@@ -5,48 +5,14 @@ See design III.1.
 
 from __future__ import annotations
 
-from collections.abc import Hashable, Mapping
-from dataclasses import dataclass
+from collections.abc import Mapping
 from typing import Any
 
-from .event_template import ValueSpec, _require_hashable
+from ._spec_base import OpaqueSpec
 from .provenance import Provenance
 from .tracked import Annotated, TrackedTerm
 
 __all__ = ["Opaque", "OpaqueSpec"]
-
-
-@dataclass(frozen=True)
-class OpaqueSpec(ValueSpec):
-    """The fallback value spec, for a value no other spec describes.
-
-    An opaque value carries no exposed structure (a string, a DataFrame, an
-    arbitrary Python object, ...). ``meta`` is optional opaque metadata and
-    must be hashable (or ``None``).
-    """
-
-    meta: Hashable = None
-
-    def __post_init__(self) -> None:
-        _require_hashable(self.meta, context="OpaqueSpec.meta")
-
-    def is_valid(self, value: Any) -> bool:
-        """Whether *value* is a valid opaque value — anything but a mapping.
-
-        As the fallback spec, ``OpaqueSpec`` accepts any value **except** a
-        ``Mapping``: a mapping denotes tree structure (a subtree), never a
-        leaf. Every other value is valid, including a numeric array or scalar
-        — such a value is *typically* described by an :class:`NumericArraySpec`, but
-        an explicitly-opaque field still accepts it. ``meta`` is metadata
-        about the spec and is not checked against the value.
-
-        Notes
-        -----
-        The record layer honours the same rule: mappings are never leaves, so
-        :class:`~probpipe.Record` construction materialises a mapping field
-        value into a nested subtree.
-        """
-        return not isinstance(value, Mapping)
 
 
 class Opaque(TrackedTerm, Annotated):

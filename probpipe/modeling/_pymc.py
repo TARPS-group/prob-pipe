@@ -11,7 +11,7 @@ from typing import Any
 
 import jax.numpy as jnp
 
-from ..core.event_template import NumericEventTemplate
+from ..core._specs import NumericRecordSpec
 from ..core.tracked import auto_name
 from ._base import ProbabilisticModel
 
@@ -182,7 +182,7 @@ class PyMCModel(ProbabilisticModel):
         self,
         model: Any,
         names: tuple[str, ...] | list[str],
-    ) -> NumericEventTemplate:
+    ) -> NumericRecordSpec:
         """Parameter template over *names*, read from a PyMC *model* build.
 
         Inference passes the data-conditioned build and the names from
@@ -200,7 +200,7 @@ class PyMCModel(ProbabilisticModel):
 
         Returns
         -------
-        NumericEventTemplate
+        NumericRecordSpec
             One field per name, carrying its event shape.
 
         Raises
@@ -221,10 +221,10 @@ class PyMCModel(ProbabilisticModel):
                     f"`pm.Normal({name!r}, 0, 1, shape=k)`)."
                 )
             fields[name] = tuple(int(s) for s in raw_shape)
-        return NumericEventTemplate(**fields)
+        return NumericRecordSpec(**fields)
 
     @property
-    def event_template(self) -> NumericEventTemplate:
+    def event_template(self) -> NumericRecordSpec:
         """Declared parameter template from the no-data build (canonical
         parameters, observed variables excluded).
 

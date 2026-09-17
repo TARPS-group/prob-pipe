@@ -31,9 +31,9 @@ from . import (
     _workflow_plan,
     _workflow_recipe,
 )
+from ._specs import RecordSpec
 from .config import WorkflowKind, prefect_config
 from .distribution import BroadcastDistribution, Distribution, EmpiricalDistribution
-from .event_template import EventTemplate
 from .provenance import Provenance
 from .tracked import TrackedTerm
 
@@ -57,7 +57,7 @@ def execute_distribution_broadcast(
     require_jax_traceable: Callable[[dict[str, Any], list[_workflow_call.WorkflowInputRef]], None],
     workflow_name: str,
     workflow_kind: WorkflowKind,
-    output_template: EventTemplate | None = None,
+    output_template: RecordSpec | None = None,
     provenance_parents: Sequence[TrackedTerm] = (),
     provenance_inputs: Mapping[str, Any] | None = None,
     record_recipe: bool = True,
@@ -107,7 +107,7 @@ def execute_distribution_broadcast(
         Effective orchestration mode for this call. The value is recorded in
         provenance and passed to the JAX path so Prefect task/flow requests can
         fail clearly when Prefect is unavailable.
-    output_template : EventTemplate or None
+    output_template : RecordSpec or None
         Concrete authoritative template for declared outputs, when present.
     provenance_parents : sequence of TrackedTerm
         Call-level tracked lineage, already ordered and deduplicated.
@@ -290,7 +290,7 @@ def _broadcast_jax(
     get_key: Callable[[_workflow_plan.PlannedRandomEvent], PRNGKey],
     workflow_name: str,
     workflow_kind: WorkflowKind,
-    output_template: EventTemplate | None,
+    output_template: RecordSpec | None,
 ) -> BroadcastDistribution:
     """Execute distribution broadcasting through local ``jax.vmap``."""
     if workflow_kind in (WorkflowKind.TASK, WorkflowKind.FLOW) and (task is None or flow is None):
@@ -349,7 +349,7 @@ def _broadcast_enumerate(
         [],
         _workflow_execution.WorkflowExecutionConfig,
     ],
-    output_template: EventTemplate | None,
+    output_template: RecordSpec | None,
 ) -> BroadcastDistribution:
     """Execute the plan's exact combinations and sampled repetitions."""
     execution = make_execution_config()
@@ -472,7 +472,7 @@ def _broadcast_sample(
         [],
         _workflow_execution.WorkflowExecutionConfig,
     ],
-    output_template: EventTemplate | None,
+    output_template: RecordSpec | None,
 ) -> BroadcastDistribution:
     """Sample distribution arguments and execute one function call per sample."""
     execution = make_execution_config()

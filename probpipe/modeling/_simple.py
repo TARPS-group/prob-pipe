@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..core._specs import RecordSpec
 from ..core.distribution import Distribution
-from ..core.event_template import EventTemplate
 from ..core.protocols import SupportsLogProb
 from ..core.record import Record
 from ..core.tracked import auto_name
@@ -56,7 +56,7 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
         # the type system: the prior must be both ``SupportsLogProb``
         # (so the joint log-density is computable) and a
         # ``RecordDistribution`` (so its ``event_template`` is a
-        # required, non-``None`` ``EventTemplate``).
+        # required, non-``None`` ``RecordSpec``).
         from ..core.distribution import RecordDistribution
 
         if not isinstance(prior, SupportsLogProb):
@@ -86,14 +86,14 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
         # ``isinstance(prior, RecordDistribution)`` guard above implies
         # the metaclass invariant); ``data_tpl`` may be ``None`` for
         # likelihoods that don't declare a data template.
-        prior_tpl: EventTemplate = prior.event_template
+        prior_tpl: RecordSpec = prior.event_template
         data_tpl = getattr(likelihood, "data_template", None)
         # Convert legacy ``Record``-typed data templates to
-        # ``EventTemplate``. ``Record`` and ``EventTemplate`` are
+        # ``RecordSpec``. ``Record`` and ``RecordSpec`` are
         # unrelated types, so the ``Record`` check is sufficient on
         # its own.
         if isinstance(data_tpl, Record):
-            data_tpl = EventTemplate.infer_from(data_tpl)
+            data_tpl = RecordSpec.infer_from(data_tpl)
         if data_tpl is not None:
             overlap = set(prior_tpl.fields) & set(data_tpl.fields)
             if overlap:
@@ -102,7 +102,7 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
             # subtree is carried over whole rather than indexed by a top-level
             # subtree name (which leaf-keyed ``[]`` would reject).
             merged: dict[str, Any] = {**dict(prior_tpl.children), **dict(data_tpl.children)}
-            self._event_template: EventTemplate = EventTemplate(merged)
+            self._event_template: RecordSpec = RecordSpec(merged)
         else:
             self._event_template = prior_tpl
 
@@ -119,8 +119,8 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
         return self._likelihood
 
     @property
-    def event_template(self) -> EventTemplate:
-        """Merged ``EventTemplate`` over prior fields + likelihood data fields.
+    def event_template(self) -> RecordSpec:
+        """Merged ``RecordSpec`` over prior fields + likelihood data fields.
 
         ``SimpleModel`` is not itself a :class:`RecordDistribution`, but
         it carries a template so :attr:`fields`, conditioning, and

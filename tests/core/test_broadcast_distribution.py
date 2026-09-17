@@ -442,20 +442,20 @@ class TestMakeMarginal:
         assert isinstance(m, _RecordMarginal)
 
     def test_declared_bare_array_requires_single_leaf_template(self):
-        from probpipe import EventTemplate
+        from probpipe import RecordSpec
 
         with pytest.raises(ValueError, match=r"bare array.*single-leaf"):
             _make_marginal(
                 jnp.ones((5, 2)),
                 None,
-                event_template=EventTemplate(left=(2,), right=(2,)),
+                event_template=RecordSpec(left=(2,), right=(2,)),
             )
 
     def test_declared_bare_array_preserves_nested_single_leaf_path(self):
-        from probpipe import EventTemplate
+        from probpipe import RecordSpec
 
         samples = jnp.arange(10.0).reshape(5, 2)
-        template = EventTemplate(stats=EventTemplate(value=(2,)))
+        template = RecordSpec(stats=RecordSpec(value=(2,)))
 
         marginal = _make_marginal(samples, None, event_template=template)
 
@@ -913,7 +913,7 @@ class TestMakeStack:
         from probpipe import Record, RecordBatch
         from probpipe.core._broadcast_distributions import _make_stack
         from probpipe.core._opaque import OpaqueSpec
-        from probpipe.core.event_template import NumericArraySpec
+        from probpipe.core._specs import NumericArraySpec
 
         records = [Record("r", x=jnp.ones(2, dtype=jnp.bfloat16), label=f"r{i}") for i in range(3)]
         out = _make_stack(records, n=3, field_name="demo", level_names=("sweep",))
@@ -968,7 +968,7 @@ class TestMakeStack:
         assert out.values.shape == (4, 3)
 
     def test_declared_vmap_array_requires_single_leaf_template(self):
-        from probpipe import EventTemplate
+        from probpipe import RecordSpec
         from probpipe.core._broadcast_distributions import _make_stack
 
         with pytest.raises(ValueError, match=r"bare array.*single-leaf"):
@@ -976,16 +976,16 @@ class TestMakeStack:
                 jnp.ones((4, 2)),
                 n=4,
                 field_name="demo",
-                event_template=EventTemplate(left=(2,), right=(2,)),
+                event_template=RecordSpec(left=(2,), right=(2,)),
                 level_names=("sweep",),
             )
 
     def test_declared_vmap_array_preserves_nested_single_leaf_path(self):
-        from probpipe import EventTemplate
+        from probpipe import RecordSpec
         from probpipe.core._broadcast_distributions import _make_stack
 
         values = jnp.arange(8.0).reshape(4, 2)
-        template = EventTemplate(stats=EventTemplate(value=(2,)))
+        template = RecordSpec(stats=RecordSpec(value=(2,)))
 
         out = _make_stack(
             values,
@@ -999,11 +999,11 @@ class TestMakeStack:
         np.testing.assert_allclose(out["stats/value"], values)
 
     def test_declared_vmap_array_supports_multidimensional_batch_shape(self):
-        from probpipe import EventTemplate
+        from probpipe import RecordSpec
         from probpipe.core._broadcast_distributions import _make_stack
 
         values = jnp.arange(12.0).reshape(6, 2)
-        template = EventTemplate(stats=EventTemplate(value=(2,)))
+        template = RecordSpec(stats=RecordSpec(value=(2,)))
 
         out = _make_stack(
             values,

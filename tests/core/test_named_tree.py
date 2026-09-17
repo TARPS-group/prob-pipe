@@ -10,12 +10,12 @@ from __future__ import annotations
 import jax.numpy as jnp
 import pytest
 
-from probpipe import EventTemplate, NumericRecord, Record
+from probpipe import NumericRecord, Record, RecordSpec
 from probpipe.core._opaque import OpaqueSpec
-from probpipe.core.event_template import (
+from probpipe.core._specs import (
     NumericArraySpec,
-    NumericEventTemplate,
-    ValueSpec,
+    NumericRecordSpec,
+    TermSpec,
 )
 from probpipe.core.named_tree import NamedTree
 
@@ -27,20 +27,20 @@ from probpipe.core.named_tree import NamedTree
 class TestPublicSubstrate:
     def test_families_are_named_trees(self):
         assert isinstance(Record("r", a=1.0), NamedTree)
-        assert isinstance(EventTemplate(a=()), NamedTree)
+        assert isinstance(RecordSpec(a=()), NamedTree)
         assert isinstance(NumericRecord("nr", a=jnp.array(1.0)), NamedTree)
 
     def test_leaf_type_hooks(self):
-        assert EventTemplate._leaf_type() is ValueSpec
+        assert RecordSpec._leaf_type() is TermSpec
         assert Record._leaf_type() is object
 
     def test_template_rejects_non_spec_leaf(self):
         with pytest.raises(TypeError):
-            EventTemplate(a=object())
+            RecordSpec(a=object())
 
     def test_substrate_is_not_directly_instantiable(self):
         # ``NamedTree`` is the abstract substrate; only concrete families
-        # (Record / EventTemplate / batch types) own a ``_tree`` store.
+        # (Record / RecordSpec / batch types) own a ``_tree`` store.
         with pytest.raises(TypeError, match="abstract substrate"):
             NamedTree()
 
@@ -87,8 +87,8 @@ class TestIsMultiField:
         assert Record("r", g=Record("r", a=1.0, b=2.0)).is_multi_field is True
 
     def test_template(self):
-        assert EventTemplate(a=()).is_multi_field is False
-        assert EventTemplate(a=(), b=(2,)).is_multi_field is True
+        assert RecordSpec(a=()).is_multi_field is False
+        assert RecordSpec(a=(), b=(2,)).is_multi_field is True
 
 
 # ===========================================================================
@@ -154,9 +154,9 @@ class TestWithPathNames:
             record.with_path_names({"g/mu": "a"}, mu="b")
 
     def test_template_family_preserved(self):
-        t = EventTemplate(a=(), b=(2,))
+        t = RecordSpec(a=(), b=(2,))
         renamed = t.with_path_names(a="alpha")
-        assert isinstance(renamed, NumericEventTemplate)
+        assert isinstance(renamed, NumericRecordSpec)
         assert tuple(renamed.keys()) == ("alpha", "b")
 
     def test_numeric_record_family_preserved(self):
@@ -175,7 +175,7 @@ class TestWithPathNames:
 
     def test_explicit_template_metadata_survives(self):
         spec = NumericArraySpec((), dtype=jnp.float32)
-        r = Record("r", a=jnp.array(1.0, dtype=jnp.float32), event_template=EventTemplate(a=spec))
+        r = Record("r", a=jnp.array(1.0, dtype=jnp.float32), event_template=RecordSpec(a=spec))
         renamed = r.with_path_names(a="alpha")
         assert renamed.event_template["alpha"] == spec
 
@@ -187,7 +187,7 @@ class TestWithPathNames:
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=EventTemplate(a=()),
+            element_spec=RecordSpec(a=()),
         )
         renamed = ra.with_path_names(a="b")
         assert list(renamed.event_template) == ["b"]
@@ -257,7 +257,7 @@ class TestPytreeAuxSplit:
             "mine",
             a=jnp.array(1.0, dtype=jnp.float32),
             b="label",
-            event_template=EventTemplate(a=spec, b=None),
+            event_template=RecordSpec(a=spec, b=None),
         )
         leaves, treedef = jax.tree_util.tree_flatten(r)
         back = jax.tree_util.tree_unflatten(treedef, leaves)
@@ -303,7 +303,7 @@ class TestPytreeAuxSplit:
         richer = Record(
             "r",
             a=jnp.array(1.0, dtype=jnp.float32),
-            event_template=EventTemplate(a=NumericArraySpec((), dtype=jnp.float32)),
+            event_template=RecordSpec(a=NumericArraySpec((), dtype=jnp.float32)),
         )
         # Treedef equality is stricter than record equality: a richer explicit
         # template distinguishes the treedefs even when the data is equal.
@@ -329,7 +329,7 @@ class TestRecordAutoPromotion:
         assert type(r.at_path("g/h")) is NumericRecord
 
     def test_explicit_non_numeric_template_wins(self):
-        r = Record("r", a=1.0, event_template=EventTemplate(a=OpaqueSpec()))
+        r = Record("r", a=1.0, event_template=RecordSpec(a=OpaqueSpec()))
         assert type(r) is Record
 
     def test_backend_leaves_stay_verbatim(self):
@@ -379,7 +379,7 @@ class TestRecordAutoPromotion:
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=EventTemplate(a=()),
+            element_spec=RecordSpec(a=()),
         )
         assert type(ra) is RecordBatch
         nrb = NumericRecordBatch(
@@ -387,7 +387,7 @@ class TestRecordAutoPromotion:
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=EventTemplate(a=()),
+            element_spec=RecordSpec(a=()),
         )
         assert type(nrb) is NumericRecordBatch
 
@@ -406,14 +406,14 @@ class TestValueLevelEntryPoints:
         assert rebuilt.name == "mine"
 
     def test_from_field_values_numeric_template_promotes(self):
-        tpl = EventTemplate(a=(), b=(2,))
+        tpl = RecordSpec(a=(), b=(2,))
         rebuilt = Record.from_field_values("v", tpl, [jnp.array(1.0), jnp.zeros(2)])
         assert type(rebuilt) is NumericRecord
         assert rebuilt.event_template is tpl
 
     def test_from_field_values_count_mismatch(self):
         with pytest.raises(ValueError, match="expected"):
-            Record.from_field_values("v", EventTemplate(a=(), b=()), [1.0])
+            Record.from_field_values("v", RecordSpec(a=(), b=()), [1.0])
 
     def test_numeric_record_from_vector_round_trip(self):
         nr = NumericRecord("nr", x=jnp.arange(3.0), g=NumericRecord("nr", y=jnp.array(2.0)))

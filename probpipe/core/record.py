@@ -4,7 +4,7 @@ A ``Record`` is a single structured value: an immutable collection of named,
 ordered fields. In ProbPipe, it is widely used as a wrapper for deterministic
 quantities, and thus can be viewed as the non-random counterpart to
 :class:`~probpipe.core._distribution_base.Distribution`. Every ``Record``
-carries an :class:`EventTemplate` that describes the structure of the
+carries a :class:`RecordSpec` that describes the structure of the
 stored value. The event template is the schema encoding the structure of
 the concrete value.
 
@@ -13,7 +13,7 @@ A canonical value wrapper
 ``Record``\\ s are one of the building blocks of unified, reproducible
 probabilistic pipelines in ProbPipe. They are used to wrap concrete values,
 attaching metadata (name, provenance) and structural information
-(an :class:`EventTemplate`). The typical pattern is for
+(a :class:`RecordSpec`). The typical pattern is for
 :class:`Function`\\ s to work with native types; ``Record``\\ s come
 into play at the boundaries, wrapping the inputs and outputs of these functions.
 For example, by default the return value of the ``sample`` operator is wrapped
@@ -23,8 +23,8 @@ The ``Record`` family
 ---------------------
 - :class:`Record`: represents a single value, which may contain multiple fields.
 - :class:`~probpipe.NumericRecord`: a subclass in which all fields are numeric, stored in native form (converted to JAX arrays lazily, at the compute boundary).
-- :class:`~probpipe.RecordBatch`: batch of ``Record``s sharing one ``EventTemplate``.
-- :class:`~probpipe.NumericRecordBatch`: batch of ``NumericRecord``s sharing one ``EventTemplate``.
+- :class:`~probpipe.RecordBatch`: batch of ``Record``s sharing one ``RecordSpec``.
+- :class:`~probpipe.NumericRecordBatch`: batch of ``NumericRecord``s sharing one ``RecordSpec``.
 
 Notes
 -----
@@ -45,15 +45,9 @@ import numpy as np
 
 from ..custom_types import ArrayLike
 from ._array_backend import _metadata_of, _numpy_dtype_of, _to_numpy_array, array_backend_for
-from .event_template import (
-    EventTemplate,
-    NumericEventTemplate,
-    RecordSpec,
-    _full_array_shape_or_none,
-    _record_declaration_for,
-    _record_declaration_template,
-    _unify_event_template_with_value,
-)
+from ._record_spec import _unify_event_template_with_value
+from ._spec_base import _full_array_shape_or_none
+from ._specs import NumericRecordSpec, RecordSpec
 from .named_tree import _PATH_SEP, NamedTree, _check_no_path_sep, _unflatten_paths
 from .tracked import Annotated, TrackedTerm
 
@@ -211,14 +205,14 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     Structure encoded by the event template
     ----------------------------------------
     :attr:`event_template` always reflects the structure of the stored value.
-    Because an :class:`EventTemplate` is itself a :class:`~probpipe.core.named_tree.NamedTree`, its tree
+    Because a :class:`RecordSpec` is itself a :class:`~probpipe.core.named_tree.NamedTree`, its tree
     mirrors the record's exactly: each nested ``Record`` corresponds to a
-    nested ``EventTemplate``, and each field value corresponds to a value spec
+    nested ``RecordSpec``, and each field value corresponds to a value spec
     (an array to an :class:`NumericArraySpec`, any non-array to an
     :class:`OpaqueSpec`, and so on). ::
 
         r.event_template
-        # NumericEventTemplate(x=(), y=NumericEventTemplate(a=(), b=()))
+        # NumericRecordSpec(x=(), y=NumericRecordSpec(a=(), b=()))
         r.event_template["y/a"]  # NumericArraySpec(shape=())  — the spec for r["y/a"]
 
         # A record's subtree and its template's subtree stay in lock-step:
@@ -226,7 +220,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
         # Each field value maps to a value spec by type:
         Record("r", vec=jnp.zeros(3), label="fox").event_template
-        # EventTemplate(vec=(3,), label=None)   — array -> NumericArraySpec, str -> OpaqueSpec
+        # RecordSpec(vec=(3,), label=None)   — array -> NumericArraySpec, str -> OpaqueSpec
 
     Metadata: identity and annotations
     ----------------------------------
@@ -245,9 +239,9 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     passed as a field value is materialised into a nested subtree — never
     stored as a leaf — whether it appears as a keyword value or nested inside a
     positional mapping. When every leaf is a numeric array (so
-    the carried template is a :class:`NumericEventTemplate`), ``Record(...)``
+    the carried template is a :class:`NumericRecordSpec`), ``Record(...)``
     **auto-promotes** to :class:`NumericRecord`, mirroring the
-    ``EventTemplate`` promotion; the numeric axis is re-derived whenever a
+    ``RecordSpec`` promotion; the numeric axis is re-derived whenever a
     transform constructs a new record, so an edit that removes the last
     non-numeric leaf promotes the result and one that introduces a
     non-numeric leaf demotes it. An explicit non-numeric ``event_template``
@@ -261,11 +255,11 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     When an ``event_template`` is supplied it is validated against the value's
     structure, and any mismatch in tree shape or field/spec kind raises
     ``ValueError``. When omitted, the template is inferred via
-    :meth:`EventTemplate.infer_from`; inference recovers the tree structure but
+    :meth:`RecordSpec.infer_from`; inference recovers the tree structure but
     is lossy on the value specs (e.g. it cannot recover a :class:`FunctionSpec`'s
     input / output structure). ::
 
-        Record("r", a=1.0, event_template=EventTemplate(a=(), b=()))
+        Record("r", a=1.0, event_template=RecordSpec(a=(), b=()))
         # ValueError: event_template fields ['a', 'b'] do not match record fields ['a'] ...
 
     Equality and hashing
@@ -281,7 +275,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     ``map_with_keys``, which rebuild the result and re-infer its specs — compares
     equal only when inference recovers the original template, for instance when
     that template was itself inferred (the record was built without an explicit
-    ``event_template``). Inference is lossy: :meth:`EventTemplate.infer_from`
+    ``event_template``). Inference is lossy: :meth:`RecordSpec.infer_from`
     cannot recover a ``NumericArraySpec``'s ``dtype`` / ``support``, an
     ``OpaqueSpec``'s ``meta``, etc., so an identity ``map`` of a record carrying
     a richer explicit template does *not* compare equal::
@@ -315,11 +309,9 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         takes its name from the field key it sits under. A ``Mapping`` value
         (e.g. a ``dict``) is never a leaf — it is materialised into a nested
         subtree.
-    event_template : EventTemplate or RecordSpec, optional
-        The value's authoritative schema, as a bare template or as the
-        :class:`RecordSpec` that stores one — the two denote the same space, and
-        a bare template is wrapped at construction. When omitted the schema is
-        inferred from the field data (via :meth:`EventTemplate.infer_from`); when
+    event_template : RecordSpec, optional
+        The value's authoritative schema and kind spec. When omitted it is
+        inferred from the field data (via :meth:`RecordSpec.infer_from`); when
         supplied — e.g. carried forward from the distribution that produced the
         value — it is validated against the field names. Either way it is fixed
         for the life of the record; read it back via :attr:`spec`, or its
@@ -390,7 +382,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                     "e.g. Record('my_record', x=...); the name= keyword and "
                     "name-less forms were removed."
                 )
-            event_template = _record_declaration_template(kwargs.get("event_template"))
+            event_template = kwargs.get("event_template")
             if len(args) > 1 and args[1] is not None:
                 source: Mapping[str, Any] = args[1]
             else:
@@ -401,7 +393,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
             # stored in native form, so promotion never coerces or loses
             # anything.
             template_allows = event_template is None or isinstance(
-                event_template, NumericEventTemplate
+                event_template, NumericRecordSpec
             )
             numeric = (
                 template_allows
@@ -418,14 +410,10 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         _fields: Mapping[str, _FieldValue] | None = None,
         /,
         *,
-        event_template: EventTemplate | RecordSpec | None = None,
+        event_template: RecordSpec | None = None,
         _validate_leaves: bool = True,
         **fields: _FieldValue,
     ):
-        # Every check below reads structure, so work in templates and keep the
-        # caller's form to store at the end.
-        declaration = event_template
-        event_template = _record_declaration_template(declaration)
         if _fields is not None:
             if fields:
                 raise ValueError("Cannot pass both positional dict and keyword arguments")
@@ -442,10 +430,10 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
         field_map: dict[str, _FieldValue] = {}
         for field_name, value in field_inputs.items():
-            sub_template: EventTemplate | None = None
+            sub_template: RecordSpec | None = None
             if event_template is not None:
                 template_child = event_template.children.get(field_name)
-                if isinstance(template_child, EventTemplate):
+                if isinstance(template_child, RecordSpec):
                     sub_template = template_child
             try:
                 if isinstance(value, Mapping):
@@ -489,7 +477,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         object.__setattr__(self, "_tree", field_map)
         self._init_tracked(name)
         if event_template is None:
-            event_template = EventTemplate.infer_from(field_map)
+            event_template = RecordSpec.infer_from(field_map)
         else:
             self._validate_event_template(event_template, check_leaf_values=_validate_leaves)
             # Store fields in the template's field order so iteration,
@@ -503,7 +491,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                 object.__setattr__(
                     self, "_tree", {k: field_map[k] for k in event_template.children}
                 )
-        object.__setattr__(self, "_spec", _record_declaration_for(event_template, declaration))
+        object.__setattr__(self, "_spec", event_template)
 
     @staticmethod
     def _named_by_key(field_name: str, child: Record) -> Record:
@@ -521,13 +509,13 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         return renamed
 
     def _validate_event_template(
-        self, event_template: EventTemplate, *, check_leaf_values: bool = True
+        self, event_template: RecordSpec, *, check_leaf_values: bool = True
     ) -> None:
         """Check that an explicitly-supplied template matches this record's structure.
 
         Validates the **whole tree**, recursively: at every level the field-name
         sets must match, a nested ``Record`` must align with a nested
-        ``EventTemplate`` (both internal nodes), and a non-``Record`` leaf must
+        ``RecordSpec`` (both internal nodes), and a non-``Record`` leaf must
         satisfy its value spec's ``is_valid`` (structure: shape and dtype; a
         ``NumericArraySpec``'s ``support`` is descriptive and not part of ``is_valid``).
         Leaf validation is skipped on the pytree-unflatten path, where a leaf's
@@ -537,7 +525,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         Raises ``ValueError`` naming the ``/``-path of the first mismatch.
         """
 
-        def _check(record: Record, template: EventTemplate, prefix: str) -> None:
+        def _check(record: Record, template: RecordSpec, prefix: str) -> None:
             record_fields = set(record._tree)
             template_fields = set(template.fields)
             if record_fields != template_fields:
@@ -550,7 +538,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                 spec = template.children[name]
                 path = f"{prefix}{name}"
                 value_is_node = isinstance(value, Record)
-                spec_is_node = isinstance(spec, EventTemplate)
+                spec_is_node = isinstance(spec, RecordSpec)
                 if value_is_node and spec_is_node:
                     _check(value, spec, f"{path}{_PATH_SEP}")
                 elif value_is_node != spec_is_node:
@@ -586,34 +574,30 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     def spec(self) -> RecordSpec:
         """This record's own :class:`RecordSpec` — the single stored source of its type.
 
-        Fixed at construction and always present. A declaration given as a bare
-        :class:`EventTemplate` is stored wrapped, so after construction only the
-        spec remains and the declared kind is its class. :attr:`event_template`
-        is a view on it.
-
+        Fixed at construction and always present. The schema is the kind spec
+        itself; :attr:`event_template` exposes the same object.
         """
         return self._spec
 
     @property
-    def event_template(self) -> EventTemplate:
-        """The authoritative :class:`EventTemplate` describing this value's structure.
+    def event_template(self) -> RecordSpec:
+        """The authoritative :class:`RecordSpec` describing this value's structure.
 
         A view on :attr:`spec`, fixed at construction and always present. When a
         declaration was supplied (carried forward from the producing generator)
         it describes that structure; otherwise one was inferred from the field
-        data at construction (via :meth:`EventTemplate.infer_from`).
+        data at construction (via :meth:`RecordSpec.infer_from`).
 
         Notes
         -----
         Inference is a lossy fallback (it cannot recover a ``NumericArraySpec``'s
-        ``dtype`` / ``support``, an ``OpaqueSpec``'s ``meta``, or a
-        ``RecordSpec`` / ``DistributionSpec`` / ``FunctionSpec``), so both round
+        ``dtype`` / ``support``, an ``OpaqueSpec``'s ``meta``, or declarations not carried by an untracked value), so both round
         trips out of this process carry the declaration rather than re-deriving
         it: the spec rides in the JAX pytree aux data, and ``__reduce__``
         serializes it. A value reconstructed by ``tree_unflatten`` or by
         ``pickle.loads`` carries this same structure.
         """
-        return self._spec.event_template
+        return self._spec
 
     # -- Tree structure -----------------------------------------------------
     #
@@ -698,7 +682,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
             return child.event_template
         return self.event_template.children[name]
 
-    def _rebuild_root(self, children: Mapping[str, Any], event_template: EventTemplate) -> Record:
+    def _rebuild_root(self, children: Mapping[str, Any], event_template: RecordSpec) -> Record:
         """Rebuild the root of a structural transform, threading the template.
 
         The rebuilt record preserves the root's name and derives its numeric
@@ -748,7 +732,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
             specs[name] = edited.event_template
         if not new_children:
             raise ValueError("Cannot remove all fields from a collection")
-        return self._rebuild_root(new_children, EventTemplate(specs))
+        return self._rebuild_root(new_children, RecordSpec(specs))
 
     def merge(self, other: Record) -> Record:
         """Return the union of this Record and *other* (see :meth:`NamedTree.merge`).
@@ -778,7 +762,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                 continue
             new_children[name] = child
             specs[name] = other._child_spec(name, child)
-        return self._rebuild_root(new_children, EventTemplate(specs))
+        return self._rebuild_root(new_children, RecordSpec(specs))
 
     def replace(self, _updates: Mapping[str, Any] | None = None, /, **updates: Any) -> Record:
         """Return a new Record with the values at the given paths replaced.
@@ -829,14 +813,14 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         return self._rebuild_class()(
             self._name,
             new_children,
-            event_template=EventTemplate(specs),
+            event_template=RecordSpec(specs),
         )
 
     def _spec_of(self, value: _FieldValue) -> Any:
         """The value spec describing a new field *value*, for template threading."""
         if isinstance(value, Record):
             return value.event_template
-        return EventTemplate.infer_from({"_leaf_": value}).children["_leaf_"]
+        return RecordSpec.infer_from({"_leaf_": value}).children["_leaf_"]
 
     # -- Field renaming -------------------------------------------------------
 
@@ -959,7 +943,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         return cls(name, d)
 
     @classmethod
-    def from_field_values(cls, name: str, template: EventTemplate, values: Iterable[Any]) -> Record:
+    def from_field_values(cls, name: str, template: RecordSpec, values: Iterable[Any]) -> Record:
         """Reconstruct a value from an ordered sequence of field values.
 
         *values* supplies one object per field, in canonical order (the order
@@ -969,14 +953,14 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         the round-trip is faithful:
         ``Record.from_field_values(r.name, r.event_template, r.values()) == r``.
         The export side is just ``list(record.values())``. The result's class
-        follows the template's numericness — a :class:`NumericEventTemplate`
+        follows the template's numericness — a :class:`NumericRecordSpec`
         builds a :class:`NumericRecord` via the auto-promotion.
 
         Parameters
         ----------
         name : str
             Name for the reconstructed record (user-given).
-        template : EventTemplate
+        template : RecordSpec
             The authoritative schema supplying names, nesting, and order.
         values : iterable
             One field value per template key, in canonical order.
@@ -1004,10 +988,10 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
             )
         leaf_iter = iter(values)
 
-        def _build(tpl: EventTemplate, node_name: str) -> Record:
+        def _build(tpl: RecordSpec, node_name: str) -> Record:
             fields = {
                 field_name: (
-                    _build(spec, field_name) if isinstance(spec, EventTemplate) else next(leaf_iter)
+                    _build(spec, field_name) if isinstance(spec, RecordSpec) else next(leaf_iter)
                 )
                 for field_name, spec in tpl.children.items()
             }
@@ -1082,7 +1066,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         both infer the same template and compare equal; but a record given a
         richer explicit template compares equal to a re-inferred rebuild of
         itself (e.g. via :meth:`map`) only when inference recovers that template,
-        since :meth:`EventTemplate.infer_from` is lossy (it cannot recover a
+        since :meth:`RecordSpec.infer_from` is lossy (it cannot recover a
         ``NumericArraySpec``'s ``dtype`` / ``support``, etc.).
 
         :meth:`__hash__` is a coarser, structural hash (shape only, never the
@@ -1164,7 +1148,7 @@ def _pack_fields(
 
     :meth:`Distribution._pack_value` is the main caller; it works from the
     field-name tuple alone, since some distributions expose ``fields`` without
-    an :class:`EventTemplate` instance.
+    a :class:`RecordSpec` instance.
     """
     given = set(field_kwargs)
     expected = set(fields)
@@ -1228,7 +1212,7 @@ def _record_unflatten(aux: tuple[RecordSpec, str], children: list) -> Record:
     r = object.__new__(Record)
     r.__init__(
         name,
-        dict(zip(tuple(spec.event_template.children), children)),
+        dict(zip(tuple(spec.children), children)),
         event_template=spec,
         _validate_leaves=False,
     )

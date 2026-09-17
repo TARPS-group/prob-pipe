@@ -287,7 +287,10 @@ class TFPConverter(Converter):
                 # Unknown TFP: sample -> RecordEmpiricalDistribution
                 kwargs.pop("num_samples", None)
                 sample_shape = plan.sample_shape
-                assert sample_shape is not None
+                if sample_shape is None:
+                    raise RuntimeError(
+                        "Sampling a TFP distribution requires a conversion sample_shape"
+                    )
                 key = _resolve_conversion_key(key, plan)
                 samples = source.sample(seed=key, sample_shape=sample_shape)
                 emp_name = kwargs.get("name") or getattr(source, "name", None) or "samples"

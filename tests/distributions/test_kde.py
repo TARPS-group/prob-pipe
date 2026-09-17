@@ -15,10 +15,10 @@ import pytest
 
 from probpipe import (
     EmpiricalDistribution,
-    EventTemplate,
-    NumericEventTemplate,
     NumericRecord,
+    NumericRecordSpec,
     Record,
+    RecordSpec,
 )
 from probpipe.core._empirical import RecordEmpiricalDistribution
 from probpipe.core._numeric_record import NumericRecord as _NumericRecord
@@ -32,7 +32,7 @@ from probpipe.distributions.kde import KDEDistribution
 
 @pytest.fixture
 def two_field_template():
-    return EventTemplate(intercept=(), slope=())
+    return RecordSpec(intercept=(), slope=())
 
 
 @pytest.fixture
@@ -46,7 +46,7 @@ def flat_samples():
 # ---------------------------------------------------------------------------
 
 
-class TestEventTemplateConstructor:
+class TestRecordSpecConstructor:
     def test_multi_field_template_preserved(self, two_field_template, flat_samples):
         kde = KDEDistribution(
             flat_samples,
@@ -57,14 +57,14 @@ class TestEventTemplateConstructor:
         assert kde.event_template.fields == ("intercept", "slope")
 
     def test_mismatched_vector_size_raises(self, flat_samples):
-        bad_tpl = EventTemplate(a=(), b=(), c=())  # vector_size=3, samples flat dim=2
+        bad_tpl = RecordSpec(a=(), b=(), c=())  # vector_size=3, samples flat dim=2
         with pytest.raises(ValueError, match="vector_size"):
             KDEDistribution(flat_samples, event_template=bad_tpl, name="bad")
 
     def test_single_field_template_unchanged(self, flat_samples):
         """A single-field template falls through to the auto-build path
         (the existing single-field behaviour is the baseline)."""
-        single = EventTemplate(theta=(2,))
+        single = RecordSpec(theta=(2,))
         kde = KDEDistribution(
             flat_samples,
             event_template=single,
@@ -158,7 +158,7 @@ class TestLogProbDualInput:
             "batch",
             {"intercept": jnp.array([0.5, 0.6, 0.7]), "slope": jnp.array([-0.3, -0.4, -0.5])},
             "draw",
-            element_spec=NumericEventTemplate(intercept=(), slope=()),
+            element_spec=NumericRecordSpec(intercept=(), slope=()),
         )
         lp = kde._log_prob(nrb)
         assert lp.shape == (3,)

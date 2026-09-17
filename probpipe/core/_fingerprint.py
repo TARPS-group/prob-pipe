@@ -315,18 +315,18 @@ def _numeric_container_to_numpy(obj: Any) -> _np.ndarray | None:
 
 def _is_event_template(obj: Any) -> bool:
     try:
-        from .event_template import EventTemplate
+        from ._specs import RecordSpec
 
-        return isinstance(obj, EventTemplate)
+        return isinstance(obj, RecordSpec)
     except ImportError:
         return False
 
 
 def _is_value_spec(obj: Any) -> bool:
     try:
-        from .event_template import ValueSpec
+        from ._specs import TermSpec
 
-        return isinstance(obj, ValueSpec)
+        return isinstance(obj, TermSpec)
     except ImportError:
         return False
 
@@ -338,7 +338,7 @@ def _update_event_template(
     max_array_bytes: int | None,
     state: _FingerprintState,
 ) -> None:
-    """Hash an EventTemplate by its ordered tree and spec declarations."""
+    """Hash a RecordSpec by its ordered tree and spec declarations."""
     h.update(b"template:")
     template_type = type(template)
     h.update(template_type.__module__.encode())
@@ -359,10 +359,10 @@ def _update_value_spec(
     max_array_bytes: int | None,
     state: _FingerprintState,
 ) -> None:
-    """Hash a built-in ValueSpec by the declaration fields that define it."""
+    """Hash a built-in TermSpec by the declaration fields that define it."""
     from ._batch import BatchSpec
     from ._opaque import OpaqueSpec
-    from .event_template import (
+    from ._specs import (
         DistributionSpec,
         FunctionSpec,
         NumericArraySpec,
@@ -386,7 +386,7 @@ def _update_value_spec(
     elif isinstance(spec, OpaqueSpec):
         _update(h, spec.meta, depth + 1, max_array_bytes, state)
     elif isinstance(spec, RecordSpec):
-        _update(h, spec.event_template, depth + 1, max_array_bytes, state)
+        _update_event_template(h, spec, depth, max_array_bytes, state)
     elif isinstance(spec, DistributionSpec):
         _update(h, spec.event_spec, depth + 1, max_array_bytes, state)
     elif isinstance(spec, FunctionSpec):

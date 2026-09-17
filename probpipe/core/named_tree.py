@@ -5,7 +5,7 @@ nested objects with a unique string path to each leaf. This module provides
 :class:`NamedTree`, the shared substrate those families are built on — the one
 place the leaf-keyed mapping contract, tree navigation, and the
 structure-preserving transforms are defined. It is reused by
-:class:`~probpipe.core.event_template.EventTemplate` (a tree of value specs)
+:class:`~probpipe.core._specs.RecordSpec` (a tree of value specs)
 and :class:`~probpipe.Record` (a tree of values), so the type- and value-level
 structures cannot drift apart on how a field is named or a path is resolved.
 
@@ -120,8 +120,8 @@ class NamedTree[L]:
     family's own node class (the hook :meth:`_node_type`); every other value
     is a leaf, validated against the family's declared :meth:`_leaf_type` at
     construction. The static counterpart of that leaf type is the class type
-    parameter ``L`` — :class:`~probpipe.core.event_template.EventTemplate`
-    binds :class:`~probpipe.core.event_template.ValueSpec`, :class:`~probpipe.Record`
+    parameter ``L`` — :class:`~probpipe.core._specs.RecordSpec`
+    binds :class:`~probpipe.core._specs.TermSpec`, :class:`~probpipe.Record`
     binds ``Any`` — which the leaf-trafficking accessors (``[]``,
     :meth:`values`, :meth:`items`, :meth:`map`) carry through to typed
     consumers. Mappings are never leaves: a mapping value denotes tree
@@ -139,7 +139,7 @@ class NamedTree[L]:
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:
         # Abstract substrate: an instance only ever exists as a concrete
-        # family (``Record`` / ``EventTemplate`` / the batch types). A direct
+        # family (``Record`` / ``RecordSpec`` / the batch types). A direct
         # ``NamedTree()`` would build an object with no ``_tree`` store, so
         # every later method would fail with a cryptic ``AttributeError``;
         # fail loudly here instead. Concrete families define their own
@@ -149,7 +149,7 @@ class NamedTree[L]:
             raise TypeError(
                 "NamedTree is an abstract substrate and cannot be instantiated "
                 "directly; construct a concrete family such as Record or "
-                "EventTemplate."
+                "RecordSpec."
             )
         return super().__new__(cls)
 
@@ -177,8 +177,8 @@ class NamedTree[L]:
         the concrete class (auto-promotion) overrides this with that base
         class, so an edit re-decides the promotion instead of forcing the
         result into the original subclass — e.g. replacing an array spec with
-        an opaque one turns a ``NumericEventTemplate`` into a mixed
-        ``EventTemplate``, and removing the last opaque spec promotes.
+        an opaque one turns a ``NumericRecordSpec`` into a mixed
+        ``RecordSpec``, and removing the last opaque spec promotes.
         """
         return cls
 
@@ -469,8 +469,8 @@ class NamedTree[L]:
         Returns a new collection of the **same structure** (identical names and
         nesting) whose fields are ``f``'s outputs, rebuilt through the class's
         constructor via :meth:`_rebuild_class` — for the value types this is the
-        same class; a base ``EventTemplate`` may auto-promote to (or demote
-        from) :class:`NumericEventTemplate` when the mapped specs change
+        same class; a base ``RecordSpec`` may auto-promote to (or demote
+        from) :class:`NumericRecordSpec` when the mapped specs change
         numericness. *f* is
         called as ``f(field_object, *args, **kwargs)`` for each field in canonical
         order. Any extra *args* / *kwargs* are forwarded to *f* unchanged and are

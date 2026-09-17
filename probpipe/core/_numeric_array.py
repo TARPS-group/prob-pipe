@@ -18,7 +18,7 @@ from ._array_backend import (
     _to_jax_array,
     _to_numpy_array,
 )
-from .event_template import NumericArraySpec
+from ._specs import NumericArraySpec
 from .provenance import Provenance
 from .tracked import Annotated, TrackedTerm
 

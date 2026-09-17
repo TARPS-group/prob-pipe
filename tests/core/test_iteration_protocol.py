@@ -180,14 +180,14 @@ def test_numeric_record_iterates_field_names():
 
 
 def test_a_record_batch_iterates_leading_axis_views():
-    from probpipe.core.event_template import EventTemplate
+    from probpipe.core._specs import RecordSpec
 
     batch = RecordBatch(
         "batch",
         {"a": jnp.zeros((5,)), "b": jnp.zeros((5,))},
         level_names="draw",
         axes_per_level=(1,),
-        element_spec=EventTemplate(a=(), b=()),
+        element_spec=RecordSpec(a=(), b=()),
     )
     rows = list(iter(batch))
     assert len(rows) == 5
@@ -195,14 +195,14 @@ def test_a_record_batch_iterates_leading_axis_views():
 
 
 def test_a_numeric_record_batch_iterates_leading_axis_views():
-    from probpipe.core.event_template import NumericEventTemplate
+    from probpipe.core._specs import NumericRecordSpec
 
     batch = NumericRecordBatch(
         "batch",
         {"a": jnp.zeros((4,)), "b": jnp.zeros((4,))},
         level_names="draw",
         axes_per_level=(1,),
-        element_spec=NumericEventTemplate(a=(), b=()),
+        element_spec=NumericRecordSpec(a=(), b=()),
     )
     rows = list(iter(batch))
     assert len(rows) == 4

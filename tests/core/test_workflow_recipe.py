@@ -697,7 +697,7 @@ class TestWorkflowCallableAnchor:
         declared = Function(
             func=replayable_identity,
             n_broadcast_samples=5,
-            input_template=probpipe.EventTemplate(value=()),
+            input_template=probpipe.RecordSpec(value=()),
         )
 
         with workflow_run(seed=4):

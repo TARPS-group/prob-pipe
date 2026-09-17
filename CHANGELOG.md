@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- Shared declarations now use one `TermSpec` protocol. `InputSpec` describes
+  named input slots; `OutputSpec` distinguishes a named whole return value from
+  exposed record fields, including a pending type in the single-keyword form.
+  A single array output remains an array; a one-field record remains a record.
+  `RecordSpec` is now the record schema itself, replacing `EventTemplate` and
+  its separate wrapper; `NumericRecordSpec` replaces `NumericEventTemplate`.
+  Replace `ValueSpec` with `TermSpec` in custom specs. Dimension binding returns
+  a refined spec, `with_dims` permits partial substitution, and `with_dim_names`
+  renames symbols throughout nested declarations. Existing live function and
+  distribution template APIs retain their signatures for their later migration.
+
 - Names are set at construction and preserved by structural transforms;
   `with_name` is the sole renaming operation. The `name_is_auto` attribute,
   constructor keywords, and carried state are removed. `auto_name` now returns

@@ -47,6 +47,17 @@ from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._opaque import Opaque, OpaqueSpec
 from probpipe.core._opaque_batch import OpaqueBatch
 from probpipe.core._record_batch import RecordBatch
+from probpipe.core._specs import (
+    DistributionSpec,
+    FunctionSpec,
+    InputSpec,
+    NumericArraySpec,
+    NumericRecordSpec,
+    NumericSpec,
+    OutputSpec,
+    RecordSpec,
+    TermSpec,
+)
 from probpipe.core._workflow_context import workflow_run
 from probpipe.core._workflow_errors import (
     ReplayCompatibilityError,
@@ -93,16 +104,6 @@ from probpipe.core.distribution import (
     RecordEmpiricalDistribution,
     set_default_num_evaluations,
     set_return_approx_dist,
-)
-from probpipe.core.event_template import (
-    DistributionSpec,
-    EventTemplate,
-    FunctionSpec,
-    NumericArraySpec,
-    NumericEventTemplate,
-    RecordSpec,
-    TermSpec,
-    ValueSpec,
 )
 from probpipe.core.named_tree import NamedTree
 from probpipe.core.node import (
@@ -211,17 +212,14 @@ from probpipe.validation import predictive_check
 
 __all__ = [
     "Annotated",
-    # Inference
     "ApproximateDistribution",
     "ArrayBackend",
     "ArrayRandomFunction",
     "Batch",
     "BatchSpec",
-    # Array-backend registry
     "BayesFlowLikelihood",
     "BayesFlowModel",
     "BayesFlowRatio",
-    # Discrete
     "Bernoulli",
     "Beta",
     "Binomial",
@@ -231,20 +229,16 @@ __all__ = [
     "Categorical",
     "Cauchy",
     "ConditionallyIndependentLikelihood",
-    # Constraints
     "Constraint",
     "ConversionInfo",
     "ConversionMethod",
     "Converter",
-    # Record-based designs
     "Design",
     "Dirichlet",
-    # Base classes
     "Distribution",
     "DistributionArray",
     "DistributionSpec",
     "EmpiricalDistribution",
-    "EventTemplate",
     "Exponential",
     "FlatNumericRecordDistribution",
     "FlattenedDistributionView",
@@ -252,7 +246,6 @@ __all__ = [
     "Function",
     "FunctionBatch",
     "FunctionSpec",
-    # Modeling
     "GLMLikelihood",
     "Gamma",
     "GaussianRandomFunction",
@@ -260,10 +253,10 @@ __all__ = [
     "HalfCauchy",
     "HalfNormal",
     "IncrementalConditioner",
+    "InputSpec",
     "InverseGamma",
     "JointEmpirical",
     "JointGaussian",
-    # KDE
     "KDEDistribution",
     "Laplace",
     "Likelihood",
@@ -272,38 +265,34 @@ __all__ = [
     "MinibatchedDistribution",
     "Module",
     "Multinomial",
-    # Multivariate
     "MultivariateNormal",
     "NamedTree",
     "NegativeBinomial",
-    # Continuous
     "Normal",
     "NumericArray",
     "NumericArrayBatch",
     "NumericArraySpec",
-    "NumericEventTemplate",
     "NumericJointEmpirical",
     "NumericRandomMeasure",
     "NumericRecord",
     "NumericRecordBatch",
     "NumericRecordDistribution",
     "NumericRecordDistributionView",
+    "NumericRecordSpec",
+    "NumericSpec",
     "Opaque",
     "OpaqueBatch",
     "OpaqueSpec",
+    "OutputSpec",
     "ParentInfo",
     "Pareto",
     "Poisson",
     "ProbabilisticModel",
-    # Joint
     "ProductDistribution",
     "Provenance",
     "ProvenanceMode",
-    # Random functions
     "RandomFunction",
-    # Random measures
     "RandomMeasure",
-    # Record
     "Record",
     "RecordBatch",
     "RecordBootstrapReplicateDistribution",
@@ -319,7 +308,6 @@ __all__ = [
     "SupportsArrayBackend",
     "SupportsConditioning",
     "SupportsCovariance",
-    # Protocols
     "SupportsExpectation",
     "SupportsLogProb",
     "SupportsMean",
@@ -332,24 +320,19 @@ __all__ = [
     "TFPDistribution",
     "TermSpec",
     "TrackedTerm",
-    # Transformed
     "TransformedDistribution",
     "TruncatedNormal",
     "Uniform",
     "UnmanagedConcurrentWorkflowEntryError",
-    "ValueSpec",
     "VonMisesFisher",
-    # Weights
     "Weights",
     "Wishart",
-    # Configuration
     "WorkflowKind",
     "abstract_workflow_method",
     "array_backend_for",
     "bijector_for",
     "boolean",
     "condition_on_nutpie",
-    # Converters
     "converter_registry",
     "elliptical_slice",
     "function",
@@ -357,7 +340,6 @@ __all__ = [
     "inference_method_registry",
     "integer_interval",
     "interval",
-    # Transition / iteration
     "iterate",
     "learn_amortized_likelihood",
     "learn_amortized_posterior",
@@ -366,10 +348,8 @@ __all__ = [
     "non_negative_integer",
     "positive",
     "positive_definite",
-    # Validation
     "predictive_check",
     "prefect_config",
-    # Provenance
     "provenance_ancestors",
     "provenance_config",
     "provenance_dag",

@@ -26,7 +26,7 @@ from probpipe import (
     Record,
     RecordBatch,
 )
-from probpipe.core.event_template import EventTemplate
+from probpipe.core._specs import RecordSpec
 from probpipe.core.tracked import Annotated, TrackedTerm, auto_name
 
 # ===========================================================================
@@ -56,7 +56,7 @@ class TestMixinMembership:
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=EventTemplate(a=()),
+            element_spec=RecordSpec(a=()),
         )
         assert isinstance(ra, TrackedTerm)
 
@@ -125,7 +125,7 @@ class TestNameLifecycle:
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=EventTemplate(a=()),
+            element_spec=RecordSpec(a=()),
         )
         assert ra.name == "derived"
         named = RecordBatch(
@@ -133,7 +133,7 @@ class TestNameLifecycle:
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=EventTemplate(a=()),
+            element_spec=RecordSpec(a=()),
         )
         assert named.name == "mine"
 
@@ -289,7 +289,7 @@ class TestWithNameOnBatchTypes:
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=EventTemplate(a=()),
+            element_spec=RecordSpec(a=()),
         )
         ra2 = ra.with_name("mine")
         assert ra2 is not ra
@@ -304,7 +304,7 @@ class TestWithNameOnBatchTypes:
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=EventTemplate(a=()),
+            element_spec=RecordSpec(a=()),
         )
         nra2 = nrb.with_name("new")
         assert nra2.name == "new"
@@ -503,7 +503,7 @@ class TestBatchPickleRoundTrip:
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=EventTemplate(a=()),
+            element_spec=RecordSpec(a=()),
         )
         nrb.with_provenance(Provenance("op"))
         back = pickle.loads(pickle.dumps(nrb))

@@ -35,8 +35,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from ..core._specs import RecordSpec
 from ..core.distribution import Distribution
-from ..core.event_template import EventTemplate
 from ..core.protocols import SupportsSampling
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike
@@ -273,7 +273,7 @@ def get_prior(dist: Distribution) -> Distribution:
     return dist._prior if is_simple_model(dist) else dist
 
 
-def extract_event_template(dist: Distribution) -> EventTemplate | None:
+def extract_event_template(dist: Distribution) -> RecordSpec | None:
     """Return *dist*'s prior's ``event_template``, or ``None``.
 
     Uses ``getattr`` to tolerate priors that aren't a
@@ -341,7 +341,7 @@ def build_target_log_prob_flat(
     *,
     init: ArrayLike | None = None,
     random_seed: int | Array = 0,
-) -> tuple[Callable[[Array], Array], Array, EventTemplate | None]:
+) -> tuple[Callable[[Array], Array], Array, RecordSpec | None]:
     """Build a flat-vector target + initial state + (optional) record template.
 
     Returns ``(target_flat_fn, flat_init, event_template)``:

@@ -71,13 +71,9 @@ from dataclasses import dataclass, replace
 from math import prod
 from typing import Any, Self, cast
 
-from .event_template import (
-    TermSpec,
-    ValueSpec,
-    _check_kind_of,
-    _unify_array_shape,
-    _unify_specs,
-)
+from ._record_spec import _check_kind_of
+from ._spec_base import _unify_array_shape, _unify_specs
+from ._specs import TermSpec
 from .provenance import Provenance
 from .tracked import TrackedTerm
 
@@ -104,9 +100,9 @@ class BatchSpec(TermSpec):
 
     Parameters
     ----------
-    element_spec : ValueSpec
-        What every element of the batch satisfies. A raw-value spec is admitted
-        as readily as a term spec.
+    element_spec : TermSpec
+        What every element of the batch satisfies, including numeric-array
+        and opaque kinds.
     axis_groups : iterable of iterable of int
         The axis *sizes* each level holds, in order, outermost level first. Every
         level holds at least one axis, and there is at least one axis in all.
@@ -125,7 +121,7 @@ class BatchSpec(TermSpec):
     Raises
     ------
     TypeError
-        If ``element_spec`` is not a :class:`ValueSpec`, an axis size is not an
+        If ``element_spec`` is not a :class:`TermSpec`, an axis size is not an
         integer, or a level name is not a string.
     ValueError
         If there are no batch axes, a level holds no axes, an axis size is
@@ -154,13 +150,13 @@ class BatchSpec(TermSpec):
     :meth:`Batch.with_level_names` raises on a collision for the same reason.
     """
 
-    element_spec: ValueSpec
+    element_spec: TermSpec
     axis_groups: tuple[tuple[int | str, ...], ...]
     level_names: tuple[str, ...]
 
     def __init__(
         self,
-        element_spec: ValueSpec,
+        element_spec: TermSpec,
         axis_groups: Iterable[Iterable[int | str]],
         level_names: Iterable[str],
     ) -> None:
@@ -169,9 +165,9 @@ class BatchSpec(TermSpec):
         The fields are the *stored* types; the iterables accepted here are
         normalized to tuples before assignment, so a stored spec is hashable.
         """
-        if not isinstance(element_spec, ValueSpec):
+        if not isinstance(element_spec, TermSpec):
             raise TypeError(
-                f"BatchSpec.element_spec must be a ValueSpec, got {type(element_spec).__name__}"
+                f"BatchSpec.element_spec must be a TermSpec, got {type(element_spec).__name__}"
             )
         if isinstance(level_names, str):
             raise TypeError(
@@ -242,7 +238,7 @@ class BatchSpec(TermSpec):
         ValueError
             If the multiplicity is polymorphic. A count is a number, and a
             declaration that defers a size has none until it is bound — the same
-            reason a polymorphic ``NumericEventTemplate`` has no flat layout.
+            reason a polymorphic ``NumericRecordSpec`` has no flat layout.
         """
         if self.free_axis_dims:
             dimensions = ", ".join(sorted(self.free_axis_dims))
@@ -272,10 +268,10 @@ class BatchSpec(TermSpec):
         """
         return frozenset(size for size in self.batch_shape if isinstance(size, str))
 
-    def with_bound_dims(self, bindings: Mapping[str, int]) -> BatchSpec:
+    def _substitute_dims(self, bindings: Mapping[str, int | str]) -> BatchSpec:
         """This spec with both its element schema and its axis sizes substituted."""
         return BatchSpec(
-            self.element_spec.with_bound_dims(bindings),
+            self.element_spec._substitute_dims(bindings),
             tuple(
                 tuple(bindings.get(size, size) if isinstance(size, str) else size for size in group)
                 for group in self.axis_groups
@@ -283,7 +279,7 @@ class BatchSpec(TermSpec):
             self.level_names,
         )
 
-    def bind_dims_from_value(self, value: Any, bindings: dict[str, int], path: str) -> None:
+    def _bind_dims_from_value(self, value: Any, bindings: dict[str, int], path: str) -> None:
         """Bind the declared multiplicity and element schema from a live *value*.
 
         A live :class:`Batch` carries a concrete spec of its own, so it binds
@@ -296,9 +292,9 @@ class BatchSpec(TermSpec):
                 f"{type(value).__name__} exposes no schema to bind it against"
             )
         _check_kind_of(actual, value, self, path)
-        self.bind_dims_from_spec(actual, bindings, path)
+        self._bind_dims_from_spec(actual, bindings, path)
 
-    def bind_dims_from_spec(self, actual: ValueSpec, bindings: dict[str, int], path: str) -> bool:
+    def _bind_dims_from_spec(self, actual: TermSpec, bindings: dict[str, int], path: str) -> bool:
         """Bind the declared axis sizes and element schema against *actual*'s own.
 
         The multiplicity binds like an array shape: a symbolic axis size takes the
@@ -363,7 +359,7 @@ class Batch[E](TrackedTerm, ABC):
     spec : BatchSpec
         This batch's own specification, at the family kind. The single stored
         source of its type: everything below is a view on it.
-    element_spec : ValueSpec
+    element_spec : TermSpec
         The specification every element satisfies.
     batch_shape : tuple of int
         The batch axes, the flat concatenation of :attr:`axis_groups`. Always
@@ -465,7 +461,7 @@ class Batch[E](TrackedTerm, ABC):
         return self._spec
 
     @property
-    def element_spec(self) -> ValueSpec:
+    def element_spec(self) -> TermSpec:
         """The specification every element satisfies — a view on :attr:`spec`."""
         return self._spec.element_spec
 

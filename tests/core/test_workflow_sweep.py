@@ -13,7 +13,6 @@ import pytest
 from probpipe import (
     BroadcastDistribution,
     DistributionArray,
-    EventTemplate,
     Function,
     Normal,
     NumericArray,
@@ -23,6 +22,7 @@ from probpipe import (
     NumericRecordBatch,
     Record,
     RecordBatch,
+    RecordSpec,
     log_prob,
     mean,
 )
@@ -376,7 +376,7 @@ class TestASweptBodyThatReturnsABatch:
             "batch",
             {"x": jnp.arange(6.0).reshape(2, 3)},
             "cell",
-            element_spec=EventTemplate(x=()),
+            element_spec=RecordSpec(x=()),
             axes_per_level=(2,),
         )
 
@@ -476,7 +476,7 @@ def numeric_sweep_source(request):
         "inputs",
         {"x": values},
         levels,
-        element_spec=EventTemplate(x=NumericArraySpec((), dtype=np.float32)),
+        element_spec=RecordSpec(x=NumericArraySpec((), dtype=np.float32)),
         axes_per_level=axes_per_level,
     )
 

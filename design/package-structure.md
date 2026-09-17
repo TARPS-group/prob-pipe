@@ -25,6 +25,7 @@ probpipe/
 ├── core/                      # Part II — shared abstractions
 │   ├── _named_tree.py         #   NamedTree (II.6)
 │   ├── _constraints.py        #   Constraint and the constraint factories (II.3)
+│   ├── _spec_base.py          #   dimension protocol and non-record specs; independent of record schemas
 │   ├── _specs.py              #   TermSpec, NumericArraySpec, OpaqueSpec (II.1), InputSpec, OutputSpec and component projection contracts (II.2)
 │   ├── _kinds.py              #   the kind table: register_kind, term_class_for_spec, batch_class_for_spec (II.1)
 │   ├── _numeric.py            #   Numeric and its spec-side mixin NumericSpec (II.3)

@@ -6,7 +6,7 @@ See design III.1.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -113,9 +113,7 @@ class OpaqueBatch(_ObjectBatch[Any]):
     @property
     def element_spec(self) -> OpaqueSpec:
         """The :class:`OpaqueSpec` every element satisfies — a view on ``spec``."""
-        spec = self._spec.element_spec
-        assert isinstance(spec, OpaqueSpec)  # narrowed at construction
-        return spec
+        return cast(OpaqueSpec, self._spec.element_spec)
 
 
 register_kind(OpaqueSpec, term_class=Opaque, batch_class=OpaqueBatch)

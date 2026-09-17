@@ -45,7 +45,7 @@ from ..core._object_batch import _is_object_array
 from ..core._random_functions import RandomFunction
 from ..core._random_measures import RandomMeasure
 from ..core._record_batch import RecordBatch, _batch_class_for
-from ..core.event_template import _reshaped_template
+from ..core._record_spec import _reshaped_template
 from ..core.protocols import (
     SupportsLogProb,
     SupportsRandomUnnormalizedLogProb,
