@@ -77,6 +77,22 @@ class TestConstruction:
         tpl = RecordSpec(z=(), a=(3,), m=None)
         assert tpl.fields == ("z", "a", "m")
 
+    @pytest.mark.parametrize("empty_type", [RecordSpec, NumericRecordSpec])
+    @pytest.mark.parametrize("with_leaf", [False, True])
+    def test_copy_constructor_preserves_empty_subtrees_and_numeric_kind(
+        self, empty_type, with_leaf
+    ):
+        empty = empty_type()
+        fields = {"x": ()} if with_leaf else {}
+        original = RecordSpec(fields | {"empty": empty})
+
+        copied = RecordSpec(original)
+
+        assert type(copied) is type(original)
+        assert copied == original
+        assert tuple(copied.children) == tuple(original.children)
+        assert copied.children["empty"] is empty
+
     def test_slash_in_field_name_rejected(self):
         with pytest.raises(ValueError, match="must not contain '/'"):
             RecordSpec(**{"a/b": ()})

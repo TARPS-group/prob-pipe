@@ -217,6 +217,8 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
             raise TypeError("RecordSpec fields must be a mapping or a RecordSpec")
         if cls is RecordSpec:
             specs = _field_specs if _field_specs is not None else field_specs
+            if isinstance(specs, RecordSpec):
+                specs = specs.children
             if specs and _all_numeric(specs.values()):
                 return object.__new__(NumericRecordSpec)
         return object.__new__(cls)
