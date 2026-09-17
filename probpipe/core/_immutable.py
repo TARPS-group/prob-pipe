@@ -7,7 +7,7 @@ guard and, because an object that refuses assignment cannot be restored the way
 
 :class:`~probpipe.core.tracked.TrackedTerm` inherits it, so a term is immutable by
 being one (``C2 – Functional interface over immutable objects``);
-:class:`~probpipe.core.event_template.EventTemplate` mixes it in directly, being
+:class:`~probpipe.core._specs.RecordSpec` mixes it in directly, being
 immutable without being a term.
 
 One layer is exempt for now:

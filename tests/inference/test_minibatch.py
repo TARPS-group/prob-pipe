@@ -16,12 +16,12 @@ import pytest
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
 from probpipe import (
-    EventTemplate,
     GLMLikelihood,
     MultivariateNormal,
     NumericArraySpec,
     NumericRecordBatch,
     Record,
+    RecordSpec,
     random_unnormalized_log_prob,
 )
 from probpipe.core._random_functions import RandomFunction
@@ -232,7 +232,7 @@ class TestInnerDraw:
         per-minibatch surrogate regardless of which container type the
         user passes.
         """
-        from probpipe import NumericEventTemplate, NumericRecordBatch
+        from probpipe import NumericRecordBatch, NumericRecordSpec
 
         X, y = regression_data
         record_data = Record("r", X=X, y=y)
@@ -241,7 +241,7 @@ class TestInnerDraw:
             {"X": jnp.asarray(X), "y": jnp.asarray(y)},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=NumericEventTemplate(X=(X.shape[1],), y=()),
+            element_spec=NumericRecordSpec(X=(X.shape[1],), y=()),
         )
 
         m_rec = MinibatchedDistribution(prior, likelihood, record_data, batch_size=20)
@@ -487,7 +487,7 @@ def test_a_multi_axis_batch_is_refused_at_construction(prior, likelihood):
         "batch",
         {"x": jnp.ones((4, 3))},
         ("n", "k"),
-        element_spec=EventTemplate(x=NumericArraySpec(shape=())),
+        element_spec=RecordSpec(x=NumericArraySpec(shape=())),
     )
     with pytest.raises(ValueError, match="rows are one axis"):
         MinibatchedDistribution(prior, likelihood, grid, batch_size=2)

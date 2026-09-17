@@ -13,13 +13,67 @@ strings index nested paths: `record["params/intercept"]`.
 
 ::: probpipe.NumericRecord
 
-::: probpipe.EventTemplate
+::: probpipe.RecordSpec
 
-::: probpipe.NumericEventTemplate
+::: probpipe.NumericRecordSpec
+
+## Kind and component declarations
+
+All kinds use `TermSpec`. `NumericSpec` additionally exposes the flat numeric
+size. `RecordSpec` is both the record-kind declaration and its schema; it
+replaces `EventTemplate`, with `NumericRecordSpec` replacing its numeric form.
+
+`InputSpec` maps Python parameter names to term specs. `OutputSpec` distinguishes
+one named whole value from exposed record fields:
+
+```python
+from probpipe import InputSpec, NumericArraySpec, OutputSpec, RecordSpec
+
+beta = NumericArraySpec(("p",))
+sigma = NumericArraySpec(())
+inputs = InputSpec(data=NumericArraySpec(("n", "p")))
+whole_array = OutputSpec(beta=beta)
+pending_type = OutputSpec(beta=None)
+one_field_record = OutputSpec(RecordSpec(beta=beta))
+record_fields = OutputSpec(beta=beta, sigma=sigma)
+whole_record = OutputSpec(parameters=RecordSpec(beta=beta, sigma=sigma))
+```
+
+The single-keyword form describes the whole returned value; it inserts no
+single-field record. The positional record form exposes immediate children
+regardless of field count. `spec` and `components` are read-only derived views;
+nested records stay nested. Only a single named whole value can carry a `None`
+type hole. Replace that declaration with the same component name and a known
+spec when the type becomes available.
+
+Symbolic dimensions share one scope across nested specs and input slots.
+`with_dims` substitutes supplied sizes and leaves the rest symbolic;
+`with_dim_names` renames symbols simultaneously. `bind_dims_from_value` and
+`bind_dims_from_spec` return refined specs and reject conflicting sizes.
+
+Value validation reads the actual fields of a `Record` or mapping, including
+array shapes and dtypes. Binding from another spec uses only the information
+that declaration supplies. The same spec-binding rules apply directly and
+inside records, input slots, or batches.
+
+These shared declarations do not yet replace the legacy live `Function`
+input/output-template or distribution event-template constructor APIs.
+
+::: probpipe.TermSpec
+
+::: probpipe.NumericSpec
+
+::: probpipe.NumericArraySpec
+
+::: probpipe.OpaqueSpec
+
+::: probpipe.InputSpec
+
+::: probpipe.OutputSpec
 
 ## The tree substrate
 
-`Record` and `EventTemplate` are both built on `NamedTree`, the shared
+`Record` and `RecordSpec` are both built on `NamedTree`, the shared
 named, ordered tree that owns the leaf-keyed mapping interface, path
 navigation, the structure-preserving edits (`merge` / `without` /
 `replace` / `with_path_names`), and nested-dict export (`to_nested_dict`)

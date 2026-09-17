@@ -317,14 +317,14 @@ class TestAnEmptyRecordHasNoBatch:
             RecordBatch.stack([Record("r"), Record("r")], level_name="x")
 
     def test_a_zero_column_batch_is_refused(self):
-        from probpipe import EventTemplate, RecordBatch
+        from probpipe import RecordBatch, RecordSpec
 
         with pytest.raises(ValueError, match="at least one field"):
             RecordBatch(
                 "batch",
                 {},
                 "x",
-                element_spec=EventTemplate(),
+                element_spec=RecordSpec(),
             )
 
 
@@ -345,13 +345,13 @@ class TestEachSweptRowTakesItsOwnKind:
     @staticmethod
     def _rows(n: int = 3):
         from probpipe import NumericRecordBatch
-        from probpipe.core.event_template import NumericEventTemplate
+        from probpipe.core._specs import NumericRecordSpec
 
         return NumericRecordBatch(
             "rows",
             {"x": jnp.arange(float(n))},
             "row",
-            element_spec=NumericEventTemplate(x=()),
+            element_spec=NumericRecordSpec(x=()),
         )
 
     def _swept(self, body, dispatch):
@@ -421,7 +421,7 @@ class TestEachSweptRowTakesItsOwnKind:
     def test_a_batch_row_keeps_the_level_it_named(self, dispatch):
         """A row that names its own level keeps that name inside the sweep's."""
         from probpipe import NumericRecordBatch
-        from probpipe.core.event_template import NumericEventTemplate
+        from probpipe.core._specs import NumericRecordSpec
 
         def body(v):
             x = jnp.asarray(v["x"])
@@ -429,7 +429,7 @@ class TestEachSweptRowTakesItsOwnKind:
                 "parts",
                 {"y": jnp.stack([x, x * 2])},
                 "part",
-                element_spec=NumericEventTemplate(y=()),
+                element_spec=NumericRecordSpec(y=()),
             )
 
         out = self._swept(body, dispatch)
@@ -455,13 +455,13 @@ class TestASweptEmptyMappingHitsTheSameWall:
     @pytest.mark.parametrize("dispatch", ["auto", "sequential"])
     def test_a_swept_body_returning_an_empty_mapping_is_refused(self, dispatch):
         from probpipe import NumericRecordBatch
-        from probpipe.core.event_template import NumericEventTemplate
+        from probpipe.core._specs import NumericRecordSpec
 
         rows = NumericRecordBatch(
             "rows",
             {"x": jnp.arange(3.0)},
             "row",
-            element_spec=NumericEventTemplate(x=()),
+            element_spec=NumericRecordSpec(x=()),
         )
 
         with pytest.raises(ValueError, match="at least one field"):

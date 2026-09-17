@@ -20,15 +20,15 @@ from ..core._empirical import RecordEmpiricalDistribution
 from ..core._numeric_record import NumericRecord
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._numeric_record_distribution import NumericRecordDistribution
+from ..core._specs import NumericRecordSpec
 from ..core.constraints import Constraint, real
-from ..core.event_template import NumericEventTemplate
 from ..core.record import Record
 from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike
 from ._tfp_base import TFPDistribution
 
 if TYPE_CHECKING:
-    from ..core.event_template import EventTemplate
+    from ..core._specs import RecordSpec
 
 __all__ = ["KDEDistribution"]
 
@@ -56,7 +56,7 @@ class KDEDistribution(TFPDistribution):
         Per-dimension bandwidth (standard deviation of each Gaussian
         kernel), shape ``(d,)`` or scalar.  If ``None``, Silverman's
         rule is used: ``n^{-1/(d+4)} * std_j`` for each dimension *j*.
-    event_template : EventTemplate or None
+    event_template : RecordSpec or None
         Structural template for the KDE's value type. When ``None`` (the
         default) a single-field template keyed by ``name`` is auto-built,
         matching the historical behavior. When supplied with multiple
@@ -77,7 +77,7 @@ class KDEDistribution(TFPDistribution):
         *,
         log_weights: ArrayLike | Weights | None = None,
         bandwidth: ArrayLike | None = None,
-        event_template: EventTemplate | None = None,
+        event_template: RecordSpec | None = None,
         name: str | None = None,
     ):
         samples = _as_float_array(samples)
@@ -100,7 +100,7 @@ class KDEDistribution(TFPDistribution):
         # single-field auto-build keyed by ``name``. Validate that the
         # template's flat width matches the samples' trailing dimension.
         if event_template is not None and len(event_template.fields) > 1:
-            if isinstance(event_template, NumericEventTemplate):
+            if isinstance(event_template, NumericRecordSpec):
                 expected = event_template.vector_size
             else:
                 expected = sum(

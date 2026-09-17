@@ -15,7 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from probpipe import ApproximateDistribution
-from probpipe.core.event_template import NumericArraySpec
+from probpipe.core._specs import NumericArraySpec
 from probpipe.modeling import PyMCModel
 
 
@@ -280,7 +280,7 @@ class TestPyMCModel:
         assert captured["mp_ctx"] is None
 
 
-class TestEventTemplate:
+class TestRecordSpec:
     """``PyMCModel.event_template`` exposes the free-RV layout that
     inference methods thread through to the resulting posterior.
     """

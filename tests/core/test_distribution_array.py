@@ -19,12 +19,12 @@ import numpy as np
 import pytest
 
 from probpipe import (
-    EventTemplate,
     Normal,
     NumericArrayBatch,
     NumericRecordBatch,
     ProductDistribution,
     Provenance,
+    RecordSpec,
     log_prob,
     mean,
     sample,
@@ -54,7 +54,7 @@ class TestConstruction:
 
         array = DistributionArray(components, name="common")
 
-        assert array.event_template == EventTemplate(y=())
+        assert array.event_template == RecordSpec(y=())
 
     def test_mismatched_component_event_templates_report_none(self):
         components = [
@@ -72,15 +72,15 @@ class TestConstruction:
         array = _make_distribution_array(
             components,
             name="declared",
-            event_template=EventTemplate(y=()),
+            event_template=RecordSpec(y=()),
         )
 
-        assert array.event_template == EventTemplate(y=())
+        assert array.event_template == RecordSpec(y=())
         with pytest.raises(ValueError, match="does not match declared template"):
             _make_distribution_array(
                 components,
                 name="invalid",
-                event_template=EventTemplate(z=()),
+                event_template=RecordSpec(z=()),
             )
 
     def test_indexing_returns_component(self):

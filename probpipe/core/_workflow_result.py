@@ -19,7 +19,7 @@ from ._broadcast_distributions import _make_stack
 from ._function_contract import _wrap_declared_function_output
 from ._numeric_record import _is_numeric_leaf
 from ._record_batch import RecordBatch
-from .event_template import EventTemplate, _to_record_declaration
+from ._specs import RecordSpec
 from .provenance import Provenance
 from .record import Record
 from .tracked import TrackedTerm
@@ -39,7 +39,7 @@ BROADCAST_NESTED: BroadcastMode = "nested"
 def _wrap_as_term(
     value: Any,
     field_name: str,
-    output_template: EventTemplate | None = None,
+    output_template: RecordSpec | None = None,
     *,
     name: str | None = None,
 ) -> Any:
@@ -126,7 +126,7 @@ def _coerce_output(
     broadcast_mode: BroadcastMode,
     provenance: Provenance | None,
     field_name: str,
-    output_template: EventTemplate | None = None,
+    output_template: RecordSpec | None = None,
 ) -> Any:
     """Enforce the record / batch / distribution output contract.
 
@@ -181,13 +181,13 @@ def _coerce_output(
 def _copy_result_term(
     value: TrackedTerm,
     *,
-    output_template: EventTemplate | None = None,
+    output_template: RecordSpec | None = None,
 ) -> TrackedTerm:
     """Copy a retained tracked container into an independent result term."""
     clone = value._shallow_copy()
     if output_template is not None:
         if isinstance(clone, RecordBatch):
-            element_spec = _to_record_declaration(output_template)
+            element_spec = output_template
             object.__setattr__(clone, "_spec", replace(clone.spec, element_spec=element_spec))
             # The columns are reordered to match: a batch flattens its columns in
             # its spec's leaf order, so a declared template that orders the same
@@ -196,7 +196,7 @@ def _copy_result_term(
             columns = clone._raw_columns()
             object.__setattr__(clone, "_columns", {p: columns[p] for p in output_template})
         elif isinstance(clone, Record):
-            object.__setattr__(clone, "_spec", _to_record_declaration(output_template))
+            object.__setattr__(clone, "_spec", output_template)
     object.__setattr__(clone, "_provenance", None)
     # The annotations container is already the clone's own: ``_shallow_copy``
     # decouples what the host declares in ``_decoupled_state``.

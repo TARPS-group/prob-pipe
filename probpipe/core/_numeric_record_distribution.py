@@ -44,7 +44,7 @@ from math import prod
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .event_template import NumericEventTemplate
+    from ._specs import NumericRecordSpec
 
 import jax
 import jax.numpy as jnp
@@ -178,7 +178,7 @@ class NumericRecordDistribution(RecordDistribution):
     Extends :class:`RecordDistribution` with numeric-specific metadata
     (per-field shape, dtype, and support). The class is the most
     general numeric random variable in ProbPipe: one draw is a pytree
-    of ``jax.Array`` leaves named via a :class:`EventTemplate`.
+    of ``jax.Array`` leaves named via a :class:`RecordSpec`.
     Single-leaf distributions (``Normal``, ``Beta``,
     ``MultivariateNormal``, ...) are the trivial case; joint
     distributions (``ProductDistribution``, ``SequentialJointDistribution``,
@@ -211,7 +211,7 @@ class NumericRecordDistribution(RecordDistribution):
 
     A concrete subclass that declares ``event_shape`` and is constructed
     with a ``name=`` gets an auto-built single-field
-    ``EventTemplate(**{name: event_shape})`` on first read of
+    ``RecordSpec(**{name: event_shape})`` on first read of
     :attr:`event_template`. Multi-field subclasses (joints) override
     ``event_template`` directly to skip the auto-build.
 
@@ -246,7 +246,7 @@ class NumericRecordDistribution(RecordDistribution):
 
     @property
     def event_template(self):
-        """Auto-build a single-field ``EventTemplate`` from
+        """Auto-build a single-field ``RecordSpec`` from
         ``name`` + ``event_shape`` when the subclass hasn't set one.
 
         Cached via :meth:`object.__setattr__` on first read.
@@ -260,7 +260,7 @@ class NumericRecordDistribution(RecordDistribution):
         explicitly, or declare ``event_shape`` so the auto-build can
         proceed).
         """
-        from .event_template import EventTemplate
+        from ._specs import RecordSpec
 
         tpl = getattr(self, "_event_template", None)
         if tpl is not None:
@@ -278,7 +278,7 @@ class NumericRecordDistribution(RecordDistribution):
             raise TypeError(
                 f"{type(self).__name__} must declare event_shape or set _event_template explicitly."
             ) from None
-        tpl = EventTemplate(**{name: es})
+        tpl = RecordSpec(**{name: es})
         object.__setattr__(self, "_event_template", tpl)
         return tpl
 
@@ -508,14 +508,14 @@ class NumericRecordDistribution(RecordDistribution):
     def event_size(self) -> int:
         """Total number of scalar elements in one sample.
 
-        For a :class:`NumericEventTemplate` this is the cached
-        ``vector_size``. For a general ``EventTemplate``, sums the
+        For a :class:`NumericRecordSpec` this is the cached
+        ``vector_size``. For a general ``RecordSpec``, sums the
         numeric-leaf shapes; opaque leaves contribute zero.
         """
-        from .event_template import NumericEventTemplate
+        from ._specs import NumericRecordSpec
 
         tpl = self.event_template
-        if isinstance(tpl, NumericEventTemplate):
+        if isinstance(tpl, NumericRecordSpec):
             return tpl.vector_size
         return sum(
             prod(shape) if shape else 1 for shape in tpl.leaf_shapes.values() if shape is not None
@@ -587,7 +587,7 @@ class NumericRecordDistribution(RecordDistribution):
     def as_record_distribution(
         self,
         *,
-        template: NumericEventTemplate,
+        template: NumericRecordSpec,
         name: str | None = None,
     ) -> NumericRecordDistribution:
         """Lift this distribution to a Record-keyed view under *template*.
@@ -805,7 +805,7 @@ class FlatNumericRecordDistribution(NumericRecordDistribution):
     def as_record_distribution(
         self,
         *,
-        template: NumericEventTemplate,
+        template: NumericRecordSpec,
         name: str | None = None,
     ) -> NumericRecordDistribution:
         """Lift this flat distribution to a Record-keyed view under *template*.
@@ -816,9 +816,9 @@ class FlatNumericRecordDistribution(NumericRecordDistribution):
 
         Parameters
         ----------
-        template : NumericEventTemplate
+        template : NumericRecordSpec
             Target structural skeleton. Must be a
-            :class:`NumericEventTemplate` — opaque (``None``) leaves
+            :class:`NumericRecordSpec` — opaque (``None``) leaves
             cannot be reconstructed from a flat numeric array.
         name : str, optional
             Name for the lifted distribution. Defaults to ``self.name``.
@@ -833,15 +833,15 @@ class FlatNumericRecordDistribution(NumericRecordDistribution):
         Raises
         ------
         TypeError
-            If ``template`` is not a ``NumericEventTemplate``.
+            If ``template`` is not a ``NumericRecordSpec``.
         ValueError
             If ``self.vector_size`` does not match ``template.vector_size``.
         """
-        from .event_template import NumericEventTemplate
+        from ._specs import NumericRecordSpec
 
-        if not isinstance(template, NumericEventTemplate):
+        if not isinstance(template, NumericRecordSpec):
             raise TypeError(
-                f"as_record_distribution requires a NumericEventTemplate, "
+                f"as_record_distribution requires a NumericRecordSpec, "
                 f"got {type(template).__name__}. Opaque (None) leaves "
                 f"cannot be reconstructed from a flat numeric array."
             )
@@ -1201,7 +1201,7 @@ class NumericRecordDistributionView(NumericRecordDistribution):
     Inverse of :class:`FlattenedDistributionView`. ``self._base`` is a
     :class:`FlatNumericRecordDistribution` (single-field, ``event_shape
     == (N,)``); ``self.event_template`` is the user-supplied
-    :class:`NumericEventTemplate` (not the source's auto-template).
+    :class:`NumericRecordSpec` (not the source's auto-template).
 
     Sampling, log-prob, and moments delegate to ``self._base`` and
     reshape via the template's flatten / unflatten machinery.
@@ -1218,7 +1218,7 @@ class NumericRecordDistributionView(NumericRecordDistribution):
     def __new__(
         cls,
         base: Distribution,
-        template: NumericEventTemplate,
+        template: NumericRecordSpec,
         *,
         name: str | None = None,
     ):
@@ -1228,7 +1228,7 @@ class NumericRecordDistributionView(NumericRecordDistribution):
     def __init__(
         self,
         base: Distribution,
-        template: NumericEventTemplate,
+        template: NumericRecordSpec,
         *,
         name: str | None = None,
     ):

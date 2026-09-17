@@ -58,8 +58,9 @@ from ._numeric_record_distribution import (
     NumericRecordDistribution,
 )
 from ._record_batch import RecordBatch
+from ._record_spec import _reshaped_template
+from ._specs import NumericRecordSpec, RecordSpec
 from .constraints import Constraint, real
-from .event_template import EventTemplate, NumericEventTemplate, _reshaped_template
 from .protocols import (
     SupportsCovariance,
     SupportsExpectation,
@@ -79,8 +80,8 @@ from .tracked import auto_name
 def _event_template_from_data(
     record_data: Record,
     leading_shape: tuple[int, ...] = (),
-) -> EventTemplate:
-    """Build a ``EventTemplate`` from stored Record data.
+) -> RecordSpec:
+    """Build a ``RecordSpec`` from stored Record data.
 
     Strips the first dimension (sample axis) from each leaf to get event
     shapes, optionally prepending ``leading_shape``. Leaf-keyed by full
@@ -91,7 +92,7 @@ def _event_template_from_data(
     for key, val in record_data.items():
         arr = jnp.asarray(val)
         specs[key] = (*leading_shape, *arr.shape[1:])
-    return EventTemplate(specs)
+    return RecordSpec(specs)
 
 
 def _fieldwise_op(record_data: Record, op: Callable) -> NumericRecord:
@@ -295,7 +296,7 @@ class EmpiricalDistribution[T](
                 # The record-based empirical is a ``NumericRecordDistribution``,
                 # and a batch now admits callable and opaque fields. Routing one
                 # of those here fails inside JAX staging rather than at the door.
-                if not isinstance(samples.event_template, NumericEventTemplate):
+                if not isinstance(samples.event_template, NumericRecordSpec):
                     raise TypeError(
                         f"EmpiricalDistribution over a batch of records requires numeric "
                         f"fields; {samples.name!r} declares {samples.event_template}. The "
@@ -507,7 +508,7 @@ class RecordEmpiricalDistribution(
         sample_shape: tuple[int, ...] | None = None,
         name: str | None = None,
     ):
-        element_declaration: EventTemplate | None = None
+        element_declaration: RecordSpec | None = None
         if isinstance(samples, RecordBatch):
             # A batch holds its rows axis in the batch; the empirical stores a
             # record whose leaves carry it, so peel to that form — raw columns,
@@ -772,14 +773,12 @@ class RecordEmpiricalDistribution(
         """
         keys = tuple(self._record_data.keys())
         single_field = len(keys) == 1
-        only_field = keys[0] if single_field else None
 
         def _row(i):
             r = _index_record(self._record_data, i)
             if not single_field:
                 return r
-            assert only_field is not None
-            return r[only_field]
+            return r[keys[0]]
 
         if num_evaluations is not None:
             if isinstance(num_evaluations, bool) or not isinstance(num_evaluations, int):
@@ -1225,7 +1224,7 @@ class RecordBootstrapReplicateDistribution(
         # backwards advertises ``(n, rows, *event)`` where a draw is
         # ``(n, *event)``.
         atom = getattr(source, "event_template", None)
-        if isinstance(atom, EventTemplate):
+        if isinstance(atom, RecordSpec):
             if not isinstance(source, EmpiricalDistribution):
                 atom = _reshaped_template(atom, lambda shape: shape[1:])
             self._event_template = _reshaped_template(

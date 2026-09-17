@@ -20,10 +20,10 @@ import numpy as np
 import probpipe as pp
 from probpipe import (
     ApproximateDistribution,
-    EventTemplate,
     Normal,
     NumericRecord,
     ProductDistribution,
+    RecordSpec,
     condition_on,
     learn_amortized_posterior,
 )
@@ -975,7 +975,7 @@ class TestBayesFlowValidation:
         heterogeneous fields could silently pick the wrong bijector."""
 
         class _NoSupports:
-            event_template = EventTemplate(a=(), b=())
+            event_template = RecordSpec(a=(), b=())
 
             @property
             def supports(self):

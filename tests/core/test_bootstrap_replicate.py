@@ -18,7 +18,7 @@ from probpipe import (
     expectation,
     sample,
 )
-from probpipe.core.event_template import NumericArraySpec
+from probpipe.core._specs import NumericArraySpec
 
 # ---------------------------------------------------------------------------
 # Construction

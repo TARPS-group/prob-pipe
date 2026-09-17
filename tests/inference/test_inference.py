@@ -16,20 +16,20 @@ import pytest
 
 from probpipe import (
     ApproximateDistribution,
-    EventTemplate,
     MultivariateNormal,
     Normal,
     NumericRecordBatch,
     ProductDistribution,
     Record,
+    RecordSpec,
     mean,
     sample,
     variance,
     workflow_run,
 )
 from probpipe.core._record_batch import RecordBatch
+from probpipe.core._specs import NumericArraySpec
 from probpipe.core.distribution import _RecordDistributionView
-from probpipe.core.event_template import NumericArraySpec
 from probpipe.inference import rwmh
 from probpipe.inference._approximate_distribution import make_posterior
 from probpipe.inference._inference_utils import build_mcmc_datatree
@@ -244,7 +244,7 @@ class TestApproximateDistributionValuesTemplate:
 
     @pytest.fixture
     def template(self):
-        return EventTemplate(r=(), K=(), phi=())
+        return RecordSpec(r=(), K=(), phi=())
 
     @pytest.fixture
     def posterior_with_template(self, template):
@@ -308,7 +308,7 @@ class TestApproximateDistributionValuesTemplate:
         flat chain positionally in template order (which would scramble
         the draws).
         """
-        template = EventTemplate(a=(), b=(2,))  # sizes: a=1, b=2
+        template = RecordSpec(a=(), b=(2,))  # sizes: a=1, b=2
         # Columns laid out in field_order = (b, a): [b0, b1, a0].
         b_block = jnp.array([[10.0, 11.0], [12.0, 13.0]])  # (2, 2)
         a_block = jnp.array([[1.0], [2.0]])  # (2, 1)
@@ -328,7 +328,7 @@ class TestApproximateDistributionValuesTemplate:
 
     def test_field_order_none_is_positional(self):
         """field_order=None keeps the historical positional layout."""
-        template = EventTemplate(a=(), b=(2,))
+        template = RecordSpec(a=(), b=(2,))
         chain = jnp.array([[1.0, 10.0, 11.0], [2.0, 12.0, 13.0]])  # a, then b
         prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
         post = make_posterior(
@@ -343,7 +343,7 @@ class TestApproximateDistributionValuesTemplate:
 
     def test_field_order_must_be_permutation(self):
         """A field_order that isn't a permutation of template fields raises."""
-        template = EventTemplate(a=(), b=())
+        template = RecordSpec(a=(), b=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         with pytest.raises(ValueError, match="not a permutation"):
@@ -359,7 +359,7 @@ class TestApproximateDistributionValuesTemplate:
         """With field_order, a chain wider than the template's total flat
         size raises rather than silently dropping the extra columns in the
         permutation gather."""
-        template = EventTemplate(a=(), b=())  # total flat size 2
+        template = RecordSpec(a=(), b=())  # total flat size 2
         chain = jax.random.normal(jax.random.PRNGKey(0), (5, 3))  # 3 columns
         prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
         with pytest.raises(ValueError, match="doesn't match"):
@@ -375,7 +375,7 @@ class TestApproximateDistributionValuesTemplate:
         """With field_order, a chain narrower than the template's total
         flat size raises clearly rather than clamping the out-of-bounds
         gather indices."""
-        template = EventTemplate(a=(), b=(), c=())  # total flat size 3
+        template = RecordSpec(a=(), b=(), c=())  # total flat size 3
         chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))  # 2 columns
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         with pytest.raises(ValueError, match="doesn't match"):
@@ -403,7 +403,7 @@ class TestApproximateDistributionValuesTemplate:
     def test_field_order_single_field_invalid_permutation_raises(self):
         """field_order is validated even for a single-field template, so a
         wrong name is caught rather than silently ignored."""
-        template = EventTemplate(a=())
+        template = RecordSpec(a=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (5, 1))
         prior = MultivariateNormal(loc=jnp.zeros(1), cov=jnp.eye(1), name="z")
         with pytest.raises(ValueError, match="not a permutation"):
@@ -418,7 +418,7 @@ class TestApproximateDistributionValuesTemplate:
     def test_field_order_single_field_width_mismatch_raises(self):
         """With field_order, the chain width is validated for a
         single-field template too — not only for multi-field ones."""
-        template = EventTemplate(a=(2,))  # flat size 2
+        template = RecordSpec(a=(2,))  # flat size 2
         chain = jax.random.normal(jax.random.PRNGKey(0), (5, 3))  # 3 columns
         prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
         with pytest.raises(ValueError, match="doesn't match"):
@@ -432,7 +432,7 @@ class TestApproximateDistributionValuesTemplate:
 
     def test_field_order_opaque_template_raises_clear_error(self):
         """field_order cannot compute a permutation for opaque fields."""
-        template = EventTemplate(a=None, b=())
+        template = RecordSpec(a=None, b=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         with pytest.raises(ValueError, match="field 'a' has an opaque spec"):
@@ -446,7 +446,7 @@ class TestApproximateDistributionValuesTemplate:
 
     def test_multi_field_opaque_template_raises_clear_error(self):
         """Multi-field splitting rejects opaque fields before sizing."""
-        template = EventTemplate(a=None, b=())
+        template = RecordSpec(a=None, b=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         with pytest.raises(ValueError, match="field 'a' has an opaque spec"):
@@ -459,7 +459,7 @@ class TestApproximateDistributionValuesTemplate:
 
     def test_array_shaped_fields(self):
         """Template with non-scalar fields unflattens correctly."""
-        template = EventTemplate(
+        template = RecordSpec(
             mean=(3,),
             cov=(2, 2),
         )
@@ -478,7 +478,7 @@ class TestApproximateDistributionValuesTemplate:
 
     def test_draws_with_warmup_and_template(self):
         """draws(include_warmup=True) returns Record when template is set."""
-        template = EventTemplate(a=(), b=())
+        template = RecordSpec(a=(), b=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (50, 2))
         warmup = jax.random.normal(jax.random.PRNGKey(1), (10, 2))
         annotations = build_mcmc_datatree([chain], warmup_chains=[warmup])
@@ -497,8 +497,8 @@ class TestApproximateDistributionValuesTemplate:
 
     def test_nested_event_template_unflatten(self):
         """Nested Record template unflattens draws into nested structure."""
-        template = EventTemplate(
-            params=EventTemplate(a=(), b=()),
+        template = RecordSpec(
+            params=RecordSpec(a=(), b=()),
             scale=(),
         )
         vector_size = 3  # a + b + scale
@@ -522,13 +522,13 @@ class TestApproximateDistributionValuesTemplate:
 
         With Option B's per-top-level-field split, every accessor on
         ``ApproximateDistribution`` is keyed by the user-supplied
-        template's top-level fields. Nested ``EventTemplate`` fields
+        template's top-level fields. Nested ``RecordSpec`` fields
         are stored as a flat ``(n, nested_vector_size)`` slice under the
         top-level field name; the nested structure is recoverable via
         ``event_template[field]`` and ``draws()``.
         """
-        template = EventTemplate(
-            params=EventTemplate(a=(), b=()),
+        template = RecordSpec(
+            params=RecordSpec(a=(), b=()),
             scale=(),
         )
         vector_size = 3  # a + b + scale
@@ -558,7 +558,7 @@ class TestApproximateDistributionValuesTemplate:
         with pytest.raises(AttributeError, match="multiple fields"):
             _ = post.event_shape
         # The nested template is preserved on ``event_template``.
-        assert isinstance(post.event_template.at_path("params"), EventTemplate)
+        assert isinstance(post.event_template.at_path("params"), RecordSpec)
         assert tuple(post.event_template.at_path("params").children) == ("a", "b")
         # Moments key by the user's top-level fields, not by an
         # auto-wrap leaf.
@@ -921,7 +921,7 @@ class TestRecordDistributionView:
 
     @pytest.fixture
     def template(self):
-        return EventTemplate(K=(), phi=(), r=())
+        return RecordSpec(K=(), phi=(), r=())
 
     @pytest.fixture
     def posterior(self, template):
@@ -970,7 +970,7 @@ class TestRecordDistributionView:
         assert view.event_shape == ()
 
     def test_view_event_shape_vector(self):
-        template = EventTemplate(vec=(5,), scalar=())
+        template = RecordSpec(vec=(5,), scalar=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (50, 6))
         prior = MultivariateNormal(loc=jnp.zeros(6), cov=jnp.eye(6), name="z")
         post = make_posterior([chain], parents=(prior,), algorithm="test", event_template=template)
@@ -1016,7 +1016,7 @@ class TestRecordDistributionView:
         """_mean() falls back to _field_draws() when parent lacks SupportsMean."""
         # ApproximateDistribution IS SupportsMean, so we test the fallback
         # by checking the empirical mean matches the draws directly.
-        template = EventTemplate(a=(), b=())
+        template = RecordSpec(a=(), b=())
         chain = jnp.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         post = make_posterior([chain], parents=(prior,), algorithm="test", event_template=template)
@@ -1061,7 +1061,7 @@ class TestViewProtocolDuckTyping:
         """ApproximateDistribution lacks SupportsLogProb → view doesn't have it."""
         from probpipe import SupportsLogProb
 
-        template = EventTemplate(a=(), b=())
+        template = RecordSpec(a=(), b=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (50, 2))
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         post = make_posterior([chain], parents=(prior,), algorithm="test", event_template=template)
@@ -1075,7 +1075,7 @@ class TestViewProtocolDuckTyping:
         joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(3, 2, name="y"))
         assert isinstance(joint["x"], SupportsSampling)
 
-        template = EventTemplate(a=())
+        template = RecordSpec(a=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 1))
         prior = Normal(0, 1, name="x")
         post = make_posterior([chain], parents=(prior,), algorithm="test", event_template=template)
@@ -1122,7 +1122,7 @@ class TestViewProtocolDuckTyping:
         assert isinstance(view_with, SupportsLogProb)
 
         # ApproximateDistribution parent → isinstance False
-        template = EventTemplate(a=())
+        template = RecordSpec(a=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 1))
         prior = Normal(0, 1, name="x")
         post = make_posterior([chain], parents=(prior,), algorithm="test", event_template=template)
@@ -1143,7 +1143,7 @@ class TestRecordDistributionProperties:
 
     @pytest.fixture
     def template(self):
-        return EventTemplate(K=(), phi=(), r=())
+        return RecordSpec(K=(), phi=(), r=())
 
     @pytest.fixture
     def posterior(self, template):
@@ -1361,7 +1361,7 @@ class TestEndToEndValuesPipeline:
 
     def test_multi_field_posterior(self):
         """Posterior with multiple named scalar fields."""
-        template = EventTemplate(a=(), b=(), c=())
+        template = RecordSpec(a=(), b=(), c=())
         # 3 scalar fields → flat draw vectors of size 3
         chain = jax.random.normal(jax.random.PRNGKey(0), (200, 3))
         prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")

@@ -24,7 +24,7 @@ See design III.3.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from typing import Any, Self
+from typing import Any, Self, cast
 
 import jax
 import jax.numpy as jnp
@@ -37,7 +37,7 @@ from ._record_batch import (
     _record_element_spec,
     _unflatten_with,
 )
-from .event_template import EventTemplate, NumericArraySpec, NumericEventTemplate, RecordSpec
+from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
 from .provenance import Provenance
 
 __all__ = ["NumericRecordBatch"]
@@ -46,7 +46,7 @@ __all__ = ["NumericRecordBatch"]
 class NumericRecordBatch(RecordBatch):
     """A :class:`RecordBatch` whose every column is a numeric array.
 
-    The all-numeric specialization, carrying a ``NumericEventTemplate``: a bare
+    The all-numeric specialization, carrying a ``NumericRecordSpec``: a bare
     pytree of arrays whose leading axes are the ``batch_shape``, so its columns
     are the leaves ``jit`` / ``vmap`` / ``grad`` traverse. The batch itself is
     rebuilt only under a transform that keeps every batch axis or removes all of
@@ -72,15 +72,15 @@ class NumericRecordBatch(RecordBatch):
         /,
         level_names: str | Iterable[str],
         *,
-        element_spec: RecordSpec | EventTemplate,
+        element_spec: RecordSpec,
         axes_per_level: Iterable[int] | None = None,
         provenance: Provenance | None = None,
     ) -> None:
-        template = _record_element_spec(element_spec, kind=type(self).__name__).event_template
-        if not isinstance(template, NumericEventTemplate):
+        template = _record_element_spec(element_spec, kind=type(self).__name__)
+        if not isinstance(template, NumericRecordSpec):
             raise TypeError(
                 f"{type(self).__name__} describes an all-numeric element, so its element_spec "
-                f"carries a NumericEventTemplate; got one over {type(template).__name__} with "
+                f"carries a NumericRecordSpec; got one over {type(template).__name__} with "
                 f"fields {list(template.keys())}"
             )
         super().__init__(
@@ -96,11 +96,9 @@ class NumericRecordBatch(RecordBatch):
     # ``RecordSpec``, and only ``event_template`` has anything narrower to say.
 
     @property
-    def event_template(self) -> NumericEventTemplate:
+    def event_template(self) -> NumericRecordSpec:
         """The numeric structure of one element — a view on :attr:`element_spec`."""
-        template = self.element_spec.event_template
-        assert isinstance(template, NumericEventTemplate)  # narrowed at construction
-        return template
+        return cast(NumericRecordSpec, self.element_spec)
 
     # ``_check_columns`` is not overridden: every field of a numeric template is
     # a ``NumericArraySpec``, so the base already checks each column for a numeric
@@ -188,7 +186,7 @@ class NumericRecordBatch(RecordBatch):
     def from_vector(
         cls,
         name: str,
-        template: NumericEventTemplate,
+        template: NumericRecordSpec,
         vec: Array,
         *,
         level_names: str | Iterable[str],
@@ -200,8 +198,9 @@ class NumericRecordBatch(RecordBatch):
         ----------
         name : str
             The reconstructed batch's name (user-given).
-        template : NumericEventTemplate
+        template : NumericRecordSpec
             The flat layout: field names, event shapes, and canonical order.
+            Every leaf must be a NumericArraySpec.
         vec : Array
             Shape ``(*batch_shape, vector_size)`` — the trailing axis is the flat
             dimension, and every leading axis is a batch axis.
@@ -225,8 +224,8 @@ class NumericRecordBatch(RecordBatch):
         Raises
         ------
         TypeError
-            If *vec* has no batch axis — reconstruct a single value with
-            ``NumericRecord.from_vector``.
+            If the template contains a non-array leaf, or *vec* has no batch
+            axis — reconstruct a single value with ``NumericRecord.from_vector``.
         ValueError
             If the trailing axis is not ``template.vector_size``, or if the level
             names do not account for *vec*'s leading axes.
@@ -236,8 +235,8 @@ class NumericRecordBatch(RecordBatch):
         A two-level batch round-trips when both levels are named:
 
         >>> import jax.numpy as jnp
-        >>> from probpipe import EventTemplate
-        >>> template = EventTemplate(x=(2,))
+        >>> from probpipe import RecordSpec
+        >>> template = RecordSpec(x=(2,))
         >>> batch = NumericRecordBatch("post", {"x": jnp.zeros((4, 5, 2))},
         ...                            ("chain", "draw"), element_spec=template)
         >>> rebuilt = NumericRecordBatch.from_vector(
@@ -260,14 +259,19 @@ class NumericRecordBatch(RecordBatch):
         batch_shape = tuple(vec.shape[:-1])
         columns: dict[str, Any] = {}
         offset = 0
-        for key, event_shape in template.leaf_shapes.items():
+        for key, declared in template._walk_leaves():
+            if not isinstance(declared, NumericArraySpec):
+                raise TypeError(
+                    f"{cls.__name__}.from_vector: field {key!r} has a {type(declared).__name__}; "
+                    "reconstruction requires NumericArraySpec leaves"
+                )
+            event_shape = declared.shape
             size = int(np.prod(event_shape, dtype=int))
             block = jnp.reshape(vec[..., offset : offset + size], (*batch_shape, *event_shape))
             # Concatenating promoted the fields to one dtype, so a field that
             # declares its own is cast back to it — otherwise the reconstruction
             # contradicts the very template it was rebuilt from.
-            declared = template[key]
-            if isinstance(declared, NumericArraySpec) and declared.dtype is not None:
+            if declared.dtype is not None:
                 block = block.astype(declared.dtype)
             columns[key] = block
             offset += size

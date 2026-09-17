@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from probpipe import NumericRecord, Record
-from probpipe.core.event_template import EventTemplate
+from probpipe.core._specs import RecordSpec
 
 # ---------------------------------------------------------------------------
 # Construction
@@ -163,7 +163,7 @@ class TestConstruction:
             _broadcast_distributions,
             _numeric_record,
             _record_batch,
-            event_template,
+            _spec_base,
         )
         from probpipe.record import design
 
@@ -177,7 +177,7 @@ class TestConstruction:
         assert not hasattr(_broadcast_distributions, "_is_numeric_dtype")
         # leaf-level predicate: one resolver shared by the record gate and inference
         assert _numeric_record._is_numeric_leaf is _array_backend._is_numeric_leaf
-        assert event_template._is_numeric_leaf is _array_backend._is_numeric_leaf
+        assert _spec_base._is_numeric_leaf is _array_backend._is_numeric_leaf
 
     def test_bfloat16_leaf_accepted(self):
         # ml_dtypes numerics (kind "V") are numeric leaves.
@@ -199,9 +199,9 @@ class TestConstruction:
         # common float across the mixed-dtype fields, and from_vector casts each
         # block back to its declared dtype. Before the cast + skeleton fix, the
         # int32 template made from_vector raise on the float32 placeholder.
-        from probpipe.core.event_template import EventTemplate, NumericArraySpec
+        from probpipe.core._specs import NumericArraySpec, RecordSpec
 
-        tpl = EventTemplate(
+        tpl = RecordSpec(
             k=NumericArraySpec(shape=(3,), dtype=jnp.int32),
             x=NumericArraySpec(shape=(2,), dtype=jnp.float32),
         )
@@ -238,7 +238,7 @@ class TestToVectorFromVector:
         np.testing.assert_allclose(flat, [1.0, 2.0, 3.0])
 
     def test_unflatten_with_event_template(self):
-        tpl = EventTemplate(a=(), b=(3,))
+        tpl = RecordSpec(a=(), b=(3,))
         flat = jnp.array([1.0, 2.0, 3.0, 4.0])
         nr = NumericRecord.from_vector("nr", tpl, flat)
         assert isinstance(nr, NumericRecord)
@@ -246,7 +246,7 @@ class TestToVectorFromVector:
         np.testing.assert_allclose(nr["b"], [2.0, 3.0, 4.0])
 
     def test_roundtrip_with_template(self):
-        tpl = EventTemplate(r=(), K=(), phi=())
+        tpl = RecordSpec(r=(), K=(), phi=())
         nr = NumericRecord("nr", r=1.8, K=70.0, phi=10.0)
         flat = nr.to_vector()
         nr2 = NumericRecord.from_vector("nr2", tpl, flat)
@@ -255,10 +255,10 @@ class TestToVectorFromVector:
         np.testing.assert_allclose(float(nr2["phi"]), 10.0)
 
     def test_roundtrip_nested_template(self):
-        from probpipe.core.event_template import NumericEventTemplate
+        from probpipe.core._specs import NumericRecordSpec
 
-        inner_tpl = NumericEventTemplate(x=(), y=(2,))
-        outer_tpl = NumericEventTemplate(params=inner_tpl, z=(3,))
+        inner_tpl = NumericRecordSpec(x=(), y=(2,))
+        outer_tpl = NumericRecordSpec(params=inner_tpl, z=(3,))
         flat = jnp.arange(6.0)  # x=0, y=[1,2], z=[3,4,5]
         nr = NumericRecord.from_vector("nr", outer_tpl, flat)
         assert isinstance(nr.at_path("params"), NumericRecord)

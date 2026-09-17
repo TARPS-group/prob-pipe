@@ -36,9 +36,9 @@ from ._distribution_array import DistributionArray, _make_distribution_array
 from ._numeric_array import NumericArray
 from ._numeric_array_batch import NumericArrayBatch, _MappedBatchStore
 from ._record_batch import RecordBatch, _MappedBatchColumns
+from ._specs import RecordSpec
 from .config import WorkflowKind, prefect_config
 from .distribution import BroadcastDistribution, Distribution
-from .event_template import EventTemplate
 from .provenance import Provenance
 from .record import Record
 from .tracked import TrackedTerm
@@ -68,7 +68,7 @@ def execute_sweep(
     ],
     workflow_name: str,
     include_inputs: bool = False,
-    output_template: EventTemplate | None = None,
+    output_template: RecordSpec | None = None,
     provenance_parents: list[TrackedTerm] | None = None,
     provenance_inputs: Mapping[str, Any] | None = None,
     workflow_kind: WorkflowKind = WorkflowKind.OFF,

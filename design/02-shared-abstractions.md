@@ -44,6 +44,8 @@ def term_class_for_spec(spec: TermSpec) -> type: ...    # the tracked class of t
 def batch_class_for_spec(spec: TermSpec) -> type: ...   # its batch form
 ```
 
+`with_dims` substitutes supplied sizes and leaves other dimensions symbolic. `with_dim_names` renames simultaneously. Binding reads concrete sizes in one shared scope and rejects disagreements; unobserved dimensions remain symbolic.
+
 ### Rationale
 
 One `is_valid` contract across the kinds keeps validation uniform (`C1 – Uniform interface to functions, distributions, and values`), and defining each concrete spec beside the kind it describes keeps this layer generic (`D2 – Generality first`). Naming the base for the terms it types is `C5 – Naming for unambiguous meaning` applied to the library's own vocabulary: every spec types a tracked term, and *value* stays reserved for the mathematical kind. The kind rule is `D2 – Generality first`: every result can be tracked and every collection of draws stacked, so nothing an operation produces falls outside the system. A symbolic dimension carries a dimension's identity, which is mathematical structure, while deferring its size to the data that determines it; hence cross-field equalities travel with the term, and sizes bind when their producer appears (`D5 – Explicit, carried structure`, `C3 – Computational detail hidden by default, available on demand`). Declaring the kind correspondence once, where each kind is defined, is `D6 – Single source of truth`: the wrap, the declaration enforcement, and the batch constructors read one table, so widening a kind widens all of them.

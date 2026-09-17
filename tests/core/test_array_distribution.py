@@ -327,7 +327,7 @@ class TestCanonicalConvenience:
         today triggers (every shipped class is single-leaf via the
         auto-template helper)."""
         from probpipe import NumericRecord
-        from probpipe.core.event_template import EventTemplate
+        from probpipe.core._specs import RecordSpec
 
         class TwoField(NumericRecordDistribution):
             # Multi-leaf subclasses bypass the single-field auto-template
@@ -339,7 +339,7 @@ class TestCanonicalConvenience:
 
             @property
             def event_template(self):
-                return EventTemplate(a=(), b=(2,))
+                return RecordSpec(a=(), b=(2,))
 
             @property
             def dtypes(self):
@@ -419,14 +419,14 @@ class TestCanonicalConvenience:
         from probpipe.core._numeric_record_distribution import (
             NumericRecordDistribution,
         )
-        from probpipe.core.event_template import EventTemplate
+        from probpipe.core._specs import RecordSpec
 
         class ThreeField(NumericRecordDistribution):
             """Multi-field target with three fields (source has two)."""
 
             @property
             def event_template(self):
-                return EventTemplate(a=(), b=(), c=())
+                return RecordSpec(a=(), b=(), c=())
 
             @property
             def dtypes(self):
@@ -464,12 +464,12 @@ class TestCanonicalConvenience:
         from probpipe.core._numeric_record_distribution import (
             NumericRecordDistribution,
         )
-        from probpipe.core.event_template import EventTemplate
+        from probpipe.core._specs import RecordSpec
 
         class TwoFieldSource(NumericRecordDistribution):
             @property
             def event_template(self):
-                return EventTemplate(s1=(), s2=())
+                return RecordSpec(s1=(), s2=())
 
             @property
             def dtypes(self):
@@ -489,7 +489,7 @@ class TestCanonicalConvenience:
         class TwoFieldTarget(NumericRecordDistribution):
             @property
             def event_template(self):
-                return EventTemplate(t1=(), t2=())
+                return RecordSpec(t1=(), t2=())
 
             @property
             def dtypes(self):
@@ -544,14 +544,14 @@ class TestCanonicalConvenience:
         from probpipe.core._numeric_record_distribution import (
             NumericRecordDistribution,
         )
-        from probpipe.core.event_template import EventTemplate
+        from probpipe.core._specs import RecordSpec
 
         class _UnimplSupportsSource(NumericRecordDistribution):
             """Multi-field NRD that explicitly doesn't declare supports."""
 
             @property
             def event_template(self):
-                return EventTemplate(a=(), b=())
+                return RecordSpec(a=(), b=())
 
             @property
             def dtypes(self):

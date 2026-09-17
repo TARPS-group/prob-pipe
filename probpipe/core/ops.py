@@ -149,7 +149,8 @@ def _drawn_at_its_batch_form(drawn: Any, sample_shape: tuple[int, ...], *, name:
     from ._numeric_array_batch import NumericArrayBatch
     from ._object_batch import _is_object_array
     from ._record_batch import _batch_class_for
-    from .event_template import NumericArraySpec, _reshaped_template
+    from ._record_spec import _reshaped_template
+    from ._specs import NumericArraySpec
     from .record import Record
     from .tracked import TrackedTerm
 
@@ -233,7 +234,7 @@ def _at_the_operands_levels(computed: Any, operand: Any) -> Any:
     from ._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
     from ._batch import Batch, _ranks_of
     from ._numeric_array_batch import NumericArrayBatch
-    from .event_template import NumericArraySpec
+    from ._specs import NumericArraySpec
 
     if not isinstance(operand, Batch) or not _is_numeric_leaf(computed):
         return computed

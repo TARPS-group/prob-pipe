@@ -14,7 +14,7 @@ import pytest
 
 from probpipe import NumericRecord, NumericRecordBatch, Record, RecordBatch, function
 from probpipe.core._immutable import Immutable
-from probpipe.core.event_template import EventTemplate
+from probpipe.core._specs import RecordSpec
 
 # ---------------------------------------------------------------------------
 # Hosts declared here rather than reused: the point is the storage forms, and
@@ -200,7 +200,7 @@ class TestTheHostsInTheTree:
         params=[
             pytest.param(lambda: Record("r", {"x": jnp.ones(2), "tag": "m"}), id="record"),
             pytest.param(lambda: NumericRecord("nr", {"x": jnp.ones(2)}), id="numeric-record"),
-            pytest.param(lambda: EventTemplate(x=(2,), tag=None), id="event-template"),
+            pytest.param(lambda: RecordSpec(x=(2,), tag=None), id="event-template"),
             pytest.param(
                 lambda: RecordBatch.stack(
                     [Record("r", {"x": jnp.ones(2), "tag": "m"})] * 2,

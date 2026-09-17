@@ -8,7 +8,7 @@ import jax
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
-from ..core.event_template import EventTemplate
+from ..core._specs import RecordSpec
 from ..core.protocols import _WorkflowGenerativeProviderCertificate
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike, PRNGKey
@@ -110,9 +110,9 @@ class GLMLikelihood:
         return X @ beta
 
     @property
-    def data_template(self) -> EventTemplate:
+    def data_template(self) -> RecordSpec:
         """Named structure of GLM data: ``X`` (design matrix) and ``y`` (response)."""
-        return EventTemplate(X=(0, 0), y=(0,))
+        return RecordSpec(X=(0, 0), y=(0,))
 
     def _extract_X_y(self, data):
         """Extract design matrix and response from data.

@@ -6,12 +6,13 @@ See design III.1.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from typing import cast
 
 import numpy as np
 
 from ._kinds import register_kind
 from ._object_batch import _ObjectBatch
-from .event_template import FunctionSpec
+from ._specs import FunctionSpec
 from .provenance import Provenance
 
 __all__ = ["FunctionBatch"]
@@ -111,9 +112,7 @@ class FunctionBatch(_ObjectBatch[Callable]):
     @property
     def element_spec(self) -> FunctionSpec:
         """The :class:`FunctionSpec` every element satisfies — a view on ``spec``."""
-        spec = self._spec.element_spec
-        assert isinstance(spec, FunctionSpec)  # narrowed at construction
-        return spec
+        return cast(FunctionSpec, self._spec.element_spec)
 
 
 register_kind(FunctionSpec, batch_class=FunctionBatch)

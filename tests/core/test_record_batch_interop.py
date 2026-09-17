@@ -20,7 +20,6 @@ import numpy as np
 import pytest
 
 from probpipe import (
-    EventTemplate,
     Function,
     FunctionBatch,
     FunctionSpec,
@@ -33,13 +32,14 @@ from probpipe import (
     OpaqueSpec,
     ProductDistribution,
     Record,
+    RecordSpec,
     function,
 )
 from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._record_batch import RecordBatch
-from probpipe.core.event_template import NumericEventTemplate
+from probpipe.core._specs import NumericRecordSpec
 
-ELEMENT = NumericEventTemplate(a=(), b=(2,))
+ELEMENT = NumericRecordSpec(a=(), b=(2,))
 
 
 def _draws(n: int = 4, *, name: str = "draws") -> NumericRecordBatch:
@@ -58,7 +58,7 @@ def _one_field(n: int = 4, *, name: str = "draws") -> NumericRecordBatch:
         name,
         {"x": jnp.arange(n, dtype=float)},
         "draw",
-        element_spec=NumericEventTemplate(x=()),
+        element_spec=NumericRecordSpec(x=()),
         axes_per_level=(1,),
     )
 
@@ -92,16 +92,16 @@ class TestFunctionBoundary:
     def test_a_declared_output_template_retypes_a_returned_batch(self):
         batch = _draws()
 
-        f = Function(func=lambda: batch, output_template=EventTemplate(a=(), b=(2,)))
+        f = Function(func=lambda: batch, output_template=RecordSpec(a=(), b=(2,)))
 
         result = f()
 
         assert isinstance(result, NumericRecordBatch)
-        assert result.element_spec.event_template == batch.event_template
+        assert result.element_spec == batch.event_template
 
     def test_a_declared_output_template_checks_a_batch_column(self):
         batch = _draws()
-        declared = EventTemplate(a=NumericArraySpec((), dtype=jnp.int32), b=(2,))
+        declared = RecordSpec(a=NumericArraySpec((), dtype=jnp.int32), b=(2,))
 
         f = Function(func=lambda: batch, output_template=declared)
 
@@ -148,7 +148,7 @@ class TestFieldExtraction:
             "batch",
             {"a": jnp.arange(4.0), "b": jnp.ones(4)},
             "draw",
-            element_spec=NumericEventTemplate(a=(), b=()),
+            element_spec=NumericRecordSpec(a=(), b=()),
             axes_per_level=(1,),
         )
 
@@ -213,7 +213,7 @@ class TestDesignCoercion:
                 "batch",
                 {"y": jnp.ones(4)},
                 "draw",
-                element_spec=NumericEventTemplate(y=()),
+                element_spec=NumericRecordSpec(y=()),
                 axes_per_level=(1,),
             )
         )
@@ -243,7 +243,7 @@ class TestBroadcastComponents:
             "batch",
             {"a": jnp.zeros((5, 2))},
             "draw",
-            element_spec=NumericEventTemplate(a=()),
+            element_spec=NumericRecordSpec(a=()),
             axes_per_level=(2,),
         )
 
@@ -321,7 +321,7 @@ class TestSiblingViewsZipThroughACall:
             "batch",
             {"x": jnp.arange(3.0), "y": jnp.arange(3.0) * 10},
             "draw",
-            element_spec=EventTemplate(x=(), y=()),
+            element_spec=RecordSpec(x=(), y=()),
         )
         views = batch.select_all()
 
@@ -349,7 +349,7 @@ class TestOpaqueColumnsAreRearrangedRaw:
                 "x": jnp.arange(3.0),
             },
             "draw",
-            element_spec=EventTemplate(tag=None, x=()),
+            element_spec=RecordSpec(tag=None, x=()),
         )
 
     def test_presented_and_raw_columns_differ_for_an_opaque_field(self):
@@ -387,10 +387,10 @@ class TestRetypingADeclaredOutputKeepsColumnsWithTheirKeys:
             "batch",
             {"a": jnp.arange(3.0), "b": jnp.arange(3.0) * 10},
             "draw",
-            element_spec=EventTemplate(a=(), b=()),
+            element_spec=RecordSpec(a=(), b=()),
         )
 
-        retyped = _copy_result_term(batch, output_template=EventTemplate(b=(), a=()))
+        retyped = _copy_result_term(batch, output_template=RecordSpec(b=(), a=()))
         roundtripped = jax.jit(lambda x: x)(retyped)
 
         np.testing.assert_array_equal(np.asarray(roundtripped["a"]), [0.0, 1.0, 2.0])
@@ -408,7 +408,7 @@ class TestATransformCannotAddAnUnnamedLevel:
                 "batch",
                 {"s": x + jnp.zeros(2)},
                 "inner",
-                element_spec=EventTemplate(s=()),
+                element_spec=RecordSpec(s=()),
                 axes_per_level=(1,),
             )
 
@@ -423,7 +423,7 @@ class TestATransformCannotAddAnUnnamedLevel:
             "batch",
             {"s": jnp.zeros((3, 2))},
             ("outer", "inner"),
-            element_spec=EventTemplate(s=()),
+            element_spec=RecordSpec(s=()),
             axes_per_level=(1, 1),
         )
 
@@ -434,7 +434,7 @@ class TestATransformCannotAddAnUnnamedLevel:
             "batch",
             {"s": jnp.zeros(3)},
             "outer",
-            element_spec=EventTemplate(s=()),
+            element_spec=RecordSpec(s=()),
         )
         seen: list[Any] = []
         jax.vmap(lambda b: seen.append(type(b).__name__) or jnp.zeros(()))(single)
@@ -450,7 +450,7 @@ class TestBatchFingerprinting:
             "batch",
             {"x": jnp.arange(3.0)},
             (level,),
-            element_spec=EventTemplate(x=()),
+            element_spec=RecordSpec(x=()),
             axes_per_level=axes_per_level,
         )
 
@@ -461,7 +461,7 @@ class TestBatchFingerprinting:
             "batch",
             {"a": jnp.arange(3.0), "b": jnp.arange(3.0)},
             "draw",
-            element_spec=EventTemplate(a=(), b=()),
+            element_spec=RecordSpec(a=(), b=()),
         )
 
         assert isinstance(fingerprint(batch), str)
@@ -484,7 +484,7 @@ class TestBatchFingerprinting:
                 "batch",
                 {"a": jnp.arange(3.0), "b": jnp.arange(3.0) * 10},
                 "draw",
-                element_spec=EventTemplate(a=(), b=()),
+                element_spec=RecordSpec(a=(), b=()),
             )
 
         assert fingerprint(build()) == fingerprint(build())
@@ -496,13 +496,13 @@ class TestBatchFingerprinting:
             "batch",
             {"a": jnp.arange(3.0), "b": jnp.arange(3.0) * 10},
             "draw",
-            element_spec=EventTemplate(a=(), b=()),
+            element_spec=RecordSpec(a=(), b=()),
         )
         ba = NumericRecordBatch(
             "batch",
             {"a": jnp.arange(3.0) * 10, "b": jnp.arange(3.0)},
             "draw",
-            element_spec=EventTemplate(a=(), b=()),
+            element_spec=RecordSpec(a=(), b=()),
         )
 
         assert fingerprint(ab) != fingerprint(ba)
@@ -514,14 +514,14 @@ class TestBatchFingerprinting:
             "batch",
             {"x": jnp.zeros((2, 3))},
             ("a", "b"),
-            element_spec=EventTemplate(x=()),
+            element_spec=RecordSpec(x=()),
             axes_per_level=(1, 1),
         )
         joined = NumericRecordBatch(
             "batch",
             {"x": jnp.zeros((2, 3))},
             "a",
-            element_spec=EventTemplate(x=()),
+            element_spec=RecordSpec(x=()),
             axes_per_level=(2,),
         )
 
@@ -537,7 +537,7 @@ class TestMultiLevelSweeps:
             "batch",
             {"x": jnp.arange(6.0).reshape(2, 3)},
             ("chain", "draw"),
-            element_spec=EventTemplate(x=()),
+            element_spec=RecordSpec(x=()),
             axes_per_level=(1, 1),
         )
 
@@ -558,13 +558,13 @@ class TestMultiLevelSweeps:
             "batch",
             {"a": jnp.arange(2.0)},
             "outer",
-            element_spec=EventTemplate(a=()),
+            element_spec=RecordSpec(a=()),
         )
         b = NumericRecordBatch(
             "batch",
             {"b": jnp.arange(3.0)},
             "inner",
-            element_spec=EventTemplate(b=()),
+            element_spec=RecordSpec(b=()),
         )
 
         @function
@@ -573,7 +573,7 @@ class TestMultiLevelSweeps:
                 "batch",
                 {"s": jnp.asarray(a["a"]) + jnp.asarray(b["b"]) + jnp.zeros(2)},
                 "rows",
-                element_spec=EventTemplate(s=()),
+                element_spec=RecordSpec(s=()),
                 axes_per_level=(1,),
             )
 
@@ -595,7 +595,7 @@ class TestAutoDispatchFallsBackForABatchReturningBody:
             "batch",
             {"x": jnp.arange(3.0)},
             "draw",
-            element_spec=EventTemplate(x=()),
+            element_spec=RecordSpec(x=()),
         )
 
         def body(v):
@@ -603,7 +603,7 @@ class TestAutoDispatchFallsBackForABatchReturningBody:
                 "batch",
                 {"s": jnp.asarray(v["x"]) + jnp.zeros(2)},
                 "inner",
-                element_spec=EventTemplate(s=()),
+                element_spec=RecordSpec(s=()),
                 axes_per_level=(1,),
             )
 
@@ -623,7 +623,7 @@ class TestAutoDispatchFallsBackForABatchReturningBody:
             "batch",
             {"x": jnp.arange(3.0)},
             "draw",
-            element_spec=EventTemplate(x=()),
+            element_spec=RecordSpec(x=()),
         )
 
         @function
@@ -646,7 +646,7 @@ class TestSameRankTransformsCannotLieEither:
             "batch",
             {"x": jnp.arange(2.0), "y": jnp.arange(2.0) * 10},
             "draw",
-            element_spec=EventTemplate(x=(), y=()),
+            element_spec=RecordSpec(x=(), y=()),
         )
 
         with pytest.raises(ValueError, match="keeps every batch axis or removes all of them"):
@@ -664,7 +664,7 @@ class TestSameRankTransformsCannotLieEither:
             "batch",
             {"x": jnp.arange(2.0), "y": jnp.arange(2.0)},
             "draw",
-            element_spec=EventTemplate(x=(), y=()),
+            element_spec=RecordSpec(x=(), y=()),
         )
         _, treedef = jtu.tree_flatten(batch)
 
@@ -687,7 +687,7 @@ class TestOpaqueBatchesStack:
                     "x": jnp.arange(2.0) + i,
                 },
                 "inner",
-                element_spec=EventTemplate(tag=None, x=()),
+                element_spec=RecordSpec(tag=None, x=()),
             )
             for i in range(3)
         ]
@@ -711,7 +711,7 @@ class TestObjectValuedMarginals:
             "batch",
             {"tag": np.array(["a", "b", "c"], dtype=object), "x": jnp.arange(3.0)},
             "draw",
-            element_spec=EventTemplate(tag=None, x=()),
+            element_spec=RecordSpec(tag=None, x=()),
         )
 
         marginal = _make_marginal(batch)
@@ -727,10 +727,10 @@ class TestAnEmptySweepAnswersToItsTemplate:
             "batch",
             {"x": jnp.zeros((0,))},
             "design",
-            element_spec=EventTemplate(x=()),
+            element_spec=RecordSpec(x=()),
         )
 
-        @function(output_template=EventTemplate(y=()))
+        @function(output_template=RecordSpec(y=()))
         def fit(p):
             return {"y": jnp.asarray(p["x"]) * 2.0}
 
@@ -751,7 +751,7 @@ class TestATransformCannotResizeTheElement:
             "batch",
             {"x": jnp.zeros((3, 2))},
             "draw",
-            element_spec=EventTemplate(x=(2,)),
+            element_spec=RecordSpec(x=(2,)),
         )
 
     def test_slicing_an_event_axis_is_refused(self):
@@ -776,7 +776,7 @@ class TestAnEmptySweepIsNotAMissingOutput:
             batch_shape=(0,),
             field_name="fit",
             level_names=("design",),
-            event_template=EventTemplate(y=()),
+            event_template=RecordSpec(y=()),
         )
 
         assert list(out.event_template) == ["y"]
@@ -793,7 +793,7 @@ class TestAnEmptySweepIsNotAMissingOutput:
                 n=3,
                 field_name="fit",
                 level_names=("s",),
-                event_template=EventTemplate(y=()),
+                event_template=RecordSpec(y=()),
             )
 
 
@@ -806,7 +806,7 @@ class TestZeroWidthEventsUnderExplicitJax:
             "batch",
             {"x": jnp.zeros((3, 0)), "row": jnp.arange(3.0)},
             "draw",
-            element_spec=EventTemplate(x=(0,), row=()),
+            element_spec=RecordSpec(x=(0,), row=()),
         )
 
         out = Function(
@@ -833,7 +833,7 @@ class TestShapeCannotRecoverAxisProvenance:
             "batch",
             {"x": jnp.arange(float(chain * draw)).reshape(chain, draw)},
             ("chain", "draw"),
-            element_spec=EventTemplate(x=()),
+            element_spec=RecordSpec(x=()),
             axes_per_level=(1, 1),
         )
 
@@ -856,7 +856,7 @@ class TestATransformCannotRetypeTheElement:
             "batch",
             {"x": jnp.zeros(3, dtype=jnp.float32)},
             "draw",
-            element_spec=EventTemplate(x=NumericArraySpec((), dtype=jnp.float32)),
+            element_spec=RecordSpec(x=NumericArraySpec((), dtype=jnp.float32)),
         )
 
         with pytest.raises(TypeError, match="does not admit"):
@@ -869,7 +869,7 @@ class TestATransformCannotRetypeTheElement:
             "batch",
             {"x": jnp.zeros(3, dtype=jnp.float16)},
             "draw",
-            element_spec=EventTemplate(x=NumericArraySpec((), dtype=jnp.float32)),
+            element_spec=RecordSpec(x=NumericArraySpec((), dtype=jnp.float32)),
         )
 
         widened = jax.tree.map(lambda leaf: leaf.astype(jnp.float32), batch)
@@ -886,7 +886,7 @@ class TestZeroRowsAgreeAcrossDispatch:
             "batch",
             {"x": jnp.zeros((2, 0))},
             ("a", "b"),
-            element_spec=EventTemplate(x=()),
+            element_spec=RecordSpec(x=()),
             axes_per_level=(1, 1),
         )
 
@@ -910,14 +910,14 @@ class TestFunctionValuedColumnsStack:
         what stack, and the presentation survives the aggregation."""
         from probpipe.core._broadcast_distributions import _make_stack
         from probpipe.core._function_batch import FunctionBatch
-        from probpipe.core.event_template import FunctionSpec
+        from probpipe.core._specs import FunctionSpec
 
         rows = [
             RecordBatch(
                 "batch",
                 {"f": np.array([(lambda i=i, j=j: i * 10 + j) for j in range(2)], dtype=object)},
                 "inner",
-                element_spec=EventTemplate(f=FunctionSpec()),
+                element_spec=RecordSpec(f=FunctionSpec()),
             )
             for i in range(3)
         ]
@@ -941,7 +941,7 @@ class TestAnEmpiricalTakesABatch:
             "batch",
             {"X": jnp.arange(4.0), "y": jnp.arange(4.0) * 10},
             "obs",
-            element_spec=EventTemplate(X=(), y=()),
+            element_spec=RecordSpec(X=(), y=()),
         )
 
         empirical = EmpiricalDistribution(data)
@@ -963,7 +963,7 @@ class TestBatchValuedRowAggregation:
             "batch",
             {"x": jnp.arange(float(n))},
             "row",
-            element_spec=EventTemplate(x=NumericArraySpec(shape=())),
+            element_spec=RecordSpec(x=NumericArraySpec(shape=())),
         )
 
     @staticmethod
@@ -972,7 +972,7 @@ class TestBatchValuedRowAggregation:
             "batch",
             {"y": jnp.zeros(n)},
             level,
-            element_spec=EventTemplate(y=NumericArraySpec(shape=())),
+            element_spec=RecordSpec(y=NumericArraySpec(shape=())),
         )
 
     @staticmethod
@@ -989,7 +989,7 @@ class TestBatchValuedRowAggregation:
             [lambda x: x + 1, lambda x: x * 2],
             "item",
             element_spec=FunctionSpec(
-                input_template=EventTemplate(x=()), output_spec=NumericArraySpec(())
+                input_template=RecordSpec(x=()), output_spec=NumericArraySpec(())
             ),
         )
 
@@ -1079,7 +1079,7 @@ class TestBatchValuedRowAggregation:
                 "batch",
                 {"z": jnp.zeros(2)},
                 "inner",
-                element_spec=EventTemplate(z=NumericArraySpec(shape=())),
+                element_spec=RecordSpec(z=NumericArraySpec(shape=())),
             )
 
         with pytest.raises(ValueError, match="returned batches that disagree"):
@@ -1200,14 +1200,14 @@ class TestDeclaredOpaqueOutputAcrossDispatches:
             level_name="row",
         )
 
-        @function(output_template=EventTemplate(y=None), dispatch=dispatch)
+        @function(output_template=RecordSpec(y=None), dispatch=dispatch)
         def make_vector(row):
             return {"y": jnp.array([row["i"], row["i"] + 1])}
 
         result = make_vector(row=rows)
 
         assert result.batch_shape == (2,)
-        assert result.event_template == EventTemplate(y=None)
+        assert result.event_template == RecordSpec(y=None)
         column = result._raw_column("y")
         assert column.dtype == object
         assert column.shape == (2,)

@@ -14,8 +14,8 @@ from typing import Any, NamedTuple
 import jax.numpy as jnp
 import numpy as np
 
+from ..core._specs import NumericRecordSpec
 from ..core.distribution import Distribution
-from ..core.event_template import NumericEventTemplate
 from ..core.protocols import SupportsLogProb
 from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike
@@ -183,9 +183,9 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
         return _param_blocks(self._bs_model.param_names())
 
     @cached_property
-    def event_template(self) -> NumericEventTemplate:
+    def event_template(self) -> NumericRecordSpec:
         """One field per Stan parameter block, shaped from BridgeStan's names."""
-        return NumericEventTemplate({b.name: b.shape for b in self._blocks})
+        return NumericRecordSpec({b.name: b.shape for b in self._blocks})
 
     @property
     def fields(self) -> tuple[str, ...]:
@@ -279,9 +279,9 @@ class _UnconstrainedStanView(Distribution[Any], SupportsLogProb):
         return _param_blocks(self._model._bs_model.param_unc_names())
 
     @cached_property
-    def event_template(self) -> NumericEventTemplate:
+    def event_template(self) -> NumericRecordSpec:
         """One field per unconstrained Stan parameter block."""
-        return NumericEventTemplate({b.name: b.shape for b in self._blocks})
+        return NumericRecordSpec({b.name: b.shape for b in self._blocks})
 
     @property
     def fields(self) -> tuple[str, ...]:
