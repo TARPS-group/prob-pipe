@@ -109,9 +109,7 @@ class _FakeBase:
                 exact=self._check_exact,
                 pending=self._pending,
             )
-        return MethodInfo(
-            feasible=self._feasible, exact=self._check_exact, pending=self._pending
-        )
+        return MethodInfo(feasible=self._feasible, exact=self._check_exact, pending=self._pending)
 
     def execute(self, *args: Any, **kwargs: Any) -> Any:
         self.execute_calls += 1

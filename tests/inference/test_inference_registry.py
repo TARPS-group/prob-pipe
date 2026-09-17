@@ -1,6 +1,6 @@
 """Tests for the inference method registry."""
 
-from typing import Any, ClassVar
+from typing import ClassVar
 
 import jax.numpy as jnp
 import numpy as np

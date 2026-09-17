@@ -38,6 +38,7 @@ from probpipe.core._array_backend import (
     register_array_backend,
 )
 from probpipe.core._batch import Batch, BatchSpec
+from probpipe.core._dispatch import MathematicalDomainError, ResolutionError
 from probpipe.core._distribution_array import DistributionArray
 from probpipe.core._function_batch import FunctionBatch
 from probpipe.core._numeric_array import NumericArray
@@ -45,7 +46,6 @@ from probpipe.core._numeric_array_batch import NumericArrayBatch
 from probpipe.core._numeric_record import NumericRecord
 from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._opaque import Opaque, OpaqueSpec
-from probpipe.core._dispatch import MathematicalDomainError, ResolutionError
 from probpipe.core._opaque_batch import OpaqueBatch
 from probpipe.core._record_batch import RecordBatch
 from probpipe.core._workflow_context import workflow_run
@@ -313,8 +313,8 @@ __all__ = [
     "RecordEmpiricalDistribution",
     "RecordSpec",
     "ReplayCompatibilityError",
-    "ResolutionError",
     "ReplayUnsupportedCallableError",
+    "ResolutionError",
     "SequentialJointDistribution",
     "SimpleGenerativeModel",
     "SimpleModel",
