@@ -385,7 +385,7 @@ class MethodInfo:
     exact:       bool | None   # the local guarantee; None when not yet determined
     pending:     tuple[str, ...]   # unresolved feasibility requirements
 
-class ResolutionError(Exception): ...   # no available implementation under the requested controls
+class ResolutionError(LookupError): ...  # no available implementation under the requested controls
 class MathematicalDomainError(ValueError): ...  # the mathematical operation is known to be undefined
 
 class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
@@ -405,7 +405,7 @@ class BinaryDispatchRegistry[M: BinaryDispatchMethod](BaseDispatchRegistry[M]): 
 
 Provenance records whether each step was exact and its target, preserving upstream approximation history. Exact downstream work cannot erase an earlier approximation relative to an upstream target, and an upstream approximation does not make a later exact calculation on the returned law locally approximate. Derived routes and registry routes report the exactness of their selected implementation chain; a wrapper cannot upgrade it.
 
-**Two failures.** A known mathematical nonexistence raises `MathematicalDomainError`, for example a requested mean known not to exist. Computational unavailability raises `ResolutionError`; failure to establish existence does not establish nonexistence. A numerical execution failure propagates as such, and neither it nor a missing capability is silently reclassified as a mathematical domain error. Structural admission errors and return-contract defects are specified at their engine steps (V.4, V.10).
+**Two failures.** A known mathematical nonexistence raises `MathematicalDomainError`, for example a requested mean known not to exist. Computational unavailability raises `ResolutionError`, a `LookupError` alongside the `KeyError` an unknown method name raises, so one `except LookupError` covers both ways a dispatch names nothing that runs; failure to establish existence does not establish nonexistence. A numerical execution failure propagates as such, and neither it nor a missing capability is silently reclassified as a mathematical domain error. Structural admission errors and return-contract defects are specified at their engine steps (V.4, V.10).
 
 A single **catalog** makes every registry discoverable: it lists the registries, their entries with their priorities, and a one-line description each, so a user can see which entries exist and how a call will resolve. An **entry** is one registered item within a registry; the term is generic because the catalog spans registries whose items are not all type-dispatched methods. A registry can be cataloged if it implements `SupportsRegistryCataloging`; satisfying the protocol is structural, and membership requires an explicit `register`. The operation vocabulary is cataloged the same way, so what ProbPipe can do and how a given call resolves are answered from one place.
 

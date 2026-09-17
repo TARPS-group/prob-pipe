@@ -4,22 +4,24 @@ A dispatch registry holds named implementations of one operation and
 selects among them by the types of the arguments. Every method declares,
 at registration and for its whole life, whether it is **exact**: whether
 its result denotes the requested mathematical object or stands in for it.
-Selection order is the same in every registry:
+Selection order is the same in every dispatch registry:
 
 1. exact methods before approximate ones;
 2. priority among methods of the same exactness, higher first;
 3. registration order.
 
-A method whose ``priority`` is ``None`` is **opt-in-only**: the auto walk
-skips it and it runs only when named through ``method="..."``. That is the
-default, so registering a method never changes what runs until a
-contributor ranks it. ``set_priorities`` re-ranks at runtime; it cannot
+A method whose ``priority`` is ``None`` is **opt-in-only**: automatic
+selection skips it and it runs only when named through ``method="..."``.
+That is the default, so registering a method never changes what runs until
+a contributor ranks it. ``set_priorities`` re-ranks at runtime; it cannot
 change whether a method is exact, since exactness is not one of its inputs.
 
 Two failures are distinct. :class:`ResolutionError` means no available
-implementation under the requested controls. :class:`MathematicalDomainError`
-means the mathematical operation is known to be undefined, a ``ValueError``
-a method raises itself; the registry never converts one into the other.
+implementation under the requested controls; it is a ``LookupError``,
+alongside the ``KeyError`` an unknown method name raises.
+:class:`MathematicalDomainError` means the mathematical operation is known
+to be undefined, a ``ValueError`` a method raises itself; the registry never
+converts one into the other.
 
 The two arity subclasses differ only in how they compute the dispatch key
 from the arguments and how they pre-filter methods by ``supported_types()``.
@@ -46,13 +48,20 @@ __all__ = [
 ]
 
 
-class ResolutionError(Exception):
+class ResolutionError(LookupError):
     """No available implementation under the requested controls.
 
     Raised by a registry when no registered method is feasible for the
     arguments, when the first candidate that is not infeasible is still
     unresolved, or when a method selected by name is infeasible. The
     message names the methods tried and what each was missing.
+
+    A ``LookupError``, as is the ``KeyError`` an unknown method name
+    raises, so ``except LookupError`` catches both ways a dispatch can
+    fail to name something that runs. It is deliberately not a
+    ``TypeError``: the arguments may be perfectly well typed and still
+    have no applicable method, as a model that no registered inference
+    method supports does.
     """
 
 
@@ -150,7 +159,7 @@ class BaseDispatchMethod(ABC):
     def priority(self) -> int | None:
         """Rank among methods of the same exactness, higher first.
 
-        ``None``, the default, is opt-in-only: excluded from the auto walk
+        ``None``, the default, is opt-in-only: excluded from automatic selection
         and reachable only by name.
         """
         return None
@@ -189,7 +198,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
 
     Everything that does not depend on how many arguments select the method
     lives here: registration, ranking, the opt-in filter, ``set_priorities``,
-    and the ``check`` / ``execute`` walk. Three hooks are left to the arity
+    and the ``check`` / ``execute`` path. Three hooks are left to the arity
     subclasses, and they are the only place arity enters:
 
     - :meth:`_cache_key` turns the positional arguments into the **dispatch
@@ -201,7 +210,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
       order can change;
     - :meth:`_format_key` renders a key for error messages.
 
-    The walk then reads only the list ``_find_methods`` returns, so a
+    Selection then reads only the list ``_find_methods`` returns, so a
     subclass never touches ranking, the opt-in filter, or the errors.
 
     ``check`` with no positional arguments returns an infeasible
@@ -270,7 +279,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
         case nothing is applied. Overrides are recorded on the registry and
         never mutate a method. A move between ``None`` and an integer emits
         a ``UserWarning``, since it changes whether the method participates
-        in the auto walk. Exactness is not an input, so an override never
+        in automatic selection. Exactness is not an input, so an override never
         lifts an approximate method above an exact one.
         """
         merged: dict[str, int | None] = dict(priorities or {})
@@ -307,20 +316,28 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
             raise KeyError(f"No method named {name!r}. Available: {available}") from None
 
     def list_methods(self) -> list[str]:
-        """Method names in selection order."""
+        """Every registered method name, in rank order.
+
+        Ordered by the selection key: exact before approximate, then
+        priority, then registration order. This ranks the methods; it does
+        not forecast what a call runs. An opt-in-only method keeps its rank
+        position although automatic selection skips it, so an exact
+        opt-in-only method can be listed above the approximate method a
+        call would actually pick. Ask :meth:`check` what would run.
+        """
         return [m.name for m in self._methods]
 
     def _is_auto_dispatchable(self, m: M) -> bool:
         return self._effective_priority(m) is not None
 
     @staticmethod
-    def _passes_floor(m: M, exact_only: bool) -> bool:
+    def _passes_exact_only(m: M, exact_only: bool) -> bool:
         return m.exact or not exact_only
 
     def _candidates(self, args: tuple[Any, ...], exact_only: bool) -> list[M]:
         key = self._cache_key(args)
         found = self._find_methods(key)
-        return [m for m in found if self._passes_floor(m, exact_only)]
+        return [m for m in found if self._passes_exact_only(m, exact_only)]
 
     def check(
         self,
@@ -339,7 +356,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
         """
         if method is not None:
             m = self.get_method(method)
-            if not self._passes_floor(m, exact_only):
+            if not self._passes_exact_only(m, exact_only):
                 return MethodInfo(
                     feasible=False,
                     method_name=method,
@@ -379,7 +396,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
         """
         if method is not None:
             m = self.get_method(method)
-            if not self._passes_floor(m, exact_only):
+            if not self._passes_exact_only(m, exact_only):
                 raise ResolutionError(
                     f"Method {method!r} is approximate and exact_only was requested"
                 )
@@ -409,23 +426,27 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
 
     @staticmethod
     def _with_exact(m: M, info: MethodInfo) -> MethodInfo:
-        """Fill ``method_name`` and ``exact`` from the method when the check left them."""
-        if info.method_name and info.exact is not None:
-            return info
+        """Name the method and state its exactness from the registration.
+
+        ``exact`` is taken from the method, never from the check, so the
+        reported value is the declared one whatever a check returns. A
+        method that sets it cannot make a report disagree with what
+        ``exact_only`` filters on, which reads the declaration too.
+        """
         return MethodInfo(
             feasible=info.feasible,
             method_name=info.method_name or m.name,
             description=info.description,
-            exact=m.exact if info.exact is None else info.exact,
+            exact=m.exact,
             pending=info.pending,
         )
 
     def _no_method_message(self, args: tuple[Any, ...], tried: list[str], exact_only: bool) -> str:
         key = self._format_key(self._cache_key(args))
-        floor = " with exact_only" if exact_only else ""
+        restriction = " with exact_only" if exact_only else ""
         if tried:
-            return f"No feasible method for {key}{floor}. Tried: " + "; ".join(tried)
-        return f"No method registered for {key}{floor}. Available: {self.list_methods()}"
+            return f"No feasible method for {key}{restriction}. Tried: " + "; ".join(tried)
+        return f"No method registered for {key}{restriction}. Available: {self.list_methods()}"
 
     @abstractmethod
     def _cache_key(self, args: tuple[Any, ...]) -> Any:

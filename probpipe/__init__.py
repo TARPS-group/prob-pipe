@@ -45,6 +45,7 @@ from probpipe.core._numeric_array_batch import NumericArrayBatch
 from probpipe.core._numeric_record import NumericRecord
 from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._opaque import Opaque, OpaqueSpec
+from probpipe.core._dispatch import MathematicalDomainError, ResolutionError
 from probpipe.core._opaque_batch import OpaqueBatch
 from probpipe.core._record_batch import RecordBatch
 from probpipe.core._workflow_context import workflow_run
@@ -269,6 +270,7 @@ __all__ = [
     "Likelihood",
     "LinearBasisFunction",
     "LogNormal",
+    "MathematicalDomainError",
     "MinibatchedDistribution",
     "Module",
     "Multinomial",
@@ -311,6 +313,7 @@ __all__ = [
     "RecordEmpiricalDistribution",
     "RecordSpec",
     "ReplayCompatibilityError",
+    "ResolutionError",
     "ReplayUnsupportedCallableError",
     "SequentialJointDistribution",
     "SimpleGenerativeModel",

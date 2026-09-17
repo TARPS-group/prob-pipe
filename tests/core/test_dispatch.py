@@ -9,6 +9,7 @@ Each test is parametrized over the unary and binary registries.
 
 from __future__ import annotations
 
+import builtins
 import inspect
 import random
 import re
@@ -67,6 +68,7 @@ class _FakeBase:
         result: Any = None,
         raises: BaseException | None = None,
         check_raises: BaseException | None = None,
+        check_exact: bool | None = None,
         fill_info: bool = True,
     ):
         self._name = name
@@ -78,6 +80,7 @@ class _FakeBase:
         self._result = result
         self._raises = raises
         self._check_raises = check_raises
+        self._check_exact = check_exact
         self._fill_info = fill_info
         self.check_calls = 0
         self.execute_calls = 0
@@ -103,9 +106,12 @@ class _FakeBase:
                 feasible=self._feasible,
                 method_name=self._name,
                 description=self._description,
+                exact=self._check_exact,
                 pending=self._pending,
             )
-        return MethodInfo(feasible=self._feasible, pending=self._pending)
+        return MethodInfo(
+            feasible=self._feasible, exact=self._check_exact, pending=self._pending
+        )
 
     def execute(self, *args: Any, **kwargs: Any) -> Any:
         self.execute_calls += 1
@@ -206,6 +212,25 @@ class TestExactnessDeclaration:
 
         assert Bare().priority is None
 
+    @pytest.mark.parametrize("declared", [True, False], ids=["exact", "approximate"])
+    def test_a_check_cannot_contradict_the_registration(self, arity: Arity, declared: bool):
+        """The report states the declared exactness, whatever the check returns.
+
+        Otherwise ``check`` could advertise an exactness that ``exact_only``,
+        which reads the declaration, would not honour.
+        """
+        reg = arity.registry()
+        reg.register(arity.method("m", exact=declared, check_exact=not declared))
+        assert reg.check(*arity.args).exact is declared
+        assert reg.check(*arity.args, method="m").exact is declared
+
+    def test_exact_only_agrees_with_what_check_reports(self, arity: Arity):
+        reg = arity.registry()
+        reg.register(arity.method("liar", exact=False, check_exact=True))
+        assert reg.check(*arity.args).exact is False
+        with pytest.raises(ResolutionError):
+            reg.execute(*arity.args, exact_only=True)
+
 
 # ---------------------------------------------------------------------------
 # Selection order: exact before approximate, then priority, then registration
@@ -275,12 +300,14 @@ class TestSelectionOrder:
         reg.register(arity.method("zero", priority=0, result="zero"))
         assert reg.execute(*arity.args) == "zero"
 
-    def test_list_methods_is_selection_order(self, arity: Arity):
+    def test_list_methods_is_rank_order(self, arity: Arity):
         reg = arity.registry()
         reg.register(arity.method("a_approx", exact=False, priority=100))
         reg.register(arity.method("e_low", exact=True, priority=1))
         reg.register(arity.method("e_high", exact=True, priority=2))
         reg.register(arity.method("e_opt", exact=True, priority=None))
+        # The opt-in-only exact method keeps its rank position although no
+        # automatic selection reaches it: the listing ranks, it does not forecast.
         assert reg.list_methods() == ["e_high", "e_low", "e_opt", "a_approx"]
 
 
@@ -352,6 +379,25 @@ class TestSetPriorities:
             reg.set_priorities(a=50, nope=1)
         assert reg._effective_priority(reg.get_method("a")) == 1
 
+    @pytest.mark.parametrize(
+        "kwargs, exc, match",
+        [({"a": 5, "nope": 1}, KeyError, "No method named 'nope'"), ({"a": 6}, ValueError, "both")],
+        ids=["unknown-name", "name-in-both-forms"],
+    )
+    def test_an_aborted_override_does_not_warn(self, arity: Arity, kwargs, exc, match):
+        """Nothing is applied, so nothing crossed opt-in to warn about.
+
+        The crossing value is what makes this discriminating: warning before
+        validating would fire here.
+        """
+        reg = arity.registry()
+        reg.register(arity.method("a", priority=None))
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            with pytest.raises(exc, match=match):
+                reg.set_priorities({"a": 5} if exc is ValueError else None, **kwargs)
+        assert reg._effective_priority(reg.get_method("a")) is None
+
     def test_warns_once_on_each_crossing_of_opt_in(self, arity: Arity):
         reg = arity.registry()
         reg.register(arity.method("a", priority=50))
@@ -373,7 +419,7 @@ class TestSetPriorities:
             reg.set_priorities(a=-3)
             reg.set_priorities(b=None)
 
-    def test_promoted_opt_in_method_joins_the_auto_walk(self, arity: Arity):
+    def test_promoted_opt_in_method_joins_automatic_selection(self, arity: Arity):
         reg = arity.registry()
         reg.register(arity.method("opt_in", priority=None, result="ran"))
         with pytest.warns(UserWarning, match="out of opt-in-only"):
@@ -528,7 +574,7 @@ class TestExecute:
             reg.execute(*arity.args, method="nope")
 
     @pytest.mark.parametrize("exc", [ValueError("bad"), RuntimeError("worse")])
-    def test_a_method_failure_propagates_and_stops_the_walk(self, arity: Arity, exc: Exception):
+    def test_a_method_failure_propagates_and_stops_the_search(self, arity: Arity, exc: Exception):
         reg = arity.registry()
         failing = arity.method("failing", priority=2, raises=exc)
         fallback = arity.method("fallback", priority=1, result="never")
@@ -538,8 +584,25 @@ class TestExecute:
             reg.execute(*arity.args)
         assert fallback.execute_calls == 0
 
-    def test_resolution_error_is_not_a_value_error(self):
+    def test_resolution_error_is_a_lookup_error_and_nothing_else(self):
+        """The hierarchy is part of the contract, so it is asserted here.
+
+        A ``LookupError`` alongside ``KeyError``, so one ``except`` covers
+        both ways a dispatch names nothing that runs. Deliberately not a
+        ``TypeError``: well-typed arguments can still have no applicable
+        method.
+        """
+        assert issubclass(ResolutionError, LookupError)
+        assert not issubclass(ResolutionError, TypeError)
         assert not issubclass(ResolutionError, ValueError)
+
+    def test_one_except_lookup_error_covers_both_dispatch_failures(self, arity: Arity):
+        reg = arity.registry()
+        reg.register(arity.method("a", feasible=False))
+        with pytest.raises(LookupError):
+            reg.execute(*arity.args)
+        with pytest.raises(LookupError):
+            reg.execute(*arity.args, method="absent")
 
 
 class TestMathematicalDomainError:
@@ -690,6 +753,28 @@ class TestDesignAgreement:
         for name in names:
             assert hasattr(_dispatch, name), f"{name} is declared in II.7 but not implemented"
 
+    def test_declared_exception_bases_match(self):
+        """The base class is contract, not commentary.
+
+        Which builtin an error derives from decides what ``except`` clauses
+        catch it, so II.7 declaring it is only worth anything if this
+        compares it.
+        """
+        declared = re.findall(r"^class (\w*Error)\((\w+)\)", _design_block(), re.M)
+        assert declared, "no exception classes found in the II.7 block"
+        for name, base in declared:
+            implemented = getattr(_dispatch, name)
+            assert issubclass(implemented, getattr(builtins, base)), (name, base)
+            assert implemented.__mro__[1].__name__ == base, (
+                f"{name} derives from {implemented.__mro__[1].__name__}, II.7 says {base}"
+            )
+
+    def test_every_public_name_is_declared(self):
+        """One direction is not enough: a name II.7 dropped must not survive."""
+        declared = set(re.findall(r"^class (\w+)", _design_block(), re.M))
+        exported = {n for n in _dispatch.__all__ if n[0].isupper()}
+        assert exported <= declared, exported - declared
+
     def test_method_info_fields_match(self):
         block = _design_block()
         section = block[block.index("class MethodInfo:") :]
@@ -714,15 +799,38 @@ class TestDesignAgreement:
         for method_name in ("set_priorities", "execute", "check"):
             declared = re.search(rf"def {method_name}\((.*?)\)\s*->", block, re.S)
             assert declared is not None, method_name
-            declared_params = [
-                p.split(":")[0].split("=")[0].strip().lstrip("*")
+            raw = [
+                p.strip()
                 for p in _split_top_level(declared.group(1).replace("\n", " "))
-                if p.strip() not in ("", "/")
+                if p.strip()
             ]
-            implemented = list(
-                inspect.signature(getattr(BaseDispatchRegistry, method_name)).parameters
-            )
+            declared_params = [
+                p.split(":")[0].split("=")[0].strip().lstrip("*") for p in raw if p != "/"
+            ]
+            signature = inspect.signature(getattr(BaseDispatchRegistry, method_name))
+            implemented = list(signature.parameters)
             assert declared_params == implemented, (method_name, declared_params, implemented)
+
+            # Defaults decide what a bare call does, so they are compared too.
+            for entry in raw:
+                if "=" not in entry or entry == "/":
+                    continue
+                param = entry.split(":")[0].split("=")[0].strip().lstrip("*")
+                declared_default = entry.split("=", 1)[1].strip()
+                actual = signature.parameters[param].default
+                assert str(actual) == declared_default or repr(actual) == declared_default, (
+                    method_name,
+                    param,
+                    declared_default,
+                    actual,
+                )
+
+            # A positional-only marker in II.7 must be one in the implementation.
+            declared_positional_only = "/" in raw
+            actual_positional_only = any(
+                q.kind is inspect.Parameter.POSITIONAL_ONLY for q in signature.parameters.values()
+            )
+            assert declared_positional_only == actual_positional_only, method_name
 
 
 def _split_top_level(text: str) -> list[str]:

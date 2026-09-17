@@ -27,6 +27,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `exact = False` through `InferenceMethod`; the former priority-0 methods
   (`blackjax_hmc`, `blackjax_sghmc`, `pymc_advi`, `tfp_nuts`, `tfp_hmc`) are
   `None`, and the other ranks are unchanged, so auto-selection is unchanged.
+  Selection order is stated for dispatch registries; the converter registry
+  keeps its own `TypeError` and `ConversionMethod` until it moves to
+  `distributions/_conversion.py` (IV.3).
+
+- **`ResolutionError` is a `LookupError`, and both new exceptions are public.**
+  `from probpipe import ResolutionError, MathematicalDomainError`. Rooting it
+  at `LookupError` puts it alongside the `KeyError` an unknown `method=` name
+  raises, so one `except LookupError` covers both ways a dispatch names nothing
+  that runs. It is deliberately not a `TypeError`: well-typed arguments can
+  still have no applicable method. Code that caught `TypeError` from
+  `condition_on` to mean "no method for this model" must catch
+  `ResolutionError` instead.
+
+- **`InferenceMethod` is a subclass of `UnaryDispatchMethod`, not an alias.**
+  `InferenceMethod is UnaryDispatchMethod` was true and is now false. It exists
+  to declare `exact = False` once for every built-in inference method, so a
+  third-party method subclassing `UnaryDispatchMethod` directly must declare
+  `exact` itself.
 
 - Names are set at construction and preserved by structural transforms;
   `with_name` is the sole renaming operation. The `name_is_auto` attribute,
