@@ -372,15 +372,9 @@ class TestConditionOn:
         conditioned = ops.condition_on(sjd, x=jnp.array(3.0))
         assert conditioned.fields == ("y",)
 
-    def test_condition_on_an_object_with_no_protocols_is_unresolved(self):
-        """No registered method dispatches on it, so resolution fails.
-
-        A ``LookupError``, so one ``except`` covers this and the ``KeyError``
-        an unknown ``method=`` name raises.
-        """
+    def test_condition_on_an_object_with_no_protocols_raises_resolution_error(self):
+        """No registered method dispatches on it, so resolution fails rather than typing."""
         with pytest.raises(ResolutionError):
-            ops.condition_on("not_a_distribution", jnp.array(1.0))
-        with pytest.raises(LookupError):
             ops.condition_on("not_a_distribution", jnp.array(1.0))
 
 

@@ -16,12 +16,12 @@ GP hyperparameter posteriors with Gaussian hyperpriors, latent-Gaussian
 models). When applicable, ESS dominates RWMH on the same target and is
 often competitive with NUTS at a fraction of the per-step cost.
 
-ProbPipe registers this method at priority 75: self-tuning, converging
-robustly without per-model hyperparameter selection, so it ranks above
-``blackjax_rwmh`` (55) and below the NUTS backends (82-88). Its
-``check()`` is strict — ``SimpleModel`` only, Gaussian prior detected
+ProbPipe registers this method at priority 75. It is self-tuning and
+converges robustly without per-model hyperparameter selection, so it
+ranks above ``blackjax_rwmh`` (55) and below the NUTS backends (82-88).
+Its ``check()`` is strict — ``SimpleModel`` only, Gaussian prior detected
 by :func:`_gaussian_prior_params`, observed data required — so
-auto-dispatch only fires when the kernel is genuinely applicable.
+auto-dispatch only fires when the kernel is applicable.
 """
 
 from __future__ import annotations
@@ -280,8 +280,8 @@ class BlackJAXESSMethod(InferenceMethod):
     """Elliptical slice sampling on top of ``blackjax.elliptical_slice``.
 
     Self-tuning, converging robustly without per-model hyperparameter
-    selection. Priority 75. The narrow Gaussian-prior
-    feasibility class is enforced in ``check()``, not by priority.
+    selection, at priority 75. The narrow Gaussian-prior feasibility
+    class is enforced in ``check()``, not by priority.
     """
 
     @property

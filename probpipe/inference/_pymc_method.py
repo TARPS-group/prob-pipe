@@ -110,10 +110,10 @@ class PyMCADVIMethod(InferenceMethod):
     def priority(self) -> int | None:
         # A parametric variational approximation, its quality bounded by
         # the mean-field family, registered at ``priority=None``,
-        # opt-in-only. ADVI is
-        # a deliberate bias-for-speed tradeoff the user should choose
-        # explicitly; auto-dispatching into it when (e.g.) ``pymc_nuts``
-        # happens to fail would surface VI silently in MCMC's place.
+        # opt-in-only. ADVI trades bias for speed, a tradeoff the user
+        # should choose explicitly; auto-dispatching into it when (e.g.)
+        # ``pymc_nuts`` happens to fail would silently substitute VI for
+        # MCMC.
         # Callers who want ADVI pin ``method="pymc_advi"``.
         return None
 

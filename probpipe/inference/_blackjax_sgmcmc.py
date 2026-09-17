@@ -18,9 +18,9 @@ convention — the per-step ``measure_key`` is passed through BlackJAX's
 opaque ``minibatch`` slot.
 
 SGLD ranks at 45, below every full-batch gradient method, and SGHMC is
-opt-in-only; the per-method ``check()``
-further requires ``batch_size=`` to be passed, so SGMCMC only applies
-when the user has opted into minibatching via
+opt-in-only. The per-method ``check()`` further requires ``batch_size=``
+to be passed, so SGMCMC only applies when the user has opted into
+minibatching via
 ``condition_on(model, observed, method="blackjax_sgld", batch_size=…)``
 or by selecting it explicitly. See the inference-method registry
 docs for the full priority convention.
@@ -249,10 +249,10 @@ class BlackJAXSGLDMethod(_BlackJAXSGMCMCMethod):
     """BlackJAX Stochastic Gradient Langevin Dynamics.
 
     Kernel: :func:`blackjax.sgld`. Refinement-based, so asymptotically
-    exact as the step-size schedule decays. Priority 45 — below every
-    full-batch gradient method, so it never wins automatic selection
-    over one; ``check()`` further requires the
-    user to pass ``batch_size=`` for SGLD to be applicable at all.
+    exact as the step-size schedule decays. Priority 45, below every
+    full-batch gradient method, so it never wins automatic selection over
+    one; ``check()`` further requires the user to pass ``batch_size=`` for
+    SGLD to be applicable at all.
     """
 
     _method_name = "blackjax_sgld"

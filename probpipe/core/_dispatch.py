@@ -18,7 +18,7 @@ change whether a method is exact, since exactness is not one of its inputs.
 
 Two failures are distinct. :class:`ResolutionError` means no available
 implementation under the requested controls; it is a ``LookupError``,
-alongside the ``KeyError`` an unknown method name raises.
+like the ``KeyError`` an unknown method name raises.
 :class:`MathematicalDomainError` means the mathematical operation is known
 to be undefined, a ``ValueError`` a method raises itself; the registry never
 converts one into the other.
@@ -56,12 +56,11 @@ class ResolutionError(LookupError):
     unresolved, or when a method selected by name is infeasible. The
     message names the methods tried and what each was missing.
 
-    A ``LookupError``, as is the ``KeyError`` an unknown method name
+    A ``LookupError``, like the ``KeyError`` an unknown method name
     raises, so ``except LookupError`` catches both ways a dispatch can
-    fail to name something that runs. It is deliberately not a
-    ``TypeError``: the arguments may be perfectly well typed and still
-    have no applicable method, as a model that no registered inference
-    method supports does.
+    fail to select a method. It is not a ``TypeError``: well-typed
+    arguments can still have no applicable method, as a model that no
+    registered inference method supports does.
     """
 
 
@@ -92,9 +91,9 @@ class MethodInfo:
     pending entries, so a reader never has to decide which of the two
     fields is authoritative.
 
-    ``exact`` is the method's guarantee for this call, ``None`` while it is
-    undetermined; the registry fills it from the method when the check left
-    it blank.
+    ``exact`` is the method's declared exactness. The registry sets it from
+    the declaration whatever a ``check`` returned, so it is ``None`` only in
+    a report that a method's ``check`` returned directly.
     """
 
     feasible: bool | None
@@ -197,8 +196,8 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
     """Arity-independent registry logic.
 
     Everything that does not depend on how many arguments select the method
-    lives here: registration, ranking, the opt-in filter, ``set_priorities``,
-    and the ``check`` / ``execute`` path. Three hooks are left to the arity
+    is implemented here: registration, ranking, the opt-in filter,
+    ``set_priorities``, and the ``check`` / ``execute`` path. Three hooks are left to the arity
     subclasses, and they are the only place arity enters:
 
     - :meth:`_cache_key` turns the positional arguments into the **dispatch
@@ -210,8 +209,8 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
       order can change;
     - :meth:`_format_key` renders a key for error messages.
 
-    Selection then reads only the list ``_find_methods`` returns, so a
-    subclass never touches ranking, the opt-in filter, or the errors.
+    Selection reads only the list ``_find_methods`` returns, so a subclass
+    reimplements none of ranking, the opt-in filter, or the errors.
 
     ``check`` with no positional arguments returns an infeasible
     :class:`MethodInfo` rather than raising, since there is nothing to
@@ -282,16 +281,16 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
         in automatic selection. Exactness is not an input, so an override never
         lifts an approximate method above an exact one.
         """
-        merged: dict[str, int | None] = dict(priorities or {})
+        overrides: dict[str, int | None] = dict(priorities or {})
         for name, value in kwargs.items():
-            if name in merged:
+            if name in overrides:
                 raise ValueError(f"Method {name!r} given both in the mapping and as a keyword")
-            merged[name] = value
-        for name in merged:
+            overrides[name] = value
+        for name in overrides:
             if name not in self._name_index:
                 available = ", ".join(sorted(self._name_index)) or "(none)"
                 raise KeyError(f"No method named {name!r}. Available: {available}")
-        for name, new_priority in merged.items():
+        for name, new_priority in overrides.items():
             old_priority = self._effective_priority(self._name_index[name])
             if (old_priority is None) != (new_priority is None):
                 direction = "out of opt-in-only" if old_priority is None else "into opt-in-only"
@@ -302,7 +301,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
                     UserWarning,
                     stacklevel=2,
                 )
-        self._priority_overrides.update(merged)
+        self._priority_overrides.update(overrides)
         self._sort_methods()
 
     # -- query --------------------------------------------------------------
@@ -316,28 +315,27 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
             raise KeyError(f"No method named {name!r}. Available: {available}") from None
 
     def list_methods(self) -> list[str]:
-        """Every registered method name, in rank order.
+        """Every registered method name, in selection order.
 
-        Ordered by the selection key: exact before approximate, then
-        priority, then registration order. This ranks the methods; it does
-        not forecast what a call runs. An opt-in-only method keeps its rank
-        position although automatic selection skips it, so an exact
-        opt-in-only method can be listed above the approximate method a
-        call would actually pick. Ask :meth:`check` what would run.
+        Exact before approximate, then priority, then registration order.
+        The listing ranks the methods; it does not say what a call runs. An
+        opt-in-only method keeps its position although automatic selection
+        skips it, so an exact opt-in-only method can be listed above the
+        approximate method a call would pick. :meth:`check` reports what
+        would run.
         """
-        return [m.name for m in self._methods]
+        return [method.name for method in self._methods]
 
-    def _is_auto_dispatchable(self, m: M) -> bool:
-        return self._effective_priority(m) is not None
+    def _is_auto_dispatchable(self, method: M) -> bool:
+        return self._effective_priority(method) is not None
 
     @staticmethod
-    def _passes_exact_only(m: M, exact_only: bool) -> bool:
-        return m.exact or not exact_only
+    def _passes_exact_only(method: M, exact_only: bool) -> bool:
+        return method.exact or not exact_only
 
     def _candidates(self, args: tuple[Any, ...], exact_only: bool) -> list[M]:
-        key = self._cache_key(args)
-        found = self._find_methods(key)
-        return [m for m in found if self._passes_exact_only(m, exact_only)]
+        admitting = self._find_methods(self._cache_key(args))
+        return [method for method in admitting if self._passes_exact_only(method, exact_only)]
 
     def check(
         self,
@@ -355,23 +353,23 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
         and its description names every method tried.
         """
         if method is not None:
-            m = self.get_method(method)
-            if not self._passes_exact_only(m, exact_only):
+            named = self.get_method(method)
+            if not self._passes_exact_only(named, exact_only):
                 return MethodInfo(
                     feasible=False,
                     method_name=method,
                     description=f"Method {method!r} is approximate and exact_only was requested",
-                    exact=m.exact,
+                    exact=named.exact,
                 )
-            return self._with_exact(m, m.check(*args, **kwargs))
+            return self._with_exact(named, named.check(*args, **kwargs))
         if not args:
             return MethodInfo(feasible=False, description="No arguments provided")
         tried: list[str] = []
-        for m in self._candidates(args, exact_only):
-            info = self._with_exact(m, m.check(*args, **kwargs))
+        for candidate in self._candidates(args, exact_only):
+            info = self._with_exact(candidate, candidate.check(*args, **kwargs))
             if info.feasible is not False:
                 return info
-            tried.append(f"{m.name}: {info.description or 'infeasible'}")
+            tried.append(f"{candidate.name}: {info.description or 'infeasible'}")
         return MethodInfo(
             feasible=False,
             description=self._no_method_message(args, tried, exact_only),
@@ -395,49 +393,47 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
         unchanged, and no other method is tried after it.
         """
         if method is not None:
-            m = self.get_method(method)
-            if not self._passes_exact_only(m, exact_only):
+            named = self.get_method(method)
+            if not self._passes_exact_only(named, exact_only):
                 raise ResolutionError(
                     f"Method {method!r} is approximate and exact_only was requested"
                 )
-            info = m.check(*args, **kwargs)
+            info = named.check(*args, **kwargs)
             if info.feasible is None:
                 raise ResolutionError(
                     f"Method {method!r} is unresolved; pending: {', '.join(info.pending)}"
                 )
             if not info.feasible:
                 raise ResolutionError(f"Method {method!r} is not applicable: {info.description}")
-            return m.execute(*args, **kwargs)
+            return named.execute(*args, **kwargs)
         if not args:
             raise TypeError("No arguments provided for dispatch")
         tried: list[str] = []
-        for m in self._candidates(args, exact_only):
-            info = m.check(*args, **kwargs)
+        for candidate in self._candidates(args, exact_only):
+            info = candidate.check(*args, **kwargs)
             if info.feasible is None:
                 raise ResolutionError(
-                    f"Method {m.name!r} is unresolved; pending: {', '.join(info.pending)}"
+                    f"Method {candidate.name!r} is unresolved; pending: {', '.join(info.pending)}"
                 )
             if info.feasible:
-                return m.execute(*args, **kwargs)
-            tried.append(f"{m.name}: {info.description or 'infeasible'}")
+                return candidate.execute(*args, **kwargs)
+            tried.append(f"{candidate.name}: {info.description or 'infeasible'}")
         raise ResolutionError(self._no_method_message(args, tried, exact_only))
 
     # -- internals ----------------------------------------------------------
 
     @staticmethod
-    def _with_exact(m: M, info: MethodInfo) -> MethodInfo:
-        """Name the method and state its exactness from the registration.
+    def _with_exact(method: M, info: MethodInfo) -> MethodInfo:
+        """Name the method and set ``exact`` from its declaration.
 
-        ``exact`` is taken from the method, never from the check, so the
-        reported value is the declared one whatever a check returns. A
-        method that sets it cannot make a report disagree with what
-        ``exact_only`` filters on, which reads the declaration too.
+        ``exact`` is taken from the method, never from the check, so a
+        report cannot disagree with what ``exact_only`` filters on.
         """
         return MethodInfo(
             feasible=info.feasible,
-            method_name=info.method_name or m.name,
+            method_name=info.method_name or method.name,
             description=info.description,
-            exact=m.exact,
+            exact=method.exact,
             pending=info.pending,
         )
 
@@ -485,10 +481,10 @@ class UnaryDispatchRegistry[M: UnaryDispatchMethod](BaseDispatchRegistry[M]):
     def _find_methods(self, key: type) -> list[M]:
         if key not in self._type_cache:
             self._type_cache[key] = [
-                m
-                for m in self._methods
-                if self._is_auto_dispatchable(m)
-                and any(issubclass(key, st) for st in m.supported_types())
+                method
+                for method in self._methods
+                if self._is_auto_dispatchable(method)
+                and any(issubclass(key, supported) for supported in method.supported_types())
             ]
         return self._type_cache[key]
 
@@ -513,16 +509,16 @@ class BinaryDispatchRegistry[M: BinaryDispatchMethod](BaseDispatchRegistry[M]):
 
     def _find_methods(self, key: tuple[type, type]) -> list[M]:
         if key not in self._type_cache:
-            tl, tr = key
+            left_type, right_type = key
             matches: list[M] = []
-            for m in self._methods:
-                if not self._is_auto_dispatchable(m):
+            for method in self._methods:
+                if not self._is_auto_dispatchable(method):
                     continue
-                st = m.supported_types()
-                if any(issubclass(tl, lt) for lt in st[0]) and any(
-                    issubclass(tr, rt) for rt in st[1]
+                supported_left, supported_right = method.supported_types()
+                if any(issubclass(left_type, left) for left in supported_left) and any(
+                    issubclass(right_type, right) for right in supported_right
                 ):
-                    matches.append(m)
+                    matches.append(method)
             self._type_cache[key] = matches
         return self._type_cache[key]
 

@@ -68,7 +68,7 @@ class _FakeBase:
         result: Any = None,
         raises: BaseException | None = None,
         check_raises: BaseException | None = None,
-        check_exact: bool | None = None,
+        reported_exact: bool | None = None,
         fill_info: bool = True,
     ):
         self._name = name
@@ -80,7 +80,7 @@ class _FakeBase:
         self._result = result
         self._raises = raises
         self._check_raises = check_raises
-        self._check_exact = check_exact
+        self._reported_exact = reported_exact
         self._fill_info = fill_info
         self.check_calls = 0
         self.execute_calls = 0
@@ -106,10 +106,12 @@ class _FakeBase:
                 feasible=self._feasible,
                 method_name=self._name,
                 description=self._description,
-                exact=self._check_exact,
+                exact=self._reported_exact,
                 pending=self._pending,
             )
-        return MethodInfo(feasible=self._feasible, exact=self._check_exact, pending=self._pending)
+        return MethodInfo(
+            feasible=self._feasible, exact=self._reported_exact, pending=self._pending
+        )
 
     def execute(self, *args: Any, **kwargs: Any) -> Any:
         self.execute_calls += 1
@@ -210,21 +212,21 @@ class TestExactnessDeclaration:
 
         assert Bare().priority is None
 
-    @pytest.mark.parametrize("declared", [True, False], ids=["exact", "approximate"])
-    def test_a_check_cannot_contradict_the_registration(self, arity: Arity, declared: bool):
+    @pytest.mark.parametrize("declared_exact", [True, False], ids=["exact", "approximate"])
+    def test_a_check_cannot_contradict_the_registration(self, arity: Arity, declared_exact: bool):
         """The report states the declared exactness, whatever the check returns.
 
-        Otherwise ``check`` could advertise an exactness that ``exact_only``,
-        which reads the declaration, would not honour.
+        Otherwise ``check`` could report an exactness that ``exact_only``,
+        which reads the declaration, would not honor.
         """
         reg = arity.registry()
-        reg.register(arity.method("m", exact=declared, check_exact=not declared))
-        assert reg.check(*arity.args).exact is declared
-        assert reg.check(*arity.args, method="m").exact is declared
+        reg.register(arity.method("m", exact=declared_exact, reported_exact=not declared_exact))
+        assert reg.check(*arity.args).exact is declared_exact
+        assert reg.check(*arity.args, method="m").exact is declared_exact
 
     def test_exact_only_agrees_with_what_check_reports(self, arity: Arity):
         reg = arity.registry()
-        reg.register(arity.method("liar", exact=False, check_exact=True))
+        reg.register(arity.method("misreporting", exact=False, reported_exact=True))
         assert reg.check(*arity.args).exact is False
         with pytest.raises(ResolutionError):
             reg.execute(*arity.args, exact_only=True)
@@ -298,14 +300,14 @@ class TestSelectionOrder:
         reg.register(arity.method("zero", priority=0, result="zero"))
         assert reg.execute(*arity.args) == "zero"
 
-    def test_list_methods_is_rank_order(self, arity: Arity):
+    def test_list_methods_is_selection_order_including_opt_in(self, arity: Arity):
         reg = arity.registry()
         reg.register(arity.method("a_approx", exact=False, priority=100))
         reg.register(arity.method("e_low", exact=True, priority=1))
         reg.register(arity.method("e_high", exact=True, priority=2))
         reg.register(arity.method("e_opt", exact=True, priority=None))
-        # The opt-in-only exact method keeps its rank position although no
-        # automatic selection reaches it: the listing ranks, it does not forecast.
+        # The opt-in-only exact method keeps its position although automatic
+        # selection never reaches it: the listing ranks, it does not say what runs.
         assert reg.list_methods() == ["e_high", "e_low", "e_opt", "a_approx"]
 
 
@@ -385,8 +387,8 @@ class TestSetPriorities:
     def test_an_aborted_override_does_not_warn(self, arity: Arity, kwargs, exc, match):
         """Nothing is applied, so nothing crossed opt-in to warn about.
 
-        The crossing value is what makes this discriminating: warning before
-        validating would fire here.
+        The new value crosses opt-in, so a warning emitted before validation
+        would be caught here.
         """
         reg = arity.registry()
         reg.register(arity.method("a", priority=None))
@@ -583,13 +585,7 @@ class TestExecute:
         assert fallback.execute_calls == 0
 
     def test_resolution_error_is_a_lookup_error_and_nothing_else(self):
-        """The hierarchy is part of the contract, so it is asserted here.
-
-        A ``LookupError`` alongside ``KeyError``, so one ``except`` covers
-        both ways a dispatch names nothing that runs. Deliberately not a
-        ``TypeError``: well-typed arguments can still have no applicable
-        method.
-        """
+        """The base class is part of the II.7 contract: it decides which ``except`` clauses catch the error."""
         assert issubclass(ResolutionError, LookupError)
         assert not issubclass(ResolutionError, TypeError)
         assert not issubclass(ResolutionError, ValueError)
@@ -752,26 +748,21 @@ class TestDesignAgreement:
             assert hasattr(_dispatch, name), f"{name} is declared in II.7 but not implemented"
 
     def test_declared_exception_bases_match(self):
-        """The base class is contract, not commentary.
-
-        Which builtin an error derives from decides what ``except`` clauses
-        catch it, so II.7 declaring it is only worth anything if this
-        compares it.
-        """
-        declared = re.findall(r"^class (\w*Error)\((\w+)\)", _design_block(), re.M)
-        assert declared, "no exception classes found in the II.7 block"
-        for name, base in declared:
-            implemented = getattr(_dispatch, name)
-            assert issubclass(implemented, getattr(builtins, base)), (name, base)
-            assert implemented.__mro__[1].__name__ == base, (
-                f"{name} derives from {implemented.__mro__[1].__name__}, II.7 says {base}"
+        """Which builtin an error derives from decides which ``except`` clauses catch it."""
+        declared_bases = re.findall(r"^class (\w*Error)\((\w+)\)", _design_block(), re.M)
+        assert declared_bases, "no exception classes found in the II.7 block"
+        for name, base in declared_bases:
+            implemented_class = getattr(_dispatch, name)
+            assert issubclass(implemented_class, getattr(builtins, base)), (name, base)
+            assert implemented_class.__mro__[1].__name__ == base, (
+                f"{name} derives from {implemented_class.__mro__[1].__name__}, II.7 says {base}"
             )
 
     def test_every_public_name_is_declared(self):
-        """One direction is not enough: a name II.7 dropped must not survive."""
-        declared = set(re.findall(r"^class (\w+)", _design_block(), re.M))
-        exported = {n for n in _dispatch.__all__ if n[0].isupper()}
-        assert exported <= declared, exported - declared
+        """A name II.7 has dropped must not survive in ``__all__``."""
+        declared_names = set(re.findall(r"^class (\w+)", _design_block(), re.M))
+        exported_names = {name for name in _dispatch.__all__ if name[0].isupper()}
+        assert exported_names <= declared_names, exported_names - declared_names
 
     def test_method_info_fields_match(self):
         block = _design_block()
@@ -795,40 +786,47 @@ class TestDesignAgreement:
         block = _design_block()
         block = block[block.index("class BaseDispatchRegistry") :]
         for method_name in ("set_priorities", "execute", "check"):
-            declared = re.search(rf"def {method_name}\((.*?)\)\s*->", block, re.S)
-            assert declared is not None, method_name
-            raw = [
-                p.strip()
-                for p in _split_top_level(declared.group(1).replace("\n", " "))
-                if p.strip()
+            declared_signature = re.search(rf"def {method_name}\((.*?)\)\s*->", block, re.S)
+            assert declared_signature is not None, method_name
+            declared_entries = [
+                entry.strip()
+                for entry in _split_top_level(declared_signature.group(1).replace("\n", " "))
+                if entry.strip()
             ]
             declared_params = [
-                p.split(":")[0].split("=")[0].strip().lstrip("*") for p in raw if p != "/"
+                entry.split(":")[0].split("=")[0].strip().lstrip("*")
+                for entry in declared_entries
+                if entry != "/"
             ]
             signature = inspect.signature(getattr(BaseDispatchRegistry, method_name))
-            implemented = list(signature.parameters)
-            assert declared_params == implemented, (method_name, declared_params, implemented)
+            implemented_params = list(signature.parameters)
+            assert declared_params == implemented_params, (
+                method_name,
+                declared_params,
+                implemented_params,
+            )
 
             # Defaults decide what a bare call does, so they are compared too.
-            for entry in raw:
+            for entry in declared_entries:
                 if "=" not in entry or entry == "/":
                     continue
-                param = entry.split(":")[0].split("=")[0].strip().lstrip("*")
+                param_name = entry.split(":")[0].split("=")[0].strip().lstrip("*")
                 declared_default = entry.split("=", 1)[1].strip()
-                actual = signature.parameters[param].default
-                assert str(actual) == declared_default or repr(actual) == declared_default, (
+                implemented_default = signature.parameters[param_name].default
+                assert declared_default in (str(implemented_default), repr(implemented_default)), (
                     method_name,
-                    param,
+                    param_name,
                     declared_default,
-                    actual,
+                    implemented_default,
                 )
 
             # A positional-only marker in II.7 must be one in the implementation.
-            declared_positional_only = "/" in raw
-            actual_positional_only = any(
-                q.kind is inspect.Parameter.POSITIONAL_ONLY for q in signature.parameters.values()
+            declared_positional_only = "/" in declared_entries
+            implemented_positional_only = any(
+                parameter.kind is inspect.Parameter.POSITIONAL_ONLY
+                for parameter in signature.parameters.values()
             )
-            assert declared_positional_only == actual_positional_only, method_name
+            assert declared_positional_only == implemented_positional_only, method_name
 
 
 def _split_top_level(text: str) -> list[str]:
