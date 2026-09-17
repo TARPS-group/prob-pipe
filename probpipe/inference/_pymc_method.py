@@ -28,11 +28,11 @@ class PyMCNutsMethod(InferenceMethod):
 
     @property
     def priority(self) -> int:
-        # Tier 81-90 (optimised backend; native PyMC NUTS, tailored to
-        # PyMCModel). At 82 alongside ``cmdstan_nuts``; the two apply to
-        # disjoint model classes so the tie is documentary. Below
-        # ``nutpie_nuts`` (88; Rust gradients are faster on PyMCModel
-        # too when nutpie is installed).
+        # An optimised backend: native PyMC NUTS, tailored to PyMCModel.
+        # At 82 alongside ``cmdstan_nuts``; the two apply to disjoint
+        # model classes so the tie is documentary. Below ``nutpie_nuts``
+        # (88; Rust gradients are faster on PyMCModel too when nutpie is
+        # installed).
         return 82
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
@@ -108,9 +108,9 @@ class PyMCADVIMethod(InferenceMethod):
 
     @property
     def priority(self) -> int | None:
-        # Tier 21-30 by algorithm category (parametric variational
-        # approximation; quality bounded by the mean-field family), but
-        # registered at ``priority=None``, opt-in-only. ADVI is
+        # A parametric variational approximation, its quality bounded by
+        # the mean-field family, registered at ``priority=None``,
+        # opt-in-only. ADVI is
         # a deliberate bias-for-speed tradeoff the user should choose
         # explicitly; auto-dispatching into it when (e.g.) ``pymc_nuts``
         # happens to fail would surface VI silently in MCMC's place.

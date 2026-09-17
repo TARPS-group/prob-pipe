@@ -42,9 +42,9 @@ class CmdStanNutsMethod(InferenceMethod):
 
     @property
     def priority(self) -> int:
-        # Tier 81-90 (optimised backend; Stan-compiled NUTS via the
-        # cmdstanpy subprocess interface). Below nutpie_nuts (85) due
-        # to subprocess overhead.
+        # An optimised backend: Stan-compiled NUTS through the cmdstanpy
+        # subprocess interface. Below ``nutpie_nuts`` (88) and
+        # ``blackjax_nuts`` (85) because of the subprocess overhead.
         return 82
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:

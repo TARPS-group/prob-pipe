@@ -17,8 +17,8 @@ kernel via the ``grad_estimator(position, measure_key)`` closure
 convention — the per-step ``measure_key`` is passed through BlackJAX's
 opaque ``minibatch`` slot.
 
-Priorities (45 / 42) sit in the refinement-based MC tier (1–50, above
-parametric and below all exact methods); the per-method ``check()``
+SGLD ranks at 45, below every full-batch gradient method, and SGHMC is
+opt-in-only; the per-method ``check()``
 further requires ``batch_size=`` to be passed, so SGMCMC only applies
 when the user has opted into minibatching via
 ``condition_on(model, observed, method="blackjax_sgld", batch_size=…)``
@@ -248,10 +248,10 @@ def _run_sgmcmc_loop(
 class BlackJAXSGLDMethod(_BlackJAXSGMCMCMethod):
     """BlackJAX Stochastic Gradient Langevin Dynamics.
 
-    Kernel: :func:`blackjax.sgld`. Tier 41-50 (refinement-based:
-    asymptotically exact as the step-size schedule decays). Priority
-    45 — sits below every exact method, so does not auto-win over
-    full-batch gradient methods; ``check()`` further requires the
+    Kernel: :func:`blackjax.sgld`. Refinement-based, so asymptotically
+    exact as the step-size schedule decays. Priority 45 — below every
+    full-batch gradient method, so it never wins automatic selection
+    over one; ``check()`` further requires the
     user to pass ``batch_size=`` for SGLD to be applicable at all.
     """
 
@@ -267,9 +267,9 @@ class BlackJAXSGHMCMethod(_BlackJAXSGMCMCMethod):
 
     Kernel: :func:`blackjax.sghmc`. Accepts the additional kwargs
     ``num_integration_steps`` (default 10), ``alpha`` (default 0.01),
-    ``beta`` (default 0.0). Tier 41-50 by algorithm category
-    (refinement-based: asymptotically exact as the step-size schedule
-    decays), but registered at ``priority=None``, opt-in-only.
+    ``beta`` (default 0.0). Refinement-based like SGLD, so asymptotically
+    exact as the step-size schedule decays, but registered at
+    ``priority=None``, opt-in-only.
     Reasoning: SGHMC's ``check()`` is identical to ``blackjax_sgld``
     (same ``SimpleModel`` + ``ConditionallyIndependentLikelihood`` +
     ``batch_size=`` gate); with SGLD at 45, SGHMC is structurally

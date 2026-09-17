@@ -194,10 +194,9 @@ class NutpieNutsMethod(InferenceMethod):
 
     @property
     def priority(self) -> int:
-        # Tier 81-90 (optimised backend; Rust-implemented NUTS with
-        # in-process gradients, faster than every other registered
-        # NUTS backend on its applicable model class). Top of the
-        # tier at 88.
+        # An optimised backend: Rust-implemented NUTS with in-process
+        # gradients, faster than every other registered NUTS backend on
+        # its applicable model class, so it ranks above all of them at 88.
         return 88
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:

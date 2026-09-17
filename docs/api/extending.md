@@ -73,7 +73,7 @@ itself, not an instance.
 `InferenceMethod` subclasses register with
 `inference_method_registry` and declare `supported_types`, whether they are
 `exact`, a `priority`, and `check()` / `execute()` methods. When
-[`condition_on`](operations.md#conditioning) runs, the registry walks the
+[`condition_on`](operations.md#conditioning) runs, the registry tries the
 methods in selection order and runs the first whose `check()` reports
 feasibility. The built-in methods table is on
 [Modeling and inference → Inference methods](inference.md#inference-methods).
@@ -132,7 +132,7 @@ method relative to the nearest of these.
 #### Setting `priority` on an `InferenceMethod` subclass
 
 ```python
-class MyNutsMethod(InferenceMethod):
+class MySelfTuningMethod(InferenceMethod):
     @property
     def priority(self) -> int | None:
         # Self-tuning and broadly applicable: beside blackjax_elliptical_slice.

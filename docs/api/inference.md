@@ -27,7 +27,7 @@ predictive checks. Registering a new inference method is documented under
 ## Inference methods
 
 [`condition_on`](operations.md#conditioning) dispatches through the
-inference-method registry: methods are walked in selection order, exact
+inference-method registry: methods are tried in selection order, exact
 methods before approximate ones and then by priority, and the first whose
 `check()` returns `feasible=True` runs. Pass `method="<name>"` to override
 the auto-selection; `inference_method_registry.set_priorities(...)` reorders

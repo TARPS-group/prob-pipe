@@ -641,10 +641,10 @@ def rwmh(
 class BlackJAXRWMHMethod(InferenceMethod):
     """Gradient-free RWMH on top of BlackJAX's ``normal_random_walk``.
 
-    Tier 51-60 (slow per effective sample in high dimensions even when
-    tuned). Priority 55. Auto-dispatched when no gradient-based method
-    passes ``check()`` — e.g., for log-densities that are not
-    JAX-traceable — or when the user pins ``method="blackjax_rwmh"``.
+    Slow per effective sample in high dimensions even when tuned, so it
+    ranks at 55, below every gradient-based method. Selected when none of
+    them passes ``check()`` — for example a log-density that is not
+    JAX-traceable — or when the caller pins ``method="blackjax_rwmh"``.
     """
 
     @property

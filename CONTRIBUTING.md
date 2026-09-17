@@ -614,7 +614,7 @@ uv build packaging/probpipe   # probpipe (metapackage)
 `condition_on` dispatches inference via a pluggable **inference method
 registry** (`inference_method_registry`).  Each method declares
 `supported_types`, whether it is `exact`, a `priority`, and `check()`/`execute()`
-methods. The registry walks methods in selection order; the first
+methods. The registry tries methods in selection order; the first
 whose `check()` returns `feasible=True` wins.
 
 Models no longer implement `_condition_on` directly — conditioning is

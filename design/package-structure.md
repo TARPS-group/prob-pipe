@@ -154,7 +154,7 @@ Every module with a design contract, with where it goes; the target contracts ab
 | `core/_broadcast_distributions.py` | split: `BroadcastDistribution` is retired, the lift's joint result being an `EmpiricalDistribution` (V.10, VII.2); the row aggregator `_make_stack` to `functions/_result.py` (V.10); the mixture and record marginals to `operations/_marginal.py` and `families/_mixture.py` (VI.8, VII.3) |
 | `core/_empirical.py` | `distributions/_empirical.py` |
 | `inference/_registry.py` (the registry object, today imported upward by `core/ops.py`) | `operations/_condition.py`; the methods stay in `inference/`, and the edge points downward |
-| `core/named_tree.py`, `core/tracked.py`, `core/provenance.py`, `core/_registry.py` | `core/`, one module per II section; `Annotated` folds into `TrackedTerm` (II.4) |
+| `core/named_tree.py`, `core/tracked.py`, `core/provenance.py`, `core/_dispatch.py` | `core/`, one module per II section; `Annotated` folds into `TrackedTerm` (II.4) |
 | `core/_numeric_array.py`, `core/_opaque.py`, `core/record.py`, and their batch modules | `values/`, one module per III section |
 | `core/event_template.py`, `core/constraints.py` | split in place: `core/_specs.py`, `core/_record_spec.py`, `core/_numeric.py`, `core/_constraints.py` (II.1–II.3, III.5) |
 | `record/design.py` | `designs/`, generalized from `RecordBatch` to any element spec |
