@@ -197,8 +197,8 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
 
     Everything that does not depend on how many arguments select the method
     is implemented here: registration, ranking, the opt-in filter,
-    ``set_priorities``, and the ``check`` / ``execute`` path. Three hooks are left to the arity
-    subclasses, and they are the only place arity enters:
+    ``set_priorities``, and the ``check`` / ``execute`` path. Three hooks are
+    left to the arity subclasses, and they are the only place arity enters:
 
     - :meth:`_cache_key` turns the positional arguments into the **dispatch
       key**, the type or types a method's ``supported_types`` is matched
