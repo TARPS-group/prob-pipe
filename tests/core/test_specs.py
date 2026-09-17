@@ -296,6 +296,18 @@ class TestSpecKinds:
         assert schema["function"] == FunctionSpec(RecordSpec(x=()), RecordSpec(y=()))
         assert schema["raw_callable"] == FunctionSpec()
 
+    def test_empirical_without_event_template_remains_a_record_field(self):
+        from probpipe import EmpiricalDistribution
+
+        law = EmpiricalDistribution(["a", "b"], name="law")
+        schema = RecordSpec.infer_from({"law": law})
+        assert schema["law"] == OpaqueSpec()
+
+        record = Record("r", law=law)
+        assert record["law"] is law
+        assert record.spec == schema
+        assert schema.is_valid(record)
+
     def test_numeric_batch_field_keeps_its_batch_kind(self):
         from probpipe import NumericArrayBatch
 

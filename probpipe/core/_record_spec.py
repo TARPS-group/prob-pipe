@@ -441,17 +441,17 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
         - A **mapping** of named fields (e.g. a ``Record``'s field dict) is
           inferred field by field: a nested ``Record`` field contributes its
           own schema; other tracked fields retain their specs. Distributions
-          and callables become their kind specs, a numeric array or scalar
-          becomes a :class:`NumericArraySpec` of its shape, and remaining raw
-          values become :class:`OpaqueSpec`. The result auto-promotes to a
-          :class:`NumericRecordSpec` when every field is numeric.
+          with a record event schema and callables become their kind specs;
+          a numeric array or scalar becomes a :class:`NumericArraySpec` of its
+          shape, and remaining raw values become :class:`OpaqueSpec`. The result
+          auto-promotes to a :class:`NumericRecordSpec` when every field is numeric.
 
         This is the **fallback** for wrapping a raw value that has no template
         yet (e.g. at a workflow boundary); for a value you already hold, read
         its authoritative ``event_template`` directly. Inference is lossy — it
         cannot recover an untracked array's declared ``dtype`` / ``support``
         constraints or opaque metadata. A tracked field keeps its own spec;
-        distribution and callable fields retain their respective kinds. A Python ``list`` /
+        distributions without a declaration remain opaque. A Python ``list`` /
         ``tuple`` leaf (no ``.shape`` / ``.dtype``) is treated as opaque even if
         it holds numbers; wrap it in
         ``np.asarray`` / ``jnp.asarray`` first for a numeric leaf.
@@ -494,7 +494,13 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
             if isinstance(val, Record):
                 return val.event_template
             if isinstance(val, Distribution):
-                return DistributionSpec(val.event_template)
+                # Temporary legacy-distribution bridge (#448 A1/E2). Remove this
+                # branch once every Distribution carries its own spec; the
+                # TrackedTerm path above must then supply the declaration.
+                template = getattr(val, "event_template", None)
+                if isinstance(template, RecordSpec):
+                    return DistributionSpec(template)
+                return OpaqueSpec()
             if callable(val):
                 if isinstance(val, TrackedTerm):
                     return FunctionSpec(
