@@ -349,7 +349,7 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
             )
         for name, spec in self._tree.items():
             child_path = f"{path}{_PATH_SEP}{name}" if path else name
-            _unify_spec_with_value(spec, children[name], bindings, child_path)
+            spec._bind_dims_from_value(children[name], bindings, child_path)
 
     def _bind_dims_from_spec(self, actual: TermSpec, bindings: dict[str, int], path: str) -> bool:
         if not isinstance(actual, RecordSpec):
@@ -651,14 +651,6 @@ class NumericRecordSpec(RecordSpec, NumericSpec):
 # ---------------------------------------------------------------------------
 # Private symbolic-dimension unification
 # ---------------------------------------------------------------------------
-
-
-def _unify_spec_with_value(spec: TermSpec, value: Any, bindings: dict[str, int], path: str) -> None:
-    """Validate a value and collect its dimensions without rebuilding the spec."""
-    if isinstance(spec, (NumericArraySpec, RecordSpec)) or spec.free_dims:
-        spec._bind_dims_from_value(value, bindings, path)
-    elif not spec.is_valid(value):
-        raise ValueError(f"{path} does not conform to its field spec ({spec!r})")
 
 
 def _unify_event_template_with_value(

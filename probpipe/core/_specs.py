@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from ._kind_specs import DistributionSpec, FunctionSpec
-from ._record_spec import NumericRecordSpec, RecordSpec, _unify_spec_with_value
+from ._record_spec import NumericRecordSpec, RecordSpec
 from ._spec_base import (
     NumericArraySpec,
     NumericSpec,
@@ -119,7 +119,7 @@ class InputSpec(Mapping[str, TermSpec]):
             raise ValueError(f"InputSpec slots {list(self)} do not match values {list(value)}")
         bindings: dict[str, int] = {}
         for name, spec in self._slots.items():
-            _unify_spec_with_value(spec, value[name], bindings, f"InputSpec/{name}")
+            spec._bind_dims_from_value(value[name], bindings, f"InputSpec/{name}")
         return InputSpec(
             {name: spec._substitute_dims(bindings) for name, spec in self._slots.items()}
         )

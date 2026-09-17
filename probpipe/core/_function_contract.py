@@ -17,7 +17,6 @@ from ._record_batch import RecordBatch
 from ._record_spec import (
     _concretize_event_template,
     _unify_event_template_with_value,
-    _unify_spec_with_value,
 )
 from ._spec_base import _full_array_shape_or_none, _unify_specs
 from ._specs import NumericArraySpec, RecordSpec, TermSpec
@@ -186,8 +185,8 @@ def _validate_declared_input_value(
 ) -> dict[str, int]:
     child = input_template.children[parameter_name]
     resolved = dict(bindings or {})
-    _unify_spec_with_value(
-        child, value, resolved, f"Function {function_name!r} {source}/{parameter_name}"
+    child._bind_dims_from_value(
+        value, resolved, f"Function {function_name!r} {source}/{parameter_name}"
     )
     return resolved
 
@@ -269,7 +268,7 @@ def _bind_planned_function_inputs(
             )
             _unify_specs(expected, actual, bindings, path)
         else:
-            _unify_spec_with_value(expected, values[name], bindings, path)
+            expected._bind_dims_from_value(values[name], bindings, path)
     return input_template._substitute_dims(bindings), bindings
 
 

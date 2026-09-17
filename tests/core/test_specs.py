@@ -442,6 +442,65 @@ class TestRecordValueValidation:
         np.testing.assert_allclose(jax.vmap(total)(rows), [3.0, 12.0], rtol=0, atol=0)
 
 
+class TestNestedValueBinding:
+    @pytest.fixture(params=["direct", "record", "nested_record", "input"])
+    def wrap_binding(self, request):
+        def wrap(spec, value):
+            match request.param:
+                case "direct":
+                    return spec, value
+                case "record":
+                    return RecordSpec(value=spec), {"value": value}
+                case "nested_record":
+                    return RecordSpec(group=RecordSpec(value=spec)), {"group": {"value": value}}
+                case "input":
+                    return InputSpec(value=spec), {"value": value}
+
+        return wrap
+
+    @pytest.mark.parametrize("kind", ["function", "distribution"])
+    @pytest.mark.parametrize("size", [3, 4])
+    def test_fixed_and_concretized_specs_follow_the_same_binding_rules(
+        self, wrap_binding, kind, size
+    ):
+        from probpipe import EmpiricalDistribution, Function
+
+        if kind == "function":
+            spec_type = FunctionSpec
+            reference = Function(func=lambda x: x, input_template=RecordSpec(x=(3,)))
+            actual = Function(func=lambda x: x, input_template=RecordSpec(x=(size,)))
+        else:
+            spec_type = DistributionSpec
+            reference = EmpiricalDistribution(np.zeros((2, 3)), name="x")
+            actual = EmpiricalDistribution(np.zeros((2, size)), name="x")
+
+        # The live declaration omits dtype; binding must retain the expected dtype.
+        symbolic = spec_type(RecordSpec(x=NumericArraySpec(("n",), dtype="float64")))
+        fixed = spec_type(RecordSpec(x=NumericArraySpec((3,), dtype="float64")))
+        declared, value = wrap_binding(symbolic, actual)
+        expected, _ = wrap_binding(symbolic.with_dims(n=size), actual)
+        bound = declared.bind_dims_from_value(value)
+        assert bound == expected
+        assert bound.bind_dims_from_value(value) == bound
+
+        for spec in (fixed, symbolic.with_dims(n=3), symbolic.bind_dims_from_value(reference)):
+            assert spec == fixed
+            declared, value = wrap_binding(spec, actual)
+            if size == 3:
+                assert declared.bind_dims_from_value(value) == declared
+            else:
+                with pytest.raises(ValueError, match="dimension 4, expected 3"):
+                    declared.bind_dims_from_value(value)
+        assert symbolic.free_dims == {"n"}
+
+    def test_missing_callable_declarations_remain_unspecified(self, wrap_binding):
+        symbolic = FunctionSpec(RecordSpec(x=("n",)))
+        for spec in (symbolic, symbolic.with_dims(n=3)):
+            declared, value = wrap_binding(spec, lambda x: x)
+            assert declared.bind_dims_from_value(value) == declared
+        assert symbolic.free_dims == {"n"}
+
+
 class TestNestedSpecBinding:
     @pytest.fixture(params=["direct", "record", "nested_record", "input", "batch"])
     def wrap_spec(self, request):
