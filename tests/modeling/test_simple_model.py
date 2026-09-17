@@ -18,6 +18,7 @@ from probpipe import (
     EventTemplate,
     MultivariateNormal,
     Record,
+    ResolutionError,
     SimpleModel,
     SupportsLogProb,
     SupportsSampling,
@@ -211,9 +212,7 @@ class TestSimpleModelConditioningPaths:
         assert isinstance(result, ApproximateDistribution)
 
     def test_condition_on_bad_method(self, model, data):
-        with pytest.raises(KeyError):
-            from probpipe import condition_on
-
+        with pytest.raises(ResolutionError, match="nonexistent_method"):
             condition_on(model, data, method="nonexistent_method")
 
     def test_condition_on_explicit_init(self, model, data):
