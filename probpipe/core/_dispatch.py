@@ -16,10 +16,15 @@ That is the default, so registering a method never changes what runs until
 a contributor ranks it. ``set_priorities`` re-ranks at runtime; it cannot
 change whether a method is exact, since exactness is not one of its inputs.
 
+A method's ``check`` returns a :class:`Feasibility`: whether the call is
+feasible, why not, and which declarations are pending. The registry's
+``check`` returns a :class:`MethodInfo`, which adds the selected method's
+name and declared exactness from the registration, so a method never
+reports its own exactness.
+
 Two failures are distinct. :class:`ResolutionError` means no available
-implementation under the requested controls; it is a ``LookupError``,
-like the ``KeyError`` an unknown method name raises.
-:class:`MathematicalDomainError` means the mathematical operation is known
+implementation under the requested controls, including a ``method=`` name
+that is not registered. :class:`MathematicalDomainError` means the mathematical operation is known
 to be undefined, a ``ValueError`` a method raises itself; the registry never
 converts one into the other.
 
@@ -40,6 +45,7 @@ __all__ = [
     "BaseDispatchRegistry",
     "BinaryDispatchMethod",
     "BinaryDispatchRegistry",
+    "Feasibility",
     "MathematicalDomainError",
     "MethodInfo",
     "ResolutionError",
@@ -48,19 +54,16 @@ __all__ = [
 ]
 
 
-class ResolutionError(LookupError):
+class ResolutionError(Exception):
     """No available implementation under the requested controls.
 
     Raised by a registry when no registered method is feasible for the
     arguments, when the first candidate that is not infeasible is still
-    unresolved, or when a method selected by name is infeasible. The
-    message names the methods tried and what each was missing.
-
-    A ``LookupError``, like the ``KeyError`` an unknown method name
-    raises, so ``except LookupError`` catches both ways a dispatch can
-    fail to select a method. It is not a ``TypeError``: well-typed
-    arguments can still have no applicable method, as a model that no
-    registered inference method supports does.
+    unresolved, or when the method a caller named is infeasible or not
+    registered. The message names the methods tried and what each was
+    missing. It is not a ``TypeError``: well-typed arguments can still
+    have no applicable method, as a model that no registered inference
+    method supports does.
     """
 
 
@@ -74,7 +77,7 @@ class MathematicalDomainError(ValueError):
 
 
 @dataclass(frozen=True)
-class MethodInfo:
+class Feasibility:
     """What a method's ``check`` reports about one call.
 
     ``feasible`` has three values. ``True``: the method applies. ``False``:
@@ -91,27 +94,44 @@ class MethodInfo:
     pending entries, so a reader never has to decide which of the two
     fields is authoritative.
 
-    ``exact`` is the method's declared exactness. The registry sets it from
-    the declaration whatever a ``check`` returned, so it is ``None`` only in
-    a report that a method's ``check`` returned directly.
+    A method reports only what it alone can know. Its name and whether it
+    is exact are declared at registration, and the registry adds them in
+    the :class:`MethodInfo` it returns.
     """
 
     feasible: bool | None
-    method_name: str = ""
     description: str = ""
-    exact: bool | None = None
     pending: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         if self.feasible is None and not self.pending:
-            raise ValueError("an unresolved MethodInfo must name its pending declarations")
+            raise ValueError("an unresolved Feasibility must name its pending declarations")
         if self.feasible is not None and self.pending:
-            raise ValueError("only an unresolved MethodInfo carries pending declarations")
+            raise ValueError("only an unresolved Feasibility carries pending declarations")
 
     @property
     def unresolved(self) -> bool:
         """``True`` when feasibility awaits declarations not yet available."""
         return self.feasible is None
+
+
+@dataclass(frozen=True)
+class MethodInfo(Feasibility):
+    """A registry's report: a method's feasibility and what its registration declares.
+
+    ``method_name`` and ``exact`` come from the registration, never from
+    the method's ``check``. Both are ``None`` exactly when no method was
+    selected: the infeasible report that names every method tried, and the
+    no-argument probe.
+    """
+
+    method_name: str | None = None
+    exact: bool | None = None
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if (self.method_name is None) != (self.exact is None):
+            raise ValueError("method_name and exact are set together or not at all")
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +165,7 @@ class BaseDispatchMethod(ABC):
         ...
 
     @abstractmethod
-    def check(self, *args: Any, **kwargs: Any) -> MethodInfo:
+    def check(self, *args: Any, **kwargs: Any) -> Feasibility:
         """Probe feasibility without significant computation."""
         ...
 
@@ -228,6 +248,9 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
 
     # -- registration -------------------------------------------------------
 
+    def _available(self) -> str:
+        return ", ".join(sorted(self._name_index)) or "(none)"
+
     def register(self, method: M) -> None:
         """Register a method.
 
@@ -288,8 +311,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
             overrides[name] = value
         for name in overrides:
             if name not in self._name_index:
-                available = ", ".join(sorted(self._name_index)) or "(none)"
-                raise KeyError(f"No method named {name!r}. Available: {available}")
+                raise KeyError(f"No method named {name!r}. Available: {self._available()}")
         for name, new_priority in overrides.items():
             old_priority = self._effective_priority(self._name_index[name])
             if (old_priority is None) != (new_priority is None):
@@ -311,8 +333,20 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
         try:
             return self._name_index[name]
         except KeyError:
-            available = ", ".join(sorted(self._name_index)) or "(none)"
-            raise KeyError(f"No method named {name!r}. Available: {available}") from None
+            raise KeyError(f"No method named {name!r}. Available: {self._available()}") from None
+
+    def _named(self, name: str) -> M:
+        """The method a caller requested with ``method=``.
+
+        Unlike :meth:`get_method`, a name that is not registered is a
+        dispatch that cannot resolve, so it raises :class:`ResolutionError`.
+        """
+        try:
+            return self._name_index[name]
+        except KeyError:
+            raise ResolutionError(
+                f"No method named {name!r}. Available: {self._available()}"
+            ) from None
 
     def list_methods(self) -> list[str]:
         """Every registered method name, in selection order.
@@ -347,26 +381,28 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
         """Report which method would run, without running anything.
 
         Returns the first candidate in selection order whose ``check`` is
-        feasible or unresolved; an unresolved candidate above a feasible one
-        is reported as unresolved, since a probe may not claim a method that
-        may not run. When no candidate is feasible the result is infeasible
-        and its description names every method tried.
+        feasible or unresolved, named and with its declared exactness; an
+        unresolved candidate above a feasible one is reported as unresolved,
+        since a probe may not claim a method that may not run. When no
+        candidate is feasible the result is infeasible, names no method, and
+        its description names every method tried. A ``method=`` name that is
+        not registered raises :class:`ResolutionError`.
         """
         if method is not None:
-            named = self.get_method(method)
+            named = self._named(method)
             if not self._passes_exact_only(named, exact_only):
                 return MethodInfo(
                     feasible=False,
-                    method_name=method,
                     description=f"Method {method!r} is approximate and exact_only was requested",
+                    method_name=method,
                     exact=named.exact,
                 )
-            return self._with_exact(named, named.check(*args, **kwargs))
+            return self._report(named, named.check(*args, **kwargs))
         if not args:
             return MethodInfo(feasible=False, description="No arguments provided")
         tried: list[str] = []
         for candidate in self._candidates(args, exact_only):
-            info = self._with_exact(candidate, candidate.check(*args, **kwargs))
+            info = self._report(candidate, candidate.check(*args, **kwargs))
             if info.feasible is not False:
                 return info
             tried.append(f"{candidate.name}: {info.description or 'infeasible'}")
@@ -387,13 +423,13 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
         Auto-selection runs the first feasible candidate in selection order.
         A candidate that is unresolved raises :class:`ResolutionError`
         naming its pending requirements, as does the absence of any feasible
-        candidate. A named method that is infeasible or below the requested
-        exactness raises :class:`ResolutionError`; an unknown name raises
-        ``KeyError``. An exception raised by the method itself propagates
-        unchanged, and no other method is tried after it.
+        candidate. A named method that is infeasible, below the requested
+        exactness, or not registered raises :class:`ResolutionError`. An
+        exception raised by the method itself propagates unchanged, and no
+        other method is tried after it.
         """
         if method is not None:
-            named = self.get_method(method)
+            named = self._named(method)
             if not self._passes_exact_only(named, exact_only):
                 raise ResolutionError(
                     f"Method {method!r} is approximate and exact_only was requested"
@@ -423,18 +459,18 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
     # -- internals ----------------------------------------------------------
 
     @staticmethod
-    def _with_exact(method: M, info: MethodInfo) -> MethodInfo:
-        """Name the method and set ``exact`` from its declaration.
+    def _report(method: M, feasibility: Feasibility) -> MethodInfo:
+        """The method's feasibility with its name and declared exactness.
 
-        ``exact`` is taken from the method, never from the check, so a
-        report cannot disagree with what ``exact_only`` filters on.
+        ``exact`` is read from the registration, so a report cannot disagree
+        with what ``exact_only`` filters on.
         """
         return MethodInfo(
-            feasible=info.feasible,
-            method_name=info.method_name or method.name,
-            description=info.description,
+            feasible=feasibility.feasible,
+            description=feasibility.description,
+            pending=feasibility.pending,
+            method_name=method.name,
             exact=method.exact,
-            pending=info.pending,
         )
 
     def _no_method_message(self, args: tuple[Any, ...], tried: list[str], exact_only: bool) -> str:

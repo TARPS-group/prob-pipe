@@ -9,6 +9,7 @@ first feasible method in selection order, or the user names one through
 from __future__ import annotations
 
 from ..core._dispatch import (  # noqa: F401 (re-export)
+    Feasibility,
     MethodInfo,
     UnaryDispatchMethod,
     UnaryDispatchRegistry,

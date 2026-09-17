@@ -155,6 +155,8 @@ sharp failure modes, or exists only for `method=` testing — leaves
 
 ::: probpipe.core._dispatch.BinaryDispatchMethod
 
+::: probpipe.core._dispatch.Feasibility
+
 ::: probpipe.core._dispatch.MethodInfo
 
 ::: probpipe.core._dispatch.ResolutionError

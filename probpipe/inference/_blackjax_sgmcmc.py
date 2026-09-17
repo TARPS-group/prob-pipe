@@ -34,7 +34,7 @@ import blackjax
 import jax
 import jax.numpy as jnp
 
-from ..core._dispatch import MethodInfo
+from ..core._dispatch import Feasibility
 from ..core._random_measures import RandomMeasure
 from ..custom_types import PRNGKey
 from ._approximate_distribution import ApproximateDistribution, make_posterior
@@ -106,20 +106,18 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
 
     # -- feasibility checks --------------------------------------------------
 
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
+    def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:
         """Require SimpleModel + ConditionallyIndependentLikelihood + batch_size."""
         from ..core.protocols import ConditionallyIndependentLikelihood
 
         if not is_simple_model(dist):
-            return MethodInfo(
+            return Feasibility(
                 feasible=False,
-                method_name=self.name,
                 description=(f"{self.name} requires a SimpleModel; got {type(dist).__name__}."),
             )
         if not isinstance(dist.likelihood, ConditionallyIndependentLikelihood):
-            return MethodInfo(
+            return Feasibility(
                 feasible=False,
-                method_name=self.name,
                 description=(
                     f"{self.name} requires model.likelihood to satisfy "
                     f"ConditionallyIndependentLikelihood; got "
@@ -127,15 +125,14 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
                 ),
             )
         if "batch_size" not in kwargs:
-            return MethodInfo(
+            return Feasibility(
                 feasible=False,
-                method_name=self.name,
                 description=(
                     f"{self.name} requires an explicit batch_size= kwarg. "
                     f"There is no canonical default for a stochastic sampler."
                 ),
             )
-        return MethodInfo(feasible=True, method_name=self.name)
+        return Feasibility(feasible=True)
 
     # -- execution -----------------------------------------------------------
 

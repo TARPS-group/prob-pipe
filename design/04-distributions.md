@@ -111,11 +111,11 @@ A distribution may have more than one representation, and an operation or a back
 
 ```python
 @dataclass(frozen=True)
-class ConversionInfo(MethodInfo):
+class ConversionInfo(Feasibility):
     target_spec: DistributionSpec | None   # None when still unresolved
     target_class: type | None
     capabilities: tuple[type, ...]         # claims guaranteed by this conversion
-    # pending requirements and exactness are inherited from MethodInfo
+    # pending requirements are inherited from Feasibility; exactness is the converter's declaration
 
 class Converter(BinaryDispatchMethod):
     name: str

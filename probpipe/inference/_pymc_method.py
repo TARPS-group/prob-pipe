@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from ..core._dispatch import MethodInfo
+from ..core._dispatch import Feasibility
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._inference_utils import extract_chain_columns, posterior_var_order
 from ._registry import InferenceMethod
@@ -35,12 +35,10 @@ class PyMCNutsMethod(InferenceMethod):
         # installed).
         return 82
 
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
+    def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:
         if not isinstance(dist, self._model_type):
-            return MethodInfo(
-                feasible=False, method_name=self.name, description="Requires PyMCModel"
-            )
-        return MethodInfo(feasible=True, method_name=self.name)
+            return Feasibility(feasible=False, description="Requires PyMCModel")
+        return Feasibility(feasible=True)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
         import pymc as pm
@@ -117,12 +115,10 @@ class PyMCADVIMethod(InferenceMethod):
         # Callers who want ADVI pin ``method="pymc_advi"``.
         return None
 
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
+    def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:
         if not isinstance(dist, self._model_type):
-            return MethodInfo(
-                feasible=False, method_name=self.name, description="Requires PyMCModel"
-            )
-        return MethodInfo(feasible=True, method_name=self.name)
+            return Feasibility(feasible=False, description="Requires PyMCModel")
+        return Feasibility(feasible=True)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
         import pymc as pm

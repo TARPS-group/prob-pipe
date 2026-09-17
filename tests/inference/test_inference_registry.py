@@ -90,7 +90,7 @@ class TestInferenceMethodRegistry:
         assert mean(posterior).shape == (2,)
 
     def test_nonexistent_method_raises(self, simple_model, data):
-        with pytest.raises(KeyError):
+        with pytest.raises(ResolutionError, match="nonexistent"):
             condition_on(simple_model, data, method="nonexistent")
 
     def test_infeasible_method_raises(self):

@@ -33,7 +33,7 @@ import jax.scipy.linalg as jsl
 import numpy as np
 from blackjax.adaptation.mass_matrix import welford_algorithm
 
-from ..core._dispatch import MethodInfo
+from ..core._dispatch import Feasibility
 from ..core.distribution import Distribution
 from ..core.protocols import SupportsUnnormalizedLogProb
 from ..custom_types import Array, ArrayLike
@@ -658,21 +658,19 @@ class BlackJAXRWMHMethod(InferenceMethod):
     def priority(self) -> int:
         return 55
 
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
+    def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:
         prior = get_prior(dist)
         if not isinstance(prior, SupportsUnnormalizedLogProb):
-            return MethodInfo(
+            return Feasibility(
                 feasible=False,
-                method_name=self.name,
                 description="Requires SupportsUnnormalizedLogProb",
             )
         if observed is not None and isinstance(observed, dict):
-            return MethodInfo(
+            return Feasibility(
                 feasible=False,
-                method_name=self.name,
                 description="Does not support dict-based conditioning",
             )
-        return MethodInfo(feasible=True, method_name=self.name)
+        return Feasibility(feasible=True)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
         prior = get_prior(dist)

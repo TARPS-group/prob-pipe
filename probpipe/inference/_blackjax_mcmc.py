@@ -48,7 +48,7 @@ from blackjax.mcmc.dynamic_hmc import (
     init as _dynamic_hmc_init,
 )
 
-from ..core._dispatch import MethodInfo
+from ..core._dispatch import Feasibility
 from ..core.distribution import Distribution
 from ..core.protocols import SupportsUnnormalizedLogProb
 from ..custom_types import Array
@@ -307,28 +307,25 @@ class _BlackJAXMCMCMethod(InferenceMethod):
     def priority(self) -> int | None:
         return self._method_priority
 
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
+    def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:
         if not isinstance(dist, SupportsUnnormalizedLogProb):
-            return MethodInfo(
+            return Feasibility(
                 feasible=False,
-                method_name=self.name,
                 description="Requires SupportsUnnormalizedLogProb",
             )
         try:
             target_flat, flat_init, _ = build_target_log_prob_flat(dist, observed)
             if not is_jax_traceable(target_flat, flat_init):
-                return MethodInfo(
+                return Feasibility(
                     feasible=False,
-                    method_name=self.name,
                     description="Log-prob is not JAX-traceable",
                 )
         except Exception as e:
-            return MethodInfo(
+            return Feasibility(
                 feasible=False,
-                method_name=self.name,
                 description=str(e),
             )
-        return MethodInfo(feasible=True, method_name=self.name)
+        return Feasibility(feasible=True)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
         random_seed: int = kwargs.get("random_seed", 0)

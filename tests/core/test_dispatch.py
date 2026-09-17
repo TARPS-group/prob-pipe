@@ -14,6 +14,7 @@ import inspect
 import random
 import re
 import warnings
+from dataclasses import fields, is_dataclass
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,7 @@ from probpipe.core._dispatch import (
     BaseDispatchRegistry,
     BinaryDispatchMethod,
     BinaryDispatchRegistry,
+    Feasibility,
     MathematicalDomainError,
     MethodInfo,
     ResolutionError,
@@ -54,7 +56,11 @@ class RightSub(Right):
 
 
 class _FakeBase:
-    """Shared body of the two fakes: configurable name, exactness, rank, and check."""
+    """Shared body of the two fakes: configurable name, exactness, rank, and check.
+
+    ``report`` replaces the ``Feasibility`` the check would build, so a test
+    can return anything a method might, a ``MethodInfo`` included.
+    """
 
     def __init__(
         self,
@@ -68,8 +74,7 @@ class _FakeBase:
         result: Any = None,
         raises: BaseException | None = None,
         check_raises: BaseException | None = None,
-        reported_exact: bool | None = None,
-        fill_info: bool = True,
+        report: Feasibility | None = None,
     ):
         self._name = name
         self._exact = exact
@@ -80,8 +85,7 @@ class _FakeBase:
         self._result = result
         self._raises = raises
         self._check_raises = check_raises
-        self._reported_exact = reported_exact
-        self._fill_info = fill_info
+        self._report = report
         self.check_calls = 0
         self.execute_calls = 0
 
@@ -97,20 +101,14 @@ class _FakeBase:
     def priority(self) -> int | None:
         return self._priority
 
-    def check(self, *args: Any, **kwargs: Any) -> MethodInfo:
+    def check(self, *args: Any, **kwargs: Any) -> Feasibility:
         self.check_calls += 1
         if self._check_raises is not None:
             raise self._check_raises
-        if self._fill_info:
-            return MethodInfo(
-                feasible=self._feasible,
-                method_name=self._name,
-                description=self._description,
-                exact=self._reported_exact,
-                pending=self._pending,
-            )
-        return MethodInfo(
-            feasible=self._feasible, exact=self._reported_exact, pending=self._pending
+        if self._report is not None:
+            return self._report
+        return Feasibility(
+            feasible=self._feasible, description=self._description, pending=self._pending
         )
 
     def execute(self, *args: Any, **kwargs: Any) -> Any:
@@ -205,31 +203,33 @@ class TestExactnessDeclaration:
                 return (object,)
 
             def check(self, *a, **kw):
-                return MethodInfo(feasible=True)
+                return Feasibility(feasible=True)
 
             def execute(self, *a, **kw):
                 return "ran"
 
         assert Bare().priority is None
 
+    def test_a_feasibility_carries_no_exactness(self):
+        """A method reports only what it alone knows; exactness is the registration's."""
+        assert {f.name for f in fields(Feasibility)} == {"feasible", "description", "pending"}
+
     @pytest.mark.parametrize("declared_exact", [True, False], ids=["exact", "approximate"])
     def test_a_check_cannot_contradict_the_registration(self, arity: Arity, declared_exact: bool):
-        """The report states the declared exactness, whatever the check returns.
+        """Even a check that returns a ``MethodInfo`` cannot override the declaration.
 
         Otherwise ``check`` could report an exactness that ``exact_only``,
         which reads the declaration, would not honor.
         """
+        contradicting = MethodInfo(feasible=True, method_name="other", exact=not declared_exact)
         reg = arity.registry()
-        reg.register(arity.method("m", exact=declared_exact, reported_exact=not declared_exact))
-        assert reg.check(*arity.args).exact is declared_exact
-        assert reg.check(*arity.args, method="m").exact is declared_exact
-
-    def test_exact_only_agrees_with_what_check_reports(self, arity: Arity):
-        reg = arity.registry()
-        reg.register(arity.method("misreporting", exact=False, reported_exact=True))
-        assert reg.check(*arity.args).exact is False
-        with pytest.raises(ResolutionError):
-            reg.execute(*arity.args, exact_only=True)
+        reg.register(arity.method("m", exact=declared_exact, report=contradicting))
+        for info in (reg.check(*arity.args), reg.check(*arity.args, method="m")):
+            assert info.exact is declared_exact
+            assert info.method_name == "m"
+        if not declared_exact:
+            with pytest.raises(ResolutionError):
+                reg.execute(*arity.args, exact_only=True)
 
 
 # ---------------------------------------------------------------------------
@@ -471,8 +471,9 @@ class TestExactOnly:
 class TestCheck:
     def test_returns_the_first_feasible_candidate_with_name_and_exactness(self, arity: Arity):
         reg = arity.registry()
-        reg.register(arity.method("m", exact=False, priority=1, fill_info=False))
+        reg.register(arity.method("m", exact=False, priority=1))
         info = reg.check(*arity.args)
+        assert isinstance(info, MethodInfo)
         assert info.feasible is True
         assert info.method_name == "m"
         assert info.exact is False
@@ -492,6 +493,7 @@ class TestCheck:
         reg.register(arity.method("b", priority=1, feasible=False, description="needs samples"))
         info = reg.check(*arity.args)
         assert info.feasible is False
+        assert info.method_name is None and info.exact is None
         for fragment in ("a: needs a density", "b: needs samples"):
             assert fragment in info.description
 
@@ -509,10 +511,17 @@ class TestCheck:
         reg.register(arity.method("m", priority=None))
         assert reg.check(*arity.args, method="m").feasible is True
 
+    def test_unknown_name_is_a_resolution_error(self, arity: Arity):
+        reg = arity.registry()
+        reg.register(arity.method("m"))
+        with pytest.raises(ResolutionError, match="Available: m"):
+            reg.check(*arity.args, method="nope")
+
     def test_no_arguments_is_an_infeasible_probe(self, arity: Arity):
         reg = arity.registry()
         info = reg.check()
         assert info.feasible is False
+        assert info.method_name is None
         assert "No arguments provided" in info.description
         with pytest.raises(TypeError, match="No arguments provided"):
             reg.execute()
@@ -567,10 +576,11 @@ class TestExecute:
         with pytest.raises(ResolutionError, match="shape"):
             reg.execute(*arity.args, method="m")
 
-    def test_unknown_name_is_a_lookup_error(self, arity: Arity):
+    def test_unknown_name_is_a_resolution_error(self, arity: Arity):
+        """Naming a method that is not registered is a dispatch that cannot resolve."""
         reg = arity.registry()
         reg.register(arity.method("m"))
-        with pytest.raises(KeyError, match="Available: m"):
+        with pytest.raises(ResolutionError, match="Available: m"):
             reg.execute(*arity.args, method="nope")
 
     @pytest.mark.parametrize("exc", [ValueError("bad"), RuntimeError("worse")])
@@ -584,19 +594,16 @@ class TestExecute:
             reg.execute(*arity.args)
         assert fallback.execute_calls == 0
 
-    def test_resolution_error_is_a_lookup_error_and_nothing_else(self):
-        """The base class is part of the II.7 contract: it decides which ``except`` clauses catch the error."""
-        assert issubclass(ResolutionError, LookupError)
-        assert not issubclass(ResolutionError, TypeError)
-        assert not issubclass(ResolutionError, ValueError)
+    def test_resolution_error_derives_directly_from_exception(self):
+        """The base class is part of the II.7 contract: it decides what ``except`` catches."""
+        assert ResolutionError.__mro__[1] is Exception
 
-    def test_one_except_lookup_error_covers_both_dispatch_failures(self, arity: Arity):
+    def test_one_except_resolution_error_covers_every_dispatch_failure(self, arity: Arity):
         reg = arity.registry()
         reg.register(arity.method("a", feasible=False))
-        with pytest.raises(LookupError):
-            reg.execute(*arity.args)
-        with pytest.raises(LookupError):
-            reg.execute(*arity.args, method="absent")
+        for kwargs in ({}, {"method": "a"}, {"method": "absent"}):
+            with pytest.raises(ResolutionError):
+                reg.execute(*arity.args, **kwargs)
 
 
 class TestMathematicalDomainError:
@@ -624,32 +631,41 @@ class TestMathematicalDomainError:
 
 
 # ---------------------------------------------------------------------------
-# MethodInfo
+# Feasibility and MethodInfo
 # ---------------------------------------------------------------------------
 
 
-class TestMethodInfo:
-    def test_frozen(self):
-        info = MethodInfo(feasible=True)
+@pytest.mark.parametrize("report_cls", [Feasibility, MethodInfo])
+class TestFeasibility:
+    def test_frozen(self, report_cls: type[Feasibility]):
+        report = report_cls(feasible=True)
         with pytest.raises(AttributeError):
-            info.feasible = False  # type: ignore[misc]
+            report.feasible = False  # type: ignore[misc]
 
-    def test_feasible_with_pending_is_rejected(self):
+    def test_feasible_with_pending_is_rejected(self, report_cls: type[Feasibility]):
         with pytest.raises(ValueError, match="pending"):
-            MethodInfo(feasible=True, pending=("x",))
+            report_cls(feasible=True, pending=("x",))
 
-    def test_unresolved_without_pending_is_rejected(self):
+    def test_unresolved_without_pending_is_rejected(self, report_cls: type[Feasibility]):
         with pytest.raises(ValueError, match="pending"):
-            MethodInfo(feasible=None)
+            report_cls(feasible=None)
 
-    def test_only_unresolved_carries_pending(self):
-        MethodInfo(feasible=False)
+    def test_only_unresolved_carries_pending(self, report_cls: type[Feasibility]):
+        report_cls(feasible=False)
         with pytest.raises(ValueError, match="only an unresolved"):
-            MethodInfo(feasible=False, pending=("x",))
+            report_cls(feasible=False, pending=("x",))
 
-    def test_exact_defaults_to_none_and_round_trips(self):
-        assert MethodInfo(feasible=True).exact is None
-        assert MethodInfo(feasible=True, exact=False).exact is False
+
+class TestMethodInfo:
+    def test_is_a_feasibility(self):
+        assert issubclass(MethodInfo, Feasibility)
+
+    def test_name_and_exactness_are_set_together(self):
+        assert MethodInfo(feasible=False).method_name is None
+        assert MethodInfo(feasible=True, method_name="m", exact=True).exact is True
+        for partial in ({"method_name": "m"}, {"exact": True}):
+            with pytest.raises(ValueError, match="together"):
+                MethodInfo(feasible=True, **partial)
 
 
 # ---------------------------------------------------------------------------
@@ -764,12 +780,19 @@ class TestDesignAgreement:
         exported_names = {name for name in _dispatch.__all__ if name[0].isupper()}
         assert exported_names <= declared_names, exported_names - declared_names
 
-    def test_method_info_fields_match(self):
+    @pytest.mark.parametrize("report_cls", [Feasibility, MethodInfo])
+    def test_report_fields_match(self, report_cls: type[Feasibility]):
+        """Each class declares in II.7 exactly the fields it adds to its base."""
         block = _design_block()
-        section = block[block.index("class MethodInfo:") :]
+        header = re.search(rf"^class {report_cls.__name__}\b", block, re.M)
+        assert header is not None, report_cls.__name__
+        section = block[header.start() :]
         section = section[: section.index("\nclass ")]
         declared = dict(re.findall(r"^\s+(\w+):\s+([^#\n]+?)\s*(?:#.*)?$", section, re.M))
-        implemented = {f.name: f.type for f in MethodInfo.__dataclass_fields__.values()}
+        inherited = {
+            f.name for base in report_cls.__bases__ if is_dataclass(base) for f in fields(base)
+        }
+        implemented = {f.name: f.type for f in fields(report_cls) if f.name not in inherited}
         assert set(declared) == set(implemented)
         for name, annotation in declared.items():
             assert annotation.replace(" ", "") == str(implemented[name]).replace(" ", "")

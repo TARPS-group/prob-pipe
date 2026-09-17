@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import tensorflow_probability.substrates.jax.mcmc as tfp_mcmc
 
-from ..core._dispatch import MethodInfo
+from ..core._dispatch import Feasibility
 from ..core.distribution import Distribution
 from ..core.protocols import SupportsUnnormalizedLogProb
 from ..custom_types import Array
@@ -137,14 +137,13 @@ class _TFPGradientMethod(InferenceMethod):
     def priority(self) -> int | None:
         return self._method_priority
 
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
+    def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:
         # Intentionally probes JAX traceability (via jax.make_jaxpr) to avoid
         # selecting a gradient-based method that would fail at execute() time.
         # The cost is ~one JAX trace, cached by JAX on subsequent calls.
         if not isinstance(dist, SupportsUnnormalizedLogProb):
-            return MethodInfo(
+            return Feasibility(
                 feasible=False,
-                method_name=self.name,
                 description="Requires SupportsUnnormalizedLogProb",
             )
         try:
@@ -155,14 +154,13 @@ class _TFPGradientMethod(InferenceMethod):
                 random_seed=kwargs.get("random_seed", 0),
             )
             if not is_jax_traceable(target, init):
-                return MethodInfo(
+                return Feasibility(
                     feasible=False,
-                    method_name=self.name,
                     description="Log-prob is not JAX-traceable",
                 )
         except Exception as e:
-            return MethodInfo(feasible=False, method_name=self.name, description=str(e))
-        return MethodInfo(feasible=True, method_name=self.name)
+            return Feasibility(feasible=False, description=str(e))
+        return Feasibility(feasible=True)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
         random_seed = kwargs.get("random_seed", 0)

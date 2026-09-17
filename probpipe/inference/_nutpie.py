@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from ..core._dispatch import MethodInfo
+from ..core._dispatch import Feasibility
 from ..core.node import function
 from ..custom_types import ArrayLike
 from ._approximate_distribution import ApproximateDistribution, make_posterior
@@ -199,18 +199,14 @@ class NutpieNutsMethod(InferenceMethod):
         # its applicable model class, so it ranks above all of them at 88.
         return 88
 
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
+    def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:
         if not isinstance(dist, self._supported):
-            return MethodInfo(
-                feasible=False, method_name=self.name, description="Requires StanModel or PyMCModel"
-            )
+            return Feasibility(feasible=False, description="Requires StanModel or PyMCModel")
         try:
             import nutpie  # noqa: F401
         except ImportError:
-            return MethodInfo(
-                feasible=False, method_name=self.name, description="nutpie not installed"
-            )
-        return MethodInfo(feasible=True, method_name=self.name)
+            return Feasibility(feasible=False, description="nutpie not installed")
+        return Feasibility(feasible=True)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
         return condition_on_nutpie.apply(dist, observed, **kwargs)

@@ -347,7 +347,7 @@ Some operations have many possible implementations, and which one applies depend
 Each **dispatch method** declares:
 1. a unique `name`;
 2. the types it applies to, via `supported_types`;
-3. a `check` function that probes feasibility without significant computation and reports, as a `MethodInfo`, whether the call is feasible, infeasible, or **unresolved**, which means the declarations the probe needs are not yet available, and at what fidelity;
+3. a `check` function that probes feasibility without significant computation and reports, as a `Feasibility`, whether the call is feasible, infeasible, or **unresolved**, which means the declarations the probe needs are not yet available; it does not report exactness, which the method declared;
 4. an `execute` function that performs it;
 5. whether it is **exact**: a method either returns a representation of the requested result or a stand-in for it, declared where the method is registered and fixed for the method's life;
 6. a **priority**: an integer rank among the methods of the same exactness, and the one thing about a method a deployment may change at runtime.
@@ -358,7 +358,7 @@ Dispatch is by argument type: a `UnaryDispatchRegistry` keys on the first argume
 3. specificity, favoring the method whose declared types are closest to the argument's class in method-resolution order;
 4. registration order.
 
-A method whose priority is `None` is **opt-in-only**, skipped by auto-selection and reachable only by name. That is the default, so registering a method never silently changes what runs until a contributor ranks it. `set_priorities` re-ranks at runtime, by mapping or by keyword since a method name need not be an identifier, without changing whether a method is exact, and warns when a method moves into or out of opt-in-only. A caller can bypass auto-selection with `method="..."`. A call with no feasible method raises `ResolutionError`, naming the methods tried and what each was missing, and a named method that is infeasible raises the same. A non-executing probe may instead report unresolved requirements (V.1); it must not report those as either feasibility or mathematical nonexistence. New methods are added by registration at import, by whichever layer owns the implementation, so a registry gains its providers without importing them.
+A method whose priority is `None` is **opt-in-only**, skipped by auto-selection and reachable only by name. That is the default, so registering a method never silently changes what runs until a contributor ranks it. `set_priorities` re-ranks at runtime, by mapping or by keyword since a method name need not be an identifier, without changing whether a method is exact, and warns when a method moves into or out of opt-in-only. A caller can bypass auto-selection with `method="..."`. A call with no feasible method raises `ResolutionError`, naming the methods tried and what each was missing; a named method that is infeasible, or a name that is not registered, raises the same. The registry's `check` and `execute` are the dispatch interface, so an unknown name is a dispatch that cannot resolve; `get_method` and `set_priorities` look a name up and raise `KeyError`. A non-executing probe may instead report unresolved requirements (V.1); it must not report those as either feasibility or mathematical nonexistence. New methods are added by registration at import, by whichever layer owns the implementation, so a registry gains its providers without importing them.
 
 ```python
 class BaseDispatchMethod(ABC):
@@ -367,7 +367,7 @@ class BaseDispatchMethod(ABC):
     priority: int | None = None   # rank among methods of the same exactness, higher first; None is opt-in-only
 
     @abstractmethod
-    def check(self, *args, **kwargs) -> MethodInfo: ...
+    def check(self, *args, **kwargs) -> Feasibility: ...
     @abstractmethod
     def execute(self, *args, **kwargs) -> Any: ...
 
@@ -378,14 +378,16 @@ class BinaryDispatchMethod(BaseDispatchMethod):   # still abstract
     @abstractmethod
     def supported_types(self) -> tuple[tuple[type, ...], tuple[type, ...]]: ...   # (left, right) types
 
-class MethodInfo:
+class Feasibility:                # what a method's check reports
     feasible:    bool | None   # None when required declarations are not yet available
-    method_name: str
-    description: str
-    exact:       bool | None   # the local guarantee; None when not yet determined
-    pending:     tuple[str, ...]   # unresolved feasibility requirements
+    description: str           # why not, when infeasible
+    pending:     tuple[str, ...]   # the missing declarations; non-empty exactly when feasible is None
 
-class ResolutionError(LookupError): ...  # no available implementation under the requested controls
+class MethodInfo(Feasibility):    # what a registry's check reports
+    method_name: str | None    # from the registration; both None exactly when no method was selected
+    exact:       bool | None   # the selected method's declared exactness, never the check's
+
+class ResolutionError(Exception): ...   # no available implementation under the requested controls
 class MathematicalDomainError(ValueError): ...  # the mathematical operation is known to be undefined
 
 class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
@@ -405,7 +407,7 @@ class BinaryDispatchRegistry[M: BinaryDispatchMethod](BaseDispatchRegistry[M]): 
 
 Provenance records whether each step was exact and its target, preserving upstream approximation history. Exact downstream work cannot erase an earlier approximation relative to an upstream target, and an upstream approximation does not make a later exact calculation on the returned law locally approximate. Derived routes and registry routes report the exactness of their selected implementation chain; a wrapper cannot upgrade it.
 
-**Two failures.** A known mathematical nonexistence raises `MathematicalDomainError`, for example a requested mean known not to exist. Computational unavailability raises `ResolutionError`, a `LookupError` like the `KeyError` an unknown method name raises, so one `except LookupError` covers both ways a dispatch can fail to select a method; failure to establish existence does not establish nonexistence. A numerical execution failure propagates as such, and neither it nor a missing capability is silently reclassified as a mathematical domain error. Structural admission errors and return-contract defects are specified at their engine steps (V.4, V.10).
+**Two failures.** A known mathematical nonexistence raises `MathematicalDomainError`, for example a requested mean known not to exist. Computational unavailability raises `ResolutionError`; failure to establish existence does not establish nonexistence. A numerical execution failure propagates as such, and neither it nor a missing capability is silently reclassified as a mathematical domain error. Structural admission errors and return-contract defects are specified at their engine steps (V.4, V.10).
 
 A single **catalog** makes every registry discoverable: it lists the registries, their entries with their priorities, and a one-line description each, so a user can see which entries exist and how a call will resolve. An **entry** is one registered item within a registry; the term is generic because the catalog spans registries whose items are not all type-dispatched methods. A registry can be cataloged if it implements `SupportsRegistryCataloging`; satisfying the protocol is structural, and membership requires an explicit `register`. The operation vocabulary is cataloged the same way, so what ProbPipe can do and how a given call resolves are answered from one place.
 

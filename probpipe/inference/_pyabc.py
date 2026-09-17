@@ -14,7 +14,7 @@ from pyabc.sampler import SingleCoreSampler
 from ..core.ops import log_prob, sample
 from ..custom_types import PRNGKey
 from ._approximate_distribution import ApproximateDistribution, make_posterior
-from ._registry import InferenceMethod, MethodInfo
+from ._registry import Feasibility, InferenceMethod
 
 if TYPE_CHECKING:
     from xarray import DataTree
@@ -134,14 +134,12 @@ class PyABCSMCMethod(InferenceMethod):
         # band for a pure SimpleGenerativeModel.
         return 6
 
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
+    def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:
         # lazy: avoid an inference->modeling import cycle
         from ..modeling._simple_generative import SimpleGenerativeModel
 
         if not isinstance(dist, SimpleGenerativeModel):
-            return MethodInfo(
-                feasible=False, method_name=self.name, description="Requires SimpleGenerativeModel"
-            )
+            return Feasibility(feasible=False, description="Requires SimpleGenerativeModel")
         prior = dist["parameters"]
         # Feasible means the prior can flatten, sample, *and* score jointly.
         # Build the backing distribution, then score one in-support draw — this
@@ -151,14 +149,13 @@ class PyABCSMCMethod(InferenceMethod):
             pyabc_prior = PyABCDistribution(prior, jax.random.PRNGKey(0))
             density = pyabc_prior.pdf(pyabc_prior.rvs())
         except Exception as e:
-            return MethodInfo(feasible=False, method_name=self.name, description=str(e))
+            return Feasibility(feasible=False, description=str(e))
         if not np.isfinite(density):
-            return MethodInfo(
+            return Feasibility(
                 feasible=False,
-                method_name=self.name,
                 description="prior has no usable joint density",
             )
-        return MethodInfo(feasible=True, method_name=self.name)
+        return Feasibility(feasible=True)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
         """Run SMC-ABC and return a weighted posterior.

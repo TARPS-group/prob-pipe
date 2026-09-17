@@ -18,8 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `check` and `execute` take `exact_only=True` to exclude approximate methods.
   `set_priorities` accepts a positional mapping as well as keywords, since a
   method name need not be an identifier, and cannot change exactness.
-  `MethodInfo` gains `exact: bool | None` and `pending: tuple[str, ...]`, and
-  `feasible` may be `None` while required declarations are unavailable.
+  A method's `check` returns a `Feasibility` (`feasible`, `description`,
+  `pending`); the registry's `check` returns a `MethodInfo`, a `Feasibility`
+  with `method_name` and `exact` set from the registration, so a method never
+  reports its own name or exactness. `feasible` may be `None` while required
+  declarations are unavailable, and `pending` then names them.
   A call with no feasible method raises `ResolutionError` where it raised
   `TypeError`; `MathematicalDomainError(ValueError)` is defined beside it for
   known mathematical nonexistence and is never raised by the registry itself.
@@ -31,13 +34,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keeps its `TypeError` and `ConversionMethod` until its move to
   `distributions/_conversion.py` (design IV.3).
 
-- **`ResolutionError` is a `LookupError`, and both new exceptions are public.**
-  `from probpipe import ResolutionError, MathematicalDomainError`. It is a
-  `LookupError`, like the `KeyError` an unknown `method=` name raises, so one
-  `except LookupError` covers both ways a dispatch can fail to select a
-  method. It is not a `TypeError`, because well-typed arguments can still have
-  no applicable method. Code that caught `TypeError` from `condition_on` to
-  mean "no method for this model" must catch `ResolutionError` instead.
+- **Both new exceptions are public, and an unknown `method=` name is a
+  resolution failure.** `from probpipe import ResolutionError,
+  MathematicalDomainError`. `ResolutionError` derives directly from
+  `Exception`; it is not a `TypeError`, because well-typed arguments can
+  still have no applicable method. `execute` and `check` raise it for a
+  `method=` name that is not registered, where they raised `KeyError`, so one
+  `except ResolutionError` covers every way a dispatch can fail to select a
+  method; `get_method` and `set_priorities` keep `KeyError`. Code that caught
+  `TypeError` from `condition_on` to mean "no method for this model" must
+  catch `ResolutionError` instead.
 
 - **`InferenceMethod` is a subclass of `UnaryDispatchMethod`, not an alias.**
   It was an alias of `UnaryDispatchMethod`; it is now a subclass that declares

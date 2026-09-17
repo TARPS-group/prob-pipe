@@ -7,7 +7,7 @@ from typing import Any
 import arviz_base as azb
 import jax.numpy as jnp
 
-from ..core._dispatch import MethodInfo
+from ..core._dispatch import Feasibility
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
 
@@ -47,12 +47,10 @@ class CmdStanNutsMethod(InferenceMethod):
         # ``blackjax_nuts`` (85) because of the subprocess overhead.
         return 82
 
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
+    def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:
         if not isinstance(dist, self._model_type):
-            return MethodInfo(
-                feasible=False, method_name=self.name, description="Requires StanModel"
-            )
-        return MethodInfo(feasible=True, method_name=self.name)
+            return Feasibility(feasible=False, description="Requires StanModel")
+        return Feasibility(feasible=True)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
         cmdstanpy = _import_cmdstanpy()

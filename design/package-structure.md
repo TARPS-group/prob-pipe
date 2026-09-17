@@ -32,7 +32,7 @@ probpipe/
 │   ├── _record_spec.py        #   RecordSpec, NumericRecordSpec, unification (III.5)
 │   ├── _identity.py           #   TrackedTerm with annotations on the base, Immutable, Provenance, fingerprints, the provenance traversal (II.4)
 │   ├── _batch.py              #   Batch, BatchSpec: axis groups, level names, at_levels (II.5)
-│   ├── _dispatch.py           #   dispatch methods and registries, MethodInfo, ResolutionError, MathematicalDomainError (II.7)
+│   ├── _dispatch.py           #   dispatch methods and registries, Feasibility, MethodInfo, ResolutionError, MathematicalDomainError (II.7)
 │   ├── _catalog.py            #   EntrySummary, RegistryCatalog (II.7)
 │   └── _config.py             #   library configuration
 ├── values/                    # the value layer (III.1–III.6; LinOp, III.4, is in linalg/)
