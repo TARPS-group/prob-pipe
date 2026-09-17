@@ -1,6 +1,5 @@
 """Tests for the inference method registry."""
 
-import warnings
 from typing import Any, ClassVar
 
 import jax.numpy as jnp
@@ -16,52 +15,9 @@ from probpipe import (
     condition_on,
     mean,
 )
-from probpipe.core._dispatch import (
-    MethodInfo,
-    ResolutionError,
-    UnaryDispatchMethod,
-    UnaryDispatchRegistry,
-)
+from probpipe.core._dispatch import ResolutionError
 from probpipe.inference import inference_method_registry
 from probpipe.modeling._likelihood import Likelihood
-
-# ---------------------------------------------------------------------------
-# Shared test helper
-# ---------------------------------------------------------------------------
-
-
-class FakeMethod(UnaryDispatchMethod):
-    """Configurable stub for registry tests."""
-
-    def __init__(
-        self, n: str = "fake", p: int | None = None, feasible: bool = True, result: Any = None
-    ):
-        self._name = n
-        self._priority = p
-        self._feasible = feasible
-        self._result = result
-
-    @property
-    def name(self):
-        return self._name
-
-    @property
-    def exact(self):
-        return False
-
-    def supported_types(self):
-        return (object,)
-
-    @property
-    def priority(self):
-        return self._priority
-
-    def check(self, *a, **kw):
-        return MethodInfo(feasible=self._feasible, method_name=self._name)
-
-    def execute(self, *a, **kw):
-        return self._result if self._result is not None else self._name
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -83,66 +39,6 @@ def data():
     return jnp.ones(20, dtype=float)
 
 
-# ---------------------------------------------------------------------------
-# Generic UnaryDispatchRegistry tests
-# ---------------------------------------------------------------------------
-
-
-class TestUnaryDispatchRegistry:
-    def test_register_and_list(self):
-        reg = UnaryDispatchRegistry()
-        reg.register(FakeMethod("low", 10))
-        reg.register(FakeMethod("high", 100))
-        reg.register(FakeMethod("mid", 50))
-        assert reg.list_methods() == ["high", "mid", "low"]
-
-    def test_duplicate_name_raises(self):
-        reg = UnaryDispatchRegistry()
-        reg.register(FakeMethod("dup"))
-        with pytest.raises(ValueError, match="already registered"):
-            reg.register(FakeMethod("dup"))
-
-    def test_get_method(self):
-        reg = UnaryDispatchRegistry()
-        m = FakeMethod("test")
-        reg.register(m)
-        assert reg.get_method("test") is m
-
-    def test_get_method_not_found(self):
-        reg = UnaryDispatchRegistry()
-        with pytest.raises(KeyError, match="No method named"):
-            reg.get_method("nonexistent")
-
-    def test_execute_by_name(self):
-        reg = UnaryDispatchRegistry()
-        reg.register(FakeMethod("test", result=42))
-        assert reg.execute("anything", method="test") == 42
-
-    def test_execute_no_method_raises(self):
-        reg = UnaryDispatchRegistry()
-        with pytest.raises(ResolutionError, match="No method registered"):
-            reg.execute("anything")
-
-    def test_set_priorities(self):
-        reg = UnaryDispatchRegistry()
-        reg.register(FakeMethod("a", 10))
-        reg.register(FakeMethod("b", 100))
-        assert reg.list_methods() == ["b", "a"]
-
-        reg.set_priorities(a=200)
-        assert reg.list_methods() == ["a", "b"]
-
-    def test_set_priorities_unknown_raises(self):
-        reg = UnaryDispatchRegistry()
-        with pytest.raises(KeyError):
-            reg.set_priorities(nonexistent=100)
-
-
-# ---------------------------------------------------------------------------
-# Inference method registry tests
-# ---------------------------------------------------------------------------
-
-
 class TestInferenceMethodRegistry:
     def test_methods_registered(self):
         methods = inference_method_registry.list_methods()
@@ -151,19 +47,18 @@ class TestInferenceMethodRegistry:
         assert "blackjax_rwmh" in methods
 
     def test_priority_order(self):
-        """BlackJAX RWMH stays above the opt-in-only TFP gradient methods.
+        """Ranked methods precede the opt-in-only ones in the listing.
 
-        After the BlackJAX migration, ``tfp_nuts`` and ``tfp_hmc`` are
-        at priority 0 (opt-in only) and so don't participate in the
-        order ``list_methods()`` exposes for auto-dispatch.
-        ``blackjax_rwmh`` (priority 55) is the gradient-free
-        auto-dispatch entry point.
+        ``tfp_nuts`` and ``tfp_hmc`` carry no priority, so they are listed
+        but never selected automatically; ``blackjax_rwmh`` (55) is the
+        gradient-free entry point automatic selection does reach.
         """
         methods = inference_method_registry.list_methods()
-        # All three remain registered.
         assert {"tfp_nuts", "tfp_hmc", "blackjax_rwmh"}.issubset(methods)
-        # blackjax_nuts (85) outranks blackjax_rwmh (55) outranks the opt-in TFP pair.
         assert methods.index("blackjax_nuts") < methods.index("blackjax_rwmh")
+        for opt_in in ("tfp_nuts", "tfp_hmc"):
+            assert methods.index("blackjax_rwmh") < methods.index(opt_in)
+            assert inference_method_registry.get_method(opt_in).priority is None
 
     def test_auto_select_nuts(self, simple_model, data):
         """BlackJAX NUTS is the auto-dispatch winner for any JAX-traceable model."""
@@ -235,104 +130,6 @@ class TestInferenceMethodRegistry:
 # ---------------------------------------------------------------------------
 # Opt-in only (priority is None)
 # ---------------------------------------------------------------------------
-
-
-class TestOptInOnlyPriority:
-    """Priority None = opt-in only: skipped during auto-dispatch."""
-
-    def test_priority_none_skipped_in_auto_walk(self):
-        reg = UnaryDispatchRegistry()
-        reg.register(FakeMethod("opt_in", p=None, result=10))
-        # Auto-dispatch finds no method because the only one is opt-in.
-        with pytest.raises(ResolutionError, match="No method registered"):
-            reg.execute("anything")
-
-    def test_priority_none_reachable_by_name(self):
-        reg = UnaryDispatchRegistry()
-        reg.register(FakeMethod("opt_in", p=None, result=10))
-        # Explicit method= still works.
-        assert reg.execute("anything", method="opt_in") == 10
-
-    def test_default_priority_is_opt_in(self):
-        """A UnaryDispatchMethod subclass without a priority override defaults to opt-in."""
-
-        class Bare(UnaryDispatchMethod):
-            @property
-            def name(self):
-                return "bare"
-
-            @property
-            def exact(self):
-                return False
-
-            def supported_types(self):
-                return (object,)
-
-            def check(self, *a, **kw):
-                return MethodInfo(feasible=True, method_name="bare")
-
-            def execute(self, *a, **kw):
-                return "ran"
-
-        reg = UnaryDispatchRegistry()
-        reg.register(Bare())
-        # Auto-dispatch skips it.
-        with pytest.raises(ResolutionError):
-            reg.execute("anything")
-        # Explicit invocation finds it.
-        assert reg.execute("anything", method="bare") == "ran"
-
-    def test_priority_none_alongside_ranked(self):
-        """An opt-in-only method does not block a ranked method."""
-        reg = UnaryDispatchRegistry()
-        reg.register(FakeMethod("opt_in", p=None, result="skipped"))
-        reg.register(FakeMethod("auto", p=10, result="ran"))
-        assert reg.execute("anything") == "ran"
-
-    def test_promote_from_opt_in_via_set_priorities(self):
-        """set_priorities can promote an opt-in-only method into auto-dispatch."""
-        reg = UnaryDispatchRegistry()
-        reg.register(FakeMethod("opt_in", p=None, result="ran"))
-        # Suppress the crossing warning for this targeted check.
-        with pytest.warns(UserWarning, match="out of opt-in-only"):
-            reg.set_priorities(opt_in=10)
-        assert reg.execute("anything") == "ran"
-
-
-# ---------------------------------------------------------------------------
-# set_priorities zero-crossing warning
-# ---------------------------------------------------------------------------
-
-
-class TestSetPrioritiesZeroCrossingWarning:
-    def test_warn_when_demoting_to_opt_in(self):
-        reg = UnaryDispatchRegistry()
-        reg.register(FakeMethod("a", p=50))
-        with pytest.warns(UserWarning, match="into opt-in-only"):
-            reg.set_priorities(a=None)
-
-    def test_warn_when_promoting_from_opt_in(self):
-        reg = UnaryDispatchRegistry()
-        reg.register(FakeMethod("a", p=None))
-        with pytest.warns(UserWarning, match="out of opt-in-only"):
-            reg.set_priorities(a=42)
-
-    def test_no_warn_when_staying_positive(self):
-        reg = UnaryDispatchRegistry()
-        reg.register(FakeMethod("a", p=50))
-        # A rank is only a rank; no crossing means no warning.
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", UserWarning)
-            reg.set_priorities(a=10)
-            reg.set_priorities(a=0)
-            reg.set_priorities(a=80)
-
-    def test_no_warn_when_staying_opt_in(self):
-        reg = UnaryDispatchRegistry()
-        reg.register(FakeMethod("a", p=None))
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", UserWarning)
-            reg.set_priorities(a=None)
 
 
 # ---------------------------------------------------------------------------
