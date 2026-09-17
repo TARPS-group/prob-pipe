@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
-from typing import Any
+from typing import Any, Self, cast
 
 from ._immutable import Immutable
 from ._spec_base import (
@@ -19,7 +19,8 @@ from .named_tree import _PATH_SEP, NamedTree, _check_no_path_sep, _unflatten_pat
 
 
 def _reshaped_template(
-    template: RecordSpec, reshape: Callable[[tuple[int, ...]], tuple[int, ...]]
+    template: RecordSpec,
+    reshape: Callable[[tuple[int | str, ...]], tuple[int | str, ...]],
 ) -> RecordSpec:
     """*template* with every array field's shape mapped through *reshape*.
 
@@ -209,7 +210,7 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
         _field_specs: Mapping[str, _FieldSpecInput] | None = None,
         /,
         **field_specs: _FieldSpecInput,
-    ):
+    ) -> Self:
         # Only auto-promote when invoked directly on the base class —
         # explicit ``NumericRecordSpec(...)`` calls bypass this path
         # and run their own strict validation.
@@ -220,7 +221,7 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
             if isinstance(specs, RecordSpec):
                 specs = specs.children
             if specs and _all_numeric(specs.values()):
-                return object.__new__(NumericRecordSpec)
+                return cast(Self, object.__new__(NumericRecordSpec))
         return object.__new__(cls)
 
     def __init__(

@@ -345,7 +345,7 @@ class NumericArraySpec(NumericSpec):
         """The flat array size; raises ValueError while dimensions are symbolic."""
         if self.free_dims:
             raise ValueError(f"vector_size has unbound dimensions: {sorted(self.free_dims)}")
-        return prod(self.shape)
+        return prod(cast(tuple[int, ...], self.shape))
 
     def __eq__(self, other: object) -> bool:
         # Mirror the dataclass-generated ``__eq__``: on a class mismatch,
