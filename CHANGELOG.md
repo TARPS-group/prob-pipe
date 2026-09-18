@@ -31,7 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pending`); the registry's `check` returns a `MethodInfo`, a `Feasibility`
   with `method_name` and `exact` set from the registration, so a method never
   reports its own name or exactness. `feasible` may be `None` while required
-  declarations are unavailable, and `pending` then names them.
+  declarations are unavailable, and `pending` then names them. A `MethodInfo`
+  that is feasible or unresolved names its method; only the infeasible report
+  that lists every method tried names none.
   A call with no feasible method raises `ResolutionError`;
   `MathematicalDomainError(ValueError)` is defined beside it for known
   mathematical nonexistence and is never raised by the registry itself.
@@ -52,7 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `except ResolutionError` covers every way a dispatch can fail to select a
   method; `get_method` and `set_priorities` keep `KeyError`. Code that caught
   `TypeError` from `condition_on` to mean "no method for this model" must
-  catch `ResolutionError` instead.
+  catch `ResolutionError` instead. `check` and `execute` raise `TypeError`
+  for fewer positional arguments than the arity requires, none included and
+  whether or not `method=` is given; `check()` with no arguments no longer
+  returns an infeasible report.
 
 - **`InferenceMethod` is a subclass of `UnaryDispatchMethod`, not an alias.**
   It was an alias of `UnaryDispatchMethod`; it is now a subclass that declares

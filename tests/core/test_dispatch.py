@@ -692,14 +692,25 @@ class TestCheck:
         with pytest.raises(ResolutionError, match="Available: m"):
             reg.check(*arity.args, method="nope")
 
-    def test_no_arguments_is_an_infeasible_probe(self, arity: Arity):
+    def test_no_arguments_is_a_type_error(self, arity: Arity):
         reg = arity.registry()
-        info = reg.check()
-        assert info.feasible is False
-        assert info.method_name is None
-        assert "No arguments provided" in info.description
-        with pytest.raises(TypeError, match="No arguments provided"):
+        reg.register(arity.method("m"))
+        with pytest.raises(TypeError, match="positional argument"):
+            reg.check()
+        with pytest.raises(TypeError, match="positional argument"):
             reg.execute()
+
+    def test_named_dispatch_still_requires_the_arity(self, arity: Arity):
+        """``method=`` bypasses the type pre-filter, not the arity."""
+        reg = arity.registry()
+        method = arity.method("m", priority=None)
+        reg.register(method)
+        for too_few in ((), arity.args[:-1]):
+            with pytest.raises(TypeError, match="positional argument"):
+                reg.check(*too_few, method="m")
+            with pytest.raises(TypeError, match="positional argument"):
+                reg.execute(*too_few, method="m")
+        assert method.check_calls == 0
 
     def test_binary_registry_needs_two_arguments(self):
         reg = BinaryDispatchRegistry()
@@ -813,9 +824,9 @@ class TestMathematicalDomainError:
 @pytest.mark.parametrize("report_cls", [Feasibility, MethodInfo])
 class TestFeasibility:
     def test_frozen(self, report_cls: type[Feasibility]):
-        report = report_cls(feasible=True)
+        report = report_cls(feasible=False)
         with pytest.raises(AttributeError):
-            report.feasible = False  # type: ignore[misc]
+            report.feasible = True  # type: ignore[misc]
 
     def test_feasible_with_pending_is_rejected(self, report_cls: type[Feasibility]):
         with pytest.raises(ValueError, match="pending"):
@@ -841,6 +852,14 @@ class TestMethodInfo:
         for partial in ({"method_name": "m"}, {"exact": True}):
             with pytest.raises(ValueError, match="together"):
                 MethodInfo(feasible=True, **partial)
+
+    def test_a_feasible_or_unresolved_report_names_its_method(self):
+        """Only the infeasible aggregate that lists every method tried names none."""
+        MethodInfo(feasible=False)
+        with pytest.raises(ValueError, match="names its method"):
+            MethodInfo(feasible=True)
+        with pytest.raises(ValueError, match="names its method"):
+            MethodInfo(feasible=None, pending=("x",))
 
 
 # ---------------------------------------------------------------------------

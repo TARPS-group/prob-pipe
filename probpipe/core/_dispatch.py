@@ -114,8 +114,9 @@ class Feasibility:
 class MethodInfo(Feasibility):
     """Used by a registry to describe a method's feasibility plus its registration information.
 
-    The ``method_name`` and ``exact`` atributes are both ``None`` exactly when no method could
-    be selected.
+    The ``method_name`` and ``exact`` attributes are both ``None`` exactly when no method could
+    be selected, which is the infeasible report that lists every method tried; a feasible or
+    unresolved report names its method.
 
     Attributes
     ----------
@@ -127,8 +128,9 @@ class MethodInfo(Feasibility):
     Raises
     ------
     ValueError
-        If exactly one of ``method_name`` and ``exact`` is ``None``, or on a
-        condition :class:`Feasibility` rejects.
+        If exactly one of ``method_name`` and ``exact`` is ``None``; if both
+        are ``None`` while ``feasible`` is not ``False``; or on a condition
+        :class:`Feasibility` rejects.
     """
 
     method_name: str | None = None
@@ -138,6 +140,8 @@ class MethodInfo(Feasibility):
         super().__post_init__()
         if (self.method_name is None) != (self.exact is None):
             raise ValueError("method_name and exact are set together or not at all")
+        if self.method_name is None and self.feasible is not False:
+            raise ValueError("a feasible or unresolved MethodInfo names its method")
 
 
 # ---------------------------------------------------------------------------
@@ -445,8 +449,8 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
     def _passes_exact_only(registration: _Registration[M], exact_only: bool) -> bool:
         return registration.exact or not exact_only
 
-    def _candidates(self, args: tuple[Any, ...], exact_only: bool) -> list[_Registration[M]]:
-        admitting = self._find_methods(self._cache_key(args))
+    def _candidates(self, key: Any, exact_only: bool) -> list[_Registration[M]]:
+        admitting = self._find_methods(key)
         return [
             registration
             for registration in admitting
@@ -461,6 +465,10 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
         **kwargs: Any,
     ) -> MethodInfo:
         """Report which method a call would run, without running anything.
+
+        A ``method=`` name bypasses the type pre-filter, not the arity: the
+        positional arguments are validated before the named method's
+        ``check`` runs.
 
         Parameters
         ----------
@@ -480,20 +488,20 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
             Under auto-selection, the report of the first candidate in
             selection order whose ``check`` is feasible or unresolved, so an
             unresolved candidate ranked above a feasible one is the one
-            reported. When no candidate is feasible, or there are no
-            positional arguments, an infeasible report that names no method
-            and whose ``description`` lists every method tried. With
-            ``method``, that method's report, or an infeasible report when
-            ``exact_only`` excludes it.
+            reported. When no candidate is feasible, an infeasible report
+            that names no method and whose ``description`` lists every method
+            tried. With ``method``, that method's report, or an infeasible
+            report when ``exact_only`` excludes it.
 
         Raises
         ------
         ResolutionError
             If ``method`` is not a registered name.
         TypeError
-            If there are positional arguments but fewer than the registry's
-            arity requires.
+            If there are fewer positional arguments than the registry's arity
+            requires, none included.
         """
+        key = self._cache_key(args)
         if method is not None:
             named = self._named(method)
             if not self._passes_exact_only(named, exact_only):
@@ -504,17 +512,15 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
                     exact=named.exact,
                 )
             return self._report(named, named.method.check(*args, **kwargs))
-        if not args:
-            return MethodInfo(feasible=False, description="No arguments provided")
         tried: list[str] = []
-        for candidate in self._candidates(args, exact_only):
+        for candidate in self._candidates(key, exact_only):
             info = self._report(candidate, candidate.method.check(*args, **kwargs))
             if info.feasible is not False:
                 return info
             tried.append(f"{candidate.name}: {info.description or 'infeasible'}")
         return MethodInfo(
             feasible=False,
-            description=self._no_method_message(args, tried, exact_only),
+            description=self._no_method_message(key, tried, exact_only),
         )
 
     def execute(
@@ -527,8 +533,9 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
         """Run the selected method and return its result.
 
         Under auto-selection the first feasible candidate in selection order
-        runs. An exception raised by a method's ``check`` or ``execute``
-        propagates unchanged, and no other method is tried after it.
+        runs. A ``method=`` name bypasses the type pre-filter, not the arity.
+        An exception raised by a method's ``check`` or ``execute`` propagates
+        unchanged, and no other method is tried after it.
 
         Parameters
         ----------
@@ -556,9 +563,10 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
             not registered, is infeasible, or is approximate while
             ``exact_only`` is ``True``.
         TypeError
-            If there are no positional arguments, or fewer than the
-            registry's arity requires.
+            If there are fewer positional arguments than the registry's arity
+            requires, none included.
         """
+        key = self._cache_key(args)
         if method is not None:
             named = self._named(method)
             if not self._passes_exact_only(named, exact_only):
@@ -573,10 +581,8 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
             if not info.feasible:
                 raise ResolutionError(f"Method {method!r} is not applicable: {info.description}")
             return named.method.execute(*args, **kwargs)
-        if not args:
-            raise TypeError("No arguments provided for dispatch")
         tried: list[str] = []
-        for candidate in self._candidates(args, exact_only):
+        for candidate in self._candidates(key, exact_only):
             info = candidate.method.check(*args, **kwargs)
             if info.feasible is None:
                 raise ResolutionError(
@@ -585,7 +591,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
             if info.feasible:
                 return candidate.method.execute(*args, **kwargs)
             tried.append(f"{candidate.name}: {info.description or 'infeasible'}")
-        raise ResolutionError(self._no_method_message(args, tried, exact_only))
+        raise ResolutionError(self._no_method_message(key, tried, exact_only))
 
     # -- internals ----------------------------------------------------------
 
@@ -600,12 +606,14 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
             exact=registration.exact,
         )
 
-    def _no_method_message(self, args: tuple[Any, ...], tried: list[str], exact_only: bool) -> str:
-        key = self._format_key(self._cache_key(args))
+    def _no_method_message(self, key: Any, tried: list[str], exact_only: bool) -> str:
+        formatted = self._format_key(key)
         restriction = " with exact_only" if exact_only else ""
         if tried:
-            return f"No feasible method for {key}{restriction}. Tried: " + "; ".join(tried)
-        return f"No method registered for {key}{restriction}. Available: {self.list_methods()}"
+            return f"No feasible method for {formatted}{restriction}. Tried: " + "; ".join(tried)
+        return (
+            f"No method registered for {formatted}{restriction}. Available: {self.list_methods()}"
+        )
 
     @abstractmethod
     def _cache_key(self, args: tuple[Any, ...]) -> Any:
@@ -614,7 +622,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
         A type for a unary registry, a pair of types for a binary one; the
         key is what ``supported_types`` is matched against and what the
         method cache is indexed by. Raises ``TypeError`` when ``args`` has
-        fewer entries than the arity needs.
+        fewer entries than the arity needs, none included.
         """
         ...
 
@@ -690,6 +698,10 @@ class UnaryDispatchRegistry[M: UnaryDispatchMethod](BaseDispatchRegistry[M]):
     """Dispatches on the type of the first positional argument."""
 
     def _cache_key(self, args: tuple[Any, ...]) -> type:
+        if not args:
+            raise TypeError(
+                "UnaryDispatchRegistry requires a positional argument to dispatch on; got none"
+            )
         return type(args[0])
 
     def _validate_supported_types(self, name: str, supported_types: Any) -> None:
