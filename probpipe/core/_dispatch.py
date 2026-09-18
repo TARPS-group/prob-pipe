@@ -216,12 +216,41 @@ class BinaryDispatchMethod(BaseDispatchMethod[BinarySupportedTypes]):
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class _Registration[M]:
+    """A method with the declarations the registry read from it at registration.
+
+    The registry ranks, filters, and reports from these fields and never
+    reads the method's attributes again, so a method mutated after
+    registration changes nothing the registry does.
+    """
+
+    method: M
+    name: str
+    exact: bool
+    priority: int | None
+    supported_types: Any
+    index: int
+
+
+def _validated_priority(name: str, priority: Any) -> int | None:
+    """``priority`` if it is an ``int`` or ``None``; ``TypeError`` otherwise, ``bool`` included."""
+    if priority is None or (isinstance(priority, int) and not isinstance(priority, bool)):
+        return priority
+    raise TypeError(f"Method {name!r} priority must be an int or None; got {priority!r}")
+
+
 class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
     """Registry of dispatch methods for one operation.
 
     :meth:`register` adds a method, :meth:`check` reports which method a call
     would run, :meth:`execute` runs it, :meth:`set_priorities` re-ranks at
     runtime, and :meth:`list_methods` lists the methods in selection order.
+    The registry reads a method's ``name``, ``exact``, ``priority``, and
+    ``supported_types()`` once, at registration, and validates them before it
+    changes; ranking, filtering, and reporting then use that registration, so
+    a method mutated afterwards changes nothing.
+
     Everything that does not depend on how many arguments select the method
     is implemented here; an arity subclass supplies the four hooks
     :meth:`_cache_key`, :meth:`_validate_supported_types`,
@@ -230,19 +259,22 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
     """
 
     def __init__(self) -> None:
-        self._methods: list[M] = []
-        self._name_index: dict[str, M] = {}
+        self._registrations: list[_Registration[M]] = []
+        self._by_name: dict[str, _Registration[M]] = {}
         self._priority_overrides: dict[str, int | None] = {}
-        self._registration_order: dict[str, int] = {}
-        self._type_cache: dict[Any, list[M]] = {}
+        self._type_cache: dict[Any, list[_Registration[M]]] = {}
 
     # -- registration -------------------------------------------------------
 
     def _available(self) -> str:
-        return ", ".join(sorted(self._name_index)) or "(none)"
+        return ", ".join(sorted(self._by_name)) or "(none)"
 
     def register(self, method: M) -> None:
         """Register a method.
+
+        The method's ``name``, ``exact``, ``priority``, and
+        ``supported_types()`` are read here, once, and validated before the
+        registry changes, so a rejected method leaves it as it was.
 
         Parameters
         ----------
@@ -251,41 +283,50 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
 
         Raises
         ------
+        TypeError
+            If ``method.name`` is not a ``str``; if ``method.exact`` is not a
+            ``bool``; if ``method.priority`` is not an ``int`` or ``None``, a
+            ``bool`` included; or if ``method.supported_types()`` does not
+            have the registry's arity shape.
         ValueError
             If ``method.name`` is empty or already registered.
-        TypeError
-            If ``method.exact`` is not a ``bool``, or ``method.supported_types()``
-            does not have the registry's arity shape.
         """
-        if not method.name:
-            raise ValueError(f"Method.name must be a non-empty string; got {method.name!r}")
-        if method.name in self._name_index:
-            raise ValueError(f"Method name {method.name!r} is already registered")
+        name = method.name
+        if not isinstance(name, str):
+            raise TypeError(f"Method.name must be a str; got {name!r}")
+        if not name:
+            raise ValueError("Method.name must be a non-empty string; got ''")
+        if name in self._by_name:
+            raise ValueError(f"Method name {name!r} is already registered")
         exact = method.exact
         if type(exact) is not bool:
-            raise TypeError(f"Method {method.name!r} must declare exact as a bool; got {exact!r}")
-        self._validate_supported_types(method.name, method.supported_types())
-        self._registration_order[method.name] = len(self._registration_order)
-        self._methods.append(method)
-        self._name_index[method.name] = method
-        self._sort_methods()
+            raise TypeError(f"Method {name!r} must declare exact as a bool; got {exact!r}")
+        priority = _validated_priority(name, method.priority)
+        supported_types = method.supported_types()
+        self._validate_supported_types(name, supported_types)
+        registration = _Registration(
+            method, name, exact, priority, supported_types, len(self._registrations)
+        )
+        self._registrations.append(registration)
+        self._by_name[name] = registration
+        self._sort_registrations()
 
     # -- ranking ------------------------------------------------------------
 
-    def _effective_priority(self, method: M) -> int | None:
-        return self._priority_overrides.get(method.name, method.priority)
+    def _effective_priority(self, registration: _Registration[M]) -> int | None:
+        return self._priority_overrides.get(registration.name, registration.priority)
 
-    def _sort_key(self, method: M) -> tuple[int, int, int, int]:
-        priority = self._effective_priority(method)
+    def _sort_key(self, registration: _Registration[M]) -> tuple[int, int, int, int]:
+        priority = self._effective_priority(registration)
         return (
-            0 if method.exact else 1,
+            0 if registration.exact else 1,
             1 if priority is None else 0,
             -(priority or 0),
-            self._registration_order[method.name],
+            registration.index,
         )
 
-    def _sort_methods(self) -> None:
-        self._methods.sort(key=self._sort_key)
+    def _sort_registrations(self) -> None:
+        self._registrations.sort(key=self._sort_key)
         self._type_cache.clear()
 
     def set_priorities(
@@ -318,17 +359,20 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
             If a name appears both in ``priorities`` and as a keyword.
         KeyError
             If a name is not registered.
+        TypeError
+            If a value is not an ``int`` or ``None``, a ``bool`` included.
         """
         overrides: dict[str, int | None] = dict(priorities or {})
         for name, value in kwargs.items():
             if name in overrides:
                 raise ValueError(f"Method {name!r} given both in the mapping and as a keyword")
             overrides[name] = value
-        for name in overrides:
-            if name not in self._name_index:
+        for name, value in overrides.items():
+            if name not in self._by_name:
                 raise KeyError(f"No method named {name!r}. Available: {self._available()}")
+            _validated_priority(name, value)
         for name, new_priority in overrides.items():
-            old_priority = self._effective_priority(self._name_index[name])
+            old_priority = self._effective_priority(self._by_name[name])
             if (old_priority is None) != (new_priority is None):
                 direction = "out of opt-in-only" if old_priority is None else "into opt-in-only"
                 warnings.warn(
@@ -339,7 +383,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
                     stacklevel=2,
                 )
         self._priority_overrides.update(overrides)
-        self._sort_methods()
+        self._sort_registrations()
 
     # -- query --------------------------------------------------------------
 
@@ -362,19 +406,19 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
             If no method is registered under ``name``.
         """
         try:
-            return self._name_index[name]
+            return self._by_name[name].method
         except KeyError:
             raise KeyError(f"No method named {name!r}. Available: {self._available()}") from None
 
-    def _named(self, name: str) -> M:
-        """The method a caller requested with ``method=``.
+    def _named(self, name: str) -> _Registration[M]:
+        """The registration of the method a caller requested with ``method=``.
 
         Unlike :meth:`get_method`, a name that is not registered raises
         :class:`ResolutionError`, since the request is a dispatch that cannot
         resolve.
         """
         try:
-            return self._name_index[name]
+            return self._by_name[name]
         except KeyError:
             raise ResolutionError(
                 f"No method named {name!r}. Available: {self._available()}"
@@ -390,18 +434,22 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
             methods included at their rank. The listing does not say what a
             call would run; :meth:`check` does.
         """
-        return [method.name for method in self._methods]
+        return [registration.name for registration in self._registrations]
 
-    def _is_auto_dispatchable(self, method: M) -> bool:
-        return self._effective_priority(method) is not None
+    def _is_auto_dispatchable(self, registration: _Registration[M]) -> bool:
+        return self._effective_priority(registration) is not None
 
     @staticmethod
-    def _passes_exact_only(method: M, exact_only: bool) -> bool:
-        return method.exact or not exact_only
+    def _passes_exact_only(registration: _Registration[M], exact_only: bool) -> bool:
+        return registration.exact or not exact_only
 
-    def _candidates(self, args: tuple[Any, ...], exact_only: bool) -> list[M]:
+    def _candidates(self, args: tuple[Any, ...], exact_only: bool) -> list[_Registration[M]]:
         admitting = self._find_methods(self._cache_key(args))
-        return [method for method in admitting if self._passes_exact_only(method, exact_only)]
+        return [
+            registration
+            for registration in admitting
+            if self._passes_exact_only(registration, exact_only)
+        ]
 
     def check(
         self,
@@ -453,12 +501,12 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
                     method_name=method,
                     exact=named.exact,
                 )
-            return self._report(named, named.check(*args, **kwargs))
+            return self._report(named, named.method.check(*args, **kwargs))
         if not args:
             return MethodInfo(feasible=False, description="No arguments provided")
         tried: list[str] = []
         for candidate in self._candidates(args, exact_only):
-            info = self._report(candidate, candidate.check(*args, **kwargs))
+            info = self._report(candidate, candidate.method.check(*args, **kwargs))
             if info.feasible is not False:
                 return info
             tried.append(f"{candidate.name}: {info.description or 'infeasible'}")
@@ -515,39 +563,39 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
                 raise ResolutionError(
                     f"Method {method!r} is approximate and exact_only was requested"
                 )
-            info = named.check(*args, **kwargs)
+            info = named.method.check(*args, **kwargs)
             if info.feasible is None:
                 raise ResolutionError(
                     f"Method {method!r} is unresolved; pending: {', '.join(info.pending)}"
                 )
             if not info.feasible:
                 raise ResolutionError(f"Method {method!r} is not applicable: {info.description}")
-            return named.execute(*args, **kwargs)
+            return named.method.execute(*args, **kwargs)
         if not args:
             raise TypeError("No arguments provided for dispatch")
         tried: list[str] = []
         for candidate in self._candidates(args, exact_only):
-            info = candidate.check(*args, **kwargs)
+            info = candidate.method.check(*args, **kwargs)
             if info.feasible is None:
                 raise ResolutionError(
                     f"Method {candidate.name!r} is unresolved; pending: {', '.join(info.pending)}"
                 )
             if info.feasible:
-                return candidate.execute(*args, **kwargs)
+                return candidate.method.execute(*args, **kwargs)
             tried.append(f"{candidate.name}: {info.description or 'infeasible'}")
         raise ResolutionError(self._no_method_message(args, tried, exact_only))
 
     # -- internals ----------------------------------------------------------
 
     @staticmethod
-    def _report(method: M, feasibility: Feasibility) -> MethodInfo:
+    def _report(registration: _Registration[M], feasibility: Feasibility) -> MethodInfo:
         """The method's feasibility with its registered name and exactness."""
         return MethodInfo(
             feasible=feasibility.feasible,
             description=feasibility.description,
             pending=feasibility.pending,
-            method_name=method.name,
-            exact=method.exact,
+            method_name=registration.name,
+            exact=registration.exact,
         )
 
     def _no_method_message(self, args: tuple[Any, ...], tried: list[str], exact_only: bool) -> str:
@@ -580,13 +628,14 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
         ...
 
     @abstractmethod
-    def _find_methods(self, key: Any) -> list[M]:
-        """The auto-dispatchable methods admitting ``key``, in selection order.
+    def _find_methods(self, key: Any) -> list[_Registration[M]]:
+        """The auto-dispatchable registrations admitting ``key``, in selection order.
 
-        Filters ``self._methods``, which :meth:`_sort_methods` keeps in
-        selection order, to those passing :meth:`_is_auto_dispatchable` and
-        whose ``supported_types`` admit the key by ``issubclass``, and
-        memoizes the result in ``self._type_cache[key]``.
+        Filters ``self._registrations``, which :meth:`_sort_registrations`
+        keeps in selection order, to those passing
+        :meth:`_is_auto_dispatchable` and whose ``supported_types`` admit the
+        key by ``issubclass``, and memoizes the result in
+        ``self._type_cache[key]``.
         """
         ...
 
@@ -613,13 +662,13 @@ class UnaryDispatchRegistry[M: UnaryDispatchMethod](BaseDispatchRegistry[M]):
                 f"got {supported_types!r}"
             )
 
-    def _find_methods(self, key: type) -> list[M]:
+    def _find_methods(self, key: type) -> list[_Registration[M]]:
         if key not in self._type_cache:
             self._type_cache[key] = [
-                method
-                for method in self._methods
-                if self._is_auto_dispatchable(method)
-                and any(issubclass(key, supported) for supported in method.supported_types())
+                registration
+                for registration in self._registrations
+                if self._is_auto_dispatchable(registration)
+                and any(issubclass(key, supported) for supported in registration.supported_types)
             ]
         return self._type_cache[key]
 
@@ -653,18 +702,18 @@ class BinaryDispatchRegistry[M: BinaryDispatchMethod](BaseDispatchRegistry[M]):
                 f"pair of tuples of classes; got {supported_types!r}"
             )
 
-    def _find_methods(self, key: tuple[type, type]) -> list[M]:
+    def _find_methods(self, key: tuple[type, type]) -> list[_Registration[M]]:
         if key not in self._type_cache:
             left_type, right_type = key
-            matches: list[M] = []
-            for method in self._methods:
-                if not self._is_auto_dispatchable(method):
+            matches: list[_Registration[M]] = []
+            for registration in self._registrations:
+                if not self._is_auto_dispatchable(registration):
                     continue
-                supported_left, supported_right = method.supported_types()
+                supported_left, supported_right = registration.supported_types
                 if any(issubclass(left_type, left) for left in supported_left) and any(
                     issubclass(right_type, right) for right in supported_right
                 ):
-                    matches.append(method)
+                    matches.append(registration)
             self._type_cache[key] = matches
         return self._type_cache[key]
 

@@ -154,12 +154,20 @@ class Arity:
     """
 
     def __init__(
-        self, registry_cls: type, fake: type, args: tuple[Any, ...], bad_supported: list[Any]
+        self,
+        registry_cls: type,
+        fake: type,
+        args: tuple[Any, ...],
+        fresh_args: tuple[Any, ...],
+        bad_supported: list[Any],
+        exclude_args: Any,
     ):
         self.registry_cls = registry_cls
         self.fake = fake
         self.args = args
+        self.fresh_args = fresh_args  # admitted by the defaults, of types no earlier call used
         self.bad_supported = bad_supported
+        self.exclude_args = exclude_args  # mutates a fake so its types no longer admit ``args``
 
     def registry(self) -> BaseDispatchRegistry[Any]:
         return self.registry_cls()
@@ -175,13 +183,17 @@ def arity(request: pytest.FixtureRequest) -> Arity:
             UnaryDispatchRegistry,
             FakeUnary,
             (Left(),),
+            fresh_args=(LeftSub(),),
             bad_supported=[((Left,), (Right,)), ("Left",), Left, [Left]],
+            exclude_args=lambda fake: setattr(fake, "_types", (Right,)),
         )
     return Arity(
         BinaryDispatchRegistry,
         FakeBinary,
         (Left(), Right()),
+        fresh_args=(LeftSub(), RightSub()),
         bad_supported=[(Left, Right), ((Left,), ("Right",)), ((Left,),), (Left, (Right,))],
+        exclude_args=lambda fake: setattr(fake, "_left", (Right,)),
     )
 
 
@@ -397,19 +409,23 @@ class TestSetPriorities:
         reg.register(arity.method("a", priority=1))
         with pytest.raises(ValueError, match="both"):
             reg.set_priorities({"a": 5}, a=6)
-        assert reg._effective_priority(reg.get_method("a")) == 1
+        assert reg._effective_priority(reg._by_name["a"]) == 1
 
     def test_unknown_name_raises_and_applies_nothing(self, arity: Arity):
         reg = arity.registry()
         reg.register(arity.method("a", priority=1))
         with pytest.raises(KeyError, match="No method named 'nope'"):
             reg.set_priorities(a=50, nope=1)
-        assert reg._effective_priority(reg.get_method("a")) == 1
+        assert reg._effective_priority(reg._by_name["a"]) == 1
 
     @pytest.mark.parametrize(
         "kwargs, exc, match",
-        [({"a": 5, "nope": 1}, KeyError, "No method named 'nope'"), ({"a": 6}, ValueError, "both")],
-        ids=["unknown-name", "name-in-both-forms"],
+        [
+            ({"a": 5, "nope": 1}, KeyError, "No method named 'nope'"),
+            ({"a": 6}, ValueError, "both"),
+            ({"a": "high"}, TypeError, "int or None"),
+        ],
+        ids=["unknown-name", "name-in-both-forms", "non-integer-value"],
     )
     def test_an_aborted_override_does_not_warn(self, arity: Arity, kwargs, exc, match):
         """Nothing is applied, so nothing crossed opt-in to warn about.
@@ -423,7 +439,21 @@ class TestSetPriorities:
             warnings.simplefilter("error")
             with pytest.raises(exc, match=match):
                 reg.set_priorities({"a": 5} if exc is ValueError else None, **kwargs)
-        assert reg._effective_priority(reg.get_method("a")) is None
+        assert reg._effective_priority(reg._by_name["a"]) is None
+
+    @pytest.mark.parametrize(
+        "bad", ["high", 5.0, True, False], ids=["str", "float", "True", "False"]
+    )
+    def test_non_integer_override_raises_and_applies_nothing(self, arity: Arity, bad: Any):
+        """Validated before anything is stored, so the registry stays usable."""
+        reg = arity.registry()
+        reg.register(arity.method("a", priority=1, result="a"))
+        reg.register(arity.method("b", priority=2, result="b"))
+        with pytest.raises(TypeError, match="priority must be an int or None"):
+            reg.set_priorities(a=bad)
+        assert reg.list_methods() == ["b", "a"]
+        assert reg._effective_priority(reg._by_name["a"]) == 1
+        assert reg.execute(*arity.args) == "b"
 
     def test_warns_once_on_each_crossing_of_opt_in(self, arity: Arity):
         reg = arity.registry()
@@ -707,11 +737,44 @@ class TestRegistration:
         with pytest.raises(ValueError, match="already registered"):
             reg.register(arity.method("dup"))
 
-    @pytest.mark.parametrize("name", ["", None])
-    def test_empty_name_rejected(self, arity: Arity, name: Any):
+    def test_empty_name_rejected(self, arity: Arity):
         reg = arity.registry()
         with pytest.raises(ValueError, match="non-empty"):
+            reg.register(arity.method(""))
+        assert reg.list_methods() == []
+
+    @pytest.mark.parametrize("name", [None, 5], ids=["None", "int"])
+    def test_non_string_name_rejected(self, arity: Arity, name: Any):
+        reg = arity.registry()
+        with pytest.raises(TypeError, match="must be a str"):
             reg.register(arity.method(name))
+        assert reg.list_methods() == []
+
+    @pytest.mark.parametrize(
+        "bad", ["5", 5.0, True, False, [1]], ids=["str", "float", "True", "False", "list"]
+    )
+    def test_non_integer_priority_rejected(self, arity: Arity, bad: Any):
+        reg = arity.registry()
+        with pytest.raises(TypeError, match="priority must be an int or None"):
+            reg.register(arity.method("m", priority=bad))
+        assert reg.list_methods() == []
+        with pytest.raises(KeyError):
+            reg.get_method("m")
+
+    def test_a_rejected_registration_leaves_the_registry_as_it_was(self, arity: Arity):
+        reg = arity.registry()
+        reg.register(arity.method("a", priority=1, result="a"))
+        assert reg.execute(*arity.args) == "a"
+        for bad in (
+            arity.method("a", priority=2),
+            arity.method("b", exact="yes"),
+            arity.method("c", priority="high"),
+            arity.method("d", supported=arity.bad_supported[0]),
+        ):
+            with pytest.raises((TypeError, ValueError)):
+                reg.register(bad)
+        assert reg.list_methods() == ["a"]
+        assert reg.execute(*arity.args) == "a"
 
     def test_supported_types_must_have_the_arity_shape(self, arity: Arity):
         """Python enforces nothing about the type parameter, so registration checks the value."""
@@ -737,6 +800,31 @@ class TestRegistration:
         assert reg.get_method("m") is m
         with pytest.raises(KeyError, match="No method named"):
             reg.get_method("nope")
+
+
+class TestRegistrationIsASnapshot:
+    def test_mutating_a_registered_method_changes_nothing(self, arity: Arity):
+        """Declarations are read once; the registry ranks, filters, and reports from that reading."""
+        reg = arity.registry()
+        a = arity.method("a", exact=False, priority=10, result="a")
+        b = arity.method("b", exact=False, priority=5, result="b")
+        reg.register(a)
+        reg.register(b)
+        assert reg.list_methods() == ["a", "b"]
+
+        a._name = "renamed"  # would break the name index
+        a._priority = None  # would make ``a`` opt-in-only
+        b._exact = True  # would move ``b`` ahead of ``a``
+        arity.exclude_args(b)  # would drop ``b`` from admission
+
+        assert reg.list_methods() == ["a", "b"]
+        assert reg.get_method("a") is a
+        info = reg.check(*arity.args)
+        assert (info.method_name, info.exact) == ("a", False)
+        assert reg.execute(*arity.args) == "a"
+        # A key no call has used yet is admitted from the registration, not from ``b`` as it is now.
+        a._feasible = False
+        assert reg.execute(*arity.fresh_args) == "b"
 
 
 class TestCaches:

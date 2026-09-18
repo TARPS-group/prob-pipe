@@ -22,7 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it now declares itself; `UnaryDispatchMethod` and `BinaryDispatchMethod` fix
   the shape through the exported `UnarySupportedTypes` and
   `BinarySupportedTypes`, and registration rejects a `supported_types()` value
-  of the wrong shape.
+  of the wrong shape. A registry reads `name`, `exact`, `priority`, and
+  `supported_types()` once, at registration, and validates all four before it
+  changes, so a rejected method or a bad `set_priorities` value leaves it as
+  it was; a `bool` is not accepted as a priority.
   A method's `check` returns a `Feasibility` (`feasible`, `description`,
   `pending`); the registry's `check` returns a `MethodInfo`, a `Feasibility`
   with `method_name` and `exact` set from the registration, so a method never
