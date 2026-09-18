@@ -571,6 +571,24 @@ def _split_data_kwargs(
     return data_kwargs, inference_kwargs
 
 
+def _registry_observed(observed: Any, data_kwargs: dict[str, Any]) -> Any:
+    """The observed argument in the form a registered method takes.
+
+    Named data kwargs are bundled into one ``Record``; a positional value is
+    passed through. Raises ``ValueError`` when both are given.
+    """
+    if not data_kwargs:
+        return observed
+    if observed is not None:
+        raise ValueError(
+            "Cannot provide both positional `observed` and named "
+            f"data kwargs ({', '.join(data_kwargs)})"
+        )
+    from .record import Record
+
+    return Record("observed", data_kwargs)
+
+
 @function
 def condition_on(
     dist: Distribution,
@@ -606,12 +624,16 @@ def condition_on(
        closed-form result (e.g., conjugate updates, joint marginalization).
     3. **Approximate conditioning** — if *dist* claims
        ``SupportsApproximateConditioning``, its ``_condition_on`` runs, such
-       as one forward pass through a pre-trained amortized posterior.
-       ``exact_only=True`` skips this route.
+       as one forward pass through a pre-trained amortized posterior. An
+       exact registered method outranks it, and ``exact_only=True`` skips it
+       altogether.
     4. **Registry auto-select** — the inference method registry runs the
        first feasible method in selection order: exact methods before
        approximate ones, then by priority (NUTS, HMC, RWMH, etc.). A call
        with no feasible method raises ``ResolutionError``.
+
+    Exactness is compared across routes, not only within the registry: no
+    approximate route runs while an exact one applies.
 
     Parameters
     ----------
@@ -652,7 +674,6 @@ def condition_on(
         If a kwarg matches a component name only up to case.
     """
     from ..inference import inference_method_registry
-    from .record import Record
 
     # Separate data kwargs (names matching fields) from
     # inference kwargs (everything else like num_results, num_warmup).
@@ -660,38 +681,33 @@ def condition_on(
 
     # Explicit method override → always use the registry
     if method is not None:
-        if data_kwargs:
-            if observed is not None:
-                raise ValueError(
-                    "Cannot provide both positional `observed` and named "
-                    f"data kwargs ({', '.join(data_kwargs)})"
-                )
-            observed = Record("observed", data_kwargs)
         return inference_method_registry.execute(
-            dist, observed, method=method, exact_only=exact_only, **inference_kwargs
+            dist,
+            _registry_observed(observed, data_kwargs),
+            method=method,
+            exact_only=exact_only,
+            **inference_kwargs,
         )
 
-    # A built-in conditioning path, exact first. The approximate one is
-    # skipped under exact_only, leaving the registry to answer or refuse.
-    # Only the data and inference kwargs pass through to _condition_on, which
-    # handles its own validation (e.g., ProductDistribution raises KeyError on
-    # unknown names); the controls stay here.
-    if isinstance(dist, SupportsExactConditioning) or (
-        not exact_only and isinstance(dist, SupportsApproximateConditioning)
-    ):
+    # An exact built-in path. Only the data and inference kwargs pass through
+    # to _condition_on, which handles its own validation (e.g.,
+    # ProductDistribution raises KeyError on unknown names); the controls
+    # stay here.
+    if isinstance(dist, SupportsExactConditioning):
         return dist._condition_on(observed, **data_kwargs, **inference_kwargs)
 
+    # An approximate built-in path runs only when no exact route applies, so
+    # an exact registered method outranks it and exact_only skips it.
+    if not exact_only and isinstance(dist, SupportsApproximateConditioning):
+        exact_candidate = inference_method_registry.check(
+            dist, _registry_observed(observed, data_kwargs), exact_only=True, **inference_kwargs
+        )
+        if exact_candidate.feasible is not True:
+            return dist._condition_on(observed, **data_kwargs, **inference_kwargs)
+
     # Registry auto-selects the first feasible method in selection order.
-    # Data kwargs are bundled into observed as a Record object.
-    if data_kwargs:
-        if observed is not None:
-            raise ValueError(
-                "Cannot provide both positional `observed` and named "
-                f"data kwargs ({', '.join(data_kwargs)})"
-            )
-        observed = Record("observed", data_kwargs)
     return inference_method_registry.execute(
-        dist, observed, exact_only=exact_only, **inference_kwargs
+        dist, _registry_observed(observed, data_kwargs), exact_only=exact_only, **inference_kwargs
     )
 
 

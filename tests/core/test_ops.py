@@ -399,6 +399,65 @@ class TestConditionOn:
         ops.condition_on(Recorder(), 1.0, exact_only=True, num_results=5)
         assert Recorder.seen == {"num_results": 5}
 
+    def test_an_exact_registered_method_outranks_the_approximate_capability(self, monkeypatch):
+        """Exactness is compared across route sources, not only within the registry."""
+        from probpipe.core._dispatch import Feasibility, UnaryDispatchMethod, UnaryDispatchRegistry
+
+        class Amortized(SupportsApproximateConditioning):
+            calls: ClassVar[int] = 0
+
+            def _condition_on(self, observed, /, **kwargs):
+                Amortized.calls += 1
+                return Normal(0, 1, name="amortized")
+
+        class ExactMethod(UnaryDispatchMethod):
+            ran = False
+
+            @property
+            def name(self):
+                return "exact_for_amortized"
+
+            @property
+            def exact(self):
+                return True
+
+            @property
+            def priority(self):
+                return 1
+
+            def supported_types(self):
+                return (Amortized,)
+
+            def check(self, *args, **kwargs):
+                return Feasibility(feasible=True)
+
+            def execute(self, *args, **kwargs):
+                ExactMethod.ran = True
+                return Normal(0, 1, name="exact")
+
+        registry = UnaryDispatchRegistry()
+        registry.register(ExactMethod())
+        monkeypatch.setattr("probpipe.inference.inference_method_registry", registry)
+
+        ops.condition_on(Amortized(), 1.0)
+        assert ExactMethod.ran
+        assert Amortized.calls == 0
+
+    def test_the_approximate_capability_runs_when_no_exact_method_applies(self, monkeypatch):
+        """With only approximate methods registered, the built-in path still wins."""
+        from probpipe.core._dispatch import UnaryDispatchRegistry
+
+        class Amortized(SupportsApproximateConditioning):
+            calls: ClassVar[int] = 0
+
+            def _condition_on(self, observed, /, **kwargs):
+                Amortized.calls += 1
+                return Normal(0, 1, name="amortized")
+
+        monkeypatch.setattr("probpipe.inference.inference_method_registry", UnaryDispatchRegistry())
+        ops.condition_on(Amortized(), 1.0)
+        assert Amortized.calls == 1
+
     def test_exact_only_skips_the_approximate_capability_route(self):
         """An amortized conditioner is not an exact answer, so the call falls to the registry."""
 
