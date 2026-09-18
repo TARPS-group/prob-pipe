@@ -61,7 +61,9 @@ class GoodBinary(BinaryDispatchMethod):
 
 
 class UnaryWithBinaryShape(GoodUnary):
-    def supported_types(self) -> BinarySupportedTypes:  # pyright: ignore[reportIncompatibleMethodOverride]
+    def supported_types(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self,
+    ) -> BinarySupportedTypes:
         return ((int,), (str,))
 
 

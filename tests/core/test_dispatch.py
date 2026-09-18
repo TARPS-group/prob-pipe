@@ -436,7 +436,10 @@ class TestSpecificity:
         assert reg.execute(*arity.args) == "s"
 
     def test_a_virtual_subclass_is_least_specific(self):
-        """Admitted by ``issubclass`` without appearing in the MRO, so it ranks after every real base."""
+        """Admitted by ``issubclass`` without appearing in the MRO.
+
+        Such a type ranks after every real base.
+        """
 
         class Marker(abc.ABC):
             @abc.abstractmethod
@@ -453,7 +456,10 @@ class TestSpecificity:
         assert reg.execute(Left()) == "marker"
 
     def test_binary_distance_is_the_sum_of_the_two_sides(self):
-        """``(LeftSub, RightSub)``: C at 1 + 0 beats A at 0 + 2 and B at 1 + 1, which tie in order."""
+        """For ``(LeftSub, RightSub)``, C at 1 + 0 beats A at 0 + 2 and B at 1 + 1.
+
+        A and B tie and fall back to registration order.
+        """
         reg = BinaryDispatchRegistry()
         declared = {
             "D": ((object,), (object,)),  # 2 + 2
@@ -941,7 +947,7 @@ class TestRegistration:
 
 class TestRegistrationIsASnapshot:
     def test_mutating_a_registered_method_changes_nothing(self, arity: Arity):
-        """Declarations are read once; the registry ranks, filters, and reports from that reading."""
+        """Declarations are read once; ranking, filtering, and reporting use that reading."""
         reg = arity.registry()
         a = arity.method("a", exact=False, priority=10, result="a")
         b = arity.method("b", exact=False, priority=5, result="b")
