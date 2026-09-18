@@ -59,7 +59,9 @@ inheritance required.
 
 ::: probpipe.SupportsCovariance
 
-::: probpipe.SupportsConditioning
+::: probpipe.SupportsExactConditioning
+
+::: probpipe.SupportsApproximateConditioning
 
 `SupportsArrayBackend` is the only **class-level** protocol: its declared
 method (`_make_array_backend`) is a `@classmethod`, so the runtime check

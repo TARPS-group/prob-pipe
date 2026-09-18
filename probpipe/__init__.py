@@ -114,9 +114,10 @@ from probpipe.core.node import (
     workflow_method,
 )
 from probpipe.core.protocols import (
+    SupportsApproximateConditioning,
     SupportsArrayBackend,
-    SupportsConditioning,
     SupportsCovariance,
+    SupportsExactConditioning,
     SupportsExpectation,
     SupportsLogProb,
     SupportsMean,
@@ -319,9 +320,10 @@ __all__ = [
     "SimpleGenerativeModel",
     "SimpleModel",
     "StudentT",
+    "SupportsApproximateConditioning",
     "SupportsArrayBackend",
-    "SupportsConditioning",
     "SupportsCovariance",
+    "SupportsExactConditioning",
     # Protocols
     "SupportsExpectation",
     "SupportsLogProb",

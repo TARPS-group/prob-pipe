@@ -29,7 +29,7 @@ import numpy as np
 
 from ..core.distribution import Distribution
 from ..core.node import function
-from ..core.protocols import GenerativeLikelihood, SupportsConditioning
+from ..core.protocols import GenerativeLikelihood, SupportsApproximateConditioning
 from ..custom_types import ArrayLike, PRNGKey
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._bayesflow_common import (
@@ -139,11 +139,11 @@ def _field_bijectors(prior: Distribution, keys: tuple[str, ...]) -> dict[str, tf
 
 
 # ---------------------------------------------------------------------------
-# Trained-model wrapper: a SupportsConditioning direct sampler
+# Trained-model wrapper: an approximate-conditioning direct sampler
 # ---------------------------------------------------------------------------
 
 
-class BayesFlowModel(Distribution, SupportsConditioning):
+class BayesFlowModel(Distribution, SupportsApproximateConditioning):
     """A BayesFlow amortized model of the joint ``p(theta, y)``.
 
     Bundles the generative model it was trained from (``prior`` + ``simulator``,

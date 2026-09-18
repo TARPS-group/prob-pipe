@@ -30,8 +30,9 @@ from . import _workflow_broker, _workflow_descendants
 from .distribution import Distribution, RandomFunction
 from .node import function
 from .protocols import (
-    SupportsConditioning,
+    SupportsApproximateConditioning,
     SupportsCovariance,
+    SupportsExactConditioning,
     SupportsExpectation,
     SupportsLogProb,
     SupportsMean,
@@ -600,7 +601,7 @@ def condition_on(
     1. **Explicit override** — ``method="tfp_nuts"`` (or any registered
        name) routes directly to the named inference method.
     2. **Exact conditioning** — if *dist* implements
-       ``SupportsConditioning``, its ``_condition_on`` is called for a
+       a conditioning capability, its ``_condition_on`` is called for a
        closed-form result (e.g., conjugate updates, joint marginalization).
     3. **Registry auto-select** — the inference method registry runs the
        first feasible method in selection order: exact methods before
@@ -610,8 +611,8 @@ def condition_on(
     Parameters
     ----------
     dist : Distribution
-        Distribution or model to condition.  Need not implement
-        ``SupportsConditioning`` — the registry provides inference
+        Distribution or model to condition.  Need not claim a
+        conditioning capability — the registry provides inference
         methods for common model types.
     observed : Any
         Observed values to condition on.
@@ -661,7 +662,7 @@ def condition_on(
     # Exact conditioning (conjugate updates, joint marginalization, etc.)
     # All kwargs pass through to _condition_on — it handles its own
     # validation (e.g., ProductDistribution raises KeyError on unknown names).
-    if isinstance(dist, SupportsConditioning):
+    if isinstance(dist, SupportsExactConditioning | SupportsApproximateConditioning):
         return dist._condition_on(observed, **data_kwargs, **inference_kwargs)
 
     # Registry auto-selects the first feasible method in selection order.

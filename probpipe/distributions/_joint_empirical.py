@@ -7,7 +7,7 @@ correlation between components.
 Two concrete classes:
 
 * :class:`JointEmpirical` — generic base. Accepts numeric or object
-  samples; claims only ``SupportsSampling`` and ``SupportsConditioning``.
+  samples; claims only ``SupportsSampling`` and ``SupportsExactConditioning``.
 * :class:`NumericJointEmpirical` — all fields numeric. Additionally
   claims ``SupportsMean`` and ``SupportsVariance``.
 
@@ -37,7 +37,7 @@ from ..core.distribution import (
 )
 from ..core.event_template import EventTemplate
 from ..core.protocols import (
-    SupportsConditioning,
+    SupportsExactConditioning,
     SupportsMean,
     SupportsSampling,
     SupportsVariance,
@@ -54,7 +54,7 @@ from ._joint_utils import (
 __all__ = ["JointEmpirical", "NumericJointEmpirical"]
 
 
-class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning):
+class JointEmpirical(RecordDistribution, SupportsSampling, SupportsExactConditioning):
     """
     Joint distribution from weighted joint samples.
 

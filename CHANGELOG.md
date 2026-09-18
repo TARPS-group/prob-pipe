@@ -47,6 +47,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keeps its `TypeError` and `ConversionMethod` until its move to
   `distributions/_conversion.py` (design IV.3).
 
+- **`SupportsConditioning` is replaced by `SupportsExactConditioning` and
+  `SupportsApproximateConditioning`.** A distribution with a built-in
+  conditioning path now declares whether that path returns the conditional law
+  or a stand-in for it, and `condition_on` has one capability route for each.
+  Both are abstract base classes rather than `@runtime_checkable` protocols, so
+  a class claims one by inheriting it and a class that merely defines
+  `_condition_on` claims neither: exactness is a claim about the result, which
+  no structural check can read. `ProductDistribution`, `JointGaussian`,
+  `SequentialJointDistribution`, and `JointEmpirical` claim the exact
+  capability; `BayesFlowModel` claims the approximate one.
+
 - **Both new exceptions are public, and an unknown `method=` name is a
   resolution failure.** `from probpipe import ResolutionError,
   MathematicalDomainError`. `ResolutionError` derives directly from

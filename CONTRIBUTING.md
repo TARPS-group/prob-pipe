@@ -599,7 +599,7 @@ uv build packaging/probpipe   # probpipe (metapackage)
 | `BootstrapReplicateDistribution[T]` / `RecordBootstrapReplicateDistribution` | N-fold product over a source: each draw is a bootstrapped dataset of `n` i.i.d. observations. Accepts a `Record`, `RecordEmpiricalDistribution`, numeric array, or any `SupportsSampling` source (in which case `n` is mandatory). |
 | `Function` | Immutable first-class `TrackedTerm` / `Annotated`, schema-aware computation term. It owns a frozen Python `signature`, optional authoritative input/output `EventTemplate`s, and an implementation object. `apply` performs one raw evaluation; `__call__` adds lifting, variadic slot planning, sweeps, orchestration, wrapping, and Function-first provenance. Prefect is off by default; views are grouped by parent for correlated broadcasting. |
 | `Module` | Stateful workflow-aware base class (see `@workflow_method`) |
-| Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, `SupportsConditioning`, etc.; dynamic inclusion on `ProductDistribution` and `TransformedDistribution` |
+| Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, the two conditioning capabilities, etc.; dynamic inclusion on `ProductDistribution` and `TransformedDistribution` |
 | `BaseDispatchRegistry` | Abstract base for the dispatch registries: holds registration, exactness-then-rank ordering, opt-in filtering (`priority=None`) with override warnings, and the `check`/`execute` loop. Arity-specific subclasses override `_cache_key`, `_find_methods`, and `_format_key`. |
 | `UnaryDispatchRegistry` | Single-argument dispatch registry; dispatches on the type of the first positional argument. Used by the inference method registry. |
 | `BinaryDispatchRegistry` | Two-argument dispatch registry; dispatches on the joint type of the first two positional args via paired `((left_types,), (right_types,))` pre-filters. |
@@ -649,10 +649,10 @@ Built-in methods:
 
 **Amortized SBI dispatches two ways.** Trained amortized posterior estimators
 (`learn_amortized_posterior` → `BayesFlowModel`, the `[bayesflow]` extra)
-implement `SupportsConditioning` directly, so `condition_on(model, observed)` is
-a single forward pass through the trained network. Because `condition_on` checks
-`SupportsConditioning` *before* the inference-method registry, these estimators
-short-circuit it and register no method. The learned NLE/NRE likelihoods
+claim `SupportsApproximateConditioning`, so `condition_on(model, observed)` is
+a single forward pass through the trained network. Because `condition_on` takes
+a conditioning capability *before* the inference-method registry, these
+estimators short-circuit it and register no method. The learned NLE/NRE likelihoods
 (`learn_amortized_likelihood` / `learn_amortized_ratio` → `BayesFlowLikelihood`
 / `BayesFlowRatio`) take the opposite route: they are ordinary
 `ConditionallyIndependentLikelihood` components, so
