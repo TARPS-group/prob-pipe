@@ -97,7 +97,8 @@ A method declares two things about where it stands, and they are separate.
   override `priority` is opt-in until a contributor ranks it, so registering
   one never changes what runs.
 
-Ties keep registration order. `inference_method_registry.set_priorities(...)`
+Ties go to the method whose declared types are closest to the argument's
+class, then to registration order. `inference_method_registry.set_priorities(...)`
 re-ranks at runtime, by keyword or by a mapping for names that are not
 identifiers; it cannot change whether a method is exact.
 

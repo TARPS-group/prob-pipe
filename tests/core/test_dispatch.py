@@ -1,7 +1,8 @@
 """Invariants of the dispatch registries.
 
 Every method declares whether it is exact; selection is exact before
-approximate, then priority, then registration order; ``set_priorities``
+approximate, then priority, then type specificity, then registration order;
+``set_priorities``
 re-ranks without touching exactness; ``check`` probes without running;
 ``execute`` runs the first feasible method or raises ``ResolutionError``.
 Each test is parametrized over the unary and binary registries.
@@ -9,8 +10,10 @@ Each test is parametrized over the unary and binary registries.
 
 from __future__ import annotations
 
+import abc
 import builtins
 import inspect
+import itertools
 import random
 import re
 import warnings
@@ -159,6 +162,9 @@ class Arity:
         fake: type,
         args: tuple[Any, ...],
         fresh_args: tuple[Any, ...],
+        other_args: tuple[Any, ...],
+        general: Any,
+        specific: Any,
         bad_supported: list[Any],
         exclude_args: Any,
     ):
@@ -166,6 +172,9 @@ class Arity:
         self.fake = fake
         self.args = args
         self.fresh_args = fresh_args  # admitted by the defaults, of types no earlier call used
+        self.other_args = other_args  # admitted by ``general`` only
+        self.general = general  # a ``supported_types`` value admitting ``args`` at a distance
+        self.specific = specific  # one admitting ``args`` exactly
         self.bad_supported = bad_supported
         self.exclude_args = exclude_args  # mutates a fake so its types no longer admit ``args``
 
@@ -184,6 +193,9 @@ def arity(request: pytest.FixtureRequest) -> Arity:
             FakeUnary,
             (Left(),),
             fresh_args=(LeftSub(),),
+            other_args=(Right(),),
+            general=(object,),
+            specific=(Left,),
             bad_supported=[((Left,), (Right,)), ("Left",), Left, [Left]],
             exclude_args=lambda fake: setattr(fake, "_types", (Right,)),
         )
@@ -192,6 +204,9 @@ def arity(request: pytest.FixtureRequest) -> Arity:
         FakeBinary,
         (Left(), Right()),
         fresh_args=(LeftSub(), RightSub()),
+        other_args=(Right(), Right()),
+        general=((object,), (object,)),
+        specific=((Left,), (Right,)),
         bad_supported=[(Left, Right), ((Left,), ("Right",)), ((Left,),), (Left, (Right,))],
         exclude_args=lambda fake: setattr(fake, "_left", (Right,)),
     )
@@ -272,7 +287,8 @@ class TestExactnessDeclaration:
 
 
 # ---------------------------------------------------------------------------
-# Selection order: exact before approximate, then priority, then registration
+# Selection order: exact before approximate, then priority, then specificity,
+# then registration
 # ---------------------------------------------------------------------------
 
 
@@ -348,6 +364,108 @@ class TestSelectionOrder:
         # The opt-in-only exact method keeps its position although automatic
         # selection never reaches it: the listing ranks, it does not say what runs.
         assert reg.list_methods() == ["e_high", "e_low", "e_opt", "a_approx"]
+
+
+class TestSpecificity:
+    """Among methods of equal rank, the closest declared type wins; the distance is per call."""
+
+    @pytest.mark.parametrize(
+        "general_first", [True, False], ids=["general-first", "specific-first"]
+    )
+    def test_specific_beats_general_whichever_was_registered_first(
+        self, arity: Arity, general_first: bool
+    ):
+        reg = arity.registry()
+        methods = [
+            arity.method("general", priority=1, supported=arity.general, result="general"),
+            arity.method("specific", priority=1, supported=arity.specific, result="specific"),
+        ]
+        for method in methods if general_first else reversed(methods):
+            reg.register(method)
+        assert reg.execute(*arity.args) == "specific"
+        assert reg.check(*arity.args).method_name == "specific"
+
+    def test_priority_beats_specificity(self, arity: Arity):
+        reg = arity.registry()
+        reg.register(arity.method("specific", priority=1, supported=arity.specific, result="s"))
+        reg.register(arity.method("general", priority=2, supported=arity.general, result="g"))
+        assert reg.execute(*arity.args) == "g"
+
+    def test_exactness_beats_specificity(self, arity: Arity):
+        reg = arity.registry()
+        reg.register(
+            arity.method(
+                "specific", exact=False, priority=100, supported=arity.specific, result="s"
+            )
+        )
+        reg.register(
+            arity.method("general", exact=True, priority=1, supported=arity.general, result="g")
+        )
+        assert reg.execute(*arity.args) == "g"
+
+    def test_equal_specificity_keeps_registration_order(self, arity: Arity):
+        reg = arity.registry()
+        reg.register(arity.method("first", priority=1, supported=arity.general, result="first"))
+        reg.register(arity.method("second", priority=1, supported=arity.general, result="second"))
+        assert reg.execute(*arity.args) == "first"
+
+    def test_specificity_is_per_call(self, arity: Arity):
+        reg = arity.registry()
+        reg.register(arity.method("general", priority=1, supported=arity.general, result="g"))
+        reg.register(arity.method("specific", priority=1, supported=arity.specific, result="s"))
+        assert reg.execute(*arity.args) == "s"
+        assert reg.execute(*arity.other_args) == "g"
+        assert reg.list_methods() == ["general", "specific"]
+
+    def test_registration_order_is_irrelevant_when_specificities_differ(self, arity: Arity):
+        specs = {"general": arity.general, "specific": arity.specific}
+        for order in itertools.permutations(specs):
+            reg = arity.registry()
+            for name in order:
+                reg.register(arity.method(name, priority=1, supported=specs[name], result=name))
+            assert reg.execute(*arity.args) == "specific", order
+
+    def test_reranking_rebuilds_the_per_call_order(self, arity: Arity):
+        reg = arity.registry()
+        reg.register(arity.method("general", priority=1, supported=arity.general, result="g"))
+        reg.register(arity.method("specific", priority=1, supported=arity.specific, result="s"))
+        assert reg.execute(*arity.args) == "s"
+        reg.set_priorities(general=5)
+        assert reg.execute(*arity.args) == "g"
+        reg.set_priorities(general=1)
+        assert reg.execute(*arity.args) == "s"
+
+    def test_a_virtual_subclass_is_least_specific(self):
+        """Admitted by ``issubclass`` without appearing in the MRO, so it ranks after every real base."""
+
+        class Marker(abc.ABC):
+            @abc.abstractmethod
+            def mark(self) -> None: ...
+
+        Marker.register(Left)
+        reg = UnaryDispatchRegistry()
+        for name, types in (("marker", (Marker,)), ("object", (object,)), ("left", (Left,))):
+            reg.register(FakeUnary(name, priority=1, types=types, result=name))
+        assert reg.execute(Left()) == "left"
+        reg.get_method("left")._feasible = False
+        assert reg.execute(Left()) == "object"
+        reg.get_method("object")._feasible = False
+        assert reg.execute(Left()) == "marker"
+
+    def test_binary_distance_is_the_sum_of_the_two_sides(self):
+        """``(LeftSub, RightSub)``: C at 1 + 0 beats A at 0 + 2 and B at 1 + 1, which tie in order."""
+        reg = BinaryDispatchRegistry()
+        declared = {
+            "D": ((object,), (object,)),  # 2 + 2
+            "A": ((LeftSub,), (object,)),  # 0 + 2
+            "B": ((Left,), (Right,)),  # 1 + 1
+            "C": ((Left,), (RightSub,)),  # 1 + 0
+        }
+        for name, (left, right) in declared.items():
+            reg.register(FakeBinary(name, priority=1, left=left, right=right, result=name))
+        for expected in ("C", "A", "B", "D"):
+            assert reg.execute(LeftSub(), RightSub()) == expected
+            reg.get_method(expected)._feasible = False
 
 
 # ---------------------------------------------------------------------------

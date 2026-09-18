@@ -615,7 +615,8 @@ uv build packaging/probpipe   # probpipe (metapackage)
 registry** (`inference_method_registry`). Each method declares
 `supported_types`, whether it is `exact`, a `priority`, and `check()` /
 `execute()` methods. The registry tries methods in selection order — exact
-before approximate, then by priority, then by registration order — and runs
+before approximate, then by priority, then by type specificity, then by
+registration order — and runs
 the first whose `check()` reports feasibility; a call with no feasible method
 raises `ResolutionError`. Every built-in inference method declares
 `exact = False`, so its priority is a rank among approximate methods, and

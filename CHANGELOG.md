@@ -14,7 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Every `BaseDispatchMethod` declares `exact: bool` at registration, fixed for
   its life, and `priority: int | None` ranks methods of the same exactness,
   `None` (the default) meaning opt-in only. Selection is exact before
-  approximate, then priority, then registration order, in every registry.
+  approximate, then priority, then type specificity, then registration order,
+  in every registry.
   `check` and `execute` take `exact_only=True` to exclude approximate methods.
   `set_priorities` accepts a positional mapping as well as keywords, since a
   method name need not be an identifier, and cannot change exactness.

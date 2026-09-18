@@ -3,11 +3,13 @@
 A dispatch registry holds named implementations of one operation and
 selects among them by the types of the arguments and their relative
 priorities. Every method declares whether it is **exact**. Selection order
-is based on three criteria, in decreasing precedence:
+is based on four criteria, in decreasing precedence:
 
 1. exact methods before approximate ones;
 2. priority among methods of the same exactness, higher first;
-3. registration order.
+3. specificity, favoring the method whose declared types are closest to
+   the arguments' classes in method-resolution order;
+4. registration order.
 
 A method whose ``priority`` is ``None`` is **opt-in-only**: automatic
 selection skips it and it runs only when named through ``method="..."``.
@@ -252,10 +254,10 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
     a method mutated afterwards changes nothing.
 
     Everything that does not depend on how many arguments select the method
-    is implemented here; an arity subclass supplies the four hooks
-    :meth:`_cache_key`, :meth:`_validate_supported_types`,
-    :meth:`_find_methods`, and :meth:`_format_key`, and selection reads only
-    the list ``_find_methods`` returns.
+    is implemented here, admission and ranking included; an arity subclass
+    supplies the four hooks :meth:`_cache_key`,
+    :meth:`_validate_supported_types`, :meth:`_distance`, and
+    :meth:`_format_key`.
     """
 
     def __init__(self) -> None:
@@ -316,14 +318,13 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
     def _effective_priority(self, registration: _Registration[M]) -> int | None:
         return self._priority_overrides.get(registration.name, registration.priority)
 
-    def _sort_key(self, registration: _Registration[M]) -> tuple[int, int, int, int]:
+    def _rank(self, registration: _Registration[M]) -> tuple[int, int, int]:
+        """Exactness, then opt-in status, then priority: the selection key that needs no call."""
         priority = self._effective_priority(registration)
-        return (
-            0 if registration.exact else 1,
-            1 if priority is None else 0,
-            -(priority or 0),
-            registration.index,
-        )
+        return (0 if registration.exact else 1, 1 if priority is None else 0, -(priority or 0))
+
+    def _sort_key(self, registration: _Registration[M]) -> tuple[int, int, int, int]:
+        return (*self._rank(registration), registration.index)
 
     def _sort_registrations(self) -> None:
         self._registrations.sort(key=self._sort_key)
@@ -425,14 +426,15 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
             ) from None
 
     def list_methods(self) -> list[str]:
-        """Every registered method name, in selection order.
+        """Every registered method name, ranked by exactness, priority, and registration order.
 
         Returns
         -------
         list of str
-            The names as automatic selection would consider them, opt-in-only
-            methods included at their rank. The listing does not say what a
-            call would run; :meth:`check` does.
+            The names in the order automatic selection considers them before
+            type specificity, which depends on the arguments; opt-in-only
+            methods are included at their rank. The listing does not say what
+            a call would run; :meth:`check` does.
         """
         return [registration.name for registration in self._registrations]
 
@@ -627,15 +629,39 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
         """
         ...
 
-    @abstractmethod
     def _find_methods(self, key: Any) -> list[_Registration[M]]:
         """The auto-dispatchable registrations admitting ``key``, in selection order.
 
-        Filters ``self._registrations``, which :meth:`_sort_registrations`
-        keeps in selection order, to those passing
-        :meth:`_is_auto_dispatchable` and whose ``supported_types`` admit the
-        key by ``issubclass``, and memoizes the result in
-        ``self._type_cache[key]``.
+        Ordered by :meth:`_rank`, then by the distance :meth:`_distance`
+        reports for the key, then by registration order, and memoized in
+        ``self._type_cache[key]``, which :meth:`_sort_registrations` clears
+        whenever ranks change.
+        """
+        if key not in self._type_cache:
+            ranked: list[tuple[tuple[int, int, int], int, int, _Registration[M]]] = []
+            for registration in self._registrations:
+                if not self._is_auto_dispatchable(registration):
+                    continue
+                distance = self._distance(registration.supported_types, key)
+                if distance is None:
+                    continue
+                ranked.append(
+                    (self._rank(registration), distance, registration.index, registration)
+                )
+            ranked.sort(key=lambda entry: entry[:3])
+            self._type_cache[key] = [entry[3] for entry in ranked]
+        return self._type_cache[key]
+
+    @abstractmethod
+    def _distance(self, supported_types: Any, key: Any) -> int | None:
+        """How far ``key`` is from the closest declared type that admits it.
+
+        ``None`` when no declared type admits the key. Smaller is more
+        specific: the position of the admitting type in the argument class's
+        method-resolution order, or the length of that order for a type that
+        admits by ``issubclass`` without appearing in it, such as a registered
+        virtual subclass of an abstract base class. A binary registry sums
+        the two sides.
         """
         ...
 
@@ -647,6 +673,17 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
 
 def _is_tuple_of_classes(value: Any) -> bool:
     return isinstance(value, tuple) and all(isinstance(entry, type) for entry in value)
+
+
+def _mro_distance(key: type, supported_types: tuple[type, ...]) -> int | None:
+    """Distance from ``key`` to the closest of ``supported_types`` that admits it, or ``None``."""
+    mro = key.__mro__
+    distances = [
+        mro.index(supported) if supported in mro else len(mro)
+        for supported in supported_types
+        if issubclass(key, supported)
+    ]
+    return min(distances, default=None)
 
 
 class UnaryDispatchRegistry[M: UnaryDispatchMethod](BaseDispatchRegistry[M]):
@@ -662,15 +699,8 @@ class UnaryDispatchRegistry[M: UnaryDispatchMethod](BaseDispatchRegistry[M]):
                 f"got {supported_types!r}"
             )
 
-    def _find_methods(self, key: type) -> list[_Registration[M]]:
-        if key not in self._type_cache:
-            self._type_cache[key] = [
-                registration
-                for registration in self._registrations
-                if self._is_auto_dispatchable(registration)
-                and any(issubclass(key, supported) for supported in registration.supported_types)
-            ]
-        return self._type_cache[key]
+    def _distance(self, supported_types: tuple[type, ...], key: type) -> int | None:
+        return _mro_distance(key, supported_types)
 
     def _format_key(self, key: type) -> str:
         return key.__name__
@@ -702,20 +732,15 @@ class BinaryDispatchRegistry[M: BinaryDispatchMethod](BaseDispatchRegistry[M]):
                 f"pair of tuples of classes; got {supported_types!r}"
             )
 
-    def _find_methods(self, key: tuple[type, type]) -> list[_Registration[M]]:
-        if key not in self._type_cache:
-            left_type, right_type = key
-            matches: list[_Registration[M]] = []
-            for registration in self._registrations:
-                if not self._is_auto_dispatchable(registration):
-                    continue
-                supported_left, supported_right = registration.supported_types
-                if any(issubclass(left_type, left) for left in supported_left) and any(
-                    issubclass(right_type, right) for right in supported_right
-                ):
-                    matches.append(registration)
-            self._type_cache[key] = matches
-        return self._type_cache[key]
+    def _distance(
+        self, supported_types: tuple[tuple[type, ...], tuple[type, ...]], key: tuple[type, type]
+    ) -> int | None:
+        supported_left, supported_right = supported_types
+        left = _mro_distance(key[0], supported_left)
+        right = _mro_distance(key[1], supported_right)
+        if left is None or right is None:
+            return None
+        return left + right
 
     def _format_key(self, key: tuple[type, type]) -> str:
         return f"({key[0].__name__}, {key[1].__name__})"
