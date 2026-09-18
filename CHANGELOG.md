@@ -58,6 +58,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SequentialJointDistribution`, and `JointEmpirical` claim the exact
   capability; `BayesFlowModel` claims the approximate one.
 
+- **`JointEmpirical` no longer offers conditioning.** Its `_condition_on`
+  dropped the named fields and kept every atom and weight, which ignores the
+  value conditioned on: `condition_on(je, x=0)` and `condition_on(je, x=1)`
+  returned the same distribution. That is marginalization rather than
+  conditioning, exact or approximate, so the route is removed and
+  `condition_on` on a `JointEmpirical` now raises `ResolutionError`. Build the
+  marginal directly instead, by constructing a `JointEmpirical` from the
+  fields to keep with the same `weights`.
+
 - **`condition_on` takes `exact_only` as a control.** It is a keyword-only
   parameter beside `method`, so the operation consumes it and resolves it
   before selecting a route. It previously fell through to `**kwargs`, which

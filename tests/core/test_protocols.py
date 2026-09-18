@@ -653,9 +653,10 @@ class TestJointEmpiricalDispatch:
         )
         assert type(je) is JointEmpirical
         assert not isinstance(je, NumericJointEmpirical)
-        # Sampling + conditioning still available on the generic base.
+        # Sampling is available on the generic base; conditioning is not offered.
         assert isinstance(je, SupportsSampling)
-        assert isinstance(je, SupportsExactConditioning)
+        assert not isinstance(je, SupportsExactConditioning)
+        assert not isinstance(je, SupportsApproximateConditioning)
         # Numeric protocols are not on the base class.
         assert SupportsLogProb not in type(je).__mro__
         assert SupportsMean not in type(je).__mro__
