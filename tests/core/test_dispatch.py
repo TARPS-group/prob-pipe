@@ -455,6 +455,20 @@ class TestSpecificity:
         reg.get_method("object")._feasible = False
         assert reg.execute(Left()) == "marker"
 
+    def test_a_late_virtual_subclass_registration_invalidates_the_cache(self):
+        """``issubclass`` can change with no registry call, so a cached miss must not persist."""
+
+        class Marker(abc.ABC):
+            @abc.abstractmethod
+            def mark(self) -> None: ...
+
+        reg = UnaryDispatchRegistry()
+        reg.register(FakeUnary("m", priority=1, types=(Marker,), result="ran"))
+        with pytest.raises(ResolutionError):
+            reg.execute(Left())
+        Marker.register(Left)
+        assert reg.execute(Left()) == "ran"
+
     def test_binary_distance_is_the_sum_of_the_two_sides(self):
         """For ``(LeftSub, RightSub)``, C at 1 + 0 beats A at 0 + 2 and B at 1 + 1.
 

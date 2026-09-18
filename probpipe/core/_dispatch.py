@@ -28,6 +28,7 @@ mathematical operation is known to be undefined.
 
 from __future__ import annotations
 
+import abc
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
@@ -275,6 +276,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
         self._by_name: dict[str, _Registration[M]] = {}
         self._priority_overrides: dict[str, int | None] = {}
         self._type_cache: dict[Any, list[_Registration[M]]] = {}
+        self._cache_token = abc.get_cache_token()
 
     # -- registration -------------------------------------------------------
 
@@ -650,7 +652,16 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
         reports for the key, then by registration order, and memoized in
         ``self._type_cache[key]``, which :meth:`_sort_registrations` clears
         whenever ranks change.
+
+        Registering a virtual subclass of an abstract base class changes what
+        ``issubclass`` answers without any registry call, so the cache is also
+        dropped whenever ``abc.get_cache_token()`` moves, as
+        ``functools.singledispatch`` does.
         """
+        token = abc.get_cache_token()
+        if token != self._cache_token:
+            self._type_cache.clear()
+            self._cache_token = token
         if key not in self._type_cache:
             ranked: list[tuple[tuple[int, int, int], int, int, _Registration[M]]] = []
             for registration in self._registrations:
