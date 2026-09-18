@@ -35,11 +35,19 @@ extension rarely constructs directly but may need to reference.
 
 ## Protocols
 
-Protocols define capabilities that distributions may support. Each
-protocol is `@runtime_checkable`; compliance is checked via `isinstance`
-at dispatch time. External types satisfy a protocol structurally by
-implementing the underscore method (`_sample`, `_log_prob`, ...) — no
+Protocols define capabilities that distributions may support. Compliance
+is checked via `isinstance` at dispatch time. Most are
+`@runtime_checkable`, and an external type satisfies one structurally by
+implementing the underscore method (`_sample`, `_log_prob`, ...), with no
 inheritance required.
+
+The two conditioning capabilities are the exception. They are abstract
+base classes, so a distribution claims one by **inheriting** it, and a
+class that only defines `_condition_on` claims neither and is never
+selected through either conditioning route. Both declare the same
+`_condition_on`, and whether it returns the conditional law or a stand-in
+for it is a claim about the result rather than a fact about the method, so
+no structural check could tell them apart.
 
 ::: probpipe.SupportsSampling
 
@@ -58,6 +66,10 @@ inheritance required.
 ::: probpipe.SupportsVariance
 
 ::: probpipe.SupportsCovariance
+
+### Conditioning capabilities
+
+Claimed by inheriting, as above.
 
 ::: probpipe.SupportsExactConditioning
 

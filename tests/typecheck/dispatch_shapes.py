@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, assert_type
 
-from probpipe.core._dispatch import (
+from probpipe.inference import (
     BinaryDispatchMethod,
     BinaryDispatchRegistry,
     BinarySupportedTypes,

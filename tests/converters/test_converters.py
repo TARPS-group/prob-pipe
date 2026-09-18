@@ -826,14 +826,18 @@ class TestProtocolConversion:
 
     def test_unregistered_protocol_raises(self):
         """Unregistered protocol raises TypeError when source doesn't satisfy it."""
-        from probpipe.core.protocols import SupportsExactConditioning
+        from typing import Protocol, runtime_checkable
+
+        @runtime_checkable
+        class SupportsSomethingUnregistered(Protocol):
+            def _something_unregistered(self) -> None: ...
 
         samples = jax.random.normal(jax.random.PRNGKey(3), (50,))
         emp = RecordEmpiricalDistribution(samples, name="x")
-        # SupportsExactConditioning is not registered as a protocol target
-        # and EmpiricalDistribution does not satisfy it
+        # The protocol is not a registered conversion target, and the
+        # empirical distribution does not satisfy it either.
         with pytest.raises(TypeError):
-            converter_registry.convert(emp, SupportsExactConditioning)
+            converter_registry.convert(emp, SupportsSomethingUnregistered)
 
     def test_from_distribution_with_protocol(self):
         """from_distribution() works with protocol targets."""

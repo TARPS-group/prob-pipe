@@ -650,6 +650,11 @@ def condition_on(
         If ``True``, only routes that return the conditional law itself are
         considered: the approximate conditioning capability is skipped, and
         the registry excludes its approximate methods.
+
+        ``method`` and ``exact_only`` are controls, so a field of either
+        name cannot be conditioned through the named-field form. Pass it in
+        the positional ``observed`` mapping instead, as in
+        ``condition_on(dist, {"exact_only": value})``.
     **kwargs
         Inference parameters (e.g., ``num_results``, ``num_warmup``,
         ``random_seed``) and/or named data kwargs.  Any kwarg whose
