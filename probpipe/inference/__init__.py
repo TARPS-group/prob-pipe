@@ -13,12 +13,14 @@ from ..core._dispatch import (
     BaseDispatchRegistry,
     BinaryDispatchMethod,
     BinaryDispatchRegistry,
+    BinarySupportedTypes,
     Feasibility,
     MathematicalDomainError,
     MethodInfo,
     ResolutionError,
     UnaryDispatchMethod,
     UnaryDispatchRegistry,
+    UnarySupportedTypes,
 )
 from ._approximate_distribution import ApproximateDistribution
 from ._bayesflow_likelihoods import (
@@ -51,6 +53,7 @@ __all__ = [
     "BayesFlowRatio",
     "BinaryDispatchMethod",
     "BinaryDispatchRegistry",
+    "BinarySupportedTypes",
     "Feasibility",
     "InferenceMethod",
     "MathematicalDomainError",
@@ -59,6 +62,7 @@ __all__ = [
     "ResolutionError",
     "UnaryDispatchMethod",
     "UnaryDispatchRegistry",
+    "UnarySupportedTypes",
     "condition_on_nutpie",
     "elliptical_slice",
     "inference_method_registry",

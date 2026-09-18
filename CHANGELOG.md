@@ -22,8 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `BaseDispatchMethod` is generic over the shape of `supported_types`, which
   it now declares itself; `UnaryDispatchMethod` and `BinaryDispatchMethod` fix
   the shape through the exported `UnarySupportedTypes` and
-  `BinarySupportedTypes`, and registration rejects a `supported_types()` value
-  of the wrong shape. A registry reads `name`, `exact`, `priority`, and
+  `BinarySupportedTypes`, also re-exported from `probpipe.inference`, and
+  registration rejects a `supported_types()` value of the wrong shape.
+  `Feasibility.feasible` must be a `bool` or `None`; a truthy or falsy stand-in
+  such as `1` or `""` is rejected at construction. A registry reads `name`, `exact`, `priority`, and
   `supported_types()` once, at registration, and validates all four before it
   changes, so a rejected method or a bad `set_priorities` value leaves it as
   it was; a `bool` is not accepted as a priority.

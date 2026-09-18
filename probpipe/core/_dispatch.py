@@ -89,6 +89,10 @@ class Feasibility:
 
     Raises
     ------
+    TypeError
+        If ``feasible`` is anything but a ``bool`` or ``None``. Registries
+        compare it by identity, so a truthy or falsy stand-in such as ``1``
+        or ``""`` would make ``check`` and ``execute`` disagree.
     ValueError
         If ``pending`` is empty while ``feasible`` is ``None``, or non-empty
         while it is not.
@@ -99,6 +103,8 @@ class Feasibility:
     pending: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
+        if self.feasible is not None and type(self.feasible) is not bool:
+            raise TypeError(f"feasible must be a bool or None; got {self.feasible!r}")
         if self.feasible is None and not self.pending:
             raise ValueError("an unresolved Feasibility must name its pending declarations")
         if self.feasible is not None and self.pending:
@@ -588,7 +594,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
                 raise ResolutionError(
                     f"Method {candidate.name!r} is unresolved; pending: {', '.join(info.pending)}"
                 )
-            if info.feasible:
+            if info.feasible is True:
                 return candidate.method.execute(*args, **kwargs)
             tried.append(f"{candidate.name}: {info.description or 'infeasible'}")
         raise ResolutionError(self._no_method_message(key, tried, exact_only))

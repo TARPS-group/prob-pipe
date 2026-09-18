@@ -842,6 +842,12 @@ class TestFeasibility:
         with pytest.raises(ValueError, match="pending"):
             report_cls(feasible=None)
 
+    @pytest.mark.parametrize("bad", [0, 1, "", "yes", 0.0, []], ids=repr)
+    def test_feasible_must_be_a_bool_or_none(self, report_cls: type[Feasibility], bad: Any):
+        """Registries compare ``feasible`` by identity, so a stand-in would split check from execute."""
+        with pytest.raises(TypeError, match="bool or None"):
+            report_cls(feasible=bad)
+
     def test_only_unresolved_carries_pending(self, report_cls: type[Feasibility]):
         report_cls(feasible=False)
         with pytest.raises(ValueError, match="only an unresolved"):
