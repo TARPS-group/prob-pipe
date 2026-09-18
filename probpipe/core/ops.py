@@ -577,6 +577,7 @@ def condition_on(
     observed: Any = None,
     *,
     method: str | None = None,
+    exact_only: bool = False,
     **kwargs: Any,
 ) -> Distribution:
     """Condition a distribution on observed values.
@@ -600,10 +601,14 @@ def condition_on(
 
     1. **Explicit override** — ``method="tfp_nuts"`` (or any registered
        name) routes directly to the named inference method.
-    2. **Exact conditioning** — if *dist* implements
-       a conditioning capability, its ``_condition_on`` is called for a
+    2. **Exact conditioning** — if *dist* claims
+       ``SupportsExactConditioning``, its ``_condition_on`` is called for a
        closed-form result (e.g., conjugate updates, joint marginalization).
-    3. **Registry auto-select** — the inference method registry runs the
+    3. **Approximate conditioning** — if *dist* claims
+       ``SupportsApproximateConditioning``, its ``_condition_on`` runs, such
+       as one forward pass through a pre-trained amortized posterior.
+       ``exact_only=True`` skips this route.
+    4. **Registry auto-select** — the inference method registry runs the
        first feasible method in selection order: exact methods before
        approximate ones, then by priority (NUTS, HMC, RWMH, etc.). A call
        with no feasible method raises ``ResolutionError``.
@@ -619,6 +624,10 @@ def condition_on(
     method : str or None
         If provided, use the named inference method from the registry
         instead of the default dispatch.
+    exact_only : bool
+        If ``True``, only routes that return the conditional law itself are
+        considered: the approximate conditioning capability is skipped, and
+        the registry excludes its approximate methods.
     **kwargs
         Inference parameters (e.g., ``num_results``, ``num_warmup``,
         ``random_seed``) and/or named data kwargs.  Any kwarg whose
@@ -633,8 +642,9 @@ def condition_on(
     Raises
     ------
     ResolutionError
-        If no registered method is feasible for *dist*, or if ``method``
-        names a method that is not registered or is infeasible.
+        If no registered method is feasible for *dist*; if ``method`` names a
+        method that is not registered or is infeasible; or if ``exact_only``
+        is set and no exact route applies.
     ValueError
         If observed values are passed both positionally and as named data
         kwargs.
@@ -657,12 +667,18 @@ def condition_on(
                     f"data kwargs ({', '.join(data_kwargs)})"
                 )
             observed = Record("observed", data_kwargs)
-        return inference_method_registry.execute(dist, observed, method=method, **inference_kwargs)
+        return inference_method_registry.execute(
+            dist, observed, method=method, exact_only=exact_only, **inference_kwargs
+        )
 
-    # Exact conditioning (conjugate updates, joint marginalization, etc.)
-    # All kwargs pass through to _condition_on — it handles its own
-    # validation (e.g., ProductDistribution raises KeyError on unknown names).
-    if isinstance(dist, SupportsExactConditioning | SupportsApproximateConditioning):
+    # A built-in conditioning path, exact first. The approximate one is
+    # skipped under exact_only, leaving the registry to answer or refuse.
+    # Only the data and inference kwargs pass through to _condition_on, which
+    # handles its own validation (e.g., ProductDistribution raises KeyError on
+    # unknown names); the controls stay here.
+    if isinstance(dist, SupportsExactConditioning) or (
+        not exact_only and isinstance(dist, SupportsApproximateConditioning)
+    ):
         return dist._condition_on(observed, **data_kwargs, **inference_kwargs)
 
     # Registry auto-selects the first feasible method in selection order.
@@ -674,7 +690,9 @@ def condition_on(
                 f"data kwargs ({', '.join(data_kwargs)})"
             )
         observed = Record("observed", data_kwargs)
-    return inference_method_registry.execute(dist, observed, **inference_kwargs)
+    return inference_method_registry.execute(
+        dist, observed, exact_only=exact_only, **inference_kwargs
+    )
 
 
 @function

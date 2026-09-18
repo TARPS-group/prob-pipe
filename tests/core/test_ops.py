@@ -1,5 +1,7 @@
 """Tests for standalone operations in probpipe.core.ops."""
 
+from typing import Any, ClassVar
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -20,6 +22,8 @@ from probpipe import (
     RecordEmpiricalDistribution,
     ResolutionError,
     SequentialJointDistribution,
+    SupportsApproximateConditioning,
+    SupportsExactConditioning,
     SupportsSampling,
 )
 from probpipe.core import ops
@@ -376,6 +380,41 @@ class TestConditionOn:
         """No registered method dispatches on it, so resolution fails rather than typing."""
         with pytest.raises(ResolutionError):
             ops.condition_on("not_a_distribution", jnp.array(1.0))
+
+    def test_exact_only_keeps_the_exact_capability_route(self, joint):
+        """The control is consumed by the operation, so it never reaches ``_condition_on``."""
+        conditioned = ops.condition_on(joint, x=jnp.array(2.0), exact_only=True)
+        assert conditioned.fields == ("y",)
+
+    def test_controls_do_not_reach_the_capability_route(self):
+        """``_condition_on`` sees the data and inference kwargs, and no controls."""
+
+        class Recorder(SupportsExactConditioning):
+            seen: ClassVar[dict[str, Any]] = {}
+
+            def _condition_on(self, observed, /, **kwargs):
+                Recorder.seen = dict(kwargs)
+                return Normal(0, 1, name="posterior")
+
+        ops.condition_on(Recorder(), 1.0, exact_only=True, num_results=5)
+        assert Recorder.seen == {"num_results": 5}
+
+    def test_exact_only_skips_the_approximate_capability_route(self):
+        """An amortized conditioner is not an exact answer, so the call falls to the registry."""
+
+        class Amortized(SupportsApproximateConditioning):
+            calls: ClassVar[int] = 0
+
+            def _condition_on(self, observed, /, **kwargs):
+                Amortized.calls += 1
+                return Normal(0, 1, name="posterior")
+
+        amortized = Amortized()
+        ops.condition_on(amortized, 1.0)
+        assert Amortized.calls == 1
+        with pytest.raises(ResolutionError):
+            ops.condition_on(amortized, 1.0, exact_only=True)
+        assert Amortized.calls == 1
 
 
 # ---------------------------------------------------------------------------

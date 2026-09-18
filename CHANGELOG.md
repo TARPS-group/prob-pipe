@@ -58,6 +58,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SequentialJointDistribution`, and `JointEmpirical` claim the exact
   capability; `BayesFlowModel` claims the approximate one.
 
+- **`condition_on` takes `exact_only` as a control.** It is a keyword-only
+  parameter beside `method`, so the operation consumes it and resolves it
+  before selecting a route. It previously fell through to `**kwargs`, which
+  forwarded it into `_condition_on` as if it were observed data: conditioning
+  a `ProductDistribution` with `exact_only=True` raised `KeyError`, and an
+  amortized posterior dropped the control and answered approximately.
+
 - **Both new exceptions are public, and an unknown `method=` name is a
   resolution failure.** `from probpipe import ResolutionError,
   MathematicalDomainError`. `ResolutionError` derives directly from

@@ -89,6 +89,13 @@ class TestInferenceMethodRegistry:
         )
         assert mean(posterior).shape == (2,)
 
+    def test_exact_only_refuses_every_inference_method(self, simple_model, data):
+        """Every registered method is approximate, so an exact-only call resolves to nothing."""
+        with pytest.raises(ResolutionError):
+            condition_on(simple_model, data, exact_only=True)
+        with pytest.raises(ResolutionError):
+            condition_on(simple_model, data, method="blackjax_nuts", exact_only=True)
+
     def test_nonexistent_method_raises(self, simple_model, data):
         with pytest.raises(ResolutionError, match="nonexistent"):
             condition_on(simple_model, data, method="nonexistent")
