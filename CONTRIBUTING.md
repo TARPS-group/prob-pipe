@@ -612,23 +612,21 @@ uv build packaging/probpipe   # probpipe (metapackage)
 ### Inference method registry
 
 `condition_on` dispatches inference via a pluggable **inference method
-registry** (`inference_method_registry`).  Each method declares
-`supported_types`, whether it is `exact`, a `priority`, and `check()`/`execute()`
-methods. The registry tries methods in selection order; the first
-whose `check()` returns `feasible=True` wins.
+registry** (`inference_method_registry`). Each method declares
+`supported_types`, whether it is `exact`, a `priority`, and `check()` /
+`execute()` methods. The registry tries methods in selection order — exact
+before approximate, then by priority, then by registration order — and runs
+the first whose `check()` reports feasibility; a call with no feasible method
+raises `ResolutionError`. Every built-in inference method declares
+`exact = False`, so its priority is a rank among approximate methods, and
+`None` is opt-in-only (selectable by name but skipped during auto-dispatch).
+The criteria for ranking a new method are under
+[Extending ProbPipe → Exactness, then rank](docs/api/extending.md#exactness-then-rank).
 
 Models no longer implement `_condition_on` directly — conditioning is
 handled entirely by registered methods.  The removed protocol
 `SupportsConditionableComponents` is no longer part of the public API;
 use `fields` and the inference registry instead.
-
-Selection order is exact methods before approximate ones, then priority,
-then registration order. Every built-in inference method declares
-`exact = False`, so its priority is a rank among approximate methods and
-nothing more; `None` is opt-in-only (selectable by name but skipped during
-auto-dispatch). A call with no feasible method raises `ResolutionError`.
-The contributor-facing criteria for ranking a new method live under
-[Extending ProbPipe → Exactness, then rank](docs/api/extending.md#exactness-then-rank).
 
 Built-in methods:
 

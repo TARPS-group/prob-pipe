@@ -17,13 +17,11 @@ kernel via the ``grad_estimator(position, measure_key)`` closure
 convention — the per-step ``measure_key`` is passed through BlackJAX's
 opaque ``minibatch`` slot.
 
-SGLD ranks at 45, below every full-batch gradient method, and SGHMC is
-opt-in-only. The per-method ``check()`` further requires ``batch_size=``
-to be passed, so SGMCMC only applies when the user has opted into
-minibatching via
-``condition_on(model, observed, method="blackjax_sgld", batch_size=…)``
-or by selecting it explicitly. See the inference-method registry
-docs for the full priority convention.
+Both methods require ``batch_size=`` to be passed, so SGMCMC applies only
+when the user has opted into minibatching, as in
+``condition_on(model, observed, method="blackjax_sgld", batch_size=…)``.
+``blackjax_sgld`` is registered at priority 45 and ``blackjax_sghmc`` is
+opt-in-only; the method classes state why.
 """
 
 from __future__ import annotations
@@ -243,13 +241,15 @@ def _run_sgmcmc_loop(
 
 
 class BlackJAXSGLDMethod(_BlackJAXSGMCMCMethod):
-    """BlackJAX Stochastic Gradient Langevin Dynamics.
+    """BlackJAX Stochastic Gradient Langevin Dynamics, registered as ``blackjax_sgld``.
 
-    Kernel: :func:`blackjax.sgld`. Refinement-based, so asymptotically
-    exact as the step-size schedule decays. Priority 45, below every
-    full-batch gradient method, so it never wins automatic selection over
-    one; ``check()`` further requires the user to pass ``batch_size=`` for
-    SGLD to be applicable at all.
+    Kernel: :func:`blackjax.sgld`. Priority 45.
+
+    Notes
+    -----
+    Refinement-based, so asymptotically exact as the step-size schedule
+    decays. Ranked below every full-batch gradient method, so it never wins
+    automatic selection over one.
     """
 
     _method_name = "blackjax_sgld"
@@ -260,20 +260,21 @@ class BlackJAXSGLDMethod(_BlackJAXSGMCMCMethod):
 
 
 class BlackJAXSGHMCMethod(_BlackJAXSGMCMCMethod):
-    """BlackJAX Stochastic Gradient Hamiltonian Monte Carlo.
+    """BlackJAX Stochastic Gradient Hamiltonian Monte Carlo, registered as ``blackjax_sghmc``.
 
-    Kernel: :func:`blackjax.sghmc`. Accepts the additional kwargs
-    ``num_integration_steps`` (default 10), ``alpha`` (default 0.01),
-    ``beta`` (default 0.0). Refinement-based like SGLD, so asymptotically
-    exact as the step-size schedule decays, but registered at
-    ``priority=None``, opt-in-only.
-    Reasoning: SGHMC's ``check()`` is identical to ``blackjax_sgld``
-    (same ``SimpleModel`` + ``ConditionallyIndependentLikelihood`` +
-    ``batch_size=`` gate); with SGLD at 45, SGHMC is structurally
-    unreachable in auto-dispatch. SGLD is also the better default —
-    fewer dials (single ``step_size``) vs SGHMC's
-    ``num_integration_steps`` / ``alpha`` / ``beta``. Callers who
-    specifically want SGHMC pin ``method="blackjax_sghmc"``.
+    Kernel: :func:`blackjax.sghmc`. Opt-in-only: runs only when the caller
+    pins ``method="blackjax_sghmc"``. Accepts the additional kwargs
+    ``num_integration_steps`` (default 10), ``alpha`` (default 0.01), and
+    ``beta`` (default 0.0).
+
+    Notes
+    -----
+    Refinement-based like SGLD, so asymptotically exact as the step-size
+    schedule decays. Its ``check()`` is identical to that of
+    ``blackjax_sgld``, so with SGLD ranked, SGHMC would never be selected
+    automatically; ``priority=None`` makes that explicit. SGLD is also the
+    better default, with a single ``step_size`` to tune against SGHMC's
+    three kwargs.
     """
 
     _method_name = "blackjax_sghmc"

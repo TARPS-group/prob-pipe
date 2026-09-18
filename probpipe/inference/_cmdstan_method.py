@@ -26,7 +26,17 @@ def _import_cmdstanpy():
 
 
 class CmdStanNutsMethod(InferenceMethod):
-    """CmdStanPy-backed NUTS for Stan models."""
+    """CmdStanPy-backed NUTS, registered as ``cmdstan_nuts`` at priority 82.
+
+    Applies to a ``StanModel``; cmdstanpy is imported at execution.
+
+    Notes
+    -----
+    An optimised backend: Stan-compiled NUTS through the cmdstanpy subprocess
+    interface. Below ``nutpie_nuts`` (88) and ``blackjax_nuts`` (85) because
+    of the subprocess overhead, and tied with ``pymc_nuts`` (82), which
+    applies to a disjoint model class.
+    """
 
     def __init__(self) -> None:
         from ..modeling._stan import StanModel
@@ -42,9 +52,6 @@ class CmdStanNutsMethod(InferenceMethod):
 
     @property
     def priority(self) -> int:
-        # An optimised backend: Stan-compiled NUTS through the cmdstanpy
-        # subprocess interface. Below ``nutpie_nuts`` (88) and
-        # ``blackjax_nuts`` (85) because of the subprocess overhead.
         return 82
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:

@@ -23,9 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with `method_name` and `exact` set from the registration, so a method never
   reports its own name or exactness. `feasible` may be `None` while required
   declarations are unavailable, and `pending` then names them.
-  A call with no feasible method raises `ResolutionError` where it raised
-  `TypeError`; `MathematicalDomainError(ValueError)` is defined beside it for
-  known mathematical nonexistence and is never raised by the registry itself.
+  A call with no feasible method raises `ResolutionError`;
+  `MathematicalDomainError(ValueError)` is defined beside it for known
+  mathematical nonexistence and is never raised by the registry itself.
   `OPT_IN_ONLY_PRIORITY` is removed. Every built-in inference method declares
   `exact = False` through `InferenceMethod`; the former priority-0 methods
   (`blackjax_hmc`, `blackjax_sghmc`, `pymc_advi`, `tfp_nuts`, `tfp_hmc`) are

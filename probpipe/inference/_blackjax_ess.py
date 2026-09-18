@@ -16,12 +16,8 @@ GP hyperparameter posteriors with Gaussian hyperpriors, latent-Gaussian
 models). When applicable, ESS dominates RWMH on the same target and is
 often competitive with NUTS at a fraction of the per-step cost.
 
-ProbPipe registers this method at priority 75. It is self-tuning and
-converges robustly without per-model hyperparameter selection, so it
-ranks above ``blackjax_rwmh`` (55) and below the NUTS backends (82-88).
-Its ``check()`` is strict — ``SimpleModel`` only, Gaussian prior detected
-by :func:`_gaussian_prior_params`, observed data required — so
-auto-dispatch only fires when the kernel is applicable.
+ProbPipe registers this method as ``blackjax_elliptical_slice``;
+:class:`BlackJAXESSMethod` states its priority and feasibility class.
 """
 
 from __future__ import annotations
@@ -279,9 +275,15 @@ def elliptical_slice(
 class BlackJAXESSMethod(InferenceMethod):
     """Elliptical slice sampling on top of ``blackjax.elliptical_slice``.
 
-    Self-tuning, converging robustly without per-model hyperparameter
-    selection, at priority 75. The narrow Gaussian-prior feasibility
-    class is enforced in ``check()``, not by priority.
+    Registered as ``blackjax_elliptical_slice`` at priority 75. Applies to a
+    ``SimpleModel`` with a Gaussian prior, detected by
+    :func:`_gaussian_prior_params`, observed data, and a JAX-traceable
+    likelihood; ``check()`` enforces that class, not the priority.
+
+    Notes
+    -----
+    Self-tuning and robust without per-model hyperparameter selection, so it
+    ranks above ``blackjax_rwmh`` (55) and below the NUTS backends (82–88).
     """
 
     @property

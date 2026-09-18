@@ -12,7 +12,17 @@ from ._registry import InferenceMethod
 
 
 class PyMCNutsMethod(InferenceMethod):
-    """PyMC NUTS sampler for PyMCModel."""
+    """PyMC NUTS, registered as ``pymc_nuts`` at priority 82.
+
+    Applies to a ``PyMCModel``.
+
+    Notes
+    -----
+    An optimised backend: native PyMC NUTS, tailored to ``PyMCModel``. Tied
+    with ``cmdstan_nuts`` (82), which applies to a disjoint model class, and
+    below ``nutpie_nuts`` (88), whose Rust gradients are faster on a
+    ``PyMCModel`` too when nutpie is installed.
+    """
 
     def __init__(self) -> None:
         from ..modeling._pymc import PyMCModel
@@ -28,11 +38,6 @@ class PyMCNutsMethod(InferenceMethod):
 
     @property
     def priority(self) -> int:
-        # An optimised backend: native PyMC NUTS, tailored to PyMCModel.
-        # At 82 alongside ``cmdstan_nuts``; the two apply to disjoint
-        # model classes so the tie is documentary. Below ``nutpie_nuts``
-        # (88; Rust gradients are faster on PyMCModel too when nutpie is
-        # installed).
         return 82
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:
@@ -90,7 +95,18 @@ class PyMCNutsMethod(InferenceMethod):
 
 
 class PyMCADVIMethod(InferenceMethod):
-    """PyMC ADVI (Automatic Differentiation Variational Inference)."""
+    """PyMC ADVI, registered as ``pymc_advi``, opt-in-only.
+
+    Automatic Differentiation Variational Inference for a ``PyMCModel``;
+    runs only when the caller pins ``method="pymc_advi"``.
+
+    Notes
+    -----
+    A parametric variational approximation whose quality is bounded by the
+    mean-field family. ADVI trades bias for speed, a tradeoff the user should
+    choose explicitly; selecting it automatically when, for example,
+    ``pymc_nuts`` fails would silently substitute VI for MCMC.
+    """
 
     def __init__(self) -> None:
         from ..modeling._pymc import PyMCModel
@@ -106,13 +122,6 @@ class PyMCADVIMethod(InferenceMethod):
 
     @property
     def priority(self) -> int | None:
-        # A parametric variational approximation, its quality bounded by
-        # the mean-field family, registered at ``priority=None``,
-        # opt-in-only. ADVI trades bias for speed, a tradeoff the user
-        # should choose explicitly; auto-dispatching into it when (e.g.)
-        # ``pymc_nuts`` happens to fail would silently substitute VI for
-        # MCMC.
-        # Callers who want ADVI pin ``method="pymc_advi"``.
         return None
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:

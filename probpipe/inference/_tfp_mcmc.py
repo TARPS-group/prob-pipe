@@ -201,23 +201,27 @@ class _TFPGradientMethod(InferenceMethod):
 
 
 def TFPNutsMethod() -> _TFPGradientMethod:
-    """TFP No-U-Turn Sampler (gradient-based MCMC).
+    """TFP No-U-Turn Sampler, registered as ``tfp_nuts``, opt-in-only.
 
-    Opt-in only (``priority=None``); reach via ``method="tfp_nuts"``.
-    ``blackjax_nuts`` is the auto-dispatch default for any
-    ``SupportsLogProb`` + JAX-traceable target. This method stays
-    available for bit-pattern regression or side-by-side backend
-    comparison.
+    Runs only when the caller pins ``method="tfp_nuts"``; ``blackjax_nuts``
+    is what automatic selection picks for the same targets.
+
+    Notes
+    -----
+    Kept for bit-pattern regression and side-by-side backend comparison.
     """
     return _TFPGradientMethod("nuts", "tfp_nuts", None)
 
 
 def TFPHmcMethod() -> _TFPGradientMethod:
-    """TFP Hamiltonian Monte Carlo.
+    """TFP Hamiltonian Monte Carlo, registered as ``tfp_hmc``, opt-in-only.
 
-    Opt-in only (``priority=None``); reach via ``method="tfp_hmc"``.
-    Both HMC kernels (``tfp_hmc`` and ``blackjax_hmc``) sit at
-    ``priority=None`` — they share their respective NUTS sibling's
-    ``check()`` and so are structurally unreachable in auto-dispatch.
+    Runs only when the caller pins ``method="tfp_hmc"``.
+
+    Notes
+    -----
+    Its ``check()`` is identical to that of ``tfp_nuts``, and both TFP
+    kernels are opt-in-only because ``blackjax_nuts`` is what automatic
+    selection picks for the same targets.
     """
     return _TFPGradientMethod("hmc", "tfp_hmc", None)

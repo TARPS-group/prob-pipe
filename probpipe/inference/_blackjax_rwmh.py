@@ -641,10 +641,15 @@ def rwmh(
 class BlackJAXRWMHMethod(InferenceMethod):
     """Gradient-free RWMH on top of BlackJAX's ``normal_random_walk``.
 
-    Slow per effective sample in high dimensions even when tuned, so it
-    ranks at 55, below every gradient-based method. Selected when none of
-    them passes ``check()`` — for example a log-density that is not
-    JAX-traceable — or when the caller pins ``method="blackjax_rwmh"``.
+    Registered as ``blackjax_rwmh`` at priority 55. Applies to any target
+    whose prior satisfies ``SupportsUnnormalizedLogProb``, JAX-traceable or
+    not, so automatic selection reaches it when no gradient-based method
+    passes ``check()``.
+
+    Notes
+    -----
+    Slow per effective sample in high dimensions even when tuned, so it ranks
+    below every gradient-based method.
     """
 
     @property

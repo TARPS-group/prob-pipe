@@ -19,8 +19,14 @@ __all__ = ["InferenceMethod", "inference_method_registry"]
 
 
 class InferenceMethod(UnaryDispatchMethod):
-    """Base for the registered inference methods.
+    """Base class for registered inference methods; declares ``exact = False``.
 
+    A subclass declares ``name``, ``supported_types``, ``check``, and
+    ``execute``, and overrides ``priority`` to take part in automatic
+    selection.
+
+    Notes
+    -----
     Every inference method is approximate: a finite MCMC, SG-MCMC, slice,
     ABC, or variational output stands in for the conditional law, whatever
     its invariant target or asymptotic guarantee. Those guarantees are the

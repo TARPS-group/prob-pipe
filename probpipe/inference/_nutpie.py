@@ -167,7 +167,17 @@ def _extract_chains(
 
 
 class NutpieNutsMethod(InferenceMethod):
-    """Registry method for nutpie-backed NUTS."""
+    """nutpie-backed NUTS, registered as ``nutpie_nuts`` at priority 88.
+
+    Applies to a ``StanModel`` or ``PyMCModel`` whose modeling backend is
+    installed; infeasible while nutpie is not installed.
+
+    Notes
+    -----
+    An optimised backend: Rust-implemented NUTS with in-process gradients,
+    faster than every other registered NUTS backend on its applicable model
+    class, so it ranks above all of them.
+    """
 
     def __init__(self) -> None:
         types: list[type] = []
@@ -194,9 +204,6 @@ class NutpieNutsMethod(InferenceMethod):
 
     @property
     def priority(self) -> int:
-        # An optimised backend: Rust-implemented NUTS with in-process
-        # gradients, faster than every other registered NUTS backend on
-        # its applicable model class, so it ranks above all of them at 88.
         return 88
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:

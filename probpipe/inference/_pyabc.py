@@ -115,7 +115,16 @@ def _smc_diagnostics(history: Any) -> DataTree:
 
 
 class PyABCSMCMethod(InferenceMethod):
-    """pyabc SMC-ABC for :class:`~probpipe.modeling.SimpleGenerativeModel`."""
+    """pyabc SMC-ABC, registered as ``pyabc_smcabc`` at priority 6.
+
+    Applies to a :class:`~probpipe.modeling.SimpleGenerativeModel` whose
+    prior can flatten, sample, and score jointly.
+
+    Notes
+    -----
+    ABC quality is bounded by the summary statistics and the acceptance
+    tolerance, so it ranks below every likelihood-based method.
+    """
 
     @property
     def name(self) -> str:
@@ -129,9 +138,6 @@ class PyABCSMCMethod(InferenceMethod):
 
     @property
     def priority(self) -> int:
-        # Inexact (ABC quality is bounded by the summary statistics and the
-        # acceptance tolerance), so it sits in the low-priority auto-dispatch
-        # band for a pure SimpleGenerativeModel.
         return 6
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:

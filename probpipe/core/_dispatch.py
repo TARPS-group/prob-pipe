@@ -1,10 +1,9 @@
 """Dispatch methods and registries.
 
 A dispatch registry holds named implementations of one operation and
-selects among them by the types of the arguments. Every method declares,
-at registration and for its whole life, whether it is **exact**: whether
-its result denotes the requested mathematical object or stands in for it.
-Selection order is the same in every dispatch registry:
+selects among them by the types of the arguments and their relative
+priorities. Every method declares whether it is **exact**. Selection order
+is based on three criteria, in decreasing precedence:
 
 1. exact methods before approximate ones;
 2. priority among methods of the same exactness, higher first;
@@ -12,24 +11,17 @@ Selection order is the same in every dispatch registry:
 
 A method whose ``priority`` is ``None`` is **opt-in-only**: automatic
 selection skips it and it runs only when named through ``method="..."``.
-That is the default, so registering a method never changes what runs until
-a contributor ranks it. ``set_priorities`` re-ranks at runtime; it cannot
-change whether a method is exact, since exactness is not one of its inputs.
+``set_priorities`` re-ranks at runtime but never changes a method's
+exactness.
 
 A method's ``check`` returns a :class:`Feasibility`: whether the call is
-feasible, why not, and which declarations are pending. The registry's
-``check`` returns a :class:`MethodInfo`, which adds the selected method's
-name and declared exactness from the registration, so a method never
-reports its own exactness.
+feasible, if not then why, and which declarations are pending. The
+registry's ``check`` returns a :class:`MethodInfo`, which adds the selected
+method's name and declared exactness from the registration.
 
-Two failures are distinct. :class:`ResolutionError` means no available
-implementation under the requested controls, including a ``method=`` name
-that is not registered. :class:`MathematicalDomainError` means the mathematical operation is known
-to be undefined, a ``ValueError`` a method raises itself; the registry never
-converts one into the other.
-
-The two arity subclasses differ only in how they compute the dispatch key
-from the arguments and how they pre-filter methods by ``supported_types()``.
+A :class:`ResolutionError` means there is no available implementation under
+the requested controls. A :class:`MathematicalDomainError` means the
+mathematical operation is known to be undefined.
 """
 
 from __future__ import annotations
@@ -60,19 +52,15 @@ class ResolutionError(Exception):
     Raised by a registry when no registered method is feasible for the
     arguments, when the first candidate that is not infeasible is still
     unresolved, or when the method a caller named is infeasible or not
-    registered. The message names the methods tried and what each was
-    missing. It is not a ``TypeError``: well-typed arguments can still
-    have no applicable method, as a model that no registered inference
-    method supports does.
+    registered.
     """
 
 
 class MathematicalDomainError(ValueError):
     """The mathematical operation is known to be undefined.
 
-    Raised by a method that can establish nonexistence, for example a
-    requested mean that does not exist. Failure to establish existence is
-    not nonexistence: that is a :class:`ResolutionError`.
+    Raised by a method that can establish nonexistence, such as a
+    requested mean that does not exist.
     """
 
 
@@ -80,23 +68,23 @@ class MathematicalDomainError(ValueError):
 class Feasibility:
     """What a method's ``check`` reports about one call.
 
-    ``feasible`` has three values. ``True``: the method applies. ``False``:
-    it does not, and ``description`` says why, for example ``"needs a
-    density"``. ``None``: the probe could not decide, because a declaration
-    it reads is not yet available, and ``pending`` names those declarations.
+    Attributes
+    ----------
+    feasible : bool or None
+        ``True`` if the method applies, ``False`` if it does not, and ``None``
+        if the probe could not determine feasibility.
+    description : str
+        Describes why method does not apply if ``feasible`` is ``False``.
+    pending : tuple of str
+        One entry per missing declaration, each describing what is required
+        for the method to be feasible. Non-empty exactly when ``feasible`` is
+        ``None``.
 
-    ``pending`` holds one entry per missing declaration, phrased as the
-    thing whose arrival would settle the verdict: ``"output spec of f"``
-    for a result declaration the return will complete, ``"dimension obs"``
-    for a symbolic dimension no value has bound, ``"conversion plan for
-    theta"`` for a converter not yet resolved. It is non-empty exactly when
-    ``feasible`` is ``None``; a feasible or infeasible verdict carries no
-    pending entries, so a reader never has to decide which of the two
-    fields is authoritative.
-
-    A method reports only what it alone can know. Its name and whether it
-    is exact are declared at registration, and the registry adds them in
-    the :class:`MethodInfo` it returns.
+    Raises
+    ------
+    ValueError
+        If ``pending`` is empty while ``feasible`` is ``None``, or non-empty
+        while it is not.
     """
 
     feasible: bool | None
@@ -111,18 +99,29 @@ class Feasibility:
 
     @property
     def unresolved(self) -> bool:
-        """``True`` when feasibility awaits declarations not yet available."""
+        """``True`` when ``feasible`` is ``None``."""
         return self.feasible is None
 
 
 @dataclass(frozen=True)
 class MethodInfo(Feasibility):
-    """A registry's report: a method's feasibility and what its registration declares.
+    """Used by a registry to describe a method's feasibility plus its registration information.
 
-    ``method_name`` and ``exact`` come from the registration, never from
-    the method's ``check``. Both are ``None`` exactly when no method was
-    selected: the infeasible report that names every method tried, and the
-    no-argument probe.
+    The ``method_name`` and ``exact`` atributes are both ``None`` exactly when no method could
+    be selected. 
+
+    Attributes
+    ----------
+    method_name : str or None
+        The selected method's name.
+    exact : bool or None
+        The selected method's declared exactness.
+
+    Raises
+    ------
+    ValueError
+        If exactly one of ``method_name`` and ``exact`` is ``None``, or on a
+        condition :class:`Feasibility` rejects.
     """
 
     method_name: str | None = None
@@ -143,8 +142,7 @@ class BaseDispatchMethod(ABC):
     """Abstract base for all pluggable dispatch methods.
 
     A subclass declares a unique ``name``, whether it is ``exact``, and
-    ``check`` / ``execute``. ``supported_types`` is declared by the arity
-    subclasses, since its shape depends on the arity.
+    ``check`` / ``execute``. 
     """
 
     @property
@@ -166,7 +164,7 @@ class BaseDispatchMethod(ABC):
 
     @abstractmethod
     def check(self, *args: Any, **kwargs: Any) -> Feasibility:
-        """Probe feasibility without significant computation."""
+        """Probe feasibility for a call without significant computation."""
         ...
 
     @abstractmethod
@@ -213,30 +211,15 @@ class BinaryDispatchMethod(BaseDispatchMethod):
 
 
 class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
-    """Arity-independent registry logic.
+    """Registry of dispatch methods for one operation.
 
+    :meth:`register` adds a method, :meth:`check` reports which method a call
+    would run, :meth:`execute` runs it, :meth:`set_priorities` re-ranks at
+    runtime, and :meth:`list_methods` lists the methods in selection order.
     Everything that does not depend on how many arguments select the method
-    is implemented here: registration, ranking, the opt-in filter,
-    ``set_priorities``, and the ``check`` / ``execute`` path. Three hooks are
-    left to the arity subclasses, and they are the only place arity enters:
-
-    - :meth:`_cache_key` turns the positional arguments into the **dispatch
-      key**, the type or types a method's ``supported_types`` is matched
-      against, and raises ``TypeError`` when there are too few arguments;
-    - :meth:`_find_methods` returns the auto-dispatchable methods whose
-      ``supported_types`` admit a key, in selection order, memoized per key
-      in ``_type_cache``, which :meth:`_sort_methods` clears whenever the
-      order can change;
-    - :meth:`_format_key` renders a key for error messages.
-
-    Selection reads only the list ``_find_methods`` returns, so a subclass
-    reimplements none of ranking, the opt-in filter, or the errors.
-
-    ``check`` with no positional arguments returns an infeasible
-    :class:`MethodInfo` rather than raising, since there is nothing to
-    dispatch on; ``execute`` raises ``TypeError`` in the same case. Fewer
-    arguments than the arity requires, for example one argument to a binary
-    registry, is a contract violation and raises ``TypeError`` from both.
+    is implemented here; an arity subclass supplies the three hooks
+    :meth:`_cache_key`, :meth:`_find_methods`, and :meth:`_format_key`, and
+    selection reads only the list ``_find_methods`` returns.
     """
 
     def __init__(self) -> None:
@@ -254,8 +237,17 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
     def register(self, method: M) -> None:
         """Register a method.
 
-        Raises ``ValueError`` for an empty or duplicate name and ``TypeError``
-        when the method does not declare a boolean ``exact``.
+        Parameters
+        ----------
+        method : M
+            The method to register.
+
+        Raises
+        ------
+        ValueError
+            If ``method.name`` is empty or already registered.
+        TypeError
+            If ``method.exact`` is not a ``bool``.
         """
         if not method.name:
             raise ValueError(f"Method.name must be a non-empty string; got {method.name!r}")
@@ -295,14 +287,28 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
     ) -> None:
         """Override the rank of one or more methods.
 
-        Accepts a mapping, keywords, or both; the mapping form is for method
-        names that are not Python identifiers. A name in both raises
-        ``ValueError``, an unknown name raises ``KeyError``, and in either
-        case nothing is applied. Overrides are recorded on the registry and
-        never mutate a method. A move between ``None`` and an integer emits
-        a ``UserWarning``, since it changes whether the method participates
-        in automatic selection. Exactness is not an input, so an override never
-        lifts an approximate method above an exact one.
+        Overrides are recorded on the registry and never mutate a method. An
+        override cannot change exactness, so it never lifts an approximate
+        method above an exact one. A move between ``None`` and an integer
+        emits a ``UserWarning``, since it changes whether the method
+        participates in automatic selection. When an error is raised, nothing
+        is applied.
+
+        Parameters
+        ----------
+        priorities : mapping of str to int or None, optional
+            New priorities by method name; ``None`` makes a method
+            opt-in-only. This form accepts names that are not Python
+            identifiers.
+        **kwargs : int or None
+            New priorities by method name, as keywords.
+
+        Raises
+        ------
+        ValueError
+            If a name appears both in ``priorities`` and as a keyword.
+        KeyError
+            If a name is not registered.
         """
         overrides: dict[str, int | None] = dict(priorities or {})
         for name, value in kwargs.items():
@@ -329,7 +335,23 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
     # -- query --------------------------------------------------------------
 
     def get_method(self, name: str) -> M:
-        """Look up a method by name; ``KeyError`` when it is not registered."""
+        """Look up a method by name.
+
+        Parameters
+        ----------
+        name : str
+            A registered method name.
+
+        Returns
+        -------
+        M
+            The registered method.
+
+        Raises
+        ------
+        KeyError
+            If no method is registered under ``name``.
+        """
         try:
             return self._name_index[name]
         except KeyError:
@@ -338,8 +360,9 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
     def _named(self, name: str) -> M:
         """The method a caller requested with ``method=``.
 
-        Unlike :meth:`get_method`, a name that is not registered is a
-        dispatch that cannot resolve, so it raises :class:`ResolutionError`.
+        Unlike :meth:`get_method`, a name that is not registered raises
+        :class:`ResolutionError`, since the request is a dispatch that cannot
+        resolve.
         """
         try:
             return self._name_index[name]
@@ -351,12 +374,12 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
     def list_methods(self) -> list[str]:
         """Every registered method name, in selection order.
 
-        Exact before approximate, then priority, then registration order.
-        The listing ranks the methods; it does not say what a call runs. An
-        opt-in-only method keeps its position although automatic selection
-        skips it, so an exact opt-in-only method can be listed above the
-        approximate method a call would pick. :meth:`check` reports what
-        would run.
+        Returns
+        -------
+        list of str
+            The names as automatic selection would consider them, opt-in-only
+            methods included at their rank. The listing does not say what a
+            call would run; :meth:`check` does.
         """
         return [method.name for method in self._methods]
 
@@ -378,15 +401,39 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
         exact_only: bool = False,
         **kwargs: Any,
     ) -> MethodInfo:
-        """Report which method would run, without running anything.
+        """Report which method a call would run, without running anything.
 
-        Returns the first candidate in selection order whose ``check`` is
-        feasible or unresolved, named and with its declared exactness; an
-        unresolved candidate above a feasible one is reported as unresolved,
-        since a probe may not claim a method that may not run. When no
-        candidate is feasible the result is infeasible, names no method, and
-        its description names every method tried. A ``method=`` name that is
-        not registered raises :class:`ResolutionError`.
+        Parameters
+        ----------
+        *args : Any
+            Positional arguments of the call; the dispatch key is computed
+            from them.
+        method : str or None
+            A registered method name to probe instead of auto-selecting.
+        exact_only : bool
+            If ``True``, approximate methods are excluded.
+        **kwargs : Any
+            Keyword arguments of the call, passed to each method's ``check``.
+
+        Returns
+        -------
+        MethodInfo
+            Under auto-selection, the report of the first candidate in
+            selection order whose ``check`` is feasible or unresolved, so an
+            unresolved candidate ranked above a feasible one is the one
+            reported. When no candidate is feasible, or there are no
+            positional arguments, an infeasible report that names no method
+            and whose ``description`` lists every method tried. With
+            ``method``, that method's report, or an infeasible report when
+            ``exact_only`` excludes it.
+
+        Raises
+        ------
+        ResolutionError
+            If ``method`` is not a registered name.
+        TypeError
+            If there are positional arguments but fewer than the registry's
+            arity requires.
         """
         if method is not None:
             named = self._named(method)
@@ -418,15 +465,40 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
         exact_only: bool = False,
         **kwargs: Any,
     ) -> Any:
-        """Run the selected method.
+        """Run the selected method and return its result.
 
-        Auto-selection runs the first feasible candidate in selection order.
-        A candidate that is unresolved raises :class:`ResolutionError`
-        naming its pending requirements, as does the absence of any feasible
-        candidate. A named method that is infeasible, below the requested
-        exactness, or not registered raises :class:`ResolutionError`. An
-        exception raised by the method itself propagates unchanged, and no
-        other method is tried after it.
+        Under auto-selection the first feasible candidate in selection order
+        runs. An exception raised by a method's ``check`` or ``execute``
+        propagates unchanged, and no other method is tried after it.
+
+        Parameters
+        ----------
+        *args : Any
+            Positional arguments of the call; the dispatch key is computed
+            from them, and they are passed to the selected method.
+        method : str or None
+            A registered method name to run instead of auto-selecting.
+        exact_only : bool
+            If ``True``, approximate methods are excluded.
+        **kwargs : Any
+            Keyword arguments of the call, passed to the selected method's
+            ``check`` and ``execute``.
+
+        Returns
+        -------
+        Any
+            The result of the selected method's ``execute``.
+
+        Raises
+        ------
+        ResolutionError
+            If no candidate is feasible; if the first candidate that is not
+            infeasible is unresolved; or if ``method`` names a method that is
+            not registered, is infeasible, or is approximate while
+            ``exact_only`` is ``True``.
+        TypeError
+            If there are no positional arguments, or fewer than the
+            registry's arity requires.
         """
         if method is not None:
             named = self._named(method)
@@ -460,11 +532,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
 
     @staticmethod
     def _report(method: M, feasibility: Feasibility) -> MethodInfo:
-        """The method's feasibility with its name and declared exactness.
-
-        ``exact`` is read from the registration, so a report cannot disagree
-        with what ``exact_only`` filters on.
-        """
+        """The method's feasibility with its registered name and exactness."""
         return MethodInfo(
             feasible=feasibility.feasible,
             description=feasibility.description,

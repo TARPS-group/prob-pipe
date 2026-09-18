@@ -367,31 +367,36 @@ class _BlackJAXMCMCMethod(InferenceMethod):
 
 
 def BlackJAXNutsMethod() -> _BlackJAXMCMCMethod:
-    """BlackJAX No-U-Turn Sampler.
+    """BlackJAX No-U-Turn Sampler, registered as ``blackjax_nuts`` at priority 85.
 
-    An optimised JAX-native backend, and the method automatic selection
-    picks for any JAX-traceable ``SupportsLogProb`` target — the canonical
-    ProbPipe model class. Priority 85: below ``nutpie_nuts`` (88), whose
-    Rust gradients win the constant-factor race for Stan and PyMC models,
-    and above ``cmdstan_nuts`` / ``pymc_nuts`` (82), which apply to
-    disjoint model classes.
+    Applies to any ``SupportsUnnormalizedLogProb`` target with a
+    JAX-traceable log-density, the canonical ProbPipe model class, for which
+    it is the method automatic selection picks.
+
+    Notes
+    -----
+    An optimised JAX-native backend. Below ``nutpie_nuts`` (88), whose Rust
+    gradients win the constant-factor race for Stan and PyMC models, and
+    above ``cmdstan_nuts`` and ``pymc_nuts`` (82), which apply to disjoint
+    model classes.
     """
     return _BlackJAXMCMCMethod("nuts", "blackjax_nuts", 85)
 
 
 def BlackJAXHmcMethod() -> _BlackJAXMCMCMethod:
-    """BlackJAX Hamiltonian Monte Carlo.
+    """BlackJAX Hamiltonian Monte Carlo, registered as ``blackjax_hmc``, opt-in-only.
 
+    Same feasibility class as ``blackjax_nuts``; runs only when the caller
+    pins ``method="blackjax_hmc"``. The ``num_integration_steps`` kwarg
+    (default ``10``) is the *mean* trajectory length: each draw uses a
+    Halton-quasi-random number of leapfrog steps so a fixed-``L`` resonance
+    cannot silently stall mixing.
+
+    Notes
+    -----
     Well understood but hand-tuned: a hand-set step size and a trajectory
-    length randomized around a hand-set mean. Registered at
-    ``priority=None``, opt-in-only. Reasoning:
-    HMC's ``check()`` is identical to ``blackjax_nuts`` (same
-    ``SupportsUnnormalizedLogProb`` + JAX-traceability gate), so with
-    NUTS at 85, HMC is structurally unreachable in auto-dispatch. Keeping
-    it at 0 makes that explicit; callers who specifically want HMC pin
-    ``method="blackjax_hmc"``. The ``num_integration_steps`` kwarg
-    (default ``10``) is the *mean* trajectory length: production draws a
-    Halton-quasi-random number of leapfrog steps so a fixed-``L``
-    resonance cannot silently stall mixing.
+    length randomized around a hand-set mean. Its ``check()`` is identical to
+    that of ``blackjax_nuts``, so with NUTS ranked, HMC would never be
+    selected automatically; ``priority=None`` makes that explicit.
     """
     return _BlackJAXMCMCMethod("hmc", "blackjax_hmc", None)

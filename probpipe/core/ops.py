@@ -623,6 +623,22 @@ def condition_on(
         ``random_seed``) and/or named data kwargs.  Any kwarg whose
         name matches a distribution component name is treated as
         observed data; everything else is an inference parameter.
+
+    Returns
+    -------
+    Distribution
+        The conditional distribution, as the selected method represents it.
+
+    Raises
+    ------
+    ResolutionError
+        If no registered method is feasible for *dist*, or if ``method``
+        names a method that is not registered or is infeasible.
+    ValueError
+        If observed values are passed both positionally and as named data
+        kwargs.
+    TypeError
+        If a kwarg matches a component name only up to case.
     """
     from ..inference import inference_method_registry
     from .record import Record
@@ -648,7 +664,7 @@ def condition_on(
     if isinstance(dist, SupportsConditioning):
         return dist._condition_on(observed, **data_kwargs, **inference_kwargs)
 
-    # Registry auto-selects the best approximate inference algorithm.
+    # Registry auto-selects the first feasible method in selection order.
     # Data kwargs are bundled into observed as a Record object.
     if data_kwargs:
         if observed is not None:
