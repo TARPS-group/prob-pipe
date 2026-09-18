@@ -37,13 +37,18 @@ __all__ = [
     "BaseDispatchRegistry",
     "BinaryDispatchMethod",
     "BinaryDispatchRegistry",
+    "BinarySupportedTypes",
     "Feasibility",
     "MathematicalDomainError",
     "MethodInfo",
     "ResolutionError",
     "UnaryDispatchMethod",
     "UnaryDispatchRegistry",
+    "UnarySupportedTypes",
 ]
+
+type UnarySupportedTypes = tuple[type, ...]
+type BinarySupportedTypes = tuple[tuple[type, ...], tuple[type, ...]]
 
 
 class ResolutionError(Exception):
@@ -108,7 +113,7 @@ class MethodInfo(Feasibility):
     """Used by a registry to describe a method's feasibility plus its registration information.
 
     The ``method_name`` and ``exact`` atributes are both ``None`` exactly when no method could
-    be selected. 
+    be selected.
 
     Attributes
     ----------
@@ -138,11 +143,15 @@ class MethodInfo(Feasibility):
 # ---------------------------------------------------------------------------
 
 
-class BaseDispatchMethod(ABC):
+class BaseDispatchMethod[SupportedTypesT](ABC):
     """Abstract base for all pluggable dispatch methods.
 
-    A subclass declares a unique ``name``, whether it is ``exact``, and
-    ``check`` / ``execute``. 
+    A subclass declares a unique ``name``, whether it is ``exact``, the
+    ``supported_types`` the registry's structural pre-filter admits, and
+    ``check`` / ``execute``; ``priority`` has a default. The type parameter
+    is the shape of ``supported_types``. :class:`UnaryDispatchMethod` and
+    :class:`BinaryDispatchMethod` fix it, so an implementation subclasses
+    one of those and never spells the parameter.
     """
 
     @property
@@ -159,6 +168,18 @@ class BaseDispatchMethod(ABC):
         ``True`` for an equivalent representation or an exact draw in law;
         ``False`` for a stand-in, such as a finite Monte Carlo output or a
         moment-matched family. Declared once and fixed for the method's life.
+        """
+        ...
+
+    @abstractmethod
+    def supported_types(self) -> SupportedTypesT:
+        """Types admitted by the registry's structural pre-filter.
+
+        Concrete classes, matched by ``issubclass``; a protocol with
+        non-method members does not work there and belongs in ``check``.
+        The shape is the type parameter: a tuple of classes for a unary
+        method, a ``(left_types, right_types)`` pair of them for a binary
+        one.
         """
         ...
 
@@ -182,27 +203,12 @@ class BaseDispatchMethod(ABC):
         return None
 
 
-class UnaryDispatchMethod(BaseDispatchMethod):
-    """Abstract base for single-argument dispatch methods."""
-
-    @abstractmethod
-    def supported_types(self) -> tuple[type, ...]:
-        """Types this method can operate on, used as an ``issubclass`` pre-filter.
-
-        Must return concrete classes, since ``issubclass`` does not work
-        reliably with protocols carrying non-method members. Protocol-based
-        feasibility belongs in ``check``.
-        """
-        ...
+class UnaryDispatchMethod(BaseDispatchMethod[UnarySupportedTypes]):
+    """Dispatch method whose first argument determines admission."""
 
 
-class BinaryDispatchMethod(BaseDispatchMethod):
-    """Abstract base for two-argument dispatch methods."""
-
-    @abstractmethod
-    def supported_types(self) -> tuple[tuple[type, ...], tuple[type, ...]]:
-        """``((left_types, ...), (right_types, ...))`` for the ``issubclass`` pre-filter."""
-        ...
+class BinaryDispatchMethod(BaseDispatchMethod[BinarySupportedTypes]):
+    """Dispatch method whose first two arguments determine admission."""
 
 
 # ---------------------------------------------------------------------------
@@ -210,16 +216,17 @@ class BinaryDispatchMethod(BaseDispatchMethod):
 # ---------------------------------------------------------------------------
 
 
-class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
+class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
     """Registry of dispatch methods for one operation.
 
     :meth:`register` adds a method, :meth:`check` reports which method a call
     would run, :meth:`execute` runs it, :meth:`set_priorities` re-ranks at
     runtime, and :meth:`list_methods` lists the methods in selection order.
     Everything that does not depend on how many arguments select the method
-    is implemented here; an arity subclass supplies the three hooks
-    :meth:`_cache_key`, :meth:`_find_methods`, and :meth:`_format_key`, and
-    selection reads only the list ``_find_methods`` returns.
+    is implemented here; an arity subclass supplies the four hooks
+    :meth:`_cache_key`, :meth:`_validate_supported_types`,
+    :meth:`_find_methods`, and :meth:`_format_key`, and selection reads only
+    the list ``_find_methods`` returns.
     """
 
     def __init__(self) -> None:
@@ -247,7 +254,8 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
         ValueError
             If ``method.name`` is empty or already registered.
         TypeError
-            If ``method.exact`` is not a ``bool``.
+            If ``method.exact`` is not a ``bool``, or ``method.supported_types()``
+            does not have the registry's arity shape.
         """
         if not method.name:
             raise ValueError(f"Method.name must be a non-empty string; got {method.name!r}")
@@ -256,6 +264,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
         exact = method.exact
         if type(exact) is not bool:
             raise TypeError(f"Method {method.name!r} must declare exact as a bool; got {exact!r}")
+        self._validate_supported_types(method.name, method.supported_types())
         self._registration_order[method.name] = len(self._registration_order)
         self._methods.append(method)
         self._name_index[method.name] = method
@@ -560,6 +569,17 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
         ...
 
     @abstractmethod
+    def _validate_supported_types(self, name: str, supported_types: Any) -> None:
+        """Raise ``TypeError`` unless ``supported_types`` has the arity's shape.
+
+        Python enforces nothing about the type parameter of
+        :class:`BaseDispatchMethod`, and a wrong shape is admitted silently
+        by ``issubclass``, which accepts a tuple as its second argument, so
+        registration checks the runtime value. ``name`` is for the message.
+        """
+        ...
+
+    @abstractmethod
     def _find_methods(self, key: Any) -> list[M]:
         """The auto-dispatchable methods admitting ``key``, in selection order.
 
@@ -576,11 +596,22 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
         ...
 
 
+def _is_tuple_of_classes(value: Any) -> bool:
+    return isinstance(value, tuple) and all(isinstance(entry, type) for entry in value)
+
+
 class UnaryDispatchRegistry[M: UnaryDispatchMethod](BaseDispatchRegistry[M]):
     """Dispatches on the type of the first positional argument."""
 
     def _cache_key(self, args: tuple[Any, ...]) -> type:
         return type(args[0])
+
+    def _validate_supported_types(self, name: str, supported_types: Any) -> None:
+        if not _is_tuple_of_classes(supported_types):
+            raise TypeError(
+                f"Method {name!r} must declare supported_types as a tuple of classes; "
+                f"got {supported_types!r}"
+            )
 
     def _find_methods(self, key: type) -> list[M]:
         if key not in self._type_cache:
@@ -610,6 +641,17 @@ class BinaryDispatchRegistry[M: BinaryDispatchMethod](BaseDispatchRegistry[M]):
                 f"arguments; got {len(args)}"
             )
         return (type(args[0]), type(args[1]))
+
+    def _validate_supported_types(self, name: str, supported_types: Any) -> None:
+        if not (
+            isinstance(supported_types, tuple)
+            and len(supported_types) == 2
+            and all(_is_tuple_of_classes(side) for side in supported_types)
+        ):
+            raise TypeError(
+                f"Method {name!r} must declare supported_types as a (left_types, right_types) "
+                f"pair of tuples of classes; got {supported_types!r}"
+            )
 
     def _find_methods(self, key: tuple[type, type]) -> list[M]:
         if key not in self._type_cache:

@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `check` and `execute` take `exact_only=True` to exclude approximate methods.
   `set_priorities` accepts a positional mapping as well as keywords, since a
   method name need not be an identifier, and cannot change exactness.
+  `BaseDispatchMethod` is generic over the shape of `supported_types`, which
+  it now declares itself; `UnaryDispatchMethod` and `BinaryDispatchMethod` fix
+  the shape through the exported `UnarySupportedTypes` and
+  `BinarySupportedTypes`, and registration rejects a `supported_types()` value
+  of the wrong shape.
   A method's `check` returns a `Feasibility` (`feasible`, `description`,
   `pending`); the registry's `check` returns a `MethodInfo`, a `Feasibility`
   with `method_name` and `exact` set from the registration, so a method never

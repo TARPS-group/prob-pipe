@@ -361,22 +361,23 @@ Dispatch is by argument type: a `UnaryDispatchRegistry` keys on the first argume
 A method whose priority is `None` is **opt-in-only**, skipped by auto-selection and reachable only by name. That is the default, so registering a method never silently changes what runs until a contributor ranks it. `set_priorities` re-ranks at runtime, by mapping or by keyword since a method name need not be an identifier, without changing whether a method is exact, and warns when a method moves into or out of opt-in-only. A caller can bypass auto-selection with `method="..."`. A call with no feasible method raises `ResolutionError`, naming the methods tried and what each was missing; a named method that is infeasible, or a name that is not registered, raises the same. The registry's `check` and `execute` are the dispatch interface, so an unknown name is a dispatch that cannot resolve; `get_method` and `set_priorities` look a name up and raise `KeyError`. A non-executing probe may instead report unresolved requirements (V.1); it must not report those as either feasibility or mathematical nonexistence. New methods are added by registration at import, by whichever layer owns the implementation, so a registry gains its providers without importing them.
 
 ```python
-class BaseDispatchMethod(ABC):
+type UnarySupportedTypes = tuple[type, ...]
+type BinarySupportedTypes = tuple[tuple[type, ...], tuple[type, ...]]   # (left, right) types
+
+class BaseDispatchMethod[SupportedTypesT](ABC):
     name: str
     exact: bool                   # declared at registration, fixed for the method's life
     priority: int | None = None   # rank among methods of the same exactness, higher first; None is opt-in-only
 
     @abstractmethod
+    def supported_types(self) -> SupportedTypesT: ...   # admitted by the registry's structural pre-filter
+    @abstractmethod
     def check(self, *args, **kwargs) -> Feasibility: ...
     @abstractmethod
     def execute(self, *args, **kwargs) -> Any: ...
 
-class UnaryDispatchMethod(BaseDispatchMethod):    # still abstract
-    @abstractmethod
-    def supported_types(self) -> tuple[type, ...]: ...
-class BinaryDispatchMethod(BaseDispatchMethod):   # still abstract
-    @abstractmethod
-    def supported_types(self) -> tuple[tuple[type, ...], tuple[type, ...]]: ...   # (left, right) types
+class UnaryDispatchMethod(BaseDispatchMethod[UnarySupportedTypes]): ...     # the first argument determines admission
+class BinaryDispatchMethod(BaseDispatchMethod[BinarySupportedTypes]): ...   # the first two arguments do
 
 class Feasibility:                # what a method's check reports
     feasible:    bool | None   # None when required declarations are not yet available
@@ -390,7 +391,7 @@ class MethodInfo(Feasibility):    # what a registry's check reports
 class ResolutionError(Exception): ...   # no available implementation under the requested controls
 class MathematicalDomainError(ValueError): ...  # the mathematical operation is known to be undefined
 
-class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
+class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
     # the public interface is concrete; arity subclasses supply key extraction and matching
     def register(self, method: M) -> None: ...
     def set_priorities(self, priorities: Mapping[str, int | None] | None = None, /,

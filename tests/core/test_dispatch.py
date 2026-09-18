@@ -75,6 +75,7 @@ class _FakeBase:
         raises: BaseException | None = None,
         check_raises: BaseException | None = None,
         report: Feasibility | None = None,
+        supported: Any = None,
     ):
         self._name = name
         self._exact = exact
@@ -86,6 +87,7 @@ class _FakeBase:
         self._raises = raises
         self._check_raises = check_raises
         self._report = report
+        self._supported = supported
         self.check_calls = 0
         self.execute_calls = 0
 
@@ -124,7 +126,7 @@ class FakeUnary(_FakeBase, UnaryDispatchMethod):
         self._types = types
 
     def supported_types(self) -> tuple[type, ...]:
-        return self._types
+        return self._types if self._supported is None else self._supported
 
 
 class FakeBinary(_FakeBase, BinaryDispatchMethod):
@@ -141,16 +143,23 @@ class FakeBinary(_FakeBase, BinaryDispatchMethod):
         self._right = right
 
     def supported_types(self) -> tuple[tuple[type, ...], tuple[type, ...]]:
-        return (self._left, self._right)
+        return (self._left, self._right) if self._supported is None else self._supported
 
 
 class Arity:
-    """One registry flavor: its class, its fake, and the arguments of a call."""
+    """One registry flavor: its class, its fake, the arguments of a call, and wrong shapes.
 
-    def __init__(self, registry_cls: type, fake: type, args: tuple[Any, ...]):
+    ``bad_supported`` lists ``supported_types`` values of the other arity's
+    shape or with non-class entries, which registration must reject.
+    """
+
+    def __init__(
+        self, registry_cls: type, fake: type, args: tuple[Any, ...], bad_supported: list[Any]
+    ):
         self.registry_cls = registry_cls
         self.fake = fake
         self.args = args
+        self.bad_supported = bad_supported
 
     def registry(self) -> BaseDispatchRegistry[Any]:
         return self.registry_cls()
@@ -162,8 +171,18 @@ class Arity:
 @pytest.fixture(params=["unary", "binary"])
 def arity(request: pytest.FixtureRequest) -> Arity:
     if request.param == "unary":
-        return Arity(UnaryDispatchRegistry, FakeUnary, (Left(),))
-    return Arity(BinaryDispatchRegistry, FakeBinary, (Left(), Right()))
+        return Arity(
+            UnaryDispatchRegistry,
+            FakeUnary,
+            (Left(),),
+            bad_supported=[((Left,), (Right,)), ("Left",), Left, [Left]],
+        )
+    return Arity(
+        BinaryDispatchRegistry,
+        FakeBinary,
+        (Left(), Right()),
+        bad_supported=[(Left, Right), ((Left,), ("Right",)), ((Left,),), (Left, (Right,))],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -174,6 +193,14 @@ def arity(request: pytest.FixtureRequest) -> Arity:
 class TestExactnessDeclaration:
     def test_exact_is_abstract_on_the_base(self):
         assert "exact" in BaseDispatchMethod.__abstractmethods__
+
+    def test_supported_types_is_abstract_on_the_base(self):
+        assert "supported_types" in BaseDispatchMethod.__abstractmethods__
+
+    @pytest.mark.parametrize("arity_base", [UnaryDispatchMethod, BinaryDispatchMethod])
+    def test_arity_bases_add_no_abstract_members(self, arity_base: type):
+        """The arity classes fix the shape of ``supported_types``; the base states the contract."""
+        assert arity_base.__abstractmethods__ == BaseDispatchMethod.__abstractmethods__
 
     @pytest.mark.parametrize("bad", [None, 1, 0, "exact", "approximate"])
     def test_non_boolean_exact_is_rejected_at_register(self, arity: Arity, bad: Any):
@@ -686,6 +713,16 @@ class TestRegistration:
         with pytest.raises(ValueError, match="non-empty"):
             reg.register(arity.method(name))
 
+    def test_supported_types_must_have_the_arity_shape(self, arity: Arity):
+        """Python enforces nothing about the type parameter, so registration checks the value."""
+        reg = arity.registry()
+        for bad in arity.bad_supported:
+            with pytest.raises(TypeError, match="supported_types"):
+                reg.register(arity.method("m", supported=bad))
+        assert reg.list_methods() == []
+        with pytest.raises(KeyError):
+            reg.get_method("m")
+
     @pytest.mark.parametrize("name", ["scipy->tfp", "a.b"])
     def test_any_non_empty_string_is_a_name(self, arity: Arity, name: str):
         reg = arity.registry()
@@ -776,7 +813,7 @@ class TestDesignAgreement:
 
     def test_every_public_name_is_declared(self):
         """A name II.7 has dropped must not survive in ``__all__``."""
-        declared_names = set(re.findall(r"^class (\w+)", _design_block(), re.M))
+        declared_names = set(re.findall(r"^(?:class|type) (\w+)", _design_block(), re.M))
         exported_names = {name for name in _dispatch.__all__ if name[0].isupper()}
         assert exported_names <= declared_names, exported_names - declared_names
 
@@ -797,13 +834,17 @@ class TestDesignAgreement:
         for name, annotation in declared.items():
             assert annotation.replace(" ", "") == str(implemented[name]).replace(" ", "")
 
-    def test_base_method_declares_exact_and_priority(self):
+    def test_base_method_declares_exact_priority_and_supported_types(self):
         block = _design_block()
-        section = block[block.index("class BaseDispatchMethod(ABC):") :]
+        header = re.search(r"^class BaseDispatchMethod\b", block, re.M)
+        assert header is not None
+        section = block[header.start() :]
         section = section[: section.index("\nclass ")]
         for attr in ("exact", "priority"):
             assert re.search(rf"^\s+{attr}:", section, re.M), attr
             assert isinstance(getattr(BaseDispatchMethod, attr), property)
+        assert re.search(r"^\s+def supported_types\(", section, re.M)
+        assert "supported_types" in BaseDispatchMethod.__abstractmethods__
 
     def test_registry_signatures_match(self):
         block = _design_block()
