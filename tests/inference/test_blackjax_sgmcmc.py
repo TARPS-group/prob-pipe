@@ -76,21 +76,19 @@ class TestRegistry:
         below ``blackjax_nuts`` (85) so a routine ``condition_on(...)``
         doesn't accidentally pick a stochastic-gradient sampler. SGHMC
         has the same ``check()`` as SGLD and is therefore structurally
-        unreachable in auto-dispatch; it's at the opt-in sentinel
-        ``priority=0`` and reachable only via
-        ``method="blackjax_sghmc"``.
+        unreachable in auto-dispatch; it is opt-in only, ``priority=None``,
+        and reachable only via ``method="blackjax_sghmc"``.
         """
 
         def get(n):
             return inference_method_registry.get_method(n).priority
 
-        # SGLD below the auto-dispatch winner (BlackJAX NUTS) but
-        # positive so a `method="blackjax_sgld"` request still reaches
-        # it through the priority walk.
+        # SGLD below the auto-dispatch winner (BlackJAX NUTS) but ranked, so
+        # it participates in the auto walk.
         assert get("blackjax_sgld") < get("blackjax_nuts")
-        assert get("blackjax_sgld") > 0
-        # SGHMC at the opt-in sentinel.
-        assert get("blackjax_sghmc") == 0
+        assert get("blackjax_sgld") is not None
+        # SGHMC is opt-in only.
+        assert get("blackjax_sghmc") is None
 
 
 # -- Gradient-estimator correctness -------------------------------------------

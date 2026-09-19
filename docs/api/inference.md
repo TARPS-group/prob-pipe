@@ -27,18 +27,18 @@ predictive checks. Registering a new inference method is documented under
 ## Inference methods
 
 [`condition_on`](operations.md#conditioning) dispatches through the
-inference-method registry: methods are tried in descending priority order
-and the first whose `check()` returns `feasible=True` runs. Pass
-`method="<name>"` to override the auto-selection;
-`inference_method_registry.set_priorities(...)` reorders the table at
-runtime.
+inference-method registry: methods are tried in selection order, exact
+methods before approximate ones and then by priority, and the first whose
+`check()` returns `feasible=True` runs. Pass `method="<name>"` to override
+the auto-selection; `inference_method_registry.set_priorities(...)` reorders
+the table at runtime. A call with no feasible method raises
+`ResolutionError`.
 
-Priorities follow a single-axis convention: values above `50` mark *exact*
-methods, values in `(0, 50]` mark *inexact* methods, and `0` means
-opt-in only (selectable by name but skipped during auto-dispatch). The
-five-axis selection criteria and the tier ranges contributors should use
-when choosing a number for a new method are documented under
-[Extending ProbPipe → Setting priority for a new method](extending.md#setting-priority-for-a-new-method).
+Every built-in method is approximate, so the priorities below are ranks
+among them and nothing more. `None` means opt-in only: selectable by name
+but skipped during auto-dispatch. The selection criteria contributors use
+when ranking a new method are documented under
+[Extending ProbPipe → Exactness, then rank](extending.md#exactness-then-rank).
 
 **Built-in methods:**
 
@@ -52,11 +52,11 @@ when choosing a number for a new method are documented under
 | `blackjax_rwmh` | 55 | `SupportsLogProb` (eager fallback for non-traceable targets) | BlackJAX |
 | `blackjax_sgld` | 45 | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` | BlackJAX |
 | `pyabc_smcabc` | 6 | `SimpleGenerativeModel` with a flattenable prior | pyabc |
-| `blackjax_hmc` | 0 | `SupportsLogProb` + JAX-traceable | BlackJAX (opt-in only) |
-| `blackjax_sghmc` | 0 | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` | BlackJAX (opt-in only) |
-| `pymc_advi` | 0 | `PyMCModel` + pymc | PyMC (opt-in only) |
-| `tfp_nuts` | 0 | `SupportsLogProb` + JAX-traceable | TFP (opt-in only) |
-| `tfp_hmc` | 0 | `SupportsLogProb` + JAX-traceable | TFP (opt-in only) |
+| `blackjax_hmc` | None | `SupportsLogProb` + JAX-traceable | BlackJAX (opt-in only) |
+| `blackjax_sghmc` | None | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` | BlackJAX (opt-in only) |
+| `pymc_advi` | None | `PyMCModel` + pymc | PyMC (opt-in only) |
+| `tfp_nuts` | None | `SupportsLogProb` + JAX-traceable | TFP (opt-in only) |
+| `tfp_hmc` | None | `SupportsLogProb` + JAX-traceable | TFP (opt-in only) |
 
 ::: probpipe.ApproximateDistribution
 

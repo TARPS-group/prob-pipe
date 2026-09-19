@@ -697,11 +697,11 @@ class TestProductProtocolDuckTyping:
         assert isinstance(joint, SupportsSampling)
 
     def test_always_supports_conditioning(self):
-        """ProductDistribution always supports SupportsConditioning."""
-        from probpipe import SupportsConditioning
+        """ProductDistribution always claims SupportsExactConditioning."""
+        from probpipe import SupportsExactConditioning
 
         joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
-        assert isinstance(joint, SupportsConditioning)
+        assert isinstance(joint, SupportsExactConditioning)
 
     def test_dynamic_subclass_pytree_roundtrip(self):
         """Dynamic ProductDistribution subclass is JAX pytree-compatible."""

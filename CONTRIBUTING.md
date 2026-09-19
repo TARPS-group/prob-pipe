@@ -594,13 +594,13 @@ uv build packaging/probpipe   # probpipe (metapackage)
 | `FlattenedDistributionView` | A `FlatNumericRecordDistribution` produced by `nrd.as_flat_distribution()`. Wraps any base distribution and exposes flat-vector samples / log-probs (`event_shape == (event_size,)`), delegating through the base. |
 | `NumericRecordDistributionView` | The inverse view, produced by `FlatNumericRecordDistribution.as_record_distribution(template=…)`. Lifts a flat distribution to a Record-keyed structure; samples come back as `NumericRecord` / `NumericRecordBatch` keyed by `template.fields`. |
 | `DistributionArray` | Shape-indexed `Array[Distribution]`; exposes only the container surface (indexing, iteration, `batch_shape`, `event_shape`, `event_template`, `components`). `event_template` is the explicitly supplied authoritative template for Function aggregates, the common component template for compatible literal arrays, or `None`. Vectorized ops are delivered by the `Function` sweep layer — passing a `DistributionArray` to an op whose hint is a scalar `Distribution` / protocol triggers cell-by-cell dispatch, and outputs stack into `NumericRecordBatch` / `RecordBatch` / (nested) `DistributionArray`. Produced by parameter-sweep Functions whose inner call returns a `Distribution`. |
-| `JointEmpirical` / `NumericJointEmpirical` | Weighted joint samples distribution. Generic base supports only sampling + conditioning; the numeric subclass adds exact `SupportsMean` / `SupportsVariance`. `JointEmpirical(...)` dispatches to `NumericJointEmpirical` when every field is numeric. (Empirical distributions do not claim `SupportsLogProb`; use `from_distribution(emp, KDEDistribution, …)` for a density.) |
+| `JointEmpirical` / `NumericJointEmpirical` | Weighted joint samples distribution. Generic base supports only sampling; the numeric subclass adds exact `SupportsMean` / `SupportsVariance`. Conditioning is not offered, since dropping stored fields is marginalization; build the marginal directly. `JointEmpirical(...)` dispatches to `NumericJointEmpirical` when every field is numeric. (Empirical distributions do not claim `SupportsLogProb`; use `from_distribution(emp, KDEDistribution, …)` for a density.) |
 | `EmpiricalDistribution[T]` / `RecordEmpiricalDistribution` | Weighted empirical distribution. Generic base over arbitrary sample type ``T``; Record-based specialisation adds `event_shapes`, exact moments (`SupportsMean` / `SupportsVariance` / `SupportsCovariance`), and TFP-style shape semantics. Numeric-array sources auto-wrap as a single-field Record (requires `name=`). Two views on the stored draws: `samples` (structured `NumericRecord`, per-field access via `samples[name]`) and `flat_samples` (flat `(n, dim)` matrix across all fields, in insertion order). Use `flat_samples` for stacked-matrix idioms like `post.flat_samples.mean(axis=0)` for per-parameter posterior summaries. |
 | `BootstrapReplicateDistribution[T]` / `RecordBootstrapReplicateDistribution` | N-fold product over a source: each draw is a bootstrapped dataset of `n` i.i.d. observations. Accepts a `Record`, `RecordEmpiricalDistribution`, numeric array, or any `SupportsSampling` source (in which case `n` is mandatory). |
 | `Function` | Immutable first-class `TrackedTerm` / `Annotated`, schema-aware computation term. It owns a frozen Python `signature`, optional authoritative input/output `EventTemplate`s, and an implementation object. `apply` performs one raw evaluation; `__call__` adds lifting, variadic slot planning, sweeps, orchestration, wrapping, and Function-first provenance. Prefect is off by default; views are grouped by parent for correlated broadcasting. |
 | `Module` | Stateful workflow-aware base class (see `@workflow_method`) |
-| Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, `SupportsConditioning`, etc.; dynamic inclusion on `ProductDistribution` and `TransformedDistribution` |
-| `BaseDispatchRegistry` | Abstract base for priority-based registries: holds registration, priority management (incl. opt-in-only sentinel + override warnings), and the `check`/`execute` loop. Arity-specific subclasses override `_cache_key`, `_find_methods`, and `_format_key`. |
+| Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, the two conditioning capabilities, etc.; dynamic inclusion on `ProductDistribution` and `TransformedDistribution` |
+| `BaseDispatchRegistry` | Abstract base for the dispatch registries: holds registration and the validation of a method's declarations, ordering by exactness, then rank, then type specificity, then registration order, opt-in filtering (`priority=None`) with override warnings, and the `check`/`execute` loop, `_find_methods` included. Arity-specific subclasses implement `_cache_key`, `_validate_supported_types`, `_distance`, and `_format_key`. |
 | `UnaryDispatchRegistry` | Single-argument dispatch registry; dispatches on the type of the first positional argument. Used by the inference method registry. |
 | `BinaryDispatchRegistry` | Two-argument dispatch registry; dispatches on the joint type of the first two positional args via paired `((left_types,), (right_types,))` pre-filters. |
 | `ProbabilisticModel` | Base for models (extends `Distribution`; provides `fields`) |
@@ -612,22 +612,22 @@ uv build packaging/probpipe   # probpipe (metapackage)
 ### Inference method registry
 
 `condition_on` dispatches inference via a pluggable **inference method
-registry** (`inference_method_registry`).  Each method declares
-`supported_types`, a `priority`, and `check()`/`execute()` methods.
-The registry tries methods in descending priority order; the first
-whose `check()` returns `feasible=True` wins.
+registry** (`inference_method_registry`). Each method declares
+`supported_types`, whether it is `exact`, a `priority`, and `check()` /
+`execute()` methods. The registry tries methods in selection order — exact
+before approximate, then by priority, then by type specificity, then by
+registration order — and runs
+the first whose `check()` reports feasibility; a call with no feasible method
+raises `ResolutionError`. Every built-in inference method declares
+`exact = False`, so its priority is a rank among approximate methods, and
+`None` is opt-in-only (selectable by name but skipped during auto-dispatch).
+The criteria for ranking a new method are under
+[Extending ProbPipe → Exactness, then rank](docs/api/extending.md#exactness-then-rank).
 
 Models no longer implement `_condition_on` directly — conditioning is
 handled entirely by registered methods.  The removed protocol
 `SupportsConditionableComponents` is no longer part of the public API;
 use `fields` and the inference registry instead.
-
-Priorities follow a semantic convention (issue #189): values above
-``50`` mark *exact* methods, values in ``(0, 50]`` mark *inexact*
-methods, and ``0`` is the opt-in-only sentinel (selectable by name but
-skipped during auto-dispatch). The contributor-facing tier criteria
-for picking a number when registering a new method live under
-[Extending ProbPipe → Setting priority for a new method](docs/api/extending.md#setting-priority-for-a-new-method).
 
 Built-in methods:
 
@@ -641,18 +641,19 @@ Built-in methods:
 | 55 | `blackjax_rwmh` | BlackJAX | Any `SupportsLogProb` (eager fallback for non-traceable targets) |
 | 45 | `blackjax_sgld` | BlackJAX | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` |
 | 6 | `pyabc_smcabc` | pyabc | `SimpleGenerativeModel` with a flattenable prior (requires the `[pyabc]` extra) |
-| 0 | `blackjax_hmc` | BlackJAX | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
-| 0 | `blackjax_sghmc` | BlackJAX | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=`; opt-in only via `method=` |
-| 0 | `pymc_advi` | PyMC | `PyMCModel`; opt-in only via `method=` |
-| 0 | `tfp_nuts` | TFP | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
-| 0 | `tfp_hmc` | TFP | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
+| None | `blackjax_hmc` | BlackJAX | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
+| None | `blackjax_sghmc` | BlackJAX | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=`; opt-in only via `method=` |
+| None | `pymc_advi` | PyMC | `PyMCModel`; opt-in only via `method=` |
+| None | `tfp_nuts` | TFP | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
+| None | `tfp_hmc` | TFP | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
 
 **Amortized SBI dispatches two ways.** Trained amortized posterior estimators
 (`learn_amortized_posterior` → `BayesFlowModel`, the `[bayesflow]` extra)
-implement `SupportsConditioning` directly, so `condition_on(model, observed)` is
-a single forward pass through the trained network. Because `condition_on` checks
-`SupportsConditioning` *before* the inference-method registry, these estimators
-short-circuit it and register no method. The learned NLE/NRE likelihoods
+claim `SupportsApproximateConditioning`, so `condition_on(model, observed)` is
+a single forward pass through the trained network. Because an approximate
+conditioning capability is taken whenever the registry has no feasible *exact*
+method, and none is registered for these estimators, they answer through the
+capability and register no method. The learned NLE/NRE likelihoods
 (`learn_amortized_likelihood` / `learn_amortized_ratio` → `BayesFlowLikelihood`
 / `BayesFlowRatio`) take the opposite route: they are ordinary
 `ConditionallyIndependentLikelihood` components, so

@@ -9,6 +9,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **A dispatch method declares whether it is exact; the integer priority
+  tiers are gone.** `probpipe.core._registry` is now `probpipe.core._dispatch`.
+  Every `BaseDispatchMethod` declares `exact: bool` at registration, fixed for
+  its life, and `priority: int | None` ranks methods of the same exactness,
+  `None` (the default) meaning opt-in only. Selection is exact before
+  approximate, then priority, then type specificity, then registration order,
+  in every registry.
+  `check` and `execute` take `exact_only=True` to exclude approximate methods.
+  `set_priorities` accepts a positional mapping as well as keywords, since a
+  method name need not be an identifier, and cannot change exactness.
+  `BaseDispatchMethod` is generic over the shape of `supported_types`, which
+  it now declares itself; `UnaryDispatchMethod` and `BinaryDispatchMethod` fix
+  the shape through the exported `UnarySupportedTypes` and
+  `BinarySupportedTypes`, also re-exported from `probpipe.inference`, and
+  registration rejects a `supported_types()` value of the wrong shape.
+  `Feasibility.feasible` must be a `bool` or `None`; a truthy or falsy stand-in
+  such as `1` or `""` is rejected at construction. A registry reads `name`, `exact`, `priority`, and
+  `supported_types()` once, at registration, and validates all four before it
+  changes, so a rejected method or a bad `set_priorities` value leaves it as
+  it was; a `bool` is not accepted as a priority.
+  A method's `check` returns a `Feasibility` (`feasible`, `description`,
+  `pending`); the registry's `check` returns a `MethodInfo`, a `Feasibility`
+  with `method_name` and `exact` set from the registration, so a method never
+  reports its own name or exactness. `feasible` may be `None` while required
+  declarations are unavailable, and `pending` then names them. A `MethodInfo`
+  that is feasible or unresolved names its method; only the infeasible report
+  that lists every method tried names none.
+  A call with no feasible method raises `ResolutionError`;
+  `MathematicalDomainError(ValueError)` is defined beside it for known
+  mathematical nonexistence and is never raised by the registry itself.
+  `OPT_IN_ONLY_PRIORITY` is removed. Every built-in inference method declares
+  `exact = False` through `InferenceMethod`; the former priority-0 methods
+  (`blackjax_hmc`, `blackjax_sghmc`, `pymc_advi`, `tfp_nuts`, `tfp_hmc`) are
+  `None`, and the other ranks are unchanged, so auto-selection is unchanged.
+  The converter registry is not a dispatch registry and is unchanged: it
+  keeps its `TypeError` and `ConversionMethod` until its move to
+  `distributions/_conversion.py` (design IV.3).
+
+- **`SupportsConditioning` is replaced by `SupportsExactConditioning` and
+  `SupportsApproximateConditioning`.** A distribution with a built-in
+  conditioning path now declares whether that path returns the conditional law
+  or a stand-in for it, and `condition_on` has one capability route for each.
+  Both are abstract base classes rather than `@runtime_checkable` protocols, so
+  a class claims one by inheriting it and a class that merely defines
+  `_condition_on` claims neither: exactness is a claim about the result, which
+  no structural check can read. `ProductDistribution`, `JointGaussian`, and
+  `SequentialJointDistribution` claim the exact capability; `BayesFlowModel`
+  claims the approximate one.
+
+- **`JointEmpirical` no longer offers conditioning.** Its `_condition_on`
+  dropped the named fields and kept every atom and weight, which ignores the
+  value conditioned on: `condition_on(je, x=0)` and `condition_on(je, x=1)`
+  returned the same distribution. That is marginalization rather than
+  conditioning, exact or approximate, so the route is removed and
+  `condition_on` on a `JointEmpirical` now raises `ResolutionError`. Build the
+  marginal directly instead, by constructing a `JointEmpirical` from the
+  fields to keep with the same `weights`.
+
+- **`condition_on` takes `exact_only` as a control.** It is a keyword-only
+  parameter beside `method`, so the operation consumes it and resolves it
+  before selecting a route. It previously fell through to `**kwargs`, which
+  forwarded it into `_condition_on` as if it were observed data: conditioning
+  a `ProductDistribution` with `exact_only=True` raised `KeyError`, and an
+  amortized posterior dropped the control and answered approximately.
+
+- **Both new exceptions are public, and an unknown `method=` name is a
+  resolution failure.** `from probpipe import ResolutionError,
+  MathematicalDomainError`. `ResolutionError` derives directly from
+  `Exception`; it is not a `TypeError`, because well-typed arguments can
+  still have no applicable method. `execute` and `check` raise it for a
+  `method=` name that is not registered, where they raised `KeyError`, so one
+  `except ResolutionError` covers every way a dispatch can fail to select a
+  method; `get_method` and `set_priorities` keep `KeyError`. Code that caught
+  `TypeError` from `condition_on` to mean "no method for this model" must
+  catch `ResolutionError` instead. `check` and `execute` raise `TypeError`
+  for fewer positional arguments than the arity requires, none included and
+  whether or not `method=` is given; `check()` with no arguments no longer
+  returns an infeasible report.
+
+- **`InferenceMethod` is a subclass of `UnaryDispatchMethod`, not an alias.**
+  It was an alias of `UnaryDispatchMethod`; it is now a subclass that declares
+  `exact = False` once for every built-in inference method, so a third-party
+  method subclassing `UnaryDispatchMethod` directly must declare `exact`
+  itself.
+
 - Names are set at construction and preserved by structural transforms;
   `with_name` is the sole renaming operation. The `name_is_auto` attribute,
   constructor keywords, and carried state are removed. `auto_name` now returns

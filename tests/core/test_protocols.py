@@ -20,8 +20,9 @@ from probpipe import (
     TransformedDistribution,
 )
 from probpipe.core.protocols import (
-    SupportsConditioning,
+    SupportsApproximateConditioning,
     SupportsCovariance,
+    SupportsExactConditioning,
     SupportsExpectation,
     SupportsLogProb,
     SupportsMean,
@@ -208,20 +209,20 @@ class TestSupportsMean:
 
 
 # ---------------------------------------------------------------------------
-# SupportsConditioning
+# Conditioning capabilities
 # ---------------------------------------------------------------------------
 
 
-class TestSupportsConditioning:
+class TestConditioningCapabilities:
     def test_product_distribution(self, joint):
-        assert isinstance(joint, SupportsConditioning)
+        assert isinstance(joint, SupportsExactConditioning)
 
     def test_sequential_joint(self):
         sjd = SequentialJointDistribution(
             x=Normal(0, 1, name="x"),
             y=lambda x: Normal(loc=x, scale=1.0, name="y"),
         )
-        assert isinstance(sjd, SupportsConditioning)
+        assert isinstance(sjd, SupportsExactConditioning)
 
     def test_joint_gaussian(self):
         jg = JointGaussian(
@@ -230,10 +231,25 @@ class TestSupportsConditioning:
             x=2,
             y=2,
         )
-        assert isinstance(jg, SupportsConditioning)
+        assert isinstance(jg, SupportsExactConditioning)
 
     def test_normal_not_conditionable(self, normal):
-        assert not isinstance(normal, SupportsConditioning)
+        assert not isinstance(normal, SupportsExactConditioning)
+        assert not isinstance(normal, SupportsApproximateConditioning)
+
+    def test_the_exact_implementations_do_not_claim_approximate(self, joint):
+        assert not isinstance(joint, SupportsApproximateConditioning)
+
+    def test_the_capability_is_claimed_by_inheriting_not_by_the_method(self):
+        """Exactness is a claim about the result, so defining ``_condition_on`` claims nothing."""
+
+        class DefinesTheMethod:
+            def _condition_on(self, observed, /, **kwargs):
+                return observed
+
+        instance = DefinesTheMethod()
+        assert not isinstance(instance, SupportsExactConditioning)
+        assert not isinstance(instance, SupportsApproximateConditioning)
 
 
 # ---------------------------------------------------------------------------
@@ -581,7 +597,7 @@ class TestSequentialJointDynamicProtocols:
         assert isinstance(joint, SupportsLogProb)
         assert isinstance(joint, SupportsMean)
         assert isinstance(joint, SupportsVariance)
-        assert isinstance(joint, SupportsConditioning)
+        assert isinstance(joint, SupportsExactConditioning)
 
     def test_bootstrap_component_drops_log_prob(self):
         """``BootstrapDistribution`` lacks ``SupportsLogProb``; a
@@ -593,7 +609,7 @@ class TestSequentialJointDynamicProtocols:
         )
         # Sampling and conditioning always available.
         assert isinstance(joint, SupportsSampling)
-        assert isinstance(joint, SupportsConditioning)
+        assert isinstance(joint, SupportsExactConditioning)
         # MRO-level claims reflect missing log-prob on a component.
         assert SupportsLogProb not in type(joint).__mro__
 
@@ -637,9 +653,10 @@ class TestJointEmpiricalDispatch:
         )
         assert type(je) is JointEmpirical
         assert not isinstance(je, NumericJointEmpirical)
-        # Sampling + conditioning still available on the generic base.
+        # Sampling is available on the generic base; conditioning is not offered.
         assert isinstance(je, SupportsSampling)
-        assert isinstance(je, SupportsConditioning)
+        assert not isinstance(je, SupportsExactConditioning)
+        assert not isinstance(je, SupportsApproximateConditioning)
         # Numeric protocols are not on the base class.
         assert SupportsLogProb not in type(je).__mro__
         assert SupportsMean not in type(je).__mro__

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from ..core._registry import MethodInfo
+from ..core._dispatch import Feasibility
 from ..core.node import function
 from ..custom_types import ArrayLike
 from ._approximate_distribution import ApproximateDistribution, make_posterior
@@ -167,7 +167,17 @@ def _extract_chains(
 
 
 class NutpieNutsMethod(InferenceMethod):
-    """Registry method for nutpie-backed NUTS."""
+    """nutpie-backed NUTS, registered as ``nutpie_nuts`` at priority 88.
+
+    Applies to a ``StanModel`` or ``PyMCModel`` whose modeling backend is
+    installed; infeasible while nutpie is not installed.
+
+    Notes
+    -----
+    An optimised backend: Rust-implemented NUTS with in-process gradients,
+    faster than every other registered NUTS backend on its applicable model
+    class, so it ranks above all of them.
+    """
 
     def __init__(self) -> None:
         types: list[type] = []
@@ -194,24 +204,16 @@ class NutpieNutsMethod(InferenceMethod):
 
     @property
     def priority(self) -> int:
-        # Tier 81-90 (optimised backend; Rust-implemented NUTS with
-        # in-process gradients, faster than every other registered
-        # NUTS backend on its applicable model class). Top of the
-        # tier at 88.
         return 88
 
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
+    def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:
         if not isinstance(dist, self._supported):
-            return MethodInfo(
-                feasible=False, method_name=self.name, description="Requires StanModel or PyMCModel"
-            )
+            return Feasibility(feasible=False, description="Requires StanModel or PyMCModel")
         try:
             import nutpie  # noqa: F401
         except ImportError:
-            return MethodInfo(
-                feasible=False, method_name=self.name, description="nutpie not installed"
-            )
-        return MethodInfo(feasible=True, method_name=self.name)
+            return Feasibility(feasible=False, description="nutpie not installed")
+        return Feasibility(feasible=True)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
         return condition_on_nutpie.apply(dist, observed, **kwargs)

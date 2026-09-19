@@ -31,7 +31,7 @@ from ..core._record_distribution import (
 )
 from ..core.named_tree import _PATH_SEP
 from ..core.protocols import (
-    SupportsConditioning,
+    SupportsExactConditioning,
     SupportsLogProb,
     SupportsMean,
     SupportsSampling,
@@ -73,7 +73,7 @@ def _product_class_for_components(components: dict) -> type:
       :class:`RecordDistribution` surface — sampling, conditioning,
       and named-component access still work; the numeric methods are
       simply absent.
-    - ``SupportsSampling`` and ``SupportsConditioning`` are always
+    - ``SupportsSampling`` and ``SupportsExactConditioning`` are always
       included.
     - ``SupportsLogProb``, ``SupportsMean``, ``SupportsVariance`` are
       added only when every leaf supports them.
@@ -156,7 +156,7 @@ def _merge_positional_and_keyword(
 class ProductDistribution(
     RecordDistribution,
     SupportsSampling,
-    SupportsConditioning,
+    SupportsExactConditioning,
 ):
     """Joint distribution with **independent** leaf components.
 

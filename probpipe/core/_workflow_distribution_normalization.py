@@ -25,8 +25,9 @@ from . import _workflow_call
 from ._distribution_array import DistributionArray
 from .distribution import Distribution, NumericRecordDistribution
 from .protocols import (
-    SupportsConditioning,
+    SupportsApproximateConditioning,
     SupportsCovariance,
+    SupportsExactConditioning,
     SupportsExpectation,
     SupportsLogProb,
     SupportsMean,
@@ -49,7 +50,8 @@ DISTRIBUTION_HINT_PROTOCOLS: tuple[type, ...] = (
     SupportsQuantile,
     SupportsRandomLogProb,
     SupportsRandomUnnormalizedLogProb,
-    SupportsConditioning,
+    SupportsExactConditioning,
+    SupportsApproximateConditioning,
 )
 
 
