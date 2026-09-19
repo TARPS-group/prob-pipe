@@ -54,9 +54,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Both are abstract base classes rather than `@runtime_checkable` protocols, so
   a class claims one by inheriting it and a class that merely defines
   `_condition_on` claims neither: exactness is a claim about the result, which
-  no structural check can read. `ProductDistribution`, `JointGaussian`,
-  `SequentialJointDistribution`, and `JointEmpirical` claim the exact
-  capability; `BayesFlowModel` claims the approximate one.
+  no structural check can read. `ProductDistribution`, `JointGaussian`, and
+  `SequentialJointDistribution` claim the exact capability; `BayesFlowModel`
+  claims the approximate one.
 
 - **`JointEmpirical` no longer offers conditioning.** Its `_condition_on`
   dropped the named fields and kept every atom and weight, which ignores the

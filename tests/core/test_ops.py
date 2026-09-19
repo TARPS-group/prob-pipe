@@ -458,6 +458,52 @@ class TestConditionOn:
         ops.condition_on(Amortized(), 1.0)
         assert Amortized.calls == 1
 
+    def test_an_unresolved_exact_candidate_falls_back_to_the_approximate_capability(
+        self, monkeypatch
+    ):
+        """An exact method that cannot yet decide does not hold the call back."""
+        from probpipe.core._dispatch import Feasibility, UnaryDispatchMethod, UnaryDispatchRegistry
+
+        class Amortized(SupportsApproximateConditioning):
+            calls: ClassVar[int] = 0
+
+            def _condition_on(self, observed, /, **kwargs):
+                Amortized.calls += 1
+                return Normal(0, 1, name="amortized")
+
+        class UnresolvedExact(UnaryDispatchMethod):
+            ran = False
+
+            @property
+            def name(self):
+                return "unresolved_exact"
+
+            @property
+            def exact(self):
+                return True
+
+            @property
+            def priority(self):
+                return 1
+
+            def supported_types(self):
+                return (Amortized,)
+
+            def check(self, *args, **kwargs):
+                return Feasibility(feasible=None, pending=("event spec of the model",))
+
+            def execute(self, *args, **kwargs):
+                UnresolvedExact.ran = True
+                return Normal(0, 1, name="exact")
+
+        registry = UnaryDispatchRegistry()
+        registry.register(UnresolvedExact())
+        monkeypatch.setattr("probpipe.inference.inference_method_registry", registry)
+
+        ops.condition_on(Amortized(), 1.0)
+        assert Amortized.calls == 1
+        assert not UnresolvedExact.ran
+
     def test_exact_only_skips_the_approximate_capability_route(self):
         """An amortized conditioner is not an exact answer, so the call falls to the registry."""
 
