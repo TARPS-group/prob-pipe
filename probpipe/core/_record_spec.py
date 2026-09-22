@@ -582,7 +582,9 @@ class NumericRecordSpec(RecordSpec, NumericSpec):
     the shape specs in hand.
     """
 
-    __slots__ = ("_vector_size",)
+    __slots__ = ("_cached_vector_size",)
+
+    _cached_vector_size: int | None
 
     def _post_validate(self, field_specs: dict[str, TermSpec]) -> None:
         for name, spec in field_specs.items():
@@ -608,7 +610,8 @@ class NumericRecordSpec(RecordSpec, NumericSpec):
         **field_specs: _FieldSpecInput,
     ):
         super().__init__(_field_specs, **field_specs)
-        object.__setattr__(self, "_vector_size", self._compute_vector_size())
+        size = None if self.free_dims else sum(spec.vector_size for spec in self._tree.values())
+        object.__setattr__(self, "_cached_vector_size", size)
 
     @property
     def leaf_shapes(self) -> dict[str, tuple[int | str, ...]]:
@@ -631,36 +634,14 @@ class NumericRecordSpec(RecordSpec, NumericSpec):
                 result[name] = (spec.vector_size,)
         return result
 
-    def _compute_vector_size(self) -> int | None:
-        """Total scalar count, or None while symbolic dimensions remain."""
-        if self.free_dims:
-            return None
-        return sum(spec.vector_size for spec in self._tree.values())
-
     @property
-    def vector_size(self) -> int:
-        """Length of the per-element 1-D vector (``to_vector`` / ``from_vector``).
+    def is_concrete(self) -> bool:
+        """Whether construction determined a concrete numeric layout."""
+        return self._cached_vector_size is not None
 
-        The total number of scalar elements across all numeric leaves — the
-        trailing-axis length of a value's
-        :meth:`~probpipe.NumericRecord.to_vector` output. A single value
-        serializes to shape ``(vector_size,)``; a batch serializes to a matrix
-        ``(*batch_shape, vector_size)``, not a single vector.
-
-        Raises
-        ------
-        ValueError
-            If the template still has symbolic dimensions. The message lists
-            the dimensions that must first be made concrete.
-        """
-        size = self._vector_size
-        if size is None:
-            dimensions = ", ".join(sorted(self.free_dims))
-            raise ValueError(
-                "vector_size is undefined for a polymorphic NumericRecordSpec; "
-                f"unbound dimensions: {dimensions}"
-            )
-        return size
+    def _vector_size(self) -> int:
+        """The cached scalar count for this concrete record schema."""
+        return cast(int, self._cached_vector_size)
 
     # 1-D numeric (de)serialization is a value operation and lives on the
     # value types: ``to_vector`` on :class:`~probpipe.NumericRecord` /

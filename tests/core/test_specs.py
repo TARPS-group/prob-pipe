@@ -379,8 +379,7 @@ class TestSpecKinds:
         class Coordinates(NumericSpec):
             size: int
 
-            @property
-            def vector_size(self):
+            def _vector_size(self):
                 return self.size
 
             def is_valid(self, value):

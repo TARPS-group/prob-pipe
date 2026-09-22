@@ -241,14 +241,36 @@ class TermSpec(ABC):
 
 
 class NumericSpec(TermSpec):
-    """A spec whose values have a flat numeric layout; this adds no kind."""
+    """A spec whose values have a flat numeric layout; this adds no kind.
+
+    Subclasses implement ``_vector_size`` for concrete specs. The public
+    ``vector_size`` property rejects unbound dimensions before calling it.
+    """
 
     __slots__ = ()
 
     @property
-    @abstractmethod
     def vector_size(self) -> int:
-        """The number of scalar coordinates, defined only for concrete specs."""
+        """The number of scalar coordinates in one value's flat numeric vector.
+
+        Raises
+        ------
+        ValueError
+            If the spec still has symbolic dimensions. The message lists
+            the dimensions that must first be made concrete.
+        """
+        if not self.is_concrete:
+            dimensions = ", ".join(sorted(self.free_dims))
+            raise ValueError(
+                f"vector_size is undefined for a polymorphic {type(self).__name__}; "
+                f"unbound dimensions: {dimensions}"
+            )
+        return self._vector_size()
+
+    @abstractmethod
+    def _vector_size(self) -> int:
+        """Return the scalar count; called only for concrete specs."""
+        raise NotImplementedError(f"{type(self).__name__}._vector_size is not implemented")
 
 
 @dataclass(frozen=True, eq=False, init=False, slots=True)
@@ -344,11 +366,8 @@ class NumericArraySpec(NumericSpec):
             support=self.support,
         )
 
-    @property
-    def vector_size(self) -> int:
-        """The flat array size; raises ValueError while dimensions are symbolic."""
-        if self.free_dims:
-            raise ValueError(f"vector_size has unbound dimensions: {sorted(self.free_dims)}")
+    def _vector_size(self) -> int:
+        """The product of the concrete array dimensions."""
         return prod(cast(tuple[int, ...], self.shape))
 
     def __eq__(self, other: object) -> bool:

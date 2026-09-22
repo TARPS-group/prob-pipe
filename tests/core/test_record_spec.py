@@ -7,6 +7,7 @@ import pickle
 import weakref
 from dataclasses import dataclass, replace
 from typing import Any, get_type_hints
+from unittest.mock import PropertyMock, patch
 
 import jax
 import jax.numpy as jnp
@@ -345,6 +346,19 @@ class TestFlatSize:
         assert type(spec.vector_size) is int
         assert spec.vector_size == 0
 
+    @pytest.mark.parametrize("size", [0, 3])
+    def test_concrete_size_reads_do_not_traverse_dimensions(self, size):
+        spec = NumericRecordSpec(nested=NumericRecordSpec(x=(size, 2)), aux={})
+        with patch.object(
+            RecordSpec,
+            "free_dims",
+            new_callable=PropertyMock,
+            side_effect=AssertionError("concrete layout should use its cached size"),
+        ):
+            assert spec.is_concrete
+            assert spec.vector_size == size * 2
+            assert spec.vector_size == size * 2
+
     def test_partial_binding_and_renaming_report_remaining_dimensions(self):
         spec = NumericRecordSpec(nested=NumericRecordSpec(x=("z",)), y=("a",))
         partial = spec.with_dims(z=2)
@@ -636,6 +650,24 @@ class TestRepr:
 
 
 class TestTermSpecs:
+    @pytest.mark.parametrize("size", [0, 3, "n"], ids=["zero", "positive", "symbolic"])
+    def test_numeric_layout_hook_is_only_called_for_concrete_specs(self, size):
+        calls = []
+
+        class Coordinates(NumericArraySpec):
+            def _vector_size(self):
+                calls.append(self.shape[0])
+                return super()._vector_size()
+
+        spec = Coordinates((size,))
+        if isinstance(size, str):
+            with pytest.raises(ValueError, match=r"Coordinates; unbound dimensions: n$"):
+                _ = spec.vector_size
+            assert calls == []
+        else:
+            assert spec.vector_size == size
+            assert calls == [size]
+
     def test_numeric_array_spec_defaults(self):
         spec = NumericArraySpec((3,))
         assert spec.shape == (3,)
@@ -1501,8 +1533,7 @@ class TestNumericSubset:
     def test_numeric_layout_errors_are_not_silently_pruned(self):
         @dataclass(frozen=True)
         class UnavailableLayout(NumericSpec):
-            @property
-            def vector_size(self):
+            def _vector_size(self):
                 raise ValueError("numeric layout unavailable")
 
             def is_valid(self, value):
