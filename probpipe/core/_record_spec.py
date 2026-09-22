@@ -631,10 +631,10 @@ class NumericRecordSpec(RecordSpec, NumericSpec):
                 result[name] = (spec.vector_size,)
         return result
 
-    def _compute_vector_size(self) -> int:
-        """Total scalar count across all numeric leaves."""
+    def _compute_vector_size(self) -> int | None:
+        """Total scalar count, or None while symbolic dimensions remain."""
         if self.free_dims:
-            return 0
+            return None
         return sum(spec.vector_size for spec in self._tree.values())
 
     @property
@@ -653,13 +653,14 @@ class NumericRecordSpec(RecordSpec, NumericSpec):
             If the template still has symbolic dimensions. The message lists
             the dimensions that must first be made concrete.
         """
-        if self.free_dims:
+        size = self._vector_size
+        if size is None:
             dimensions = ", ".join(sorted(self.free_dims))
             raise ValueError(
                 "vector_size is undefined for a polymorphic NumericRecordSpec; "
                 f"unbound dimensions: {dimensions}"
             )
-        return self._vector_size
+        return size
 
     # 1-D numeric (de)serialization is a value operation and lives on the
     # value types: ``to_vector`` on :class:`~probpipe.NumericRecord` /

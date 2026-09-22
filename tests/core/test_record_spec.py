@@ -332,6 +332,71 @@ class TestFlatSize:
         with pytest.raises(ValueError, match="unbound dimensions: obs"):
             _ = tpl.vector_size
 
+    @pytest.mark.parametrize(
+        "spec",
+        [
+            pytest.param(NumericRecordSpec(), id="empty-root"),
+            pytest.param(NumericRecordSpec(x=(0, 3)), id="zero-length-array"),
+            pytest.param(NumericRecordSpec(aux={"nested": {}}), id="empty-subtrees"),
+        ],
+    )
+    def test_zero_size_is_a_concrete_integer(self, spec):
+        assert spec.is_concrete
+        assert type(spec.vector_size) is int
+        assert spec.vector_size == 0
+
+    def test_partial_binding_and_renaming_report_remaining_dimensions(self):
+        spec = NumericRecordSpec(nested=NumericRecordSpec(x=("z",)), y=("a",))
+        partial = spec.with_dims(z=2)
+        renamed = partial.with_dim_names(a="b")
+
+        for template, missing in ((spec, "a, z"), (partial, "a"), (renamed, "b")):
+            with pytest.raises(ValueError, match=rf"unbound dimensions: {missing}$"):
+                _ = template.vector_size
+        assert spec.free_dims == {"a", "z"}
+        assert partial.free_dims == {"a"}
+        assert renamed.with_dims(b=0).vector_size == 2
+
+    @pytest.mark.parametrize("size", [0, 3])
+    def test_complete_binding_computes_size_without_changing_original(self, size):
+        spec = NumericRecordSpec(nested=NumericRecordSpec(x=("n", 2)), aux={})
+        actual = NumericRecordSpec(nested=NumericRecordSpec(x=(size, 2)), aux={})
+        values = {"nested": {"x": np.zeros((size, 2))}, "aux": {}}
+
+        for bound in (
+            spec.with_dims(n=size),
+            spec.bind_dims_from_spec(actual),
+            spec.bind_dims_from_value(values),
+        ):
+            assert type(bound) is NumericRecordSpec
+            assert bound == actual
+            assert type(bound.vector_size) is int
+            assert bound.vector_size == size * 2
+        assert spec.free_dims == {"n"}
+        with pytest.raises(ValueError, match=r"unbound dimensions: n$"):
+            _ = spec.vector_size
+
+    @pytest.mark.parametrize(
+        ("spec", "size"),
+        [
+            pytest.param(NumericRecordSpec(aux={}), 0, id="zero"),
+            pytest.param(NumericRecordSpec(nested={"x": (3, 2)}), 6, id="positive"),
+            pytest.param(NumericRecordSpec(nested={"x": ("n", 2)}), None, id="symbolic"),
+        ],
+    )
+    def test_copy_and_pickle_preserve_size_availability(self, spec, size):
+        for restored in (copy.copy(spec), copy.deepcopy(spec), pickle.loads(pickle.dumps(spec))):
+            assert type(restored) is type(spec)
+            assert restored == spec
+            assert hash(restored) == hash(spec)
+            if size is None:
+                with pytest.raises(ValueError, match=r"unbound dimensions: n$"):
+                    _ = restored.vector_size
+                assert restored.with_dims(n=3).vector_size == 6
+            else:
+                assert type(restored.vector_size) is int
+                assert restored.vector_size == size
+
     def test_rejects_opaque_leaf(self):
         with pytest.raises(TypeError, match="only NumericArraySpec"):
             NumericRecordSpec(label=None, x=(3,))
