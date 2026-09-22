@@ -1,4 +1,4 @@
-"""Tests for probpipe.core.record.RecordSpec."""
+"""Tests for record schemas and shared spec validation and binding contracts."""
 
 from __future__ import annotations
 
@@ -584,17 +584,32 @@ class TestTermSpecs:
         with pytest.raises(TypeError, match="non-negative ints"):
             NumericArraySpec((-1,))
 
-    def test_specs_are_frozen(self):
-
-        for spec in (
-            NumericArraySpec((3,)),
-            OpaqueSpec(),
-            RecordSpec(x=()),
-            DistributionSpec(event_spec=RecordSpec(x=())),
-            FunctionSpec(input_template=RecordSpec(x=()), output_spec=RecordSpec(y=())),
-        ):
-            with pytest.raises(AttributeError):
-                spec.shape = (1,)  # type: ignore[misc]
+    @pytest.mark.parametrize(
+        ("spec", "field"),
+        [
+            pytest.param(NumericArraySpec((3,)), "shape", id="array"),
+            pytest.param(OpaqueSpec(meta="label"), "meta", id="opaque"),
+            pytest.param(RecordSpec(label=None), "_tree", id="record"),
+            pytest.param(RecordSpec(x=()), "_tree", id="numeric-record"),
+            pytest.param(
+                DistributionSpec(event_spec=RecordSpec(x=())), "event_spec", id="distribution"
+            ),
+            pytest.param(
+                FunctionSpec(input_template=RecordSpec(x=())), "input_template", id="function-input"
+            ),
+            pytest.param(
+                FunctionSpec(output_spec=RecordSpec(y=())), "output_spec", id="function-output"
+            ),
+        ],
+    )
+    def test_specs_are_frozen(self, spec, field):
+        original = getattr(spec, field)
+        with pytest.raises(AttributeError):
+            setattr(spec, field, object())
+        assert getattr(spec, field) is original
+        with pytest.raises(AttributeError):
+            delattr(spec, field)
+        assert getattr(spec, field) is original
 
     def test_specs_are_hashable(self):
         # Usable as dict keys / set members — required for treedef caching.
@@ -2037,25 +2052,31 @@ class TestInferenceThroughTermSpecs:
         ):
             Record("r", data=jnp.zeros(5), law=self._law(3), event_template=declared)
 
-    def test_the_kind_is_checked_by_the_pass_itself(self):
+    @pytest.mark.parametrize(
+        ("spec_type", "message"),
+        [
+            pytest.param(RecordSpec, "expected named fields", id="record-receives-distribution"),
+            pytest.param(
+                DistributionSpec,
+                "does not conform to its field spec",
+                id="distribution-receives-record",
+            ),
+        ],
+    )
+    def test_the_kind_is_checked_by_the_pass_itself(self, spec_type, message):
         """Asserted at the unifier, not through `Record`.
 
         `Record` validates again afterwards, so routing through it cannot tell
         whether the pass checks the kind or merely lets a later check catch it.
         A polymorphic declaration must refuse a wrong-kind value on its own.
         """
-        law = self._law(3)
-        record = Record("w", x=jnp.zeros(3))
         sym = RecordSpec(x=NumericArraySpec(shape=("obs",)))
-
-        for declared, value in (
-            (RecordSpec(sym), law),
-            (DistributionSpec(sym), record),
-        ):
-            with pytest.raises(ValueError, match=r"does not conform|expected named fields"):
-                _unify_event_template_with_value(
-                    RecordSpec(field=declared), {"field": value}, context="v"
-                )
+        declared = spec_type(sym)
+        value = self._law(3) if spec_type is RecordSpec else Record("w", x=jnp.zeros(3))
+        with pytest.raises(ValueError, match=rf"^v/field .*{message}"):
+            _unify_event_template_with_value(
+                RecordSpec(field=declared), {"field": value}, context="v"
+            )
 
     def test_a_callable_declaration_refuses_a_non_callable_in_the_pass(self):
         """Likewise for the FunctionSpec branch, which has its own refusal."""

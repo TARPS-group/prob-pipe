@@ -1054,16 +1054,14 @@ class TestProvenance:
 
 
 class TestSpecStorage:
-    """``spec`` is the single stored source of a record's type; ``event_template``
-    is a view on it, so the two cannot disagree.
-    """
+    """``spec`` and ``event_template`` return the same stored ``RecordSpec``."""
 
-    def test_spec_is_a_record_spec_over_the_event_template(self):
+    def test_inferred_spec_and_event_template_are_the_same_record_spec(self):
         r = Record("r", x=jnp.asarray(1.0), label="a")
         assert isinstance(r.spec, RecordSpec)
         assert r.spec is r.event_template
 
-    def test_event_template_is_a_view_on_the_spec(self):
+    def test_explicit_event_template_and_spec_are_the_same_object(self):
         tpl = RecordSpec(x=())
         r = Record("r", {"x": jnp.asarray(1.0)}, event_template=tpl)
         assert r.event_template is r.spec
@@ -1095,8 +1093,7 @@ class TestSpecStorage:
 
         numeric = RecordSpec(x=(2,))
         assert isinstance(Record("r", {"x": jnp.zeros(2)}, event_template=numeric), NumericRecord)
-        # A non-numeric leaf in the declaration vetoes promotion, as a bare
-        # template does: the spec wrapping changes nothing about the reading.
+        # A non-numeric leaf in the declaration vetoes promotion.
         mixed = RecordSpec(x=(2,), label=None)
         r = Record("r", {"x": jnp.zeros(2), "label": "a"}, event_template=mixed)
         assert not isinstance(r, NumericRecord)

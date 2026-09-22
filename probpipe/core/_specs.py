@@ -51,17 +51,20 @@ class InputSpec(Mapping[str, TermSpec]):
     Parameters
     ----------
     slots : Mapping[str, TermSpec], optional
-        A positional mapping of slots, in iteration order.
+        A positional mapping of slots, in iteration order. A nested record is
+        one slot carrying a RecordSpec.
     **components : TermSpec
-        Alternatively, named input slots. No constructor keyword is reserved.
+        Alternatively, named input slots, including RecordSpec-valued slots.
+        No constructor keyword is reserved.
 
     Raises
     ------
     TypeError
-        If a slot is not a spec or mapping and keyword forms are combined.
+        If a non-None positional argument is not a Mapping, mapping and keyword
+        forms are combined, or a slot value is not a hashable TermSpec.
+        Type holes (None slot values) are not admitted.
     ValueError
-        If a slot name is not a Python identifier. Type holes and path keys are
-        not admitted; a nested record is one slot carrying a RecordSpec.
+        If a slot name is not a non-keyword Python identifier, including path keys.
     """
 
     _slots: dict[str, TermSpec]

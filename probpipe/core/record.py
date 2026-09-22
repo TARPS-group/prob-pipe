@@ -155,12 +155,11 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     """A single structured value with metadata.
 
     A ``Record`` holds a single concrete value: an ordered, named collection
-    of fields. Every record stores its type as a :attr:`spec`, a
-    :class:`RecordSpec` over the :attr:`event_template` that encodes the
-    structure of the value: the names, how the fields are stored, and specs on
-    the structure of the fields themselves. :attr:`event_template` is a view on
-    that one stored object, so the two cannot disagree. A record is immutable
-    and its :attr:`spec` is fixed at construction.
+    of fields. Every record stores its type as a :class:`RecordSpec` that
+    encodes the structure of the value: the names, how the fields are stored,
+    and specs on the fields themselves. :attr:`spec` and :attr:`event_template`
+    return the same stored object. A record is immutable and its :attr:`spec`
+    is fixed at construction.
 
     A named collection of values
     ----------------------------
@@ -583,10 +582,10 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     def event_template(self) -> RecordSpec:
         """The authoritative :class:`RecordSpec` describing this value's structure.
 
-        A view on :attr:`spec`, fixed at construction and always present. When a
-        declaration was supplied (carried forward from the producing generator)
-        it describes that structure; otherwise one was inferred from the field
-        data at construction (via :meth:`RecordSpec.infer_from`).
+        Returns the same object as :attr:`spec`, fixed at construction and always
+        present. When a declaration was supplied (carried forward from the
+        producing generator) it describes that structure; otherwise one was
+        inferred from the field data at construction (via :meth:`RecordSpec.infer_from`).
 
         Notes
         -----

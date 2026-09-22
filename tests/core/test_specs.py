@@ -215,15 +215,37 @@ class TestDeclarationRoundTrips:
 
 
 class TestDimensionBinding:
-    def test_spec_binding_never_unwraps_a_single_field_record(self):
-        array = NumericArraySpec(("n",))
-        record = RecordSpec(x=(3,))
-        with pytest.raises(ValueError):
-            array.bind_dims_from_spec(record)
-        with pytest.raises(ValueError):
-            RecordSpec(x=array).bind_dims_from_spec(RecordSpec(x=record))
-        with pytest.raises(ValueError):
-            RecordSpec(x=array).bind_dims_from_value({"x": {"y": np.zeros(3)}})
+    @pytest.mark.parametrize(
+        ("expected", "actual_spec", "actual_value", "value_error"),
+        [
+            pytest.param(
+                NumericArraySpec((3,)),
+                RecordSpec(x=(3,)),
+                Record("r", x=np.zeros(3)),
+                "does not conform",
+                id="array-receives-record",
+            ),
+            pytest.param(
+                RecordSpec(x=(3,)),
+                NumericArraySpec((3,)),
+                np.zeros(3),
+                "expected named fields",
+                id="record-receives-array",
+            ),
+        ],
+    )
+    @pytest.mark.parametrize("nested", [False, True], ids=["direct", "nested"])
+    def test_spec_binding_never_unwraps_a_single_field_record(
+        self, expected, actual_spec, actual_value, value_error, nested
+    ):
+        if nested:
+            expected = RecordSpec(field=expected)
+            actual_spec = RecordSpec(field=actual_spec)
+            actual_value = {"field": actual_value}
+        with pytest.raises(ValueError, match="does not conform"):
+            expected.bind_dims_from_spec(actual_spec)
+        with pytest.raises(ValueError, match=value_error):
+            expected.bind_dims_from_value(actual_value)
 
     def test_shared_symbol_scope_across_input_slots_and_nested_batch(self):
         slots = InputSpec(
