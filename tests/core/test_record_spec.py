@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import copy
+import pickle
+import weakref
+from dataclasses import dataclass, replace
 from typing import Any, get_type_hints
 
 import jax
@@ -10,7 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import Function, NumericRecord, Record
+from probpipe import Function, NumericRecord, Record, positive
 from probpipe.core._batch import BatchSpec
 from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._opaque import OpaqueSpec
@@ -588,6 +591,8 @@ class TestTermSpecs:
         ("spec", "field"),
         [
             pytest.param(NumericArraySpec((3,)), "shape", id="array"),
+            pytest.param(NumericArraySpec((3,), dtype="float32"), "dtype", id="array-dtype"),
+            pytest.param(NumericArraySpec((3,), support=positive), "support", id="array-support"),
             pytest.param(OpaqueSpec(meta="label"), "meta", id="opaque"),
             pytest.param(RecordSpec(label=None), "_tree", id="record"),
             pytest.param(RecordSpec(x=()), "_tree", id="numeric-record"),
@@ -610,6 +615,40 @@ class TestTermSpecs:
         with pytest.raises(AttributeError):
             delattr(spec, field)
         assert getattr(spec, field) is original
+
+    @pytest.mark.parametrize(
+        "spec",
+        [
+            pytest.param(NumericArraySpec(("n", 3), dtype="float32", support=positive), id="array"),
+            pytest.param(OpaqueSpec(meta=("tag", 3)), id="opaque"),
+        ],
+    )
+    def test_array_and_opaque_specs_round_trip_without_instance_dict(self, spec):
+        for restored in (
+            spec,
+            copy.copy(spec),
+            copy.deepcopy(spec),
+            pickle.loads(pickle.dumps(spec)),
+            replace(spec),
+        ):
+            assert type(restored) is type(spec)
+            assert restored == spec
+            assert hash(restored) == hash(spec)
+            assert not hasattr(restored, "__dict__")
+            assert weakref.ref(restored)() is restored
+
+    @pytest.mark.parametrize(
+        "spec",
+        [
+            pytest.param(RecordSpec(label=None), id="record"),
+            pytest.param(NumericRecordSpec(x=(3,)), id="numeric-record"),
+            pytest.param(DistributionSpec(RecordSpec(x=(3,))), id="distribution"),
+            pytest.param(FunctionSpec(), id="function"),
+            pytest.param(BatchSpec(NumericArraySpec((3,)), [(2,)], ["draw"]), id="batch"),
+        ],
+    )
+    def test_spec_subclasses_preserve_weak_reference_support(self, spec):
+        assert weakref.ref(spec)() is spec
 
     def test_specs_are_hashable(self):
         # Usable as dict keys / set members — required for treedef caching.

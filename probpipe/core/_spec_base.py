@@ -32,6 +32,8 @@ class TermSpec(ABC):
     dimensions share a scope through nested schemas and declarations.
     """
 
+    __slots__ = ("__weakref__",)
+
     @property
     def is_concrete(self) -> bool:
         """Whether no symbolic dimensions remain."""
@@ -241,13 +243,15 @@ class TermSpec(ABC):
 class NumericSpec(TermSpec):
     """A spec whose values have a flat numeric layout; this adds no kind."""
 
+    __slots__ = ()
+
     @property
     @abstractmethod
     def vector_size(self) -> int:
         """The number of scalar coordinates, defined only for concrete specs."""
 
 
-@dataclass(frozen=True, eq=False, init=False)
+@dataclass(frozen=True, eq=False, init=False, slots=True)
 class NumericArraySpec(NumericSpec):
     """A numeric-array value spec: an event ``shape`` plus optional metadata.
 
@@ -452,7 +456,7 @@ def _unify_array_shape(
     return tuple(concrete)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class OpaqueSpec(TermSpec):
     """The fallback value spec, for a value no other spec describes.
 
