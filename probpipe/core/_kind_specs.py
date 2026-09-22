@@ -48,7 +48,10 @@ class DistributionSpec(TermSpec):
         return DistributionSpec(self.event_spec._substitute_dims(bindings))
 
     def _bind_dims_from_value(self, value: Any, bindings: dict[str, int], path: str) -> None:
-        """Bind the declared draw schema against the schema *value* carries."""
+        """Validate a concrete draw schema, or bind a symbolic one from *value*."""
+        if not self.free_dims:
+            super()._bind_dims_from_value(value, bindings, path)
+            return
         actual = _schema_carried_by(value, self, path)
         _check_kind_of(DistributionSpec(actual), value, self, path)
         _unify_specs(self.event_spec, actual, bindings, path)
@@ -184,19 +187,22 @@ class FunctionSpec(TermSpec):
         """Bind the declared output against the schema the callable declares.
 
         A record declaration meets the template as a whole. Any other declaration
-        describes the one value returned, so it meets the template's sole leaf,
-        the reading a leaf spec is given anywhere a value carries a one-field
-        template. A callable declaring several output fields does not match one.
+        describes the one value returned, so it meets the template's sole
+        immediate field. A callable declaring several output fields does not
+        match one.
+
+        Temporary legacy-template adapter (#448): remove this unwrapping once
+        live Functions carry OutputSpec declarations.
         """
         if isinstance(self.output_spec, RecordSpec):
             _unify_specs(self.output_spec, actual_output, bindings, path)
             return
-        if len(actual_output) != 1:
+        if len(actual_output.children) != 1:
             raise ValueError(
                 f"{path} declares one output value ({self.output_spec!r}), but the callable "
-                f"declares output fields {list(actual_output.keys())}"
+                f"declares output fields {list(actual_output.children)}"
             )
-        _unify_specs(self.output_spec, next(iter(actual_output.values())), bindings, path)
+        _unify_specs(self.output_spec, next(iter(actual_output.children.values())), bindings, path)
 
     def _bind_dims_from_spec(self, actual: TermSpec, bindings: dict[str, int], path: str) -> bool:
         """Bind each declared side from the matching side of *actual*.

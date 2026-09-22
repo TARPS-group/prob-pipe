@@ -458,6 +458,53 @@ class TestApplyContract:
 
         assert result.num_atoms == 5
 
+    @pytest.mark.parametrize(
+        "template",
+        [RecordSpec(outer=RecordSpec(inner=(3,))), RecordSpec(x=(3,), empty=RecordSpec())],
+        ids=["nested_leaf", "empty_sibling"],
+    )
+    def test_sampling_lift_does_not_flatten_record_structure(self, template):
+        class StructuredNormal(Normal):
+            @property
+            def event_template(self):
+                return template
+
+            def _sample(self, key, sample_shape=()):
+                raise AssertionError("An incompatible schema must be rejected before sampling")
+
+        law = StructuredNormal(0, 1, name="x")
+        wrapped = Function(
+            func=lambda v: v,
+            input_template=RecordSpec(v=(3,)),
+            dispatch="sequential",
+            n_broadcast_samples=5,
+        )
+        with pytest.raises(ValueError, match=r"RecordSpec.*does not conform"):
+            wrapped(v=law)
+
+    @pytest.mark.parametrize(
+        "template",
+        [RecordSpec(x=(3,)), RecordSpec(outer=RecordSpec(inner=(3,)))],
+        ids=["flat", "nested"],
+    )
+    def test_sampling_lift_preserves_explicit_record_declarations(self, template):
+        from probpipe.core._function_contract import _bind_planned_function_inputs
+
+        class StructuredNormal(Normal):
+            @property
+            def event_template(self):
+                return template
+
+        declared = RecordSpec(v=template)
+        bound, bindings = _bind_planned_function_inputs(
+            function_name="f",
+            input_template=declared,
+            values={"v": StructuredNormal(0, 1, name="x")},
+            lifted_names={"v"},
+        )
+        assert bound == declared
+        assert bindings == {}
+
     def test_every_batch_kind_lifts_against_its_element_spec(self):
         """A batch states what one element satisfies in ``element_spec``, at every
         kind, so a declared function reads every batch the same way."""

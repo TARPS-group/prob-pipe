@@ -91,7 +91,7 @@ class TestConstruction:
         assert type(copied) is type(original)
         assert copied == original
         assert tuple(copied.children) == tuple(original.children)
-        assert copied.children["empty"] is empty
+        assert copied.children["empty"] is original.children["empty"]
 
     def test_slash_in_field_name_rejected(self):
         with pytest.raises(ValueError, match="must not contain '/'"):
@@ -1112,14 +1112,67 @@ class TestAutoPromotionSpecs:
         tpl = RecordSpec(sub=RecordSpec(a=(), b=(2,)), z=())
         assert isinstance(tpl, NumericRecordSpec)
 
-    @pytest.mark.parametrize("empty", [{}, {"nested": {}}])
-    def test_empty_mapping_matches_explicit_record_spec(self, empty):
+    @pytest.mark.parametrize("empty", [{}, RecordSpec(), NumericRecordSpec(), {"nested": {}}])
+    def test_empty_subtree_forms_have_the_same_numeric_layout(self, empty):
         implicit = RecordSpec(x=(), empty=empty)
         explicit = RecordSpec(x=(), empty=RecordSpec(empty))
-        assert type(implicit) is type(explicit) is RecordSpec
+        assert type(implicit) is type(explicit) is NumericRecordSpec
         assert implicit == explicit
+        assert hash(implicit) == hash(explicit)
         assert implicit.is_numeric
+        assert implicit.vector_size == explicit.vector_size == 1
+        assert implicit.leaf_shapes == explicit.leaf_shapes == {"x": ()}
+        assert isinstance(implicit.children["empty"], NumericRecordSpec)
         assert implicit.numeric_subset() == NumericRecordSpec(x=())
+
+    def test_numeric_parent_normalizes_empty_child_without_mutating_it(self):
+        empty = RecordSpec()
+        parent = NumericRecordSpec(empty=empty)
+        assert type(empty) is RecordSpec
+        assert isinstance(parent.children["empty"], NumericRecordSpec)
+        assert parent.vector_size == 0
+        assert parent.leaf_shapes == {}
+        assert list(parent.children) == ["empty"]
+
+    def test_dimension_transforms_preserve_empty_numeric_subtrees(self):
+        from probpipe import positive
+
+        spec = NumericRecordSpec(
+            theta=NumericArraySpec(("d",), dtype="float64", support=positive),
+            aux=NumericRecordSpec(nested=NumericRecordSpec()),
+        )
+        renamed = spec.with_dim_names(d="n")
+        assert isinstance(renamed, NumericRecordSpec)
+        assert isinstance(renamed.at_path("aux/nested"), NumericRecordSpec)
+        assert renamed["theta"].shape == ("n",)
+        values = {"theta": np.ones(3), "aux": {"nested": {}}}
+        actual = RecordSpec(theta=(3,), aux={"nested": {}})
+        for bound in (
+            spec.with_dims(d=3),
+            renamed.with_dims(n=3),
+            spec.bind_dims_from_value(values),
+            spec.bind_dims_from_spec(actual),
+        ):
+            assert isinstance(bound, NumericRecordSpec)
+            assert isinstance(bound.at_path("aux/nested"), NumericRecordSpec)
+            assert list(bound.children) == ["theta", "aux"]
+            assert bound.vector_size == 3
+            assert bound.leaf_shapes == {"theta": (3,)}
+            assert bound["theta"].dtype == np.dtype("float64")
+            assert bound["theta"].support is positive
+        assert spec.free_dims == {"d"}
+
+    @pytest.mark.parametrize("spec_type", [RecordSpec, NumericRecordSpec])
+    def test_dimension_transforms_preserve_empty_root_kind(self, spec_type):
+        spec = spec_type()
+        for result in (
+            spec.with_dims(d=3),
+            spec.with_dim_names(d="n"),
+            spec.bind_dims_from_value({}),
+            spec.bind_dims_from_spec(RecordSpec()),
+        ):
+            assert type(result) is spec_type
+            assert result == spec
 
     def test_opaque_spec_blocks_promotion(self):
         tpl = RecordSpec(x=(), label=OpaqueSpec())
@@ -1398,6 +1451,16 @@ class TestToVector:
 
 
 class TestFromVectorRoundTripSingle:
+    def test_empty_numeric_subtree_keeps_its_kind(self):
+        tpl = NumericRecordSpec(theta=(3,), aux=NumericRecordSpec())
+        flat = jnp.arange(3.0)
+        value = NumericRecord.from_vector("value", tpl, flat)
+        assert isinstance(value, NumericRecord)
+        assert isinstance(value.at_path("aux"), NumericRecord)
+        assert value.event_template == tpl
+        assert list(value.children) == ["theta", "aux"]
+        np.testing.assert_array_equal(value.to_vector(), flat)
+
     def test_scalar(self):
         v = NumericRecord("nr", x=1.5)
         tpl = RecordSpec.infer_from(v)
@@ -1437,6 +1500,17 @@ class TestFromVectorRoundTripSingle:
 
 
 class TestFromVectorRoundTripBatched:
+    def test_empty_numeric_subtree_survives_vector_round_trip(self):
+        tpl = NumericRecordSpec(theta=(3,), aux=NumericRecordSpec())
+        flat = jnp.arange(6.0).reshape(2, 3)
+        value = NumericRecordBatch.from_vector("values", tpl, flat, level_names="draw")
+        assert isinstance(value, NumericRecordBatch)
+        assert value.batch_shape == (2,)
+        assert value.level_names == ("draw",)
+        assert value.event_template == tpl
+        assert isinstance(value.event_template.children["aux"], NumericRecordSpec)
+        np.testing.assert_array_equal(value.to_vector(), flat)
+
     def test_single_batch_axis(self):
         tpl = RecordSpec(x=(), y=(3,))
         flat = jnp.arange(4 * tpl.vector_size, dtype=float).reshape(4, tpl.vector_size)
@@ -1984,7 +2058,7 @@ class TestAFunctionOutputBindsWhateverItDeclares:
     `output_spec` is any value spec, since a callable may return a term of any
     kind. A record declaration meets the callable's output template as a whole;
     any other declaration describes the one value returned and meets that
-    template's sole leaf. Both bind, so a name shared with the input is one
+    template's sole immediate field. Both bind, so a name shared with the input is one
     dimension on either route.
     """
 
@@ -2043,6 +2117,22 @@ class TestAFunctionOutputBindsWhateverItDeclares:
 
         with pytest.raises(ValueError, match=r"declares one output value.*output fields"):
             Record("r", f=function, event_template=declared)
+
+    @pytest.mark.parametrize(
+        "template",
+        [RecordSpec(outer=RecordSpec(inner=(3,))), RecordSpec(x=(3,), empty=RecordSpec())],
+        ids=["nested_leaf", "empty_sibling"],
+    )
+    def test_one_array_output_does_not_flatten_record_structure(self, template):
+        function = Function(func=lambda: None, output_template=template)
+        for size in (3, "n"):
+            spec = FunctionSpec(output_spec=NumericArraySpec((size,)))
+            with pytest.raises(ValueError):
+                spec.bind_dims_from_value(function)
+            with pytest.raises(ValueError):
+                RecordSpec(f=spec).bind_dims_from_value({"f": function})
+        record_output = FunctionSpec(output_spec=template)
+        assert record_output.bind_dims_from_value(function) == record_output
 
     def test_a_bare_callable_still_binds_nothing_from_its_output(self):
         """No declaration to read, so the output stays free rather than raising."""

@@ -221,11 +221,12 @@ def _lifted_element_spec(
     instead let only a batch of records be swept by a declared function, and made
     a batch of records satisfy a declaration that named a bare array.
 
-    Interim implementation detail: live distributions still carry legacy event
-    templates. The current sampling lift passes a sole field as a bare value
-    when the callable declares a leaf, and as a record for a record declaration.
+    Temporary legacy-template adapter (#448): live distributions still carry
+    event templates. The current sampling lift passes a sole immediate field as
+    a bare value when the callable declares a leaf, and as a record for a record declaration.
     Resolve that legacy packaging here, before strict spec unification. Batch
     element specs already name their actual kinds and need no adaptation.
+    Remove this unwrapping once live distributions carry OutputSpec declarations.
     """
     from ._batch import Batch
 
@@ -233,8 +234,8 @@ def _lifted_element_spec(
         return value.element_spec
     template = getattr(value, "event_template", None)
     if isinstance(template, RecordSpec):
-        if not isinstance(expected, RecordSpec) and len(template) == 1:
-            return next(iter(template.values()))
+        if not isinstance(expected, RecordSpec) and len(template.children) == 1:
+            return next(iter(template.children.values()))
         return template
     raise ValueError(
         f"Function {function_name!r} input {name!r} states no element specification for "

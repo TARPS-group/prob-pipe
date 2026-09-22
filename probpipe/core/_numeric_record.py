@@ -496,7 +496,7 @@ def _value_treedef(template: NumericRecordSpec) -> jax.tree_util.PyTreeDef:
         # template may pin another dtype (int32 / bool) — this skeleton exists
         # only to capture the treedef structure, and the real leaves are cast
         # to the field dtype in ``_reconstruct_from_vector``.
-        return Record("value", fields, event_template=tpl, _validate_leaves=False)
+        return NumericRecord("value", fields, event_template=tpl, _validate_leaves=False)
 
     return jax.tree_util.tree_structure(_build(template))
 

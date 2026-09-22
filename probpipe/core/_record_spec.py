@@ -74,12 +74,16 @@ def _to_spec(spec: _FieldSpecInput) -> TermSpec:
 def _is_numeric_spec(spec: Any) -> bool:
     """Whether a constructor input denotes a NumericSpec.
 
-    Non-empty mappings count when every child is numeric. Empty mappings
-    become plain RecordSpec instances, so they do not trigger promotion.
+    Mappings and record schemas count when every child is numeric; empty
+    subtrees have no non-numeric leaves and do not block a numeric parent.
     """
+    if isinstance(spec, NumericSpec):
+        return True
+    if isinstance(spec, RecordSpec):
+        return spec.is_numeric
     if isinstance(spec, Mapping):
-        return bool(spec) and _all_numeric(spec.values())
-    return isinstance(spec, NumericSpec)
+        return _all_numeric(spec.values())
+    return False
 
 
 def _all_numeric(specs: Iterable[Any]) -> bool:
@@ -87,7 +91,7 @@ def _all_numeric(specs: Iterable[Any]) -> bool:
 
     Drives the base-class auto-promotion hook so ``RecordSpec(x=(), y=(3,))``
     returns a ``NumericRecordSpec`` without opting in explicitly. Raw inputs
-    also allow the shape-tuple sugar; ``None``, every non-``NumericSpec`` spec,
+    also allow the shape-tuple sugar; ``None``, non-numeric leaf specs,
     mixed nested templates, and any unsupported type are non-numeric
     (``__init__`` rejects the latter).
     """
@@ -201,6 +205,8 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
     without naming the subclass. Mixed templates (any opaque / ``None`` spec)
     stay plain ``RecordSpec`` and do not expose :attr:`vector_size` — it is
     not a meaningful quantity once opaque leaves are present.
+    Empty subtrees in a numeric parent are normalized to ``NumericRecordSpec``
+    and contribute zero coordinates. A standalone ``RecordSpec()`` stays plain.
     """
 
     __slots__ = ("_tree",)
@@ -256,6 +262,13 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
                     raise TypeError(f"Field {name!r}: {exc}") from None
                 if not isinstance(converted, RecordSpec):
                     self._check_leaf(name, converted)
+            if (
+                isinstance(self, NumericRecordSpec)
+                and isinstance(converted, RecordSpec)
+                and not isinstance(converted, NumericRecordSpec)
+                and converted.is_numeric
+            ):
+                converted = NumericRecordSpec(converted)
             _require_hashable(converted, context=f"Field {name!r} spec")
             specs[name] = converted
         self._post_validate(specs)
@@ -329,7 +342,7 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
 
     def _substitute_dims(self, bindings: Mapping[str, int | str]) -> RecordSpec:
         """Substitute dimensions throughout the schema in one shared scope."""
-        return RecordSpec(
+        return type(self)(
             {name: spec._substitute_dims(bindings) for name, spec in self._tree.items()}
         )
 

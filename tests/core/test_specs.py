@@ -13,6 +13,7 @@ import pytest
 
 from probpipe import (
     BatchSpec,
+    Distribution,
     DistributionSpec,
     FunctionSpec,
     InputSpec,
@@ -24,7 +25,18 @@ from probpipe import (
     Record,
     RecordSpec,
     TermSpec,
+    positive,
 )
+
+
+@pytest.fixture
+def declared_law():
+    class DeclaredLaw(Distribution):
+        def __init__(self, template):
+            super().__init__(name="law")
+            self.event_template = template
+
+    return DeclaredLaw
 
 
 class TestOutputSpec:
@@ -474,9 +486,11 @@ class TestNestedValueBinding:
             reference = EmpiricalDistribution(np.zeros((2, 3)), name="x")
             actual = EmpiricalDistribution(np.zeros((2, size)), name="x")
 
-        # The live declaration omits dtype; binding must retain the expected dtype.
-        symbolic = spec_type(RecordSpec(x=NumericArraySpec(("n",), dtype="float64")))
-        fixed = spec_type(RecordSpec(x=NumericArraySpec((3,), dtype="float64")))
+        # Concrete distributions require exact metadata; function binding reads
+        # the available declarations without checking callable compatibility.
+        dtype = "float64" if kind == "function" else None
+        symbolic = spec_type(RecordSpec(x=NumericArraySpec(("n",), dtype=dtype)))
+        fixed = spec_type(RecordSpec(x=NumericArraySpec((3,), dtype=dtype)))
         declared, value = wrap_binding(symbolic, actual)
         expected, _ = wrap_binding(symbolic.with_dims(n=size), actual)
         bound = declared.bind_dims_from_value(value)
@@ -489,9 +503,62 @@ class TestNestedValueBinding:
             if size == 3:
                 assert declared.bind_dims_from_value(value) == declared
             else:
-                with pytest.raises(ValueError, match="dimension 4, expected 3"):
+                message = "dimension 4, expected 3" if kind == "function" else "does not conform"
+                with pytest.raises(ValueError, match=message):
                     declared.bind_dims_from_value(value)
         assert symbolic.free_dims == {"n"}
+
+    @pytest.mark.parametrize(
+        "expected, actual",
+        [
+            (
+                RecordSpec(x=NumericArraySpec((3,), dtype="float64")),
+                RecordSpec(x=NumericArraySpec((3,), dtype="float32")),
+            ),
+            (RecordSpec(x=(3,), y=()), RecordSpec(y=(), x=(3,))),
+            (
+                RecordSpec(x=NumericArraySpec((3,), support=positive)),
+                RecordSpec(x=(3,)),
+            ),
+            (
+                RecordSpec(x=(3,)),
+                RecordSpec(x=NumericArraySpec((3,), support=positive)),
+            ),
+        ],
+        ids=["dtype", "field_order", "missing_support", "extra_support"],
+    )
+    def test_concrete_distribution_values_require_exact_schemas(
+        self, wrap_binding, declared_law, expected, actual
+    ):
+        law = declared_law(actual)
+        spec = DistributionSpec(expected)
+        declared, value = wrap_binding(spec, law)
+        with pytest.raises(ValueError, match="does not conform"):
+            declared.bind_dims_from_value(value)
+        schema = RecordSpec(law=spec)
+        assert not spec.is_valid(law)
+        assert not schema.is_valid({"law": law})
+        assert not schema.is_valid(Record("value", law=law))
+        with pytest.raises(ValueError):
+            Record("value", law=law, event_template=schema)
+
+        matching = declared_law(expected)
+        declared, value = wrap_binding(spec, matching)
+        assert declared.bind_dims_from_value(value) == declared
+        assert schema.is_valid(Record("value", law=matching, event_template=schema))
+
+    def test_concretized_distribution_uses_the_same_strict_metadata_check(
+        self, wrap_binding, declared_law
+    ):
+        symbolic = DistributionSpec(RecordSpec(x=NumericArraySpec(("n",), dtype="float64")))
+        law = declared_law(RecordSpec(x=(3,)))
+        bound = symbolic.bind_dims_from_value(law)
+        fixed = DistributionSpec(RecordSpec(x=NumericArraySpec((3,), dtype="float64")))
+        for spec in (bound, symbolic.with_dims(n=3), fixed):
+            assert spec == fixed
+            declared, value = wrap_binding(spec, law)
+            with pytest.raises(ValueError, match="does not conform"):
+                declared.bind_dims_from_value(value)
 
     def test_missing_callable_declarations_remain_unspecified(self, wrap_binding):
         symbolic = FunctionSpec(RecordSpec(x=("n",)))
@@ -555,11 +622,44 @@ class TestNestedSpecBinding:
             ),
             (NumericArraySpec((3,), dtype="int32"), NumericArraySpec((3,), dtype="float32")),
             (NumericArraySpec((3,)), RecordSpec(x=(3,))),
+            (DistributionSpec(RecordSpec(x=(3,))), OpaqueSpec()),
+            (DistributionSpec(RecordSpec(x=(3,))), RecordSpec(x=(3,))),
+            (DistributionSpec(RecordSpec(x=(3,))), DistributionSpec(RecordSpec(x=(4,)))),
+            (
+                DistributionSpec(RecordSpec(x=NumericArraySpec((3,), dtype="int32"))),
+                DistributionSpec(RecordSpec(x=NumericArraySpec((3,), dtype="float32"))),
+            ),
         ],
     )
     def test_mismatches_are_rejected_at_every_nesting_depth(self, wrap_spec, expected, actual):
         with pytest.raises(ValueError):
             wrap_spec(expected).bind_dims_from_spec(wrap_spec(actual))
+
+    @pytest.mark.parametrize("size", [3, "n"])
+    @pytest.mark.parametrize("dtype", [None, "float32"])
+    def test_distribution_spec_binding_preserves_declared_order_and_metadata(
+        self, wrap_spec, size, dtype
+    ):
+        expected = DistributionSpec(
+            RecordSpec(x=NumericArraySpec((size,), dtype="float64", support=positive), y=())
+        )
+        actual = DistributionSpec(RecordSpec(y=(), x=NumericArraySpec((3,), dtype=dtype)))
+        declared = wrap_spec(expected)
+        bound = declared.bind_dims_from_spec(wrap_spec(actual))
+        assert bound == wrap_spec(expected.with_dims(n=3))
+        assert bound.bind_dims_from_spec(wrap_spec(actual)) == bound
+        assert declared == wrap_spec(expected)
+
+    @pytest.mark.parametrize("reverse", [False, True])
+    def test_distribution_spec_binding_shares_dimensions(self, wrap_spec, reverse):
+        expected = DistributionSpec(RecordSpec(x=("n",), nested=RecordSpec(y=("n",))))
+        fields = [("x", NumericArraySpec((3,))), ("nested", RecordSpec(y=(4,)))]
+        if reverse:
+            fields.reverse()
+        with pytest.raises(ValueError, match="already bound"):
+            wrap_spec(expected).bind_dims_from_spec(
+                wrap_spec(DistributionSpec(RecordSpec(dict(fields))))
+            )
 
     @pytest.mark.parametrize("reverse", [False, True])
     def test_input_value_binding_shares_dimensions_in_either_order(self, reverse):
