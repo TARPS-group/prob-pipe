@@ -17,7 +17,7 @@ It is intended for contributors and AI assistants working on the codebase.
 Protocol classes are named `Supports<Capability>` in CamelCase:
 
 ```python
-SupportsSampling, SupportsLogProb, SupportsMean, SupportsConditioning,
+SupportsSampling, SupportsLogProb, SupportsMean, SupportsExactConditioning,
 SupportsArrayBackend
 ```
 
@@ -39,6 +39,13 @@ returns `True` too — instances inherit class attributes, and
 `runtime_checkable` just looks for the named attribute — but the
 result is misleading because the protocol's contract is the class
 declaring `_make_array_backend`, not the instance.
+
+`SupportsExactConditioning` and `SupportsApproximateConditioning` are the
+other exception: they are abstract base classes, not protocols, so a class
+claims one by inheriting it. Both declare the same `_condition_on`, and
+whether that method returns the conditional law or a stand-in for it is a
+claim about the result rather than a fact about the method, so a structural
+check cannot tell them apart.
 
 The corresponding *backend* interface that `_make_array_backend`
 returns (`_DistributionArrayBackend`) is private to the library —
@@ -657,8 +664,9 @@ class SupportsFoo(Protocol):
 
 - `SupportsLogProb` extends `SupportsUnnormalizedLogProb`.
 - All other capability protocols (`SupportsSampling`, `SupportsMean`,
-  `SupportsVariance`, `SupportsCovariance`, `SupportsExpectation`,
-  `SupportsConditioning`) are standalone.
+  `SupportsVariance`, `SupportsCovariance`, `SupportsExpectation`) are
+  standalone, as are the two conditioning capabilities, which are abstract
+  base classes rather than protocols.
 - The likelihood / simulator protocols `Likelihood`,
   `ConditionallyIndependentLikelihood` (extends `Likelihood`), and
   `GenerativeLikelihood` also live in `core/protocols.py`. They type model

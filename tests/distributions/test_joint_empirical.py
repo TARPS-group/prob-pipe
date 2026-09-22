@@ -13,6 +13,9 @@ from probpipe import (
     Record,
     RecordBatch,
     RecordDistribution,
+    ResolutionError,
+    SupportsApproximateConditioning,
+    SupportsExactConditioning,
     condition_on,
     log_prob,
     mean,
@@ -292,94 +295,29 @@ class TestFlattenUnflatten:
 
 
 class TestConditionOn:
-    def test_condition_on_removes_component(self):
-        """Conditioning removes the specified component."""
+    def test_conditioning_is_not_offered(self):
+        """Dropping a field ignores the value conditioned on, so no route claims it."""
         je = JointEmpirical(
             x=jnp.array([1.0, 2.0, 3.0]),
             y=jnp.array([4.0, 5.0, 6.0]),
         )
-        cond = condition_on(je, x=jnp.array(1.0))
-        assert cond.fields == ("y",)
-        assert isinstance(cond, JointEmpirical)
+        assert not isinstance(je, SupportsExactConditioning)
+        assert not isinstance(je, SupportsApproximateConditioning)
+        with pytest.raises(ResolutionError):
+            condition_on(je, x=jnp.array(1.0))
 
-    def test_conditioned_sample_shape(self):
-        """Conditioned distribution samples the remaining components."""
+    def test_the_marginal_is_built_directly(self):
+        """What conditioning used to return: the remaining fields, atoms and weights kept."""
+        y = jnp.array([4.0, 5.0, 6.0])
         je = JointEmpirical(
             x=jnp.array([1.0, 2.0, 3.0]),
-            y=jnp.array([4.0, 5.0, 6.0]),
-        )
-        cond = condition_on(je, x=jnp.array(1.0))
-        s = sample(cond, key=jax.random.PRNGKey(0), sample_shape=(5,))
-        assert set(s.event_template) == {"y"}
-        assert s["y"].shape == (5,)
-
-    def test_condition_on_preserves_correlation(self):
-        """Row-wise correlation is preserved after conditioning."""
-        x = jnp.array([10.0, 20.0, 30.0])
-        y = jnp.array([100.0, 200.0, 300.0])  # y = 10 * x
-        z = jnp.array([1.0, 2.0, 3.0])  # z = x / 10
-        je = JointEmpirical(x=x, y=y, z=z)
-        cond = condition_on(je, x=jnp.array(0.0))  # remove x
-        s = sample(cond, key=jax.random.PRNGKey(1), sample_shape=(100,))
-        # y and z still come from the same row, so y = 100 * z
-        np.testing.assert_allclose(s["y"], 100.0 * s["z"], atol=1e-5)
-
-    def test_condition_on_weighted(self):
-        """Conditioning on weighted JointEmpirical preserves weights."""
-        je = JointEmpirical(
-            x=jnp.array([1.0, 2.0, 3.0]),
-            y=jnp.array([4.0, 5.0, 6.0]),
+            y=y,
             log_weights=jnp.array([0.0, 1.0, 2.0]),
         )
-        cond = condition_on(je, x=jnp.array(1.0))
-        assert not cond.is_uniform
-        assert cond.num_atoms == 3
-
-    def test_condition_on_uniform_stays_uniform(self):
-        """Conditioning on uniform JointEmpirical stays uniform."""
-        je = JointEmpirical(
-            x=jnp.array([1.0, 2.0, 3.0]),
-            y=jnp.array([4.0, 5.0, 6.0]),
-        )
-        cond = condition_on(je, x=jnp.array(1.0))
-        assert cond.is_uniform
-
-    def test_condition_on_provenance(self):
-        je = JointEmpirical(
-            x=jnp.array([1.0, 2.0]),
-            y=jnp.array([3.0, 4.0]),
-        )
-        raw = condition_on.apply(je, x=jnp.array(1.0))
-        cond = condition_on(je, x=jnp.array(1.0))
-        assert raw.provenance.operation == "condition_on"
-        assert "x" in raw.provenance.metadata["conditioned"]
-        assert cond.provenance is not None
-        assert cond.provenance.operation == "workflow.condition_on"
-
-    def test_condition_on_unknown_raises(self):
-        je = JointEmpirical(
-            x=jnp.array([1.0, 2.0]),
-            y=jnp.array([3.0, 4.0]),
-        )
-        with pytest.raises(KeyError, match="not found"):
-            condition_on(je, z=jnp.array(1.0))
-
-    def test_condition_on_all_raises(self):
-        je = JointEmpirical(
-            x=jnp.array([1.0, 2.0]),
-            y=jnp.array([3.0, 4.0]),
-        )
-        with pytest.raises(ValueError, match="Cannot condition on all"):
-            condition_on(je, x=jnp.array(1.0), y=jnp.array(2.0))
-
-    def test_condition_on_dict_for_leaf_raises(self):
-        """Passing a dict value for a leaf component should raise TypeError."""
-        je = JointEmpirical(
-            x=jnp.array([1.0, 2.0]),
-            y=jnp.array([3.0, 4.0]),
-        )
-        with pytest.raises(TypeError, match="component distribution"):
-            condition_on(je, x={"sub": jnp.array(1.0)})
+        marginal = JointEmpirical(y=y, weights=je.weights, name=je.name)
+        assert marginal.fields == ("y",)
+        assert marginal.num_atoms == 3
+        assert not marginal.is_uniform
 
 
 # ---------------------------------------------------------------------------

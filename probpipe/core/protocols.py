@@ -4,9 +4,11 @@ Each protocol declares a capability that a distribution may support.
 Operations in :mod:`probpipe.core.ops` check these protocols via
 ``isinstance`` to determine what computations are valid.
 
-All protocols are ``@runtime_checkable`` so that external distribution
+Most protocols are ``@runtime_checkable`` so that external distribution
 types (TFP, scipy) can satisfy them via structural subtyping without
-inheriting from ProbPipe base classes.
+inheriting from ProbPipe base classes. The two conditioning capabilities
+are the exception: they are claimed by inheritance, for the reason given
+on :class:`SupportsExactConditioning`.
 
 **Naming convention:** Protocol methods use an underscore prefix
 (``_sample``, ``_log_prob``, ``_mean``, …) to distinguish the
@@ -39,6 +41,11 @@ Protocol hierarchy
                               ``Distribution`` subclass can produce a fused
                               storage backend for ``DistributionArray``
 
+    SupportsExactConditioning        claimed by inheritance; a built-in
+    SupportsApproximateConditioning  ``_condition_on``, and whether it
+                                     returns the conditional law or a
+                                     stand-in for it
+
 The moment protocols (SupportsMean, SupportsVariance, SupportsCovariance)
 are independent of SupportsExpectation.  The ops layer falls back to
 MC estimation via SupportsExpectation when the exact protocol is absent.
@@ -51,6 +58,7 @@ Concrete classes that want default MC implementations can use the
 from __future__ import annotations
 
 import functools
+from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import (
@@ -330,24 +338,43 @@ class SupportsRandomUnnormalizedLogProb(Protocol):
 # ---------------------------------------------------------------------------
 
 
-@runtime_checkable
-class SupportsConditioning(Protocol):
-    """Distribution that has a fast, built-in ``condition_on`` path.
+class SupportsExactConditioning(ABC):
+    """Distribution whose built-in ``_condition_on`` returns the conditional law.
 
-    Implemented by distributions whose ``_condition_on`` produces a
-    posterior without calling into the inference registry — either
-    closed-form (conjugate updates, joint Gaussian marginalization)
-    or amortized (e.g., a pre-trained SBI posterior that just runs a
-    forward pass).  When ``condition_on(dist, observed)`` is called
-    and *dist* implements this protocol, the built-in path is used
-    directly; otherwise the inference method registry selects an
-    algorithm (NUTS, RWMH, variational, ...).
+    Inherit this to claim exact conditioning: a conjugate update, a joint
+    Gaussian marginalization, dropping an independent factor, or reweighting
+    an empirical joint. ``condition_on`` prefers this route over the
+    inference registry and keeps it when the caller asks for exactness.
 
-    Probabilistic models whose conditioning requires on-the-fly MCMC
-    or variational inference should **not** implement this protocol —
-    let the registry handle algorithm selection instead.
+    The capability is claimed by inheriting, not by defining
+    ``_condition_on``, which is why this class and
+    :class:`SupportsApproximateConditioning` are not ``@runtime_checkable``
+    protocols like the rest. Exactness is a claim about the result rather
+    than a fact about the method, so no structural check can read it, and
+    two protocols declaring the same ``_condition_on`` would match the same
+    classes.
     """
 
+    @abstractmethod
+    def _condition_on(self, observed: Any, /, **kwargs: Any) -> Any: ...
+
+
+class SupportsApproximateConditioning(ABC):
+    """Distribution whose built-in ``_condition_on`` returns a stand-in for the conditional law.
+
+    Inherit this to claim a built-in conditioning path that does not return
+    the conditional law itself, such as a pre-trained amortized posterior
+    that runs one forward pass. ``condition_on`` prefers this route over the
+    inference registry, and excludes it when the caller asks for exactness.
+    The capability is claimed by inheriting, as
+    :class:`SupportsExactConditioning` explains.
+
+    A model whose conditioning requires on-the-fly MCMC or variational
+    inference claims neither capability, so the inference registry selects
+    an algorithm for it.
+    """
+
+    @abstractmethod
     def _condition_on(self, observed: Any, /, **kwargs: Any) -> Any: ...
 
 
@@ -629,9 +656,10 @@ __all__ = [
     "ConditionallyIndependentLikelihood",
     "GenerativeLikelihood",
     "Likelihood",
+    "SupportsApproximateConditioning",
     "SupportsArrayBackend",
-    "SupportsConditioning",
     "SupportsCovariance",
+    "SupportsExactConditioning",
     "SupportsExpectation",
     "SupportsLogProb",
     "SupportsMean",

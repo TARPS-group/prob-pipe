@@ -31,7 +31,7 @@ class SimpleGenerativeModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsSampl
 
     **Conditioning:** Use ``condition_on(model, data)`` — the inference
     method registry auto-selects an appropriate SBI or ABC method.
-    ``SimpleGenerativeModel`` does not implement ``SupportsConditioning``
+    ``SimpleGenerativeModel`` claims no conditioning capability
     directly.
 
     Parameters

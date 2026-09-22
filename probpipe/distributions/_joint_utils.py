@@ -2,7 +2,7 @@
 
 Key-path navigation, conditioning argument parsing, and leaf pruning
 used by :class:`ProductDistribution`, :class:`SequentialJointDistribution`,
-:class:`JointEmpirical`, and :class:`JointGaussian`.
+and :class:`JointGaussian`.
 """
 
 from __future__ import annotations

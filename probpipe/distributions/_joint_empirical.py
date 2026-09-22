@@ -7,7 +7,7 @@ correlation between components.
 Two concrete classes:
 
 * :class:`JointEmpirical` — generic base. Accepts numeric or object
-  samples; claims only ``SupportsSampling`` and ``SupportsConditioning``.
+  samples; claims only ``SupportsSampling``.
 * :class:`NumericJointEmpirical` — all fields numeric. Additionally
   claims ``SupportsMean`` and ``SupportsVariance``.
 
@@ -37,24 +37,18 @@ from ..core.distribution import (
 )
 from ..core.event_template import EventTemplate
 from ..core.protocols import (
-    SupportsConditioning,
     SupportsMean,
     SupportsSampling,
     SupportsVariance,
 )
-from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike, PRNGKey
-from ._joint_utils import (
-    KeyPath,
-    _parse_condition_args,
-)
 
 __all__ = ["JointEmpirical", "NumericJointEmpirical"]
 
 
-class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning):
+class JointEmpirical(RecordDistribution, SupportsSampling):
     """
     Joint distribution from weighted joint samples.
 
@@ -70,6 +64,12 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
 
     When used in broadcasting enumeration, the joint is treated as a single
     unit with ``n`` samples (no cartesian decomposition).
+
+    Conditioning is not offered. Dropping a field from the stored atoms is
+    marginalization, a different operation: it ignores the value conditioned
+    on, so every value would give the same result. Build the marginal
+    directly instead, by constructing a ``JointEmpirical`` from the fields to
+    keep with the same ``weights``.
 
     Parameters
     ----------
@@ -258,57 +258,6 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
                     result[cname] = drawn
             else:
                 result[cname] = drawn[0] if drawn.shape and drawn.shape[0] == 1 else drawn
-        return result
-
-    # -- Conditioning -------------------------------------------------------
-
-    def _condition_on(self, observed=None, /, **kwargs):
-        observed_leaves = _parse_condition_args(self, observed, kwargs)
-        return self._condition_on_impl(observed_leaves)
-
-    def _condition_on_impl(self, observed_leaves: dict[KeyPath, ArrayLike]) -> JointEmpirical:
-        """Remove conditioned components and return a new JointEmpirical.
-
-        Since ``JointEmpirical`` stores raw sample arrays keyed by name,
-        conditioning simply drops those components from the joint sample
-        matrix (preserving row-wise correlation among the remaining
-        components).
-
-        .. note::
-
-            ``JointEmpirical`` only supports **flat dicts** (no nesting).
-            All key paths must be length-1 (top-level component names).
-        """
-        for path in observed_leaves:
-            if len(path) != 1:
-                raise TypeError(
-                    f"JointEmpirical only supports flat (non-nested) "
-                    f"components.  Cannot condition on nested key path "
-                    f"{path!r}."
-                )
-        observed_names = {path[0] for path in observed_leaves}
-
-        remaining_samples = {
-            cname: arr for cname, arr in self._joint_samples.items() if cname not in observed_names
-        }
-        if not remaining_samples:
-            raise ValueError(
-                "Cannot condition on all component distributions --- "
-                "at least one must remain unconditioned."
-            )
-
-        result = type(self)(
-            **remaining_samples,
-            weights=self._w,
-            name=self._name,
-        )
-        result.with_provenance(
-            Provenance.create(
-                "condition_on",
-                parents=[self],
-                metadata={"conditioned": list(observed_names)},
-            )
-        )
         return result
 
 
