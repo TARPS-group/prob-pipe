@@ -27,6 +27,32 @@ class DistributionSpec(TermSpec):
     ------
     TypeError
         If the draw schema is not a RecordSpec.
+
+    Notes
+    -----
+    ``is_valid`` requires a Distribution whose ``event_template`` equals
+    ``event_spec``, including field order, dtype, and support metadata. A missing
+    template, or a getter raising AttributeError or TypeError because the schema
+    is unavailable, gives False; other getter errors propagate.
+
+    ``bind_dims_from_value`` validates a concrete declaration by that same rule.
+    For a symbolic declaration it instead learns sizes from the distribution's
+    schema, without sampling. An unavailable schema raises ValueError.
+    ``bind_dims_from_spec`` reads another DistributionSpec using declaration
+    compatibility: matching structure, compatible declared dtypes, and consistent
+    sizes; field order and support metadata need not be equal.
+
+    Binding returns a new spec retaining the declared metadata. Repeated symbols
+    share one scope, including surrounding records or input slots; conflicting
+    sizes raise ValueError. ``with_dims`` may leave unsupplied dimensions symbolic.
+
+    Examples
+    --------
+    >>> from probpipe import DistributionSpec, RecordSpec
+    >>> declared = DistributionSpec(RecordSpec(x=("n",)))
+    >>> bound = declared.bind_dims_from_spec(DistributionSpec(RecordSpec(x=(3,))))
+    >>> bound.event_spec["x"].shape
+    (3,)
     """
 
     event_spec: RecordSpec
@@ -114,9 +140,33 @@ class FunctionSpec(TermSpec):
 
     Notes
     -----
-    Validity is callability alone; declarations cannot validate a bare callable's
-    behavior without evaluating it. Dimension binding reads available declared
-    sides independently, without asserting callable variance or compatibility.
+    ``is_valid`` checks callability alone, accepting ordinary Python callables
+    as well as Function values. It never executes the callable or certifies
+    compatibility with the declared inputs and output. ``FunctionSpec()`` leaves
+    both sides unspecified; either side can also be declared on its own.
+
+    ``bind_dims_from_value`` reads available input/output declarations from a
+    callable; ``bind_dims_from_spec`` reads them from another FunctionSpec. The
+    two sides bind independently. A side left unspecified by either declaration
+    adds no bindings, so a bare callable leaves all dimensions symbolic.
+    Shared symbols across input and output belong to one scope; incompatible
+    declared kinds, structures, dtypes, or sizes raise ValueError. Binding a
+    non-callable value also raises ValueError. Neither binding method infers
+    callable variance or evaluates the function.
+
+    Dimension transforms and binding return new specs, preserving the declared
+    kinds and metadata. An array output stays an array declaration; a record
+    output stays a record declaration, including when it has one field.
+
+    Examples
+    --------
+    >>> from probpipe import FunctionSpec, NumericArraySpec, RecordSpec
+    >>> declared = FunctionSpec(RecordSpec(x=("n",)), NumericArraySpec(("n",)))
+    >>> actual = FunctionSpec(RecordSpec(x=(3,)), NumericArraySpec((3,)))
+    >>> declared.bind_dims_from_spec(actual).output_spec.shape
+    (3,)
+    >>> declared.bind_dims_from_value(lambda x: x).free_dims
+    frozenset({'n'})
     """
 
     input_template: RecordSpec | None

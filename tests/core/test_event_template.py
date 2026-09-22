@@ -15,7 +15,10 @@ from probpipe.core._batch import BatchSpec
 from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._opaque import OpaqueSpec
 from probpipe.core._opaque_batch import OpaqueBatch
-from probpipe.core._record_spec import _unify_event_template_with_value
+from probpipe.core._record_spec import (
+    _concretize_event_template,
+    _unify_event_template_with_value,
+)
 from probpipe.core._specs import (
     DistributionSpec,
     FunctionSpec,
@@ -1835,7 +1838,7 @@ class TestWithDims:
         assert isinstance(bound, NumericRecordSpec)
         assert bound.vector_size == 3
 
-    def test_an_unbound_dimension_is_named(self):
+    def test_unsupplied_dimensions_remain_symbolic(self):
         template = RecordSpec(
             x=NumericArraySpec(shape=("obs",)), y=NumericArraySpec(shape=("features",))
         )
@@ -1880,6 +1883,30 @@ class TestWithDims:
     def test_a_name_the_template_does_not_declare_is_ignored(self):
         """So one mapping can bind several templates."""
         assert RecordSpec(x=NumericArraySpec(shape=("n",))).with_dims(n=2, other=9).is_concrete
+
+
+class TestTemplateConcretization:
+    @pytest.mark.parametrize(
+        "bindings, missing",
+        [({}, "features, obs"), ({"obs": 2}, "features")],
+    )
+    def test_missing_dimensions_are_named_in_sorted_order(self, bindings, missing):
+        template = RecordSpec(x=("obs",), y=("features",))
+        original_bindings = bindings.copy()
+        with pytest.raises(ValueError) as caught:
+            _concretize_event_template(template, bindings, context="output")
+        assert str(caught.value) == f"output has unbound symbolic dimensions: {missing}"
+        assert template == RecordSpec(x=("obs",), y=("features",))
+        assert bindings == original_bindings
+
+    def test_complete_bindings_return_a_concrete_schema(self):
+        template = RecordSpec(x=("obs",), y=("features",))
+        bindings = {"obs": 2, "features": 3}
+        concrete = _concretize_event_template(template, bindings, context="output")
+        assert concrete == NumericRecordSpec(x=(2,), y=(3,))
+        assert concrete.is_concrete
+        assert template == RecordSpec(x=("obs",), y=("features",))
+        assert bindings == {"obs": 2, "features": 3}
 
 
 class TestBindingAFunctionSpec:

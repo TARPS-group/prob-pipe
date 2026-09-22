@@ -513,7 +513,11 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
                 # Temporary legacy-distribution bridge (#448 A1/E2). Remove this
                 # branch once every Distribution carries its own spec; the
                 # TrackedTerm path above must then supply the declaration.
-                template = getattr(val, "event_template", None)
+                try:
+                    template = getattr(val, "event_template", None)
+                except TypeError:
+                    # A schema that cannot yet be derived is unavailable.
+                    return OpaqueSpec()
                 if isinstance(template, RecordSpec):
                     return DistributionSpec(template)
                 return OpaqueSpec()
@@ -707,7 +711,10 @@ def _schema_carried_by(value: Any, spec: TermSpec, path: str) -> RecordSpec:
     A value carrying none raises, since the declaration would otherwise stay
     symbolic with nothing left to resolve it.
     """
-    template = getattr(value, "event_template", None)
+    try:
+        template = getattr(value, "event_template", None)
+    except TypeError:
+        template = None
     if not isinstance(template, RecordSpec):
         raise ValueError(
             f"{path} declares the polymorphic schema {spec!r}, but "

@@ -605,6 +605,33 @@ class TestApplyContract:
         with pytest.raises(ValueError, match="already bound"):
             wrapped(x=rows, offset=jnp.ones(4))
 
+    @pytest.mark.parametrize("entrypoint, evaluations", [("apply", 1), ("__call__", 0)])
+    def test_unbound_output_dimensions_are_reported(self, entrypoint, evaluations):
+        calls = []
+
+        def evaluate(x, fn):
+            calls.append(True)
+            return np.zeros((2, 3, 4))
+
+        wrapped = Function(
+            func=evaluate,
+            name="unbound",
+            input_template=RecordSpec(
+                x=("n",), fn=FunctionSpec(output_spec=NumericArraySpec(("z", "a")))
+            ),
+            output_template=RecordSpec(y=("n", "z", "a")),
+            dispatch="sequential",
+        )
+        # A plain callable is valid but supplies no declared dimensions.
+        with pytest.raises(ValueError) as caught:
+            getattr(wrapped, entrypoint)(np.zeros(2), lambda: None)
+        assert str(caught.value) == (
+            "Function 'unbound' output_template has unbound symbolic dimensions: a, z"
+        )
+        assert len(calls) == evaluations
+        assert wrapped.input_template.free_dims == {"n", "z", "a"}
+        assert wrapped.output_template.free_dims == {"n", "z", "a"}
+
     def test_a_mismatched_element_kind_names_both_specs(self):
         from probpipe import OpaqueBatch
 
