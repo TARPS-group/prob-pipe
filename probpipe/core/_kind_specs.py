@@ -44,7 +44,7 @@ class DistributionSpec(TermSpec):
 
     Binding returns a new spec retaining the declared metadata. Repeated symbols
     share one scope, including surrounding records or input slots; conflicting
-    sizes raise ValueError. ``with_dims`` may leave unsupplied dimensions symbolic.
+    sizes raise ValueError. ``with_dim_sizes`` may leave unsupplied dimensions symbolic.
 
     Examples
     --------

@@ -39,8 +39,8 @@ class TermSpec(ABC):
         """Whether no symbolic dimensions remain."""
         return not self.free_dims
 
-    def with_dims(self, **sizes: int) -> Self:
-        """Return a spec with the supplied symbolic dimensions replaced.
+    def with_dim_sizes(self, **sizes: int) -> Self:
+        """Return a new spec with symbolic dimensions replaced by the supplied sizes.
 
         Parameters
         ----------
@@ -65,9 +65,9 @@ class TermSpec(ABC):
             try:
                 size = operator.index(size)
             except TypeError:
-                raise TypeError(f"with_dims: {name}= must be an integer") from None
+                raise TypeError(f"with_dim_sizes: {name}= must be an integer") from None
             if size < 0:
-                raise ValueError(f"with_dims: {name}= must be non-negative")
+                raise ValueError(f"with_dim_sizes: {name}= must be non-negative")
             bindings[name] = size
         return self._substitute_dims(bindings)
 
@@ -198,7 +198,7 @@ class TermSpec(ABC):
             return
         raise ValueError(
             f"{path} declares {type(self).__name__}, whose dimensions this pass cannot "
-            f"bind from a value; bind them with with_dims before validating against one"
+            f"bind from a value; bind them with with_dim_sizes before validating against one"
         )
 
     def _bind_dims_from_spec(self, actual: TermSpec, bindings: dict[str, int], path: str) -> bool:

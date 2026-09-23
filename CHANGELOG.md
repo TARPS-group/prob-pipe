@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `RecordSpec` is now the record schema itself, replacing `EventTemplate` and
   its separate wrapper; `NumericRecordSpec` replaces `NumericEventTemplate`.
   Replace `ValueSpec` with `TermSpec` in custom specs. Dimension binding returns
-  a refined spec, `with_dims` permits partial substitution, and `with_dim_names`
+  a refined spec, `with_dim_sizes` permits partial substitution, and `with_dim_names`
   renames symbols throughout nested declarations. Existing live function and
   distribution template APIs retain their signatures for their later migration.
 

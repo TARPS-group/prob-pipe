@@ -361,7 +361,7 @@ class TestFlatSize:
 
     def test_partial_binding_and_renaming_report_remaining_dimensions(self):
         spec = NumericRecordSpec(nested=NumericRecordSpec(x=("z",)), y=("a",))
-        partial = spec.with_dims(z=2)
+        partial = spec.with_dim_sizes(z=2)
         renamed = partial.with_dim_names(a="b")
 
         for template, missing in ((spec, "a, z"), (partial, "a"), (renamed, "b")):
@@ -369,7 +369,7 @@ class TestFlatSize:
                 _ = template.vector_size
         assert spec.free_dims == {"a", "z"}
         assert partial.free_dims == {"a"}
-        assert renamed.with_dims(b=0).vector_size == 2
+        assert renamed.with_dim_sizes(b=0).vector_size == 2
 
     @pytest.mark.parametrize("size", [0, 3])
     def test_complete_binding_computes_size_without_changing_original(self, size):
@@ -378,7 +378,7 @@ class TestFlatSize:
         values = {"nested": {"x": np.zeros((size, 2))}, "aux": {}}
 
         for bound in (
-            spec.with_dims(n=size),
+            spec.with_dim_sizes(n=size),
             spec.bind_dims_from_spec(actual),
             spec.bind_dims_from_value(values),
         ):
@@ -406,7 +406,7 @@ class TestFlatSize:
             if size is None:
                 with pytest.raises(ValueError, match=r"unbound dimensions: n$"):
                     _ = restored.vector_size
-                assert restored.with_dims(n=3).vector_size == 6
+                assert restored.with_dim_sizes(n=3).vector_size == 6
             else:
                 assert type(restored.vector_size) is int
                 assert restored.vector_size == size
@@ -1302,8 +1302,8 @@ class TestAutoPromotionSpecs:
         values = {"theta": np.ones(3), "aux": {"nested": {}}}
         actual = RecordSpec(theta=(3,), aux={"nested": {}})
         for bound in (
-            spec.with_dims(d=3),
-            renamed.with_dims(n=3),
+            spec.with_dim_sizes(d=3),
+            renamed.with_dim_sizes(n=3),
             spec.bind_dims_from_value(values),
             spec.bind_dims_from_spec(actual),
         ):
@@ -1320,7 +1320,7 @@ class TestAutoPromotionSpecs:
     def test_dimension_transforms_preserve_empty_root_kind(self, spec_type):
         spec = spec_type()
         for result in (
-            spec.with_dims(d=3),
+            spec.with_dim_sizes(d=3),
             spec.with_dim_names(d="n"),
             spec.bind_dims_from_value({}),
             spec.bind_dims_from_spec(RecordSpec()),
@@ -1527,7 +1527,7 @@ class TestNumericSubset:
         assert sub.keys() == ("z", "nested/a", "x")
         assert sub["nested/a"] is leaf
         assert sub.free_dims == {"n"}
-        assert sub.with_dims(n=2).vector_size == 3
+        assert sub.with_dim_sizes(n=2).vector_size == 3
         assert tpl.keys() == ("z", "nested/label", "nested/a", "x")
 
     def test_numeric_layout_errors_are_not_silently_pruned(self):
@@ -1965,12 +1965,12 @@ class TestFreeDimsReachThroughTermSpecs:
         assert NumericArraySpec(shape=(3,)).free_dims == frozenset()
 
 
-class TestWithDims:
+class TestWithDimSizes:
     def test_binding_reaches_through_a_term_spec(self):
         sym = RecordSpec(x=NumericArraySpec(shape=("obs",)))
         template = RecordSpec(law=DistributionSpec(sym), data=NumericArraySpec(shape=("obs",)))
 
-        bound = template.with_dims(obs=4)
+        bound = template.with_dim_sizes(obs=4)
 
         assert bound.is_concrete
         assert bound["data"].shape == (4,)
@@ -1979,11 +1979,11 @@ class TestWithDims:
     def test_binding_returns_a_new_template(self):
         template = RecordSpec(x=NumericArraySpec(shape=("obs",)))
 
-        assert template.with_dims(obs=2) is not template
+        assert template.with_dim_sizes(obs=2) is not template
         assert not template.is_concrete
 
     def test_an_all_numeric_bound_template_gains_its_flat_layout(self):
-        bound = RecordSpec(x=NumericArraySpec(shape=("n",))).with_dims(n=3)
+        bound = RecordSpec(x=NumericArraySpec(shape=("n",))).with_dim_sizes(n=3)
 
         assert isinstance(bound, NumericRecordSpec)
         assert bound.vector_size == 3
@@ -1993,7 +1993,7 @@ class TestWithDims:
             x=NumericArraySpec(shape=("obs",)), y=NumericArraySpec(shape=("features",))
         )
 
-        assert template.with_dims().free_dims == {"features", "obs"}
+        assert template.with_dim_sizes().free_dims == {"features", "obs"}
 
     def test_a_batch_spec_axis_is_bindable(self):
         """It is reported by `free_dims`, so it must be substitutable."""
@@ -2001,7 +2001,7 @@ class TestWithDims:
 
         template = RecordSpec(b=BatchSpec(NumericArraySpec(shape=(3,)), [("S",)], ["draw"]))
 
-        bound = template.with_dims(S=4)
+        bound = template.with_dim_sizes(S=4)
 
         assert bound["b"].axis_groups == ((4,),)
         assert bound.is_concrete
@@ -2012,12 +2012,12 @@ class TestWithDims:
 
         for size in ("m", 2.0, None):
             with pytest.raises(TypeError, match="must be an integer"):
-                template.with_dims(n=size)
+                template.with_dim_sizes(n=size)
 
     def test_binding_some_names_reports_only_the_rest(self):
         template = RecordSpec(x=NumericArraySpec(shape=("a",)), y=NumericArraySpec(shape=("b",)))
 
-        bound = template.with_dims(a=2)
+        bound = template.with_dim_sizes(a=2)
         assert bound.free_dims == {"b"}
         assert bound["x"].shape == (2,)
         assert template.free_dims == {"a", "b"}
@@ -2025,14 +2025,14 @@ class TestWithDims:
     def test_binding_an_already_concrete_template_is_a_no_op_copy(self):
         template = RecordSpec(x=NumericArraySpec(shape=(3,)))
 
-        bound = template.with_dims()
+        bound = template.with_dim_sizes()
 
         assert bound == template
         assert bound is not template
 
     def test_a_name_the_template_does_not_declare_is_ignored(self):
         """So one mapping can bind several templates."""
-        assert RecordSpec(x=NumericArraySpec(shape=("n",))).with_dims(n=2, other=9).is_concrete
+        assert RecordSpec(x=NumericArraySpec(shape=("n",))).with_dim_sizes(n=2, other=9).is_concrete
 
 
 class TestTemplateConcretization:

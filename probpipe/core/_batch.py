@@ -1018,7 +1018,7 @@ def _axis_size(size: Any) -> int | str:
     if isinstance(size, str):
         if not size.isidentifier():
             raise ValueError(
-                f"a symbolic axis size must be an identifier, so that with_dims can "
+                f"a symbolic axis size must be an identifier, so that with_dim_sizes can "
                 f"bind it by keyword; got {size!r}"
             )
         return size

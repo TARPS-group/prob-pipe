@@ -111,7 +111,7 @@ class NumericArrayBatch(Batch[NumericArray]):
         if any(not isinstance(axis, int) for axis in event_shape):
             raise ValueError(
                 f"a symbolic dimension gives the event shape no size to split the stored "
-                f"axes by; bind {element_spec.shape} with with_dims before batching"
+                f"axes by; bind {element_spec.shape} with with_dim_sizes before batching"
             )
         if not _is_numeric_leaf(values):
             raise TypeError(

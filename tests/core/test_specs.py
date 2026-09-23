@@ -120,11 +120,11 @@ class TestOutputSpec:
     def test_output_dimension_transforms_preserve_exposure_and_holes(self):
         spec = RecordSpec(x=("n",))
         for output in (OutputSpec(parameters=spec), OutputSpec(spec)):
-            renamed = output.with_dim_names(n="m").with_dims(m=3)
+            renamed = output.with_dim_names(n="m").with_dim_sizes(m=3)
             assert list(renamed.components) == list(output.components)
             assert renamed.spec == RecordSpec(x=(3,))
         hole = OutputSpec(beta=None)
-        assert hole.with_dims(n=3).with_dim_names(n="m") == hole
+        assert hole.with_dim_sizes(n=3).with_dim_names(n="m") == hole
 
 
 class TestDeclarationConstruction:
@@ -266,7 +266,7 @@ class TestDimensionBinding:
         expected = RecordSpec(x=NumericArraySpec(("n",), dtype="float64"), y=("n",))
         values = {"x": np.zeros(3, dtype="float32"), "y": np.ones(3)}
         bound = expected.bind_dims_from_value(values)
-        assert bound == expected.with_dims(n=3)
+        assert bound == expected.with_dim_sizes(n=3)
         assert expected.bind_dims_from_spec(RecordSpec(x=(3,), y=(3,))) == bound
         assert expected.is_valid(values)
         assert not expected.is_valid(values | {"y": np.ones(4)})
@@ -294,7 +294,7 @@ class TestDimensionBinding:
             with pytest.raises(TypeError):
                 spec.with_dim_names(n=value)
         with pytest.raises(ValueError):
-            spec.with_dims(n=-1)
+            spec.with_dim_sizes(n=-1)
 
     def test_binding_array_values_checks_dtype_and_record_kind(self):
         spec = NumericArraySpec(("n",), dtype="int32")
@@ -454,7 +454,7 @@ class TestInputSpec:
         bound = inputs.bind_dims_from_value(
             {"nested": Record("r", x=np.ones(3)), "data": np.ones(3, dtype="float32")}
         )
-        assert bound == inputs.with_dims(n=3)
+        assert bound == inputs.with_dim_sizes(n=3)
         assert list(bound) == ["data", "nested"]
         assert bound["data"].support is positive
         assert bound["data"].dtype == np.dtype("float64")
@@ -479,7 +479,7 @@ class TestInputSpec:
         renamed = inputs.with_dim_names(n="m", m="n")
         assert renamed["x"].shape == ("m",)
         assert renamed["y"].shape == ("n",)
-        assert renamed.with_dims(n=2, m=3) == InputSpec(
+        assert renamed.with_dim_sizes(n=2, m=3) == InputSpec(
             x=NumericArraySpec((3,)), y=NumericArraySpec((2,))
         )
 
@@ -498,7 +498,7 @@ class TestRecordValueValidation:
 
         assert spec.is_valid(value) is valid
         if valid:
-            assert spec.bind_dims_from_value(value) == spec.with_dims(n=3)
+            assert spec.bind_dims_from_value(value) == spec.with_dim_sizes(n=3)
         else:
             with pytest.raises(ValueError, match="does not conform"):
                 spec.bind_dims_from_value(value)
@@ -513,7 +513,7 @@ class TestRecordValueValidation:
 
     def test_spec_binding_uses_only_declared_dtype_information(self):
         spec = RecordSpec(x=NumericArraySpec(("n",), dtype="int32"))
-        assert spec.bind_dims_from_spec(RecordSpec(x=(3,))) == spec.with_dims(n=3)
+        assert spec.bind_dims_from_spec(RecordSpec(x=(3,))) == spec.with_dim_sizes(n=3)
 
     def test_validation_and_binding_work_under_jit_and_vmap(self):
         spec = RecordSpec(x=NumericArraySpec(("n",), dtype="float32"))
@@ -522,7 +522,7 @@ class TestRecordValueValidation:
         def total(x):
             record = Record("row", x=x)
             assert spec.is_valid(record)
-            assert spec.bind_dims_from_value(record) == spec.with_dims(n=3)
+            assert spec.bind_dims_from_value(record) == spec.with_dim_sizes(n=3)
             return jnp.sum(record["x"])
 
         rows = jnp.arange(6.0, dtype=jnp.float32).reshape(2, 3)
@@ -554,7 +554,7 @@ class TestNestedValueBinding:
             assert f"RecordSpec/{next(iter(declared))} declares" in str(caught.value)
         assert declared.free_dims == {"n"}
 
-        concrete, value = wrap_binding(spec.with_dims(n=3), law_without_schema)
+        concrete, value = wrap_binding(spec.with_dim_sizes(n=3), law_without_schema)
         with pytest.raises(ValueError, match="does not conform"):
             concrete.bind_dims_from_value(value)
 
@@ -580,12 +580,12 @@ class TestNestedValueBinding:
         symbolic = spec_type(RecordSpec(x=NumericArraySpec(("n",), dtype=dtype)))
         fixed = spec_type(RecordSpec(x=NumericArraySpec((3,), dtype=dtype)))
         declared, value = wrap_binding(symbolic, actual)
-        expected, _ = wrap_binding(symbolic.with_dims(n=size), actual)
+        expected, _ = wrap_binding(symbolic.with_dim_sizes(n=size), actual)
         bound = declared.bind_dims_from_value(value)
         assert bound == expected
         assert bound.bind_dims_from_value(value) == bound
 
-        for spec in (fixed, symbolic.with_dims(n=3), symbolic.bind_dims_from_value(reference)):
+        for spec in (fixed, symbolic.with_dim_sizes(n=3), symbolic.bind_dims_from_value(reference)):
             assert spec == fixed
             declared, value = wrap_binding(spec, actual)
             if size == 3:
@@ -642,7 +642,7 @@ class TestNestedValueBinding:
         law = declared_law(RecordSpec(x=(3,)))
         bound = symbolic.bind_dims_from_value(law)
         fixed = DistributionSpec(RecordSpec(x=NumericArraySpec((3,), dtype="float64")))
-        for spec in (bound, symbolic.with_dims(n=3), fixed):
+        for spec in (bound, symbolic.with_dim_sizes(n=3), fixed):
             assert spec == fixed
             declared, value = wrap_binding(spec, law)
             with pytest.raises(ValueError, match="does not conform"):
@@ -650,7 +650,7 @@ class TestNestedValueBinding:
 
     def test_missing_callable_declarations_remain_unspecified(self, wrap_binding):
         symbolic = FunctionSpec(RecordSpec(x=("n",)))
-        for spec in (symbolic, symbolic.with_dims(n=3)):
+        for spec in (symbolic, symbolic.with_dim_sizes(n=3)):
             declared, value = wrap_binding(spec, lambda x: x)
             assert declared.bind_dims_from_value(value) == declared
         assert symbolic.free_dims == {"n"}
@@ -734,7 +734,7 @@ class TestNestedSpecBinding:
         actual = DistributionSpec(RecordSpec(y=(), x=NumericArraySpec((3,), dtype=dtype)))
         declared = wrap_spec(expected)
         bound = declared.bind_dims_from_spec(wrap_spec(actual))
-        assert bound == wrap_spec(expected.with_dims(n=3))
+        assert bound == wrap_spec(expected.with_dim_sizes(n=3))
         assert bound.bind_dims_from_spec(wrap_spec(actual)) == bound
         assert declared == wrap_spec(expected)
 

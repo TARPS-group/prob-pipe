@@ -103,9 +103,9 @@ class InputSpec(Mapping[str, TermSpec]):
         """Whether all slots have concrete dimensions."""
         return not self.free_dims
 
-    def with_dims(self, **sizes: int) -> InputSpec:
+    def with_dim_sizes(self, **sizes: int) -> InputSpec:
         """Return the slots with supplied sizes substituted in their shared scope."""
-        return InputSpec({name: spec.with_dims(**sizes) for name, spec in self._slots.items()})
+        return InputSpec({name: spec.with_dim_sizes(**sizes) for name, spec in self._slots.items()})
 
     def with_dim_names(self, **names: str) -> InputSpec:
         """Return the slots with simultaneous symbolic-dimension renaming."""
@@ -224,9 +224,9 @@ class OutputSpec:
         """Whether the return kind is known and all its dimensions are concrete."""
         return self.spec is not None and self.spec.is_concrete
 
-    def with_dims(self, **sizes: int) -> OutputSpec:
+    def with_dim_sizes(self, **sizes: int) -> OutputSpec:
         """Substitute dimensions while preserving component exposure and holes."""
-        return self._with_spec(None if self.spec is None else self.spec.with_dims(**sizes))
+        return self._with_spec(None if self.spec is None else self.spec.with_dim_sizes(**sizes))
 
     def with_dim_names(self, **names: str) -> OutputSpec:
         """Rename dimensions while preserving component exposure and holes."""

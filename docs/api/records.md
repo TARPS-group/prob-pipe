@@ -47,7 +47,7 @@ type hole. Replace that declaration with the same component name and a known
 spec when the type becomes available.
 
 Symbolic dimensions share one scope across nested specs and input slots.
-`with_dims` substitutes supplied sizes and leaves the rest symbolic;
+`with_dim_sizes` substitutes supplied sizes and leaves the rest symbolic;
 `with_dim_names` renames symbols simultaneously. `bind_dims_from_value` and
 `bind_dims_from_spec` return refined specs and reject conflicting sizes.
 

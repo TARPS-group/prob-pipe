@@ -34,7 +34,7 @@ class TermSpec(ABC):
     def free_dims(self) -> frozenset[str]: ...       # report: the unbound symbolic dimensions
     @property
     def is_concrete(self) -> bool: ...               # True when free_dims is empty
-    def with_dims(self, **sizes: int) -> Self: ...   # substitute explicit sizes
+    def with_dim_sizes(self, **sizes: int) -> Self: ...   # substitute explicit sizes
     def with_dim_names(self, **names: str) -> Self: ...   # rename symbolic dimensions, old=new
     def bind_dims_from_value(self, value: Any) -> Self: ...   # bind by unification against a value
     def bind_dims_from_spec(self, other: TermSpec) -> Self: ...   # bind by unification against another spec
@@ -44,7 +44,7 @@ def term_class_for_spec(spec: TermSpec) -> type: ...    # the tracked class of t
 def batch_class_for_spec(spec: TermSpec) -> type: ...   # its batch form
 ```
 
-`with_dims` substitutes supplied sizes and leaves other dimensions symbolic. `with_dim_names` renames simultaneously. Binding reads concrete sizes in one shared scope and rejects disagreements; unobserved dimensions remain symbolic.
+`with_dim_sizes` substitutes supplied sizes and leaves other dimensions symbolic. `with_dim_names` renames simultaneously. Binding reads concrete sizes in one shared scope and rejects disagreements; unobserved dimensions remain symbolic.
 
 ### Rationale
 

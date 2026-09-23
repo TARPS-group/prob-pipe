@@ -805,7 +805,7 @@ class TestSpecValidation:
             _spec([("not an identifier",)], ["draw"])
 
     def test_a_numeric_string_is_not_a_size(self):
-        """The likeliest slip: "3" is a name, and not one with_dims could bind."""
+        """The likeliest slip: "3" is a name, and not one with_dim_sizes could bind."""
         with pytest.raises(ValueError, match="must be an identifier"):
             _spec([("3",)], ["draw"])
 
