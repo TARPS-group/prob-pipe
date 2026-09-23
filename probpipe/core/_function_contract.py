@@ -11,8 +11,8 @@ from typing import Any, Protocol, cast
 import jax.numpy as jnp
 import numpy as np
 
+from ..distributions._distribution import Distribution
 from ._array_backend import _numpy_dtype_of
-from ._distribution_base import Distribution
 from ._record_batch import RecordBatch
 from ._record_spec import (
     _concretize_record_spec,

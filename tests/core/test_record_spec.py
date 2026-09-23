@@ -14,7 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import Function, NumericRecord, Record, positive
+from probpipe import DistributionSpec, Function, NumericRecord, Record, positive
 from probpipe.core._batch import BatchSpec
 from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._opaque import OpaqueSpec
@@ -24,7 +24,6 @@ from probpipe.core._record_spec import (
     _unify_record_spec_with_value,
 )
 from probpipe.core._specs import (
-    DistributionSpec,
     FunctionSpec,
     NumericArraySpec,
     NumericRecordSpec,
@@ -1067,87 +1066,6 @@ class TestOpaqueSpecIsValid:
 
     def test_meta_not_checked(self):
         assert OpaqueSpec(meta="tag").is_valid("anything")
-
-
-class TestDistributionSpecIsValid:
-    def test_matching_distribution_valid(self):
-        from probpipe import Normal
-
-        dist = Normal(name="x", loc=0.0, scale=1.0)
-        assert DistributionSpec(event_spec=dist.event_template).is_valid(dist)
-
-    def test_template_mismatch_invalid(self):
-        from probpipe import Normal
-
-        dist = Normal(name="x", loc=0.0, scale=1.0)
-        assert not DistributionSpec(event_spec=RecordSpec(y=())).is_valid(dist)
-
-    def test_non_distribution_invalid(self):
-        spec = DistributionSpec(event_spec=RecordSpec(x=()))
-        assert not spec.is_valid(42)
-        assert not spec.is_valid(RecordSpec(x=()))
-
-    def test_distribution_without_template_invalid(self):
-        # A distribution always carries the schema of its draws; one that
-        # exposes no event template cannot satisfy any DistributionSpec.
-        from probpipe.core._distribution_base import Distribution
-
-        class _NoTemplate(Distribution):
-            def __init__(self):
-                super().__init__(name="d")
-
-        spec = DistributionSpec(event_spec=RecordSpec(x=()))
-        assert not spec.is_valid(_NoTemplate())
-
-    def test_distribution_with_none_template_invalid(self):
-        from probpipe.core._distribution_base import Distribution
-
-        class _NoneTemplate(Distribution):
-            def __init__(self):
-                super().__init__(name="d")
-
-            @property
-            def event_template(self):
-                return None
-
-        spec = DistributionSpec(event_spec=RecordSpec(x=()))
-        assert not spec.is_valid(_NoneTemplate())
-
-    def test_type_error_template_is_not_a_match(self):
-        # TypeError is the documented "template not derivable" signal (e.g. an
-        # un-named auto-deriving distribution): a non-match, so is_valid
-        # returns False.
-        from probpipe.core._distribution_base import Distribution
-
-        class _NotDerivable(Distribution):
-            def __init__(self):
-                super().__init__(name="d")
-
-            @property
-            def event_template(self):
-                raise TypeError("template not derivable")
-
-        spec = DistributionSpec(event_spec=RecordSpec(x=()))
-        assert not spec.is_valid(_NotDerivable())
-
-    @pytest.mark.parametrize("error", [RuntimeError, ValueError, KeyError])
-    def test_unexpected_template_error_propagates(self, error):
-        # An unexpected error from event_template is a malfunctioning
-        # distribution, not a clean non-match — is_valid must not mask it as
-        # invalid; it propagates so the bug surfaces.
-        from probpipe.core._distribution_base import Distribution
-
-        class _Broken(Distribution):
-            def __init__(self):
-                super().__init__(name="d")
-
-            @property
-            def event_template(self):
-                raise error("boom")
-
-        spec = DistributionSpec(event_spec=RecordSpec(x=()))
-        with pytest.raises(error):
-            spec.is_valid(_Broken())
 
 
 class TestFunctionSpecIsValid:

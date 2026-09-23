@@ -21,9 +21,10 @@ from __future__ import annotations
 from typing import Any
 
 from ..converters import converter_registry
+from ..distributions._distribution import Distribution
 from . import _workflow_call
 from ._distribution_array import DistributionArray
-from .distribution import Distribution, NumericRecordDistribution
+from ._numeric_record_distribution import NumericRecordDistribution
 from .protocols import (
     SupportsApproximateConditioning,
     SupportsCovariance,

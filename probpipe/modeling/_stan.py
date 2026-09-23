@@ -15,10 +15,10 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..core._specs import NumericRecordSpec
-from ..core.distribution import Distribution
 from ..core.protocols import SupportsLogProb
 from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike
+from ..distributions._distribution import Distribution
 from ._base import ProbabilisticModel
 
 logger = logging.getLogger(__name__)

@@ -20,6 +20,7 @@ try:
 except ImportError:
     task = flow = None
 
+from ..distributions._distribution import Distribution
 from . import (
     _workflow_broker,
     _workflow_call,
@@ -31,14 +32,13 @@ from . import (
     _workflow_result,
 )
 from ._batch import Batch
-from ._broadcast_distributions import _make_stack, _row_at_its_kind
+from ._broadcast_distributions import BroadcastDistribution, _make_stack, _row_at_its_kind
 from ._distribution_array import DistributionArray, _make_distribution_array
 from ._numeric_array import NumericArray
 from ._numeric_array_batch import NumericArrayBatch, _MappedBatchStore
 from ._record_batch import RecordBatch, _MappedBatchColumns
 from ._specs import RecordSpec
 from .config import WorkflowKind, prefect_config
-from .distribution import BroadcastDistribution, Distribution
 from .provenance import Provenance
 from .record import Record
 from .tracked import TrackedTerm

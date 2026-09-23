@@ -7,12 +7,13 @@ import numpy as np
 import pytest
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
-import probpipe.core.distribution as dist_mod
+import probpipe.distributions._distribution as dist_mod
 from probpipe import (
     Bernoulli,
     Beta,
     Binomial,
     BootstrapDistribution,
+    BootstrapReplicateDistribution,
     Categorical,
     EmpiricalDistribution,
     Exponential,
@@ -401,6 +402,32 @@ class TestIsApproximate:
 # ---------------------------------------------------------------------------
 
 
+# Estimators that fall back to the default sample count when a call omits
+# ``num_evaluations``.
+_DEFAULT_SIZE_ESTIMATORS = [
+    pytest.param(lambda: Normal(loc=0.0, scale=1.0, name="x"), lambda x: x, id="tfp"),
+    pytest.param(
+        lambda: BootstrapReplicateDistribution(EmpiricalDistribution(jnp.arange(5.0), name="data")),
+        jnp.mean,
+        id="bootstrap-replicate",
+    ),
+]
+
+# Estimators that consult the default result form when a call omits
+# ``return_dist``: those above and the two empirical subsampling paths.
+_RESULT_FORM_ESTIMATORS = [
+    *_DEFAULT_SIZE_ESTIMATORS,
+    pytest.param(
+        lambda: EmpiricalDistribution(jnp.arange(10.0), name="x"), lambda x: x, id="empirical"
+    ),
+    pytest.param(
+        lambda: RecordEmpiricalDistribution(jnp.arange(20.0).reshape(10, 2), name="x"),
+        lambda x: x,
+        id="record-empirical",
+    ),
+]
+
+
 class TestGlobalDefaults:
     def test_set_default_num_evaluations(self):
         old = dist_mod.DEFAULT_NUM_EVALUATIONS
@@ -408,26 +435,34 @@ class TestGlobalDefaults:
             set_default_num_evaluations(512)
             assert dist_mod.DEFAULT_NUM_EVALUATIONS == 512
         finally:
-            # Restore via the setter — direct assignment to ``dist_mod``
-            # would only update the facade re-export, not the source of
-            # truth in ``_distribution_base``, which is what consumers
-            # read.
+            set_default_num_evaluations(old)
+
+    @pytest.mark.parametrize(("make_dist", "f"), _DEFAULT_SIZE_ESTIMATORS)
+    def test_default_num_evaluations_sets_the_estimate_size(self, make_dist, f):
+        """An estimator reads the current default sample count, not a copy taken at import."""
+        old = dist_mod.DEFAULT_NUM_EVALUATIONS
+        try:
+            set_default_num_evaluations(7)
+            result = expectation(make_dist(), f, key=jax.random.PRNGKey(0))
+            assert isinstance(result, BootstrapDistribution)
+            assert result.num_atoms == 7
+        finally:
             set_default_num_evaluations(old)
 
     def test_set_default_invalid(self):
         with pytest.raises(ValueError):
             set_default_num_evaluations(0)
 
-    def test_set_return_approx_dist(self):
+    @pytest.mark.parametrize(("make_dist", "f"), _RESULT_FORM_ESTIMATORS)
+    def test_set_return_approx_dist(self, make_dist, f):
+        """An estimator reads the current default result form, not a copy taken at import."""
         old = dist_mod.RETURN_APPROX_DIST
         try:
             set_return_approx_dist(False)
             assert dist_mod.RETURN_APPROX_DIST is False
-            d = Normal(loc=0.0, scale=1.0, name="x")
-            result = expectation(d, lambda x: x, num_evaluations=100)
+            result = expectation(make_dist(), f, num_evaluations=4, key=jax.random.PRNGKey(0))
             assert isinstance(result, NumericArray)
         finally:
-            # Restore via the setter — see ``test_set_default_num_evaluations``.
             set_return_approx_dist(old)
 
 

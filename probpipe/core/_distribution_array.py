@@ -48,7 +48,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from .._array_utils import _slice_leading_axes
-from ._distribution_base import Distribution
+from ..distributions._distribution import Distribution
 from ._immutable import transient_memo
 from ._specs import RecordSpec
 from .protocols import SupportsArrayBackend

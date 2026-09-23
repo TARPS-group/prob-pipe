@@ -5,11 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 from ..core._specs import RecordSpec
-from ..core.distribution import Distribution
 from ..core.protocols import SupportsLogProb
 from ..core.record import Record
 from ..core.tracked import auto_name
 from ..custom_types import Array
+from ..distributions._distribution import Distribution
 from ._base import ProbabilisticModel
 from ._likelihood import Likelihood
 
@@ -57,7 +57,7 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
         # (so the joint log-density is computable) and a
         # ``RecordDistribution`` (so its ``event_template`` is a
         # required, non-``None`` ``RecordSpec``).
-        from ..core.distribution import RecordDistribution
+        from ..core._record_distribution import RecordDistribution
 
         if not isinstance(prior, SupportsLogProb):
             raise TypeError(
@@ -180,7 +180,7 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
           fields). This is what the keyword API
           (``log_prob(model, intercept=..., y=...)``) produces. It is
           split into a parameter value — repacked via the prior's own
-          :meth:`~probpipe.core._distribution_base.Distribution._pack_value`
+          :meth:`~probpipe.Distribution._pack_value`
           so a single-field prior receives a bare array and a multi-field
           prior a ``Record`` — and a data sub-record built from the
           likelihood's ``data_template`` fields.

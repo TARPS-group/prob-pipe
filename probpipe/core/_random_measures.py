@@ -85,7 +85,7 @@ from __future__ import annotations
 from abc import abstractmethod
 
 from ..custom_types import Array
-from ._distribution_base import Distribution
+from ..distributions._distribution import Distribution
 from .constraints import Constraint
 
 # ---------------------------------------------------------------------------

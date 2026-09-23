@@ -12,6 +12,7 @@ import pytest
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
+    Distribution,
     DistributionArray,
     EmpiricalDistribution,
     Normal,
@@ -33,7 +34,6 @@ from probpipe.core._workflow_plan import (
     build_broadcast_plan,
     build_stochastic_plan,
 )
-from probpipe.core.distribution import Distribution
 from probpipe.core.protocols import SupportsSampling
 
 

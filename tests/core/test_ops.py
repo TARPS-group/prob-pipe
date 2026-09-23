@@ -275,7 +275,8 @@ class TestMean:
 
     def test_raises_without_supports_mean(self):
         """mean op raises TypeError for distributions without SupportsMean."""
-        from probpipe.core.distribution import NumericRecordDistribution, _mc_expectation
+        from probpipe import NumericRecordDistribution
+        from probpipe.core._numeric_record_distribution import _mc_expectation
         from probpipe.core.protocols import SupportsExpectation, SupportsSampling
 
         class NoMeanDist(NumericRecordDistribution, SupportsSampling, SupportsExpectation):

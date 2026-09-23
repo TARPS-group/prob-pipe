@@ -95,7 +95,8 @@ if it were user-guide reference text.
 | `NamedTree` (shared name-keyed tree substrate) | docstrings in `probpipe/core/named_tree.py`; #235 Chapter 1 |
 | `TermSpec` / `NumericSpec` (one spec protocol across all kinds) | docstrings in `probpipe/core/_spec_base.py`; design II.1–II.3 |
 | `NumericArraySpec` / `OpaqueSpec` (numeric-array and opaque value declarations) | docstrings in `probpipe/core/_spec_base.py`; design III.1–III.2 |
-| `DistributionSpec` / `FunctionSpec` (distribution and callable declarations) | docstrings in `probpipe/core/_kind_specs.py`; design III.7 and III.3 |
+| `DistributionSpec` (the distribution kind's declaration) | docstrings in `probpipe/distributions/_distribution.py`; design III.7 |
+| `FunctionSpec` (the callable kind's declaration) | docstrings in `probpipe/core/_kind_specs.py`; design III.3 |
 | `InputSpec` / `OutputSpec` (slots, component exposure, type holes) | docstrings in `probpipe/core/_specs.py`; design II.2 |
 | `RecordSpec` / `NumericRecordSpec` (the record kind spec is its schema) | docstrings in `probpipe/core/_record_spec.py`; design III.5 |
 | the kind table (which tracked class and which batch form each value spec has) | docstrings in `probpipe/core/_kinds.py` |

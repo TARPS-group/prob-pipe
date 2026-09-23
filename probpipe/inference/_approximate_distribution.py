@@ -11,13 +11,14 @@ if TYPE_CHECKING:
 import jax.numpy as jnp
 
 from .._weights import Weights
+from ..core._empirical import RecordEmpiricalDistribution
 from ..core._immutable import transient_memo
 from ..core._opaque import OpaqueSpec
 from ..core._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
-from ..core.distribution import Distribution, RecordEmpiricalDistribution
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike
+from ..distributions._distribution import Distribution
 
 __all__ = ["ApproximateDistribution", "make_posterior"]
 

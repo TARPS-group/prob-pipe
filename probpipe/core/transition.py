@@ -23,7 +23,7 @@ import contextlib
 from collections.abc import Callable, Iterable
 from typing import Any
 
-from .distribution import Distribution
+from ..distributions._distribution import Distribution
 from .node import Function, function
 from .provenance import Provenance
 
@@ -182,7 +182,7 @@ def with_resampling(
     """Wrap a step function to resample when particle weights degenerate.
 
     After calling *step_fn*, if the result is an
-    :class:`~probpipe.core.distribution.EmpiricalDistribution` with
+    :class:`~probpipe.EmpiricalDistribution` with
     ``ESS / N < ess_threshold``, performs multinomial resampling to
     produce equally-weighted particles.
 
@@ -216,7 +216,7 @@ def with_resampling(
     This API is likely to evolve as typical use cases become clearer.
     A future direction is a ``SupportsResampling`` protocol that would
     decouple this combinator from the concrete
-    :class:`~probpipe.core.distribution.EmpiricalDistribution` type.
+    :class:`~probpipe.EmpiricalDistribution` type.
     """
     import jax
 
@@ -225,7 +225,7 @@ def with_resampling(
 
     def _with_resampling_impl(dist: Distribution, inp: Any) -> Distribution:
         nonlocal call_count
-        from .distribution import EmpiricalDistribution
+        from ._empirical import EmpiricalDistribution
 
         out_dist = step_fn(dist, inp)
 

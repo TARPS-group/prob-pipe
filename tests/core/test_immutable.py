@@ -272,8 +272,11 @@ class TestEveryTrackedTermIsImmutable:
         for module in pkgutil.walk_packages(probpipe.__path__, "probpipe."):
             try:
                 importlib.import_module(module.name)
-            except ImportError:
-                continue  # an optional backend that is not installed
+            except ImportError as exc:
+                # An optional backend that is not installed is skipped; a
+                # failure inside probpipe is a bug the sweep must report.
+                if (exc.name or "").partition(".")[0] == "probpipe":
+                    raise
 
         seen: set[type] = set()
 
@@ -295,7 +298,7 @@ class TestEveryTrackedTermIsImmutable:
         # and free to disagree with the message or the exception. Exactly one
         # does, deliberately and temporarily, and this is what stops a second
         # from appearing quietly.
-        from probpipe.core._distribution_base import Distribution
+        from probpipe.distributions._distribution import Distribution
 
         exempt = [
             c.__name__

@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from typing import Any
 
-from ..core.distribution import Distribution
+from ..distributions._distribution import Distribution
 
 __all__ = ["ProbabilisticModel"]
 

@@ -27,10 +27,10 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..core.distribution import Distribution
 from ..core.node import function
 from ..core.protocols import GenerativeLikelihood, SupportsApproximateConditioning
 from ..custom_types import ArrayLike, PRNGKey
+from ..distributions._distribution import Distribution
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._bayesflow_common import (
     _OBSERVATION_KEY,

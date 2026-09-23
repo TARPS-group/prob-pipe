@@ -80,7 +80,7 @@ class TestSimpleModel:
         ``RecordDistribution`` can't be expressed statically, so the
         runtime guard is the only backstop.
         """
-        from probpipe.core.distribution import Distribution
+        from probpipe import Distribution
         from probpipe.core.protocols import SupportsLogProb
 
         class _LogProbOnly(Distribution, SupportsLogProb):

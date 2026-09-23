@@ -24,10 +24,10 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..core._numeric_record_batch import NumericRecordBatch
-from ..core.distribution import Distribution
 from ..core.ops import sample as _sample_op
 from ..core.protocols import GenerativeLikelihood
 from ..custom_types import Array, PRNGKey
+from ..distributions._distribution import Distribution
 
 if TYPE_CHECKING:
     # Type-only: tfp is a hard dependency but is only needed here for

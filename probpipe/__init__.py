@@ -25,6 +25,14 @@ _warnings.filterwarnings(
     category=DeprecationWarning,
 )
 
+# ``probpipe.distributions`` must initialize before any ``probpipe.core`` module
+# that imports its base class. Importing the base initializes the whole package,
+# whose families import such modules back, so a core module loaded first is still
+# partially initialized when a family imports it.
+from probpipe import distributions
+
+# isort: split
+
 from probpipe._weights import Weights
 from probpipe.converters import (
     ConversionInfo,
@@ -38,18 +46,34 @@ from probpipe.core._array_backend import (
     register_array_backend,
 )
 from probpipe.core._batch import Batch, BatchSpec
+from probpipe.core._broadcast_distributions import BroadcastDistribution
 from probpipe.core._dispatch import MathematicalDomainError, ResolutionError
 from probpipe.core._distribution_array import DistributionArray
+from probpipe.core._empirical import (
+    BootstrapReplicateDistribution,
+    EmpiricalDistribution,
+    RecordBootstrapReplicateDistribution,
+    RecordEmpiricalDistribution,
+)
 from probpipe.core._function_batch import FunctionBatch
 from probpipe.core._numeric_array import NumericArray
 from probpipe.core._numeric_array_batch import NumericArrayBatch
 from probpipe.core._numeric_record import NumericRecord
 from probpipe.core._numeric_record_batch import NumericRecordBatch
+from probpipe.core._numeric_record_distribution import (
+    BootstrapDistribution,
+    FlatNumericRecordDistribution,
+    FlattenedDistributionView,
+    NumericRecordDistribution,
+    NumericRecordDistributionView,
+)
 from probpipe.core._opaque import Opaque, OpaqueSpec
 from probpipe.core._opaque_batch import OpaqueBatch
+from probpipe.core._random_functions import ArrayRandomFunction, RandomFunction
+from probpipe.core._random_measures import NumericRandomMeasure, RandomMeasure
 from probpipe.core._record_batch import RecordBatch
+from probpipe.core._record_distribution import RecordDistribution
 from probpipe.core._specs import (
-    DistributionSpec,
     FunctionSpec,
     InputSpec,
     NumericArraySpec,
@@ -81,30 +105,6 @@ from probpipe.core.constraints import (
     simplex,
     sphere,
     unit_interval,
-)
-from probpipe.core.distribution import (
-    DEFAULT_NUM_EVALUATIONS,
-    RETURN_APPROX_DIST,
-    ArrayRandomFunction,
-    BootstrapDistribution,
-    BootstrapReplicateDistribution,
-    BroadcastDistribution,
-    Distribution,
-    EmpiricalDistribution,
-    FlatNumericRecordDistribution,
-    FlattenedDistributionView,
-    NumericRandomMeasure,
-    NumericRecordDistribution,
-    NumericRecordDistributionView,
-    # Random functions
-    RandomFunction,
-    # Random measures
-    RandomMeasure,
-    RecordBootstrapReplicateDistribution,
-    RecordDistribution,
-    RecordEmpiricalDistribution,
-    set_default_num_evaluations,
-    set_return_approx_dist,
 )
 from probpipe.core.named_tree import NamedTree
 from probpipe.core.node import (
@@ -184,6 +184,14 @@ from probpipe.distributions import (
     Wishart,
     bijector_for,
     register_bijector,
+)
+from probpipe.distributions._distribution import (
+    DEFAULT_NUM_EVALUATIONS,
+    RETURN_APPROX_DIST,
+    Distribution,
+    DistributionSpec,
+    set_default_num_evaluations,
+    set_return_approx_dist,
 )
 from probpipe.inference import (
     ApproximateDistribution,

@@ -1,7 +1,7 @@
 """Backend-agnostic inference utilities.
 
 Functions for building target log-density callables and initial chain
-states from a :class:`~probpipe.core.distribution.Distribution` plus
+states from a :class:`~probpipe.Distribution` plus
 observed data. Shared across every inference backend in
 ``probpipe.inference`` so they consume the same source of truth.
 
@@ -36,10 +36,10 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..core._specs import RecordSpec
-from ..core.distribution import Distribution
 from ..core.protocols import SupportsSampling
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike
+from ..distributions._distribution import Distribution
 
 logger = logging.getLogger(__name__)
 

@@ -3,7 +3,7 @@
 A ``Record`` is a single structured value: an immutable collection of named,
 ordered fields. In ProbPipe, it is widely used as a wrapper for deterministic
 quantities, and thus can be viewed as the non-random counterpart to
-:class:`~probpipe.core._distribution_base.Distribution`. Every ``Record``
+:class:`~probpipe.Distribution`. Every ``Record``
 carries a :class:`RecordSpec` that describes the structure of the
 stored value. The event template is the schema encoding the structure of
 the concrete value.

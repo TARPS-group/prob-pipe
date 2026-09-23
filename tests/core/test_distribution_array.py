@@ -155,7 +155,7 @@ class TestConstruction:
     def test_factory_returns_distribution_subclass(self):
         comps = [Normal(loc=0.0, scale=1.0, name="d0")]
         da = _make_distribution_array(comps)
-        from probpipe.core._distribution_base import Distribution
+        from probpipe.distributions._distribution import Distribution
 
         assert isinstance(da, Distribution)
 
@@ -893,7 +893,7 @@ class TestFromBatchedParams:
         eager construction, no backend.
         """
         from probpipe import DistributionArray
-        from probpipe.core._distribution_base import Distribution
+        from probpipe.distributions._distribution import Distribution
 
         class MyDist(Distribution):
             def __init__(self, value, *, name):
@@ -1027,7 +1027,7 @@ class TestDistributionFromBatchedParamsAlias:
             MultivariateNormal,
             Normal,
         )
-        from probpipe.core._distribution_base import Distribution
+        from probpipe.distributions._distribution import Distribution
 
         # Every Distribution subclass inherits the alias.
         for cls in (Distribution, Normal, Beta, Gamma, MultivariateNormal, EmpiricalDistribution):
@@ -1051,7 +1051,7 @@ class TestDistributionFromBatchedParamsAlias:
         """The alias inherits the factory's protocol-vs-fallback
         dispatch, so non-protocol Distribution subclasses also get the
         literal-array fallback when invoking the alias."""
-        from probpipe.core._distribution_base import Distribution
+        from probpipe.distributions._distribution import Distribution
 
         class MyDist(Distribution):
             def __init__(self, value, *, name):

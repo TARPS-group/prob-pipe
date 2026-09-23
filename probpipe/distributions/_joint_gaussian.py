@@ -10,11 +10,8 @@ from types import MappingProxyType
 import jax.numpy as jnp
 
 from .._dtype import _promote_floats
+from ..core._numeric_record_distribution import NumericRecordDistribution, _mc_expectation
 from ..core._record_distribution import _build_event_template
-from ..core.distribution import (
-    NumericRecordDistribution,
-    _mc_expectation,
-)
 from ..core.protocols import (
     SupportsCovariance,
     SupportsExactConditioning,

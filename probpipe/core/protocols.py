@@ -72,7 +72,7 @@ from typing import (
 from ..custom_types import Array, ArrayLike, PRNGKey
 
 if TYPE_CHECKING:
-    from ._distribution_base import Distribution
+    from ..distributions._distribution import Distribution
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +199,7 @@ class SupportsLogProb[T](SupportsUnnormalizedLogProb[T], Protocol):
 
     Extends :class:`SupportsUnnormalizedLogProb` because any distribution
     with a normalized density also has an unnormalized one (they coincide).
-    The base :class:`~probpipe.core.distribution.Distribution` class
+    The base :class:`~probpipe.Distribution` class
     provides ``_unnormalized_log_prob`` defaulting to ``_log_prob``.
 
     ``_log_prob`` accepts a single draw of the distribution's sample type

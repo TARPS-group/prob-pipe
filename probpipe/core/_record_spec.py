@@ -507,8 +507,8 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
             )
 
         def _leaf_spec(val: Any) -> _FieldSpecInput:
-            from ._distribution_base import Distribution
-            from ._kind_specs import DistributionSpec, FunctionSpec
+            from ..distributions._distribution import Distribution, DistributionSpec
+            from ._kind_specs import FunctionSpec
             from .tracked import TrackedTerm
 
             if isinstance(val, TrackedTerm):

@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from .._dtype import _as_float_array, _promote_floats
+from ..core._numeric_record_distribution import FlatNumericRecordDistribution
 from ..core.constraints import (
     Constraint,
     non_negative_integer,
@@ -16,7 +17,6 @@ from ..core.constraints import (
     simplex,
     sphere,
 )
-from ..core.distribution import FlatNumericRecordDistribution
 from ..custom_types import Array, ArrayLike
 from ._tfp_base import TFPDistribution
 

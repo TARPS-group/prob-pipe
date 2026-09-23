@@ -99,7 +99,7 @@ class ProtocolConverter(Converter):
     # -- Converter interface ------------------------------------------------
 
     def source_types(self) -> tuple[type, ...]:
-        from ..core.distribution import Distribution
+        from ..distributions._distribution import Distribution
 
         return (Distribution,)
 

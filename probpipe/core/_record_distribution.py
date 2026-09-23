@@ -20,7 +20,7 @@ import jax
 import jax.numpy as jnp
 
 from ..custom_types import Array, PRNGKey
-from ._distribution_base import Distribution
+from ..distributions._distribution import Distribution
 from ._specs import NumericArraySpec, RecordSpec
 from .protocols import (
     SupportsCovariance,
@@ -366,7 +366,7 @@ def _build_event_template(
     - Any other :class:`Distribution` → ``None`` (opaque leaf — the
       template records the field name but not a shape).
     """
-    from ._distribution_base import Distribution
+    from ..distributions._distribution import Distribution
     from ._numeric_record_distribution import NumericRecordDistribution
 
     specs: dict[str, Any] = {}

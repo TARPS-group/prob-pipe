@@ -49,9 +49,9 @@ from blackjax.mcmc.dynamic_hmc import (
 )
 
 from ..core._dispatch import Feasibility
-from ..core.distribution import Distribution
 from ..core.protocols import SupportsUnnormalizedLogProb
 from ..custom_types import Array
+from ..distributions._distribution import Distribution
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._inference_utils import (
     as_prng_key,

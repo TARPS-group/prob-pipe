@@ -22,6 +22,7 @@ except ImportError:
     task = flow = None
 
 from ..custom_types import Array, PRNGKey
+from ..distributions._distribution import Distribution
 from . import (
     _workflow_broker,
     _workflow_call,
@@ -31,9 +32,10 @@ from . import (
     _workflow_plan,
     _workflow_recipe,
 )
+from ._broadcast_distributions import BroadcastDistribution
+from ._empirical import EmpiricalDistribution
 from ._specs import RecordSpec
 from .config import WorkflowKind, prefect_config
-from .distribution import BroadcastDistribution, Distribution, EmpiricalDistribution
 from .provenance import Provenance
 from .tracked import TrackedTerm
 

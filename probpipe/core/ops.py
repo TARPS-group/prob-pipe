@@ -26,8 +26,9 @@ import jax
 import jax.numpy as jnp
 
 from ..custom_types import Array, PRNGKey
+from ..distributions._distribution import Distribution
 from . import _workflow_broker, _workflow_descendants
-from .distribution import Distribution, RandomFunction
+from ._random_functions import RandomFunction
 from .node import function
 from .protocols import (
     SupportsApproximateConditioning,
@@ -377,7 +378,7 @@ def mean(dist: SupportsMean) -> Any:
     * Structured distributions (``T = Record``) — returns
       :class:`~probpipe.record.Record`.
     * :class:`~probpipe.core._random_measures.RandomMeasure[T]` (``T``
-      itself a :class:`~probpipe.core._distribution_base.Distribution[T]`)
+      itself a :class:`~probpipe.Distribution[T]`)
       — returns the marginalised ``Distribution[T]`` with marginal
       ``D̄(A) = ∫ D(A) dM(D)``.
 

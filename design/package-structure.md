@@ -133,13 +133,13 @@ A handful of private helper modules (dtypes, array utilities) support the packag
 
 Every module with a design contract, with where it goes; the target contracts above are authoritative.
 
-G2 currently divides the spec implementation into four files: `core/_spec_base.py`
+The spec implementation in `core/` is divided into four files: `core/_spec_base.py`
 defines `TermSpec`, `NumericSpec`, `NumericArraySpec`, `OpaqueSpec`, and shared
 dimension unification; `core/_record_spec.py` defines `RecordSpec` and
-`NumericRecordSpec`; `core/_kind_specs.py` defines `DistributionSpec` and
-`FunctionSpec`; and `core/_specs.py` defines `InputSpec` and `OutputSpec` and
-re-exports the public spec types. The kind specs' current location is interim;
-their target placement remains beside the value types they describe.
+`NumericRecordSpec`; `core/_kind_specs.py` defines `FunctionSpec`; and
+`core/_specs.py` defines `InputSpec` and `OutputSpec` and re-exports the public
+spec types of `core/`. `DistributionSpec` is defined beside `Distribution` in
+`distributions/_distribution.py`.
 
 | Today | Target |
 |---|---|
@@ -157,7 +157,7 @@ their target placement remains beside the value types they describe.
 | `core/_workflow_execution.py`, `core/_workflow_execution_contract.py` | `functions/_execution.py` |
 | `core/_workflow_result.py` | `functions/_result.py` |
 | `core/ops.py` | `operations/`, one module per operation section (VI.1–VI.10), plus `_operation.py` for the declaration, route, and registry code |
-| `core/distribution.py`, `core/_distribution_base.py` | `distributions/_distribution.py` |
+| `distributions/_distribution.py` | in place: `Distribution` and `DistributionSpec` (III.7) |
 | `core/protocols.py` | `distributions/_capabilities.py` |
 | `core/_distribution_array.py` | `distributions/_batches.py` (III.10) |
 | `core/_broadcast_distributions.py` | split: `BroadcastDistribution` is retired, the lift's joint result being an `EmpiricalDistribution` (V.10, VII.2); the row aggregator `_make_stack` to `functions/_result.py` (V.10); the mixture and record marginals to `operations/_marginal.py` and `families/_mixture.py` (VI.8, VII.3) |
@@ -167,7 +167,7 @@ their target placement remains beside the value types they describe.
 | `core/_numeric_array.py`, `core/_opaque.py`, `core/record.py`, and their batch modules | `values/`, one module per III section |
 | `core/_spec_base.py` | `TermSpec`, `NumericArraySpec`, `OpaqueSpec`, and dimension unification stay in place; `NumericSpec` joins `Numeric` in `core/_numeric.py` (II.1, II.3, III.1–III.2) |
 | `core/_record_spec.py` | in place: `RecordSpec`, `NumericRecordSpec`, and record unification (III.5) |
-| `core/_kind_specs.py` | `FunctionSpec` to `values/_function_base.py` (III.3); `DistributionSpec` to `distributions/_distribution.py` (III.7) |
+| `core/_kind_specs.py` | `FunctionSpec` to `values/_function_base.py` (III.3) |
 | `core/_specs.py` | `InputSpec`, `OutputSpec`, and component projection contracts stay in place (II.2) |
 | `core/constraints.py` | `core/_constraints.py` (II.3) |
 | `record/design.py` | `designs/`, generalized from `RecordBatch` to any element spec |
@@ -179,7 +179,7 @@ their target placement remains beside the value types they describe.
 | `modeling/_likelihood.py` (`IncrementalConditioner`) | retired as a class; a fold of `condition_on` over data batches, settled with `iterate` |
 | `converters/_registry.py`, `converters/_protocol.py` | `distributions/_conversion.py` (IV.3): `ConversionMethod` becomes the `exact` flag, `Converter.convert` becomes `execute`, and the protocol resolver becomes protocol targets |
 | `converters/_probpipe.py`, `converters/_scipy.py`, `converters/_tfp.py` | `families/_converters.py` (IV.3) |
-| `expectation`'s `return_dist` and `set_return_approx_dist` (`core/ops.py`, `core/_distribution_base.py`) | retired: the error of a Monte Carlo estimate is taken explicitly through the bootstrap (VII.2); `set_default_num_evaluations` becomes the sample-count default in `core/_config.py` (V.2) |
+| `expectation`'s `return_dist` and `set_return_approx_dist` (`core/ops.py`, `distributions/_distribution.py`) | retired: the error of a Monte Carlo estimate is taken explicitly through the bootstrap (VII.2); `set_default_num_evaluations` becomes the sample-count default in `core/_config.py` (V.2) |
 | `core/_kinds.py`, `core/_array_backend.py` | `core/`, in place: the kind table (II.1) and the array-backend registry (II.3) |
 | `core/_immutable.py`, `core/_fingerprint.py` | `core/_identity.py` (II.4) |
 | `core/config.py` | `core/_config.py` |

@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- `Distribution` and `DistributionSpec` are defined in the distributions
+  package, and the `probpipe.core.distribution` module is removed. Its public
+  classes and functions are importable from `probpipe`, and
+  `probpipe.distributions` exports `Distribution` and `DistributionSpec` as well.
+  Two things the module provided have no public replacement: the
+  `MarginalizedBroadcastDistribution` alias, which is importable only from the
+  private `probpipe.core._broadcast_distributions`, and the current values of
+  `DEFAULT_NUM_EVALUATIONS` and `RETURN_APPROX_DIST`, since the names on
+  `probpipe` hold their import-time values. Moving the two classes changes the
+  module paths that pickles record and the fingerprints of the classes. The
+  fingerprints and replay anchors of declarations that contain a
+  `DistributionSpec` change with them, so values persisted before the change no
+  longer load or match.
 - Shared declarations now use one `TermSpec` protocol. `InputSpec` describes
   named input slots; `OutputSpec` distinguishes a named whole return value from
   exposed record fields, including a pending type in the single-keyword form.

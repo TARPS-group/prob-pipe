@@ -1,4 +1,4 @@
-"""Distribution and callable specs, with dimension binding through their declared sides."""
+"""The callable spec, with dimension binding through its declared sides."""
 
 from __future__ import annotations
 
@@ -6,118 +6,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from ._record_spec import (
-    RecordSpec,
-    _check_kind_of,
-    _schema_carried_by,
-)
+from ._record_spec import RecordSpec
 from ._spec_base import TermSpec, _unify_specs
-
-
-@dataclass(frozen=True, init=False)
-class DistributionSpec(TermSpec):
-    """A distribution-kind spec whose current draw schema is a RecordSpec.
-
-    Parameters
-    ----------
-    event_spec : RecordSpec
-        The record schema describing one draw.
-
-    Raises
-    ------
-    TypeError
-        If the draw schema is not a RecordSpec.
-
-    Notes
-    -----
-    ``is_valid`` requires a Distribution whose ``event_template`` equals
-    ``event_spec``, including field order, dtype, and support metadata. A missing
-    template, or a getter raising AttributeError or TypeError because the schema
-    is unavailable, gives False; other getter errors propagate.
-
-    ``bind_dims_from_value`` validates a concrete declaration by that same rule.
-    For a symbolic declaration it instead learns sizes from the distribution's
-    schema, without sampling. An unavailable schema raises ValueError.
-    ``bind_dims_from_spec`` reads another DistributionSpec using declaration
-    compatibility: matching structure, compatible declared dtypes, and consistent
-    sizes; field order and support metadata need not be equal.
-
-    Binding returns a new spec retaining the declared metadata. Repeated symbols
-    share one scope, including surrounding records or input slots; conflicting
-    sizes raise ValueError. ``with_dim_sizes`` may leave unsupplied dimensions symbolic.
-
-    Examples
-    --------
-    >>> from probpipe import DistributionSpec, RecordSpec
-    >>> declared = DistributionSpec(RecordSpec(x=("n",)))
-    >>> bound = declared.bind_dims_from_spec(DistributionSpec(RecordSpec(x=(3,))))
-    >>> bound.event_spec["x"].shape
-    (3,)
-    """
-
-    event_spec: RecordSpec
-
-    def __init__(self, event_spec: RecordSpec) -> None:
-        if not isinstance(event_spec, RecordSpec):
-            raise TypeError(
-                f"DistributionSpec.event_spec must be a RecordSpec, got {type(event_spec).__name__}"
-            )
-        object.__setattr__(self, "event_spec", event_spec)
-
-    @property
-    def free_dims(self) -> frozenset[str]:
-        """The unbound dimensions of the draw this declares."""
-        return self.event_spec.free_dims
-
-    def _substitute_dims(self, bindings: Mapping[str, int | str]) -> DistributionSpec:
-        """This spec around a substituted event declaration."""
-        return DistributionSpec(self.event_spec._substitute_dims(bindings))
-
-    def _bind_dims_from_value(self, value: Any, bindings: dict[str, int], path: str) -> None:
-        """Validate a concrete draw schema, or bind a symbolic one from *value*."""
-        if not self.free_dims:
-            super()._bind_dims_from_value(value, bindings, path)
-            return
-        actual = _schema_carried_by(value, self, path)
-        _check_kind_of(DistributionSpec(actual), value, self, path)
-        _unify_specs(self.event_spec, actual, bindings, path)
-
-    def _bind_dims_from_spec(self, actual: TermSpec, bindings: dict[str, int], path: str) -> bool:
-        """Bind the declared draw schema against *actual*'s own."""
-        if not isinstance(actual, DistributionSpec):
-            return False
-        _unify_specs(self.event_spec, actual.event_spec, bindings, path)
-        return True
-
-    def is_valid(self, value: Any) -> bool:
-        """Whether *value* is a ``Distribution`` matching this event declaration.
-
-        *value* must be a :class:`~probpipe.Distribution` whose own
-        ``event_template`` equals the declared record template. A distribution
-        that is not one, or that legitimately exposes no template — no
-        ``event_template`` attribute, or a template that cannot yet be
-        derived — does not satisfy the spec and returns ``False``. These are
-        the only two "schema unavailable" conditions treated as a non-match;
-        any *other* error raised while reading ``event_template`` signals a
-        malfunctioning distribution and is left to propagate rather than being
-        masked as invalid.
-        """
-        from ._distribution_base import Distribution
-
-        if not isinstance(value, Distribution):
-            return False
-        try:
-            template = value.event_template
-        except (AttributeError, TypeError):
-            # The two documented "schema unavailable" signals: no
-            # ``event_template`` attribute (AttributeError) or a template that
-            # cannot be derived (TypeError — e.g. an un-named auto-deriving
-            # distribution). Both mean the value can't be certified. A
-            # narrower catch than ``Exception`` on purpose: an unexpected
-            # error is a bug to surface, not a silent "invalid".
-            return False
-        # Normalised at construction, so the declaration is always a RecordSpec.
-        return template == self.event_spec
 
 
 @dataclass(frozen=True, init=False)

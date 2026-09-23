@@ -8,7 +8,6 @@
           - "probpipe/distributions/**"
           - "probpipe/converters/**"
           - "probpipe/linalg/**"
-          - "probpipe/core/distribution.py"
           - "probpipe/core/_distribution_*.py"
           - "probpipe/core/_empirical.py"
           - "probpipe/core/_random_measures.py"
