@@ -30,12 +30,12 @@ from .._array_utils import _is_numeric_array
 from .._dtype import _as_float_array
 from .._weights import Weights
 from ..core._record_distribution import RecordDistribution, _build_event_template
+from ..core._specs import RecordSpec
 from ..core.distribution import (
     NumericRecordDistribution,
     RecordEmpiricalDistribution,
     _mc_expectation,
 )
-from ..core.event_template import EventTemplate
 from ..core.protocols import (
     SupportsMean,
     SupportsSampling,
@@ -148,7 +148,7 @@ class JointEmpirical(RecordDistribution, SupportsSampling):
             self._event_template = _build_event_template(self._components)
         else:
             # Generic (non-numeric) path: derive a structural
-            # ``EventTemplate`` directly from the stored samples. Each
+            # ``RecordSpec`` directly from the stored samples. Each
             # field's per-row shape becomes its spec; object-dtype leaves
             # report ``None``. This keeps the
             # ``RecordDistribution`` metaclass invariant
@@ -160,7 +160,7 @@ class JointEmpirical(RecordDistribution, SupportsSampling):
                     specs[cname] = tuple(arr.shape[1:])
                 else:
                     specs[cname] = None
-            self._event_template = EventTemplate(specs)
+            self._event_template = RecordSpec(specs)
 
     # Hook for NumericJointEmpirical to override; base class returns None
     # because generic joint samples can't be expressed as per-component
@@ -216,14 +216,14 @@ class JointEmpirical(RecordDistribution, SupportsSampling):
         """
         from ..core._numeric_record_batch import NumericRecordBatch
         from ..core._record_batch import RecordBatch
-        from ..core.event_template import NumericEventTemplate
+        from ..core._specs import NumericRecordSpec
 
         rows = self._resample_rows(key, sample_shape)
         if not sample_shape:
             return Record(self.name, rows)
         cls = (
             NumericRecordBatch
-            if isinstance(self.event_template, NumericEventTemplate)
+            if isinstance(self.event_template, NumericRecordSpec)
             else RecordBatch
         )
         return cls(

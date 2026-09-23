@@ -6,7 +6,7 @@ See design III.1.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any, Self
+from typing import Any, Self, cast
 
 import jax
 import numpy as np
@@ -22,7 +22,7 @@ from ._array_backend import (
 from ._batch import Batch, BatchSpec, _axis_groups_for
 from ._kinds import register_kind
 from ._numeric_array import NumericArray
-from .event_template import NumericArraySpec
+from ._specs import NumericArraySpec
 from .provenance import Provenance
 
 __all__ = ["NumericArrayBatch"]
@@ -111,7 +111,7 @@ class NumericArrayBatch(Batch[NumericArray]):
         if any(not isinstance(axis, int) for axis in event_shape):
             raise ValueError(
                 f"a symbolic dimension gives the event shape no size to split the stored "
-                f"axes by; bind {element_spec.shape} with with_dims before batching"
+                f"axes by; bind {element_spec.shape} with with_dim_sizes before batching"
             )
         if not _is_numeric_leaf(values):
             raise TypeError(
@@ -164,9 +164,7 @@ class NumericArrayBatch(Batch[NumericArray]):
     @property
     def element_spec(self) -> NumericArraySpec:
         """What every element satisfies — a view on :attr:`spec`."""
-        spec = self.spec.element_spec
-        assert isinstance(spec, NumericArraySpec)
-        return spec
+        return cast(NumericArraySpec, self.spec.element_spec)
 
     @property
     def values(self) -> Any:
@@ -375,8 +373,8 @@ class _MappedBatchStore:
             element_spec = value.spec
             if element_spec.free_dims:
                 bindings: dict[str, int] = {}
-                element_spec.bind_dims_from_value(value, bindings, value.name)
-                element_spec = element_spec.with_bound_dims(bindings)
+                element_spec._bind_dims_from_value(value, bindings, value.name)
+                element_spec = element_spec._substitute_dims(bindings)
             return cls(
                 value.name,
                 value.as_jax(),

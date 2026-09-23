@@ -1,4 +1,4 @@
-"""Contract guards for the named-collection redesign (Record / EventTemplate).
+"""Contract guards for the named-collection redesign (Record / RecordSpec).
 
 These assert the *contracts* introduced by the leaf-keyed collection model —
 construction rules and their error cases, canonical ordering, the conditional
@@ -11,9 +11,9 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import EventTemplate, NumericRecord, NumericRecordBatch, Record
+from probpipe import NumericRecord, NumericRecordBatch, Record, RecordSpec
 from probpipe.core._opaque import OpaqueSpec
-from probpipe.core.event_template import NumericArraySpec, NumericEventTemplate
+from probpipe.core._specs import NumericArraySpec, NumericRecordSpec
 
 # ---------------------------------------------------------------------------
 # Construction: path-keyed unflattening and its error cases
@@ -25,9 +25,9 @@ class TestPathKeyedConstruction:
         a = Record("r", {"physics/force": 1.0, "physics/mass": 2.0, "observation": 3.0})
         b = Record("r", physics=Record("r", force=1.0, mass=2.0), observation=3.0)
         assert a == b
-        # EventTemplate mirrors the same path convention.
-        ta = EventTemplate({"physics/force": (), "physics/mass": (), "observation": ()})
-        tb = EventTemplate(physics=EventTemplate(force=(), mass=()), observation=())
+        # RecordSpec mirrors the same path convention.
+        ta = RecordSpec({"physics/force": (), "physics/mass": (), "observation": ()})
+        tb = RecordSpec(physics=RecordSpec(force=(), mass=()), observation=())
         assert ta == tb
 
     def test_canonical_first_appearance_order(self):
@@ -84,7 +84,7 @@ class TestConditionalRoundTrip:
 
     def test_value_only_dict_is_lossy_for_dtype(self):
         # A template carrying dtype is not recoverable from a value-only dict.
-        tpl = EventTemplate(x=NumericArraySpec((), dtype=jnp.dtype("float32")))
+        tpl = RecordSpec(x=NumericArraySpec((), dtype=jnp.dtype("float32")))
         r = Record("r", {"x": jnp.float32(1.0)}, event_template=tpl)
         assert Record("r", dict(r)) != r  # re-inferred template drops the dtype
 
@@ -109,8 +109,8 @@ class TestSubtreeTemplateInvariant:
         self._check(Record("r", physics=Record("r", force=1.0, mass=2.0), obs=3.0))
 
     def test_supplied_template_via_path_keys(self):
-        tpl = EventTemplate(
-            physics=EventTemplate(force=NumericArraySpec((), dtype=jnp.dtype("float32")), mass=()),
+        tpl = RecordSpec(
+            physics=RecordSpec(force=NumericArraySpec((), dtype=jnp.dtype("float32")), mass=()),
             obs=(),
         )
         r = Record(
@@ -124,8 +124,8 @@ class TestSubtreeTemplateInvariant:
     def test_supplied_template_via_prebuilt_child(self):
         # A pre-built child Record whose own template differs from the supplied
         # slice must adopt the slice's specs.
-        tpl = EventTemplate(
-            physics=EventTemplate(force=NumericArraySpec((), dtype=jnp.dtype("float64")), mass=()),
+        tpl = RecordSpec(
+            physics=RecordSpec(force=NumericArraySpec((), dtype=jnp.dtype("float64")), mass=()),
             obs=(),
         )
         child = Record("r", {"force": 1.0, "mass": 2.0})  # bare-shape inferred template
@@ -143,7 +143,7 @@ class TestSubtreeTemplateInvariant:
         # verbatim — preserving its identity and metadata (backend aux)
         # instead of being rebuilt.
         child = NumericRecord("physics", force=1.0, mass=2.0)
-        tpl = EventTemplate(physics=child.event_template, obs=())
+        tpl = RecordSpec(physics=child.event_template, obs=())
         r = Record("r", physics=child, obs=3.0, event_template=tpl)
         assert r.at_path("physics") is child
         assert r.at_path("physics").name == "physics"
@@ -168,7 +168,7 @@ class TestConvenienceConstructors:
     def test_constructor_reads_every_mapping_as_structure(self):
         # Mappings are never leaves: every mapping level becomes a subtree,
         # even where a template proposes a leaf there — the mismatch raises.
-        tpl = EventTemplate(meta=OpaqueSpec(), x=())
+        tpl = RecordSpec(meta=OpaqueSpec(), x=())
         with pytest.raises(ValueError):
             Record("r", {"meta": {"seed": 0}, "x": 1.0}, event_template=tpl)
         r = Record("r", {"meta": {"seed": 0}, "x": 1.0})
@@ -199,7 +199,7 @@ class TestConvenienceConstructors:
             assert rebuilt == r
 
     def test_from_field_values_count_mismatch_raises(self):
-        tpl = EventTemplate(a=(), b=())
+        tpl = RecordSpec(a=(), b=())
         with pytest.raises(ValueError):
             Record.from_field_values("r", tpl, [1.0])
 
@@ -211,8 +211,8 @@ class TestConvenienceConstructors:
 
 class TestEditTemplateThreading:
     def _rich(self):
-        tpl = EventTemplate(
-            physics=EventTemplate(force=NumericArraySpec((), dtype=jnp.dtype("float32")), mass=()),
+        tpl = RecordSpec(
+            physics=RecordSpec(force=NumericArraySpec((), dtype=jnp.dtype("float32")), mass=()),
             obs=NumericArraySpec((), dtype=jnp.dtype("float32")),
         )
         return Record(
@@ -233,7 +233,7 @@ class TestEditTemplateThreading:
         right = Record(
             "r",
             {"obs": jnp.float32(9.0)},
-            event_template=EventTemplate(obs=NumericArraySpec((), dtype=jnp.dtype("float32"))),
+            event_template=RecordSpec(obs=NumericArraySpec((), dtype=jnp.dtype("float32"))),
         )
         m = left.merge(right)
         assert m.event_template.at_path("physics/force").dtype == jnp.dtype("float32")
@@ -248,8 +248,8 @@ class TestEditTemplateThreading:
     def test_replace_preserves_field_order(self):
         # A replaced subtree (or leaf) must stay in its position, not jump to the
         # end — canonical order is part of the template's identity.
-        t = EventTemplate(p=EventTemplate(x=(), y=()), q=())
-        assert tuple(t.replace({"p": EventTemplate(z=())}).keys()) == ("p/z", "q")
+        t = RecordSpec(p=RecordSpec(x=(), y=()), q=())
+        assert tuple(t.replace({"p": RecordSpec(z=())}).keys()) == ("p/z", "q")
         r = Record("r", p=Record("r", x=1.0, y=2.0), q=3.0)
         assert tuple(r.replace({"p": Record("r", z=9.0)}).keys()) == ("p/z", "q")
         assert tuple(r.replace({"q": 7.0}).keys()) == ("p/x", "p/y", "q")
@@ -272,18 +272,18 @@ class TestEditTemplateThreading:
         # An all-numeric Record's template auto-promotes; replacing a field
         # with a non-numeric value must re-decide the promotion, not raise.
         r = Record("r", x=1.0, y=2.0)
-        assert isinstance(r.event_template, NumericEventTemplate)
+        assert isinstance(r.event_template, NumericRecordSpec)
         r2 = r.replace(x="hello")
         assert r2["x"] == "hello"
-        assert not isinstance(r2.event_template, NumericEventTemplate)
+        assert not isinstance(r2.event_template, NumericRecordSpec)
         # ... and merging a mixed record into a numeric one likewise demotes.
         m = r.merge(Record("r", label="fox"))
-        assert not isinstance(m.event_template, NumericEventTemplate)
+        assert not isinstance(m.event_template, NumericRecordSpec)
         # The template's own edits re-decide in both directions.
-        t = EventTemplate(x=(), y=(3,))
+        t = RecordSpec(x=(), y=(3,))
         t2 = t.replace(x=OpaqueSpec())
-        assert type(t2) is EventTemplate
-        assert isinstance(t2.replace(x=NumericArraySpec(())), NumericEventTemplate)
+        assert type(t2) is RecordSpec
+        assert isinstance(t2.replace(x=NumericArraySpec(())), NumericRecordSpec)
 
     def test_edits_reuse_untouched_children_verbatim(self):
         # An untouched nested child already named by its field key survives
@@ -316,19 +316,19 @@ class TestEditTemplateThreading:
 
 
 # ---------------------------------------------------------------------------
-# EventTemplate edits / map operate on specs directly
+# RecordSpec edits / map operate on specs directly
 # ---------------------------------------------------------------------------
 
 
-class TestEventTemplateOps:
+class TestRecordSpecOps:
     def test_without_merge_on_template(self):
-        tpl = EventTemplate(physics=EventTemplate(force=(), mass=()), obs=())
+        tpl = RecordSpec(physics=RecordSpec(force=(), mass=()), obs=())
         assert tuple(tpl.without("physics/mass").keys()) == ("physics/force", "obs")
-        merged = EventTemplate(a=()).merge(EventTemplate(b=(3,)))
+        merged = RecordSpec(a=()).merge(RecordSpec(b=(3,)))
         assert tuple(merged.keys()) == ("a", "b")
 
     def test_map_over_specs_requires_coercible_output(self):
-        tpl = EventTemplate(a=(2,), b=())
+        tpl = RecordSpec(a=(2,), b=())
         # identity over specs
         assert tpl.map(lambda s: s) == tpl
         # non-spec-coercible output raises TypeError
@@ -336,10 +336,10 @@ class TestEventTemplateOps:
             tpl.map(lambda s: object())
 
     def test_map_to_numeric_promotes(self):
-        tpl = EventTemplate(a=None, b=())  # mixed -> base EventTemplate
-        assert not isinstance(tpl, NumericEventTemplate)
+        tpl = RecordSpec(a=None, b=())  # mixed -> base RecordSpec
+        assert not isinstance(tpl, NumericRecordSpec)
         mapped = tpl.map(lambda s: NumericArraySpec((2,)))  # every spec numeric now
-        assert isinstance(mapped, NumericEventTemplate)
+        assert isinstance(mapped, NumericRecordSpec)
 
 
 # ---------------------------------------------------------------------------
@@ -421,7 +421,7 @@ class TestBatchFieldNav:
     covers for every collection."""
 
     def _nested_batch(self):
-        tpl = EventTemplate(outer=EventTemplate(a=(), b=()), m=())
+        tpl = RecordSpec(outer=RecordSpec(a=(), b=()), m=())
         return NumericRecordBatch.from_vector(
             "nrb", tpl, jnp.arange(15.0).reshape(5, 3), level_names="draw"
         )

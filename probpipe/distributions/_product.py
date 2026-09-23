@@ -426,7 +426,7 @@ class ProductDistribution(
         """Per-leaf support constraints -- each leaf component's ``support``.
 
         Nested components are keyed by slash-delimited paths
-        (``"outer/a"``), matching ``EventTemplate.leaf_shapes``, so every
+        (``"outer/a"``), matching ``RecordSpec.leaf_shapes``, so every
         value is a ``Constraint``."""
         out: dict = {}
 

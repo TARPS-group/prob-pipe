@@ -16,9 +16,9 @@ from probpipe import (
     Function,
     MultivariateNormal,
     Normal,
-    NumericEventTemplate,
     NumericRecord,
     NumericRecordBatch,
+    NumericRecordSpec,
     ProductDistribution,
     Record,
     TransformedDistribution,
@@ -590,7 +590,7 @@ def test_known_unapproved_record_wrappers_fail_closed():
         loc=jnp.zeros(2),
         cov=jnp.eye(2),
         name="theta",
-    ).as_record_distribution(template=NumericEventTemplate(a=(), b=()))
+    ).as_record_distribution(template=NumericRecordSpec(a=(), b=()))
 
     for value, label in (
         (flattened, "FlattenedDistributionView"),

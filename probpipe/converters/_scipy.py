@@ -292,7 +292,10 @@ class ScipyConverter(Converter):
             # Unknown scipy: sample -> RecordEmpiricalDistribution
             kwargs.pop("num_samples", None)
             sample_shape = plan.sample_shape
-            assert sample_shape is not None
+            if sample_shape is None:
+                raise RuntimeError(
+                    "Sampling a scipy distribution requires a conversion sample_shape"
+                )
             key = _resolve_conversion_key(key, plan)
             samples = jnp.asarray(
                 source.rvs(

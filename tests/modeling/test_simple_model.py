@@ -15,9 +15,9 @@ import pytest
 
 from probpipe import (
     ApproximateDistribution,
-    EventTemplate,
     MultivariateNormal,
     Record,
+    RecordSpec,
     ResolutionError,
     SimpleModel,
     SupportsLogProb,
@@ -293,7 +293,7 @@ class TestSimpleModelWithValues:
     @pytest.fixture
     def prior_with_template(self):
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params")
-        prior._event_template = EventTemplate(a=(), b=())
+        prior._event_template = RecordSpec(a=(), b=())
         return prior
 
     @pytest.fixture
@@ -356,7 +356,7 @@ class TestSimpleModelWithValues:
     def test_field_overlap_raises(self):
         """SimpleModel rejects overlapping prior and data field names."""
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params")
-        prior._event_template = EventTemplate(X=(), y=())
+        prior._event_template = RecordSpec(X=(), y=())
 
         class _OverlapLikelihood:
             def log_likelihood(self, params, data):
@@ -364,7 +364,7 @@ class TestSimpleModelWithValues:
 
             @property
             def data_template(self):
-                return EventTemplate(X=(0, 0), y=(0,))
+                return RecordSpec(X=(0, 0), y=(0,))
 
         with pytest.raises(ValueError, match="overlap"):
             SimpleModel(prior, _OverlapLikelihood())

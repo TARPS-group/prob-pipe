@@ -14,14 +14,13 @@ import pytest
 
 from probpipe import (
     DistributionSpec,
-    EventTemplate,
     FunctionSpec,
     Normal,
     NumericArraySpec,
     OpaqueSpec,
     Record,
     RecordSpec,
-    ValueSpec,
+    TermSpec,
 )
 from probpipe.core._fingerprint import (
     _fingerprint_with_strength,
@@ -461,8 +460,8 @@ class TestFunctionHashing:
         def build(*, input_shape=(), output_shape=()):
             return Function(
                 func=identity,
-                input_template=EventTemplate(x=input_shape),
-                output_template=EventTemplate(y=output_shape),
+                input_template=RecordSpec(x=input_shape),
+                output_template=RecordSpec(y=output_shape),
             )
 
         baseline = build()
@@ -922,7 +921,7 @@ class TestNumericContainerHashing:
         assert run() == run()
 
 
-class TestValueSpecFingerprints:
+class TestTermSpecFingerprints:
     """Specs are hashed as template leaves, by declaration and not by identity.
 
     A declaration is stored as a spec (`DistributionSpec.event_spec`,
@@ -940,13 +939,13 @@ class TestValueSpecFingerprints:
         still returns a digest — so every comparison below would be meaningless
         without this check.
         """
-        digest, weak = _fingerprint_with_strength(EventTemplate(field=spec))
+        digest, weak = _fingerprint_with_strength(RecordSpec(field=spec))
         assert not weak, "spec hashed by identity, not by declaration"
         return digest
 
     @pytest.fixture
     def tau(self):
-        return EventTemplate(x=())
+        return RecordSpec(x=())
 
     def test_every_spec_kind_is_reachable_by_the_hasher(self, tau):
         """Each kind hashes by declaration; none falls through to identity."""
@@ -958,18 +957,18 @@ class TestValueSpecFingerprints:
             FunctionSpec(tau, tau),
             FunctionSpec(),
         ):
-            _, weak = _fingerprint_with_strength(EventTemplate(field=spec))
+            _, weak = _fingerprint_with_strength(RecordSpec(field=spec))
             assert not weak, f"{type(spec).__name__} hashed by identity"
 
     def test_an_unknown_spec_kind_is_reported_weak(self, tau):
         """The contract boundary: a spec the hasher does not know is not silently
         treated as strong, so a future kind that skips the hasher is visible."""
 
-        class _UnknownSpec(ValueSpec):
+        class _UnknownSpec(TermSpec):
             def is_valid(self, value):
                 return True
 
-        _, weak = _fingerprint_with_strength(EventTemplate(field=_UnknownSpec()))
+        _, weak = _fingerprint_with_strength(RecordSpec(field=_UnknownSpec()))
         assert weak
 
     @pytest.mark.parametrize(
@@ -985,10 +984,10 @@ class TestValueSpecFingerprints:
     def test_equal_declarations_fingerprint_equal(self, make):
         # Distinct-but-equal templates, so this pins declaration equality
         # rather than object identity.
-        assert self._fp(make(EventTemplate(x=()))) == self._fp(make(EventTemplate(x=())))
+        assert self._fp(make(RecordSpec(x=()))) == self._fp(make(RecordSpec(x=())))
 
     def test_distinct_declarations_fingerprint_differently(self, tau):
-        other = EventTemplate(y=())
+        other = RecordSpec(y=())
         assert self._fp(RecordSpec(tau)) != self._fp(RecordSpec(other))
         assert self._fp(DistributionSpec(tau)) != self._fp(DistributionSpec(other))
         assert self._fp(FunctionSpec(tau, tau)) != self._fp(FunctionSpec(tau, other))
@@ -1010,7 +1009,7 @@ class TestValueSpecFingerprints:
         An output declaration may itself be a FunctionSpec, so the chain is
         unbounded; hashing it must degrade to the depth marker and report weak
         rather than exhaust the interpreter stack. The spec is hashed directly:
-        nesting it in a template instead would recurse in ``EventTemplate``'s
+        nesting it in a template instead would recurse in ``RecordSpec``'s
         own hash, which is a separate concern.
         """
         spec = FunctionSpec()
@@ -1030,15 +1029,15 @@ class TestValueSpecFingerprints:
     def test_spec_outside_a_template_is_still_hashed_by_declaration(self, wrap, tau):
         """A spec reached other than as a template leaf must not hash by identity.
 
-        The generic hasher must route a `ValueSpec` to the spec hasher, which
+        The generic hasher must route a `TermSpec` to the spec hasher, which
         records the object type and the declaration fields. Falling through to
         identity hashing would make equal declarations hash differently and
         silently break cache keys and provenance.
         """
         # Both specs are bound and alive simultaneously, so they cannot share an
         # address: under identity hashing the digests would differ.
-        left = RecordSpec(EventTemplate(x=()))
-        right = RecordSpec(EventTemplate(x=()))
+        left = RecordSpec(x=())
+        right = RecordSpec(x=())
         first, weak = _fingerprint_with_strength(wrap(left))
         second, _ = _fingerprint_with_strength(wrap(right))
 
@@ -1057,8 +1056,8 @@ class TestValueSpecFingerprints:
         the type name too, so it separates a RecordSpec from a DistributionSpec
         on its own. Only reading the declaration fields separates these.
         """
-        one = RecordSpec(EventTemplate(x=()))
-        other = RecordSpec(EventTemplate(y=()))
+        one = RecordSpec(x=())
+        other = RecordSpec(y=())
         first, weak = _fingerprint_with_strength(wrap(one))
         second, _ = _fingerprint_with_strength(wrap(other))
 

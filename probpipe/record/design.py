@@ -23,7 +23,7 @@ import numpy as np
 
 from ..core._array_backend import _is_numeric_dtype
 from ..core._record_batch import RecordBatch
-from ..core.event_template import EventTemplate
+from ..core._specs import RecordSpec
 
 __all__ = ["Design", "FullFactorialDesign"]
 
@@ -203,7 +203,7 @@ class FullFactorialDesign(Design):
             f"FullFactorialDesign({','.join(names)})",
             fields,
             DESIGN_LEVEL,
-            element_spec=EventTemplate(template_spec),
+            element_spec=RecordSpec(template_spec),
             axes_per_level=(1,),
         )
         # The name is derived from the marginals, not user-typed.

@@ -7,10 +7,10 @@ import scipy.stats
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
 from probpipe import (
-    EventTemplate,
     GLMLikelihood,
     MultivariateNormal,
     Record,
+    RecordSpec,
     SimpleModel,
     condition_on,
     mean,
@@ -179,7 +179,7 @@ class TestGLMLikelihoodDataTemplate:
 
     def test_data_template_fields(self, poisson_lik):
         tpl = poisson_lik.data_template
-        assert isinstance(tpl, EventTemplate)
+        assert isinstance(tpl, RecordSpec)
         assert tpl.fields == ("X", "y")
 
     def test_data_template_integrates_with_simple_model(self, poisson_lik):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from unittest.mock import patch
 
 import jax
@@ -78,6 +79,44 @@ def _flat_samples(dist):
 
 
 class TestBuiltInConversionPlanning:
+    @pytest.mark.parametrize(
+        ("provider", "sample_method", "message"),
+        [
+            ("probpipe", "_sample", "a sampled conversion requires a sample shape"),
+            ("tfp", "sample", "Sampling a TFP distribution requires a conversion sample_shape"),
+            ("scipy", "rvs", "Sampling a scipy distribution requires a conversion sample_shape"),
+        ],
+    )
+    @pytest.mark.parametrize("explicit_key", [False, True], ids=["automatic-key", "explicit-key"])
+    def test_missing_sample_shape_fails_before_sampling_and_rng_commit(
+        self, provider, sample_method, message, explicit_key
+    ):
+        if provider == "probpipe":
+            converter = ProbPipeConverter()
+            source = Normal(loc=0.0, scale=1.0, name="x")
+        elif provider == "tfp":
+            converter = TFPConverter()
+            source = tfd.VonMises(loc=0.0, concentration=1.0)
+        else:
+            stats = pytest.importorskip("scipy.stats")
+            converter = _scipy.ScipyConverter()
+            source = stats.chi2(df=3)
+        target = RecordEmpiricalDistribution
+        plan = converter._workflow_plan_conversion(source, target, {"num_samples": 4})
+        invalid_plan = replace(plan, sample_shape=None)
+        key = jax.random.key(11) if explicit_key else None
+
+        with (
+            patch.object(converter, "_workflow_plan_conversion", return_value=invalid_plan),
+            patch.object(type(source), sample_method) as sample,
+            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            workflow_run(seed=7),
+        ):
+            with pytest.raises(RuntimeError, match=message):
+                converter.convert(source, target, key=key, num_samples=4)
+            sample.assert_not_called()
+            commit.assert_not_called()
+
     def test_exact_and_analytic_paths_claim_no_event(self):
         source = Normal(loc=0.0, scale=1.0, name="x")
         analytic_source = Gamma(concentration=9.0, rate=1.0, name="g")

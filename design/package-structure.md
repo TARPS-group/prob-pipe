@@ -25,7 +25,8 @@ probpipe/
 ├── core/                      # Part II — shared abstractions
 │   ├── _named_tree.py         #   NamedTree (II.6)
 │   ├── _constraints.py        #   Constraint and the constraint factories (II.3)
-│   ├── _specs.py              #   TermSpec, NumericArraySpec, OpaqueSpec (II.1), InputSpec, OutputSpec and component projection contracts (II.2)
+│   ├── _spec_base.py          #   TermSpec and dimension unification (II.1), NumericArraySpec, OpaqueSpec (III.1–III.2)
+│   ├── _specs.py              #   InputSpec, OutputSpec and component projection contracts (II.2)
 │   ├── _kinds.py              #   the kind table: register_kind, term_class_for_spec, batch_class_for_spec (II.1)
 │   ├── _numeric.py            #   Numeric and its spec-side mixin NumericSpec (II.3)
 │   ├── _array_backend.py      #   the array-backend registry for native numeric leaves (II.3)
@@ -132,6 +133,14 @@ A handful of private helper modules (dtypes, array utilities) support the packag
 
 Every module with a design contract, with where it goes; the target contracts above are authoritative.
 
+G2 currently divides the spec implementation into four files: `core/_spec_base.py`
+defines `TermSpec`, `NumericSpec`, `NumericArraySpec`, `OpaqueSpec`, and shared
+dimension unification; `core/_record_spec.py` defines `RecordSpec` and
+`NumericRecordSpec`; `core/_kind_specs.py` defines `DistributionSpec` and
+`FunctionSpec`; and `core/_specs.py` defines `InputSpec` and `OutputSpec` and
+re-exports the public spec types. The kind specs' current location is interim;
+their target placement remains beside the value types they describe.
+
 | Today | Target |
 |---|---|
 | `core/node.py` (`Function`, the decorator, `with_options`) | `functions/_function.py` |
@@ -156,7 +165,11 @@ Every module with a design contract, with where it goes; the target contracts ab
 | `inference/_registry.py` (the registry object, today imported upward by `core/ops.py`) | `operations/_condition.py`; the methods stay in `inference/`, and the edge points downward |
 | `core/named_tree.py`, `core/tracked.py`, `core/provenance.py`, `core/_dispatch.py` | `core/`, one module per II section; `Annotated` folds into `TrackedTerm` (II.4) |
 | `core/_numeric_array.py`, `core/_opaque.py`, `core/record.py`, and their batch modules | `values/`, one module per III section |
-| `core/event_template.py`, `core/constraints.py` | split in place: `core/_specs.py`, `core/_record_spec.py`, `core/_numeric.py`, `core/_constraints.py` (II.1–II.3, III.5) |
+| `core/_spec_base.py` | `TermSpec`, `NumericArraySpec`, `OpaqueSpec`, and dimension unification stay in place; `NumericSpec` joins `Numeric` in `core/_numeric.py` (II.1, II.3, III.1–III.2) |
+| `core/_record_spec.py` | in place: `RecordSpec`, `NumericRecordSpec`, and record unification (III.5) |
+| `core/_kind_specs.py` | `FunctionSpec` to `values/_function_base.py` (III.3); `DistributionSpec` to `distributions/_distribution.py` (III.7) |
+| `core/_specs.py` | `InputSpec`, `OutputSpec`, and component projection contracts stay in place (II.2) |
+| `core/constraints.py` | `core/_constraints.py` (II.3) |
 | `record/design.py` | `designs/`, generalized from `RecordBatch` to any element spec |
 | `core/_record_distribution.py` | `distributions/_views.py` (`FieldView`, III.7); `RecordDistribution` is retired, since draw structure is declared in `event_spec` (III.7) |
 | `core/_numeric_record_distribution.py` | the numeric marker to `distributions/_distribution.py` (III.7) and `BootstrapDistribution` to `families/_resampling.py` (VII.2); `FlatNumericRecordDistribution`, `FlattenedDistributionView`, and `NumericRecordDistributionView` are retired, the flat view being `evaluate(to_vector, d)` (III.7) |

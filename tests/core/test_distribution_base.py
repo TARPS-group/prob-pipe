@@ -14,7 +14,7 @@ from probpipe import (
     RecordEmpiricalDistribution,
     TransformedDistribution,
 )
-from probpipe.core.event_template import NumericArraySpec
+from probpipe.core._specs import NumericArraySpec
 from probpipe.core.provenance import Provenance, provenance_ancestors
 from probpipe.distributions.kde import KDEDistribution
 
@@ -140,7 +140,7 @@ class TestWithNameSampling:
         assert renamed.event_shape == mvn.event_shape
 
 
-class TestWithNameEventTemplate:
+class TestWithNameRecordSpec:
     """with_name() regenerates the cached event_template with the new name."""
 
     def test_template_field_name_updates(self):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 from typing import Any, Protocol, runtime_checkable
+from unittest.mock import patch
 
 import jax.numpy as jnp
 import numpy as np
@@ -18,6 +19,7 @@ from probpipe import (
     Normal,
     NumericArrayBatch,
     NumericRecordDistribution,
+    converter_registry,
     log_prob,
     mean,
     workflow_run,
@@ -96,6 +98,28 @@ class TestNormalizeDistributionValues:
         assert normalized["dist"] is not empirical_dist
         assert isinstance(normalized["dist"], KDEDistribution)
         assert isinstance(normalized["dist"], SupportsLogProb)
+
+    def test_protocol_hint_preserves_value_when_conversion_raises_type_error(self, empirical_dist):
+        with patch.object(converter_registry, "convert", side_effect=TypeError("unsupported")):
+            normalized = normalize_distribution_values(
+                values={"dist": empirical_dist},
+                signature_info=_signature_info(("dist",), {"dist": SupportsLogProb}),
+            )
+
+        assert normalized["dist"] is empirical_dist
+
+    def test_protocol_hint_propagates_invalid_conversion_plan(self, empirical_dist):
+        error = RuntimeError("a sampled conversion requires a sample shape")
+        with (
+            patch.object(converter_registry, "convert", side_effect=error),
+            pytest.raises(RuntimeError, match="requires a sample shape") as exc_info,
+        ):
+            normalize_distribution_values(
+                values={"dist": empirical_dist},
+                signature_info=_signature_info(("dist",), {"dist": SupportsLogProb}),
+            )
+
+        assert exc_info.value is error
 
     def test_zero_dimensional_distribution_array_unwraps_to_scalar_component(self):
         da = DistributionArray.from_batched_params(

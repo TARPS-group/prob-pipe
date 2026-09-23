@@ -13,7 +13,6 @@ import pytest
 
 from probpipe import (
     DistributionArray,
-    EventTemplate,
     Function,
     FunctionBatch,
     Normal,
@@ -27,9 +26,10 @@ from probpipe import (
     ProductDistribution,
     Record,
     RecordBatch,
+    RecordSpec,
 )
+from probpipe.core._specs import NumericRecordSpec
 from probpipe.core._workflow_result import _wrap_as_term
-from probpipe.core.event_template import NumericEventTemplate
 from probpipe.core.ops import (
     log_prob,
     mean,
@@ -41,7 +41,7 @@ from probpipe.core.ops import (
 )
 
 KEY = jax.random.PRNGKey(0)
-ELEMENT = NumericEventTemplate(a=())
+ELEMENT = NumericRecordSpec(a=())
 COLUMNS = {"a": jnp.arange(4.0)}
 
 
@@ -454,7 +454,7 @@ class TestRawDrawNaming:
 
     @pytest.mark.parametrize("value", [2.0, {"x": 2.0}], ids=["scalar", "mapping"])
     def test_a_declared_raw_result_takes_the_requested_name(self, value):
-        template = EventTemplate(x=NumericArraySpec(()))
+        template = RecordSpec(x=NumericArraySpec(()))
         result = _wrap_as_term(value, "sample", template, name="law")
 
         assert isinstance(result, Record)
@@ -487,13 +487,13 @@ class TestEveryAggregateIsNamedForItsFunction:
 
     @staticmethod
     def _rows(n: int = 3):
-        from probpipe.core.event_template import NumericEventTemplate
+        from probpipe.core._specs import NumericRecordSpec
 
         return NumericRecordBatch(
             "rows",
             {"x": jnp.arange(float(n))},
             "row",
-            element_spec=NumericEventTemplate(x=()),
+            element_spec=NumericRecordSpec(x=()),
         )
 
     def _swept(self, body, **controls):
@@ -515,24 +515,22 @@ class TestEveryAggregateIsNamedForItsFunction:
         assert result.name == "double"
 
     def test_a_declared_aggregate_is_named_the_same_way(self):
-        from probpipe import EventTemplate
+        from probpipe import RecordSpec
 
-        result = self._swept(
-            lambda v: {"y": jnp.asarray(v["x"])}, output_template=EventTemplate(y=())
-        )
+        result = self._swept(lambda v: {"y": jnp.asarray(v["x"])}, output_template=RecordSpec(y=()))
 
         assert result.name == "double"
 
     def test_a_multi_axis_sweep_is_named_the_same_way(self):
         """The re-cut to the sweep's own geometry is a separate construction, and
         it had its own naming."""
-        from probpipe.core.event_template import NumericEventTemplate
+        from probpipe.core._specs import NumericRecordSpec
 
         grid = NumericRecordBatch(
             "grid",
             {"x": jnp.arange(6.0).reshape(2, 3)},
             ("a", "b"),
-            element_spec=NumericEventTemplate(x=()),
+            element_spec=NumericRecordSpec(x=()),
         )
 
         result = Function(
@@ -581,7 +579,7 @@ class TestNoKindInventsAName:
             "derived",
             {"a": jnp.zeros(3), "b": jnp.zeros(3)},
             "lvl",
-            element_spec=NumericEventTemplate(a=(), b=()),
+            element_spec=NumericRecordSpec(a=(), b=()),
         )
 
         edited = batch.without("b")

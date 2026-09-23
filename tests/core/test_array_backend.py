@@ -18,7 +18,7 @@ import pytest
 
 from probpipe import ArrayBackend, NumericRecord, Record, array_backend_for, register_array_backend
 from probpipe.core import _array_backend
-from probpipe.core.event_template import EventTemplate, NumericArraySpec, NumericEventTemplate
+from probpipe.core._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
 
 xr = pytest.importorskip("xarray")
 pd = pytest.importorskip("pandas")
@@ -94,9 +94,9 @@ class TestRegistryLookup:
 
     def test_dataframe_mixed_numeric_validates_against_pinned_spec(self):
         # Regression: an int64 + float64 frame validates against a float64-pinned
-        # NumericEventTemplate (previously rejected because numpy_dtype was None).
+        # NumericRecordSpec (previously rejected because numpy_dtype was None).
         df = pd.DataFrame({"a": [1, 2], "b": [3.0, 4.0]})
-        tpl = NumericEventTemplate({"x": NumericArraySpec((2, 2), dtype=np.dtype("float64"))})
+        tpl = NumericRecordSpec({"x": NumericArraySpec((2, 2), dtype=np.dtype("float64"))})
         nr = NumericRecord("r", x=df, event_template=tpl)
         assert nr["x"] is df
 
@@ -363,7 +363,7 @@ class TestLazyConversion:
         leaf = _LazyLeaf()
         r = Record("r", lazy=leaf)
         assert type(r) is NumericRecord
-        assert isinstance(r.event_template, NumericEventTemplate)
+        assert isinstance(r.event_template, NumericRecordSpec)
         assert leaf.materialisations == 0
 
     def test_compute_boundary_materialises_exactly_once(self):
@@ -456,7 +456,7 @@ def _fake_backend() -> ArrayBackend:
 class TestBackendRegistrationEndToEnd:
     def test_unregistered_fake_tensor_is_rejected(self):
         t = _FakeTensor([1.0, 2.0])
-        assert EventTemplate.infer_from({"t": t})["t"] != NumericArraySpec((2,))
+        assert RecordSpec.infer_from({"t": t})["t"] != NumericArraySpec((2,))
         with pytest.raises(TypeError, match="must be a numeric"):
             NumericRecord("nr", t=t)
 
@@ -465,8 +465,8 @@ class TestBackendRegistrationEndToEnd:
         t = _FakeTensor([1.0, 2.0])
 
         # Recognition: template inference and spec validation.
-        tpl = EventTemplate.infer_from({"t": t})
-        assert isinstance(tpl, NumericEventTemplate)
+        tpl = RecordSpec.infer_from({"t": t})
+        assert isinstance(tpl, NumericRecordSpec)
         assert tpl["t"] == NumericArraySpec((2,))
         assert NumericArraySpec((2,)).is_valid(t)
         assert NumericArraySpec((2,), dtype=np.float32).is_valid(t)
@@ -578,7 +578,7 @@ class TestGenericGateRejectsExtensionDtype:
         from unittest.mock import MagicMock
 
         from probpipe.core._array_backend import _is_numeric_dtype
-        from probpipe.core.event_template import _full_array_shape_or_none
+        from probpipe.core._spec_base import _full_array_shape_or_none
 
         assert _is_numeric_dtype(MagicMock()) is False
         assert _full_array_shape_or_none(MagicMock()) is None
@@ -598,7 +598,7 @@ class TestNullableNumericMissingData:
         df = pd.DataFrame({"a": pd.array([1, 2], dtype="Int64")})
         r = Record("r", m=df)
         assert type(r) is NumericRecord
-        assert isinstance(r.event_template, NumericEventTemplate)
+        assert isinstance(r.event_template, NumericRecordSpec)
 
     def test_na_encoded_as_nan_at_boundary(self):
         df = pd.DataFrame({"a": pd.array([1, None, 3], dtype="Int64")})

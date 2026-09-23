@@ -97,7 +97,7 @@ def _sample_probpipe_conversion_source(
     """Sample a ProbPipe source through its closed root graph when keyless."""
     sample_shape = plan.sample_shape
     if sample_shape is None:
-        raise TypeError("a sampled conversion requires a sample shape")
+        raise RuntimeError("a sampled conversion requires a sample shape")
     if key is not None:
         return source._sample(key, sample_shape)
     captured = _workflow_descendants.capture_stochastic_consumer(source)

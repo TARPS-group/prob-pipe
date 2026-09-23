@@ -763,7 +763,7 @@ class TestDistributionCoverageGaps:
 
     def test_auto_template_from_name_and_event_shape(self):
         """``NumericRecordDistribution`` auto-builds a single-field
-        ``EventTemplate`` from ``name`` + ``event_shape``, so every
+        ``RecordSpec`` from ``name`` + ``event_shape``, so every
         concrete subclass has a non-None template without per-subclass
         boilerplate. ``dtypes`` is canonical (subclass must override);
         ``dtype`` derives from it.

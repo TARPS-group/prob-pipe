@@ -22,8 +22,8 @@ from typing import Any
 import numpy as np
 
 from ._function_contract import _CallableFunctionImplementation
+from ._specs import RecordSpec
 from .constraints import Constraint
-from .event_template import EventTemplate
 
 _CALLABLE_DEFINITION_ABI = "probpipe.callable_definition/v1"
 _CALLABLE_DEFINITION_DOMAIN = b"ProbPipe-callable-definition-v1\0"
@@ -284,7 +284,7 @@ def _canonical_value_inner(value: Any, active_ids: set[int]) -> dict[str, Any]:
             return _canonical_array(np.asarray(value), tag="numpy_scalar")
         if isinstance(value, np.ndarray):
             return _canonical_array(value, tag="numpy_array")
-        if isinstance(value, EventTemplate):
+        if isinstance(value, RecordSpec):
             return {
                 "tag": "event_template",
                 "type": _type_identity(type(value)),

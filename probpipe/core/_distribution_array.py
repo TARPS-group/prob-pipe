@@ -50,7 +50,7 @@ import numpy as np
 from .._array_utils import _slice_leading_axes
 from ._distribution_base import Distribution
 from ._immutable import transient_memo
-from .event_template import EventTemplate
+from ._specs import RecordSpec
 from .protocols import SupportsArrayBackend
 from .tracked import auto_name
 
@@ -181,7 +181,7 @@ class DistributionArray[T](Distribution[T]):
         # leaves it ``None`` and uses ``_components`` as the
         # storage-of-truth.
         self._backend = None
-        self._event_template: EventTemplate | None = None
+        self._event_template: RecordSpec | None = None
         name = auto_name(name, "distribution_array")
         super().__init__(name=name)
         # A DistributionArray holding MC-marginal components inherits
@@ -386,10 +386,16 @@ class DistributionArray[T](Distribution[T]):
         accesses return the same cached tuple but indexing via
         :meth:`__getitem__` / :meth:`_flat_component` always returns a
         fresh scalar.
+
+        Raises
+        ------
+        RuntimeError
+            If neither stored components nor a backend is available.
         """
         if self._components is not None:
             return self._components
-        assert self._backend is not None  # invariant
+        if self._backend is None:
+            raise RuntimeError("DistributionArray has neither stored components nor a backend")
         cells = transient_memo(self).get("components")
         if cells is None:
             n = prod(self._batch_shape)
@@ -417,7 +423,7 @@ class DistributionArray[T](Distribution[T]):
         return getattr(self._components[0], "event_shape", ())
 
     @property
-    def event_template(self) -> EventTemplate | None:
+    def event_template(self) -> RecordSpec | None:
         """Authoritative template shared by the component distributions.
 
         Function-produced arrays store the declared template explicitly.
@@ -682,7 +688,7 @@ def _make_distribution_array(
     *,
     batch_shape: tuple[int, ...] | None = None,
     name: str | None = None,
-    event_template: EventTemplate | None = None,
+    event_template: RecordSpec | None = None,
 ) -> DistributionArray:
     """Factory: build a ``DistributionArray``.
 
@@ -704,7 +710,7 @@ def _make_distribution_array(
         ``len(components)``.
     name : str, optional
         Name for provenance.
-    event_template : EventTemplate, optional
+    event_template : RecordSpec, optional
         Authoritative template for a Function-produced aggregate. Every
         component must expose the same template.
     """

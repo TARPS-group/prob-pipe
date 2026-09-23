@@ -24,7 +24,7 @@ import jax
 import numpy as np
 
 from ._batch import Batch, BatchSpec, _axis_groups_for
-from .event_template import ValueSpec
+from ._specs import TermSpec
 from .provenance import Provenance
 
 
@@ -46,7 +46,7 @@ class _ObjectBatch[E](Batch[E]):
     level_names : str or iterable of str
         One name per level, outermost first; a single string names a single
         level. There is no default, deliberately — see *Notes*.
-    element_spec : ValueSpec
+    element_spec : TermSpec
         What every element satisfies, checked against each at construction.
     axes_per_level : iterable of int, optional
         How many axes each level holds, outermost first; they must account for
@@ -98,7 +98,7 @@ class _ObjectBatch[E](Batch[E]):
         /,
         level_names: str | Iterable[str],
         *,
-        element_spec: ValueSpec,
+        element_spec: TermSpec,
         axes_per_level: Iterable[int] | None = None,
         provenance: Provenance | None = None,
     ) -> None:
@@ -268,7 +268,7 @@ def _from_iterable(elements: Iterable[Any], *, kind: str) -> np.ndarray:
 
 
 def _check_elements(
-    store: np.ndarray, element_spec: ValueSpec, *, describing: str, kind: str
+    store: np.ndarray, element_spec: TermSpec, *, describing: str, kind: str
 ) -> None:
     """Fail on the first element the shared spec does not admit, naming its position.
 

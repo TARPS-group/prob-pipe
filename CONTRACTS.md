@@ -1,7 +1,7 @@
 # Contract Discipline — Value-Model Refactor (issue #235)
 
 **Audience:** every session (Claude or human) implementing a phase of the #235 value-model plan —
-`EventTemplate`, the `Record` / `Distribution` value containers, the Batch types
+`RecordSpec`, the `Record` / `Distribution` value containers, the Batch types
 (`*Array` → `*Batch`), `Function`, and naming/provenance. **Read this before you start, and
 follow it for every phase.** It is meant to outlive any single PR or session — do not assume the
 plan's author is available to restate these rules.
@@ -93,10 +93,14 @@ if it were user-guide reference text.
 | Abstraction | Canonical contract location |
 |---|---|
 | `NamedTree` (shared name-keyed tree substrate) | docstrings in `probpipe/core/named_tree.py`; #235 Chapter 1 |
-| `EventTemplate` / `NumericEventTemplate` / `ValueSpec` (raw-value: `NumericArraySpec`·`OpaqueSpec`; `TermSpec`: `RecordSpec`·`DistributionSpec`·`FunctionSpec`) | docstrings in `probpipe/core/event_template.py`; #235 Chapter 1 |
+| `TermSpec` / `NumericSpec` (one spec protocol across all kinds) | docstrings in `probpipe/core/_spec_base.py`; design II.1–II.3 |
+| `NumericArraySpec` / `OpaqueSpec` (numeric-array and opaque value declarations) | docstrings in `probpipe/core/_spec_base.py`; design III.1–III.2 |
+| `DistributionSpec` / `FunctionSpec` (distribution and callable declarations) | docstrings in `probpipe/core/_kind_specs.py`; design III.7 and III.3 |
+| `InputSpec` / `OutputSpec` (slots, component exposure, type holes) | docstrings in `probpipe/core/_specs.py`; design II.2 |
+| `RecordSpec` / `NumericRecordSpec` (the record kind spec is its schema) | docstrings in `probpipe/core/_record_spec.py`; design III.5 |
 | the kind table (which tracked class and which batch form each value spec has) | docstrings in `probpipe/core/_kinds.py` |
 | `NumericArray` / `Opaque` (the tracked classes of the two raw-value kinds) | docstrings in `probpipe/core/_numeric_array.py`, `_opaque.py` |
-| `Record` / `NumericRecord` (each stores its type as a `RecordSpec`, with `event_template` a view on it) | docstrings in `probpipe/core/record.py`, `_numeric_record.py`; #235 Chapter 2 |
+| `Record` / `NumericRecord` (`spec` and `event_template` return the same stored `RecordSpec` object) | docstrings in `probpipe/core/record.py`, `_numeric_record.py`; #235 Chapter 2 |
 | `Batch` / `BatchSpec` (the multiplicity axis: levels, level names, view identity) | docstrings in `probpipe/core/_batch.py`; #235 Chapter 2 |
 | `NumericArrayBatch` (the batch form of the numeric-array kind; one native store, not columns) | docstrings in `probpipe/core/_numeric_array_batch.py`; #235 Chapter 2 |
 | `RecordBatch` / `NumericRecordBatch` (columnar, leaf-path-keyed storage; a collection, not a named tree) | docstrings in `probpipe/core/_record_batch.py`, `_numeric_record_batch.py`; #235 Chapter 2 |
@@ -117,7 +121,7 @@ if it were user-guide reference text.
 | the spec every element of a batch satisfies | `element_spec` |
 | the objects a batch is built from | `elements` |
 | independent-draw shape prefix for `sample` | `sample_shape` |
-| a distribution's structural schema | `event_template` |
+| a distribution's current structural schema | `event_template` (RecordSpec; declaration migration is separate) |
 | PRNG key | `key` |
 | a tracked object's own identity name (the required first arg of `Record` / a distribution) | `name` |
 | a field key within a tree / the name being assigned to a field | `field_name` / `key` |

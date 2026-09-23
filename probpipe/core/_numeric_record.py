@@ -34,11 +34,10 @@ from ._array_backend import (
     _numpy_dtype_of,
     _to_jax_array,
 )
-from .event_template import (
-    EventTemplate,
-    NumericEventTemplate,
+from ._specs import (
+    NumericArraySpec,
+    NumericRecordSpec,
     RecordSpec,
-    _record_declaration_template,
 )
 from .named_tree import _PATH_SEP, _check_no_path_sep, _unflatten_paths
 from .record import Record
@@ -144,9 +143,8 @@ class NumericRecord(Record):
         ``numpy`` / ``xarray`` / ``pandas`` / registered backends), a numeric
         Python scalar, or a nested ``NumericRecord``. At least one field is
         required.
-    event_template : NumericEventTemplate or RecordSpec, optional
-        The value's authoritative schema, as a bare template or as the
-        :class:`RecordSpec` that stores one. When omitted it is inferred from
+    event_template : NumericRecordSpec, optional
+        The value's authoritative numeric schema. When omitted it is inferred from
         the field data at construction; when supplied it is validated against
         the fields. Either way it is fixed for the life of the record, readable
         as :attr:`spec` or, for its structure, :attr:`event_template`.
@@ -190,14 +188,10 @@ class NumericRecord(Record):
         _fields: Mapping[str, ArrayLike | NumericRecord] | None = None,
         /,
         *,
-        event_template: EventTemplate | RecordSpec | None = None,
+        event_template: RecordSpec | None = None,
         _validate_leaves: bool = True,
         **fields: ArrayLike | NumericRecord,
     ):
-        # Read as a template for the child lookups below. ``event_template``
-        # itself goes on to ``Record.__init__`` in the caller's own form, so a
-        # supplied spec is stored verbatim rather than re-wrapped.
-        declared_template = _record_declaration_template(event_template)
         # Build the validated field dict *before* Record's __init__ runs, so
         # ``_fields`` is populated exactly once and the "constructed once,
         # never touched" invariant implied by ``__slots__`` + the
@@ -217,10 +211,10 @@ class NumericRecord(Record):
         for field_name, value in raw_inputs.items():
             if isinstance(value, Mapping):
                 # A mapping value is nested structure: materialise the child.
-                sub_template: EventTemplate | None = None
-                if declared_template is not None:
-                    child = declared_template.children.get(field_name)
-                    if isinstance(child, EventTemplate):
+                sub_template: RecordSpec | None = None
+                if event_template is not None:
+                    child = event_template.children.get(field_name)
+                    if isinstance(child, RecordSpec):
                         sub_template = child
                 raw_fields[field_name] = type(self)(field_name, value, event_template=sub_template)
             else:
@@ -359,10 +353,15 @@ class NumericRecord(Record):
         numeric leaves into a single dense vector.
         """
         leaves = [self._field_as_jax(key) for key in self.event_template]
+        if not leaves:
+            # ``jnp.concatenate`` refuses an empty list; a record with no
+            # numeric leaves has ``vector_size == 0`` and serialises to the
+            # zero-length vector, which concatenates as the identity.
+            return jnp.zeros(0)
         return jnp.concatenate([jnp.reshape(leaf, -1) for leaf in leaves])
 
     @classmethod
-    def from_vector(cls, name: str, template: NumericEventTemplate, vec: Array) -> NumericRecord:
+    def from_vector(cls, name: str, template: NumericRecordSpec, vec: Array) -> NumericRecord:
         """Reconstruct a single record from its dense 1-D vector.
 
         The value-level inverse of :meth:`to_vector`: splits *vec* into the
@@ -376,8 +375,9 @@ class NumericRecord(Record):
         ----------
         name : str
             Name for the reconstructed record (user-given).
-        template : NumericEventTemplate
-            The flat layout supplying field names, shapes, and order.
+        template : NumericRecordSpec
+            The flat layout supplying field names, shapes, and order. Every
+            leaf must be a NumericArraySpec.
         vec : Array
             A vector of shape ``(template.vector_size,)`` — one single
             (unbatched) value.
@@ -391,7 +391,8 @@ class NumericRecord(Record):
         Raises
         ------
         TypeError
-            If *vec* carries leading batch axes — batched reconstruction is
+            If the template contains a non-array leaf, or *vec* carries
+            leading batch axes — batched reconstruction is
             the batch type's concern; use :meth:`NumericRecordBatch.from_vector`
             for a batched matrix.
         ValueError
@@ -477,7 +478,7 @@ class NumericRecord(Record):
 # ---------------------------------------------------------------------------
 
 
-def _value_treedef(template: NumericEventTemplate) -> jax.tree_util.PyTreeDef:
+def _value_treedef(template: NumericRecordSpec) -> jax.tree_util.PyTreeDef:
     """PyTreeDef of the value :func:`_reconstruct_from_vector` builds.
 
     A throwaway ``NumericRecord`` / ``NumericRecordBatch`` skeleton mirroring
@@ -488,10 +489,10 @@ def _value_treedef(template: NumericEventTemplate) -> jax.tree_util.PyTreeDef:
     """
     numeric_fill = jnp.zeros((), dtype=jnp.float32)
 
-    def _build(tpl: NumericEventTemplate) -> NumericRecord:
+    def _build(tpl: NumericRecordSpec) -> NumericRecord:
         fields: dict[str, Any] = {}
         for name, spec in tpl.children.items():
-            if isinstance(spec, NumericEventTemplate):
+            if isinstance(spec, NumericRecordSpec):
                 fields[name] = _build(spec)
             else:
                 fields[name] = jnp.broadcast_to(numeric_fill, spec.shape)
@@ -500,14 +501,14 @@ def _value_treedef(template: NumericEventTemplate) -> jax.tree_util.PyTreeDef:
         # template may pin another dtype (int32 / bool) — this skeleton exists
         # only to capture the treedef structure, and the real leaves are cast
         # to the field dtype in ``_reconstruct_from_vector``.
-        return Record("value", fields, event_template=tpl, _validate_leaves=False)
+        return NumericRecord("value", fields, event_template=tpl, _validate_leaves=False)
 
     return jax.tree_util.tree_structure(_build(template))
 
 
 def _reconstruct_from_vector(
     name: str,
-    template: NumericEventTemplate,
+    template: NumericRecordSpec,
     vec: Array,
     *,
     level_names: str | Iterable[str] = "sample",
@@ -525,6 +526,8 @@ def _reconstruct_from_vector(
 
     Raises
     ------
+    TypeError
+        If a template leaf is not a NumericArraySpec.
     ValueError
         If *vec* is 0-dimensional, or its trailing axis is not
         ``template.vector_size``.
@@ -545,25 +548,23 @@ def _reconstruct_from_vector(
     offset = 0
     leaves: list[Any] = []
 
-    def _collect(tpl: NumericEventTemplate) -> None:
-        nonlocal offset
-        for spec in tpl.children.values():
-            if isinstance(spec, NumericEventTemplate):
-                _collect(spec)
-            else:
-                size = prod(spec.shape) if spec.shape else 1
-                chunk = vec[..., offset : offset + size]
-                offset += size
-                leaf = jnp.reshape(chunk, (*batch_shape, *spec.shape))
-                # Cast back to the field's declared dtype so a dtype-pinned
-                # template (e.g. int32 / bool) round-trips faithfully — the flat
-                # vector is typically float (``to_vector`` concatenates, which
-                # promotes across mixed-dtype fields).
-                if spec.dtype is not None:
-                    leaf = leaf.astype(spec.dtype)
-                leaves.append(leaf)
-
-    _collect(template)
+    for path, spec in template._walk_leaves():
+        if not isinstance(spec, NumericArraySpec):
+            raise TypeError(
+                f"from_vector: field {path!r} has a {type(spec).__name__}; "
+                "reconstruction requires NumericArraySpec leaves"
+            )
+        size = prod(spec.shape)
+        chunk = vec[..., offset : offset + size]
+        offset += size
+        leaf = jnp.reshape(chunk, (*batch_shape, *spec.shape))
+        # Cast back to the field's declared dtype so a dtype-pinned
+        # template (e.g. int32 / bool) round-trips faithfully — the flat
+        # vector is typically float (``to_vector`` concatenates, which
+        # promotes across mixed-dtype fields).
+        if spec.dtype is not None:
+            leaf = leaf.astype(spec.dtype)
+        leaves.append(leaf)
     if batch_shape:
         # A batch reconstructs itself: its storage is one array per field, which
         # the flat blocks already are, so there is no tree to unflatten.
@@ -621,7 +622,7 @@ def _numeric_record_unflatten(aux: tuple[RecordSpec, str], children: list) -> Nu
     spec, name = aux
     return NumericRecord(
         name,
-        dict(zip(tuple(spec.event_template.children), children)),
+        dict(zip(tuple(spec.children), children)),
         event_template=spec,
         _validate_leaves=False,
     )

@@ -36,12 +36,8 @@ from ._numeric_record_batch import NumericRecordBatch
 from ._object_batch import _from_iterable, _is_object_array, _ObjectBatch
 from ._opaque_batch import OpaqueBatch
 from ._record_batch import RecordBatch, _batch_class_for, _MappedBatchColumns
-from .event_template import (
-    EventTemplate,
-    NumericArraySpec,
-    NumericEventTemplate,
-    _full_array_shape_or_none,
-)
+from ._spec_base import _full_array_shape_or_none
+from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
 from .protocols import (
     SupportsLogProb,
     SupportsMean,
@@ -77,7 +73,7 @@ class _RecordMarginal(RecordEmpiricalDistribution):
         *,
         log_weights: Array | Weights | None = None,
         name: str | None = None,
-        event_template: EventTemplate | None = None,
+        event_template: RecordSpec | None = None,
     ):
         # A batch of records holds its rows axis in the batch, and the merged
         # constructor wants one row per batch index, so peel it: the leaves keep
@@ -126,7 +122,7 @@ class _MixtureMarginal[T](Distribution[T]):
         *,
         log_weights: Array | Weights | None = None,
         name: str | None = None,
-        event_template: EventTemplate | None = None,
+        event_template: RecordSpec | None = None,
     ):
         n = len(components)
         self._components = components
@@ -149,7 +145,7 @@ class _MixtureMarginal[T](Distribution[T]):
         return self._w.normalized
 
     @property
-    def event_template(self) -> EventTemplate | None:
+    def event_template(self) -> RecordSpec | None:
         """Authoritative template shared by the mixture components."""
         return self._event_template
 
@@ -271,7 +267,7 @@ def _make_mixture_marginal(
     weights: Array | Weights | None = None,
     *,
     name: str | None = None,
-    event_template: EventTemplate | None = None,
+    event_template: RecordSpec | None = None,
 ) -> _MixtureMarginal:
     """Factory that builds a mixture marginal with dynamic protocol support.
 
@@ -378,7 +374,7 @@ def _stack_declared_columns(
     batch_shape: tuple[int, ...],
     axes_per_level: tuple[int, ...],
     level_names: tuple[str, ...],
-    template: EventTemplate,
+    template: RecordSpec,
 ) -> RecordBatch:
     """Build one batch for validated authoritative Function outputs.
 
@@ -445,7 +441,7 @@ def _empty_declared_stack(
     batch_shape: tuple[int, ...],
     /,
     *,
-    template: EventTemplate,
+    template: RecordSpec,
     level_names: tuple[str, ...],
     axes_per_level: tuple[int, ...],
 ) -> Any:
@@ -480,7 +476,7 @@ def _make_marginal(
     *,
     output_distributions: list | None = None,
     name: str | None = None,
-    event_template: EventTemplate | None = None,
+    event_template: RecordSpec | None = None,
 ) -> MarginalizedBroadcastDistribution:
     """Factory to construct the appropriate marginal subtype."""
     if output_distributions is not None:
@@ -516,7 +512,7 @@ def _make_marginal(
         )
 
     if isinstance(output_samples, RecordBatch) and not isinstance(
-        output_samples.event_template, NumericEventTemplate
+        output_samples.event_template, NumericRecordSpec
     ):
         # The record marginal is empirical over numeric leaves — its reductions
         # and resampling convert columns to arrays — so a batch holding a
@@ -749,7 +745,7 @@ def _make_stack(
     axis_groups: tuple[tuple[int, ...], ...] | None = None,
     name: str | None = None,
     field_name: str,
-    event_template: EventTemplate | None = None,
+    event_template: RecordSpec | None = None,
 ) -> Any:
     """Wrap inner Function outputs as a shape-``batch_shape``
     aggregate.
@@ -805,13 +801,12 @@ def _make_stack(
     result_name = field_name if name is None else name
 
     # Resolve batch_shape vs. n. Exactly one must be provided.
-    if batch_shape is None and n is None:
-        raise TypeError("_make_stack requires either batch_shape or n")
-    if batch_shape is not None and n is not None:
-        raise TypeError("_make_stack: pass batch_shape OR n, not both")
     if batch_shape is None:
-        assert n is not None
+        if n is None:
+            raise TypeError("_make_stack requires either batch_shape or n")
         batch_shape = (n,)
+    elif n is not None:
+        raise TypeError("_make_stack: pass batch_shape OR n, not both")
     batch_shape = tuple(batch_shape)
     n_total = int(prod(batch_shape)) if batch_shape else 1
     # One level per swept group, tiling the aggregate's leading axes. A single
@@ -1035,8 +1030,8 @@ def _make_stack(
                     spec = output.spec
                     if spec.free_dims:
                         bindings: dict[str, int] = {}
-                        spec.bind_dims_from_value(output, bindings, field_name)
-                        spec = spec.with_bound_dims(bindings)
+                        spec._bind_dims_from_value(output, bindings, field_name)
+                        spec = spec._substitute_dims(bindings)
                     specs.append(spec)
                 element_spec = specs[0]
                 for spec in specs[1:]:
@@ -1156,7 +1151,7 @@ def _make_stack(
         paths = list(inner_outputs.event_template)
         resolved = [inner_outputs[path] for path in paths]
         if all(hasattr(v, "shape") and v.shape[:1] == (n_total,) for v in resolved):
-            tpl = event_template or EventTemplate(
+            tpl = event_template or RecordSpec(
                 dict(zip(paths, (v.shape[1:] for v in resolved), strict=True))
             )
             columns = {
@@ -1349,7 +1344,7 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
         output_distributions: list | None = None,
         broadcast_args: list[str],
         name: str | None = None,
-        output_template: EventTemplate | None = None,
+        output_template: RecordSpec | None = None,
     ):
         self._input_samples = input_samples
         self._output_samples = output_samples

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from math import prod
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from xarray import DataTree
@@ -13,8 +13,8 @@ import jax.numpy as jnp
 from .._weights import Weights
 from ..core._immutable import transient_memo
 from ..core._opaque import OpaqueSpec
+from ..core._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
 from ..core.distribution import Distribution, RecordEmpiricalDistribution
-from ..core.event_template import EventTemplate, NumericArraySpec, NumericEventTemplate
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike
@@ -22,21 +22,21 @@ from ..custom_types import Array, ArrayLike
 __all__ = ["ApproximateDistribution", "make_posterior"]
 
 
-def _spec_size(spec: NumericArraySpec | EventTemplate) -> int:
+def _spec_size(spec: NumericArraySpec | RecordSpec) -> int:
     """Number of scalar elements one field contributes to a flat vector.
 
-    Given the spec of a single field of an :class:`EventTemplate`, return how
+    Given the spec of a single field of a :class:`RecordSpec`, return how
     many scalars that field occupies in the dense 1-D vector layout (see
     :meth:`~probpipe.NumericRecord.to_vector`): ``prod(shape)`` for an
-    :class:`NumericArraySpec`, or :attr:`~NumericEventTemplate.vector_size` for a
-    nested :class:`NumericEventTemplate`. Summing this over a template's fields
+    :class:`NumericArraySpec`, or :attr:`~NumericRecordSpec.vector_size` for a
+    nested :class:`NumericRecordSpec`. Summing this over a template's fields
     gives the template's own ``vector_size``; it is used here to size each
     field's contiguous column block when splitting a flat chain.
 
     Parameters
     ----------
     spec
-        One field's spec, as returned by :meth:`EventTemplate.__getitem__`.
+        One field's spec, as returned by :meth:`RecordSpec.__getitem__`.
 
     Raises
     ------
@@ -44,20 +44,20 @@ def _spec_size(spec: NumericArraySpec | EventTemplate) -> int:
         If the field has no flat size — a non-numeric leaf
         (:class:`~probpipe.OpaqueSpec` / :class:`~probpipe.DistributionSpec` /
         :class:`~probpipe.FunctionSpec`) or a mixed (non-all-numeric) nested
-        :class:`EventTemplate`.
+        :class:`RecordSpec`.
     """
-    if isinstance(spec, NumericEventTemplate):
+    if isinstance(spec, NumericRecordSpec):
         return spec.vector_size
-    if isinstance(spec, EventTemplate):
+    if isinstance(spec, RecordSpec):
         raise TypeError(
             f"nested {type(spec).__name__} contains non-numeric leaves; "
-            f"a flat size requires a NumericEventTemplate."
+            f"a flat size requires a NumericRecordSpec."
         )
     if isinstance(spec, NumericArraySpec):
         return prod(spec.shape) if spec.shape else 1
     raise TypeError(
         f"template field ({type(spec).__name__}) has no flat size; only numeric "
-        f"(NumericArraySpec) fields and nested NumericEventTemplate fields do."
+        f"(NumericArraySpec) fields and nested NumericRecordSpec fields do."
     )
 
 
@@ -67,7 +67,7 @@ def _spec_size(spec: NumericArraySpec | EventTemplate) -> int:
 
 
 def _column_permutation(
-    event_template: EventTemplate,
+    event_template: RecordSpec,
     field_order: list[str],
 ) -> list[int]:
     """Column-index permutation mapping a *field_order*-laid-out flat chain
@@ -133,7 +133,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         Optional per-sample importance weights (across all chains).
     name : str or None
         Distribution name for provenance.
-    event_template : EventTemplate or None
+    event_template : RecordSpec or None
         If given, names the posterior's fields: the concatenated chain is
         split into per-field arrays (multi-field) so :meth:`draws`,
         :meth:`_mean` / :meth:`_variance`, etc. return Records keyed by
@@ -155,7 +155,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
     :attr:`fields`, :attr:`event_shapes`, :attr:`dtypes`,
     :meth:`_mean` / :meth:`_variance`, and the public ops
     (``mean(post)`` / ``variance(post)``) all return Records whose
-    keys match :attr:`fields`. Nested ``EventTemplate`` fields are
+    keys match :attr:`fields`. Nested ``RecordSpec`` fields are
     stored as a flat ``(n, nested_vector_size)`` array under the
     top-level field name; the nested structure is recoverable via
     ``event_template[field]`` and via :meth:`draws`, which walks
@@ -174,7 +174,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         *,
         weights: ArrayLike | Weights | None = None,
         name: str | None = None,
-        event_template: EventTemplate | None = None,
+        event_template: RecordSpec | None = None,
         field_order: list[str] | None = None,
     ):
         if not chains:
@@ -221,7 +221,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         # this in ``draws()`` to decide whether to wrap the output.
         self._user_template = event_template is not None
         # Multi-field template → split the flat chain by top-level
-        # field. Nested ``EventTemplate`` fields are stored as a
+        # field. Nested ``RecordSpec`` fields are stored as a
         # 2-D ``(n, nested_vector_size)`` slice under the top-level
         # field name; the nested structure is recovered via
         # ``event_template[field]`` and ``draws()``. Slice sizes use
@@ -257,14 +257,13 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
             for field_name, size in zip(event_template.fields, sizes):
                 spec = event_template.children[field_name]
                 chunk = flat[..., offset : offset + size]
-                if isinstance(spec, EventTemplate):
+                if isinstance(spec, RecordSpec):
                     # Nested: keep flat-per-top-level-field. Shape is
                     # ``(*sample_shape, nested_vector_size)``.
                     fields[field_name] = chunk
                 else:
                     # NumericArraySpec leaf (opaque rejected above, nested handled).
-                    assert isinstance(spec, NumericArraySpec)
-                    shape = spec.shape
+                    shape = cast(NumericArraySpec, spec).shape
                     fields[field_name] = chunk.reshape(*flat.shape[:-1], *shape)
                 offset += size
             super().__init__(
@@ -449,7 +448,7 @@ def make_posterior(
     algorithm: str,
     *,
     annotations: DataTree | None = None,
-    event_template: EventTemplate | None = None,
+    event_template: RecordSpec | None = None,
     field_order: list[str] | None = None,
     weights: ArrayLike | Weights | None = None,
     **meta: Any,
@@ -467,7 +466,7 @@ def make_posterior(
     annotations : DataTree or None
         Pre-built annotations DataTree (diagnostics, sample stats, warmup).
         Inference methods are responsible for building this.
-    event_template : EventTemplate or None
+    event_template : RecordSpec or None
         If provided, ``draws()`` returns named ``Record``.
     field_order : list of str or None
         Names the field each contiguous column-block of ``chains`` belongs

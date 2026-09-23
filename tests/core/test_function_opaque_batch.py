@@ -19,13 +19,13 @@ import pytest
 from probpipe import (
     Batch,
     BatchSpec,
-    EventTemplate,
     FunctionBatch,
     FunctionSpec,
     NumericArraySpec,
     OpaqueBatch,
     OpaqueSpec,
     Record,
+    RecordSpec,
     TermSpec,
     TrackedTerm,
 )
@@ -291,7 +291,7 @@ class TestSpec:
         assert labels.element_spec is labels.spec.element_spec
 
     def test_an_element_spec_may_be_given(self):
-        declared = FunctionSpec(EventTemplate(x=()), EventTemplate(y=()))
+        declared = FunctionSpec(RecordSpec(x=()), RecordSpec(y=()))
         batch = FunctionBatch(
             "batch",
             [lambda x: x],
@@ -302,9 +302,9 @@ class TestSpec:
         assert batch.element_spec == declared
         assert batch.spec.element_spec == declared
 
-    def test_a_batch_naming_no_kind_is_specified_all_the_same(self, labels):
-        """The case `BatchSpec` exists for: `OpaqueSpec` names no kind, the batch does."""
-        assert not isinstance(labels.element_spec, TermSpec)
+    def test_opaque_elements_and_their_batch_both_have_kind_specs(self, labels):
+        """The opaque base kind and its batch both use the common spec protocol."""
+        assert isinstance(labels.element_spec, TermSpec)
         assert isinstance(labels.spec, TermSpec)
 
     def test_is_valid_reads_every_part_of_the_spec(self, functions):
@@ -331,7 +331,7 @@ class TestSpec:
                 "batch",
                 three,
                 "variant",
-                element_spec=FunctionSpec(EventTemplate(x=())),
+                element_spec=FunctionSpec(RecordSpec(x=())),
             )
         )
 

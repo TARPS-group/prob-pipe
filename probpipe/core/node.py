@@ -54,12 +54,8 @@ from ._function_contract import (
 from ._numeric_record_batch import NumericRecordBatch
 from ._record_batch import RecordBatch
 from ._record_distribution import RecordDistribution
-from .event_template import (
-    EventTemplate,
-    NumericArraySpec,
-    NumericEventTemplate,
-    _concretize_event_template,
-)
+from ._record_spec import _concretize_record_spec
+from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
 from .provenance import Provenance
 from .tracked import Annotated, TrackedTerm, auto_name
 
@@ -281,11 +277,11 @@ class Function(Node, TrackedTerm, Annotated):
     include_inputs : bool
         Whether distribution broadcasting includes sampled inputs in the
         returned joint distribution by default.
-    input_template : EventTemplate or None
+    input_template : RecordSpec or None
         Optional authoritative input schema. Its top-level fields must match
         the fixed signature parameters by name. Symbolic dimensions are bound
         independently for each invocation.
-    output_template : EventTemplate or None
+    output_template : RecordSpec or None
         Optional authoritative output schema. Output symbols must be declared
         by ``input_template`` and are resolved in the same invocation-local
         dimension scope.
@@ -320,8 +316,8 @@ class Function(Node, TrackedTerm, Annotated):
         dispatch: _FunctionDispatch = "auto",  # "auto" | "jax" | "sequential" | "thread"
         max_workers: int | None = None,  # ThreadPoolExecutor worker count
         include_inputs: bool = False,  # True → return BroadcastDistribution (joint over inputs+outputs)
-        input_template: EventTemplate | None = None,
-        output_template: EventTemplate | None = None,
+        input_template: RecordSpec | None = None,
+        output_template: RecordSpec | None = None,
         **kwargs: Any,  # convenience bindings (merged into bind)
     ):
         if not callable(func):
@@ -358,8 +354,8 @@ class Function(Node, TrackedTerm, Annotated):
         *,
         signature: inspect.Signature,
         name: str,
-        input_template: EventTemplate | None = None,
-        output_template: EventTemplate | None = None,
+        input_template: RecordSpec | None = None,
+        output_template: RecordSpec | None = None,
         workflow_kind: WorkflowKind = WorkflowKind.DEFAULT,
         bind: dict[str, Any] | None = None,
         module: Any | None = None,
@@ -412,8 +408,8 @@ class Function(Node, TrackedTerm, Annotated):
         dispatch: _FunctionDispatch,
         max_workers: int | None,
         include_inputs: bool,
-        input_template: EventTemplate | None,
-        output_template: EventTemplate | None,
+        input_template: RecordSpec | None,
+        output_template: RecordSpec | None,
         convenience_bindings: Mapping[str, Any],
         metadata_source: Callable[..., Any] | None,
     ) -> None:
@@ -487,12 +483,12 @@ class Function(Node, TrackedTerm, Annotated):
         return self._signature_info.signature
 
     @property
-    def input_template(self) -> EventTemplate | None:
+    def input_template(self) -> RecordSpec | None:
         """The authoritative input schema declaration, when provided."""
         return self._input_template
 
     @property
-    def output_template(self) -> EventTemplate | None:
+    def output_template(self) -> RecordSpec | None:
         """The authoritative output schema declaration, when provided."""
         return self._output_template
 
@@ -781,7 +777,7 @@ class Function(Node, TrackedTerm, Annotated):
             },
         )
         concrete_output_template = (
-            _concretize_event_template(
+            _concretize_record_spec(
                 self._output_template,
                 invocation_bindings,
                 context=f"Function {self._name!r} output_template",
@@ -1078,10 +1074,7 @@ class Function(Node, TrackedTerm, Annotated):
                         binding = stochastic_plan.runtime_bindings[group.index]
                         root = binding.root
                         template = root.event_template
-                        if (
-                            not isinstance(template, NumericEventTemplate)
-                            or not template.is_concrete
-                        ):
+                        if not isinstance(template, NumericRecordSpec) or not template.is_concrete:
                             raise TypeError(
                                 f"{type(root).__name__} does not declare a concrete numeric "
                                 "event template for side-effect-free JAX probing"

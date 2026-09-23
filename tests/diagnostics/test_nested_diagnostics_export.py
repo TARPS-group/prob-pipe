@@ -15,7 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import EventTemplate, MultivariateNormal, NumericEventTemplate
+from probpipe import MultivariateNormal, NumericRecordSpec, RecordSpec
 from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.diagnostics._arviz_bridge import extract_draws
 from probpipe.diagnostics._datatree_store import to_named_posterior_dataset
@@ -35,12 +35,12 @@ def _posterior(template, vector_size, *, n_chains=2, n_draws=30, seed0=0):
 
 
 def _nested_posterior(n_chains=2, n_draws=30):
-    template = EventTemplate(params=EventTemplate(a=(), b=()), scale=())
+    template = RecordSpec(params=RecordSpec(a=(), b=()), scale=())
     return _posterior(template, 3, n_chains=n_chains, n_draws=n_draws)
 
 
 def _flat_posterior(n_chains=2, n_draws=30):
-    template = EventTemplate(a=(), b=())
+    template = RecordSpec(a=(), b=())
     return _posterior(template, 2, n_chains=n_chains, n_draws=n_draws, seed0=10)
 
 
@@ -148,11 +148,11 @@ class _LinearModel:
     ("template", "intercept_key", "slope_key"),
     [
         (
-            NumericEventTemplate(coeffs=NumericEventTemplate(intercept=(), slope=(1,))),
+            NumericRecordSpec(coeffs=NumericRecordSpec(intercept=(), slope=(1,))),
             "coeffs/intercept",
             "coeffs/slope",
         ),
-        (NumericEventTemplate(intercept=(), slope=(1,)), "intercept", "slope"),
+        (NumericRecordSpec(intercept=(), slope=(1,)), "intercept", "slope"),
     ],
     ids=["nested", "flat"],
 )

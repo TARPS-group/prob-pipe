@@ -152,12 +152,12 @@ and schema checks:
 ```python
 import jax.numpy as jnp
 
-from probpipe import EventTemplate, function
+from probpipe import RecordSpec, function
 
 
 @function(
-    input_template=EventTemplate(x=("obs",), scale=()),
-    output_template=EventTemplate(y=("obs",)),
+    input_template=RecordSpec(x=("obs",), scale=()),
+    output_template=RecordSpec(y=("obs",)),
 )
 def standardize(x, scale=1.0):
     return x / scale
@@ -171,8 +171,8 @@ wrapped = standardize(values, scale=2.0)  # Record with field "y"
 String dimensions such as `"obs"` are symbolic. They are bound separately for
 each call, shared between the input and output templates, and never written
 back into the declaration. Repeating a symbol requires equal sizes, including
-across nested fields. `EventTemplate.free_dims` lists unresolved symbols and
-`EventTemplate.is_concrete` reports whether none remain. A polymorphic numeric
+across nested fields. `RecordSpec.free_dims` lists unresolved symbols and
+`RecordSpec.is_concrete` reports whether none remain. A polymorphic numeric
 template has no `vector_size` until its symbols are bound.
 
 When supplied, templates are authoritative:

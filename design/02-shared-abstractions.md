@@ -34,7 +34,7 @@ class TermSpec(ABC):
     def free_dims(self) -> frozenset[str]: ...       # report: the unbound symbolic dimensions
     @property
     def is_concrete(self) -> bool: ...               # True when free_dims is empty
-    def with_dims(self, **sizes: int) -> Self: ...   # substitute explicit sizes
+    def with_dim_sizes(self, **sizes: int) -> Self: ...   # substitute explicit sizes
     def with_dim_names(self, **names: str) -> Self: ...   # rename symbolic dimensions, old=new
     def bind_dims_from_value(self, value: Any) -> Self: ...   # bind by unification against a value
     def bind_dims_from_spec(self, other: TermSpec) -> Self: ...   # bind by unification against another spec
@@ -43,6 +43,8 @@ def register_kind(spec_type: type[TermSpec], *, term_class: type, batch_class: t
 def term_class_for_spec(spec: TermSpec) -> type: ...    # the tracked class of the spec's kind
 def batch_class_for_spec(spec: TermSpec) -> type: ...   # its batch form
 ```
+
+`with_dim_sizes` substitutes supplied sizes and leaves other dimensions symbolic. `with_dim_names` renames simultaneously. Binding reads concrete sizes in one shared scope and rejects disagreements; unobserved dimensions remain symbolic.
 
 ### Rationale
 
@@ -118,8 +120,9 @@ class Numeric(ABC):                         # the flat-vector interface of the n
 ```python
 class NumericSpec(TermSpec, ABC):   # mixin: the specs whose values implement Numeric
     @property
+    def vector_size(self) -> int: ...   # total flat dimension; raises unless concrete
     @abstractmethod
-    def vector_size(self) -> int: ...   # total flat dimension; defined only when concrete
+    def _vector_size(self) -> int: ...  # the count itself; called only for a concrete spec
 ```
 
 A numeric kind may also specify the **support** of its values with a `Constraint`, which compares and hashes by value.

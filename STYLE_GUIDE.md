@@ -222,7 +222,7 @@ or a whole resampled replicate (use `replicate_size`).
 
 ### 1.10 Record field iteration and path access
 
-The mapping protocol on `Record` and `EventTemplate` (`keys` / `values`
+The mapping protocol on `Record` and `RecordSpec` (`keys` / `values`
 / `items` / `__iter__` / `__len__` / `__contains__` / `__getitem__`) is
 **leaf-keyed**: it enumerates every leaf by its full `/`-path, never
 interior nodes. The

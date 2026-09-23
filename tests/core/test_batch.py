@@ -20,10 +20,10 @@ import numpy as np
 import pytest
 
 from probpipe import (
-    EventTemplate,
     NumericArraySpec,
     NumericRecordBatch,
     OpaqueSpec,
+    RecordSpec,
     TermSpec,
 )
 from probpipe.core._batch import Batch, BatchSpec
@@ -349,7 +349,7 @@ class TestSpec:
         assert _spec([(4,)], ["draw"]) != _spec([(4,)], ["chain"])
 
     def test_an_element_spec_must_be_a_value_spec(self):
-        with pytest.raises(TypeError, match="must be a ValueSpec"):
+        with pytest.raises(TypeError, match="must be a TermSpec"):
             BatchSpec("not a spec", [(2,)], ["draw"])
 
     def test_a_batch_must_be_given_a_batch_spec(self):
@@ -805,7 +805,7 @@ class TestSpecValidation:
             _spec([("not an identifier",)], ["draw"])
 
     def test_a_numeric_string_is_not_a_size(self):
-        """The likeliest slip: "3" is a name, and not one with_dims could bind."""
+        """The likeliest slip: "3" is a name, and not one with_dim_sizes could bind."""
         with pytest.raises(ValueError, match="must be an identifier"):
             _spec([("3",)], ["draw"])
 
@@ -997,8 +997,8 @@ class TestBatchSpecFingerprint:
         )
 
     def test_a_spec_in_a_template_fingerprints_by_content(self):
-        one = EventTemplate(post=_spec([(3,)], ["draw"], NumericArraySpec(shape=(2,))), y=(2,))
-        two = EventTemplate(post=_spec([(3,)], ["draw"], NumericArraySpec(shape=(2,))), y=(2,))
+        one = RecordSpec(post=_spec([(3,)], ["draw"], NumericArraySpec(shape=(2,))), y=(2,))
+        two = RecordSpec(post=_spec([(3,)], ["draw"], NumericArraySpec(shape=(2,))), y=(2,))
         assert fingerprint(one) == fingerprint(two)
 
 
@@ -1593,8 +1593,8 @@ class TestSymbolicMultiplicity:
     def test_a_symbolic_axis_is_substitutable(self):
         spec = _spec([("S",)], ["draw"])
 
-        assert spec.with_bound_dims({"S": 3}).axis_groups == ((3,),)
-        assert spec.with_bound_dims({"S": 3}).free_dims == frozenset()
+        assert spec._substitute_dims({"S": 3}).axis_groups == ((3,),)
+        assert spec._substitute_dims({"S": 3}).free_dims == frozenset()
 
     def test_a_concrete_batch_still_builds(self, flat):
         assert flat.batch_shape == (4,)
@@ -1608,7 +1608,7 @@ class TestSymbolicMultiplicity:
         """
         bindings: dict[str, int] = {}
 
-        assert _spec([("S",)], ["draw"]).bind_dims_from_spec(
+        assert _spec([("S",)], ["draw"])._bind_dims_from_spec(
             _spec([(3,)], ["draw"]), bindings, "path"
         )
         assert bindings == {"S": 3}
@@ -1618,7 +1618,7 @@ class TestSymbolicMultiplicity:
         declared = BatchSpec(NumericArraySpec(shape=("n",)), [("n",)], ["row"])
         bindings: dict[str, int] = {}
 
-        assert declared.bind_dims_from_spec(
+        assert declared._bind_dims_from_spec(
             BatchSpec(NumericArraySpec(shape=(3,)), [(3,)], ["row"]), bindings, "path"
         )
         assert bindings == {"n": 3}
@@ -1629,13 +1629,13 @@ class TestSymbolicMultiplicity:
         actual = BatchSpec(NumericArraySpec(shape=(5,)), [(3,)], ["row"])
 
         with pytest.raises(ValueError, match=r"symbolic dimension 'n' to 5, .*already bound to 3"):
-            declared.bind_dims_from_spec(actual, {}, "path")
+            declared._bind_dims_from_spec(actual, {}, "path")
 
     def test_binding_leaves_the_spec_unsubstituted(self):
         """Substitution waits for the closed scope, as it does for every leaf."""
         declared = _spec([("S",)], ["draw"])
 
-        declared.bind_dims_from_spec(_spec([(3,)], ["draw"]), {}, "path")
+        declared._bind_dims_from_spec(_spec([(3,)], ["draw"]), {}, "path")
 
         assert declared.axis_groups == (("S",),)
 
@@ -1644,25 +1644,25 @@ class TestSymbolicMultiplicity:
         declared = BatchSpec(OpaqueSpec(), [("S",), ("T",)], ["chain", "draw"])
 
         with pytest.raises(ValueError, match="has levels"):
-            declared.bind_dims_from_spec(_spec([(3,)], ["draw"]), {}, "path")
+            declared._bind_dims_from_spec(_spec([(3,)], ["draw"]), {}, "path")
 
     def test_a_name_repeated_within_one_level_binds_once(self):
         """`("n", "n")` on one level is a square grid, as it is in an array shape."""
         declared = BatchSpec(OpaqueSpec(), [("n", "n")], ["grid"])
         bindings: dict[str, int] = {}
 
-        declared.bind_dims_from_spec(_spec([(3, 3)], ["grid"]), bindings, "path")
+        declared._bind_dims_from_spec(_spec([(3, 3)], ["grid"]), bindings, "path")
         assert bindings == {"n": 3}
 
         with pytest.raises(ValueError, match=r"'n' to 4, .*already bound to 3"):
-            declared.bind_dims_from_spec(_spec([(3, 4)], ["grid"]), {}, "path")
+            declared._bind_dims_from_spec(_spec([(3, 4)], ["grid"]), {}, "path")
 
     def test_levels_bind_their_own_dimensions(self):
         """Distinct names on distinct levels each take their own axis."""
         declared = BatchSpec(OpaqueSpec(), [("C",), ("D",)], ["chain", "draw"])
         bindings: dict[str, int] = {}
 
-        declared.bind_dims_from_spec(_spec([(2,), (4,)], ["chain", "draw"]), bindings, "path")
+        declared._bind_dims_from_spec(_spec([(2,), (4,)], ["chain", "draw"]), bindings, "path")
 
         assert bindings == {"C": 2, "D": 4}
 
@@ -1672,7 +1672,7 @@ class TestSymbolicMultiplicity:
         actual = BatchSpec(BatchSpec(OpaqueSpec(), [(5,)], ["inner"]), [(2,)], ["outer"])
         bindings: dict[str, int] = {}
 
-        declared.bind_dims_from_spec(actual, bindings, "path")
+        declared._bind_dims_from_spec(actual, bindings, "path")
 
         assert bindings == {"o": 2, "i": 5}
 
@@ -1683,11 +1683,11 @@ class TestSymbolicMultiplicity:
         oblong = BatchSpec(BatchSpec(OpaqueSpec(), [(5,)], ["inner"]), [(4,)], ["outer"])
         bindings: dict[str, int] = {}
 
-        declared.bind_dims_from_spec(square, bindings, "path")
+        declared._bind_dims_from_spec(square, bindings, "path")
         assert bindings == {"n": 4}
 
         with pytest.raises(ValueError, match=r"'n' to 5, .*already bound to 4"):
-            declared.bind_dims_from_spec(oblong, {}, "path")
+            declared._bind_dims_from_spec(oblong, {}, "path")
 
     def test_an_element_dimension_binds_through_the_element_spec(self):
         """The element's own schema binds by the same rule one level in."""
@@ -1695,7 +1695,7 @@ class TestSymbolicMultiplicity:
         actual = BatchSpec(NumericArraySpec(shape=(7,)), [(3,)], ["item"])
         bindings: dict[str, int] = {}
 
-        declared.bind_dims_from_spec(actual, bindings, "path")
+        declared._bind_dims_from_spec(actual, bindings, "path")
 
         assert bindings == {"n": 3, "d": 7}
 
@@ -1727,7 +1727,7 @@ def _args_for(kind: str, *, shape: tuple[int, ...], levels):
         return (store, levels), {}
     if kind == "NumericArrayBatch":
         return (jnp.zeros(shape), levels), {"element_spec": NumericArraySpec(())}
-    return ({"x": jnp.zeros(shape)}, levels), {"element_spec": EventTemplate(x=())}
+    return ({"x": jnp.zeros(shape)}, levels), {"element_spec": RecordSpec(x=())}
 
 
 class TestTheConstructorSignatureContract:
@@ -1833,7 +1833,7 @@ class TestFromVectorTakesThePartitionToo:
 
     def test_one_name_takes_every_batch_axis(self):
         rebuilt = NumericRecordBatch.from_vector(
-            "post", EventTemplate(x=(2,)), self._vec((4, 5)), level_names="sample"
+            "post", RecordSpec(x=(2,)), self._vec((4, 5)), level_names="sample"
         )
 
         assert (rebuilt.batch_shape, rebuilt.level_names) == ((4, 5), ("sample",))
@@ -1841,7 +1841,7 @@ class TestFromVectorTakesThePartitionToo:
 
     def test_several_names_take_one_axis_each(self):
         rebuilt = NumericRecordBatch.from_vector(
-            "post", EventTemplate(x=(2,)), self._vec((4, 5)), level_names=("chain", "draw")
+            "post", RecordSpec(x=(2,)), self._vec((4, 5)), level_names=("chain", "draw")
         )
 
         assert rebuilt.axis_groups == ((4,), (5,))
@@ -1852,7 +1852,7 @@ class TestFromVectorTakesThePartitionToo:
         with pytest.raises(TypeError, match="unexpected keyword argument 'axis_groups'"):
             NumericRecordBatch.from_vector(
                 "post",
-                EventTemplate(x=(2,)),
+                RecordSpec(x=(2,)),
                 self._vec((4, 5)),
                 level_names=("chain", "draw"),
                 axis_groups=((4,), (5,)),
@@ -1862,7 +1862,7 @@ class TestFromVectorTakesThePartitionToo:
         """Three axes, two levels: the first level holds two of them."""
         rebuilt = NumericRecordBatch.from_vector(
             "post",
-            EventTemplate(x=(2,)),
+            RecordSpec(x=(2,)),
             self._vec((2, 3, 4)),
             level_names=("grid", "draw"),
             axes_per_level=(2, 1),
