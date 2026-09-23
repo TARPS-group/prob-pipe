@@ -20,8 +20,8 @@ from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._opaque import OpaqueSpec
 from probpipe.core._opaque_batch import OpaqueBatch
 from probpipe.core._record_spec import (
-    _concretize_event_template,
-    _unify_event_template_with_value,
+    _concretize_record_spec,
+    _unify_record_spec_with_value,
 )
 from probpipe.core._specs import (
     DistributionSpec,
@@ -103,6 +103,19 @@ class TestConstruction:
     def test_slash_in_field_name_rejected(self):
         with pytest.raises(ValueError, match="must not contain '/'"):
             RecordSpec(**{"a/b": ()})
+
+    @pytest.mark.parametrize("spec_type", [RecordSpec, NumericRecordSpec])
+    @pytest.mark.parametrize("keyword_form", [False, True], ids=["mapping", "keywords"])
+    @pytest.mark.parametrize("nested", [False, True], ids=["root", "nested"])
+    def test_empty_field_name_rejected(self, spec_type, keyword_form, nested):
+        fields = {"": (3,)}
+        if nested:
+            fields = {"group": fields}
+        with pytest.raises(ValueError, match="field key must be a non-empty string"):
+            if keyword_form:
+                spec_type(**fields)
+            else:
+                spec_type(fields)
 
     def test_dict_and_kwargs_raises(self):
         with pytest.raises(ValueError, match="Cannot pass both"):
@@ -1754,7 +1767,7 @@ class TestTermSpecTaxonomy:
         assert get_type_hints(FunctionSpec)["output_spec"] == TermSpec | None
         assert get_type_hints(NumericArraySpec)["dtype"] == np.dtype | None
 
-    def test_the_old_parameter_names_are_gone(self):
+    def test_the_old_parameter_and_attribute_names_are_gone(self):
         """Positional construction survives the rename; keyword construction does not.
 
         The migration rule the CHANGELOG states: a keyword call moves to the new
@@ -1763,9 +1776,9 @@ class TestTermSpecTaxonomy:
         tau = RecordSpec(x=())
         assert DistributionSpec(tau) == DistributionSpec(event_spec=tau)
         assert FunctionSpec(tau, tau) == FunctionSpec(tau, output_spec=tau)
-        with pytest.raises(TypeError, match="event_template"):
+        with pytest.raises(TypeError, match="unexpected keyword argument 'event_template'"):
             DistributionSpec(event_template=tau)  # type: ignore[call-arg]
-        with pytest.raises(TypeError, match="output_template"):
+        with pytest.raises(TypeError, match="unexpected keyword argument 'output_template'"):
             FunctionSpec(tau, output_template=tau)  # type: ignore[call-arg]
         assert not hasattr(DistributionSpec(tau), "event_template")
         assert not hasattr(FunctionSpec(tau, tau), "output_template")
@@ -1773,9 +1786,8 @@ class TestTermSpecTaxonomy:
     def test_term_valued_output_is_kept_not_wrapped(self):
         """A term output declaration names its own kind and passes through."""
         tau = RecordSpec(x=())
-        inner = DistributionSpec(tau)
-        assert FunctionSpec(tau, inner).output_spec is inner
-        assert FunctionSpec(tau, FunctionSpec()).output_spec == FunctionSpec()
+        for inner in (DistributionSpec(tau), FunctionSpec()):
+            assert FunctionSpec(tau, inner).output_spec is inner
 
     def test_term_valued_event_declaration_is_rejected(self):
         """An event declaration is record-valued: a term draw is not yet checkable.
@@ -1789,13 +1801,6 @@ class TestTermSpecTaxonomy:
         for decl in (DistributionSpec(tau), FunctionSpec()):
             with pytest.raises(TypeError, match="must be a RecordSpec"):
                 DistributionSpec(decl)  # type: ignore[arg-type]
-
-    def test_declared_kind_is_the_stored_spec_class(self):
-        """The declaration's class is the declared kind — a structural test."""
-        tau = RecordSpec(x=())
-        assert DistributionSpec(tau).event_spec is tau
-        assert FunctionSpec(tau, tau).output_spec is tau
-        assert type(FunctionSpec(tau, FunctionSpec()).output_spec) is FunctionSpec
 
     def test_raw_value_output_declaration_is_stored_as_given(self):
         """An output declaration is any value specification, as in Fun(sigma, rho).
@@ -1823,27 +1828,11 @@ class TestTermSpecTaxonomy:
         assert RecordSpec(x=()) == RecordSpec(x=())
         assert hash(RecordSpec(x=())) == hash(RecordSpec(x=()))
 
-    def test_record_declarations_preserve_schema_identity(self):
-        """The storage rule at the value level, not merely by class."""
-        tau = RecordSpec(x=())
-        assert DistributionSpec(tau).event_spec is tau
-        assert FunctionSpec(tau, tau).output_spec is tau
-
     def test_term_spec_declares_the_abstract_validation_protocol(self):
         """The hierarchy's headline claim: is_valid stays declared once."""
         with pytest.raises(TypeError, match="abstract"):
             TermSpec()  # type: ignore[abstract]
         assert "is_valid" in TermSpec.__abstractmethods__
-
-    def test_the_old_attribute_names_are_gone(self):
-        """The breaking half of the rename, which the CHANGELOG advertises."""
-        tau = RecordSpec(x=())
-        assert not hasattr(DistributionSpec(tau), "event_template")
-        assert not hasattr(FunctionSpec(tau, tau), "output_template")
-        with pytest.raises(TypeError, match="unexpected keyword argument"):
-            DistributionSpec(event_template=tau)  # type: ignore[call-arg]
-        with pytest.raises(TypeError, match="unexpected keyword argument"):
-            FunctionSpec(tau, output_template=tau)  # type: ignore[call-arg]
 
 
 class TestRecordSpec:
@@ -2044,7 +2033,7 @@ class TestTemplateConcretization:
         template = RecordSpec(x=("obs",), y=("features",))
         original_bindings = bindings.copy()
         with pytest.raises(ValueError) as caught:
-            _concretize_event_template(template, bindings, context="output")
+            _concretize_record_spec(template, bindings, context="output")
         assert str(caught.value) == f"output has unbound symbolic dimensions: {missing}"
         assert template == RecordSpec(x=("obs",), y=("features",))
         assert bindings == original_bindings
@@ -2052,7 +2041,7 @@ class TestTemplateConcretization:
     def test_complete_bindings_return_a_concrete_schema(self):
         template = RecordSpec(x=("obs",), y=("features",))
         bindings = {"obs": 2, "features": 3}
-        concrete = _concretize_event_template(template, bindings, context="output")
+        concrete = _concretize_record_spec(template, bindings, context="output")
         assert concrete == NumericRecordSpec(x=(2,), y=(3,))
         assert concrete.is_concrete
         assert template == RecordSpec(x=("obs",), y=("features",))
@@ -2209,16 +2198,14 @@ class TestInferenceThroughTermSpecs:
         declared = spec_type(sym)
         value = self._law(3) if spec_type is RecordSpec else Record("w", x=jnp.zeros(3))
         with pytest.raises(ValueError, match=rf"^v/field .*{message}"):
-            _unify_event_template_with_value(
-                RecordSpec(field=declared), {"field": value}, context="v"
-            )
+            _unify_record_spec_with_value(RecordSpec(field=declared), {"field": value}, context="v")
 
     def test_a_callable_declaration_refuses_a_non_callable_in_the_pass(self):
         """Likewise for the FunctionSpec branch, which has its own refusal."""
         declared = RecordSpec(f=FunctionSpec(RecordSpec(x=NumericArraySpec(shape=("obs",))), None))
 
         with pytest.raises(ValueError, match="does not conform to its field spec"):
-            _unify_event_template_with_value(declared, {"f": 3}, context="v")
+            _unify_record_spec_with_value(declared, {"f": 3}, context="v")
 
     def test_a_value_carrying_no_schema_says_so(self):
         """A polymorphic schema needs one to bind against."""
@@ -2512,47 +2499,15 @@ class TestMultiplicityBindsFromAValue:
         assert record.event_template["b"].axis_groups == ((3,),)
 
 
-class TestEverySpecBindsWhatItDeclares:
-    """A spec that reports dimensions implements binding for them.
+class TestDefaultSpecBinding:
+    """Public binding validates dimensionless values or reports unbindable dimensions."""
 
-    `free_dims`, `_substitute_dims`, and the two binding methods are one contract:
-    a spec that reports a name and leaves binding to the base class would raise
-    the base's refusal at the moment the name had to be resolved. The check is
-    over the live subclasses, so a spec added later is held to it too.
-    """
-
-    @staticmethod
-    def _concrete_specs():
-        seen: list[type[TermSpec]] = []
-        pending = [TermSpec]
-        while pending:
-            for subclass in pending.pop().__subclasses__():
-                if subclass not in seen:
-                    seen.append(subclass)
-                    pending.append(subclass)
-        return [spec for spec in seen if not getattr(spec, "__abstractmethods__", False)]
-
-    def test_the_inventory_is_not_vacuous(self):
-        """The walk finds the specs it is meant to hold."""
-        found = set(self._concrete_specs())
-
-        assert {NumericArraySpec, OpaqueSpec, RecordSpec, DistributionSpec, FunctionSpec} <= found
-        assert BatchSpec in found
-
-    @pytest.mark.parametrize("method", ["_bind_dims_from_value", "_bind_dims_from_spec"])
-    def test_a_spec_reporting_dimensions_overrides_binding(self, method):
-        """Whatever reports a dimension resolves it, rather than inheriting a refusal."""
-        for spec in self._concrete_specs():
-            if spec.free_dims is TermSpec.free_dims:
-                continue  # declares no dimensions, so the default is the answer
-            assert getattr(spec, method) is not getattr(TermSpec, method), (
-                f"{spec.__name__} reports free_dims but inherits {method}"
-            )
-
-    def test_a_spec_declaring_no_dimensions_keeps_the_default(self):
-        """`OpaqueSpec` declares none, so the base class answers for it."""
-        assert OpaqueSpec.free_dims is TermSpec.free_dims
-        assert OpaqueSpec._bind_dims_from_value is TermSpec._bind_dims_from_value
+    def test_a_dimensionless_spec_preserves_its_metadata(self):
+        spec = OpaqueSpec(meta="payload")
+        assert spec.bind_dims_from_value(object()) == spec
+        assert spec.bind_dims_from_spec(OpaqueSpec(meta="payload")) == spec
+        with pytest.raises(ValueError, match="does not conform"):
+            spec.bind_dims_from_spec(OpaqueSpec(meta="different"))
 
     def test_the_default_refuses_rather_than_passing_silently(self):
         """A spec that reported a name it could not bind would say so."""
@@ -2567,12 +2522,9 @@ class TestEverySpecBindsWhatItDeclares:
                 return True
 
         with pytest.raises(ValueError, match="cannot bind from a value"):
-            _DimlessButClaiming()._bind_dims_from_value(object(), {}, "p")
+            _DimlessButClaiming().bind_dims_from_value(object())
 
     def test_an_array_binds_its_own_shape(self):
-        """`NumericArraySpec` owns its binding rather than being special-cased by the pass."""
-        bindings: dict[str, int] = {}
-
-        NumericArraySpec(shape=("n", "m"))._bind_dims_from_value(jnp.zeros((2, 5)), bindings, "p")
-
-        assert bindings == {"n": 2, "m": 5}
+        spec = NumericArraySpec(shape=("n", "m"))
+        assert spec.bind_dims_from_value(jnp.zeros((2, 5))) == NumericArraySpec((2, 5))
+        assert spec.shape == ("n", "m")

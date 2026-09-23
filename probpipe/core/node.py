@@ -54,7 +54,7 @@ from ._function_contract import (
 from ._numeric_record_batch import NumericRecordBatch
 from ._record_batch import RecordBatch
 from ._record_distribution import RecordDistribution
-from ._record_spec import _concretize_event_template
+from ._record_spec import _concretize_record_spec
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
 from .provenance import Provenance
 from .tracked import Annotated, TrackedTerm, auto_name
@@ -777,7 +777,7 @@ class Function(Node, TrackedTerm, Annotated):
             },
         )
         concrete_output_template = (
-            _concretize_event_template(
+            _concretize_record_spec(
                 self._output_template,
                 invocation_bindings,
                 context=f"Function {self._name!r} output_template",

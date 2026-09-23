@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a refined spec, `with_dim_sizes` permits partial substitution, and `with_dim_names`
   renames symbols throughout nested declarations. Existing live function and
   distribution template APIs retain their signatures for their later migration.
+  Moving and renaming schema classes changes their fingerprints and those of
+  containing terms; affected persisted provenance fingerprints no longer match.
 
 - Names are set at construction and preserved by structural transforms;
   `with_name` is the sole renaming operation. The `name_is_auto` attribute,

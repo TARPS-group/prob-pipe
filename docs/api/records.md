@@ -47,9 +47,11 @@ type hole. Replace that declaration with the same component name and a known
 spec when the type becomes available.
 
 Symbolic dimensions share one scope across nested specs and input slots.
-`with_dim_sizes` substitutes supplied sizes and leaves the rest symbolic;
-`with_dim_names` renames symbols simultaneously. `bind_dims_from_value` and
-`bind_dims_from_spec` return refined specs and reject conflicting sizes.
+`TermSpec`, `InputSpec`, and `OutputSpec` provide `with_dim_sizes` to substitute
+supplied sizes and leave the rest symbolic, and `with_dim_names` to rename
+symbols simultaneously. `TermSpec` and `InputSpec` also provide
+`bind_dims_from_value` and `bind_dims_from_spec`, which return refined specs
+and reject conflicting sizes.
 
 Value validation reads the actual fields of a `Record` or mapping, including
 array shapes and dtypes. Binding from another spec uses only the information

@@ -521,7 +521,7 @@ class TestKeysAgreement:
         assert list(v.keys()) == ["theta/loc", "theta/s", "top"]
 
     def test_cross_type_value_is_one_opaque_leaf(self):
-        # An RecordSpec stored as a Record field value is an opaque leaf,
+        # A RecordSpec stored as a Record field value is an opaque leaf,
         # NOT an internal node: keys() must not descend into it.
         v = Record("r", weird=RecordSpec(a=(2,)), x=jnp.array([1.0, 2.0]))
         assert list(v.keys()) == ["weird", "x"]

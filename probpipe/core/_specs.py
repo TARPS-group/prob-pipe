@@ -10,6 +10,7 @@ import keyword
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import cast
 
 from ._kind_specs import DistributionSpec, FunctionSpec
 from ._record_spec import NumericRecordSpec, RecordSpec
@@ -206,18 +207,12 @@ class OutputSpec:
         """The ordered immediate components, as a read-only derived mapping."""
         if self._component_name is not None:
             return MappingProxyType({self._component_name: self._term_spec})
-        if isinstance(self._term_spec, RecordSpec):
-            return self._term_spec.children
-        raise TypeError(
-            "OutputSpec has no components outside a RecordSpec or single-keyword hole form"
-        )
+        return cast(RecordSpec, self._term_spec).children
 
     def _with_spec(self, spec: TermSpec | None) -> OutputSpec:
         if self._component_name is not None:
             return OutputSpec(**{self._component_name: spec})
-        if isinstance(spec, RecordSpec):
-            return OutputSpec(spec)
-        raise TypeError("OutputSpec._with_spec requires a RecordSpec or single-keyword hole form")
+        return OutputSpec(cast(RecordSpec, spec))
 
     @property
     def is_concrete(self) -> bool:

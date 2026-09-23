@@ -215,6 +215,28 @@ class TestDeclarationRoundTrips:
 
 
 class TestDimensionBinding:
+    @pytest.mark.parametrize("actual", [None, {"x": NumericArraySpec((3,))}])
+    def test_binding_requires_an_actual_term_spec(self, actual):
+        with pytest.raises(TypeError, match="bind_dims_from_spec expects a TermSpec"):
+            RecordSpec(x=(3,)).bind_dims_from_spec(actual)
+
+    @pytest.mark.parametrize("actual_name", ["n", "m"])
+    @pytest.mark.parametrize("kind", ["array", "batch"])
+    def test_binding_requires_concrete_actual_dimensions(self, actual_name, kind):
+        if kind == "array":
+            declared = NumericArraySpec(("n",))
+            actual = NumericArraySpec((actual_name,))
+            message = "concrete dimensions are required"
+        else:
+            declared = BatchSpec(OpaqueSpec(), [("n",)], ["draw"])
+            actual = BatchSpec(OpaqueSpec(), [(actual_name,)], ["draw"])
+            message = "non-concrete dimension"
+
+        with pytest.raises(ValueError, match=message):
+            declared.bind_dims_from_spec(actual)
+        assert declared.free_dims == {"n"}
+        assert actual.free_dims == {actual_name}
+
     @pytest.mark.parametrize(
         ("expected", "actual_spec", "actual_value", "value_error"),
         [
@@ -436,6 +458,14 @@ class TestDistributionSchemaAvailability:
 
 
 class TestInputSpec:
+    def test_binding_values_requires_a_mapping(self):
+        with pytest.raises(TypeError, match=r"InputSpec\.bind_dims_from_value expects a mapping"):
+            InputSpec(x=OpaqueSpec()).bind_dims_from_value(None)
+
+    def test_binding_specs_requires_an_input_spec(self):
+        with pytest.raises(TypeError, match=r"InputSpec\.bind_dims_from_spec expects an InputSpec"):
+            InputSpec(x=OpaqueSpec()).bind_dims_from_spec({"x": OpaqueSpec()})
+
     def test_inputs_follow_mapping_equality_while_preserving_slot_order(self):
         array = NumericArraySpec(())
         left = InputSpec(x=array, y=OpaqueSpec())

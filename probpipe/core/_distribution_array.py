@@ -386,6 +386,11 @@ class DistributionArray[T](Distribution[T]):
         accesses return the same cached tuple but indexing via
         :meth:`__getitem__` / :meth:`_flat_component` always returns a
         fresh scalar.
+
+        Raises
+        ------
+        RuntimeError
+            If neither stored components nor a backend is available.
         """
         if self._components is not None:
             return self._components

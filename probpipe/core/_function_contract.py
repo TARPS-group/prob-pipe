@@ -15,8 +15,8 @@ from ._array_backend import _numpy_dtype_of
 from ._distribution_base import Distribution
 from ._record_batch import RecordBatch
 from ._record_spec import (
-    _concretize_event_template,
-    _unify_event_template_with_value,
+    _concretize_record_spec,
+    _unify_record_spec_with_value,
 )
 from ._spec_base import _full_array_shape_or_none, _unify_specs
 from ._specs import NumericArraySpec, RecordSpec, TermSpec
@@ -201,7 +201,7 @@ def _bind_function_inputs(
     """Bind one call's raw inputs to its declaration template."""
     if input_template is None:
         return None, {}
-    return _unify_event_template_with_value(
+    return _unify_record_spec_with_value(
         input_template,
         values,
         bindings,
@@ -283,7 +283,7 @@ def _validate_function_output(
     """Validate one native result and return the call's concrete output schema."""
     if output_template is None:
         return None
-    concrete = _concretize_event_template(
+    concrete = _concretize_record_spec(
         output_template,
         bindings,
         context=f"Function {function_name!r} output_template",

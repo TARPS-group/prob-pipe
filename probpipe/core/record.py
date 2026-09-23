@@ -45,7 +45,7 @@ import numpy as np
 
 from ..custom_types import ArrayLike
 from ._array_backend import _metadata_of, _numpy_dtype_of, _to_numpy_array, array_backend_for
-from ._record_spec import _unify_event_template_with_value
+from ._record_spec import _unify_record_spec_with_value
 from ._spec_base import _full_array_shape_or_none
 from ._specs import NumericRecordSpec, RecordSpec
 from .named_tree import _PATH_SEP, NamedTree, _check_no_path_sep, _unflatten_paths
@@ -423,7 +423,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
             field_inputs = dict(fields)
 
         if event_template is not None and event_template.free_dims and _validate_leaves:
-            event_template, _ = _unify_event_template_with_value(
+            event_template, _ = _unify_record_spec_with_value(
                 event_template, field_inputs, context=f"Record {name!r}"
             )
 

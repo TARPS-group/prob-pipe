@@ -66,9 +66,7 @@ def _to_spec(spec: _FieldSpecInput) -> TermSpec:
         return OpaqueSpec()
     if isinstance(spec, tuple):
         return NumericArraySpec(shape=spec)
-    raise TypeError(
-        f"spec must be a shape tuple, None, a TermSpec, or an RecordSpec, got {type(spec).__name__}"
-    )
+    raise TypeError(f"spec must be a shape tuple, None, or a TermSpec, got {type(spec).__name__}")
 
 
 def _is_numeric_spec(spec: Any) -> bool:
@@ -165,7 +163,7 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
     Parameters
     ----------
     **field_specs
-        Named fields. Each value is one of:
+        Fields with non-empty names. Each value is one of:
 
         - ``tuple[int | str, ...]`` — fixed or symbolic shape of a numeric array
           leaf (e.g. ``()`` for a scalar, ``(3,)`` for a 3-vector, or
@@ -246,6 +244,8 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
             )
         else:
             for name in field_specs:
+                if not name:
+                    raise ValueError("field key must be a non-empty string")
                 _check_no_path_sep(name)
             nested = dict(field_specs)
         specs: dict[str, TermSpec] = {}
@@ -655,14 +655,14 @@ class NumericRecordSpec(RecordSpec, NumericSpec):
 # ---------------------------------------------------------------------------
 
 
-def _unify_event_template_with_value(
+def _unify_record_spec_with_value(
     template: RecordSpec,
     value: Any,
     bindings: Mapping[str, int] | None = None,
     *,
     context: str = "value",
 ) -> tuple[RecordSpec, dict[str, int]]:
-    """Return a concrete copy of *template* unified with a concrete value.
+    """Return a refined copy of *template* unified with a concrete value.
 
     The declaration and the optional input bindings are never mutated. The
     returned binding dictionary can be threaded through several calls to give
@@ -673,7 +673,7 @@ def _unify_event_template_with_value(
     return template._substitute_dims(resolved), resolved
 
 
-def _concretize_event_template(
+def _concretize_record_spec(
     template: RecordSpec,
     bindings: Mapping[str, int],
     *,
