@@ -1,6 +1,6 @@
 """BlackJAX-backed gradient MCMC methods: NUTS and HMC.
 
-Two :class:`~probpipe.core._registry.UnaryDispatchMethod` subclasses registered with
+Two :class:`~probpipe.core._dispatch.UnaryDispatchMethod` subclasses registered with
 :data:`~probpipe.inference.inference_method_registry`:
 
 * ``blackjax_nuts`` — No-U-Turn Sampler with window-adapted step size and
@@ -48,7 +48,7 @@ from blackjax.mcmc.dynamic_hmc import (
     init as _dynamic_hmc_init,
 )
 
-from ..core._registry import MethodInfo
+from ..core._dispatch import Feasibility
 from ..core.distribution import Distribution
 from ..core.protocols import SupportsUnnormalizedLogProb
 from ..custom_types import Array
@@ -291,7 +291,7 @@ def _extract_blackjax_sample_stats(
 class _BlackJAXMCMCMethod(InferenceMethod):
     """Base for BlackJAX gradient MCMC methods (NUTS, HMC)."""
 
-    def __init__(self, algorithm: Algorithm, method_name: str, method_priority: int):
+    def __init__(self, algorithm: Algorithm, method_name: str, method_priority: int | None):
         self._algorithm = algorithm
         self._method_name = method_name
         self._method_priority = method_priority
@@ -304,31 +304,28 @@ class _BlackJAXMCMCMethod(InferenceMethod):
         return (Distribution,)
 
     @property
-    def priority(self) -> int:
+    def priority(self) -> int | None:
         return self._method_priority
 
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
+    def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:
         if not isinstance(dist, SupportsUnnormalizedLogProb):
-            return MethodInfo(
+            return Feasibility(
                 feasible=False,
-                method_name=self.name,
                 description="Requires SupportsUnnormalizedLogProb",
             )
         try:
             target_flat, flat_init, _ = build_target_log_prob_flat(dist, observed)
             if not is_jax_traceable(target_flat, flat_init):
-                return MethodInfo(
+                return Feasibility(
                     feasible=False,
-                    method_name=self.name,
                     description="Log-prob is not JAX-traceable",
                 )
         except Exception as e:
-            return MethodInfo(
+            return Feasibility(
                 feasible=False,
-                method_name=self.name,
                 description=str(e),
             )
-        return MethodInfo(feasible=True, method_name=self.name)
+        return Feasibility(feasible=True)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
         random_seed: int = kwargs.get("random_seed", 0)
@@ -370,31 +367,36 @@ class _BlackJAXMCMCMethod(InferenceMethod):
 
 
 def BlackJAXNutsMethod() -> _BlackJAXMCMCMethod:
-    """BlackJAX No-U-Turn Sampler.
+    """BlackJAX No-U-Turn Sampler, registered as ``blackjax_nuts`` at priority 85.
 
-    Tier 81-90 (optimised JAX-native backend; the primary auto-dispatch
-    winner for any JAX-traceable ``SupportsLogProb`` target — the
-    canonical ProbPipe model class). Priority 85. Sits below
-    ``nutpie_nuts`` (88; Rust gradients win the constant-factor race for
-    Stan / PyMC models) and at the same tier as ``cmdstan_nuts`` /
-    ``pymc_nuts`` (82), which apply to disjoint model classes.
+    Applies to any ``SupportsUnnormalizedLogProb`` target with a
+    JAX-traceable log-density, the canonical ProbPipe model class, for which
+    it is the method automatic selection picks.
+
+    Notes
+    -----
+    An optimised JAX-native backend. Below ``nutpie_nuts`` (88), whose Rust
+    gradients win the constant-factor race for Stan and PyMC models, and
+    above ``cmdstan_nuts`` and ``pymc_nuts`` (82), which apply to disjoint
+    model classes.
     """
     return _BlackJAXMCMCMethod("nuts", "blackjax_nuts", 85)
 
 
 def BlackJAXHmcMethod() -> _BlackJAXMCMCMethod:
-    """BlackJAX Hamiltonian Monte Carlo.
+    """BlackJAX Hamiltonian Monte Carlo, registered as ``blackjax_hmc``, opt-in-only.
 
-    Tier 61-70 by algorithm category (well-understood, hand-tuned step
-    size; trajectory length randomized around a hand-set mean), but
-    registered at the opt-in-only sentinel ``priority=0``. Reasoning:
-    HMC's ``check()`` is identical to ``blackjax_nuts`` (same
-    ``SupportsUnnormalizedLogProb`` + JAX-traceability gate), so with
-    NUTS at 85, HMC is structurally unreachable in auto-dispatch. Keeping
-    it at 0 makes that explicit; callers who specifically want HMC pin
-    ``method="blackjax_hmc"``. The ``num_integration_steps`` kwarg
-    (default ``10``) is the *mean* trajectory length: production draws a
-    Halton-quasi-random number of leapfrog steps so a fixed-``L``
-    resonance cannot silently stall mixing.
+    Same feasibility class as ``blackjax_nuts``; runs only when the caller
+    pins ``method="blackjax_hmc"``. The ``num_integration_steps`` kwarg
+    (default ``10``) is the *mean* trajectory length: each draw uses a
+    Halton-quasi-random number of leapfrog steps so a fixed-``L`` resonance
+    cannot silently stall mixing.
+
+    Notes
+    -----
+    Well understood but hand-tuned: a hand-set step size and a trajectory
+    length randomized around a hand-set mean. Its ``check()`` is identical to
+    that of ``blackjax_nuts``, so with NUTS ranked, HMC would never be
+    selected automatically; ``priority=None`` makes that explicit.
     """
-    return _BlackJAXMCMCMethod("hmc", "blackjax_hmc", 0)
+    return _BlackJAXMCMCMethod("hmc", "blackjax_hmc", None)

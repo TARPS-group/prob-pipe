@@ -18,7 +18,7 @@ A result rule declares the result's components independently of its label. It ca
 
 Since the engine runs the stack, `op(...)` is a tracked term under fresh, derived identity whose spec satisfies the completed declaration, `op.with_options(raw=True)(...)` is that result detached (II.4), and `op.check(...)` is the engine's `check`.
 
-**Routes.** The implementations behind one operation come from different places, and a route is the one form they all take. It has the interface of a dispatch method (II.7), that is, `check`, `execute`, and a **fidelity**, but is bound to a call rather than to argument types, and it is registered against the operation it realizes by upward registration, as for any registry. Routes come from four sources, and an operation may carry any combination:
+**Routes.** The implementations behind one operation come from different places, and a route is the one form they all take. It has the interface of a dispatch method (II.7), that is, `check`, `execute`, and an **exact** flag, but is bound to a call rather than to argument types, and it is registered against the operation it realizes by upward registration, as for any registry. Routes come from four sources, and an operation may carry any combination:
 
 | route source | the implementation comes from | example |
 |---|---|---|
@@ -29,7 +29,7 @@ Since the engine runs the stack, `op(...)` is a tracked term under fresh, derive
 
 Where a route dispatches on a capability it names the operand it dispatches on. Its check reads the call's specs, the parameters the result rule reads, the controls, and declared representation metadata such as a factorization or a guarded capability (III.8), and it never evaluates the body. A capability route requires protocol membership plus the capability's guard, and membership alone where the capability is total on its domain. A structural route checks declared structure, a registry route delegates its probe to that registry, and a fallback checks its stated domain and assumptions. Missing declarations are reported as unresolved (V.1), and execution never catches a failure and tries another route.
 
-Routes use II.7's fidelity, specificity, and registration order, with no configurable within-tier priority at the operation itself. Registry routes retain their registry's priorities. Their local fidelity is the selected method's; derived routes likewise use the selected chain's guarantee rather than a fixed exact tag on the wrapper.
+Routes use II.7's exactness, specificity, and registration order, with no configurable priority at the operation itself. Registry routes retain their registry's priorities. Their local fidelity is the selected method's; derived routes likewise use the selected chain's guarantee rather than a fixed exact tag on the wrapper.
 
 ```python
 @dataclass(frozen=True)
@@ -47,19 +47,17 @@ class BoundCall:                   # one call, after binding and normalization
 class OperationRoute(Protocol):    # one interface; the helpers below are construction shorthand
     name:     str
     source:   RouteSource
-    fidelity: Fidelity | None     # None for a delegated route until its plan selects a method
-    def check(self, call: BoundCall, result: OutputSpec | None) -> MethodInfo: ...
+    exact: bool | None            # None for a delegated route until its plan selects a method
+    def check(self, call: BoundCall, result: OutputSpec | None) -> Feasibility: ...
     def execute(self, call: BoundCall, result: OutputSpec | None) -> Any: ...
 
 mean.capability_route("closed_form", operand="d", protocol=SupportsMean, method="_mean",
-                      fidelity=Fidelity.EXACT)
-mean.fallback_route("monte_carlo", check=_can_sample, execute=_mc_mean,
-                    fidelity=Fidelity.APPROXIMATE)
+                      exact=True)
+mean.fallback_route("monte_carlo", check=_can_sample, execute=_mc_mean, exact=False)
 marginal.capability_route("exact", operand="d", protocol=SupportsMarginals,
-                          method="_marginal", check=_can_marginalize_path,
-                          fidelity=Fidelity.EXACT)
+                          method="_marginal", check=_can_marginalize_path, exact=True)
 # An omitted capability guard means membership suffices on the declared domain.
-condition_on.structural_route("curry", check=_can_curry, execute=_curry, fidelity=Fidelity.EXACT)
+condition_on.structural_route("curry", check=_can_curry, execute=_curry, exact=True)
 condition_on.registry_route("bayes", registry=inference_method_registry)
 ```
 
@@ -104,7 +102,7 @@ class OperandSummary:
 class RouteSummary:
     name:     str
     source:   RouteSource
-    fidelity: Fidelity | None    # None until a delegated route is resolved (II.7)
+    exact:    bool | None        # None until a delegated route is resolved (II.7)
     requires: tuple[type, ...]   # the protocols a capability route needs; empty otherwise
     condition: str               # the feasibility condition in words, for the routes that types cannot state
 
@@ -227,11 +225,11 @@ A mean is defined whenever draws can be averaged, which is coordinatewise for ar
 
 **The `given` argument.** `given` is field-keyed: a `Record`, or a mapping from field paths to values, with every value conforming to the spec at its path, all of them unified together (II.1). Each key must name either a *given* slot, that is, a name in the `given_spec` or a path into a structured slot, or a *produced* field, that is, a path in the event schema; any other key is an error. A key may also name an interior path, in which case its value is a sub-record checked against the sub-schema. Binding part of a structured slot is defined as restructure-then-bind (II.6): the bound part is promoted and bound, the residual slot remains, and a group emptied by the binding dissolves. Conditioning is stated entirely in terms of fields, and factors never appear in the call: the derived factor graph is read only to decide which case below applies and to carry it out.
 
-**The routes.** `condition_on` resolves across three of the four route sources (VI.0): structural routes that curry a given slot or slice the factor graph, a capability route on `SupportsConditioning`, which a `ConditionalDistribution` always satisfies since `_condition_on` is its required primitive, and a registry route through the inference methods for Bayes' rule. Binding a given slot applies the kernel, and binding a produced field conditions the law; the factor graph helps select a route for the second, never changes what it means. Feasibility is checked from the declarations and available capabilities:
+**The routes.** `condition_on` resolves across three of the four route sources (VI.0): structural routes that curry a given slot or slice the factor graph, a capability route for each of the two conditioning capabilities, which a `ConditionalDistribution` claims since `_condition_on` is its required primitive, and a registry route through the inference methods for Bayes' rule. Binding a given slot applies the kernel, and binding a produced field conditions the law; the factor graph helps select a route for the second, never changes what it means. The controls are resolved before a route is selected, so `exact_only` excludes the approximate conditioning capability and the registry's approximate methods alike, and never reaches the selected route as an argument. Exactness is compared across route sources, as VI.0 requires: an exact registered method outranks the approximate conditioning capability, so no approximate route runs while an exact one applies. Feasibility is checked from the declarations and available capabilities:
 
 - **Exogenous given, so curry.** Binding a slot that the object conditions on but does not produce returns a smaller `ConditionalDistribution`, or an ordinary `Distribution` once all given slots are bound. This is exact and involves no inference. For example, binding a regression model's covariates curries it toward the data-ready likelihood.
 - **Produced field with an exact slice.** Binding leaves a conditional that can be assembled from available normalized factors and exact local conditioning operations. For example, in `p(y | beta) p(beta)`, fixing `beta` leaves the existing kernel `p(y | beta)`. A multi-field factor must support the required internal conditioning; its fields are never assumed independent. Upstream or independent fields commonly admit this route, but graph position alone does not establish feasibility.
-- **Produced field requiring Bayes' rule.** Binding leaves a likelihood contribution involving unconditioned variables, requiring an exact conditioning method or inference. For example, fixing `y` in `p(y | beta) p(beta)` leaves the likelihood `p(y | beta)` over the unknown `beta`, even though `y` has no downstream dependents. An available guarded `SupportsConditioning` route may compute the conditional exactly, as a `MultivariateNormal` does. Otherwise the operation considers inference methods registered for the model's representation (below), including atomic representations, and raises `ResolutionError` when none applies.
+- **Produced field requiring Bayes' rule.** Binding leaves a likelihood contribution involving unconditioned variables, requiring an exact conditioning method or inference. For example, fixing `y` in `p(y | beta) p(beta)` leaves the likelihood `p(y | beta)` over the unknown `beta`, even though `y` has no downstream dependents. An available `SupportsExactConditioning` route may compute the conditional exactly, as a `MultivariateNormal` does, and a `SupportsApproximateConditioning` route may answer it with a stand-in, as a pre-trained amortized posterior does. Otherwise the operation considers inference methods registered for the model's representation (below), including atomic representations, and raises `ResolutionError` when none applies.
 
 When `given` names several fields, the cases combine: the exact bindings, curry and slice, are applied first, and Bayes' rule runs on what remains. Field classification is computed once, on the graph with every conditioned field marked, so the outcome does not depend on the order the fields are listed. Conditioning on a produced field does not require the given fields to be bound first. The result stays conditional on the unmet givens, with the produced-field conditioning applied within each slice of the given, so the result curries like any other `ConditionalDistribution`, and in the exact cases the two orders agree: conditioning on a produced field and then binding the given yields the same distribution as binding the given first. An approximate route records its assumptions and fidelity instead of promising equality in law, and a conditional at a value is the version the selected route defines, since almost-everywhere uniqueness does not fix it pointwise. When the produced-field conditioning requires Bayes' rule, the resulting `ConditionalDistribution` may realize the inference lazily, once its given is bound, or through a method that supports amortization.
 
@@ -292,7 +290,7 @@ Leaving the integral out of `condition_on` keeps conditioning single-valued, sin
 
 ### Contract
 
-`convert(d, target)` returns a distribution of the requested class or satisfying the requested capability protocol (III.8). Its registry route uses the converter plan and event-preservation contract of IV.3. `with_options(method=..., min_fidelity=...)` controls selection, and provenance records the selected converter's local fidelity. A source already satisfying the target needs no numerical conversion and returns under fresh identity. Entry normalization plans the same conversion; execution constructs it and records it by the same contract (V.4, V.9).
+`convert(d, target)` returns a distribution of the requested class or satisfying the requested capability protocol (III.8). Its registry route uses the converter plan and event-preservation contract of IV.3. `with_options(method=..., exact_only=...)` controls selection, and provenance records the selected converter's local fidelity. A source already satisfying the target needs no numerical conversion and returns under fresh identity. Entry normalization plans the same conversion; execution constructs it and records it by the same contract (V.4, V.9).
 
 ### Rationale
 

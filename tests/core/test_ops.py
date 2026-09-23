@@ -1,5 +1,7 @@
 """Tests for standalone operations in probpipe.core.ops."""
 
+from typing import Any, ClassVar
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -18,7 +20,10 @@ from probpipe import (
     OpaqueBatch,
     ProductDistribution,
     RecordEmpiricalDistribution,
+    ResolutionError,
     SequentialJointDistribution,
+    SupportsApproximateConditioning,
+    SupportsExactConditioning,
     SupportsSampling,
 )
 from probpipe.core import ops
@@ -371,10 +376,150 @@ class TestConditionOn:
         conditioned = ops.condition_on(sjd, x=jnp.array(3.0))
         assert conditioned.fields == ("y",)
 
-    def test_condition_type_error(self):
-        """Objects with no protocols raise TypeError."""
-        with pytest.raises(TypeError):
+    def test_condition_on_an_object_with_no_protocols_raises_resolution_error(self):
+        """No registered method dispatches on it, so resolution fails rather than typing."""
+        with pytest.raises(ResolutionError):
             ops.condition_on("not_a_distribution", jnp.array(1.0))
+
+    def test_exact_only_keeps_the_exact_capability_route(self, joint):
+        """The control is consumed by the operation, so it never reaches ``_condition_on``."""
+        conditioned = ops.condition_on(joint, x=jnp.array(2.0), exact_only=True)
+        assert conditioned.fields == ("y",)
+
+    def test_controls_do_not_reach_the_capability_route(self):
+        """``_condition_on`` sees the data and inference kwargs, and no controls."""
+
+        class Recorder(SupportsExactConditioning):
+            seen: ClassVar[dict[str, Any]] = {}
+
+            def _condition_on(self, observed, /, **kwargs):
+                Recorder.seen = dict(kwargs)
+                return Normal(0, 1, name="posterior")
+
+        ops.condition_on(Recorder(), 1.0, exact_only=True, num_results=5)
+        assert Recorder.seen == {"num_results": 5}
+
+    def test_an_exact_registered_method_outranks_the_approximate_capability(self, monkeypatch):
+        """Exactness is compared across route sources, not only within the registry."""
+        from probpipe.core._dispatch import Feasibility, UnaryDispatchMethod, UnaryDispatchRegistry
+
+        class Amortized(SupportsApproximateConditioning):
+            calls: ClassVar[int] = 0
+
+            def _condition_on(self, observed, /, **kwargs):
+                Amortized.calls += 1
+                return Normal(0, 1, name="amortized")
+
+        class ExactMethod(UnaryDispatchMethod):
+            ran = False
+
+            @property
+            def name(self):
+                return "exact_for_amortized"
+
+            @property
+            def exact(self):
+                return True
+
+            @property
+            def priority(self):
+                return 1
+
+            def supported_types(self):
+                return (Amortized,)
+
+            def check(self, *args, **kwargs):
+                return Feasibility(feasible=True)
+
+            def execute(self, *args, **kwargs):
+                ExactMethod.ran = True
+                return Normal(0, 1, name="exact")
+
+        registry = UnaryDispatchRegistry()
+        registry.register(ExactMethod())
+        monkeypatch.setattr("probpipe.inference.inference_method_registry", registry)
+
+        ops.condition_on(Amortized(), 1.0)
+        assert ExactMethod.ran
+        assert Amortized.calls == 0
+
+    def test_the_approximate_capability_runs_when_no_exact_method_applies(self, monkeypatch):
+        """With only approximate methods registered, the built-in path still wins."""
+        from probpipe.core._dispatch import UnaryDispatchRegistry
+
+        class Amortized(SupportsApproximateConditioning):
+            calls: ClassVar[int] = 0
+
+            def _condition_on(self, observed, /, **kwargs):
+                Amortized.calls += 1
+                return Normal(0, 1, name="amortized")
+
+        monkeypatch.setattr("probpipe.inference.inference_method_registry", UnaryDispatchRegistry())
+        ops.condition_on(Amortized(), 1.0)
+        assert Amortized.calls == 1
+
+    def test_an_unresolved_exact_candidate_falls_back_to_the_approximate_capability(
+        self, monkeypatch
+    ):
+        """An exact method that cannot yet decide does not hold the call back."""
+        from probpipe.core._dispatch import Feasibility, UnaryDispatchMethod, UnaryDispatchRegistry
+
+        class Amortized(SupportsApproximateConditioning):
+            calls: ClassVar[int] = 0
+
+            def _condition_on(self, observed, /, **kwargs):
+                Amortized.calls += 1
+                return Normal(0, 1, name="amortized")
+
+        class UnresolvedExact(UnaryDispatchMethod):
+            ran = False
+
+            @property
+            def name(self):
+                return "unresolved_exact"
+
+            @property
+            def exact(self):
+                return True
+
+            @property
+            def priority(self):
+                return 1
+
+            def supported_types(self):
+                return (Amortized,)
+
+            def check(self, *args, **kwargs):
+                return Feasibility(feasible=None, pending=("event spec of the model",))
+
+            def execute(self, *args, **kwargs):
+                UnresolvedExact.ran = True
+                return Normal(0, 1, name="exact")
+
+        registry = UnaryDispatchRegistry()
+        registry.register(UnresolvedExact())
+        monkeypatch.setattr("probpipe.inference.inference_method_registry", registry)
+
+        ops.condition_on(Amortized(), 1.0)
+        assert Amortized.calls == 1
+        assert not UnresolvedExact.ran
+
+    def test_exact_only_skips_the_approximate_capability_route(self):
+        """An amortized conditioner is not an exact answer, so the call falls to the registry."""
+
+        class Amortized(SupportsApproximateConditioning):
+            calls: ClassVar[int] = 0
+
+            def _condition_on(self, observed, /, **kwargs):
+                Amortized.calls += 1
+                return Normal(0, 1, name="posterior")
+
+        amortized = Amortized()
+        ops.condition_on(amortized, 1.0)
+        assert Amortized.calls == 1
+        with pytest.raises(ResolutionError):
+            ops.condition_on(amortized, 1.0, exact_only=True)
+        assert Amortized.calls == 1
 
 
 # ---------------------------------------------------------------------------

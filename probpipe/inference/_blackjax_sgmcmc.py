@@ -1,6 +1,6 @@
 """BlackJAX-backed stochastic-gradient MCMC methods.
 
-Two :class:`~probpipe.core._registry.UnaryDispatchMethod` subclasses registered with
+Two :class:`~probpipe.core._dispatch.UnaryDispatchMethod` subclasses registered with
 :data:`~probpipe.inference.inference_method_registry`:
 
 * ``blackjax_sgld`` — Stochastic Gradient Langevin Dynamics
@@ -17,13 +17,11 @@ kernel via the ``grad_estimator(position, measure_key)`` closure
 convention — the per-step ``measure_key`` is passed through BlackJAX's
 opaque ``minibatch`` slot.
 
-Priorities (45 / 42) sit in the refinement-based MC tier (1–50, above
-parametric and below all exact methods); the per-method ``check()``
-further requires ``batch_size=`` to be passed, so SGMCMC only applies
-when the user has opted into minibatching via
-``condition_on(model, observed, method="blackjax_sgld", batch_size=…)``
-or by selecting it explicitly. See the inference-method registry
-docs for the full priority convention.
+Both methods require ``batch_size=`` to be passed, so SGMCMC applies only
+when the user has opted into minibatching, as in
+``condition_on(model, observed, method="blackjax_sgld", batch_size=…)``.
+``blackjax_sgld`` is registered at priority 45 and ``blackjax_sghmc`` is
+opt-in-only; the method classes state why.
 """
 
 from __future__ import annotations
@@ -34,8 +32,8 @@ import blackjax
 import jax
 import jax.numpy as jnp
 
+from ..core._dispatch import Feasibility
 from ..core._random_measures import RandomMeasure
-from ..core._registry import MethodInfo
 from ..custom_types import PRNGKey
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._inference_utils import as_prng_key, get_init_state, is_simple_model
@@ -87,7 +85,7 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
     """
 
     _method_name: str = ""
-    _method_priority: int = 0
+    _method_priority: int | None = None
 
     @property
     def name(self) -> str:
@@ -101,25 +99,23 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
         return (Distribution,)
 
     @property
-    def priority(self) -> int:
+    def priority(self) -> int | None:
         return self._method_priority
 
     # -- feasibility checks --------------------------------------------------
 
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
+    def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:
         """Require SimpleModel + ConditionallyIndependentLikelihood + batch_size."""
         from ..core.protocols import ConditionallyIndependentLikelihood
 
         if not is_simple_model(dist):
-            return MethodInfo(
+            return Feasibility(
                 feasible=False,
-                method_name=self.name,
                 description=(f"{self.name} requires a SimpleModel; got {type(dist).__name__}."),
             )
         if not isinstance(dist.likelihood, ConditionallyIndependentLikelihood):
-            return MethodInfo(
+            return Feasibility(
                 feasible=False,
-                method_name=self.name,
                 description=(
                     f"{self.name} requires model.likelihood to satisfy "
                     f"ConditionallyIndependentLikelihood; got "
@@ -127,15 +123,14 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
                 ),
             )
         if "batch_size" not in kwargs:
-            return MethodInfo(
+            return Feasibility(
                 feasible=False,
-                method_name=self.name,
                 description=(
                     f"{self.name} requires an explicit batch_size= kwarg. "
                     f"There is no canonical default for a stochastic sampler."
                 ),
             )
-        return MethodInfo(feasible=True, method_name=self.name)
+        return Feasibility(feasible=True)
 
     # -- execution -----------------------------------------------------------
 
@@ -246,13 +241,15 @@ def _run_sgmcmc_loop(
 
 
 class BlackJAXSGLDMethod(_BlackJAXSGMCMCMethod):
-    """BlackJAX Stochastic Gradient Langevin Dynamics.
+    """BlackJAX Stochastic Gradient Langevin Dynamics, registered as ``blackjax_sgld``.
 
-    Kernel: :func:`blackjax.sgld`. Tier 41-50 (refinement-based:
-    asymptotically exact as the step-size schedule decays). Priority
-    45 — sits below every exact method, so does not auto-win over
-    full-batch gradient methods; ``check()`` further requires the
-    user to pass ``batch_size=`` for SGLD to be applicable at all.
+    Kernel: :func:`blackjax.sgld`. Priority 45.
+
+    Notes
+    -----
+    Refinement-based, so asymptotically exact as the step-size schedule
+    decays. Ranked below every full-batch gradient method, so it never wins
+    automatic selection over one.
     """
 
     _method_name = "blackjax_sgld"
@@ -263,24 +260,25 @@ class BlackJAXSGLDMethod(_BlackJAXSGMCMCMethod):
 
 
 class BlackJAXSGHMCMethod(_BlackJAXSGMCMCMethod):
-    """BlackJAX Stochastic Gradient Hamiltonian Monte Carlo.
+    """BlackJAX Stochastic Gradient Hamiltonian Monte Carlo, registered as ``blackjax_sghmc``.
 
-    Kernel: :func:`blackjax.sghmc`. Accepts the additional kwargs
-    ``num_integration_steps`` (default 10), ``alpha`` (default 0.01),
-    ``beta`` (default 0.0). Tier 41-50 by algorithm category
-    (refinement-based: asymptotically exact as the step-size schedule
-    decays), but registered at the opt-in-only sentinel ``priority=0``.
-    Reasoning: SGHMC's ``check()`` is identical to ``blackjax_sgld``
-    (same ``SimpleModel`` + ``ConditionallyIndependentLikelihood`` +
-    ``batch_size=`` gate); with SGLD at 45, SGHMC is structurally
-    unreachable in auto-dispatch. SGLD is also the better default —
-    fewer dials (single ``step_size``) vs SGHMC's
-    ``num_integration_steps`` / ``alpha`` / ``beta``. Callers who
-    specifically want SGHMC pin ``method="blackjax_sghmc"``.
+    Kernel: :func:`blackjax.sghmc`. Opt-in-only: runs only when the caller
+    pins ``method="blackjax_sghmc"``. Accepts the additional kwargs
+    ``num_integration_steps`` (default 10), ``alpha`` (default 0.01), and
+    ``beta`` (default 0.0).
+
+    Notes
+    -----
+    Refinement-based like SGLD, so asymptotically exact as the step-size
+    schedule decays. Its ``check()`` is identical to that of
+    ``blackjax_sgld``, so with SGLD ranked, SGHMC would never be selected
+    automatically; ``priority=None`` makes that explicit. SGLD is also the
+    better default, with a single ``step_size`` to tune against SGHMC's
+    three kwargs.
     """
 
     _method_name = "blackjax_sghmc"
-    _method_priority = 0
+    _method_priority = None
 
     def _build_algorithm(self, grad_estimator, **kwargs: Any):
         num_integration_steps: int = kwargs.get("num_integration_steps", 10)

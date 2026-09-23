@@ -16,8 +16,8 @@ from ..core.distribution import (
     _mc_expectation,
 )
 from ..core.protocols import (
-    SupportsConditioning,
     SupportsCovariance,
+    SupportsExactConditioning,
     SupportsLogProb,
     SupportsMean,
     SupportsSampling,
@@ -40,7 +40,7 @@ class JointGaussian(
     SupportsMean,
     SupportsVariance,
     SupportsCovariance,
-    SupportsConditioning,
+    SupportsExactConditioning,
 ):
     """
     Joint Gaussian distribution with named components and cross-covariance.

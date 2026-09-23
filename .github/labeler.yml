@@ -48,7 +48,7 @@
           - "probpipe/core/_broadcast_distributions.py"
           - "probpipe/core/ops.py"
           - "probpipe/core/protocols.py"
-          - "probpipe/core/_registry.py"
+          - "probpipe/core/_dispatch.py"
           - "probpipe/core/transition.py"
           - "tests/core/test_workflow*.py"
           - "tests/core/test_broadcast*.py"

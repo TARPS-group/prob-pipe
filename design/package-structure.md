@@ -33,7 +33,7 @@ probpipe/
 │   ├── _record_spec.py        #   RecordSpec, NumericRecordSpec, unification (III.5)
 │   ├── _identity.py           #   TrackedTerm with annotations on the base, Immutable, Provenance, fingerprints, the provenance traversal (II.4)
 │   ├── _batch.py              #   Batch, BatchSpec: axis groups, level names, at_levels (II.5)
-│   ├── _dispatch.py           #   dispatch methods and registries, Fidelity, MethodInfo, ResolutionError, MathematicalDomainError (II.7)
+│   ├── _dispatch.py           #   dispatch methods and registries, Feasibility, MethodInfo, ResolutionError, MathematicalDomainError (II.7)
 │   ├── _catalog.py            #   EntrySummary, RegistryCatalog (II.7)
 │   └── _config.py             #   library configuration
 ├── values/                    # the value layer (III.1–III.6; LinOp, III.4, is in linalg/)
@@ -163,7 +163,7 @@ their target placement remains beside the value types they describe.
 | `core/_broadcast_distributions.py` | split: `BroadcastDistribution` is retired, the lift's joint result being an `EmpiricalDistribution` (V.10, VII.2); the row aggregator `_make_stack` to `functions/_result.py` (V.10); the mixture and record marginals to `operations/_marginal.py` and `families/_mixture.py` (VI.8, VII.3) |
 | `core/_empirical.py` | `distributions/_empirical.py` |
 | `inference/_registry.py` (the registry object, today imported upward by `core/ops.py`) | `operations/_condition.py`; the methods stay in `inference/`, and the edge points downward |
-| `core/named_tree.py`, `core/tracked.py`, `core/provenance.py`, `core/_registry.py` | `core/`, one module per II section; `Annotated` folds into `TrackedTerm` (II.4) |
+| `core/named_tree.py`, `core/tracked.py`, `core/provenance.py`, `core/_dispatch.py` | `core/`, one module per II section; `Annotated` folds into `TrackedTerm` (II.4) |
 | `core/_numeric_array.py`, `core/_opaque.py`, `core/record.py`, and their batch modules | `values/`, one module per III section |
 | `core/_spec_base.py` | `TermSpec`, `NumericArraySpec`, `OpaqueSpec`, and dimension unification stay in place; `NumericSpec` joins `Numeric` in `core/_numeric.py` (II.1, II.3, III.1–III.2) |
 | `core/_record_spec.py` | in place: `RecordSpec`, `NumericRecordSpec`, and record unification (III.5) |
@@ -177,7 +177,7 @@ their target placement remains beside the value types they describe.
 | `modeling/_glm.py` | `families/_conditional.py` (VII.8) |
 | `modeling/_base.py`, `modeling/_simple.py`, `modeling/_simple_generative.py`, and `Likelihood`, `ConditionallyIndependentLikelihood`, `GenerativeLikelihood` in `core/protocols.py` | retired: a model is a program-defined family (VII.9) or a factored joint (IV.1), and a learned likelihood is a `ConditionalDistribution` (III.9) |
 | `modeling/_likelihood.py` (`IncrementalConditioner`) | retired as a class; a fold of `condition_on` over data batches, settled with `iterate` |
-| `converters/_registry.py`, `converters/_protocol.py` | `distributions/_conversion.py` (IV.3): `ConversionMethod` becomes `Fidelity`, `Converter.convert` becomes `execute`, and the protocol resolver becomes protocol targets |
+| `converters/_registry.py`, `converters/_protocol.py` | `distributions/_conversion.py` (IV.3): `ConversionMethod` becomes the `exact` flag, `Converter.convert` becomes `execute`, and the protocol resolver becomes protocol targets |
 | `converters/_probpipe.py`, `converters/_scipy.py`, `converters/_tfp.py` | `families/_converters.py` (IV.3) |
 | `expectation`'s `return_dist` and `set_return_approx_dist` (`core/ops.py`, `core/_distribution_base.py`) | retired: the error of a Monte Carlo estimate is taken explicitly through the bootstrap (VII.2); `set_default_num_evaluations` becomes the sample-count default in `core/_config.py` (V.2) |
 | `core/_kinds.py`, `core/_array_backend.py` | `core/`, in place: the kind table (II.1) and the array-backend registry (II.3) |

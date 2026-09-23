@@ -38,6 +38,7 @@ from probpipe.core._array_backend import (
     register_array_backend,
 )
 from probpipe.core._batch import Batch, BatchSpec
+from probpipe.core._dispatch import MathematicalDomainError, ResolutionError
 from probpipe.core._distribution_array import DistributionArray
 from probpipe.core._function_batch import FunctionBatch
 from probpipe.core._numeric_array import NumericArray
@@ -114,9 +115,10 @@ from probpipe.core.node import (
     workflow_method,
 )
 from probpipe.core.protocols import (
+    SupportsApproximateConditioning,
     SupportsArrayBackend,
-    SupportsConditioning,
     SupportsCovariance,
+    SupportsExactConditioning,
     SupportsExpectation,
     SupportsLogProb,
     SupportsMean,
@@ -262,6 +264,7 @@ __all__ = [
     "Likelihood",
     "LinearBasisFunction",
     "LogNormal",
+    "MathematicalDomainError",
     "MinibatchedDistribution",
     "Module",
     "Multinomial",
@@ -301,13 +304,15 @@ __all__ = [
     "RecordSpec",
     "ReplayCompatibilityError",
     "ReplayUnsupportedCallableError",
+    "ResolutionError",
     "SequentialJointDistribution",
     "SimpleGenerativeModel",
     "SimpleModel",
     "StudentT",
+    "SupportsApproximateConditioning",
     "SupportsArrayBackend",
-    "SupportsConditioning",
     "SupportsCovariance",
+    "SupportsExactConditioning",
     "SupportsExpectation",
     "SupportsLogProb",
     "SupportsMean",

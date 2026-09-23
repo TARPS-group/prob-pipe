@@ -472,9 +472,10 @@ class SupportsQuantile[T](Protocol):
 class SupportsExpectation[T](Protocol):
     def _expectation(self, f: Callable[[T], Array]) -> Array: ...   # exact E[f(X)] for arbitrary f
 
-@runtime_checkable
-class SupportsConditioning(Protocol):
+class SupportsExactConditioning(ABC):        # claimed by inheriting, not structurally
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Distribution: ...   # the conditional law given fixed values
+class SupportsApproximateConditioning(ABC):  # same primitive, returning a stand-in for that law
+    def _condition_on(self, given: Any, /, **kwargs: Any) -> Distribution: ...
 
 @runtime_checkable
 class SupportsMarginals(Protocol):
@@ -563,7 +564,7 @@ class ConditionalDistributionSpec(TermSpec):  # a ConditionalDistribution; is_va
 
 ### Rationale
 
-Applying a `ConditionalDistribution` to a conditioning value returns a `Distribution`, which ensures `D4 – Closed system of objects under operations` is satisfied. A `ConditionalDistribution`'s capabilities are the `Distribution` capabilities shifted by one conditioning argument (`D3 – Capability-based operations`), so a single operation vocabulary applies to conditional distributions too, under the rule that *`Distribution` and `ConditionalDistribution` behave as similarly as possible*. The capabilities use distinct `_conditional_*` method names because a `@runtime_checkable` check matches on method name alone, so reusing `_sample` / `_log_prob` would corrupt the unconditional capability checks. `_condition_on` is the exception: fixing given fields means the same thing on both types, so a `ConditionalDistribution` satisfying `SupportsConditioning` is intended rather than a collision, and the names stay distinct where the meanings differ.
+Applying a `ConditionalDistribution` to a conditioning value returns a `Distribution`, which ensures `D4 – Closed system of objects under operations` is satisfied. A `ConditionalDistribution`'s capabilities are the `Distribution` capabilities shifted by one conditioning argument (`D3 – Capability-based operations`), so a single operation vocabulary applies to conditional distributions too, under the rule that *`Distribution` and `ConditionalDistribution` behave as similarly as possible*. The capabilities use distinct `_conditional_*` method names because a `@runtime_checkable` check matches on method name alone, so reusing `_sample` / `_log_prob` would corrupt the unconditional capability checks. `_condition_on` is the exception: fixing given fields means the same thing on both types, so a `ConditionalDistribution` claiming a conditioning capability is intended rather than a collision, and the names stay distinct where the meanings differ. The same rule is why the two conditioning capabilities are claimed by inheriting rather than structurally: whether `_condition_on` returns the conditional law or a stand-in for it is a claim about the result, which no check on method names can read, so two structural protocols declaring it would match the same classes.
 
 ## III.10 — `DistributionBatch` and `ConditionalDistributionBatch`
 

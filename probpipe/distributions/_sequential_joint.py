@@ -25,7 +25,7 @@ from ..core.distribution import (
     _mc_expectation,
 )
 from ..core.protocols import (
-    SupportsConditioning,
+    SupportsExactConditioning,
     SupportsLogProb,
     SupportsMean,
     SupportsSampling,
@@ -75,7 +75,7 @@ def _sequential_class_for_components(components: dict) -> type:
     """Return a SequentialJointDistribution subclass whose bases match
     what the resolved components support.
 
-    Always includes ``SupportsSampling`` and ``SupportsConditioning``
+    Always includes ``SupportsSampling`` and ``SupportsExactConditioning``
     (forward sampling + conditioning work regardless of component
     capabilities). Adds :class:`NumericRecordDistribution` when every
     resolved leaf is itself a :class:`NumericRecordDistribution`,
@@ -112,7 +112,7 @@ def _sequential_class_for_components(components: dict) -> type:
 class SequentialJointDistribution(
     RecordDistribution,
     SupportsSampling,
-    SupportsConditioning,
+    SupportsExactConditioning,
 ):
     """
     Joint distribution with autoregressive (sequential) dependence.

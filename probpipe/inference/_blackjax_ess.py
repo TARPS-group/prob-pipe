@@ -16,11 +16,8 @@ GP hyperparameter posteriors with Gaussian hyperpriors, latent-Gaussian
 models). When applicable, ESS dominates RWMH on the same target and is
 often competitive with NUTS at a fraction of the per-step cost.
 
-ProbPipe registers this method at priority 75 (tier 71-80: self-tuning,
-converges robustly without per-model hyperparameter selection). Its
-``check()`` is strict — ``SimpleModel`` only, Gaussian prior detected
-by :func:`_gaussian_prior_params`, observed data required — so
-auto-dispatch only fires when the kernel is genuinely applicable.
+ProbPipe registers this method as ``blackjax_elliptical_slice``;
+:class:`BlackJAXESSMethod` states its priority and feasibility class.
 """
 
 from __future__ import annotations
@@ -34,7 +31,7 @@ import jax.numpy as jnp
 import jax.scipy.linalg as jsl
 import numpy as np
 
-from ..core._registry import MethodInfo
+from ..core._dispatch import Feasibility
 from ..core.distribution import Distribution
 from ..custom_types import Array, ArrayLike
 from ._approximate_distribution import ApproximateDistribution, make_posterior
@@ -278,9 +275,15 @@ def elliptical_slice(
 class BlackJAXESSMethod(InferenceMethod):
     """Elliptical slice sampling on top of ``blackjax.elliptical_slice``.
 
-    Tier 71-80 (self-tuning, converges robustly without per-model
-    hyperparameter selection). Priority 75. The narrow Gaussian-prior
-    feasibility class is enforced in ``check()``, not by priority.
+    Registered as ``blackjax_elliptical_slice`` at priority 75. Applies to a
+    ``SimpleModel`` with a Gaussian prior, detected by
+    :func:`_gaussian_prior_params`, observed data, and a JAX-traceable
+    likelihood; ``check()`` enforces that class, not the priority.
+
+    Notes
+    -----
+    Self-tuning and robust without per-model hyperparameter selection, so it
+    ranks above ``blackjax_rwmh`` (55) and below the NUTS backends (82–88).
     """
 
     @property
@@ -294,11 +297,10 @@ class BlackJAXESSMethod(InferenceMethod):
     def priority(self) -> int:
         return 75
 
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
+    def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:
         if not is_simple_model(dist):
-            return MethodInfo(
+            return Feasibility(
                 feasible=False,
-                method_name=self.name,
                 description=(
                     "ESS requires a SimpleModel; bare "
                     "SupportsUnnormalizedLogProb has no prior/likelihood "
@@ -308,21 +310,18 @@ class BlackJAXESSMethod(InferenceMethod):
         prior = get_prior(dist)
         gp = _gaussian_prior_params(prior)
         if gp is None:
-            return MethodInfo(
+            return Feasibility(
                 feasible=False,
-                method_name=self.name,
                 description=(f"ESS requires a Gaussian prior; got {type(prior).__name__}"),
             )
         if observed is None:
-            return MethodInfo(
+            return Feasibility(
                 feasible=False,
-                method_name=self.name,
                 description="ESS requires observed data for the likelihood",
             )
         if isinstance(observed, dict):
-            return MethodInfo(
+            return Feasibility(
                 feasible=False,
-                method_name=self.name,
                 description="Does not support dict-based conditioning",
             )
         # The runner traces the BlackJAX ESS step under ``lax.scan``;
@@ -333,18 +332,16 @@ class BlackJAXESSMethod(InferenceMethod):
             flat_init = jnp.asarray(gp[0])
             loglikelihood_fn = build_likelihood_flat(prior, likelihood, observed)
             if not is_jax_traceable(loglikelihood_fn, flat_init):
-                return MethodInfo(
+                return Feasibility(
                     feasible=False,
-                    method_name=self.name,
                     description="Log-likelihood is not JAX-traceable",
                 )
         except Exception as e:
-            return MethodInfo(
+            return Feasibility(
                 feasible=False,
-                method_name=self.name,
                 description=str(e),
             )
-        return MethodInfo(feasible=True, method_name=self.name)
+        return Feasibility(feasible=True)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
         return elliptical_slice(

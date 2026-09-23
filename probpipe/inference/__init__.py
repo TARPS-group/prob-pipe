@@ -8,14 +8,19 @@ empirical distributions, and the inference method registry for
 
 from __future__ import annotations
 
-from ..core._registry import (
+from ..core._dispatch import (
     BaseDispatchMethod,
     BaseDispatchRegistry,
     BinaryDispatchMethod,
     BinaryDispatchRegistry,
+    BinarySupportedTypes,
+    Feasibility,
+    MathematicalDomainError,
     MethodInfo,
+    ResolutionError,
     UnaryDispatchMethod,
     UnaryDispatchRegistry,
+    UnarySupportedTypes,
 )
 from ._approximate_distribution import ApproximateDistribution
 from ._bayesflow_likelihoods import (
@@ -27,7 +32,7 @@ from ._bayesflow_likelihoods import (
 
 # Amortized SBI (optional ``[bayesflow]`` extra). keras/bayesflow load lazily on
 # first call, so these eager imports stay cheap; the trained artifacts dispatch
-# via ``SupportsConditioning`` (NPE) or plug into ``SimpleModel`` as
+# via ``SupportsApproximateConditioning`` (NPE) or plug into ``SimpleModel`` as
 # ``Likelihood`` components (NLE/NRE) -- no inference-registry methods needed.
 from ._bayesflow_posteriors import BayesFlowModel, learn_amortized_posterior
 from ._blackjax_ess import elliptical_slice
@@ -48,11 +53,16 @@ __all__ = [
     "BayesFlowRatio",
     "BinaryDispatchMethod",
     "BinaryDispatchRegistry",
+    "BinarySupportedTypes",
+    "Feasibility",
     "InferenceMethod",
+    "MathematicalDomainError",
     "MethodInfo",
     "MinibatchedDistribution",
+    "ResolutionError",
     "UnaryDispatchMethod",
     "UnaryDispatchRegistry",
+    "UnarySupportedTypes",
     "condition_on_nutpie",
     "elliptical_slice",
     "inference_method_registry",
@@ -67,7 +77,7 @@ __all__ = [
 # Register built-in inference methods
 # ---------------------------------------------------------------------------
 
-# TFP-backed MCMC — registered at priority 0 (opt-in only); BlackJAX
+# TFP-backed MCMC — registered with ``priority=None`` (opt-in only); BlackJAX
 # methods below win auto-dispatch.
 from ._tfp_mcmc import TFPHmcMethod, TFPNutsMethod
 

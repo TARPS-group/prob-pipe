@@ -33,7 +33,7 @@ import jax.scipy.linalg as jsl
 import numpy as np
 from blackjax.adaptation.mass_matrix import welford_algorithm
 
-from ..core._registry import MethodInfo
+from ..core._dispatch import Feasibility
 from ..core.distribution import Distribution
 from ..core.protocols import SupportsUnnormalizedLogProb
 from ..custom_types import Array, ArrayLike
@@ -641,10 +641,15 @@ def rwmh(
 class BlackJAXRWMHMethod(InferenceMethod):
     """Gradient-free RWMH on top of BlackJAX's ``normal_random_walk``.
 
-    Tier 51-60 (slow per effective sample in high dimensions even when
-    tuned). Priority 55. Auto-dispatched when no gradient-based method
-    passes ``check()`` — e.g., for log-densities that are not
-    JAX-traceable — or when the user pins ``method="blackjax_rwmh"``.
+    Registered as ``blackjax_rwmh`` at priority 55. Applies to any target
+    whose prior satisfies ``SupportsUnnormalizedLogProb``, JAX-traceable or
+    not, so automatic selection reaches it when no gradient-based method
+    passes ``check()``.
+
+    Notes
+    -----
+    Slow per effective sample in high dimensions even when tuned, so it ranks
+    below every gradient-based method.
     """
 
     @property
@@ -658,21 +663,19 @@ class BlackJAXRWMHMethod(InferenceMethod):
     def priority(self) -> int:
         return 55
 
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
+    def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:
         prior = get_prior(dist)
         if not isinstance(prior, SupportsUnnormalizedLogProb):
-            return MethodInfo(
+            return Feasibility(
                 feasible=False,
-                method_name=self.name,
                 description="Requires SupportsUnnormalizedLogProb",
             )
         if observed is not None and isinstance(observed, dict):
-            return MethodInfo(
+            return Feasibility(
                 feasible=False,
-                method_name=self.name,
                 description="Does not support dict-based conditioning",
             )
-        return MethodInfo(feasible=True, method_name=self.name)
+        return Feasibility(feasible=True)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
         prior = get_prior(dist)
