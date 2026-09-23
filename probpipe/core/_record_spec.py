@@ -224,7 +224,12 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
             specs = _field_specs if _field_specs is not None else field_specs
             if isinstance(specs, RecordSpec):
                 specs = specs.children
-            if specs and _all_numeric(specs.values()):
+            # No emptiness guard: an empty schema has no non-numeric leaf and
+            # lays out flat at length zero, so it is numeric like any other
+            # all-numeric schema. Withholding the class here is what let a
+            # schema disagree with its own ``is_numeric``, and with the class
+            # ``Record`` picks for the matching value.
+            if _all_numeric(specs.values()):
                 return cast(Self, object.__new__(NumericRecordSpec))
         return object.__new__(cls)
 
@@ -244,6 +249,9 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
             )
         else:
             for name in field_specs:
+                # Same rule as the positional path form enforces in
+                # ``_unflatten_paths``; the keyword form reaches neither it
+                # nor its message.
                 if not name:
                     raise ValueError("field key must be a non-empty string")
                 _check_no_path_sep(name)
@@ -510,9 +518,9 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
             if isinstance(val, Record):
                 return val.event_template
             if isinstance(val, Distribution):
-                # Temporary legacy-distribution bridge (#448 A1/E2). Remove this
-                # branch once every Distribution carries its own spec; the
-                # TrackedTerm path above must then supply the declaration.
+                # Temporary bridge for a distribution that carries no spec of
+                # its own (#448). Remove this branch once every Distribution
+                # does; the TrackedTerm path above must then supply it.
                 try:
                     template = getattr(val, "event_template", None)
                 except TypeError:
@@ -636,7 +644,11 @@ class NumericRecordSpec(RecordSpec, NumericSpec):
 
     @property
     def is_concrete(self) -> bool:
-        """Whether construction determined a concrete numeric layout."""
+        """Whether no symbolic dimension remains, as :class:`TermSpec` defines it.
+
+        Read from the layout cached at construction, which is populated
+        exactly when every dimension was concrete.
+        """
         return self._cached_vector_size is not None
 
     def _vector_size(self) -> int:

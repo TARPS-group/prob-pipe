@@ -120,8 +120,9 @@ class Numeric(ABC):                         # the flat-vector interface of the n
 ```python
 class NumericSpec(TermSpec, ABC):   # mixin: the specs whose values implement Numeric
     @property
+    def vector_size(self) -> int: ...   # total flat dimension; raises unless concrete
     @abstractmethod
-    def vector_size(self) -> int: ...   # total flat dimension; defined only when concrete
+    def _vector_size(self) -> int: ...  # the count itself; called only for a concrete spec
 ```
 
 A numeric kind may also specify the **support** of its values with a `Constraint`, which compares and hashes by value.

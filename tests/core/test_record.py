@@ -88,6 +88,35 @@ class TestConstruction:
         assert type(v) is NumericRecord
         assert v["x"] is arr
 
+    @pytest.mark.parametrize(
+        "fields",
+        [
+            pytest.param({"a": np.zeros(3)}, id="all-numeric"),
+            pytest.param({"a": np.zeros(3), "b": {}}, id="empty-nested-mapping"),
+            pytest.param({"a": np.zeros(3), "b": {"c": {}}}, id="empty-nested-twice"),
+            pytest.param({"a": np.zeros(3), "b": Record("b", {})}, id="empty-nested-record"),
+            pytest.param({}, id="empty-root"),
+            pytest.param({"a": np.zeros(3), "s": "text"}, id="non-numeric-field"),
+        ],
+    )
+    def test_the_class_agrees_with_the_schema_it_carries(self, fields):
+        """The value probe and the schema probe answer the same question.
+
+        ``Record.__new__`` picks the class from the raw values while the
+        carried schema is inferred separately, so the two predicates must
+        decide alike. An empty record holds no non-numeric leaf and lays out
+        flat at length zero, so both count it numeric, nested or at the root.
+        """
+        from probpipe import NumericRecord, NumericRecordSpec
+
+        record = Record("r", fields)
+        assert isinstance(record, NumericRecord) == isinstance(record.spec, NumericRecordSpec), (
+            f"{type(record).__name__} carries {type(record.spec).__name__}"
+        )
+        if isinstance(record, NumericRecord):
+            # The promised numeric API is actually usable.
+            assert record.to_vector().shape == (record.spec.vector_size,)
+
     def test_mixed_record_stores_values_verbatim(self):
         arr = np.array([1.0, 2.0, 3.0])
         v = Record("r", x=arr, label="tag")

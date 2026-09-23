@@ -132,9 +132,19 @@ class TestConstruction:
         assert len(empty) == 0
         assert list(empty) == []
 
-    def test_the_empty_template_is_not_promoted_to_numeric(self):
-        """Vacuously every leaf is numeric, which is not a reason to claim it."""
-        assert not isinstance(RecordSpec(), NumericRecordSpec)
+    def test_the_empty_schema_is_numeric(self):
+        """No non-numeric leaf, and a well-defined zero-length flat layout.
+
+        The alternative, withholding the class from an empty schema, leaves
+        ``is_numeric`` reporting true on a plain ``RecordSpec`` — the schema
+        disagreeing with its own flag, and with the class ``Record`` picks
+        for the matching value.
+        """
+        empty = RecordSpec()
+        assert isinstance(empty, NumericRecordSpec)
+        assert empty.is_numeric
+        assert empty.vector_size == 0
+        assert empty.leaf_shapes == {}
 
     def test_none_spec(self):
         tpl = RecordSpec(label=None, x=())
@@ -1292,10 +1302,10 @@ class TestAutoPromotionSpecs:
         assert isinstance(implicit.children["empty"], NumericRecordSpec)
         assert implicit.numeric_subset() == NumericRecordSpec(x=())
 
-    def test_numeric_parent_normalizes_empty_child_without_mutating_it(self):
+    def test_a_numeric_parent_takes_an_empty_child_as_it_is(self):
         empty = RecordSpec()
         parent = NumericRecordSpec(empty=empty)
-        assert type(empty) is RecordSpec
+        assert isinstance(empty, NumericRecordSpec)
         assert isinstance(parent.children["empty"], NumericRecordSpec)
         assert parent.vector_size == 0
         assert parent.leaf_shapes == {}
@@ -1330,15 +1340,17 @@ class TestAutoPromotionSpecs:
         assert spec.free_dims == {"d"}
 
     @pytest.mark.parametrize("spec_type", [RecordSpec, NumericRecordSpec])
-    def test_dimension_transforms_preserve_empty_root_kind(self, spec_type):
+    def test_dimension_transforms_preserve_the_empty_root(self, spec_type):
+        """Both spellings construct the same numeric class, and it survives."""
         spec = spec_type()
+        assert isinstance(spec, NumericRecordSpec)
         for result in (
             spec.with_dim_sizes(d=3),
             spec.with_dim_names(d="n"),
             spec.bind_dims_from_value({}),
             spec.bind_dims_from_spec(RecordSpec()),
         ):
-            assert type(result) is spec_type
+            assert type(result) is type(spec)
             assert result == spec
 
     def test_opaque_spec_blocks_promotion(self):
@@ -2501,6 +2513,65 @@ class TestMultiplicityBindsFromAValue:
 
 class TestDefaultSpecBinding:
     """Public binding validates dimensionless values or reports unbindable dimensions."""
+
+    @staticmethod
+    def _concrete_specs():
+        """Every live concrete ``TermSpec``, one entry per class.
+
+        Deduplicated by module and qualified name rather than by identity:
+        ``dataclass(slots=True)`` rebuilds a class and the discarded original
+        stays reachable through ``__subclasses__``, so identity alone reports
+        some specs twice.
+        """
+        import sys as _sys
+
+        seen: dict[tuple[str, str], type[TermSpec]] = {}
+        pending = [TermSpec]
+        while pending:
+            for subclass in pending.pop().__subclasses__():
+                key = (subclass.__module__, subclass.__qualname__)
+                if key in seen:
+                    continue
+                if not subclass.__module__.startswith("probpipe."):
+                    # A spec a test defines locally is not the library's to
+                    # hold to this contract, and several deliberately break it.
+                    pending.append(subclass)
+                    continue
+                # Prefer the class the module actually exports: a rebuilt
+                # class and its discarded original share a name, and only
+                # one of them is the one everything else refers to.
+                module = _sys.modules.get(subclass.__module__)
+                live = getattr(module, subclass.__qualname__, subclass)
+                seen[key] = live if isinstance(live, type) else subclass
+                pending.append(subclass)
+        return [spec for spec in seen.values() if not getattr(spec, "__abstractmethods__", False)]
+
+    def test_the_inventory_is_not_vacuous(self):
+        """The walk finds the specs it is meant to hold."""
+        found = set(self._concrete_specs())
+
+        assert {NumericArraySpec, OpaqueSpec, RecordSpec, DistributionSpec, FunctionSpec} <= found
+        assert BatchSpec in found
+
+    @pytest.mark.parametrize("method", ["_bind_dims_from_value", "_bind_dims_from_spec"])
+    def test_a_spec_reporting_dimensions_overrides_binding(self, method):
+        """Whatever reports a dimension resolves it, rather than inheriting a refusal.
+
+        ``free_dims``, ``_substitute_dims`` and the two binding methods are one
+        contract. The sweep is over the live subclasses, so a spec kind added
+        later is held to it without anyone remembering to list it here.
+        """
+        for spec in self._concrete_specs():
+            if spec.free_dims is TermSpec.free_dims:
+                continue  # declares no dimensions, so the default is the answer
+            assert getattr(spec, method) is not getattr(TermSpec, method), (
+                f"{spec.__name__} reports free_dims but inherits {method}"
+            )
+
+    def test_a_spec_declaring_no_dimensions_keeps_the_default(self):
+        """``OpaqueSpec`` declares none, so the base class answers for it."""
+        assert OpaqueSpec.free_dims is TermSpec.free_dims
+        assert OpaqueSpec._bind_dims_from_value is TermSpec._bind_dims_from_value
 
     def test_a_dimensionless_spec_preserves_its_metadata(self):
         spec = OpaqueSpec(meta="payload")

@@ -21,6 +21,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   distribution template APIs retain their signatures for their later migration.
   Moving and renaming schema classes changes their fingerprints and those of
   containing terms; affected persisted provenance fingerprints no longer match.
+  A custom `NumericSpec` implements `_vector_size`; the public `vector_size`
+  property is concrete and rejects an unbound dimension before calling it.
+  `NumericArraySpec` and `OpaqueSpec` are slotted, so they no longer carry an
+  instance `__dict__`, and `TermSpec` declares `__weakref__`, so a subclass
+  must not declare that slot again. `RecordSpec(**{"": ...})` now raises
+  `ValueError` for an empty field name, matching the positional path form.
+
+- **An empty record is numeric, and a record's class agrees with its schema.**
+  `Record` picks `NumericRecord` from the raw values while the carried
+  `RecordSpec` is inferred separately, and the two disagreed on an empty child:
+  `Record("r", {"a": arr, "b": {}})` carried a `NumericRecordSpec` announcing a
+  flat layout on a plain `Record` with no `to_vector`. An empty record holds no
+  non-numeric leaf and has a well-defined zero-length flat layout, so it is
+  numeric — nested and at the root alike — and `RecordSpec()` is a
+  `NumericRecordSpec` with `vector_size == 0`. `to_vector` on a record with no
+  numeric leaves returns the zero-length vector rather than raising, and
+  `from_vector` reads it back. Previously an empty schema reported
+  `is_numeric` true while keeping the plain class; the class, the flag and the
+  value's class now always agree.
 
 - **A dispatch method declares whether it is exact; the integer priority
   tiers are gone.** `probpipe.core._registry` is now `probpipe.core._dispatch`.
@@ -770,18 +789,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   This was additive: the batch types were built alongside what they replaced
   and still what the library uses, and the new classes are not yet exported.
 
-- **`EventTemplate.with_dims(**sizes)`** binds symbolic dimensions explicitly,
-  returning a new template so refinement stays monotone, and naming any
-  dimension left unbound. It reaches through a term spec, and auto-promotes to
-  `NumericEventTemplate` when the bound template is all-numeric, so a bound
-  template gains its flat layout. The law-level `with_dims` design 03 names on
-  `Distribution` will delegate to it.
+- **`RecordSpec.with_dim_sizes(**sizes)`** binds symbolic dimensions explicitly,
+  returning a new schema so refinement stays monotone. It reaches through a term
+  spec, and auto-promotes to `NumericRecordSpec` when the bound schema is
+  all-numeric, so a bound schema gains its flat layout. Partial substitution is
+  allowed: unsupplied dimensions stay symbolic. The law-level method design 03
+  names on `Distribution` will delegate to it.
 - **A `Record` stores its `RecordSpec`.** `Record.spec` is the single stored
-  source of a record's type, and `event_template` becomes a view on it, so the
-  two cannot disagree. Construction accepts either form of a record
-  declaration: a `RecordSpec` is stored verbatim and a bare `EventTemplate` is
-  wrapped, the two denoting the same space. Everything that reads
-  `event_template` is unaffected.
+  source of a record's type, and `event_template` returns that same object, so
+  the two cannot disagree. Construction takes a `RecordSpec`; it is stored
+  verbatim. Everything that reads `event_template` is unaffected.
 
   This is the storage rule the tracked types share — a term carries the spec of
   its kind, and its schema accessors are views on that one object — reaching

@@ -353,6 +353,11 @@ class NumericRecord(Record):
         numeric leaves into a single dense vector.
         """
         leaves = [self._field_as_jax(key) for key in self.event_template]
+        if not leaves:
+            # ``jnp.concatenate`` refuses an empty list; a record with no
+            # numeric leaves has ``vector_size == 0`` and serialises to the
+            # zero-length vector, which concatenates as the identity.
+            return jnp.zeros(0)
         return jnp.concatenate([jnp.reshape(leaf, -1) for leaf in leaves])
 
     @classmethod

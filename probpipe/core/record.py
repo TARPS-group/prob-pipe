@@ -71,11 +71,16 @@ def _is_numeric_field_value(value: Any) -> bool:
     form and converted only at the compute boundary, so promotion loses
     nothing. A nested record counts iff it is a ``NumericRecord``; a batched
     child never is.
+
+    An empty nested mapping counts, matching ``_is_numeric_spec``: it holds no
+    non-numeric leaf, so it does not block a numeric parent. The two predicates
+    decide the same question on the two sides of one construction and must
+    agree, or the instance's class would contradict the schema it carries.
     """
     if isinstance(value, Mapping):
         # A mapping value is nested structure (materialised into a child):
         # numeric iff every value beneath it is.
-        return bool(value) and all(_is_numeric_field_value(v) for v in value.values())
+        return all(_is_numeric_field_value(v) for v in value.values())
     if isinstance(value, Record):
         from ._numeric_record import NumericRecord
 
@@ -394,10 +399,11 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
             template_allows = event_template is None or isinstance(
                 event_template, NumericRecordSpec
             )
-            numeric = (
-                template_allows
-                and bool(source)
-                and all(_is_numeric_field_value(value) for value in source.values())
+            # No emptiness guard, mirroring ``RecordSpec.__new__``: a record
+            # with no fields holds no non-numeric value and serialises to a
+            # zero-length vector, so it is numeric and its schema promotes.
+            numeric = template_allows and all(
+                _is_numeric_field_value(value) for value in source.values()
             )
             if numeric:
                 return object.__new__(NumericRecord)
