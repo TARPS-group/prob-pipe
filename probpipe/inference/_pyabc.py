@@ -250,8 +250,8 @@ class PyABCSMCMethod(InferenceMethod):
 
         # Known limitation: pyabc perturbs in the prior's *constrained* space, so
         # for bounded parameters it can propose out-of-support points (density 0
-        # — correct but wasteful). Follow-up (#238): perturb in unconstrained
-        # space via the prior's constraint bijectors.
+        # — correct but wasteful). Perturbing in unconstrained space through the
+        # prior's constraint bijectors would avoid these proposals.
         abc = pyabc.ABCSMC(
             model_fn,
             pyabc_prior,

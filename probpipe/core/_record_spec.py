@@ -519,8 +519,8 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
                 return val.event_template
             if isinstance(val, Distribution):
                 # Temporary bridge for a distribution that carries no spec of
-                # its own (#448). Remove this branch once every Distribution
-                # does; the TrackedTerm path above must then supply it.
+                # its own. Remove this branch once every Distribution does;
+                # the TrackedTerm path above must then supply it.
                 try:
                     template = getattr(val, "event_template", None)
                 except TypeError:

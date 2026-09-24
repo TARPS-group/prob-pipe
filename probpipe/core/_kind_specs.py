@@ -131,8 +131,8 @@ class FunctionSpec(TermSpec):
         immediate field. A callable declaring several output fields does not
         match one.
 
-        Temporary legacy-template adapter (#448): remove this unwrapping once
-        live Functions carry OutputSpec declarations.
+        Temporary legacy-template adapter: remove this unwrapping once live
+        Functions carry OutputSpec declarations.
         """
         if isinstance(self.output_spec, RecordSpec):
             _unify_specs(self.output_spec, actual_output, bindings, path)

@@ -221,7 +221,7 @@ def _lifted_element_spec(
     instead let only a batch of records be swept by a declared function, and made
     a batch of records satisfy a declaration that named a bare array.
 
-    Temporary legacy-template adapter (#448): live distributions still carry
+    Temporary legacy-template adapter: live distributions still carry
     event templates. The current sampling lift passes a sole immediate field as
     a bare value when the callable declares a leaf, and as a record for a record declaration.
     Resolve that legacy packaging here, before strict spec unification. Batch
