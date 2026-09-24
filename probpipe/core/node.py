@@ -367,8 +367,9 @@ class Function(Node, TrackedTerm, Annotated):
         """Construct an ordinary Function from a private implementation.
 
         This is the internal construction entry point for dynamically produced
-        Functions. Fitted-producer validation and attestations remain the
-        responsibility of the controlled factory planned in #370.
+        Functions. It performs no fitted-producer validation and records no
+        attestations; those belong to a controlled factory for fitted producers,
+        which does not exist yet.
         """
         if not isinstance(name, str) or not name:
             raise TypeError("Function._from_implementation() requires a non-empty name")

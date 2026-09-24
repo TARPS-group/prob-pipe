@@ -629,8 +629,8 @@ SAMPLE_LEVEL = "sample"
 
 # The axis an *enumerated* argument ranges over, which no operation mints: the
 # broadcast walks an empirical's atoms, and the level says only that they are
-# draws. Naming it for the distribution enumerated, one level per co-sampling
-# group, is issue #427.
+# draws. Naming it for the distribution enumerated, with one level per
+# co-sampling group, is not implemented.
 DRAW_LEVEL = "draw"
 
 

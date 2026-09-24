@@ -1,4 +1,4 @@
-"""Shared fixtures for inference-method validation (issue #301).
+"""Shared fixtures for inference-method validation.
 
 A conjugate Gaussian linear model with a *closed-form* posterior — the trusted
 reference an inference method is validated against by the suite in

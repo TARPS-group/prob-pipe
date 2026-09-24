@@ -190,8 +190,7 @@ class TestFieldAccess:
 
     def test_path_through_non_record_raises_clear_keyerror(self):
         """Descending past a leaf via path syntax must raise ``KeyError`` with
-        a path-aware message — not a numpy ``IndexError`` (regression for PR-A
-        review finding #5)."""
+        a path-aware message — not a numpy ``IndexError``."""
         v = Record("r", a=np.array([1.0, 2.0]))
         with pytest.raises(KeyError, match="non-tree leaf"):
             v["a/b"]
@@ -298,9 +297,8 @@ class TestImmutability:
         with pytest.raises(ValueError, match="Cannot remove all"):
             v.without("a")
 
-    # replace / merge / without must preserve the subclass (regression
-    # for review comment (b) on a8be0b3: NumericRecord was silently
-    # downgraded to Record by these methods).
+    # replace / merge / without must preserve the subclass (regression:
+    # NumericRecord was silently downgraded to Record by these methods).
 
     def test_replace_preserves_numeric_record(self):
         from probpipe import NumericRecord
@@ -713,8 +711,7 @@ class TestConversion:
         assert back["y"].attrs == {"units": "m"}
 
     def test_to_numeric_recurses_into_nested_records(self):
-        """``to_numeric()`` recurses into nested non-NumericRecord children
-        (regression for the divergence flagged in PR-A review)."""
+        """``to_numeric()`` recurses into nested non-NumericRecord children."""
         from probpipe import NumericRecord
 
         outer = Record("r", inner=Record("r", a=1.0), z=2.0)
@@ -873,7 +870,7 @@ class TestReprAndEquality:
 
     def test_hash_includes_shape(self):
         """Records with the same field names but different shapes should
-        hash differently (follow-up to review comment #10)."""
+        hash differently."""
         v1 = Record("r", a=jnp.zeros(3))
         v2 = Record("r", a=jnp.zeros(5))
         assert hash(v1) != hash(v2)
@@ -904,10 +901,9 @@ class TestReprAndEquality:
         assert mixed != Record("r", a=1.0, label="other")
 
     # Hash / eq contract: ``a == b`` must imply ``hash(a) == hash(b)``.
-    # Regression for review comment (a) on a8be0b3 — ``__hash__`` used
-    # to read raw ``.shape`` / ``.dtype`` while ``__eq__`` coerced via
-    # ``jnp.asarray``, so Record("r", a=1.0) == Record("r", a=jnp.asarray(1.0))
-    # but the hashes differed.
+    # Regression: ``__hash__`` used to read raw ``.shape`` / ``.dtype`` while
+    # ``__eq__`` coerced via ``jnp.asarray``, so
+    # Record("r", a=1.0) == Record("r", a=jnp.asarray(1.0)) but the hashes differed.
 
     def test_hash_eq_contract_scalar_vs_zero_d_array(self):
         r1 = Record("r", a=1.0)
@@ -932,8 +928,8 @@ class TestReprAndEquality:
     # the identity fast-path. ``__eq__`` compares native values with
     # ``equal_nan`` (the same basis as the content fingerprint), so two
     # separately built records with a NaN leaf are equal and hash the same.
-    # Regression for the /code-review finding that NaN leaves made ``__eq__``
-    # non-reflexive across copies (``jnp.array_equal`` treats NaN != NaN).
+    # Regression: NaN leaves made ``__eq__`` non-reflexive across copies
+    # (``jnp.array_equal`` treats NaN != NaN).
 
     def test_self_equality_with_nan(self):
         r = Record("r", x=jnp.array([jnp.nan, 1.0, jnp.nan]))
@@ -980,7 +976,7 @@ class TestReprAndEquality:
 
 
 # ---------------------------------------------------------------------------
-# Provenance (issue #130)
+# Provenance
 # ---------------------------------------------------------------------------
 
 

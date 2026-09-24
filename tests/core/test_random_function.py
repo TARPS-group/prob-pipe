@@ -16,7 +16,7 @@ from probpipe import (
 )
 
 # Test fixtures construct ``Normal`` from batched arrays; the rejection
-# in ``TFPDistribution.__init__`` (PR-C.2) makes that a user-facing
+# in ``TFPDistribution.__init__`` makes that a user-facing
 # error. Internal infra opts into the bypass — the fixtures here mock
 # library-internal code paths (RandomFunction subclasses), so the
 # bypass is appropriate.

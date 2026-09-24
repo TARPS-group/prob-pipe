@@ -137,8 +137,7 @@ class PyMCModel(ProbabilisticModel):
             the build dropped, or a new non-observed free RV it
             introduced. ProbPipe does not support models whose
             non-observed random-variable set changes with the data
-            (dynamic random variables); see
-            https://github.com/TARPS-group/prob-pipe/issues/232.
+            (dynamic random variables).
         """
         free = {rv.name for rv in model.free_RVs}
         missing = [n for n in self._param_names if n not in free]
@@ -150,8 +149,7 @@ class PyMCModel(ProbabilisticModel):
                 f"of free random variables changes with the data (dynamic "
                 f"random variables); the parameter set must be fixed across "
                 f"builds, with only per-variable shapes allowed to depend "
-                f"on data size. See "
-                f"https://github.com/TARPS-group/prob-pipe/issues/232."
+                f"on data size."
             )
         extra = free - set(self._param_names) - set(self._observed_names)
         if extra:
@@ -162,8 +160,7 @@ class PyMCModel(ProbabilisticModel):
                 f"of free random variables changes with the data (dynamic "
                 f"random variables); the parameter set must be fixed across "
                 f"builds, with only per-variable shapes allowed to depend "
-                f"on data size. See "
-                f"https://github.com/TARPS-group/prob-pipe/issues/232."
+                f"on data size."
             )
         # Partial conditioning: include observed names left free.
         omitted_observed = tuple(n for n in self._observed_names if n in free)

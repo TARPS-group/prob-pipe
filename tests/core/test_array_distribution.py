@@ -306,7 +306,7 @@ class TestSupports:
 
 
 # ---------------------------------------------------------------------------
-# Canonical / convenience accessor pairs on NumericRecordDistribution (PR-D)
+# Canonical / convenience accessor pairs on NumericRecordDistribution
 # ---------------------------------------------------------------------------
 
 
@@ -618,12 +618,12 @@ class TestCanonicalConvenience:
 
 
 # ---------------------------------------------------------------------------
-# Bernoulli / Categorical no longer report float32 (PR-D commit B fix)
+# Bernoulli / Categorical no longer report float32
 # ---------------------------------------------------------------------------
 
 
 class TestIntegerDtypeReporting:
-    """Pre-PR-D, the base ``dtypes`` silently returned
+    """Regression: the base ``dtypes`` silently returned
     ``{name: default_float_dtype()}`` for every field, so every
     integer-valued distribution reported a float dtype. With
     ``dtypes`` canonical (subclasses must override), TFP's int

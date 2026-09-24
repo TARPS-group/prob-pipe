@@ -483,8 +483,7 @@ class TestWindowedWarmup:
     wins, and even averaging the error over a panel of seeds flips on
     some panels. The *recovery* claim — that the default schedule fits
     a 30x-stretched dimension — is rock-solid across every seed tried,
-    so the suite asserts only that. (See the maintainer notes / PR for
-    the seed sweep behind this rescoping.)
+    so the suite asserts only that.
     """
 
     def test_windowed_recovers_anisotropic_cov(self):

@@ -914,7 +914,7 @@ class TestCoSamplingThroughACall:
 
     def test_a_nested_record_valued_empirical_lifts(self):
         """A column is keyed by leaf path, so a nested record batches like a
-        flat one — the case #340 was opened for."""
+        flat one."""
         empirical = RecordEmpiricalDistribution(
             Record(
                 "r", group={"x": jnp.array([1.0, 2.0, 3.0]), "y": jnp.array([10.0, 20.0, 30.0])}

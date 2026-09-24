@@ -573,7 +573,7 @@ class TestEqualityAndHashing:
         assert hash(t1) == hash(t2)
 
     def test_eq_is_order_sensitive(self):
-        """Insertion-order is part of the template's identity (#124),
+        """Insertion-order is part of the template's identity,
         and ``__hash__`` is order-sensitive — so ``__eq__`` must agree
         to satisfy Python's eq/hash contract.
         """

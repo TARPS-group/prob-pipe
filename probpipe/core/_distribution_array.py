@@ -575,9 +575,9 @@ class DistributionArray[T](Distribution[T]):
           the single cell — those work uniformly across every
           ``batch_shape`` including ``()``.
 
-        For flat row-major access over every cell (the pre-#178
-        behaviour), use :attr:`components` or
-        ``range(self.size)`` with :meth:`_flat_component`.
+        For flat row-major access over every cell, use
+        :attr:`components` or ``range(self.size)`` with
+        :meth:`_flat_component`.
         """
         bshape = self._batch_shape
         if not bshape:

@@ -317,7 +317,7 @@ class TestRecordSpec:
         """``_event_template_for(model)`` reports the data-conditioned
         shape for an RV whose shape depends on data size, while the bare
         ``event_template`` property reports the declared (no-data)
-        shape (issue #224).
+        shape.
 
         The inference paths call ``_event_template_for`` with the model
         they build from data, so the template matches the chain. The
@@ -354,8 +354,8 @@ class TestRecordSpec:
     def test_data_dependent_shape_inference_recovers_correct_layout(self):
         """End-to-end: NUTS with a per-observation effect produces a
         posterior whose ``draws()`` records match the conditioned
-        template (issue #224 — would previously shape-mismatch at
-        posterior assembly).
+        template. The no-data template would not match their shapes at
+        posterior assembly.
         """
         from probpipe import condition_on
 
@@ -380,7 +380,7 @@ class TestRecordSpec:
 
     def test_advi_field_order_realignment(self):
         """End-to-end: ``pymc_advi`` realigns posterior columns to the
-        template by name, like the NUTS/nutpie paths (PR #236).
+        template by name, like the NUTS/nutpie paths.
 
         ADVI's trace comes from ``approx.sample`` rather than a NUTS run,
         so it exercises ``posterior_var_order`` on a distinct trace source.
@@ -416,7 +416,7 @@ class TestRecordSpec:
 
     def test_dynamic_rv_set_rejected(self):
         """A model whose free-RV *set* changes with data raises a clear
-        ``ValueError`` rather than silently dropping a field (issue #232).
+        ``ValueError`` rather than silently dropping a field.
 
         Here ``ghost`` exists only in the no-data build, so it lands in
         ``_param_names`` (frozen at construction) but is absent from the
@@ -440,7 +440,7 @@ class TestRecordSpec:
 
     def test_additive_dynamic_rv_set_rejected(self):
         """An RV that exists *only* in the conditioned build is rejected
-        rather than silently dropped (issue #232, additive direction).
+        rather than silently dropped.
 
         ``extra`` is created only when data is present, so it is absent
         from ``_param_names`` (frozen from the no-data build). Without an
@@ -549,7 +549,7 @@ class TestRecordSpec:
         assert float(jnp.mean(jnp.asarray(draws["X"]))) < -50.0  # ~ -100
 
     def test_pymc_nuts_multiparam_field_order_realigned(self):
-        """End-to-end check of the name-keyed wiring (issue #233): the
+        """End-to-end check of the name-keyed wiring: the
         pymc_nuts path extracts in the trace's alphabetical ``data_vars``
         order, and ``field_order`` realigns columns to the declared
         (template) order by name.

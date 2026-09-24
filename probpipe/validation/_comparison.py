@@ -3,8 +3,9 @@
 These score a posterior *approximation* against a trusted *reference* (analytic,
 long-NUTS, or sandwich) — answering "does this method recover the right
 posterior?", as opposed to per-fit convergence diagnostics (ESS, R-hat), which
-are tracked separately in #193. They are plain, dependency-light JAX functions
-used by the inference test suite and the ``probpipe-benchmark`` harness.
+:mod:`probpipe.diagnostics` provides. They are plain, dependency-light JAX
+functions used by the inference test suite and the ``probpipe-benchmark``
+harness.
 
 The approximation under test is consumed as draws (anything exposing
 ``flat_samples``, or a raw ``(n, d)`` array); the moment metrics use its sample

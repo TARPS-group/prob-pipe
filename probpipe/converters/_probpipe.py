@@ -650,7 +650,7 @@ def _convert_to_kde(source, key, **kw):
     if isinstance(source, RecordEmpiricalDistribution):
         # Single-field and multi-field paths both route through
         # ``from_empirical``, which threads the source's
-        # ``event_template`` so KDE preserves named fields (issue #267).
+        # ``event_template`` so KDE preserves named fields.
         r = KDEDistribution.from_empirical(source, bandwidth=bandwidth, name=name)
         r.with_provenance(_mm_provenance(source))
         return r

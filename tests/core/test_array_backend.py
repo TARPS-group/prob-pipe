@@ -504,8 +504,8 @@ class TestBackendRegistrationEndToEnd:
 class TestRegisteredBackendIdentity:
     """A registered non-numpy backend (a container the duck path cannot see or
     convert) must be first-class on the identity / conversion paths too — not
-    just construction and to_vector. Regression for the review-round finding
-    that __eq__ / to_numpy bypassed the registry.
+    just construction and to_vector. Regression: __eq__ / to_numpy bypassed
+    the registry.
     """
 
     @pytest.fixture

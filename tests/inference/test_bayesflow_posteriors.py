@@ -199,7 +199,7 @@ class _PositiveLikelihood(Likelihood, GenerativeLikelihood):
 
 
 def _nested_prior():
-    """Nested ``ProductDistribution`` (issue #262): a sub-record ``outer`` (a
+    """Nested ``ProductDistribution``: a sub-record ``outer`` (a
     positive leaf ``r`` and a real leaf ``m``) plus a top-level real ``c`` --
     leaves ``outer/r``, ``outer/m``, ``c``. The ``Gamma`` leaf exercises a
     per-leaf bijector *under* nesting; ``flatten`` order is ``[r, m, c]``."""
@@ -585,7 +585,7 @@ class TestBayesFlowMethods:
         assert 0.8 < np.mean(std_ratios) < 1.25
 
     def test_nested_prior_end_to_end(self):
-        """A nested prior (issue #262) trains and conditions end to end. The
+        """A nested prior trains and conditions end to end. The
         simulator receives the structured *nested* record (read by nested name),
         posterior draws come back under the same nested leaf names, and the
         constrained leaf ``outer/r`` is mapped back through its per-leaf bijector
@@ -621,7 +621,7 @@ class TestBayesFlowMethods:
         assert mean_c_hi > mean_c_lo
 
     def test_nested_prior_calibration_against_conjugate(self):
-        """Decisive correctness check for the nested lift (issue #262): against a
+        """Decisive correctness check for the nested lift: against a
         conjugate Gaussian with an analytic posterior, each *nested* leaf's
         posterior mean and spread match the analytic values. The leaves round-trip
         in flatten order (``outer/a``, ``outer/b``, ``m``); a mis-ordered column or

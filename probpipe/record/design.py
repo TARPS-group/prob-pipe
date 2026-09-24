@@ -8,9 +8,7 @@ path as a single array-valued input::
 
     result = fit(p=design)    # one inner call per row of the sweep
 
-This module currently exports :class:`FullFactorialDesign` only;
-additional subclasses (`RandomDesign`, `LatinHypercubeDesign`,
-`SobolDesign`) are planned as follow-up PRs.
+The module's one concrete subclass is :class:`FullFactorialDesign`.
 """
 
 from __future__ import annotations

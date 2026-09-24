@@ -78,7 +78,7 @@ def _column_permutation(
     chain occupies. The returned ``perm`` satisfies: ``flat[..., perm]``
     lays the columns out in template-field order, so the positional split
     in :class:`ApproximateDistribution` maps each column to the right
-    field by name. See issue #233.
+    field by name.
 
     Raises
     ------
@@ -192,7 +192,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         # sorts variable names — permute them into ``event_template``
         # order. The positional split below (and ``draws()`` unflatten)
         # then map each column to the right field by name rather than by
-        # position, so callers don't have to pre-sort. See issue #233.
+        # position, so callers don't have to pre-sort.
         if field_order is not None:
             if event_template is None:
                 raise ValueError(
@@ -475,7 +475,7 @@ def make_posterior(
         ``event_template.fields`` order. Pass this when the chain's column
         order may differ from the template's (e.g. a backend that sorts
         variable names) so columns are aligned to fields by name rather
-        than position (see issue #233).
+        than position.
     weights : array-like, :class:`~probpipe.Weights`, or None
         Optional per-sample importance weights (across all chains),
         forwarded to :class:`ApproximateDistribution`. Lets weighted

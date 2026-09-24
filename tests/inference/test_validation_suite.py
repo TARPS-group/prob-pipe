@@ -1,10 +1,9 @@
-"""Dogfood the validation metrics on real fits (issue #301).
+"""Dogfood the validation metrics on real fits.
 
-NUTS recovers the conjugate model's closed-form posterior (closing #301's
-acceptance: a method reproduces the analytic reference within measured
-tolerances); vanilla fixed-step ``blackjax_sgld`` exhibits the covariance bias
-that #304's calibration is meant to remove. Tolerances are measured across
-seeds 0–2 per STYLE_GUIDE §8.6.
+NUTS recovers the conjugate model's closed-form posterior within measured
+tolerances, and the metrics detect the covariance bias of vanilla fixed-step
+``blackjax_sgld``. Tolerances are measured across seeds 0–2 per STYLE_GUIDE
+§8.6.
 """
 
 from __future__ import annotations
@@ -47,7 +46,7 @@ class TestSGLDCovarianceBias:
         rce_sgld = float(relative_cov_error(sgld, m.reference))
         # Vanilla fixed-step SGLD mis-estimates the posterior covariance. Measured
         # across seeds 0–2: SGLD rce ∈ [0.18, 0.35] vs NUTS [0.04, 0.08], a 2.7–6×
-        # gap — the bias #304's calibration must remove.
+        # gap.
         assert rce_sgld > 2.0 * rce_nuts
         assert rce_sgld > 0.12
 

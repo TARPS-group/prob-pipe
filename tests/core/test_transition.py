@@ -54,11 +54,10 @@ class TestIterate:
     def test_basic(self, initial):
         """iterate returns a DistributionArray including the initial.
 
-        Post issue #130 PR 1.5, Function outputs whose function
-        body returns a Python list of Distributions get wrapped as a
-        ``DistributionArray`` (the stacked-collection counterpart to
-        ``list[Distribution]``), so indexing, iteration, and len all
-        still work.
+        A Function whose body returns a Python list of Distributions
+        wraps its output as a ``DistributionArray`` (the
+        stacked-collection counterpart to ``list[Distribution]``), so
+        indexing, iteration, and len all work.
         """
         from probpipe import DistributionArray
 

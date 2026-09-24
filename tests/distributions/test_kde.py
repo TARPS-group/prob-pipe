@@ -3,7 +3,7 @@
 The single-field auto-template path is exercised throughout the
 converter tests in ``tests/converters/test_converters.py``; this file
 focuses on the multi-field ``event_template=`` constructor parameter
-(issue #267) and the :meth:`KDEDistribution.from_empirical` factory.
+and the :meth:`KDEDistribution.from_empirical` factory.
 """
 
 from __future__ import annotations
