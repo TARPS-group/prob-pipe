@@ -187,11 +187,12 @@ class TestInheritance:
         rm = _DiracRandomMeasure(
             [Normal(loc=0.0, scale=1.0, name="n0")],
         )
-        # Inner versions exist; outer versions do not.
+        # Inner versions exist; a law-valued draw has no outer ones.
         assert hasattr(rm, "inner_support")
         assert hasattr(rm, "inner_event_shape")
         assert not hasattr(rm, "support")
-        assert not hasattr(rm, "event_shape")
+        with pytest.raises(TypeError, match="does not draw a single array"):
+            _ = rm.event_shape
 
 
 # ---------------------------------------------------------------------------

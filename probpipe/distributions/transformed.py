@@ -10,6 +10,7 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ..core import _workflow_descendants
 from ..core._numeric_record_distribution import NumericRecordDistribution, _mc_expectation
+from ..core._specs import NumericArraySpec
 from ..core.constraints import (
     Constraint,
     positive,
@@ -166,16 +167,21 @@ class TransformedDistribution(NumericRecordDistribution):
     def __init__(self, name: str, base: NumericRecordDistribution, bijector: tfb.Bijector):
         self._base = base
         self._bijector = bijector
-        super().__init__(name=name)
-
+        # One draw is the base's draw pushed through the bijector: its image
+        # shape and dtype, on the image support.
         if isinstance(base, TFPDistribution):
             self._tfp_transformed = tfd.TransformedDistribution(
                 distribution=base._tfp_dist,
                 bijector=bijector,
                 name=name,
             )
+            shape = tuple(self._tfp_transformed.event_shape)
+            dtype = self._tfp_transformed.dtype
         else:
             self._tfp_transformed = None
+            shape = tuple(bijector.forward_event_shape(base.event_shape))
+            dtype = base.dtype
+        super().__init__(name, NumericArraySpec(shape, dtype, self._event_support()))
 
         self._approximate = base.is_approximate
 
@@ -202,31 +208,10 @@ class TransformedDistribution(NumericRecordDistribution):
         """The TFP bijector applied to *base*."""
         return self._bijector
 
-    # -- shape delegation ---------------------------------------------------
-
-    @property
-    def event_shape(self) -> tuple[int, ...]:
-        if self._tfp_transformed is not None:
-            return tuple(self._tfp_transformed.event_shape)
-        return tuple(self._bijector.forward_event_shape(self._base.event_shape))
-
-    @property
-    def dtypes(self) -> dict[str, jnp.dtype]:
-        """Per-field dtype — derived from the transformed TFP
-        distribution when available, falling back to the base
-        distribution's dtype. Spread across the auto-built
-        single-field template."""
-        if self._tfp_transformed is not None:
-            out_dtype = self._tfp_transformed.dtype
-        else:
-            out_dtype = self._base.dtype
-        return self._per_field_dict(out_dtype)
-
     # -- support ------------------------------------------------------------
 
-    @property
-    def support(self) -> Constraint:
-        """Derive the output support from the bijector when possible."""
+    def _event_support(self) -> Constraint:
+        """The image support, derived from the bijector when possible, else the real line."""
         bij_name = type(self._bijector).__name__
         if bij_name in _BIJECTOR_SUPPORT_MAP:
             return _BIJECTOR_SUPPORT_MAP[bij_name]

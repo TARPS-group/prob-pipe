@@ -1068,6 +1068,60 @@ class TestEmpiricalDeclarations:
         assert law.event_shapes == {"u": (2,), "v": ()}
 
 
+class TestDerivedDeclarations:
+    """Transformed laws, random functions and measures, and minibatch laws declare
+    what one draw is."""
+
+    def test_a_transformed_law_declares_the_image(self):
+        import tensorflow_probability.substrates.jax.bijectors as tfb
+
+        law = TransformedDistribution("t", Normal("x", 0.0, 1.0), tfb.Exp())
+        assert law.event_spec == OutputSpec(
+            t=NumericArraySpec((), jnp.asarray(0.0).dtype, positive)
+        )
+        over_atoms = TransformedDistribution(
+            "u", EmpiricalDistribution("e", jnp.ones((4, 2))), tfb.Exp()
+        )
+        assert over_atoms.event_shape == (2,)
+
+    def test_a_random_function_draws_an_unspecified_callable(self):
+        from probpipe import FunctionSpec, LinearBasisFunction
+
+        weights = MultivariateNormal("w", loc=jnp.zeros(2), cov=jnp.eye(2))
+        f = LinearBasisFunction(
+            "f",
+            feature_map=lambda X: jnp.concatenate([X, X**2], -1),
+            weights=weights,
+            input_shape=(1,),
+        )
+        assert f.event_spec == OutputSpec(f=FunctionSpec())
+        # A derived function keeps its base's component; its label is not one.
+        shifted = f + 1.0
+        assert shifted.name == "shift(f)"
+        assert shifted.event_spec is f.event_spec
+
+    def test_a_minibatched_measure_draws_laws_over_the_prior_parameters(self):
+        import tensorflow_probability.substrates.jax.glm as tfp_glm
+
+        from probpipe import GLMLikelihood, MinibatchedDistribution, Record
+
+        X = jnp.eye(4)
+        prior = MultivariateNormal("theta", loc=jnp.zeros(4), cov=jnp.eye(4))
+        measure = MinibatchedDistribution(
+            "measure",
+            prior,
+            GLMLikelihood(tfp_glm.Bernoulli(), x=X),
+            Record("r", X=X, y=jnp.array([1.0, 0.0, 1.0, 0.0])),
+            batch_size=2,
+        )
+        assert measure.event_spec == OutputSpec(measure=DistributionSpec(prior.event_spec))
+        draw = measure._draw_one(jax.random.PRNGKey(0))
+        assert draw.event_spec is prior.event_spec
+        assert measure.event_spec.spec.is_valid(draw)
+        at_point = measure._random_unnormalized_log_prob()(jnp.zeros(4))
+        assert at_point.event_spec == OutputSpec(log_prob=NumericArraySpec(()))
+
+
 class TestDimensionTransforms:
     def test_with_dim_sizes_binds_a_free_dimension(self):
         law = _DeclaredLaw("x", NumericArraySpec(("n",)))
