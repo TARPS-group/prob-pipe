@@ -158,11 +158,18 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
         # data dict via stanio; ``data=None`` means no data.
         self._bs_model = bridgestan.StanModel(stan_file, data=data)
         self._num_params = self._bs_model.param_unc_num()
+        # The parameters are the declared record, one field per Stan block.
+        self._init_declaration(self.event_template)
 
     # -- Distribution interface ---------------------------------------------
 
     @property
     def event_shape(self) -> tuple[int, ...]:
+        """The length of the flat unconstrained parameter vector.
+
+        An interim implementation detail: the declaration is the record of
+        parameter blocks, and the flat-vector readers still ask for this.
+        """
         return (self._num_params,)
 
     # -- Named components interface ------------------------------------------
@@ -258,9 +265,11 @@ class _UnconstrainedStanView(Distribution, SupportsLogProb):
         # ``base.name`` is guaranteed non-empty by the TrackedTerm
         # metaclass check — wrap with an ``_unconstrained`` suffix (derived, so auto).
         self._init_tracked(f"{model.name}_unconstrained")
+        self._init_declaration(self.event_template)
 
     @property
     def event_shape(self) -> tuple[int, ...]:
+        """The length of the flat unconstrained parameter vector, as for the model."""
         return self._model.event_shape
 
     @cached_property
