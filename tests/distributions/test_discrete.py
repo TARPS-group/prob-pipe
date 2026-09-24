@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import scipy.stats
 
-from probpipe import NumericRecordDistribution, log_prob, mean, sample, variance
+from probpipe import NumericRecordDistribution, integer_interval, log_prob, mean, sample, variance
 from probpipe.distributions import (
     Bernoulli,
     Binomial,
@@ -147,6 +147,11 @@ class TestCategorical:
         dist = Categorical(probs=[0.2, 0.3, 0.5], name="x")
         samples = jnp.asarray(sample(dist, key=key, sample_shape=(100,)))
         assert jnp.allclose(samples, jnp.round(samples))
+
+    @pytest.mark.parametrize("parameter", ["probs", "logits"])
+    def test_support_spans_the_categories(self, parameter):
+        dist = Categorical("x", **{parameter: [0.2, 0.3, 0.5]})
+        assert dist.support == integer_interval(0, 2)
 
 
 class TestNegativeBinomial:
