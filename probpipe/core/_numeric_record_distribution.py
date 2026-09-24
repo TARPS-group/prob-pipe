@@ -61,6 +61,7 @@ from ._record_distribution import (
     _field_event_shape,
     _interim_template,
 )
+from ._specs import NumericArraySpec
 from .constraints import (
     Constraint,
     _supports_compatible,
@@ -169,6 +170,16 @@ def _mc_expectation(
     if rd:
         return BootstrapDistribution("expectation", evals)
     return jax.tree.map(lambda v: jnp.mean(v, axis=0), evals)
+
+
+def _raw_event_shape(law: Distribution) -> tuple[int, ...]:
+    """The shape of a raw array draw of *law*, which ``flatten_value`` needs, else ``()``.
+
+    A record draw carries its own structure, so flattening one reads no shape.
+    """
+    if _declares_event(law) and not isinstance(law.event_spec.spec, NumericArraySpec):
+        return ()
+    return law.event_shape
 
 
 # ---------------------------------------------------------------------------
@@ -917,7 +928,7 @@ def _flattened_distribution_view_class_for_base(base: Distribution) -> type:
             pytree_samples = self._base._sample(key, sample_shape)
             return self._base.flatten_value(
                 pytree_samples,
-                event_shape=self._base.event_shape,
+                event_shape=_raw_event_shape(self._base),
             )
 
         extra_methods["_sample"] = _sample

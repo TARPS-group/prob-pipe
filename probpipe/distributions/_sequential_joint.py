@@ -19,6 +19,7 @@ from ..core._numeric_record_distribution import NumericRecordDistribution, _mc_e
 from ..core._record_distribution import (
     RecordDistribution,
     _build_event_template,
+    _joint_event_spec,
 )
 from ..core.protocols import (
     SupportsExactConditioning,
@@ -175,7 +176,6 @@ class SequentialJointDistribution(
             components
         )
         name = auto_name(name, "sequential(" + ",".join(components.keys()) + ")")
-        super().__init__(name=name)
         self._conditioned_names: frozenset[str] = frozenset()
         self._conditioned_values: dict[str, Array] = {}
         self._sampleable_error: str | None = None
@@ -224,8 +224,10 @@ class SequentialJointDistribution(
                 resolved[cname] = comp(**call_kw)
         self._proto_components = resolved
 
-        # Build _components dict from resolved prototypes (for shape introspection)
+        # Build _components dict from resolved prototypes (for shape introspection);
+        # the declaration is known only once the callables have resolved.
         self._components = resolved
+        super().__init__(name, _joint_event_spec(resolved))
         self._event_template = _build_event_template(self._components)
 
         # Reparent to the dynamic subclass whose protocol bases match the
@@ -281,11 +283,6 @@ class SequentialJointDistribution(
     def components(self):
         """Read-only view of the component distributions."""
         return MappingProxyType(self._components)
-
-    @property
-    def dtypes(self) -> dict[str, jnp.dtype]:
-        """Per-component dtypes from the resolved prototype distributions."""
-        return {name: component.dtype for name, component in self._components.items()}
 
     def _sample_sequential(
         self,
@@ -515,6 +512,7 @@ class SequentialJointDistribution(
 
         # Expose only unconditioned components
         set_attribute("_components", unconditioned_pre)
+        result._init_declaration(_joint_event_spec(unconditioned_pre))
         set_attribute("_event_template", _build_event_template(unconditioned_pre))
 
         result.with_provenance(

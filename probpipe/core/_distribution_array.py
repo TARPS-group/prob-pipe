@@ -50,7 +50,7 @@ import numpy as np
 from .._array_utils import _slice_leading_axes
 from ..distributions._distribution import Distribution
 from ._immutable import transient_memo
-from ._specs import RecordSpec
+from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
 from .protocols import SupportsArrayBackend
 from .tracked import auto_name
 
@@ -58,6 +58,27 @@ if TYPE_CHECKING:
     from .protocols import _DistributionArrayBackend
 
 __all__ = ["DistributionArray"]
+
+
+def _drawn_shapes(component: Distribution) -> object:
+    """The shapes one draw of *component* has, which the cells of an array share.
+
+    An array draw has its shape and a record draw the shape of each leaf, by
+    path. A one-field record reads as its field, as ``event_shape`` read it, and
+    a component that declares no event reads its ``event_shape``; both are
+    interim implementation details.
+    """
+    try:
+        spec = component.event_spec.spec
+    except AttributeError:
+        return getattr(component, "event_shape", ())
+    if isinstance(spec, RecordSpec) and len(spec.children) == 1:
+        (spec,) = spec.children.values()
+    if isinstance(spec, NumericArraySpec):
+        return spec.shape
+    if isinstance(spec, NumericRecordSpec):
+        return spec.leaf_shapes
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -154,14 +175,14 @@ class DistributionArray(Distribution):
         # Components must share event_shape. Batching lives on the
         # DistributionArray itself; per the "one random variable per
         # Distribution" rule, components have no batch_shape.
-        es0 = getattr(components[0], "event_shape", ())
+        es0 = _drawn_shapes(components[0])
         for i, c in enumerate(components):
-            es = getattr(c, "event_shape", ())
+            es = _drawn_shapes(c)
             if es != es0:
                 raise ValueError(
                     f"DistributionArray requires matching event_shape "
-                    f"across components; components[0].event_shape={es0} "
-                    f"but components[{i}].event_shape={es}."
+                    f"across components; components[0] draws {es0} "
+                    f"but components[{i}] draws {es}."
                 )
         # ``batch_shape`` defaults to (n,) for backward compatibility
         # with the 1-D-only form used until now. Multi-d broadcasting

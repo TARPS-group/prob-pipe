@@ -29,6 +29,8 @@ from probpipe import (
     HalfCauchy,
     HalfNormal,
     InverseGamma,
+    JointEmpirical,
+    JointGaussian,
     Laplace,
     LogNormal,
     Multinomial,
@@ -40,10 +42,12 @@ from probpipe import (
     OutputSpec,
     Pareto,
     Poisson,
+    ProductDistribution,
     RandomFunction,
     RandomMeasure,
     RecordEmpiricalDistribution,
     RecordSpec,
+    SequentialJointDistribution,
     StudentT,
     TransformedDistribution,
     TruncatedNormal,
@@ -51,6 +55,7 @@ from probpipe import (
     VonMisesFisher,
     Wishart,
     boolean,
+    condition_on,
     expectation,
     greater_than,
     integer_interval,
@@ -927,6 +932,76 @@ class TestFamilyDeclarations:
     def test_a_batched_backend_declares_one_cell(self):
         arr = DistributionArray.from_batched_params(Normal, loc=jnp.zeros(4), scale=1.0, name="arr")
         assert arr._backend._batched_dist.event_spec.spec.shape == ()
+
+
+class TestJointDeclarations:
+    """A joint declares an exposed record of its components' declared terms."""
+
+    def test_a_product_keeps_each_component_dtype_and_support(self):
+        product = ProductDistribution(
+            a=Normal("a", 0.0, 1.0), b={"c": Gamma("c", 2.0, 1.0)}, name="p"
+        )
+        dtype = jnp.asarray(0.0).dtype
+        assert product.event_spec == OutputSpec(
+            RecordSpec(
+                a=NumericArraySpec((), dtype, real),
+                b=RecordSpec(c=NumericArraySpec((), dtype, positive)),
+            )
+        )
+        assert product.dtypes == {"a": dtype, "b/c": dtype}
+        assert product.supports == {"a": real, "b/c": positive}
+        assert product.fields == ("a", "b")
+        with pytest.raises(TypeError, match="does not draw a single array"):
+            _ = product.event_shape
+
+    def test_a_nested_product_declares_the_inner_record(self):
+        from probpipe import sample
+
+        inner = ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0))
+        product = ProductDistribution(inner=inner)
+        leaf = NumericArraySpec((), jnp.asarray(0.0).dtype, real)
+        assert product.event_spec == OutputSpec(RecordSpec(inner=RecordSpec(a=leaf, b=leaf)))
+        assert product.event_template == RecordSpec(inner=RecordSpec(a=(), b=()))
+        assert sample(product, key=jax.random.PRNGKey(0))["inner/a"].shape == ()
+
+    def test_a_renamed_component_is_keyed_by_the_joint(self):
+        product = ProductDistribution(growth=Normal("x", 0.0, 1.0), name="p")
+        assert tuple(product.event_spec.components) == ("growth",)
+
+    def test_a_sequential_joint_declares_its_resolved_components(self):
+        joint = SequentialJointDistribution(
+            z=Normal("z", 0.0, 1.0), x=lambda z: Normal("x", z, 1.0), name="j"
+        )
+        assert tuple(joint.event_spec.components) == ("z", "x")
+        assert joint.supports == {"z": real, "x": real}
+        conditioned = condition_on(joint, z=0.5)
+        assert tuple(conditioned.event_spec.components) == ("x",)
+
+    def test_a_joint_gaussian_declares_its_blocks(self):
+        joint = JointGaussian(mean=jnp.zeros(3), cov=jnp.eye(3), x=1, y=2)
+        assert joint.event_spec.spec == RecordSpec(
+            x=NumericArraySpec((1,), jnp.asarray(0.0).dtype, real),
+            y=NumericArraySpec((2,), jnp.asarray(0.0).dtype, real),
+        )
+        assert joint.event_shapes == {"x": (1,), "y": (2,)}
+
+    def test_a_joint_empirical_declares_each_row(self):
+        joint = JointEmpirical(
+            labels=np.array(["a", "b"], dtype=object), ids=np.array([0, 1], dtype=np.int32)
+        )
+        assert joint.event_spec.spec == RecordSpec(
+            labels=OpaqueSpec(), ids=NumericArraySpec((), np.int32)
+        )
+        # An opaque field makes the draw non-numeric, so it has no dtypes.
+        assert not hasattr(joint, "dtypes")
+
+    def test_array_cells_must_draw_the_same_record(self):
+        cells = [
+            ProductDistribution(x=Normal("x", 0.0, 1.0), y=Normal("y", 0.0, 1.0)),
+            ProductDistribution(x=Normal("x", 0.0, 1.0), z=Normal("z", 0.0, 1.0)),
+        ]
+        with pytest.raises(ValueError, match="matching event_shape"):
+            DistributionArray(cells)
 
 
 class TestDimensionTransforms:

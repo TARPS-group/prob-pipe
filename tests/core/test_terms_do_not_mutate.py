@@ -148,7 +148,7 @@ class TestAQueryLeavesTheTermUnchanged:
         joint = ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 1.0, 2.0), name="j")
         assert hasattr(joint, "_tfp_dist")
         before = assigned_state(joint)
-        _ = joint.event_shape
+        _ = joint.dtypes
         assert assigned_state(joint) == before
 
 
