@@ -58,7 +58,7 @@ def _build_grad_estimator(measure: RandomMeasure):
     own minibatch internally via
     :meth:`~probpipe.MinibatchedDistribution._random_unnormalized_log_prob`.
     The kernel stays oblivious to the minibatching convention, so the
-    same builder works for any future ``RandomMeasure[Record]`` subclass
+    same builder works for any future ``RandomMeasure`` subclass
     that supplies :class:`SupportsRandomUnnormalizedLogProb`.
     """
     rand_logp = measure._random_unnormalized_log_prob()

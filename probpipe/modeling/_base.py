@@ -10,7 +10,7 @@ from ..distributions._distribution import Distribution
 __all__ = ["ProbabilisticModel"]
 
 
-class ProbabilisticModel[T](Distribution[T]):
+class ProbabilisticModel(Distribution):
     """Abstract base for probabilistic programming models.
 
     A ``ProbabilisticModel`` is a first-class :class:`Distribution`

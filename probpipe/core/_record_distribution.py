@@ -419,7 +419,7 @@ class _RecordDistributionMeta(_TrackedTermMeta):
         return instance
 
 
-class RecordDistribution(Distribution[Record], metaclass=_RecordDistributionMeta):
+class RecordDistribution(Distribution, metaclass=_RecordDistributionMeta):
     """Generic Record-based distribution.
 
     Provides named component access (``fields``, ``__getitem__``,

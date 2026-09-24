@@ -73,15 +73,15 @@ class TestHierarchy:
 
 
 # ---------------------------------------------------------------------------
-# Distribution[T] base class methods
+# Distribution base class methods
 # ---------------------------------------------------------------------------
 
 
 class TestDistributionBase:
-    """Tests for methods defined on Distribution[T] itself."""
+    """Tests for methods defined on Distribution itself."""
 
     def test_log_prob_raises_by_default(self):
-        """Distribution[T] without SupportsLogProb raises TypeError."""
+        """Distribution without SupportsLogProb raises TypeError."""
 
         class StubDist(Distribution):
             pass
@@ -113,8 +113,8 @@ class TestDistributionBase:
         assert "x" in r
 
     def test_from_distribution_on_base_class(self, scalar_normal):
-        """from_distribution is accessible on Distribution[T] base."""
-        # Normal inherits from_distribution from Distribution[T]
+        """from_distribution is accessible on Distribution base."""
+        # Normal inherits from_distribution from Distribution
         result = from_distribution(scalar_normal, Normal, num_samples=100)
         assert isinstance(result, Normal)
 
