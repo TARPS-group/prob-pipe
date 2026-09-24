@@ -293,9 +293,11 @@ class TestProperties:
         assert dist.event_shape == (5, 2)
 
     def test_generic_no_event_shape(self):
-        """Non-numeric BootstrapReplicateDistribution has no event_shape."""
+        """A non-numeric replicate is opaque, so it has no event_shape."""
         dist = BootstrapReplicateDistribution("x", ["a", "b", "c"])
-        assert not hasattr(dist, "event_shape") or "event_shape" not in type(dist).__dict__
+        assert "event_shape" not in type(dist).__dict__
+        with pytest.raises(TypeError, match="does not draw a single array"):
+            _ = dist.event_shape
 
     def test_generic_no_dim(self):
         """Non-numeric BootstrapReplicateDistribution has no dim."""

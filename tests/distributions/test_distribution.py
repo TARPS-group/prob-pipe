@@ -1004,6 +1004,70 @@ class TestJointDeclarations:
             DistributionArray(cells)
 
 
+class TestEmpiricalDeclarations:
+    """An empirical or bootstrap law declares what one draw is, read off its atoms."""
+
+    def test_opaque_atoms_are_a_whole_term(self):
+        law = EmpiricalDistribution("law", ["a", "b"])
+        assert law.event_spec == OutputSpec(law=OpaqueSpec())
+
+    def test_an_auto_wrapped_array_declares_the_record_it_draws(self):
+        law = EmpiricalDistribution("x", jnp.zeros((5, 2)))
+        dtype = jnp.asarray(0.0).dtype
+        assert law.event_spec == OutputSpec(RecordSpec(x=NumericArraySpec((2,), dtype, real)))
+        assert law.dtypes == {"x": dtype}
+        assert law.supports == {"x": real}
+        # A one-field record still answers the single-field shortcut.
+        assert law.event_shape == (2,)
+
+    def test_record_atoms_expose_their_leaves(self):
+        from probpipe import Record
+
+        law = EmpiricalDistribution(
+            "r", Record("r", a=jnp.zeros(4), b=Record("b", c=jnp.zeros((4, 3))))
+        )
+        assert set(law.dtypes) == {"a", "b/c"}
+        assert law.event_spec.spec["b/c"].shape == (3,)
+
+    def test_a_record_replicate_stacks_its_rows(self):
+        law = BootstrapReplicateDistribution("x", jnp.zeros((5, 2)), replicate_size=3)
+        assert law.event_spec.spec["x"].shape == (3, 2)
+
+    def test_a_replicate_of_an_array_law_is_a_stacked_array(self):
+        law = BootstrapReplicateDistribution("reps", Normal("x", 0.0, 1.0), replicate_size=4)
+        assert law.event_spec == OutputSpec(
+            reps=NumericArraySpec((4,), jnp.asarray(0.0).dtype, real)
+        )
+
+    def test_a_replicate_of_a_sampler_that_is_not_a_law_is_opaque(self):
+        from probpipe import sample
+
+        class _Sampler:
+            # Implements SupportsSampling without being a Distribution.
+            _sampling_cost = "low"
+            _preferred_orchestration = None
+
+            def _sample(self, key, sample_shape=()):
+                return jax.random.normal(key, (*sample_shape, 2))
+
+        law = BootstrapReplicateDistribution("reps", _Sampler(), replicate_size=5)
+        assert law.event_spec == OutputSpec(reps=OpaqueSpec())
+        assert sample(law, key=jax.random.PRNGKey(0)).shape == (5, 2)
+
+    def test_a_bootstrap_of_a_statistic_draws_its_array(self):
+        from probpipe import BootstrapDistribution
+
+        law = BootstrapDistribution("expectation", jnp.zeros((10, 3)))
+        assert law.event_spec == OutputSpec(
+            expectation=NumericArraySpec((3,), jnp.asarray(0.0).dtype, real)
+        )
+
+    def test_a_numeric_joint_empirical_is_real_valued(self):
+        law = JointEmpirical(u=np.ones((4, 2)), v=np.zeros(4))
+        assert law.supports == {"u": real, "v": real}
+        assert law.event_shapes == {"u": (2,), "v": ()}
+
+
 class TestDimensionTransforms:
     def test_with_dim_sizes_binds_a_free_dimension(self):
         law = _DeclaredLaw("x", NumericArraySpec(("n",)))

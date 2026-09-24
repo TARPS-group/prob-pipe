@@ -712,7 +712,11 @@ class BootstrapDistribution(
             weights=weights,
             log_weights=log_weights,
         )
-        super().__init__(name=name)
+        # A draw is one resampled mean, an array of the statistic's shape.
+        super().__init__(
+            name,
+            NumericArraySpec(self._evaluations.shape[1:], self._evaluations.dtype, real),
+        )
         self._approximate = True
 
     _sampling_cost: str = "low"
@@ -726,16 +730,6 @@ class BootstrapDistribution(
     @property
     def evaluations(self) -> Array:
         return self._evaluations
-
-    @property
-    def event_shape(self) -> tuple[int, ...]:
-        return self._evaluations.shape[1:]
-
-    @property
-    def dtypes(self) -> dict[str, jnp.dtype]:
-        """Per-field dtype — the evaluations' dtype spread across
-        the auto-built single-field template."""
-        return self._per_field_dict(self._evaluations.dtype)
 
     def _mean(self) -> Array:
         """Point estimate: (weighted) mean of evaluations."""
@@ -780,11 +774,6 @@ class BootstrapDistribution(
             num_evaluations=num_evaluations,
             return_dist=return_dist,
         )
-
-    @property
-    def supports(self) -> dict[str, Constraint]:
-        """Per-field support — bootstrap of mean values is real-valued."""
-        return self._per_field_dict(real)
 
     def __repr__(self) -> str:
         return f"BootstrapDistribution(num_atoms={self._num_atoms}, event_shape={self.event_shape})"
