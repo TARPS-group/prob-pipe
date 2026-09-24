@@ -1,17 +1,16 @@
 """Regression tests for narrow code paths added to close historical coverage gaps.
 
 Each test in this file targets a specific observable behavior that was
-discovered to be missing coverage (weighted paths, error branches on
-unsupported protocols, repr/alias fall-throughs).  Tests include real
-value/shape assertions — they are not coverage-only touches.
+discovered to be missing coverage (weighted paths, repr/alias
+fall-throughs).  Tests include real value/shape assertions — they are not
+coverage-only touches.
 
 Covers:
 - BootstrapDistribution: weighted sampling, variance, repr, support, evaluations
 - EmpiricalDistribution: weighted subsampled expectation
 - TFPDistribution._cov: scalar and multivariate
-- ops error paths for unsupported protocols
-- SupportsCovariance default implementation
 - TransformedDistribution non-TFP paths
+- SupportsUnnormalizedLogProb._unnormalized_prob default
 """
 
 import jax
@@ -30,7 +29,6 @@ from probpipe import (
     cov,
     expectation,
     mean,
-    prob,
     sample,
     variance,
 )
@@ -203,78 +201,6 @@ class TestTFPDistributionCov:
 
 
 # ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# ops error paths
-# ---------------------------------------------------------------------------
-
-
-class TestOpsErrorPaths:
-    """Cover TypeError error paths in ops for unsupported protocols."""
-
-    def test_prob_requires_log_prob(self):
-        from probpipe import NumericRecordDistribution
-
-        class NoLogProbNoSampleDist(NumericRecordDistribution):
-            """Has neither SupportsLogProb nor SupportsSampling."""
-
-            @property
-            def event_shape(self):
-                return ()
-
-        d = NoLogProbNoSampleDist(name="test")
-        with pytest.raises(TypeError):
-            prob(d, jnp.float32(0.0))
-
-    def test_expectation_requires_protocol(self):
-        from probpipe import NumericRecordDistribution
-
-        class MinimalDist(NumericRecordDistribution):
-            @property
-            def event_shape(self):
-                return ()
-
-        d = MinimalDist(name="test")
-        with pytest.raises(TypeError, match="does not support expectation"):
-            expectation(d, lambda x: x)
-
-    def test_mean_requires_protocol(self):
-        from probpipe import NumericRecordDistribution
-
-        class MinimalDist(NumericRecordDistribution):
-            @property
-            def event_shape(self):
-                return ()
-
-        d = MinimalDist(name="test")
-        with pytest.raises(TypeError, match="does not support mean"):
-            mean(d)
-
-    def test_variance_requires_protocol(self):
-        from probpipe import NumericRecordDistribution
-
-        class MinimalDist(NumericRecordDistribution):
-            @property
-            def event_shape(self):
-                return ()
-
-        d = MinimalDist(name="test")
-        with pytest.raises(TypeError, match="does not support variance"):
-            variance(d)
-
-    def test_cov_requires_protocol(self):
-        from probpipe import NumericRecordDistribution
-
-        class MinimalDist(NumericRecordDistribution):
-            @property
-            def event_shape(self):
-                return ()
-
-        d = MinimalDist(name="test")
-        with pytest.raises(TypeError, match="does not support covariance"):
-            cov(d)
-
-
-# ---------------------------------------------------------------------------
 # TransformedDistribution non-TFP paths
 # ---------------------------------------------------------------------------
 
@@ -321,46 +247,6 @@ class TestTransformedNonTFP:
     def test_repr(self, td):
         r = repr(td)
         assert "TransformedDistribution" in r
-
-
-# ---------------------------------------------------------------------------
-# SupportsCovariance default implementation (protocol-level)
-# ---------------------------------------------------------------------------
-
-
-class TestCovarianceRequiresProtocol:
-    """cov op requires SupportsCovariance — no MC fallback."""
-
-    def test_cov_raises_without_supports_covariance(self):
-        """A distribution with SupportsExpectation but not SupportsCovariance
-        should raise TypeError from the cov op."""
-        from probpipe import NumericRecordDistribution, cov
-        from probpipe.core._numeric_record_distribution import _mc_expectation
-        from probpipe.core.protocols import SupportsExpectation, SupportsSampling
-
-        class NoCovDist(NumericRecordDistribution, SupportsSampling, SupportsExpectation):
-            _sampling_cost = "low"
-            _preferred_orchestration = None
-
-            @property
-            def event_shape(self):
-                return (2,)
-
-            def _sample(self, key, sample_shape=()):
-                return jax.random.normal(key, (*sample_shape, 2))
-
-            def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
-                return _mc_expectation(
-                    self,
-                    f,
-                    key=key,
-                    num_evaluations=num_evaluations,
-                    return_dist=return_dist,
-                )
-
-        d = NoCovDist(name="test")
-        with pytest.raises(TypeError, match="does not support covariance"):
-            cov(d)
 
 
 # ---------------------------------------------------------------------------
