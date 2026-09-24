@@ -246,7 +246,7 @@ class SupportsMean(Protocol):
     back to MC estimation via ``SupportsExpectation`` when this protocol
     is absent.  Concrete classes that want the MC default can apply
     ``@compute_expectation`` to their ``_mean`` implementation (only
-    valid when ``T`` is array-like).
+    valid when the draws are arrays).
     """
 
     def _mean(self) -> Any: ...

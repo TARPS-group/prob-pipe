@@ -422,8 +422,8 @@ def quantile(dist: SupportsQuantile, q: Any) -> Any:
     """Compute quantile(s) of ``X ~ dist`` at probability level(s) ``q``.
 
     ``q`` is a scalar or array of probabilities in ``[0, 1]``; the return is
-    ``T``-shaped per field (finite-sample distributions return the weight-aware
-    empirical quantile via ``_quantile``).
+    shaped like one draw per field (finite-sample distributions return the
+    weight-aware empirical quantile via ``_quantile``).
 
     Requires the distribution to implement :class:`SupportsQuantile`. A concrete
     ``q`` outside ``[0, 1]`` raises ``ValueError`` (the check is skipped when

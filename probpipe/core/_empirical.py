@@ -3,7 +3,7 @@
 The hierarchy follows the *two implementations per concept* rule (see
 ``CONTRIBUTING.md`` "Framework abstraction hierarchy"): a generic
 :class:`EmpiricalDistribution` / :class:`BootstrapReplicateDistribution`
-parameterised over the value type ``T``, plus a Record-based
+over values of any type, plus a Record-based
 specialisation that adds :class:`NumericRecordDistribution` shape
 semantics. There is no third numeric-array variant — a bare numeric
 array is wrapped as a single-field :class:`Record` at the constructor
@@ -267,7 +267,7 @@ class EmpiricalDistribution(
 
     Parameters
     ----------
-    samples : Record | RecordBatch | sequence of T | array-like
+    samples : Record | RecordBatch | sequence | array-like
         The support points. Numeric-array inputs require ``name=`` so
         the auto-wrapped Record has a field name; without it construction
         raises ``ValueError``. A batch of records contributes every batch axis
