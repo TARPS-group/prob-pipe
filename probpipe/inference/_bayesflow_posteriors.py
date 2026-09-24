@@ -187,6 +187,12 @@ class BayesFlowModel(Distribution, SupportsApproximateConditioning):
         # The TrackedTerm metaclass check requires a non-empty name; the
         # derived default is an auto name.
         self._init_tracked(f"BayesFlowModel({method})")
+        # A law over the prior's parameters, declared as the prior declares them.
+        try:
+            declaration = prior.event_spec
+        except AttributeError:
+            declaration = prior.event_template
+        self._init_declaration(declaration)
 
     @property
     def prior(self) -> Distribution:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..core._specs import RecordSpec
+from ..core._specs import OutputSpec, RecordSpec
 from ..core.protocols import SupportsLogProb
 from ..core.record import Record
 from ..core.tracked import auto_name
@@ -106,6 +106,8 @@ class SimpleModel[P, D](ProbabilisticModel, SupportsLogProb):
             self._event_template: RecordSpec = RecordSpec(merged)
         else:
             self._event_template = prior_tpl
+        # The model is a law over its parameters and data, the merged record.
+        self._init_declaration(OutputSpec(self._event_template))
 
     # -- Distribution interface ---------------------------------------------
 
