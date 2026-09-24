@@ -460,7 +460,21 @@ class TestPredictiveCheckNonJax:
             num_replications=20,
             key=jax.random.PRNGKey(3),
         )
-        assert result["replicated_statistics"].num_atoms == 20
+        replicated = result["replicated_statistics"]
+        assert replicated.num_atoms == 20
+        # The likelihood adds noise from its own seeded stream to the parameter.
+        # Replaying the stream at parameter 0 gives that noise, and subtracting it
+        # recovers each replicate's parameter.
+        replay = NumpyGaussianLikelihood(rng_seed=11)
+        noise = np.array([np.mean(replay.generate_data(0.0, 10)) for _ in range(20)])
+        params = np.asarray(replicated.samples["replicated_statistics"]) - noise
+        # Every parameter is an atom of the source, and the replicates draw more than
+        # one atom. Observed across five seeds: the float32 statistics recover the
+        # atoms to within 1.2e-7.
+        atoms = np.asarray(samples)
+        nearest = np.abs(params[:, None] - atoms).argmin(axis=1)
+        np.testing.assert_allclose(params, atoms[nearest], rtol=0, atol=1e-6)
+        assert np.unique(nearest).size > 1
 
 
 # ---------------------------------------------------------------------------
