@@ -37,7 +37,7 @@ _SUPPORTED_ROUTES: frozenset[tuple[WorkflowEvaluator, WorkflowTransport]] = froz
 )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class WorkflowRngExecutionContract:
     """Canonical evaluator/transport and stochastic ABI requirements."""
 

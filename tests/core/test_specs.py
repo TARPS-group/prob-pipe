@@ -132,8 +132,7 @@ class TestDeclarationConstruction:
         ("decl", "field"),
         [(InputSpec(x=NumericArraySpec(())), "_slots"), (OutputSpec(x=None), "_term_spec")],
     )
-    def test_slotted_declarations_reject_attribute_mutation(self, decl, field):
-        assert not hasattr(decl, "__dict__")
+    def test_declarations_reject_attribute_mutation(self, decl, field):
         original = getattr(decl, field)
         with pytest.raises(FrozenInstanceError):
             setattr(decl, field, original)
@@ -141,10 +140,9 @@ class TestDeclarationConstruction:
             delattr(decl, field)
         with pytest.raises(AttributeError):
             _ = decl.unknown_attribute
-        # Frozen slotted dataclasses can raise TypeError on unknown writes in Python 3.12.
-        with pytest.raises((AttributeError, TypeError)):
+        with pytest.raises(FrozenInstanceError):
             decl.unknown_attribute = None
-        with pytest.raises((AttributeError, TypeError)):
+        with pytest.raises(FrozenInstanceError):
             del decl.unknown_attribute
         assert getattr(decl, field) is original
         assert not hasattr(decl, "unknown_attribute")

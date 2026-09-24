@@ -27,7 +27,7 @@ LogicalUnitLayout = Literal["singleton", "canonical_sweep"]
 StructuralRngId = tuple[str | int, ...]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ArrayBroadcastGroup:
     """One zip group of array-valued sweep arguments — read along the same axes.
 
@@ -49,7 +49,7 @@ class ArrayBroadcastGroup:
     axis_groups: tuple[tuple[int, ...], ...]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class BroadcastPlan:
     """Pure broadcast classification for one resolved workflow call."""
 
@@ -63,7 +63,7 @@ class BroadcastPlan:
     n_sweep: int
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class StochasticConsumerPlan:
     """Canonical projection of one argument from a co-sampled root."""
 
@@ -86,7 +86,7 @@ class StochasticConsumerPlan:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class StochasticSourceGroup:
     """One recursive stochastic root and its ordered consumers."""
 
@@ -106,7 +106,7 @@ class StochasticSourceGroup:
         return ("source-group", self.index)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class StochasticRuntimeBinding:
     """Live root and preflight-captured evaluators for one source group."""
 
@@ -123,7 +123,7 @@ class StochasticRuntimeBinding:
     )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class LogicalUnit:
     """One singleton or row-major sweep cell in a lifting plan."""
 
@@ -139,7 +139,7 @@ class LogicalUnit:
         return ("cell", *self.coordinates)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class PlannedRandomEvent:
     """Derived source/unit identity for one planned random event."""
 
@@ -147,7 +147,7 @@ class PlannedRandomEvent:
     logical_unit_id: StructuralRngId
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class StochasticPlan:
     """Immutable stochastic lifting decisions for one normalized call."""
 

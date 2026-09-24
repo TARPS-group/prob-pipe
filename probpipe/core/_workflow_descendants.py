@@ -42,7 +42,7 @@ _FORWARD_OVERRIDE_NAMES = (
 )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class CapturedStochasticConsumer:
     """One live root plus a canonical and executable descendant path."""
 
@@ -57,7 +57,7 @@ class CapturedStochasticConsumer:
     evaluator: Callable[[Any], Any] = field(compare=False, hash=False, repr=False)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class _FrozenBijectorCapture:
     """One validated descriptor and evaluator bound to its frozen snapshot."""
 
@@ -65,7 +65,7 @@ class _FrozenBijectorCapture:
     evaluator: Callable[[Any], Any] = field(compare=False, hash=False, repr=False)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class _DescriptorAbiSummary:
     """Sorted unique execution ABIs found in one descendant descriptor."""
 
