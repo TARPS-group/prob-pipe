@@ -584,12 +584,6 @@ class TestBayesFlowMethods:
         # Uncertainty: mean std ratio in [0.8, 1.25] (observed ~1.01-1.03 across seeds).
         assert 0.8 < np.mean(std_ratios) < 1.25
 
-    @pytest.mark.xfail(
-        reason="Nested-prior NPE builds a posterior over a nested NumericRecordBatch, "
-        "whose leaf-keyed migration was deferred (batch types, #326/#235), so nested "
-        "empirical construction raises KeyError. Un-xfail when #340 lands.",
-        strict=False,
-    )
     def test_nested_prior_end_to_end(self):
         """A nested prior (issue #262) trains and conditions end to end. The
         simulator receives the structured *nested* record (read by nested name),
