@@ -1,7 +1,7 @@
-"""Tests for ``_TFPArrayBackend`` (PR-C.1 commit 2).
+"""Tests for ``_TFPArrayBackend``.
 
 The backend is the fused-storage substrate that
-:class:`~probpipe.DistributionArray` will dispatch onto in commits 3-4.
+:class:`~probpipe.DistributionArray` dispatches onto.
 These tests pin the backend's behaviour in isolation:
 
 * Per-cell materialisation (``cell(i)``) returns fresh scalar
@@ -450,7 +450,7 @@ class TestPytreeRegistration:
 
 
 # ---------------------------------------------------------------------------
-# Scalar parameter broadcasting (review finding C4)
+# Scalar parameter broadcasting
 # ---------------------------------------------------------------------------
 
 
@@ -502,7 +502,7 @@ class TestScalarParamBroadcasting:
 
 
 # ---------------------------------------------------------------------------
-# Backend-derived approximation status (review finding C2)
+# Backend-derived approximation status
 # ---------------------------------------------------------------------------
 
 
@@ -546,7 +546,7 @@ class TestBackendApproximate:
 
 
 # ---------------------------------------------------------------------------
-# Negative-index alignment (review finding C5)
+# Negative-index alignment
 # ---------------------------------------------------------------------------
 
 

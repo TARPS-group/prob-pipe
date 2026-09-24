@@ -205,7 +205,7 @@ class TestIncrementalConditioner:
 
     def test_multi_batch_preserves_named_record_fields(self):
         """Multi-batch IncrementalConditioner over a named ProductDistribution
-        prior preserves field names on every batch (issue #267).
+        prior preserves field names on every batch.
 
         Previously batches 2+ collapsed to a single unnamed ``posterior``
         field of shape ``(d,)`` because the samples→KDE conversion at the

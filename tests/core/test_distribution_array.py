@@ -180,7 +180,7 @@ class TestConstruction:
 
 
 # ---------------------------------------------------------------------------
-# Container surface — len, size, iteration (numpy / jax alignment, #178)
+# Container surface — len, size, iteration (numpy / jax alignment)
 # ---------------------------------------------------------------------------
 
 
@@ -602,15 +602,14 @@ class TestProvenance:
 
 
 # ---------------------------------------------------------------------------
-# Backend-delegated storage (PR-C.1 commit 3)
+# Backend-delegated storage
 # ---------------------------------------------------------------------------
 
 
 class TestBackendDelegatedStorage:
     """Tests for the ``_from_backend`` private constructor + lazy
-    component materialisation. The factory entry point
-    (``from_batched_params``) lands in commit 4; this commit pins the
-    storage refactor in isolation.
+    component materialisation, in isolation from the ``from_batched_params``
+    factory that ``TestFromBatchedParams`` covers.
     """
 
     def _make_backend(self, n=5):
@@ -749,7 +748,7 @@ class TestBackendDelegatedStorage:
 
 
 # ---------------------------------------------------------------------------
-# from_batched_params factory (PR-C.1 commit 4)
+# from_batched_params factory
 # ---------------------------------------------------------------------------
 
 
@@ -926,9 +925,8 @@ class TestFromBatchedParams:
         produces samples / means / variances matching ``tfd.Normal``
         constructed natively with the same batched params.
 
-        Pre-PR-C.2 this test compared to ``Normal(loc=arr, scale=...)``
-        directly; PR-C.2 rejects that form, so the comparison goes
-        against TFP's own batched form (which is what
+        ``Normal(loc=arr, scale=...)`` rejects batched parameters, so the
+        comparison goes against TFP's own batched form (which is what
         ``_TFPArrayBackend`` wraps internally anyway).
         """
         import tensorflow_probability.substrates.jax.distributions as tfd
@@ -972,7 +970,7 @@ class TestFromBatchedParams:
 
 
 # ---------------------------------------------------------------------------
-# Distribution.from_batched_params alias (PR-C.1 commit 5)
+# Distribution.from_batched_params alias
 # ---------------------------------------------------------------------------
 
 

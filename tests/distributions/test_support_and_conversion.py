@@ -197,8 +197,8 @@ class TestDistributionSupport:
     def test_uniform_support(self):
         assert Uniform(low=-1.0, high=2.0, name="u").support == interval(-1.0, 2.0)
 
-    # NOTE: A family of "support with array bounds" tests was removed
-    # in PR-C.2. Each exercised a legacy batched constructor:
+    # NOTE: A family of "support with array bounds" tests was removed.
+    # Each exercised a legacy batched constructor:
     # ``Uniform(low=arr, high=arr)``, ``HalfCauchy(loc=arr, scale=arr)``,
     # ``Pareto(concentration=arr, scale=arr)``,
     # ``TruncatedNormal(loc=arr, scale=arr, low=arr, high=arr)``,

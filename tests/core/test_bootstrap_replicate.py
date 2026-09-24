@@ -172,7 +172,7 @@ class TestSampling:
 
 
 # ---------------------------------------------------------------------------
-# SupportsSampling source (#93) — a parametric distribution as the source
+# SupportsSampling source — a parametric distribution as the source
 # ---------------------------------------------------------------------------
 
 

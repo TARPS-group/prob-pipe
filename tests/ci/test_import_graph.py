@@ -1,8 +1,8 @@
 """Unit tests for the shared CI import-graph builder (scripts/ci/import_graph.py).
 
 The builder previously lived as two inline heredocs in ``ci.yml`` and could not
-be tested; see issue #266. Each test materialises a tiny fake ``probpipe``
-package in a temp cwd and exercises the graph functions against it.
+be tested. Each test materialises a tiny fake ``probpipe`` package in a temp cwd
+and exercises the graph functions against it.
 """
 
 from __future__ import annotations

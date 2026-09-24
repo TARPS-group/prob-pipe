@@ -2,8 +2,7 @@
 
 A ``Design`` is a ``RecordBatch`` whose rows are materialised from
 per-field marginals according to a subclass-specific rule. This file
-covers :class:`FullFactorialDesign`; other subclasses land in
-follow-up PRs.
+covers :class:`FullFactorialDesign`.
 """
 
 import jax.numpy as jnp

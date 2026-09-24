@@ -623,7 +623,7 @@ class TestJointEmpiricalDispatch:
         je = JointEmpirical(x=jnp.zeros((5, 2)), y=jnp.zeros(5))
         assert type(je) is NumericJointEmpirical
         # Empirical distributions deliberately do not claim
-        # SupportsLogProb (PR-B); use the converter registry for a
+        # SupportsLogProb; use the converter registry for a
         # density on top of empirical samples.
         assert not isinstance(je, SupportsLogProb)
         assert isinstance(je, SupportsMean)
@@ -760,15 +760,13 @@ class TestProtocolsSupportedByAll:
 
 
 class TestSupportsArrayBackendProtocolSurface:
-    """Structural checks on :class:`SupportsArrayBackend`.
+    """Structural checks on :class:`SupportsArrayBackend`:
 
-    Commit 1 of PR-C.1 only adds the protocol; concrete TFP / Record
-    implementations land in later commits, and the existing
-    ``Distribution`` subclasses don't yet implement
-    ``_make_array_backend``. These tests pin the protocol's *shape*
-    (importable, runtime-checkable, classmethod-level) so later
-    commits can layer on the implementations without regressing the
-    contract.
+    * the protocol and ``_DistributionArrayBackend`` are importable, and only
+      the protocol is exported;
+    * every TFP-backed distribution inherits ``_make_array_backend`` from
+      ``TFPDistribution``;
+    * ``_DistributionArrayBackend`` declares its minimum members.
     """
 
     def test_protocol_is_importable(self):
@@ -792,14 +790,13 @@ class TestSupportsArrayBackendProtocolSurface:
         ``_make_array_backend`` from ``TFPDistribution``.
 
         The protocol method is a classmethod, so the check is on the
-        class itself: ``hasattr(Normal, "_make_array_backend")``. Pins
-        the post-commit-2 contract — non-TFP distributions still don't
-        implement it and stay on the literal-array fallback path.
+        class itself: ``hasattr(Normal, "_make_array_backend")``.
+        Non-TFP distributions do not implement it and stay on the
+        literal-array fallback path.
         """
         for cls in (Normal, Beta, Gamma, MultivariateNormal):
             assert hasattr(cls, "_make_array_backend"), (
-                f"{cls.__name__} should inherit _make_array_backend "
-                f"from TFPDistribution after PR-C.1 commit 2."
+                f"{cls.__name__} should inherit _make_array_backend from TFPDistribution."
             )
 
     def test_backend_protocol_minimum_surface(self):

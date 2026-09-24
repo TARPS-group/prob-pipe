@@ -1,4 +1,4 @@
-"""Tests for the keyword form of the log_prob-family ops (issue #228).
+"""Tests for the keyword form of the log_prob-family ops.
 
 ``log_prob`` / ``prob`` / ``unnormalized_log_prob`` accept either a
 positional value or named field kwargs; the kwargs are packed into a
@@ -271,7 +271,7 @@ class TestWorkflowControlFieldNames:
 class TestControlsViaWithOptions:
     """The density ops are plain Functions, so per-call controls use
     their own ``with_options`` (the Function control path), exactly
-    like the dispatch ops — not call kwargs (issue #228)."""
+    like the dispatch ops — not call kwargs."""
 
     @pytest.mark.parametrize(
         "control",
@@ -333,7 +333,7 @@ class TestSequentialJointKwargForm:
 class _FieldlessRandomMeasure(Distribution):
     """A random measure with no named fields, implementing both random
     log-prob protocols — for the random_* ops' keyword-form error paths
-    (random measures have no field support yet; #228 PR 4). The returned
+    (random measures have no field support yet). The returned
     callables are never invoked: each test below raises before reaching them.
     """
 
@@ -351,8 +351,7 @@ class TestRandomMeasureKwargForm:
     """The random_*_log_prob ops keep `value` optional (return the
     RandomFunction) and apply controls via with_options. The keyword form
     routes to `_pack_value`; since random measures carry no named `fields` yet,
-    it raises a clear "no named fields" error — full RandomMeasure field
-    support is #228 PR 4."""
+    it raises a clear "no named fields" error."""
 
     @staticmethod
     def _measure():
@@ -398,8 +397,10 @@ class TestKwargShapeAndBroadcast:
 
 
 class TestFieldNameCollision:
-    """A field named exactly `value`/`dist` collides with the op's parameter;
-    the escape differs by single- vs multi-field (#228, see CHANGELOG)."""
+    """A field named exactly `value`/`dist` collides with the op's parameter, so
+    the keyword form cannot address it. A multi-field distribution takes that
+    field in a positional Record, and a single-field one as a bare positional
+    value."""
 
     def test_multifield_value_field_via_positional_record(self):
         p = ProductDistribution(Normal(0.0, 1.0, name="value"), Beta(2.0, 3.0, name="b"))

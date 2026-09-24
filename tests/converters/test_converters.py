@@ -776,7 +776,7 @@ class TestProtocolConversion:
 
     def test_weighted_single_field_empirical_to_kde_preserves_weights(self):
         """Single-field empirical with non-uniform weights → KDE with
-        the same weights (gap A in the review)."""
+        the same weights."""
         from probpipe.distributions.kde import KDEDistribution
 
         n = 80
@@ -797,7 +797,7 @@ class TestProtocolConversion:
 
     def test_object_array_empirical_to_kde_rejected(self):
         """Generic (object-array) EmpiricalDistribution → KDE raises
-        a clear TypeError (gap B in the review).
+        a clear TypeError.
 
         Without the explicit raise, KDE construction would fail
         somewhere deep with a confusing dtype error.
@@ -856,10 +856,10 @@ class TestProtocolConversion:
         assert result.provenance.parents[0].name == "posterior"
 
     def test_multi_field_empirical_preserves_template_through_kde(self):
-        """Multi-field RecordEmpirical → KDE preserves the named template
-        (issue #267). Regression: previously the converter passed
-        ``flat_samples`` to KDE without the template, so the resulting
-        KDE collapsed to a single-field auto-template keyed by ``name``.
+        """Multi-field RecordEmpirical → KDE preserves the named template.
+        Regression: previously the converter passed ``flat_samples`` to KDE
+        without the template, so the resulting KDE collapsed to a single-field
+        auto-template keyed by ``name``.
         """
         from probpipe import Record
         from probpipe.distributions.kde import KDEDistribution
@@ -879,7 +879,7 @@ class TestProtocolConversion:
         """``ApproximateDistribution`` (inherits from RecordEmpirical) →
         KDE must preserve the parameter-field structure so that
         :class:`IncrementalConditioner` updates beyond batch 1 don't
-        collapse to a flat ``posterior`` field (issue #267).
+        collapse to a flat ``posterior`` field.
         """
         from probpipe.core._specs import NumericRecordSpec
         from probpipe.distributions.kde import KDEDistribution

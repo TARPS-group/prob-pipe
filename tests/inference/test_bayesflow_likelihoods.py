@@ -65,7 +65,7 @@ def _prior():
 
 
 def _nested_prior():
-    """Nested conjugate prior (issue #262): a sub-record ``outer={a, b}`` plus a
+    """Nested conjugate prior: a sub-record ``outer={a, b}`` plus a
     top-level ``m`` -- leaves ``outer/a``, ``outer/b``, ``m``, all ``N(0, 1)`` so
     ``_analytic_posterior`` applies per leaf (``flatten`` order ``[a, b, m]``)."""
     return ProductDistribution(
@@ -318,7 +318,7 @@ class TestConditioning:
         assert (ratio_band[0] < ratio).all() and (ratio < ratio_band[1]).all(), ratio
 
     def test_nle_nested_prior_end_to_end(self):
-        """NLE lifts a nested prior (issue #262): SimpleModel(nested prior, learned
+        """NLE lifts a nested prior: SimpleModel(nested prior, learned
         likelihood) + condition_on -> NUTS recovers the analytic conjugate
         posterior, per nested leaf. NLE feeds raw theta to the network, so the
         nesting is purely the leaf-keyed adapter routing (no bijectors)."""
@@ -338,7 +338,7 @@ class TestConditioning:
         )
 
     def test_nre_nested_prior_end_to_end(self):
-        """NRE lifts a nested prior (issue #262): the same nested conjugate
+        """NRE lifts a nested prior: the same nested conjugate
         recovery as NLE, via the leaf-keyed classifier routing."""
         prior = _nested_prior()
         nre = learn_amortized_ratio(

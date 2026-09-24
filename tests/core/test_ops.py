@@ -407,7 +407,7 @@ class TestConditionOn:
 
     def test_condition_case_mismatched_kwarg_raises(self, joint):
         """A case-mismatched data kwarg (`X` when the field is `x`) raises
-        loudly via condition_on rather than being silently ignored (#228)."""
+        loudly via condition_on rather than being silently ignored."""
         with pytest.raises(TypeError, match="did you mean x"):
             ops.condition_on(joint, X=jnp.array(2.0))
 
@@ -694,7 +694,7 @@ class TestSplitDataKwargs:
     def test_case_mismatched_field_raises(self):
         """A kwarg matching a field only up to case is a mistyped data field —
         raise with the correct casing rather than silently routing it to
-        inference params (issue #228)."""
+        inference params."""
         from probpipe.core.ops import _split_data_kwargs
 
         dist = ProductDistribution(X=Normal(0.0, 1.0, name="X"), y=Normal(0.0, 1.0, name="y"))

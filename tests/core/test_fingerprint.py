@@ -648,7 +648,7 @@ class TestFingerprintInProvenance:
 
 
 # ===========================================================================
-# 9. Review-fix regressions — determinism, collisions, leaf-keyed records
+# 9. Regressions — determinism, collisions, leaf-keyed records
 # ===========================================================================
 
 

@@ -1,5 +1,5 @@
 """Iteration regression tests: distributions are non-iterable; only the
-Record family iterates field names (#142).
+Record family iterates field names.
 
 The rule (codified in STYLE_GUIDE.md §1.11):
 
@@ -58,7 +58,7 @@ def _make_transformed():
 
 
 # User-constructible Distribution subclasses, parametrised here to pin
-# the non-iterable rule (#142). WF-output classes (BroadcastDistribution,
+# the non-iterable rule. WF-output classes (BroadcastDistribution,
 # _RecordMarginal / _MixtureMarginal / _ListMarginal, BootstrapDistribution
 # of an op return) are produced by the Function layer rather than
 # user code; they inherit non-iterability from their bases (Distribution
