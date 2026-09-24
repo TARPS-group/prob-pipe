@@ -240,10 +240,15 @@ def get_init_state(
                 exc_info=True,
             )
 
-    if hasattr(prior, "event_shape"):
+    try:
+        shape = prior.event_shape
+    except (AttributeError, TypeError, ValueError):
+        # A prior that draws no single concrete array has no box to draw from.
+        shape = None
+    if shape is not None:
         return jax.random.uniform(
             key,
-            shape=prior.event_shape,
+            shape=shape,
             minval=-2.0,
             maxval=2.0,
             dtype=target_dtype,
