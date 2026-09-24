@@ -45,12 +45,12 @@ from probpipe.distributions.multivariate import Dirichlet, Multinomial, VonMises
 
 class TestConverterRegistry:
     def test_check_returns_conversioninfo(self):
-        info = converter_registry.check(Normal(0, 1, name="x"), Normal)
+        info = converter_registry.check(Normal("x", 0, 1), Normal)
         assert isinstance(info, ConversionInfo)
         assert info.feasible
 
     def test_check_infeasible_for_unknown_target(self):
-        info = converter_registry.check(Normal(0, 1, name="x"), int)
+        info = converter_registry.check(Normal("x", 0, 1), int)
         assert not info.feasible
 
     def test_convert_raises_for_unknown(self):
@@ -58,10 +58,8 @@ class TestConverterRegistry:
             converter_registry.convert(42, Normal)
 
     def test_is_distribution_type_probpipe(self):
-        assert converter_registry.is_distribution_type(Normal(0, 1, name="x"))
-        assert converter_registry.is_distribution_type(
-            EmpiricalDistribution(jnp.ones((5, 1)), name="x")
-        )
+        assert converter_registry.is_distribution_type(Normal("x", 0, 1))
+        assert converter_registry.is_distribution_type(EmpiricalDistribution("x", jnp.ones((5, 1))))
 
     def test_is_distribution_type_tfp(self):
         assert converter_registry.is_distribution_type(tfd.Normal(0, 1))
@@ -246,7 +244,7 @@ class TestAllCrossFamilyConversions:
 
     def test_mvn_from_empirical(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (100, 3))
-        emp = RecordEmpiricalDistribution(samples, name="x")
+        emp = RecordEmpiricalDistribution("x", samples)
         result = converter_registry.convert(emp, MultivariateNormal)
         assert isinstance(result, MultivariateNormal)
         assert result.loc.shape == (3,)
@@ -609,7 +607,7 @@ class TestFromDistributionDelegation:
 
     def test_empirical_to_empirical_preserves_source_only_for_raw_apply(self):
         samples = jnp.array([[1.0], [2.0], [3.0]])
-        emp = RecordEmpiricalDistribution(samples, name="orig")
+        emp = RecordEmpiricalDistribution("orig", samples)
         raw = from_distribution.apply(emp, RecordEmpiricalDistribution)
         emp2 = from_distribution(emp, RecordEmpiricalDistribution)
         assert raw is emp
@@ -639,7 +637,7 @@ class TestBootstrapMetadata:
     def test_empirical_moments_have_bootstrap(self):
         """RecordEmpiricalDistribution uses MC for mean/var, producing bootstrap metadata."""
         samples = jax.random.normal(jax.random.PRNGKey(0), (200,))
-        emp = RecordEmpiricalDistribution(samples[:, None], name="x")
+        emp = RecordEmpiricalDistribution("x", samples[:, None])
         result = converter_registry.convert(emp, Normal)
         assert result.provenance is not None
         # EmpiricalDistribution._mean()/_variance() return plain arrays;
@@ -669,10 +667,10 @@ class TestEdgeCases:
 
     def test_convert_non_type_target_raises(self):
         with pytest.raises(TypeError, match="No converter"):
-            converter_registry.convert(Normal(0, 1, name="x"), str)
+            converter_registry.convert(Normal("x", 0, 1), str)
 
     def test_check_infeasible_non_type_target(self):
-        info = converter_registry.check(Normal(0, 1, name="x"), "not a type")
+        info = converter_registry.check(Normal("x", 0, 1), "not a type")
         assert not info.feasible
 
 
@@ -704,7 +702,7 @@ class TestProtocolConversion:
         from probpipe.distributions.kde import KDEDistribution
 
         samples = jax.random.normal(jax.random.PRNGKey(0), (300,))
-        emp = RecordEmpiricalDistribution(samples, name="x")
+        emp = RecordEmpiricalDistribution("x", samples)
         result = converter_registry.convert(emp, SupportsLogProb)
         assert isinstance(result, SupportsLogProb)
         assert isinstance(result, KDEDistribution)
@@ -720,7 +718,7 @@ class TestProtocolConversion:
         from probpipe.distributions.kde import KDEDistribution
 
         samples = jax.random.normal(jax.random.PRNGKey(1), (300, 4))
-        emp = RecordEmpiricalDistribution(samples, name="x")
+        emp = RecordEmpiricalDistribution("x", samples)
         result = converter_registry.convert(emp, SupportsLogProb)
         assert isinstance(result, SupportsLogProb)
         assert isinstance(result, KDEDistribution)
@@ -748,7 +746,7 @@ class TestProtocolConversion:
             mu=jax.random.normal(jax.random.PRNGKey(2), (n,)),
             log_sigma=jax.random.normal(jax.random.PRNGKey(3), (n,)),
         )
-        emp = RecordEmpiricalDistribution(rec)
+        emp = RecordEmpiricalDistribution("emp", rec)
         result = converter_registry.convert(emp, SupportsLogProb)
         assert isinstance(result, KDEDistribution)
         # KDE got the flat (n, 2) matrix.
@@ -768,7 +766,7 @@ class TestProtocolConversion:
         from probpipe.distributions.kde import KDEDistribution
 
         samples = jax.random.normal(jax.random.PRNGKey(4), (150,))
-        emp = RecordEmpiricalDistribution(samples, name="theta")
+        emp = RecordEmpiricalDistribution("theta", samples)
         result = converter_registry.convert(emp, SupportsLogProb)
         assert isinstance(result, KDEDistribution)
         # Scalar event — direct field passthrough, not flattened.
@@ -782,7 +780,7 @@ class TestProtocolConversion:
         n = 80
         samples = jax.random.normal(jax.random.PRNGKey(5), (n,))
         weights = jnp.linspace(0.1, 1.0, n)
-        emp = RecordEmpiricalDistribution(samples, weights=weights, name="x")
+        emp = RecordEmpiricalDistribution("x", samples, weights=weights)
         result = converter_registry.convert(emp, SupportsLogProb)
         assert isinstance(result, KDEDistribution)
         # KDE preserves the source's normalised weights (the converter
@@ -802,7 +800,7 @@ class TestProtocolConversion:
         Without the explicit raise, KDE construction would fail
         somewhere deep with a confusing dtype error.
         """
-        emp = EmpiricalDistribution(["a", "b", "c"])
+        emp = EmpiricalDistribution("emp", ["a", "b", "c"])
         with pytest.raises(
             TypeError,
             match=r"generic .object-array. EmpiricalDistribution",
@@ -819,7 +817,7 @@ class TestProtocolConversion:
     def test_check_protocol_needs_conversion(self):
         """check() returns feasible when conversion is possible."""
         samples = jax.random.normal(jax.random.PRNGKey(2), (100,))
-        emp = RecordEmpiricalDistribution(samples, name="x")
+        emp = RecordEmpiricalDistribution("x", samples)
         info = converter_registry.check(emp, SupportsLogProb)
         assert info.feasible
         assert info.method == ConversionMethod.MOMENT_MATCH
@@ -833,7 +831,7 @@ class TestProtocolConversion:
             def _something_unregistered(self) -> None: ...
 
         samples = jax.random.normal(jax.random.PRNGKey(3), (50,))
-        emp = RecordEmpiricalDistribution(samples, name="x")
+        emp = RecordEmpiricalDistribution("x", samples)
         # The protocol is not a registered conversion target, and the
         # empirical distribution does not satisfy it either.
         with pytest.raises(TypeError):
@@ -842,14 +840,14 @@ class TestProtocolConversion:
     def test_from_distribution_with_protocol(self):
         """from_distribution() works with protocol targets."""
         samples = jax.random.normal(jax.random.PRNGKey(4), (200,))
-        emp = RecordEmpiricalDistribution(samples, name="x")
+        emp = RecordEmpiricalDistribution("x", samples)
         result = from_distribution(emp, SupportsLogProb)
         assert isinstance(result, SupportsLogProb)
 
     def test_protocol_conversion_preserves_provenance(self):
         """Protocol-based conversion attaches provenance."""
         samples = jax.random.normal(jax.random.PRNGKey(5), (200,))
-        emp = RecordEmpiricalDistribution(samples, name="posterior")
+        emp = RecordEmpiricalDistribution("posterior", samples)
         result = converter_registry.convert(emp, SupportsLogProb)
         assert result.provenance is not None
         assert len(result.provenance.parents) == 1
@@ -870,7 +868,7 @@ class TestProtocolConversion:
             intercept=jax.random.normal(jax.random.PRNGKey(0), (n,)),
             slope=jax.random.normal(jax.random.PRNGKey(1), (n,)),
         )
-        emp = RecordEmpiricalDistribution(rec)
+        emp = RecordEmpiricalDistribution("emp", rec)
         result = converter_registry.convert(emp, SupportsLogProb)
         assert isinstance(result, KDEDistribution)
         assert result.event_template.fields == ("intercept", "slope")
@@ -912,44 +910,44 @@ class TestKDEDistribution:
 
     def test_scalar_construction(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (100,))
-        kde = KDEDistribution(samples)
+        kde = KDEDistribution("kde", samples)
         assert kde.event_shape == ()
         assert not hasattr(kde, "batch_shape")
         assert kde.num_atoms == 100
 
     def test_multivariate_construction(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (100, 3))
-        kde = KDEDistribution(samples)
+        kde = KDEDistribution("kde", samples)
         assert kde.event_shape == (3,)
         assert kde.num_atoms == 100
 
     def test_log_prob_finite(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (200,))
-        kde = KDEDistribution(samples)
+        kde = KDEDistribution("kde", samples)
         lp = kde._log_prob(0.0)
         assert jnp.isfinite(lp)
 
     def test_log_prob_multivariate(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (200, 2))
-        kde = KDEDistribution(samples)
+        kde = KDEDistribution("kde", samples)
         lp = kde._log_prob(jnp.zeros(2))
         assert jnp.isfinite(lp)
 
     def test_sample_shape_scalar(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (100,))
-        kde = KDEDistribution(samples)
+        kde = KDEDistribution("kde", samples)
         s = kde._sample(jax.random.PRNGKey(1), (5,))
         assert s.shape == (5,)
 
     def test_sample_shape_multivariate(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (100, 3))
-        kde = KDEDistribution(samples)
+        kde = KDEDistribution("kde", samples)
         s = kde._sample(jax.random.PRNGKey(1), (5,))
         assert s.shape == (5, 3)
 
     def test_mean_close_to_sample_mean(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (500,))
-        kde = KDEDistribution(samples)
+        kde = KDEDistribution("kde", samples)
         np.testing.assert_allclose(
             float(kde._mean()),
             float(jnp.mean(samples)),
@@ -959,7 +957,7 @@ class TestKDEDistribution:
     def test_variance_larger_than_sample_variance(self):
         """KDE variance = sample variance + bandwidth^2, so should be larger."""
         samples = jax.random.normal(jax.random.PRNGKey(0), (500,))
-        kde = KDEDistribution(samples)
+        kde = KDEDistribution("kde", samples)
         sample_var = float(jnp.var(samples))
         kde_var = float(kde._variance())
         assert kde_var > sample_var
@@ -968,20 +966,20 @@ class TestKDEDistribution:
         samples = jax.random.normal(jax.random.PRNGKey(0), (100,))
         weights = jnp.ones(100)
         weights = weights.at[0].set(10.0)
-        kde = KDEDistribution(samples, weights=weights)
+        kde = KDEDistribution("kde", samples, weights=weights)
         assert kde.num_atoms == 100
         lp = kde._log_prob(0.0)
         assert jnp.isfinite(lp)
 
     def test_custom_bandwidth(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (100,))
-        kde = KDEDistribution(samples, bandwidth=0.5)
+        kde = KDEDistribution("kde", samples, bandwidth=0.5)
         lp = kde._log_prob(0.0)
         assert jnp.isfinite(lp)
 
     def test_supports_protocols(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (100,))
-        kde = KDEDistribution(samples)
+        kde = KDEDistribution("kde", samples)
         assert isinstance(kde, SupportsLogProb)
         assert isinstance(kde, SupportsSampling)
         assert isinstance(kde, SupportsMean)
@@ -991,7 +989,7 @@ class TestKDEDistribution:
     def test_convert_empirical_to_kde(self):
         """from_distribution(empirical, KDEDistribution) works."""
         samples = jax.random.normal(jax.random.PRNGKey(0), (200,))
-        emp = RecordEmpiricalDistribution(samples, name="x")
+        emp = RecordEmpiricalDistribution("x", samples)
         kde = converter_registry.convert(emp, KDEDistribution)
         assert isinstance(kde, KDEDistribution)
         assert kde.num_atoms == 200
@@ -1010,19 +1008,19 @@ class TestKDEDistribution:
 
     def test_cov_scalar(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (200,))
-        kde = KDEDistribution(samples)
+        kde = KDEDistribution("kde", samples)
         cov = kde._cov()
         assert cov.shape == ()
 
     def test_cov_multivariate(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (200, 3))
-        kde = KDEDistribution(samples)
+        kde = KDEDistribution("kde", samples)
         cov = kde._cov()
         assert cov.shape == (3, 3)
 
     def test_repr(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (50,))
-        kde = KDEDistribution(samples, name="test_kde")
+        kde = KDEDistribution("test_kde", samples)
         r = repr(kde)
         assert "KDEDistribution" in r
         assert "num_atoms=50" in r

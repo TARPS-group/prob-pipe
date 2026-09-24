@@ -372,7 +372,7 @@ class TestConditioning:
 
         def _gamma_prior():
             return ProductDistribution(
-                pp.Gamma(5.0, 1.0, name="lam"), Normal(loc=0.0, scale=1.0, name="m")
+                pp.Gamma("lam", 5.0, 1.0), Normal(loc=0.0, scale=1.0, name="m")
             )
 
         y = np.asarray(_SIM.generate_data(jnp.array([5.0, 0.5]), 4, key=jax.random.PRNGKey(5)))
@@ -425,7 +425,7 @@ class TestConditioning:
         y_obs = jnp.array([[2.0, 1.0]])
         an_mean, an_std = 5.0 / 4.0, np.sqrt(5.0) / 4.0
         lik = learn_amortized_likelihood(
-            pp.Gamma(2.0, 2.0, name="lam"),
+            pp.Gamma("lam", 2.0, 2.0),
             _PoissonPairSim(),
             num_simulations=4000,
             epochs=25,
@@ -443,7 +443,7 @@ class TestConditioning:
             rtol=1e-6,
         )
         post = condition_on(
-            SimpleModel(prior=pp.Gamma(2.0, 2.0, name="lam"), likelihood=lik),
+            SimpleModel(prior=pp.Gamma("lam", 2.0, 2.0), likelihood=lik),
             y_obs,
             num_results=1500,
             num_warmup=500,

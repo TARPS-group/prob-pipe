@@ -12,7 +12,6 @@ from typing import Any
 import jax.numpy as jnp
 
 from ..core._specs import NumericRecordSpec
-from ..core.tracked import auto_name
 from ._base import ProbabilisticModel
 
 logger = logging.getLogger(__name__)
@@ -42,6 +41,8 @@ class PyMCModel(ProbabilisticModel):
 
     Parameters
     ----------
+    name : str
+        Model name for provenance.
     model_fn : callable
         Function that takes ``**observed`` keyword arguments and
         returns a ``pymc.Model`` context.  Example::
@@ -52,8 +53,6 @@ class PyMCModel(ProbabilisticModel):
                     sigma = pm.HalfNormal("sigma", 1)
                     pm.Normal("y", mu, sigma, observed=y)
                 return m
-    name : str or None
-        Model name for provenance.
 
     Raises
     ------
@@ -61,12 +60,7 @@ class PyMCModel(ProbabilisticModel):
         If ``pymc`` is not installed.
     """
 
-    def __init__(
-        self,
-        model_fn: Callable[..., Any],
-        *,
-        name: str | None = None,
-    ):
+    def __init__(self, name: str, model_fn: Callable[..., Any]):
         try:
             import pymc  # noqa: F401
         except ImportError as e:
@@ -75,9 +69,6 @@ class PyMCModel(ProbabilisticModel):
             ) from e
 
         self._model_fn = model_fn
-        # Default to the class name when the caller does not supply one;
-        # the default is an auto-derived name.
-        name = auto_name(name or None, "PyMCModel")
         self._init_tracked(name)
 
         # Discover observed variable names from the model function signature.

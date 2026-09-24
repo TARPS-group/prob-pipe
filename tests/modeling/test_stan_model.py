@@ -92,7 +92,7 @@ class TestStanModelImportError:
             patch.dict("sys.modules", {"bridgestan": None}),
             pytest.raises(ImportError, match="pip install bridgestan"),
         ):
-            StanModel("test.stan")
+            StanModel("model", "test.stan")
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +132,7 @@ def conjugate_stan_file(_stan_toolchain, tmp_path_factory):
 @pytest.fixture(scope="module")
 def conjugate_model(conjugate_stan_file):
     """The conjugate model instantiated with data and an explicit name."""
-    return StanModel(conjugate_stan_file, data={"N": 3, "y": [1.0, 2.0, 3.0]}, name="normal_mean")
+    return StanModel("normal_mean", conjugate_stan_file, data={"N": 3, "y": [1.0, 2.0, 3.0]})
 
 
 @pytest.fixture(scope="module")
@@ -158,7 +158,7 @@ def structured_model(_stan_toolchain, tmp_path_factory):
         }
         """
     )
-    return StanModel(str(stan_file), name="structured")
+    return StanModel("structured", str(stan_file))
 
 
 class TestStanModelSurface:
@@ -197,11 +197,9 @@ class TestStanModelSurface:
     def test_as_unconstrained_distribution(self, conjugate_model):
         assert isinstance(conjugate_model.as_unconstrained_distribution(), _UnconstrainedStanView)
 
-    def test_name_defaults_to_class_name(self, conjugate_stan_file):
-        # Without an explicit name, StanModel falls back to the class name to
-        # satisfy the TrackedTerm metaclass's non-empty-name requirement.
-        model = StanModel(conjugate_stan_file, data={"N": 3, "y": [1.0, 2.0, 3.0]})
-        assert model.name == "StanModel"
+    def test_name_is_kept(self, conjugate_stan_file):
+        model = StanModel("model", conjugate_stan_file, data={"N": 3, "y": [1.0, 2.0, 3.0]})
+        assert model.name == "model"
 
 
 class TestStanModelDensity:
@@ -423,11 +421,6 @@ class TestUnconstrainedStanView:
 
     def test_name_with_base(self, structured_model):
         assert structured_model.as_unconstrained_distribution().name == "structured_unconstrained"
-
-    def test_name_without_base(self, conjugate_stan_file):
-        model = StanModel(conjugate_stan_file, data={"N": 3, "y": [1.0, 2.0, 3.0]})
-        view = model.as_unconstrained_distribution()
-        assert view.name == "StanModel_unconstrained"
 
     def test_event_shape_matches_model(self, structured_model):
         view = structured_model.as_unconstrained_distribution()

@@ -56,7 +56,7 @@ def _named(kind):
         ),
         "Opaque": lambda: Opaque("given", object()),
         "Function": lambda: Function(func=lambda: 1, name="given"),
-        "Normal": lambda: Normal(0.0, 1.0, name="given"),
+        "Normal": lambda: Normal("given", 0.0, 1.0),
         "RecordBatch": lambda: RecordBatch(
             "given",
             COLUMNS,
@@ -203,7 +203,7 @@ class TestADerivedNameSaysSo:
 class TestAnOperationNamesItsResult:
     """Sampling retains supplied names; summaries and densities derive theirs."""
 
-    LAW = Normal(0.0, 1.0, name="height")
+    LAW = Normal("height", 0.0, 1.0)
 
     @pytest.mark.parametrize(
         ("label", "compute"),
@@ -220,7 +220,7 @@ class TestAnOperationNamesItsResult:
 
     def test_a_record_law_result_is_named_for_the_law(self):
         """An already tracked draw retains the name its producer set."""
-        joint = ProductDistribution(a=Normal(0.0, 1.0, name="a"), name="joint")
+        joint = ProductDistribution(a=Normal("a", 0.0, 1.0), name="joint")
 
         drawn = sample(joint, key=KEY)
 
@@ -230,7 +230,7 @@ class TestAnOperationNamesItsResult:
     def test_draws_take_the_laws_name(self, sample_shape):
         """Raw draws are named for the law, so it is a caller's statement
         exactly when the caller's name for the law was one."""
-        given = sample(Normal(0.0, 1.0, name="height"), sample_shape=sample_shape, key=KEY)
+        given = sample(Normal("height", 0.0, 1.0), sample_shape=sample_shape, key=KEY)
 
         assert given.name == "height"
 
@@ -260,12 +260,12 @@ class TestLevelsAreNamedForWhatMintsThem:
     """An operation names the level it mints after itself (design V.9)."""
 
     def test_sample_mints_a_sample_level(self):
-        drawn = sample(Normal(0.0, 1.0, name="height"), sample_shape=(5,), key=KEY)
+        drawn = sample(Normal("height", 0.0, 1.0), sample_shape=(5,), key=KEY)
 
         assert drawn.level_names == ("sample",)
 
     def test_a_record_drawing_law_mints_the_same_level(self):
-        joint = ProductDistribution(a=Normal(0.0, 1.0, name="a"), name="joint")
+        joint = ProductDistribution(a=Normal("a", 0.0, 1.0), name="joint")
 
         drawn = sample(joint, sample_shape=(5,), key=KEY)
 
@@ -300,7 +300,7 @@ class TestLevelsAreNamedForWhatMintsThem:
         """
         from probpipe import EmpiricalDistribution
 
-        drawn = sample(EmpiricalDistribution(atoms, name="atoms"), sample_shape=(3,), key=KEY)
+        drawn = sample(EmpiricalDistribution("atoms", atoms), sample_shape=(3,), key=KEY)
 
         assert type(drawn).__name__ == expected
         assert (drawn.batch_shape, drawn.level_names) == ((3,), ("sample",))
@@ -309,7 +309,7 @@ class TestLevelsAreNamedForWhatMintsThem:
         """No sample_shape, no level to mint."""
         from probpipe import EmpiricalDistribution
 
-        drawn = sample(EmpiricalDistribution(jnp.linspace(0.0, 1.0, 5), name="atoms"), key=KEY)
+        drawn = sample(EmpiricalDistribution("atoms", jnp.linspace(0.0, 1.0, 5)), key=KEY)
 
         assert not isinstance(drawn, NumericRecordBatch)
 
@@ -317,7 +317,7 @@ class TestLevelsAreNamedForWhatMintsThem:
         from probpipe import EmpiricalDistribution
 
         drawn = sample(
-            EmpiricalDistribution([object() for _ in range(3)], name="atoms"),
+            EmpiricalDistribution("atoms", [object() for _ in range(3)]),
             sample_shape=(3,),
             key=KEY,
         )
@@ -339,7 +339,7 @@ class TestABatchOperandKeepsItsLevelsThroughAnOperation:
     one op and as one wide value under another.
     """
 
-    LAW = Normal(0.0, 1.0, name="height")
+    LAW = Normal("height", 0.0, 1.0)
 
     @pytest.fixture(
         params=[log_prob, prob, unnormalized_log_prob, unnormalized_prob], ids=lambda op: op.name
@@ -427,7 +427,7 @@ class TestRawDrawNaming:
                 id="record-batch-list",
             ),
             pytest.param(
-                lambda: [Normal(0.0, 1.0, name="component")],
+                lambda: [Normal("component", 0.0, 1.0)],
                 DistributionArray,
                 None,
                 id="distribution-list",

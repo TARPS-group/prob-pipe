@@ -344,7 +344,7 @@ class TestApplyContract:
             wrapped.apply()
 
     def test_shape_only_distribution_output_keeps_intrinsic_template(self):
-        returned = Normal(0, 1, name="y")
+        returned = Normal("y", 0, 1)
         intrinsic = returned.event_template
         declared = RecordSpec(y=())
         wrapped = Function(func=lambda: returned, output_template=declared)
@@ -394,11 +394,11 @@ class TestApplyContract:
     def test_distribution_requires_metadata_in_its_own_event_template(self):
         cases = [
             (
-                Normal(0, 1, name="y"),
+                Normal("y", 0, 1),
                 RecordSpec(y=NumericArraySpec((), dtype="float32")),
             ),
             (
-                Gamma(1, 1, name="y"),
+                Gamma("y", 1, 1),
                 RecordSpec(y=NumericArraySpec((), support=real)),
             ),
         ]
@@ -454,7 +454,7 @@ class TestApplyContract:
         )
 
         with workflow_run(seed=0):
-            result = wrapped(SupportAnnotatedNormal(0, 1, name="x"))
+            result = wrapped(SupportAnnotatedNormal("x", 0, 1))
 
         assert result.num_atoms == 5
 
@@ -472,7 +472,7 @@ class TestApplyContract:
             def _sample(self, key, sample_shape=()):
                 raise AssertionError("An incompatible schema must be rejected before sampling")
 
-        law = StructuredNormal(0, 1, name="x")
+        law = StructuredNormal("x", 0, 1)
         wrapped = Function(
             func=lambda v: v,
             input_template=RecordSpec(v=(3,)),
@@ -499,7 +499,7 @@ class TestApplyContract:
         bound, bindings = _bind_planned_function_inputs(
             function_name="f",
             input_template=declared,
-            values={"v": StructuredNormal(0, 1, name="x")},
+            values={"v": StructuredNormal("x", 0, 1)},
             lifted_names={"v"},
         )
         assert bound == declared
@@ -690,7 +690,7 @@ class TestApplyContract:
             wrapped.apply(1)
 
     def test_existing_distribution_requires_matching_authoritative_template(self):
-        matching = Normal(0, 1, name="draw")
+        matching = Normal("draw", 0, 1)
         wrapped = Function(
             func=lambda x: matching,
             output_template=matching.event_template,
@@ -698,7 +698,7 @@ class TestApplyContract:
 
         assert wrapped.apply(1) is matching
 
-        mismatching = Normal(0, 1, name="other")
+        mismatching = Normal("other", 0, 1)
         with pytest.raises(ValueError, match="does not exactly match declared concrete template"):
             Function(
                 func=lambda x: mismatching,
@@ -867,8 +867,8 @@ class TestSymbolicCalls:
         )
         values = DistributionArray(
             [
-                Normal(0, 1, name="left"),
-                Normal(1, 1, name="right"),
+                Normal("left", 0, 1),
+                Normal("right", 1, 1),
             ]
         )
 
@@ -932,7 +932,7 @@ class TestSymbolicCalls:
         )
 
         with workflow_run(seed=4):
-            result = wrapped(Normal(0, 1, name="x"))
+            result = wrapped(Normal("x", 0, 1))
 
         assert result.event_template == RecordSpec(pair=(2,))
         assert result.num_atoms == 8
@@ -984,7 +984,7 @@ class TestSymbolicCalls:
         )
 
         with workflow_run(seed=11):
-            result = wrapped(Normal(0, 1, name="x"))
+            result = wrapped(Normal("x", 0, 1))
 
         assert result.provenance.metadata["dispatch"] == "sequential"
         assert result.event_template == RecordSpec(y=NumericArraySpec((), support=positive))
@@ -1003,7 +1003,7 @@ class TestSymbolicCalls:
             ValueError,
             match=r"dispatch='jax' cannot validate output_template support constraints",
         ):
-            wrapped(Normal(0, 1, name="x"))
+            wrapped(Normal("x", 0, 1))
 
     def test_support_pinned_sweep_auto_falls_back_to_sequential(self):
         rows = NumericRecordBatch.stack(
@@ -1080,7 +1080,7 @@ class TestSymbolicCalls:
         )
 
         with workflow_run(seed=7):
-            result = wrapped(Normal(0, 1, name="x"))
+            result = wrapped(Normal("x", 0, 1))
 
         assert result.event_template == RecordSpec(
             stats=RecordSpec(value=(), doubled=()),
@@ -1101,7 +1101,7 @@ class TestSymbolicCalls:
 
     def test_distribution_outputs_keep_declared_template_through_broadcast(self):
         wrapped = Function(
-            func=lambda x: Normal(x, 1, name="y"),
+            func=lambda x: Normal("y", x, 1),
             input_template=RecordSpec(x=()),
             output_template=RecordSpec(y=()),
             dispatch="sequential",
@@ -1109,7 +1109,7 @@ class TestSymbolicCalls:
         )
 
         with workflow_run(seed=3):
-            broadcast = wrapped.with_options(include_inputs=True)(Normal(0, 1, name="x"))
+            broadcast = wrapped.with_options(include_inputs=True)(Normal("x", 0, 1))
         result = broadcast.marginalize()
 
         assert result.event_template == RecordSpec(y=())
@@ -1125,7 +1125,7 @@ class TestSymbolicCalls:
 
     def test_distribution_broadcast_rejects_incomplete_intrinsic_template(self):
         wrapped = Function(
-            func=lambda x: Normal(x, 1, name="y"),
+            func=lambda x: Normal("y", x, 1),
             input_template=RecordSpec(x=()),
             output_template=RecordSpec(y=NumericArraySpec((), support=real)),
             dispatch="sequential",
@@ -1136,14 +1136,14 @@ class TestSymbolicCalls:
             ValueError,
             match="does not exactly match declared concrete template",
         ):
-            wrapped(Normal(0, 1, name="x"))
+            wrapped(Normal("x", 0, 1))
 
     def test_distribution_outputs_keep_declared_template_through_sweep(self):
         rows = NumericRecordBatch.stack(
             [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)], level_name="draw"
         )
         wrapped = Function(
-            func=lambda row: Normal(row["value"], 1, name="y"),
+            func=lambda row: Normal("y", row["value"], 1),
             input_template=RecordSpec(row=RecordSpec(value=())),
             output_template=RecordSpec(y=()),
             dispatch="sequential",
@@ -1180,7 +1180,7 @@ class TestSymbolicCalls:
         )
 
         with workflow_run(seed=5):
-            result = wrapped(rows, Normal(0, 1, name="noise"))
+            result = wrapped(rows, Normal("noise", 0, 1))
 
         assert isinstance(result, DistributionArray)
         assert result.event_template == RecordSpec(prediction=())
@@ -1363,7 +1363,7 @@ class TestReentrancyAndProvenance:
             n_broadcast_samples=12,
             dispatch="sequential",
         )
-        source = Normal(0, 1, name="x")
+        source = Normal("x", 0, 1)
 
         def evaluate(_):
             with workflow_run(seed=19):
@@ -1397,7 +1397,7 @@ class TestReentrancyAndProvenance:
         [
             NumericRecord("stored", value=1.0),
             NumericRecordBatch.stack([NumericRecord("stored", value=1.0)], level_name="draw"),
-            Normal(0, 1, name="stored"),
+            Normal("stored", 0, 1),
         ],
     )
     def test_preprovenanced_tracked_return_is_copied_for_each_call(
@@ -1472,7 +1472,7 @@ class TestVariadicPlanning:
         )
 
         with workflow_run(seed=11):
-            result = wrapped.with_options(include_inputs=True)(Normal(0, 1, name="x"), 2.0)
+            result = wrapped.with_options(include_inputs=True)(Normal("x", 0, 1), 2.0)
 
         assert isinstance(result, Distribution)
         assert result.num_atoms == 8
@@ -1599,7 +1599,7 @@ class TestVariadicPlanning:
 
         wrapped = Function(func=count)
 
-        assert float(wrapped(Normal(0, 1, name="x"))) == 1
+        assert float(wrapped(Normal("x", 0, 1))) == 1
 
     def test_distribution_annotation_applies_to_each_varkwarg(self):
         def count(**extras: Distribution):
@@ -1607,12 +1607,12 @@ class TestVariadicPlanning:
 
         wrapped = Function(func=count)
 
-        assert float(wrapped(x=Normal(0, 1, name="x"))) == 1
+        assert float(wrapped(x=Normal("x", 0, 1))) == 1
 
     def test_construction_bound_varargs_participate_in_lifting(self):
         wrapped = Function(
             func=lambda *items: items[0] + items[1],
-            bind={"items": (Normal(0, 1, name="x"), 2.0)},
+            bind={"items": (Normal("x", 0, 1), 2.0)},
             dispatch="sequential",
             n_broadcast_samples=8,
         )
@@ -1631,7 +1631,7 @@ class TestVariadicPlanning:
         )
 
         with workflow_run(seed=17):
-            result = wrapped(x=Normal(0, 1, name="x"), offset=2.0)
+            result = wrapped(x=Normal("x", 0, 1), offset=2.0)
 
         assert result.num_atoms == 8
         assert result.provenance.metadata["broadcast_args"] == ["**extras['x']"]

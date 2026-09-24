@@ -259,7 +259,7 @@ class TestInputHandling:
     def test_accepts_distribution_input(self):
         # A distribution exposing flat_samples scores identically to its raw draws.
         draws = _mvn(jax.random.PRNGKey(2), 400, jnp.zeros(2), jnp.eye(2))
-        emp = EmpiricalDistribution(draws, name="z")
+        emp = EmpiricalDistribution("z", draws)
         ref = Reference.from_moments(mean=jnp.array([0.1, -0.2]), cov=jnp.eye(2))
         from_dist = float(standardized_mean_error(emp, ref))
         from_array = float(standardized_mean_error(draws, ref))

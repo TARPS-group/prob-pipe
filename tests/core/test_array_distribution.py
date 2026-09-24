@@ -666,7 +666,7 @@ class TestIntegerDtypeReporting:
 class TestFlattenedDistributionViewEmpirical:
     def test_empirical_flatten_roundtrip(self, key):
         samples = jax.random.normal(key, shape=(100, 5))
-        emp = RecordEmpiricalDistribution(samples, name="x")
+        emp = RecordEmpiricalDistribution("x", samples)
 
         flat_dist = emp.as_flat_distribution()
         assert flat_dist.event_shape == (5,)

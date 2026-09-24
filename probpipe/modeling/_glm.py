@@ -55,7 +55,7 @@ class GLMLikelihood:
     form::
 
         Xy = Record("Xy", X=X_covariates, y=y_observed)
-        bootstrap = BootstrapReplicateDistribution(EmpiricalDistribution(Xy))
+        bootstrap = BootstrapReplicateDistribution("bootstrap", EmpiricalDistribution("Xy", Xy))
         bagged = condition_on.with_options(n_broadcast_samples=16)(
             model, bootstrap,
         )

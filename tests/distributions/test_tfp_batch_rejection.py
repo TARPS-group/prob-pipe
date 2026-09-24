@@ -250,10 +250,10 @@ class TestKDEStyleSubclasses:
     """
 
     def test_kde_construction_works(self):
-        kde = KDEDistribution(jnp.zeros((20, 3)), name="kde")
+        kde = KDEDistribution("kde", jnp.zeros((20, 3)))
         assert kde is not None
         assert kde.name == "kde"
 
     def test_kde_with_1d_samples(self):
-        kde = KDEDistribution(jnp.linspace(0.0, 1.0, 10), name="kde1d")
+        kde = KDEDistribution("kde1d", jnp.linspace(0.0, 1.0, 10))
         assert kde is not None

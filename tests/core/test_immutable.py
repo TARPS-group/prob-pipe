@@ -315,7 +315,7 @@ class TestEveryTrackedTermIsImmutable:
         # clears what it fitted.
         from probpipe import Normal
 
-        term = Normal(0.0, 1.0, name="x")
+        term = Normal("x", 0.0, 1.0)
         term._trained = True
         assert term._trained is True
         del term._trained
@@ -416,7 +416,7 @@ class TestTheConstructionWindow:
         # are built first, and the joint's own window is unaffected by theirs.
         # (A distribution accepts assignment either way — see the exemption
         # above — so what is asserted is that both terms came out intact.)
-        joint = ProductDistribution(a=Normal(0.0, 1.0, name="a"), name="j")
+        joint = ProductDistribution(a=Normal("a", 0.0, 1.0), name="j")
         assert joint.name == "j"
         assert joint.components["a"].name == "a"
 
@@ -444,9 +444,7 @@ class TestAClassBuiltAtRuntime:
     def _flattened_view():
         from probpipe import Normal, ProductDistribution
 
-        joint = ProductDistribution(
-            a=Normal(0.0, 1.0, name="a"), b=Normal(1.0, 2.0, name="b"), name="j"
-        )
+        joint = ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 1.0, 2.0), name="j")
         return joint.as_flat_distribution()
 
     @pytest.fixture(
@@ -486,7 +484,5 @@ class TestAClassBuiltAtRuntime:
         # module-level rebuild, so its runtime class is never named in a pickle.
         from probpipe import Normal, ProductDistribution
 
-        joint = ProductDistribution(
-            a=Normal(0.0, 1.0, name="a"), b=Normal(1.0, 2.0, name="b"), name="j"
-        )
+        joint = ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 1.0, 2.0), name="j")
         assert type(pickle.loads(pickle.dumps(joint))).__name__ == type(joint).__name__

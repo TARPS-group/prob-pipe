@@ -24,7 +24,7 @@ differs:
 
 - :class:`~probpipe.ProductDistribution` bundles **heterogeneous
   independent components** addressed by name — e.g.
-  ``ProductDistribution(theta=Normal(0, 1), sigma=Gamma(2, 1))``.
+  ``ProductDistribution(theta=Normal("theta", 0, 1), sigma=Gamma("sigma", 2, 1))``.
   ``sample`` returns a ``Record`` keyed by component name.
 
 - :class:`DistributionArray` bundles **positionally-indexed components**
@@ -88,6 +88,7 @@ class DistributionArray(Distribution):
     name : str, optional
         Name for provenance / introspection. Defaults to
         ``"distribution_array"``.
+        Keyword-only, as an interim detail (see :class:`~probpipe.Distribution`).
 
     Notes
     -----

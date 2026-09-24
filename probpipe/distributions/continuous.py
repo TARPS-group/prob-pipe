@@ -47,21 +47,15 @@ class Normal(TFPDistribution):
 
     Parameters
     ----------
+    name : str
+        Distribution name.
     loc : array-like
         Mean of the distribution.
     scale : array-like
         Standard deviation (> 0).
-    name : str
-        Distribution name.
     """
 
-    def __init__(
-        self,
-        loc: ArrayLike,
-        scale: ArrayLike,
-        *,
-        name: str,
-    ):
+    def __init__(self, name: str, loc: ArrayLike, scale: ArrayLike):
         _, (self._loc, self._scale) = _promote_floats(loc, scale)
         self._tfp_dist = tfd.Normal(loc=self._loc, scale=self._scale)
         super().__init__(name=name)
@@ -89,21 +83,15 @@ class Beta(TFPDistribution):
 
     Parameters
     ----------
+    name : str
+        Distribution name.
     alpha : array-like
         First concentration parameter (> 0).
     beta : array-like
         Second concentration parameter (> 0).
-    name : str
-        Distribution name.
     """
 
-    def __init__(
-        self,
-        alpha: ArrayLike,
-        beta: ArrayLike,
-        *,
-        name: str,
-    ):
+    def __init__(self, name: str, alpha: ArrayLike, beta: ArrayLike):
         _, (self._alpha, self._beta) = _promote_floats(alpha, beta)
         self._tfp_dist = tfd.Beta(concentration1=self._alpha, concentration0=self._beta)
         super().__init__(name=name)
@@ -131,21 +119,15 @@ class Gamma(TFPDistribution):
 
     Parameters
     ----------
+    name : str
+        Distribution name.
     concentration : array-like
         Shape parameter (> 0).
     rate : array-like
         Rate (inverse scale) parameter (> 0).
-    name : str
-        Distribution name.
     """
 
-    def __init__(
-        self,
-        concentration: ArrayLike,
-        rate: ArrayLike,
-        *,
-        name: str,
-    ):
+    def __init__(self, name: str, concentration: ArrayLike, rate: ArrayLike):
         _, (self._concentration, self._rate) = _promote_floats(concentration, rate)
         self._tfp_dist = tfd.Gamma(concentration=self._concentration, rate=self._rate)
         super().__init__(name=name)
@@ -173,21 +155,15 @@ class InverseGamma(TFPDistribution):
 
     Parameters
     ----------
+    name : str
+        Distribution name.
     concentration : array-like
         Shape parameter (> 0).
     scale : array-like
         Scale parameter (> 0).
-    name : str
-        Distribution name.
     """
 
-    def __init__(
-        self,
-        concentration: ArrayLike,
-        scale: ArrayLike,
-        *,
-        name: str,
-    ):
+    def __init__(self, name: str, concentration: ArrayLike, scale: ArrayLike):
         _, (self._concentration, self._scale) = _promote_floats(concentration, scale)
         self._tfp_dist = tfd.InverseGamma(concentration=self._concentration, scale=self._scale)
         super().__init__(name=name)
@@ -215,18 +191,13 @@ class Exponential(TFPDistribution):
 
     Parameters
     ----------
-    rate : array-like
-        Rate parameter (> 0).
     name : str
         Distribution name.
+    rate : array-like
+        Rate parameter (> 0).
     """
 
-    def __init__(
-        self,
-        rate: ArrayLike,
-        *,
-        name: str,
-    ):
+    def __init__(self, name: str, rate: ArrayLike):
         self._rate = _as_float_array(rate)
         self._tfp_dist = tfd.Exponential(rate=self._rate)
         super().__init__(name=name)
@@ -250,21 +221,15 @@ class LogNormal(TFPDistribution):
 
     Parameters
     ----------
+    name : str
+        Distribution name.
     loc : array-like
         Mean of the underlying normal distribution.
     scale : array-like
         Standard deviation of the underlying normal distribution (> 0).
-    name : str
-        Distribution name.
     """
 
-    def __init__(
-        self,
-        loc: ArrayLike,
-        scale: ArrayLike,
-        *,
-        name: str,
-    ):
+    def __init__(self, name: str, loc: ArrayLike, scale: ArrayLike):
         _, (self._loc, self._scale) = _promote_floats(loc, scale)
         self._tfp_dist = tfd.LogNormal(loc=self._loc, scale=self._scale)
         super().__init__(name=name)
@@ -292,24 +257,17 @@ class StudentT(TFPDistribution):
 
     Parameters
     ----------
+    name : str
+        Distribution name.
     df : array-like
         Degrees of freedom (> 0).
     loc : array-like
         Location parameter.
     scale : array-like
         Scale parameter (> 0).
-    name : str
-        Distribution name.
     """
 
-    def __init__(
-        self,
-        df: ArrayLike,
-        loc: ArrayLike,
-        scale: ArrayLike,
-        *,
-        name: str,
-    ):
+    def __init__(self, name: str, df: ArrayLike, loc: ArrayLike, scale: ArrayLike):
         _, (self._df, self._loc, self._scale) = _promote_floats(df, loc, scale)
         self._tfp_dist = tfd.StudentT(df=self._df, loc=self._loc, scale=self._scale)
         super().__init__(name=name)
@@ -341,21 +299,15 @@ class Uniform(TFPDistribution):
 
     Parameters
     ----------
+    name : str
+        Distribution name.
     low : array-like
         Lower bound.
     high : array-like
         Upper bound (> low).
-    name : str
-        Distribution name.
     """
 
-    def __init__(
-        self,
-        low: ArrayLike,
-        high: ArrayLike,
-        *,
-        name: str,
-    ):
+    def __init__(self, name: str, low: ArrayLike, high: ArrayLike):
         _, (self._low, self._high) = _promote_floats(low, high)
         self._tfp_dist = tfd.Uniform(low=self._low, high=self._high)
         super().__init__(name=name)
@@ -383,21 +335,15 @@ class Cauchy(TFPDistribution):
 
     Parameters
     ----------
+    name : str
+        Distribution name.
     loc : array-like
         Location parameter.
     scale : array-like
         Scale parameter (> 0).
-    name : str
-        Distribution name.
     """
 
-    def __init__(
-        self,
-        loc: ArrayLike,
-        scale: ArrayLike,
-        *,
-        name: str,
-    ):
+    def __init__(self, name: str, loc: ArrayLike, scale: ArrayLike):
         _, (self._loc, self._scale) = _promote_floats(loc, scale)
         self._tfp_dist = tfd.Cauchy(loc=self._loc, scale=self._scale)
         super().__init__(name=name)
@@ -425,21 +371,15 @@ class Laplace(TFPDistribution):
 
     Parameters
     ----------
+    name : str
+        Distribution name.
     loc : array-like
         Location parameter.
     scale : array-like
         Scale parameter (> 0).
-    name : str
-        Distribution name.
     """
 
-    def __init__(
-        self,
-        loc: ArrayLike,
-        scale: ArrayLike,
-        *,
-        name: str,
-    ):
+    def __init__(self, name: str, loc: ArrayLike, scale: ArrayLike):
         _, (self._loc, self._scale) = _promote_floats(loc, scale)
         self._tfp_dist = tfd.Laplace(loc=self._loc, scale=self._scale)
         super().__init__(name=name)
@@ -467,18 +407,13 @@ class HalfNormal(TFPDistribution):
 
     Parameters
     ----------
-    scale : array-like
-        Scale parameter (> 0).
     name : str
         Distribution name.
+    scale : array-like
+        Scale parameter (> 0).
     """
 
-    def __init__(
-        self,
-        scale: ArrayLike,
-        *,
-        name: str,
-    ):
+    def __init__(self, name: str, scale: ArrayLike):
         self._scale = _as_float_array(scale)
         self._tfp_dist = tfd.HalfNormal(scale=self._scale)
         super().__init__(name=name)
@@ -502,21 +437,15 @@ class HalfCauchy(TFPDistribution):
 
     Parameters
     ----------
+    name : str
+        Distribution name.
     loc : array-like
         Location parameter.
     scale : array-like
         Scale parameter (> 0).
-    name : str
-        Distribution name.
     """
 
-    def __init__(
-        self,
-        loc: ArrayLike,
-        scale: ArrayLike,
-        *,
-        name: str,
-    ):
+    def __init__(self, name: str, loc: ArrayLike, scale: ArrayLike):
         _, (self._loc, self._scale) = _promote_floats(loc, scale)
         self._tfp_dist = tfd.HalfCauchy(loc=self._loc, scale=self._scale)
         super().__init__(name=name)
@@ -544,21 +473,15 @@ class Pareto(TFPDistribution):
 
     Parameters
     ----------
+    name : str
+        Distribution name.
     concentration : array-like
         Tail index (shape parameter, > 0).
     scale : array-like
         Minimum value (scale parameter, > 0).
-    name : str
-        Distribution name.
     """
 
-    def __init__(
-        self,
-        concentration: ArrayLike,
-        scale: ArrayLike,
-        *,
-        name: str,
-    ):
+    def __init__(self, name: str, concentration: ArrayLike, scale: ArrayLike):
         _, (self._concentration, self._scale) = _promote_floats(concentration, scale)
         self._tfp_dist = tfd.Pareto(concentration=self._concentration, scale=self._scale)
         super().__init__(name=name)
@@ -586,6 +509,8 @@ class TruncatedNormal(TFPDistribution):
 
     Parameters
     ----------
+    name : str
+        Distribution name.
     loc : array-like
         Mean of the underlying normal distribution.
     scale : array-like
@@ -594,18 +519,10 @@ class TruncatedNormal(TFPDistribution):
         Lower truncation bound.
     high : array-like
         Upper truncation bound (> low).
-    name : str
-        Distribution name.
     """
 
     def __init__(
-        self,
-        loc: ArrayLike,
-        scale: ArrayLike,
-        low: ArrayLike,
-        high: ArrayLike,
-        *,
-        name: str,
+        self, name: str, loc: ArrayLike, scale: ArrayLike, low: ArrayLike, high: ArrayLike
     ):
         _, (self._loc, self._scale, self._low, self._high) = _promote_floats(loc, scale, low, high)
         self._tfp_dist = tfd.TruncatedNormal(

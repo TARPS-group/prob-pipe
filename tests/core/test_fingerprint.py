@@ -362,15 +362,15 @@ class TestDistributionHashing:
         from probpipe import RecordEmpiricalDistribution
 
         samples = jnp.array([1.0, 2.0, 3.0])
-        e1 = RecordEmpiricalDistribution(samples, name="posterior")
-        e2 = RecordEmpiricalDistribution(samples, name="posterior")
+        e1 = RecordEmpiricalDistribution("posterior", samples)
+        e2 = RecordEmpiricalDistribution("posterior", samples)
         assert fingerprint(e1) == fingerprint(e2)
 
     def test_empirical_different_samples_differ(self):
         from probpipe import RecordEmpiricalDistribution
 
-        e1 = RecordEmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), name="post")
-        e2 = RecordEmpiricalDistribution(jnp.array([1.0, 2.0, 9.0]), name="post")
+        e1 = RecordEmpiricalDistribution("post", jnp.array([1.0, 2.0, 3.0]))
+        e2 = RecordEmpiricalDistribution("post", jnp.array([1.0, 2.0, 9.0]))
         assert fingerprint(e1) != fingerprint(e2)
 
     def test_empirical_non_uniform_weights_differ(self):
@@ -378,9 +378,9 @@ class TestDistributionHashing:
         from probpipe import RecordEmpiricalDistribution
 
         samples = jnp.array([1.0, 2.0, 3.0])
-        uniform = RecordEmpiricalDistribution(samples, name="post")
+        uniform = RecordEmpiricalDistribution("post", samples)
         reweighted = RecordEmpiricalDistribution(
-            samples, weights=jnp.array([0.7, 0.2, 0.1]), name="post"
+            "post", samples, weights=jnp.array([0.7, 0.2, 0.1])
         )
         assert fingerprint(uniform) != fingerprint(reweighted)
 
@@ -389,16 +389,16 @@ class TestDistributionHashing:
         from probpipe.distributions.kde import KDEDistribution
 
         pts = jnp.array([0.0, 1.0, 2.0])
-        k1 = KDEDistribution(pts, name="kde")
-        k2 = KDEDistribution(pts, name="kde")
+        k1 = KDEDistribution("kde", pts)
+        k2 = KDEDistribution("kde", pts)
         assert fingerprint(k1) == fingerprint(k2)
 
     def test_kde_different_points_differ(self):
         """Two KDE distributions with different data must have different fingerprints."""
         from probpipe.distributions.kde import KDEDistribution
 
-        k1 = KDEDistribution(jnp.array([0.0, 1.0, 2.0]), name="kde")
-        k2 = KDEDistribution(jnp.array([0.0, 1.0, 99.0]), name="kde")
+        k1 = KDEDistribution("kde", jnp.array([0.0, 1.0, 2.0]))
+        k2 = KDEDistribution("kde", jnp.array([0.0, 1.0, 99.0]))
         assert fingerprint(k1) != fingerprint(k2)
 
 
@@ -409,15 +409,23 @@ class TestBootstrapSourceFingerprint:
     def test_different_sources_differ(self):
         from probpipe import BootstrapReplicateDistribution
 
-        b1 = BootstrapReplicateDistribution(Normal(loc=0.0, scale=1.0, name="x"), replicate_size=10)
-        b2 = BootstrapReplicateDistribution(Normal(loc=5.0, scale=1.0, name="x"), replicate_size=10)
+        b1 = BootstrapReplicateDistribution(
+            "boot", Normal(loc=0.0, scale=1.0, name="x"), replicate_size=10
+        )
+        b2 = BootstrapReplicateDistribution(
+            "boot", Normal(loc=5.0, scale=1.0, name="x"), replicate_size=10
+        )
         assert fingerprint(b1) != fingerprint(b2)
 
     def test_same_source_matches(self):
         from probpipe import BootstrapReplicateDistribution
 
-        b1 = BootstrapReplicateDistribution(Normal(loc=0.0, scale=1.0, name="x"), replicate_size=10)
-        b2 = BootstrapReplicateDistribution(Normal(loc=0.0, scale=1.0, name="x"), replicate_size=10)
+        b1 = BootstrapReplicateDistribution(
+            "boot", Normal(loc=0.0, scale=1.0, name="x"), replicate_size=10
+        )
+        b2 = BootstrapReplicateDistribution(
+            "boot", Normal(loc=0.0, scale=1.0, name="x"), replicate_size=10
+        )
         assert fingerprint(b1) == fingerprint(b2)
 
 
@@ -757,7 +765,7 @@ class TestEmpiricalReweighting:
         from probpipe.core._empirical import EmpiricalDistribution
 
         s = jnp.array([1.0, 2.0, 3.0])
-        return EmpiricalDistribution(s, log_weights=jnp.log(jnp.array(weights)), name="p")
+        return EmpiricalDistribution("p", s, log_weights=jnp.log(jnp.array(weights)))
 
     def test_reweighted_differs(self):
         assert fingerprint(self._emp([0.7, 0.2, 0.1])) != fingerprint(self._emp([0.1, 0.2, 0.7]))

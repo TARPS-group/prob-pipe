@@ -151,12 +151,6 @@ class TestNameLifecycle:
         )
         assert joint.name == "my_joint"
 
-    def test_empirical_derives_default_name(self):
-        # Opaque (object) samples take the base EmpiricalDistribution path,
-        # which auto-derives the name "empirical" when none is given.
-        emp = EmpiricalDistribution(["heads", "tails", "heads"])
-        assert emp.name == "empirical"
-
     @pytest.mark.parametrize("name", [None, "mine"], ids=["derived", "supplied"])
     @pytest.mark.parametrize(
         "transform, expected",
@@ -333,7 +327,7 @@ class TestWithNameOnCustomNewHosts:
 
         from probpipe import TransformedDistribution
 
-        t = TransformedDistribution(Normal(loc=0.0, scale=1.0, name="x"), tfb.Exp())
+        t = TransformedDistribution("t", Normal(loc=0.0, scale=1.0, name="x"), tfb.Exp())
         t2 = t.with_name("y")
         assert t2.name == "y"
         key = jax.random.PRNGKey(0)
@@ -358,7 +352,7 @@ class TestWithNameOnCustomNewHosts:
         assert renamed.name == "mu_view"
 
     def test_empirical_router(self):
-        emp = EmpiricalDistribution(["a", "b", "c"])
+        emp = EmpiricalDistribution("emp", ["a", "b", "c"])
         renamed = emp.with_name("labels")
         assert renamed.name == "labels"
 
@@ -371,7 +365,7 @@ class TestWithNameOnCustomNewHosts:
 class TestNamePreservation:
     """Transformations preserve the names assigned by their constructors."""
 
-    def test_minibatched_distribution_default_and_explicit_names(self):
+    def test_minibatched_distribution_keeps_its_name(self):
         import tensorflow_probability.substrates.jax.glm as tfp_glm
 
         from probpipe import MultivariateNormal
@@ -382,11 +376,7 @@ class TestNamePreservation:
         y = jnp.array([1.0, 0.0, 1.0, 0.0])
         prior = MultivariateNormal(loc=jnp.zeros(4), cov=jnp.eye(4), name="theta")
         lik = GLMLikelihood(tfp_glm.Bernoulli(), x=X)
-        m = MinibatchedDistribution(prior, lik, Record("r", X=X, y=y), batch_size=2)
-        assert m.name == "MinibatchedDistribution(batch_size=2)"
-        named = MinibatchedDistribution(
-            prior, lik, Record("r", X=X, y=y), batch_size=2, name="mine"
-        )
+        named = MinibatchedDistribution("mine", prior, lik, Record("r", X=X, y=y), batch_size=2)
         assert named.name == "mine"
 
     def test_product_conditioning_preserves_names(self):

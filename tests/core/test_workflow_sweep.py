@@ -585,7 +585,7 @@ class TestNumericArraySweep:
     @pytest.mark.parametrize("dispatch", ["auto", "sequential", "jax"])
     def test_nested_density_results_compose_after_the_sweep(self, numeric_sweep_source, dispatch):
         source = numeric_sweep_source
-        law = Normal(0.0, 1.0, name="x")
+        law = Normal("x", 0.0, 1.0)
         result = Function(
             func=lambda row: log_prob(law, row["x"]), name="score", dispatch=dispatch
         )(source)

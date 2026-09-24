@@ -223,9 +223,9 @@ class TestNutpieStanIntegration:
         x = rng.normal(size=N)
         y = 0.5 + 1.5 * x + rng.normal(size=N)
         model = StanModel(
+            "linreg",
             str(stan_file),
             data={"N": N, "x": x.tolist(), "y": y.tolist()},
-            name="linreg",
         )
 
         result = condition_on_nutpie.apply(
@@ -276,7 +276,7 @@ class TestNutpieIntegration:
         """Nutpie recovers the analytical posterior mean for a simple Gaussian."""
         np.random.seed(0)
         y_obs = np.array([1.2, 0.8, 1.1, 0.9, 1.0], dtype=float)
-        model = PyMCModel(_gaussian_pymc_fn, name="gaussian")
+        model = PyMCModel("gaussian", _gaussian_pymc_fn)
         result = condition_on_nutpie.apply(
             model,
             data={"y": y_obs},
@@ -308,7 +308,7 @@ class TestNutpieIntegration:
         np.testing.assert_allclose(float(jnp.std(mu_draws)), post_sd, atol=0.05)
 
     def test_annotations_trace_attached(self):
-        model = PyMCModel(_gaussian_pymc_fn, name="gaussian")
+        model = PyMCModel("gaussian", _gaussian_pymc_fn)
         y_obs = np.array([0.0, 1.0], dtype=float)
         result = condition_on_nutpie.apply(
             model,
@@ -341,7 +341,7 @@ class TestNutpieIntegration:
                 pm.Normal("y", mu=zeta + alpha + mu, sigma=1000.0, observed=y)
             return m
 
-        model = PyMCModel(model_fn, name="ordering")
+        model = PyMCModel("ordering", model_fn)
         result = condition_on_nutpie.apply(
             model,
             data={"y": np.zeros(4, dtype=float)},
@@ -374,7 +374,7 @@ class TestNutpieIntegration:
                 pm.Normal("y", mu=mu + X_rv, sigma=1000.0, observed=y)
             return m
 
-        model = PyMCModel(model_fn, name="partial")
+        model = PyMCModel("partial", model_fn)
         result = condition_on_nutpie.apply(
             model,
             data={"y": np.zeros(5, dtype=float)},

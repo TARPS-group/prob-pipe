@@ -61,10 +61,11 @@ class Distribution(TrackedTerm, Annotated, ABC):
     :class:`~probpipe.core.tracked.TrackedTerm` (a :attr:`~TrackedTerm.name` and a write-once
     :attr:`~TrackedTerm.provenance`) and
     :class:`~probpipe.core.tracked.Annotated` (free-form
-    :attr:`~Annotated.annotations`).  Leaf distributions (Normal, Gamma,
-    etc.) require an explicit ``name=`` argument; composite distributions
-    (ProductDistribution, EmpiricalDistribution, etc.) auto-derive a
-    name from their components when one is not provided. Every transform
+    :attr:`~Annotated.annotations`).  A distribution's constructor takes
+    its name as the required first argument, as ``Normal("x", 0.0, 1.0)``
+    does. The classes the design retires, such as ``ProductDistribution``
+    and ``DistributionArray``, still take it as a keyword and some derive one
+    when it is omitted, an interim implementation detail. Every transform
     preserves the name; only ``with_name`` replaces it.
 
     Sampling and expectation capabilities are provided by the
@@ -108,8 +109,8 @@ class Distribution(TrackedTerm, Annotated, ABC):
 
     def __init__(
         self,
-        *,
         name: str,
+        *,
         _provenance: Provenance | None = None,
         _annotations: Mapping[str, Any] | None = None,
     ):

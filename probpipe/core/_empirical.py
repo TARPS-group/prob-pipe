@@ -10,11 +10,10 @@ array is wrapped as a single-field :class:`Record` at the constructor
 boundary and dispatches to the Record-based class.
 
 Construction-time dispatch via ``__new__``: calling the generic base
-``EmpiricalDistribution(samples, ...)`` returns a
+``EmpiricalDistribution(name, samples, ...)`` returns a
 :class:`RecordEmpiricalDistribution` when ``samples`` is a ``Record``
-or a numeric array (the latter requires ``name=`` so the auto-wrapped
-Record has a meaningful field key). Likewise
-``BootstrapReplicateDistribution(source, ...)`` returns a
+or a numeric array, whose auto-wrapped Record takes ``name`` as its field
+key. Likewise ``BootstrapReplicateDistribution(name, source, ...)`` returns a
 :class:`RecordBootstrapReplicateDistribution` for ``Record`` /
 numeric-array / numeric-array-backed ``EmpiricalDistribution``
 sources, and stays in the generic base for non-array
@@ -70,7 +69,6 @@ from .protocols import (
     SupportsVariance,
 )
 from .record import Record
-from .tracked import auto_name
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -250,7 +248,7 @@ class EmpiricalDistribution(
     This is the general base. Samples of any type (objects, callables,
     opaque user values, ...) are stored in a numpy object array.
 
-    **Automatic Record dispatch:** ``EmpiricalDistribution(samples,
+    **Automatic Record dispatch:** ``EmpiricalDistribution(name, samples,
     ...)`` returns a :class:`RecordEmpiricalDistribution` when
 
     - ``samples`` is a :class:`Record` (each field stacked along axis 0),
@@ -267,19 +265,18 @@ class EmpiricalDistribution(
 
     Parameters
     ----------
+    name : str
+        Distribution name. For a bare numeric array it also names the field
+        of the auto-wrapped record.
     samples : Record | RecordBatch | sequence | array-like
-        The support points. Numeric-array inputs require ``name=`` so
-        the auto-wrapped Record has a field name; without it construction
-        raises ``ValueError``. A batch of records contributes every batch axis
-        as atoms.
+        The support points. A numeric array is wrapped as a single-field
+        record keyed by *name*. A batch of records contributes every batch
+        axis as atoms.
     weights : array-like, :class:`~probpipe.Weights`, or None
         Non-negative weights (normalised internally). Mutually
         exclusive with *log_weights*. Uniform when neither is given.
     log_weights : array-like, :class:`~probpipe.Weights`, or None
         Log-unnormalised weights. Mutually exclusive with *weights*.
-    name : str, optional
-        Distribution name. Mandatory when *samples* is a bare numeric
-        array.
 
     Raises
     ------
@@ -289,7 +286,8 @@ class EmpiricalDistribution(
         which a callable or opaque field has none of.
     """
 
-    def __new__(cls, samples=None, *args, **kwargs):
+    def __new__(cls, *args, **kwargs):
+        samples = args[1] if len(args) > 1 else kwargs.get("samples")
         if cls is EmpiricalDistribution and samples is not None:
             if isinstance(samples, RecordBatch):
                 # The record-based empirical is a ``NumericRecordDistribution``,
@@ -311,11 +309,11 @@ class EmpiricalDistribution(
 
     def __init__(
         self,
+        name: str,
         samples: Sequence[Any] | ArrayLike,
         weights: ArrayLike | Weights | None = None,
         *,
         log_weights: ArrayLike | Weights | None = None,
-        name: str | None = None,
     ):
         # Generic-T storage: a numpy object array.
         if isinstance(samples, (jnp.ndarray, np.ndarray)):
@@ -326,7 +324,6 @@ class EmpiricalDistribution(
         if n == 0:
             raise ValueError("samples must be a non-empty sequence.")
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
-        name = auto_name(name, "empirical")
         super().__init__(name=name)
         self._approximate = True
 
@@ -420,7 +417,7 @@ class EmpiricalDistribution(
 
             rd = return_dist if return_dist is not None else _base.RETURN_APPROX_DIST
             if rd:
-                return BootstrapDistribution(f_vals, weights=sub_w)
+                return BootstrapDistribution("expectation", f_vals, weights=sub_w)
             return sub_w.mean(f_vals)
 
         f_vals = self._eval_f(f, self._samples)
@@ -462,6 +459,9 @@ class RecordEmpiricalDistribution(
 
     Parameters
     ----------
+    name : str
+        Distribution name. For a numeric array it also names the
+        auto-wrapped field.
     samples : Record | RecordBatch | array-like
         Sample data. A Record's fields each stack along axis 0; a numeric array
         auto-wraps as a single-field record keyed by ``name``. A **numeric**
@@ -477,9 +477,6 @@ class RecordEmpiricalDistribution(
     sample_shape : tuple of int, optional
         Only valid for numeric-array auto-wrap: leading-axis sample
         shape; trailing axes form the field's event shape.
-    name : str, optional
-        Distribution name. Required when *samples* is a numeric array
-        (used as the auto-wrapped field name).
 
     Notes
     -----
@@ -500,12 +497,12 @@ class RecordEmpiricalDistribution(
 
     def __init__(
         self,
+        name: str,
         samples: Record | RecordBatch | ArrayLike,
         weights: ArrayLike | Weights | None = None,
         *,
         log_weights: ArrayLike | Weights | None = None,
         sample_shape: tuple[int, ...] | None = None,
-        name: str | None = None,
     ):
         element_declaration: RecordSpec | None = None
         if isinstance(samples, RecordBatch):
@@ -548,7 +545,6 @@ class RecordEmpiricalDistribution(
         self._record_data = samples
         self._num_atoms = n
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
-        name = auto_name(name, "empirical(" + ",".join(samples.fields) + ")")
         # Skip EmpiricalDistribution.__init__ (different storage shape);
         # call Distribution.__init__ directly for name registration.
         Distribution.__init__(self, name=name)
@@ -613,7 +609,7 @@ class RecordEmpiricalDistribution(
         --------
         Single-field auto-wrap with a 1-D event::
 
-            EmpiricalDistribution(jnp.zeros((100, 5)), name="theta").flat_samples.shape
+            EmpiricalDistribution("theta", jnp.zeros((100, 5))).flat_samples.shape
             # (100, 5)
 
         Multi-field posterior::
@@ -639,7 +635,7 @@ class RecordEmpiricalDistribution(
         """Per-sample event shape, single-field only.
 
         For a single-field record (the auto-wrap case from
-        ``EmpiricalDistribution(arr, name=...)``), returns the field's
+        ``EmpiricalDistribution(name, arr)``), returns the field's
         event shape — i.e. ``arr.shape[1:]``.
 
         For multi-field records, raises :class:`AttributeError` rather
@@ -804,7 +800,7 @@ class RecordEmpiricalDistribution(
             sub_w = self._w.subsample(idx)
             rd = return_dist if return_dist is not None else _base.RETURN_APPROX_DIST
             if rd:
-                return BootstrapDistribution(f_vals, weights=sub_w)
+                return BootstrapDistribution("expectation", f_vals, weights=sub_w)
             return sub_w.mean(f_vals)
         # Exact: evaluate f on every row.
         f_vals = jnp.stack([f(_row(i)) for i in range(self._num_atoms)])
@@ -849,21 +845,22 @@ class BootstrapReplicateDistribution(
 
     Parameters
     ----------
+    name : str
+        Distribution name. For a numeric array source it also names the
+        auto-wrapped field.
     source : Record | EmpiricalDistribution | SupportsSampling | sequence
         Data to bootstrap from.
     replicate_size : int or None
         Number of items in each bootstrap replicate. Required when
         ``source`` is a non-array ``SupportsSampling`` (no canonical
         size); defaults to the source's size otherwise.
-    name : str or None
-        Distribution name. Mandatory when ``source`` is a numeric array
-        (used as the single-field auto-wrap field name).
     """
 
     _sampling_cost: str = "low"
     _preferred_orchestration: str | None = None
 
-    def __new__(cls, source=None, *args, **kwargs):
+    def __new__(cls, *args, **kwargs):
+        source = args[1] if len(args) > 1 else kwargs.get("source")
         if cls is BootstrapReplicateDistribution and source is not None:
             if isinstance(source, RecordEmpiricalDistribution):
                 return object.__new__(RecordBootstrapReplicateDistribution)
@@ -873,20 +870,14 @@ class BootstrapReplicateDistribution(
                 return object.__new__(RecordBootstrapReplicateDistribution)
             # Otherwise (SupportsSampling non-array sources or generic
             # opaque-object sequences) stay in the generic base. Note: a
-            # generic ``EmpiricalDistribution(numeric_array)`` can never
+            # generic ``EmpiricalDistribution(name, numeric_array)`` can never
             # arrive here as a generic instance — the generic base's own
             # ``__new__`` already routes numeric-array samples to
             # ``RecordEmpiricalDistribution``, which the first branch
             # above catches.
         return object.__new__(cls)
 
-    def __init__(
-        self,
-        source: Any,
-        *,
-        replicate_size: int | None = None,
-        name: str | None = None,
-    ):
+    def __init__(self, name: str, source: Any, *, replicate_size: int | None = None):
         # SupportsSampling source: each replicate is replicate_size
         # i.i.d. draws from source._sample. replicate_size is mandatory
         # (no canonical source size for a generic sampleable source).
@@ -947,7 +938,7 @@ class BootstrapReplicateDistribution(
         default_replicate_size: int,
         *,
         replicate_size: int | None,
-        name: str | None,
+        name: str,
         source_size: int | None = None,
     ) -> None:
         if replicate_size is None:
@@ -956,7 +947,6 @@ class BootstrapReplicateDistribution(
             if replicate_size < 1:
                 raise ValueError(f"replicate_size must be positive, got {replicate_size}")
             self._replicate_size = replicate_size
-        name = auto_name(name, "bootstrap")
         super().__init__(name=name)
         if self._source_kind == "sampleable":
             self._source_size = None
@@ -1081,7 +1071,7 @@ class BootstrapReplicateDistribution(
         f_vals = jnp.stack([f(_ds(k)) for k in keys])
         rd = return_dist if return_dist is not None else _base.RETURN_APPROX_DIST
         if rd:
-            return BootstrapDistribution(f_vals)
+            return BootstrapDistribution("expectation", f_vals)
         return jnp.mean(f_vals, axis=0)
 
     def __repr__(self) -> str:
@@ -1121,6 +1111,9 @@ class RecordBootstrapReplicateDistribution(
 
     Parameters
     ----------
+    name : str
+        Distribution name. For a bare numeric array it also names the
+        auto-wrapped field.
     source : Record | RecordEmpiricalDistribution | array-like
         Data to bootstrap from. A bare numeric array auto-wraps as a
         single-field ``Record`` keyed by *name*. A generic
@@ -1129,9 +1122,6 @@ class RecordBootstrapReplicateDistribution(
     replicate_size : int or None
         Number of items in each bootstrap replicate. Defaults to the
         source's size.
-    name : str or None
-        Distribution name. Mandatory when *source* is a bare numeric
-        array (used as the single-field auto-wrap field name).
 
     Raises
     ------
@@ -1147,13 +1137,7 @@ class RecordBootstrapReplicateDistribution(
     _sampling_cost: str = "low"
     _preferred_orchestration: str | None = None
 
-    def __init__(
-        self,
-        source: Any,
-        *,
-        replicate_size: int | None = None,
-        name: str | None = None,
-    ):
+    def __init__(self, name: str, source: Any, *, replicate_size: int | None = None):
         if isinstance(source, RecordEmpiricalDistribution):
             self._record_data = source._record_data
             self._w = source._w

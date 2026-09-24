@@ -16,7 +16,6 @@ import numpy as np
 
 from ..core._specs import NumericRecordSpec
 from ..core.protocols import SupportsLogProb
-from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike
 from ..distributions._distribution import Distribution
 from ._base import ProbabilisticModel
@@ -128,13 +127,13 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
 
     Parameters
     ----------
+    name : str
+        Model name for provenance.
     stan_file : str
         Path to a ``.stan`` file.
     data : dict or None
         Stan data dictionary.  Can also be provided at conditioning
         time.
-    name : str or None
-        Model name for provenance.
 
     Raises
     ------
@@ -142,13 +141,7 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
         If ``bridgestan`` is not installed.
     """
 
-    def __init__(
-        self,
-        stan_file: str,
-        *,
-        data: dict | None = None,
-        name: str | None = None,
-    ):
+    def __init__(self, name: str, stan_file: str, *, data: dict | None = None):
         try:
             import bridgestan
         except ImportError as e:
@@ -158,9 +151,6 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
 
         self._stan_file = stan_file
         self._stan_data = data
-        # Default to the class name when the caller does not supply one;
-        # the default is an auto-derived name.
-        name = auto_name(name or None, "StanModel")
         self._init_tracked(name)
 
         # Compile and instantiate. BridgeStan's constructor takes the
