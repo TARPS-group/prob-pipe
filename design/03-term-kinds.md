@@ -348,7 +348,7 @@ It claims only the batch axis and never the leaf-keyed `Mapping` contract, so a 
 
 ### Contract
 
-A `Distribution[T]` is a probability measure over values of type `T`, where `T` is the implementer-side draw type fixed below. Its `DistributionSpec` carries the draw's `OutputSpec` as `event_spec`, exposed as a view. The declaration determines both the returned kind and its component interface (II.2). It is the same declaration type a `Function` carries as `output_spec`; the names distinguish a draw from a function's return. A bare term spec is accepted and completed at construction: a `RecordSpec` exposes its fields, and any other spec is a whole-term event whose component is the law's `name`, captured once so that `with_name` never moves it. An `OutputSpec`, or a family constructor's `component_name`, names the component otherwise; a constructor fills a type hole from its parameters and stores only the complete declaration.
+A `Distribution` is a probability measure over the values its event declaration describes. Its `DistributionSpec` carries the draw's `OutputSpec` as `event_spec`, exposed as a view. The declaration determines both the returned kind and its component interface (II.2). It is the same declaration type a `Function` carries as `output_spec`; the names distinguish a draw from a function's return. A bare term spec is accepted and completed at construction: a `RecordSpec` exposes its fields, and any other spec is a whole-term event whose component is the law's `name`, captured once so that `with_name` never moves it. An `OutputSpec`, or a family constructor's `component_name`, names the component otherwise; a constructor fills a type hole from its parameters and stores only the complete declaration.
 
 It declares the operations it supports as **capabilities** (III.8), so operational support is decoupled from the class. Its `raw()` is the law detached (II.4), so a field view's `raw()` is the detached marginal rather than a reference into its parent. A draw is a tracked term of the kind the event declaration names, never wrapped in another kind to make draws uniform.
 
@@ -356,21 +356,10 @@ It declares the operations it supports as **capabilities** (III.8), so operation
 
 `with_path_names` renames or moves event fields under the rules of II.6 and renames a whole-term output component by its declared name. On an exposed record, its component names are derived from the renamed immediate children. On a named whole record, renaming the outer component leaves the record's own fields unchanged. An unqualified name that could address both is ambiguous and raises; the caller disambiguates with a full event path where available. Restructuring never silently changes the event kind or the declaration's exposure form: a path-valued target for a whole-term component is refused. `with_name` changes only the object label. A polymorphic law is legal and binds as II.1 specifies.
 
-**The draw type `T`.** `T` is the implementer-side draw type, derived from the event spec's kind rather than declared independently: the spec is the source, and the bracket is typing documentation. Writing the tracked kind (`Distribution[NumericArray]`) or its raw host (`Distribution[Array]`) names the same array kind: either notation is read at the kind level. Per kind, the implementer type is the kind's raw host, except where the host cannot carry the structure the mathematics needs:
-
-| event spec's kind | implementer draw type `T` |
-|---|---|
-| `NumericArraySpec` | `Array` |
-| `OpaqueSpec` | the wrapped object |
-| `FunctionSpec` | a callable |
-| `RecordSpec` | `Record` — the flat mapping loses schema and layout |
-| `DistributionSpec` | `Distribution` — a draw's own raw form |
-| `ConditionalDistributionSpec` | `ConditionalDistribution` |
-
 A `NumericDistribution` is a `Distribution` whose `event_spec.spec` is a `NumericSpec` (II.3), so its draws implement `Numeric` and the flat-vector interface applies; a scalar `Normal`'s `NumericArraySpec` event qualifies as a record event does.
 
 ```python
-class Distribution[T](TrackedTerm):
+class Distribution(TrackedTerm):
     def __init__(self, name: str, event_spec: OutputSpec | TermSpec) -> None: ...
         # event declaration completion follows II.2; labels never supply components
 
@@ -417,7 +406,7 @@ class DistributionSpec(TermSpec):  # a Distribution; is_valid accepts a matching
 
 ### Rationale
 
-Including a `Distribution` class is necessary to satisfy `C1 – Uniform interface to functions, distributions, and values`. A field view is `B4 – No copying at boundaries` at a field, and deriving its capabilities from its parent's ensures a view advertises only what it can compute (`D3 – Capability-based operations`). The draw-type table is `B2 – Representations only inside` per kind: an implementer writes over `T` and never sees a tracked draw. Defaulting a whole-term component to the label and capturing it once serves `C5 – Naming for unambiguous meaning` on both counts: a draw is addressable by a meaningful component without a second name in the common case, and the label never enters the mathematics afterward.
+Including a `Distribution` class is necessary to satisfy `C1 – Uniform interface to functions, distributions, and values`. A field view is `B4 – No copying at boundaries` at a field, and deriving its capabilities from its parent's ensures a view advertises only what it can compute (`D3 – Capability-based operations`). A `Distribution` takes no type parameter, because the type of its draws is a function of the stored declaration and a static parameter could record only the declaration's kind (`D6 – Single source of truth`). Defaulting a whole-term component to the label and capturing it once serves `C5 – Naming for unambiguous meaning` on both counts: a draw is addressable by a meaningful component without a second name in the common case, and the label never enters the mathematics afterward.
 
 ### Open points
 
@@ -427,21 +416,21 @@ Including a `Distribution` class is necessary to satisfy `C1 – Uniform interfa
 
 ### Contract
 
-For each operation it supports, a distribution supplies a **capability**: an underscore implementation such as `_sample` or `_mean` over `T` (III.7). Where support is partial the capability carries a **guard**, the per-instance predicate that narrows the claim, as squareness narrows a `LinOp`'s invertibility (V.12). The matching operation calls the capability through its route (VI.0): protocol membership establishes that the implementation exists, and the guard establishes support for the requested call.
+For each operation it supports, a distribution supplies a **capability**: an underscore implementation such as `_sample` or `_mean` that operates on raw forms (II.4). Where support is partial the capability carries a **guard**, the per-instance predicate that narrows the claim, as squareness narrows a `LinOp`'s invertibility (V.12). The matching operation calls the capability through its route (VI.0): protocol membership establishes that the implementation exists, and the guard establishes support for the requested call.
 
 ```python
 @runtime_checkable
-class SupportsSampling[T](Protocol):
-    def _sample(self, key: Key, sample_shape: tuple[int, ...] = ()) -> T: ...
+class SupportsSampling(Protocol):
+    def _sample(self, key: Key, sample_shape: tuple[int, ...] = ()) -> Any: ...
     # one draw for sample_shape=(); a non-empty shape prepends batch axes
 
 @runtime_checkable
-class SupportsUnnormalizedLogProb[T](Protocol):
-    def _unnormalized_log_prob(self, value: T) -> Array: ...   # log-density up to an additive constant
+class SupportsUnnormalizedLogProb(Protocol):
+    def _unnormalized_log_prob(self, value: Any) -> Array: ...   # log-density up to an additive constant
 
 @runtime_checkable
-class SupportsLogProb[T](SupportsUnnormalizedLogProb[T], Protocol):
-    def _log_prob(self, value: T) -> Array: ...                # the *normalized* log-density (refines the above)
+class SupportsLogProb(SupportsUnnormalizedLogProb, Protocol):
+    def _log_prob(self, value: Any) -> Array: ...                # the *normalized* log-density (refines the above)
 
 @runtime_checkable
 class SupportsRandomUnnormalizedLogProb(Protocol):
@@ -453,24 +442,24 @@ class SupportsRandomLogProb(Protocol):
     def _random_log_prob(self) -> Distribution: ...   # likewise, with the normalized log-density of a draw
 
 @runtime_checkable
-class SupportsMean[T](Protocol):
-    def _mean(self) -> T: ...       # event-typed: a value shaped like a draw
+class SupportsMean(Protocol):
+    def _mean(self) -> Any: ...       # event-typed: a value shaped like a draw
 
 @runtime_checkable
-class SupportsVariance[T](Protocol):
-    def _variance(self) -> T: ...   # event-typed, like _mean
+class SupportsVariance(Protocol):
+    def _variance(self) -> Any: ...   # event-typed, like _mean
 
 @runtime_checkable
 class SupportsCovariance(Protocol):
     def _cov(self) -> LinOp: ...    # a (d, d) operator over the flat numeric event
 
 @runtime_checkable
-class SupportsQuantile[T](Protocol):
+class SupportsQuantile(Protocol):
     def _quantile(self, q: ArrayLike) -> Array: ...   # numeric draws: one value per level in q, per coordinate
 
 @runtime_checkable
-class SupportsExpectation[T](Protocol):
-    def _expectation(self, f: Callable[[T], Array]) -> Array: ...   # exact E[f(X)] for arbitrary f
+class SupportsExpectation(Protocol):
+    def _expectation(self, f: Callable[[Any], Array]) -> Array: ...   # exact E[f(X)] for arbitrary f
 
 class SupportsExactConditioning(ABC):        # claimed by inheriting, not structurally
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Distribution: ...   # the conditional law given fixed values
@@ -508,14 +497,14 @@ Making each operation a *capability* rather than a base-class method follows `D3
 
 ### Contract
 
-A `ConditionalDistribution[S, T]` is a *probability kernel* `K : S → P(T)` — a family of distributions p(· | s) indexed by a *conditioning value* `s : S`. Supply a value for what it conditions on and it yields an ordinary `Distribution` over what it produces. A `Distribution` is the empty-given case, a kernel with nothing to condition on, so its marginal law exists and the unconditional operations apply; a kernel with a non-empty given has none. The two are distinct tracked types, and neither inherits from the other. A `ConditionalDistribution` and its spec always carry a non-empty `given_spec`, since binding the last given field returns a `Distribution` directly; the empty-given case is `DistributionSpec`'s.
+A `ConditionalDistribution` is a *probability kernel* `K : S → P(T)` — a family of distributions p(· | s) indexed by a *conditioning value* `s : S`. Supply a value for what it conditions on and it yields an ordinary `Distribution` over what it produces. A `Distribution` is the empty-given case, a kernel with nothing to condition on, so its marginal law exists and the unconditional operations apply; a kernel with a non-empty given has none. The two are distinct tracked types, and neither inherits from the other. A `ConditionalDistribution` and its spec always carry a non-empty `given_spec`, since binding the last given field returns a `Distribution` directly; the empty-given case is `DistributionSpec`'s.
 
-A `ConditionalDistribution` carries a `given_spec`, which is the `InputSpec` of independently bindable slots it conditions on (II.2), and an `event_spec`, which is the output declaration of one produced draw `T` and is read as for a `Distribution` (III.7); both are views on its stored `ConditionalDistributionSpec`. Unlike a function's domain and codomain, a kernel's given and event are distinct *roles*, the value conditioned on and the law produced, so their given-slot and produced-component names stay disjoint even when the two spaces coincide. A Markov kernel with `S = T` uses names like `state → next_state` rather than `state → state`, for the same reason we write `K(x, dy)` rather than `K(x, dx)`. Symbolic dimensions are scoped over the two sides jointly, so a name shared between given and event fields is one dimension, bound by `with_dim_sizes` or, in the fused conditional paths, from the given value at call time. `with_path_names` renames or moves names across both sides, returning the same kernel: the event side behaves exactly as a `Distribution`'s, and on the given side a path-valued target may split or group slots, since a kernel carries no signature to fix its top level. A `Function`'s input slots are fixed by its signature instead (III.3), so restructuring across its top level is not a rename but a new signature, obtained by wrapping the callable in one that takes the parameters wanted.
+A `ConditionalDistribution` carries a `given_spec`, which is the `InputSpec` of independently bindable slots it conditions on (II.2), and an `event_spec`, which is the output declaration of one produced draw and is read as for a `Distribution` (III.7); both are views on its stored `ConditionalDistributionSpec`. Unlike a function's domain and codomain, a kernel's given and event are distinct *roles*, the value conditioned on and the law produced, so their given-slot and produced-component names stay disjoint even when the two spaces coincide. A Markov kernel with `S = T` uses names like `state → next_state` rather than `state → state`, for the same reason we write `K(x, dy)` rather than `K(x, dx)`. Symbolic dimensions are scoped over the two sides jointly, so a name shared between given and event fields is one dimension, bound by `with_dim_sizes` or, in the fused conditional paths, from the given value at call time. `with_path_names` renames or moves names across both sides, returning the same kernel: the event side behaves exactly as a `Distribution`'s, and on the given side a path-valued target may split or group slots, since a kernel carries no signature to fix its top level. A `Function`'s input slots are fixed by its signature instead (III.3), so restructuring across its top level is not a rename but a new signature, obtained by wrapping the callable in one that takes the parameters wanted.
 
 Users never call a method on the `ConditionalDistribution`. Instead, they use the existing operations. `condition_on(K, s)` binds the given fields and evaluates the kernel to a `Distribution` with no inference. `sample(K, given=s)`, `log_prob(K, y, given=s)`, and `mean(K, given=s)` are the **fused conditional paths**, with the invariant `op(K, given=s) == op(condition_on(K, s))`: the same law for exact realizations, and equal in law for their random draws. Equality draw for draw needs the same sampling realization, random-event identity, and key derivation as well, which sharing a workflow scope alone does not provide (V.8). An approximate path records its route and assumptions; it does not promise equality in law merely because it targets the same conditional. Binding a subset of the given slots *curries* to a smaller `ConditionalDistribution` (VI.6).
 
 ```python
-class ConditionalDistribution[S, T](TrackedTerm):
+class ConditionalDistribution(TrackedTerm):
     def __init__(self, name: str, given_spec: InputSpec | Mapping[str, TermSpec], event_spec: OutputSpec | TermSpec) -> None: ...
         # given before event, as in FunctionSpec
     @property
@@ -525,19 +514,19 @@ class ConditionalDistribution[S, T](TrackedTerm):
     @property
     def event_spec(self) -> OutputSpec: ...              # view on spec: the event declaration
     def with_dim_names(self, **names: str) -> Self: ...   # rename symbolic dimensions on both sides (II.1)
-    def _condition_on(self, given: S, /, **kwargs) -> Distribution[T] | ConditionalDistribution: ...
+    def _condition_on(self, given: Record | Mapping[str, Any], /, **kwargs) -> Distribution | ConditionalDistribution: ...
     # the required primitive: the law K(given, ·), or a curried kernel for a partial given
 
 @runtime_checkable
-class SupportsConditionalSampling[S, T](Protocol):
-    def _conditional_sample(self, given: S, key: Key, sample_shape: tuple[int, ...] = ()) -> T: ...
+class SupportsConditionalSampling(Protocol):
+    def _conditional_sample(self, given: Record | Mapping[str, Any], key: Key, sample_shape: tuple[int, ...] = ()) -> Any: ...
 @runtime_checkable
-class SupportsConditionalLogProb[S, T](Protocol):
-    def _conditional_log_prob(self, given: S, value: T) -> Array: ...
+class SupportsConditionalLogProb(Protocol):
+    def _conditional_log_prob(self, given: Record | Mapping[str, Any], value: Any) -> Array: ...
 @runtime_checkable
-class SupportsConditionalMean[S, T](Protocol):
-    def _conditional_mean(self, given: S) -> T: ...
-# … and likewise SupportsConditionalVariance (_conditional_variance(given) -> T),
+class SupportsConditionalMean(Protocol):
+    def _conditional_mean(self, given: Record | Mapping[str, Any]) -> Any: ...
+# … and likewise SupportsConditionalVariance (_conditional_variance(given) -> Any),
 #   SupportsConditionalCovariance (_conditional_cov(given) -> LinOp),
 #   SupportsConditionalExpectation (_conditional_expectation(given, f, …) -> Array),
 #   SupportsConditionalMarginals (_conditional_marginal(given, path) -> Distribution).
