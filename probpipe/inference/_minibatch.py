@@ -185,8 +185,8 @@ def _draw_indices(
 def _parameter_declaration(prior: Any, component: str) -> OutputSpec:
     """The declaration of the parameters *prior* is a law over.
 
-    A prior that declares no event yet leaves them opaque under *component*, an
-    interim implementation detail.
+    A prior that is not a distribution declares nothing, so its parameters are
+    opaque under *component*.
     """
     try:
         return prior.event_spec

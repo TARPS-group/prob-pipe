@@ -94,11 +94,9 @@ class KDEDistribution(TFPDistribution):
         self._samples = samples
         self._d = d
 
-        # Multi-field template support: when the caller supplies a template
-        # with more than one field, preset ``_event_template`` so that
-        # ``NumericRecordDistribution.event_template`` (parent) skips its
-        # single-field auto-build keyed by ``name``. Validate that the
-        # template's flat width matches the samples' trailing dimension.
+        # Multi-field template support: a template with more than one field
+        # is stored and declared, after checking that its flat width matches
+        # the samples' trailing dimension.
         if event_template is not None and len(event_template.fields) > 1:
             if isinstance(event_template, NumericRecordSpec):
                 expected = event_template.vector_size
@@ -166,8 +164,8 @@ class KDEDistribution(TFPDistribution):
     #
     # When ``_event_template`` is multi-field, sample output is unflattened
     # back into ``NumericRecord`` / ``NumericRecordBatch`` keyed by the
-    # template, and log_prob accepts both structured and flat inputs. Single-
-    # field auto-templates fall through to the TFP base class behaviour, so
+    # template, and log_prob accepts both structured and flat inputs. A KDE
+    # that draws one array falls through to the TFP base class behaviour, so
     # existing call sites are unchanged.
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:

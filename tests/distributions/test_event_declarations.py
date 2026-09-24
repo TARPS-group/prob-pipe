@@ -356,7 +356,7 @@ _DRAWN_KINDS = {
 
 
 # ``sample`` stacks a tuple draw as rows instead of wrapping it as one opaque
-# value, which predates the declaration and is outside its reach.
+# value, a behavior that predates the declaration.
 _DRAW_ROWS = [
     pytest.param(
         make,

@@ -629,7 +629,7 @@ def _convert_to_kde(source, key, **kw):
     the stored samples, weights, and ``event_template`` are reused
     directly via :meth:`KDEDistribution.from_empirical` — which
     preserves named-field structure end-to-end. Other sources fall
-    back to drawing fresh samples (single-field auto-template).
+    back to drawing fresh samples, and the KDE draws one array.
 
     Raises
     ------

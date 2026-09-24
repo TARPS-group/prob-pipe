@@ -579,7 +579,8 @@ uv build packaging/probpipe   # probpipe (metapackage)
 |-------------|-------------|
 | `NamedTree` | Shared name-keyed tree substrate (`probpipe.core.named_tree`): immutable ordered tree with `/`-path navigation, the leaf-keyed mapping interface, structural edits (`merge` / `without` / `replace` / `with_path_names`), and nested-dict export (`to_nested_dict`) that the constructor reads back. `RecordSpec` and `Record` are its two families; each declares its leaf type (`TermSpec` vs arbitrary values), and mappings are never leaves. |
 | `TrackedTerm` / `Annotated` | Identity and metadata mixins (`probpipe.core.tracked`): `TrackedTerm` carries `name` and write-once `provenance` (`with_name` / `with_provenance`); `Annotated` carries the free-form `annotations` mapping. `Function`, `Distribution`, and `Record` mix in both; the batch types are tracked terms through their bases. |
-| `Distribution` | Base class of every distribution, with no type parameter; provides `event_template` and the `TrackedTerm` / `Annotated` identity attributes |
+| `Distribution` | Base class of every distribution, with no type parameter. It stores one event declaration: `spec` is a `DistributionSpec` whose `event_spec` is the `OutputSpec` of one draw. A subclass passes `event_spec` to `Distribution.__init__`, and construction raises `TypeError` for a class that leaves its event undeclared. `event_shape` is defined for a law that draws a single array. It also carries the `TrackedTerm` / `Annotated` identity attributes. |
+| `NumericDistribution` | The marker of a law whose declaration is numeric: `isinstance(d, NumericDistribution)` holds when `d.event_spec.spec` is a `NumericSpec`, whatever the class of `d`. It holds the views `dtypes` and `supports`, keyed by array-leaf path, and `dtype` and `support`, the values every leaf shares or `None`; a law whose declaration is not numeric has none of them. A class whose every instance is numeric, such as `NumericRecordDistribution`, inherits the marker, and construction checks the claim. |
 | `Record` | Named, immutable, JAX-pytree container for structured non-random values; constructed name-first (`Record(name, ...)`); leaves stored verbatim (no coercion). All-numeric construction auto-promotes to `NumericRecord`; an explicit non-numeric `event_template=` pins a plain `Record`. `Record.from_field_values(name, template, values)` is the general (de)composition inverse of `list(record.values())`; `select()` for Function splatting |
 | `NumericRecord` (subclass of `Record`) | Post-construction invariant: every leaf is numeric, **stored in native form** (jax / numpy arrays, xarray, pandas, registered backends — nothing coerced; a bare Python scalar normalises to a 0-d `jax.Array`). Conversion to `jax.Array` happens lazily at the compute boundary (pytree flatten, `to_vector`, the scalar shim) through a set-once per-leaf cache. Adds `to_vector` / `vector_size` and the classmethod inverse `NumericRecord.from_vector(name, template, vec)` (the numeric 1-D serialization). `to_numeric()` is the identity on it; `Record.to_numeric()` validates (never converts), and native containers are read back directly from the fields. |
 | `RecordBatch` | Batch of `Record` elements over named levels (`level_names` / `axes_per_level`), stored one column per leaf path; positional index → element or sub-batch view, field index → the column in its batch form. A batched draw from a joint law is one of these. Deliberately **not** a `Record`: fields are read from `event_template`, not `fields` / `items()`. |
@@ -587,14 +588,14 @@ uv build packaging/probpipe   # probpipe (metapackage)
 | `RecordSpec` | Structural skeleton (field names, per-field shapes or `None`); the value classmethods `NumericRecord.from_vector(name, template, vec)` / `NumericRecordBatch.from_vector(...)` rebuild a numeric value from its 1-D vector given a template, without an example instance |
 | `RecordDistribution` | Record-based distribution base; `fields`, `__getitem__` → `_RecordDistributionView`, `select()` / `select_all()` for correlated broadcasting. A `Distribution` represents one random variable; use `DistributionArray` for collections. |
 | `_RecordDistributionView` | Lightweight component reference; dynamic protocol support matching parent capabilities |
-| `NumericRecordDistribution` | Numeric-array distribution base; per-field `dtypes`, `supports`, `event_shapes`; base for all TFP-backed distributions |
+| `NumericRecordDistribution` | Numeric-array distribution base, which inherits the `NumericDistribution` marker and adds per-field `event_shapes` and the flat-vector interface; base for all TFP-backed distributions |
 | `FlatNumericRecordDistribution` | Refinement of `NumericRecordDistribution` enforcing the flat contract: single field, `event_shape == (N,)`. Carries `flat_size` and `as_record_distribution(template=…)` — the inverse of `as_flat_distribution()`, lifting a flat distribution to a Record-keyed view under a user-supplied `NumericRecordSpec`. Algorithms that consume a flat parameter vector (MCMC, optimisers, VI / Pathfinder / Laplace surrogates) should declare their input as this type. Natively-multivariate parametrics (`MultivariateNormal`, `Dirichlet`, `Multinomial`, `VonMisesFisher`) and `FlattenedDistributionView` all implement it. |
 | `FlattenedDistributionView` | A `FlatNumericRecordDistribution` produced by `nrd.as_flat_distribution()`. Wraps any base distribution and exposes flat-vector samples / log-probs (`event_shape == (event_size,)`), delegating through the base. |
 | `NumericRecordDistributionView` | The inverse view, produced by `FlatNumericRecordDistribution.as_record_distribution(template=…)`. Lifts a flat distribution to a Record-keyed structure; samples come back as `NumericRecord` / `NumericRecordBatch` keyed by `template.fields`. |
-| `DistributionArray` | Shape-indexed `Array[Distribution]`; exposes only the container surface (indexing, iteration, `batch_shape`, `event_shape`, `event_template`, `components`). `event_template` is the explicitly supplied authoritative template for Function aggregates, the common component template for compatible literal arrays, or `None`. Vectorized ops are delivered by the `Function` sweep layer — passing a `DistributionArray` to an op whose hint is a scalar `Distribution` / protocol triggers cell-by-cell dispatch, and outputs stack into `NumericRecordBatch` / `RecordBatch` / (nested) `DistributionArray`. Produced by parameter-sweep Functions whose inner call returns a `Distribution`. |
+| `DistributionArray` | Shape-indexed `Array[Distribution]`; exposes only the container surface (indexing, iteration, `batch_shape`, `event_shape`, `event_spec`, `event_template`, `components`). `event_spec` declares the term every cell draws, which a batched array reads from its backend, so an empty batch declares one too. `event_template`, an interim view, is the explicitly supplied authoritative template for Function aggregates, the common component template for compatible literal arrays, or `None`. Vectorized ops are delivered by the `Function` sweep layer — passing a `DistributionArray` to an op whose hint is a scalar `Distribution` / protocol triggers cell-by-cell dispatch, and outputs stack into `NumericRecordBatch` / `RecordBatch` / (nested) `DistributionArray`. Produced by parameter-sweep Functions whose inner call returns a `Distribution`. |
 | `JointEmpirical` / `NumericJointEmpirical` | Weighted joint samples distribution. Generic base supports only sampling; the numeric subclass adds exact `SupportsMean` / `SupportsVariance`. Conditioning is not offered, since dropping stored fields is marginalization; build the marginal directly. `JointEmpirical(...)` dispatches to `NumericJointEmpirical` when every field is numeric. (Empirical distributions do not claim `SupportsLogProb`; use `from_distribution(emp, KDEDistribution, …)` for a density.) |
 | `EmpiricalDistribution` / `RecordEmpiricalDistribution` | Weighted empirical distribution. The generic base holds samples of any type; the Record-based specialisation adds `event_shapes`, exact moments (`SupportsMean` / `SupportsVariance` / `SupportsCovariance`), and TFP-style shape semantics. Numeric-array sources auto-wrap as a single-field Record keyed by the name. Two views on the stored draws: `samples` (structured `NumericRecord`, per-field access via `samples[name]`) and `flat_samples` (flat `(n, dim)` matrix across all fields, in insertion order). Use `flat_samples` for stacked-matrix idioms like `post.flat_samples.mean(axis=0)` for per-parameter posterior summaries. |
-| `BootstrapReplicateDistribution` / `RecordBootstrapReplicateDistribution` | N-fold product over a source: each draw is a bootstrapped dataset of `n` i.i.d. observations. Accepts a `Record`, `RecordEmpiricalDistribution`, numeric array, or any `SupportsSampling` source (in which case `n` is mandatory). |
+| `BootstrapReplicateDistribution` / `RecordBootstrapReplicateDistribution` | N-fold product over a source: each draw is a bootstrapped dataset of `replicate_size` i.i.d. observations. Accepts a `Record`, `RecordEmpiricalDistribution`, numeric array, or any `SupportsSampling` source, in which case `replicate_size` is mandatory. |
 | `Function` | Immutable first-class `TrackedTerm` / `Annotated`, schema-aware computation term. It owns a frozen Python `signature`, optional authoritative input/output `RecordSpec`s, and an implementation object. `apply` performs one raw evaluation; `__call__` adds lifting, variadic slot planning, sweeps, orchestration, wrapping, and Function-first provenance. Prefect is off by default; views are grouped by parent for correlated broadcasting. |
 | `Module` | Stateful workflow-aware base class (see `@workflow_method`) |
 | Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, the two conditioning capabilities, etc.; dynamic inclusion on `ProductDistribution` and `TransformedDistribution` |
@@ -751,9 +752,11 @@ and a Record-based specialisation:
 - `BootstrapReplicateDistribution` / `RecordBootstrapReplicateDistribution`
 
 The generic base carries only type-agnostic features (sampling,
-expectation). The Record-based variant adds `event_shapes`, `dim`,
-`dtypes`, `support`, and moment protocols (`SupportsMean`,
-`SupportsVariance`, `SupportsCovariance`).
+expectation). The Record-based variant adds `event_shapes`, `dim`, and
+moment protocols (`SupportsMean`, `SupportsVariance`,
+`SupportsCovariance`). Numeric membership is read from the declaration
+rather than the class, so a numeric law of either variant has the
+`NumericDistribution` views, `dtypes` and `support` among them.
 
 **Automatic factory dispatch.** Constructing the generic base with
 a numeric array or a `Record` automatically returns the Record-based
@@ -775,8 +778,11 @@ keys the auto-wrapped Record's field.
 
 `BootstrapReplicateDistribution` additionally accepts a
 `SupportsSampling` source (e.g. `Normal("x", 0, 1)`); each
-replicate is `n` i.i.d. draws from `source._sample`. `n` is
-mandatory in this case (no canonical observation count).
+replicate is `replicate_size` i.i.d. draws from `source._sample`.
+`replicate_size` is mandatory in this case (no canonical observation
+count). A replicate stacks the array its source declares, and a
+replicate of a sampler that is not a `Distribution`, which declares no
+event, is opaque.
 
 ### Framework abstraction hierarchy
 
@@ -817,6 +823,11 @@ Three rules govern how the framework's universal types relate.
    declare their input as `FlatNumericRecordDistribution` so
    receiver typing — not a runtime shape probe — enforces the
    contract.
+
+   `NumericDistribution` is not an implementation either. It is the
+   marker of a numeric declaration, read from each law's `event_spec`,
+   so one class may hold numeric and non-numeric instances, as
+   `EmpiricalDistribution` does.
 
 3. **Iteration is a Record-family convention.** `Record` and
    `NumericRecord` iterate field names dict-style. A `RecordBatch` is a collection, not a named tree:

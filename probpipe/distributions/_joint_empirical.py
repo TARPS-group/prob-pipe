@@ -163,10 +163,7 @@ class JointEmpirical(RecordDistribution, SupportsSampling):
             # Generic (non-numeric) path: derive a structural
             # ``RecordSpec`` directly from the stored samples. Each
             # field's per-row shape becomes its spec; object-dtype leaves
-            # report ``None``. This keeps the
-            # ``RecordDistribution`` metaclass invariant
-            # (``event_template`` is non-``None``) without requiring
-            # numeric coercion.
+            # report ``None``. No numeric coercion is required.
             specs: dict[str, Any] = {}
             for cname, arr in stored.items():
                 if _is_numeric_array(arr):
