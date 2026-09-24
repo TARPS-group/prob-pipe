@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
-from ..core._specs import RecordSpec
+from ..core._specs import OutputSpec, RecordSpec
 from ..core.protocols import SupportsLogProb
 from ..core.record import Record
 from ..core.tracked import auto_name
 from ..custom_types import Array
-from ..distributions._distribution import Distribution
+from ..distributions._distribution import Distribution, _whole_term_component
 from ._base import ProbabilisticModel
 from ._likelihood import Likelihood
 
@@ -105,6 +105,25 @@ class SimpleModel[P, D](ProbabilisticModel, SupportsLogProb):
             self._event_template: RecordSpec = RecordSpec(merged)
         else:
             self._event_template = prior_tpl
+        # The model is a law over its parameters and data: the prior's declared
+        # record, which keeps each parameter's dtype and support, with the data
+        # fields merged in. A prior that declares no event yet gives its template,
+        # an interim implementation detail.
+        try:
+            declared = prior.event_spec
+        except AttributeError:
+            parameters: RecordSpec = prior_tpl
+        else:
+            component = _whole_term_component(declared)
+            parameters = (
+                cast(RecordSpec, declared.spec)
+                if component is None
+                else RecordSpec({component: declared.spec})
+            )
+        fields = dict(parameters.children)
+        if data_tpl is not None:
+            fields.update(data_tpl.children)
+        self._init_declaration(OutputSpec(RecordSpec(fields)))
 
     # -- Distribution interface ---------------------------------------------
 
