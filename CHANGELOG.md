@@ -427,6 +427,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`blackjax_rwmh` adaptive warmup no longer collapses its proposal.**
+  A warmup window in which the chain barely moves leaves a singular Welford
+  covariance, and refitting the proposal to it stopped the chain for the rest
+  of the run. A window that rejected every proposal refit to a proposal scale
+  near `1e-10`; a window with fewer accepted proposals than target dimensions
+  refit to a NaN proposal in float32, which rejects every move. Windows shorter
+  than the documented 25-step minimum made the first case common:
+  `num_warmup=100` split as `[7, 13, 27, 53]`, and a 2-D standard normal
+  stopped at that warmup for about a quarter of seeds. The second case stopped
+  every chain on a 20-dimensional target at the default `num_warmup=500`. The
+  window count is now reduced until every window holds at least 25 steps, so
+  `num_warmup=100` splits as `[33, 67]` and warmups shorter than 74 steps run
+  as one window. Each refit now computes
+  `(n * Sigma_hat + 5 * Sigma_prev) / (n + 5)`, which shrinks the Welford
+  covariance `Sigma_hat` toward the covariance `Sigma_prev` that the proposal
+  in use assumes and keeps the proposal positive definite. Adaptive runs draw
+  different samples than before for a fixed seed.
+
 - Native NumPy scalars retain their original dtype and precision in
   `NumericArray` storage and NumPy conversion. `as_jax()` and `float(value)`
   follow JAX's x64 configuration and may round or overflow; enable x64 before
