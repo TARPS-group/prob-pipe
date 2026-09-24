@@ -82,7 +82,7 @@ class SimpleModel[P, D](ProbabilisticModel, SupportsLogProb):
         # so condition_on can use component names as the sole signal for
         # splitting data kwargs from inference kwargs.
         #
-        # ``prior_tpl`` is a ``RecordSpec``, since a ``RecordDistribution``
+        # ``prior_tpl`` is always a record, since a ``RecordDistribution``
         # presents its template or its declaration read as one; ``data_tpl``
         # may be ``None`` for likelihoods that don't declare a data template.
         prior_tpl: RecordSpec = prior.event_template
@@ -106,19 +106,14 @@ class SimpleModel[P, D](ProbabilisticModel, SupportsLogProb):
             self._event_template = prior_tpl
         # The model is a law over its parameters and data: the prior's declared
         # record, which keeps each parameter's dtype and support, with the data
-        # fields merged in. A prior that declares no event yet gives its template,
-        # an interim implementation detail.
-        try:
-            declared = prior.event_spec
-        except AttributeError:
-            parameters: RecordSpec = prior_tpl
-        else:
-            component = _whole_term_component(declared)
-            parameters = (
-                cast(RecordSpec, declared.spec)
-                if component is None
-                else RecordSpec({component: declared.spec})
-            )
+        # fields merged in.
+        declared = prior.event_spec
+        component = _whole_term_component(declared)
+        parameters = (
+            cast(RecordSpec, declared.spec)
+            if component is None
+            else RecordSpec({component: declared.spec})
+        )
         fields = dict(parameters.children)
         if data_tpl is not None:
             fields.update(data_tpl.children)

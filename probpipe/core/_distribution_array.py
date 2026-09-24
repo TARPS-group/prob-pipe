@@ -73,14 +73,10 @@ def _drawn_shapes(component: Distribution) -> object:
     """The shapes one draw of *component* has, which the cells of an array share.
 
     An array draw has its shape and a record draw the shape of each leaf, by
-    path. A one-field record reads as its field, as ``event_shape`` read it, and
-    a component that declares no event reads its ``event_shape``; both are
-    interim implementation details.
+    path. A one-field record reads as its field, as ``event_shape`` read it, an
+    interim implementation detail.
     """
-    try:
-        spec = component.event_spec.spec
-    except AttributeError:
-        return getattr(component, "event_shape", ())
+    spec = component.event_spec.spec
     if isinstance(spec, RecordSpec) and len(spec.children) == 1:
         (spec,) = spec.children.values()
     if isinstance(spec, NumericArraySpec):
@@ -148,15 +144,10 @@ def _cell_declaration(cells: tuple[Distribution, ...], name: str) -> OutputSpec:
     An interim implementation detail of the classes the design retires. The first
     cell's declaration stands when every cell shares it. Otherwise the array
     declares the term every cell draws, with the metadata the cells share, and
-    whole-term cells declare it under *name*. A cell that declares no event yet
-    leaves the draw opaque, and so do no cells at all.
+    whole-term cells declare it under *name*. No cells at all leave the draw
+    opaque.
     """
-    declarations = []
-    for cell in cells:
-        try:
-            declarations.append(cell.event_spec)
-        except AttributeError:
-            return OutputSpec(**{name: OpaqueSpec()})
+    declarations = [cell.event_spec for cell in cells]
     if not declarations:
         return OutputSpec(**{name: OpaqueSpec()})
     first = declarations[0]

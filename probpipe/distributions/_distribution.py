@@ -58,7 +58,7 @@ def set_return_approx_dist(value: bool) -> None:
 
 
 def _complete_event_spec(event_spec: Any, name: str) -> OutputSpec:
-    """Complete *event_spec* into the output declaration of one draw (II.2, III.7).
+    """Complete *event_spec* into the output declaration of one draw.
 
     Parameters
     ----------
@@ -106,7 +106,7 @@ def _whole_term_component(declaration: OutputSpec) -> str | None:
 
 
 def _declares_numeric_event(value: Any) -> bool:
-    """Whether *value* is a law whose declared event is numeric (II.3).
+    """Whether *value* is a law whose declared event is numeric.
 
     A law still under construction declares nothing yet, so it is not numeric.
     """
@@ -139,7 +139,7 @@ class _DistributionMeta(_TrackedTermMeta):
     tracked-term metaclass checks its name: a class that bypasses
     ``Distribution.__init__`` calls ``_init_declaration`` itself.
 
-    ``isinstance(d, NumericDistribution)`` holds exactly when ``d`` declares a
+    ``isinstance(d, NumericDistribution)`` holds if and only if ``d`` declares a
     numeric event, whatever its class, and every other class check is the ordinary
     one. A class whose every instance is numeric may claim the marker by
     inheriting it, and construction checks the claim.
@@ -192,8 +192,8 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     :class:`~probpipe.core.protocols.SupportsSampling` protocol.
 
     **The event declaration.** A law stores one ``DistributionSpec``, its
-    :attr:`spec`, whose :attr:`event_spec` is the output declaration of one draw
-    (II.2). A bare ``RecordSpec`` exposes its fields; any other term spec is a
+    :attr:`spec`, whose :attr:`event_spec` is the output declaration of one
+    draw. A bare ``RecordSpec`` exposes its fields; any other term spec is a
     whole-term event whose component is the law's ``name``, captured once, so
     ``with_name`` never moves it. :attr:`event_shape` reads the declaration, and
     a law whose declaration is numeric also has the views of
@@ -280,7 +280,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
 
     @property
     def event_spec(self) -> OutputSpec:
-        """The output declaration of one draw (II.2), a view on :attr:`spec`."""
+        """The output declaration of one draw, read from :attr:`spec`."""
         return self.spec.event_spec
 
     @property
@@ -339,7 +339,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     # -- dimension transforms -------------------------------------------------
 
     def with_dim_sizes(self, **sizes: int) -> Self:
-        """Bind named symbolic dimensions of the declaration (II.1).
+        """Bind named symbolic dimensions of the declaration.
 
         Parameters
         ----------
@@ -371,7 +371,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         )
 
     def with_dim_names(self, **names: str) -> Self:
-        """Rename symbolic dimensions of the declaration, simultaneously (II.1).
+        """Rename symbolic dimensions of the declaration, simultaneously.
 
         Parameters
         ----------
@@ -407,7 +407,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     __iter__ = None
 
     def __getitem__(self, key: str | tuple[str, ...]) -> Distribution:
-        """The law of the component or field at *key* (III.7).
+        """The law of the component or field at *key*.
 
         A whole-term law is itself under its component, given as a string or a
         one-element tuple, so ``d[name]`` returns ``d``. The component is fixed at
@@ -643,9 +643,9 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
 
 
 class NumericDistribution(Distribution):
-    """The marker of a law whose event declaration is numeric (II.3), with its views.
+    """The marker of a law whose event declaration is numeric, with its views.
 
-    ``isinstance(d, NumericDistribution)`` holds exactly when
+    ``isinstance(d, NumericDistribution)`` holds if and only if
     ``d.event_spec.spec`` is a :class:`~probpipe.core._spec_base.NumericSpec`,
     so a draw implements ``Numeric`` and the flat-vector interface applies. A
     class whose every instance is numeric may inherit the marker, and
@@ -727,7 +727,7 @@ def _unify_declarations(
         raise ValueError(
             f"{path} declares the component {wanted!r}, but the law declares {found!r}"
         )
-    # A whole term's spec sits under its component, as a record field's does.
+    # A whole term's spec is bound under its component's path, as a record field's is.
     _unify_specs(
         expected.spec, actual.spec, bindings, path if wanted is None else f"{path}/{wanted}"
     )
@@ -740,7 +740,7 @@ class DistributionSpec(TermSpec):
     Parameters
     ----------
     event_spec : OutputSpec or RecordSpec
-        The declaration of one draw (II.2). A bare ``RecordSpec`` completes to the
+        The declaration of one draw. A bare ``RecordSpec`` completes to the
         exposed form.
 
     Raises

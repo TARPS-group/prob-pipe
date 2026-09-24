@@ -975,18 +975,13 @@ class BootstrapReplicateDistribution(
         source's come back as a batch of records on the level that ``sample``
         mints, declared with the element a batch reads off its columns, which has
         the source record's fields and shapes. A replicate of anything else is
-        opaque: the object data of a
-        sequence source, and the draws of a sampler that implements
-        ``SupportsSampling`` without being a :class:`~probpipe.Distribution`,
-        which declares no event. So is one from a source that declares no event
-        yet, an interim implementation detail.
+        opaque: the object data of a sequence source, and the draws of a sampler
+        that implements ``SupportsSampling`` without being a
+        :class:`~probpipe.Distribution`, which declares no event.
         """
         if not isinstance(self._source_dist, Distribution):
             return OpaqueSpec()
-        try:
-            spec = self._source_dist.event_spec.spec
-        except AttributeError:
-            return OpaqueSpec()
+        spec = self._source_dist.event_spec.spec
         if isinstance(spec, NumericArraySpec):
             return NumericArraySpec((self._replicate_size, *spec.shape), spec.dtype, spec.support)
         if isinstance(spec, RecordSpec):
