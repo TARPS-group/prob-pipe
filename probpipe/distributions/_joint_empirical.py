@@ -31,12 +31,9 @@ from .._dtype import _as_float_array
 from .._weights import Weights
 from ..core._empirical import RecordEmpiricalDistribution
 from ..core._numeric_record_distribution import NumericRecordDistribution, _mc_expectation
-from ..core._record_distribution import (
-    RecordDistribution,
-    _build_event_template,
-    _joint_event_spec,
-)
+from ..core._record_distribution import RecordDistribution, _build_event_template
 from ..core._specs import NumericArraySpec, OpaqueSpec, RecordSpec
+from ..core.constraints import real
 from ..core.protocols import (
     SupportsMean,
     SupportsSampling,
@@ -145,20 +142,21 @@ class JointEmpirical(RecordDistribution, SupportsSampling):
         name = auto_name(name, "joint_empirical(" + ",".join(samples.keys()) + ")")
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         self._components = self._build_component_dists()
-        if self._components is not None:
-            event_spec = _joint_event_spec(self._components)
-        else:
-            # One draw is a row: a numeric field declares its per-row array,
-            # and any other field is opaque.
-            event_spec = RecordSpec(
+        # One draw is a row: a numeric field declares its per-row array, and any
+        # other field is opaque. The all-numeric joint's fields lie on the real
+        # line, as its component empiricals declare theirs.
+        support = real if self._components is not None else None
+        super().__init__(
+            name,
+            RecordSpec(
                 {
-                    cname: NumericArraySpec(tuple(arr.shape[1:]), arr.dtype)
+                    cname: NumericArraySpec(tuple(arr.shape[1:]), arr.dtype, support)
                     if _is_numeric_array(arr)
                     else OpaqueSpec()
                     for cname, arr in stored.items()
                 }
-            )
-        super().__init__(name, event_spec)
+            ),
+        )
         if self._components is not None:
             self._event_template = _build_event_template(self._components)
         else:
