@@ -144,7 +144,9 @@ class TestEmpiricalSubsampling:
     """Cover the weighted subsample paths in _expectation."""
 
     def test_weighted_subsample_returns_bootstrap(self):
-        """Weighted EmpiricalDistribution with num_evaluations < n → Bootstrap."""
+        """Weighted EmpiricalDistribution with num_evaluations < n returns a
+        BootstrapDistribution over num_evaluations distinct samples, weighted by their
+        renormalized weights."""
         samples = jnp.arange(100.0)
         weights = jax.random.uniform(jax.random.PRNGKey(0), (100,))
         weights = weights / jnp.sum(weights)
@@ -152,9 +154,18 @@ class TestEmpiricalSubsampling:
         key = jax.random.PRNGKey(1)
         result = expectation(ed, lambda x: x, key=key, num_evaluations=10)
         assert isinstance(result, BootstrapDistribution)
+        assert result.num_atoms == 10
+        atoms = np.asarray(result.evaluations)
+        assert np.unique(atoms).size == 10
+        assert np.isin(atoms, samples).all()
+        # The samples are 0, ..., 99, so each atom's value is also its index into weights.
+        atom_w = np.asarray(weights)[atoms.astype(int)]
+        np.testing.assert_allclose(mean(result), np.average(atoms, weights=atom_w), rtol=1e-6)
 
     def test_weighted_subsample_returns_array(self):
-        """Weighted EmpiricalDistribution with num_evaluations < n, return_dist=False."""
+        """Weighted EmpiricalDistribution with num_evaluations < n and return_dist=False
+        returns the weighted mean of the atoms that return_dist=True returns for the
+        same key."""
         samples = jnp.arange(100.0)
         weights = jax.random.uniform(jax.random.PRNGKey(0), (100,))
         weights = weights / jnp.sum(weights)
@@ -162,7 +173,10 @@ class TestEmpiricalSubsampling:
         key = jax.random.PRNGKey(1)
         result = expectation(ed, lambda x: x, key=key, num_evaluations=10, return_dist=False)
         assert isinstance(result, NumericArray)
-        assert jnp.isfinite(jnp.asarray(result))
+        atoms = np.asarray(expectation(ed, lambda x: x, key=key, num_evaluations=10).evaluations)
+        # The samples are 0, ..., 99, so each atom's value is also its index into weights.
+        atom_w = np.asarray(weights)[atoms.astype(int)]
+        np.testing.assert_allclose(result, np.average(atoms, weights=atom_w), rtol=1e-6)
 
     def test_weighted_cov(self):
         """Weighted RecordEmpiricalDistribution covariance."""
