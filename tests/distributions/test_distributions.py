@@ -630,56 +630,6 @@ class TestDistributionABC:
             rtol=1e-5,
         )
 
-    def test_mean_requires_supports_mean(self):
-        """mean op raises TypeError for distributions without SupportsMean."""
-        from probpipe.core._numeric_record_distribution import _mc_expectation
-        from probpipe.core.protocols import SupportsExpectation, SupportsSampling
-
-        class MinimalDist(NumericRecordDistribution, SupportsSampling, SupportsExpectation):
-            _sampling_cost = "low"
-            _preferred_orchestration = None
-
-            @property
-            def event_shape(self):
-                return (1,)
-
-            def _sample(self, key, sample_shape=()):
-                return jnp.zeros((*sample_shape, 1))
-
-            def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
-                return _mc_expectation(
-                    self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist
-                )
-
-        d = MinimalDist(name="minimal")
-        with pytest.raises(TypeError, match="does not support mean"):
-            mean(d)
-
-    def test_variance_requires_supports_variance(self):
-        """variance op raises TypeError for distributions without SupportsVariance."""
-        from probpipe.core._numeric_record_distribution import _mc_expectation
-        from probpipe.core.protocols import SupportsExpectation, SupportsSampling
-
-        class MinimalDist(NumericRecordDistribution, SupportsSampling, SupportsExpectation):
-            _sampling_cost = "low"
-            _preferred_orchestration = None
-
-            @property
-            def event_shape(self):
-                return (1,)
-
-            def _sample(self, key, sample_shape=()):
-                return jnp.zeros((*sample_shape, 1))
-
-            def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
-                return _mc_expectation(
-                    self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist
-                )
-
-        d = MinimalDist(name="minimal")
-        with pytest.raises(TypeError, match="does not support variance"):
-            variance(d)
-
     def test_from_distribution_raises_for_invalid_input(self):
         with pytest.raises(TypeError):
             from_distribution(None, NumericRecordDistribution)

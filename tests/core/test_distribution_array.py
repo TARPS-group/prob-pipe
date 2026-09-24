@@ -1029,10 +1029,10 @@ class TestDistributionFromBatchedParamsAlias:
         )
         from probpipe.distributions._distribution import Distribution
 
-        # Every Distribution subclass inherits the alias.
-        for cls in (Distribution, Normal, Beta, Gamma, MultivariateNormal, EmpiricalDistribution):
-            assert hasattr(cls, "from_batched_params")
-            assert callable(cls.from_batched_params)
+        # No Distribution subclass overrides the base alias.
+        alias = Distribution.__dict__["from_batched_params"].__func__
+        for cls in (Normal, Beta, Gamma, MultivariateNormal, EmpiricalDistribution):
+            assert cls.from_batched_params.__func__ is alias
 
     def test_alias_with_explicit_batch_shape(self):
         from probpipe import MultivariateNormal

@@ -16,6 +16,7 @@ from probpipe import (
     NumericArray,
     NumericArrayBatch,
     NumericArraySpec,
+    NumericRecordDistribution,
     Opaque,
     OpaqueBatch,
     ProductDistribution,
@@ -24,9 +25,11 @@ from probpipe import (
     SequentialJointDistribution,
     SupportsApproximateConditioning,
     SupportsExactConditioning,
+    SupportsExpectation,
     SupportsSampling,
 )
 from probpipe.core import ops
+from probpipe.core._numeric_record_distribution import _mc_expectation
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -52,6 +55,41 @@ def empirical():
 @pytest.fixture
 def joint():
     return ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
+
+
+@pytest.fixture
+def no_moments():
+    """A distribution that samples and takes expectations but implements no moment protocol."""
+
+    class NoMomentsDist(NumericRecordDistribution, SupportsSampling, SupportsExpectation):
+        _sampling_cost = "low"
+        _preferred_orchestration = None
+
+        @property
+        def event_shape(self):
+            return ()
+
+        def _sample(self, key, sample_shape=()):
+            return jax.random.normal(key, sample_shape)
+
+        def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
+            return _mc_expectation(
+                self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist
+            )
+
+    return NoMomentsDist(name="test")
+
+
+@pytest.fixture
+def no_protocols():
+    """A distribution that implements no operation protocol."""
+
+    class NoProtocolsDist(NumericRecordDistribution):
+        @property
+        def event_shape(self):
+            return ()
+
+    return NoProtocolsDist(name="test")
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +268,15 @@ class TestProb:
         expected = scipy.stats.norm.pdf(float(x), loc=2.0, scale=0.5)
         np.testing.assert_allclose(float(p), expected, rtol=1e-5)
 
+    def test_raises_without_supports_log_prob(self, no_protocols):
+        """prob op raises TypeError for distributions without SupportsLogProb.
+
+        The distribution must not sample either: the call converts a distribution
+        that samples into a KDEDistribution, which supports log_prob.
+        """
+        with pytest.raises(TypeError, match="does not support prob"):
+            ops.prob(no_protocols, jnp.float32(0.0))
+
 
 # ---------------------------------------------------------------------------
 # unnormalized_log_prob
@@ -273,30 +320,10 @@ class TestMean:
         bd = BootstrapDistribution(evals)
         np.testing.assert_allclose(float(ops.mean(bd)), 3.0)
 
-    def test_raises_without_supports_mean(self):
+    def test_raises_without_supports_mean(self, no_moments):
         """mean op raises TypeError for distributions without SupportsMean."""
-        from probpipe import NumericRecordDistribution
-        from probpipe.core._numeric_record_distribution import _mc_expectation
-        from probpipe.core.protocols import SupportsExpectation, SupportsSampling
-
-        class NoMeanDist(NumericRecordDistribution, SupportsSampling, SupportsExpectation):
-            _sampling_cost = "low"
-            _preferred_orchestration = None
-
-            @property
-            def event_shape(self):
-                return ()
-
-            def _sample(self, key, sample_shape=()):
-                return jax.random.normal(key, sample_shape)
-
-            def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
-                return _mc_expectation(
-                    self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist
-                )
-
         with pytest.raises(TypeError, match="does not support mean"):
-            ops.mean(NoMeanDist(name="test"))
+            ops.mean(no_moments)
 
 
 # ---------------------------------------------------------------------------
@@ -313,6 +340,11 @@ class TestVariance:
         v = ops.variance(empirical)
         assert v.shape == (2,)
 
+    def test_raises_without_supports_variance(self, no_moments):
+        """variance op raises TypeError for distributions without SupportsVariance."""
+        with pytest.raises(TypeError, match="does not support variance"):
+            ops.variance(no_moments)
+
 
 # ---------------------------------------------------------------------------
 # cov
@@ -324,6 +356,11 @@ class TestCov:
         c = jnp.asarray(ops.cov(empirical))
         assert c.shape == (2, 2)
         np.testing.assert_allclose(c, c.T, atol=1e-5)
+
+    def test_raises_without_supports_covariance(self, no_moments):
+        """cov op raises TypeError for distributions without SupportsCovariance."""
+        with pytest.raises(TypeError, match="does not support covariance"):
+            ops.cov(no_moments)
 
 
 # ---------------------------------------------------------------------------
@@ -351,6 +388,11 @@ class TestExpectation:
             return_dist=True,
         )
         assert isinstance(result, BootstrapDistribution)
+
+    def test_raises_without_supports_expectation(self, no_protocols):
+        """expectation op raises TypeError for distributions without SupportsExpectation."""
+        with pytest.raises(TypeError, match="does not support expectation"):
+            ops.expectation(no_protocols, lambda x: x)
 
 
 # ---------------------------------------------------------------------------

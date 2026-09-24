@@ -394,6 +394,9 @@ class TestMixtureMarginal:
         # Should be bimodal around -100 and 100
         assert float(jnp.min(draws)) < -50
         assert float(jnp.max(draws)) > 50
+        # Equal component weights put half the draws in each mode. Observed across
+        # five seeds: positive fraction 0.467-0.514 (binomial sd 0.016).
+        np.testing.assert_allclose(float(jnp.mean(draws > 0)), 0.5, rtol=0, atol=0.05)
 
     def test_no_sampling_when_components_lack_it(self):
         """Components without SupportsSampling → marginal shouldn't support it."""
@@ -634,40 +637,64 @@ class TestArrayMarginalAdditional:
         np.testing.assert_allclose(result, jnp.array([2.5]), atol=1e-4)
 
     def test_expectation_subsampled(self, key):
-        """Subsampled expectation returns BootstrapDistribution by default."""
+        """Subsampled expectation returns a BootstrapDistribution by default, whose
+        atoms are num_evaluations distinct sample values."""
         from probpipe import BootstrapDistribution
 
         samples = jnp.arange(100, dtype=jnp.float32).reshape(-1, 1)
         m = _RecordMarginal(samples, None)
         result = m._expectation(lambda x: x, key=key, num_evaluations=20)
         assert isinstance(result, BootstrapDistribution)
+        assert result.num_atoms == 20
+        atoms = np.asarray(result.evaluations)
+        assert np.unique(atoms).size == 20
+        assert np.isin(atoms, samples).all()
 
     def test_expectation_subsampled_no_dist(self, key):
-        """Subsampled expectation with return_dist=False returns array."""
+        """With return_dist=False, the subsampled expectation is the mean of the
+        atoms that return_dist=True returns for the same key."""
         samples = jnp.arange(100, dtype=jnp.float32).reshape(-1, 1)
         m = _RecordMarginal(samples, None)
         result = m._expectation(lambda x: x, key=key, num_evaluations=20, return_dist=False)
         assert isinstance(result, jnp.ndarray)
+        atoms = np.asarray(m._expectation(lambda x: x, key=key, num_evaluations=20).evaluations)
+        np.testing.assert_allclose(result, np.mean(atoms, axis=0), rtol=1e-6)
 
     def test_expectation_subsampled_weighted(self, key):
-        """Subsampled expectation with weights."""
+        """With unequal weights, subsampled expectation returns a BootstrapDistribution
+        over num_evaluations distinct sample values, weighted by their renormalized
+        weights."""
         from probpipe import BootstrapDistribution
 
         n = 50
         samples = jnp.arange(n, dtype=jnp.float32).reshape(-1, 1)
-        w = jnp.ones(n) / n
+        w = jnp.arange(1.0, n + 1.0)
         m = _RecordMarginal(samples, w)
         result = m._expectation(lambda x: x, key=key, num_evaluations=10)
         assert isinstance(result, BootstrapDistribution)
+        assert result.num_atoms == 10
+        atoms = np.asarray(result.evaluations)
+        assert np.unique(atoms).size == 10
+        assert np.isin(atoms, samples).all()
+        # The samples are 0, ..., n - 1, so each atom's value is also its index into w.
+        atom_w = np.asarray(w)[atoms.ravel().astype(int)]
+        np.testing.assert_allclose(
+            mean(result), np.average(atoms, axis=0, weights=atom_w), rtol=1e-6
+        )
 
     def test_expectation_subsampled_weighted_no_dist(self, key):
-        """Subsampled weighted expectation with return_dist=False."""
+        """With unequal weights and return_dist=False, the subsampled expectation is
+        the weighted mean of the atoms that return_dist=True returns for the same key."""
         n = 50
         samples = jnp.arange(n, dtype=jnp.float32).reshape(-1, 1)
-        w = jnp.ones(n) / n
+        w = jnp.arange(1.0, n + 1.0)
         m = _RecordMarginal(samples, w)
         result = m._expectation(lambda x: x, key=key, num_evaluations=10, return_dist=False)
         assert isinstance(result, jnp.ndarray)
+        atoms = np.asarray(m._expectation(lambda x: x, key=key, num_evaluations=10).evaluations)
+        # The samples are 0, ..., n - 1, so each atom's value is also its index into w.
+        atom_w = np.asarray(w)[atoms.ravel().astype(int)]
+        np.testing.assert_allclose(result, np.average(atoms, axis=0, weights=atom_w), rtol=1e-6)
 
     def test_cov_weighted(self):
         """Weighted covariance."""
