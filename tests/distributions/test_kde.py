@@ -15,10 +15,13 @@ import pytest
 
 from probpipe import (
     EmpiricalDistribution,
+    NumericArraySpec,
     NumericRecord,
     NumericRecordSpec,
+    OutputSpec,
     Record,
     RecordSpec,
+    real,
 )
 from probpipe.core._empirical import RecordEmpiricalDistribution
 from probpipe.core._numeric_record import NumericRecord as _NumericRecord
@@ -79,6 +82,32 @@ class TestRecordSpecConstructor:
         fires — backward compatible with every existing call site."""
         kde = KDEDistribution("kde", flat_samples)
         assert kde.event_template.fields == ("kde",)
+
+
+class TestDeclaration:
+    """A KDE declares one draw from its samples and template."""
+
+    def test_samples_without_a_template_are_a_whole_array(self, flat_samples):
+        kde = KDEDistribution("post", flat_samples)
+        assert kde.event_spec == OutputSpec(post=NumericArraySpec((2,), "float32", real))
+        assert kde.event_shape == (2,)
+
+    def test_one_column_draws_scalars(self):
+        kde = KDEDistribution("k", jnp.arange(5.0)[:, None])
+        assert kde.event_shape == ()
+
+    def test_a_record_template_is_the_declared_record(self, two_field_template, flat_samples):
+        kde = KDEDistribution("post", flat_samples, event_template=two_field_template)
+        assert kde.event_spec == OutputSpec(
+            RecordSpec(
+                intercept=NumericArraySpec((), "float32", real),
+                slope=NumericArraySpec((), "float32", real),
+            )
+        )
+        assert kde.supports == {"intercept": real, "slope": real}
+        with pytest.raises(TypeError, match="does not draw a single array"):
+            _ = kde.event_shape
+        assert "event_shape=(2,)" in repr(kde)
 
 
 # ---------------------------------------------------------------------------

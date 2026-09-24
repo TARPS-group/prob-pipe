@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 import contextvars
 from collections.abc import Callable, Generator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
@@ -14,6 +14,7 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 
 from .._array_utils import _slice_leading_axes
 from ..core._numeric_record_distribution import NumericRecordDistribution, _mc_expectation
+from ..core._specs import NumericArraySpec
 from ..core.constraints import Constraint
 from ..core.protocols import (
     SupportsCovariance,
@@ -23,7 +24,11 @@ from ..core.protocols import (
     SupportsVariance,
 )
 from ..custom_types import Array, ArrayLike, PRNGKey
-from ._distribution import Distribution
+from ._distribution import Distribution, NumericDistribution
+
+if TYPE_CHECKING:
+    from ..core._spec_base import TermSpec
+    from ..core._specs import OutputSpec
 
 # ---------------------------------------------------------------------------
 # Internal bypass for the batched-parameters rejection
@@ -75,6 +80,7 @@ def _allow_batched_tfp_init() -> Generator[None, None, None]:
 
 class TFPDistribution(
     NumericRecordDistribution,
+    NumericDistribution,
     SupportsSampling,
     SupportsLogProb,
     SupportsMean,
@@ -84,7 +90,10 @@ class TFPDistribution(
     """
     Base class for distributions backed by a ``tfd.Distribution`` instance.
 
-    Subclasses set ``self._tfp_dist`` in ``__init__``.  The private
+    Subclasses set ``self._tfp_dist`` in ``__init__`` and define
+    :meth:`_event_support`. One draw is declared as a whole-term array under
+    the law's name, with the TFP event's shape and dtype and the family's
+    support, so every instance is a :class:`NumericDistribution`. The private
     protocol methods ``_sample``, ``_expectation``, ``_log_prob``,
     ``_mean``, and ``_variance`` all delegate to TFP (or use MC
     fallback for expectations).
@@ -129,23 +138,32 @@ class TFPDistribution(
     _sampling_cost: str = "low"
     _preferred_orchestration: str | None = None
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, event_spec: OutputSpec | TermSpec | None = None) -> None:
         """Final-stage initializer for TFP-backed distributions.
 
         Concrete subclasses (``Normal``, ``Beta``, …) set
         ``self._tfp_dist`` in their own ``__init__`` *before* calling
         ``super().__init__(name=name)``, so by the time we get here
-        the TFP backend is fully constructed and we can validate its
-        ``batch_shape``.
+        the TFP backend is fully constructed: it supplies the event
+        declaration, and we can validate its ``batch_shape``.
+
+        Parameters
+        ----------
+        name : str
+            Distribution name.
+        event_spec : OutputSpec or TermSpec, optional
+            The declaration of one draw, for a subclass that builds its own;
+            by default it is the TFP event's array.
         """
-        super().__init__(name=name)
-        if _BATCHED_INIT_BYPASS.get():
-            return
-        # KDE-style subclasses set ``_tfp_dist`` *after* this call;
-        # skip the check rather than crash on a missing attribute.
-        # Such classes are responsible for their own shape invariants.
+        # KDE-style subclasses set ``_tfp_dist`` *after* this call, so
+        # they supply their own declaration and shape invariants.
         tfp_dist = getattr(self, "_tfp_dist", None)
-        if tfp_dist is None:
+        if event_spec is None and tfp_dist is not None:
+            event_spec = NumericArraySpec(
+                tuple(tfp_dist.event_shape), tfp_dist.dtype, self._event_support()
+            )
+        super().__init__(name, event_spec)
+        if _BATCHED_INIT_BYPASS.get() or tfp_dist is None:
             return
         actual = tuple(tfp_dist.batch_shape)
         if actual != ():
@@ -159,33 +177,11 @@ class TFPDistribution(
                 f"for the factory."
             )
 
-    # -- shape delegation ---------------------------------------------------
+    # -- the event declaration ----------------------------------------------
 
-    @property
-    def event_shape(self) -> tuple[int, ...]:
-        return tuple(self._tfp_dist.event_shape)
-
-    @property
-    def dtypes(self) -> dict[str, jnp.dtype]:
-        """Per-field dtypes — the canonical accessor for
-        ``TFPDistribution``. Reads ``self._tfp_dist.dtype`` and
-        spreads it across every field of the auto-built
-        single-field template. ``dtype`` (the convenience) is
-        inherited from the base and derives from this dict.
-        """
-        return self._per_field_dict(self._tfp_dist.dtype)
-
-    @property
-    def support(self):
-        """The support of this distribution.  Override in subclasses."""
-        raise NotImplementedError(f"{type(self).__name__}.support")
-
-    @property
-    def supports(self) -> dict[str, Constraint]:
-        """Per-field support constraints — spreads the single-field
-        ``support`` (overridden by each concrete TFP-backed
-        subclass) across the auto-built template."""
-        return self._per_field_dict(self.support)
+    def _event_support(self) -> Constraint:
+        """The support of one draw, which ``__init__`` declares; each family defines it."""
+        raise NotImplementedError(f"{type(self).__name__}._event_support")
 
     # -- sampling & density -------------------------------------------------
 
@@ -207,7 +203,8 @@ class TFPDistribution(
         return self._tfp_dist.variance()
 
     def _cov(self) -> Array:
-        if self.event_shape == () or self.event_shape == (1,):
+        # The TFP event is flat even when the declared draw is a record.
+        if tuple(self._tfp_dist.event_shape) in ((), (1,)):
             return self._tfp_dist.variance()
         return self._tfp_dist.covariance()
 

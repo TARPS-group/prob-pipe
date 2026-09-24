@@ -53,9 +53,14 @@ from .._dtype import _as_float_array
 from .._weights import Weights
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..distributions import _distribution as _base
-from ..distributions._distribution import Distribution
+from ..distributions._distribution import Distribution, NumericDistribution
 from . import _workflow_broker, _workflow_descendants
-from ._record_distribution import RecordDistribution, _field_event_shape
+from ._record_distribution import (
+    RecordDistribution,
+    _declares_event,
+    _field_event_shape,
+    _interim_template,
+)
 from .constraints import (
     Constraint,
     _supports_compatible,
@@ -248,6 +253,11 @@ class NumericRecordDistribution(RecordDistribution):
         """Auto-build a single-field ``RecordSpec`` from
         ``name`` + ``event_shape`` when the subclass hasn't set one.
 
+        A law that stores its event declaration and sets no template
+        presents the declaration instead, so a rename leaves the template's
+        field at the declared component; that reading is an interim
+        implementation detail.
+
         Cached via :meth:`object.__setattr__` on first read.
         Multi-field subclasses (joint distributions) override this
         property to skip the auto-build.
@@ -264,6 +274,8 @@ class NumericRecordDistribution(RecordDistribution):
         tpl = getattr(self, "_event_template", None)
         if tpl is not None:
             return tpl
+        if _declares_event(self):
+            return _interim_template(self.event_spec)
         name = getattr(self, "_name", None)
         if name is None:
             raise TypeError(
@@ -315,22 +327,30 @@ class NumericRecordDistribution(RecordDistribution):
 
     @property
     def dtypes(self) -> dict[str, jnp.dtype]:
-        """Per-field dtypes — **canonical**, subclasses must override.
+        """Per-field dtypes.
 
-        Returns a ``{field: dtype}`` dict aligned with ``event_template.fields``.
-        Default raises ``NotImplementedError`` rather than returning a
-        silent default-float for every field (which lied for integer-
-        valued distributions like ``Bernoulli``, ``Poisson``, ``Categorical``).
+        A law that stores its event declaration reads it through the view of
+        :class:`~probpipe.NumericDistribution`.
+        A class that does not yet declare overrides this, an interim
+        implementation detail, and the default raises ``NotImplementedError``
+        rather than returning a silent default-float for every field (which
+        lied for integer-valued distributions like ``Bernoulli``).
         """
+        if _declares_event(self):
+            return NumericDistribution.dtypes.fget(self)
         raise NotImplementedError(f"{type(self).__name__}.dtypes")
 
     @property
     def supports(self) -> dict[str, Constraint]:
-        """Per-field support constraints — **canonical**, subclasses must override.
+        """Per-field support constraints.
 
-        Subclasses should override to provide meaningful constraints.
-        Default raises ``NotImplementedError``.
+        A law that stores its event declaration reads it through the view of
+        :class:`~probpipe.NumericDistribution`.
+        A class that does not yet declare overrides this, an interim
+        implementation detail, and the default raises ``NotImplementedError``.
         """
+        if _declares_event(self):
+            return NumericDistribution.supports.fget(self)
         raise NotImplementedError(f"{type(self).__name__}.supports")
 
     @property
@@ -358,7 +378,11 @@ class NumericRecordDistribution(RecordDistribution):
 
         Raises ``TypeError`` (via :meth:`_single_field_name`) on
         multi-field distributions; reach for :attr:`supports` then.
+        A law that stores its event declaration reads it through the view of
+        :class:`~probpipe.NumericDistribution`.
         """
+        if _declares_event(self):
+            return NumericDistribution.support.fget(self)
         return self.supports[self._single_field_name()]
 
     def _check_support_compatible(
@@ -444,7 +468,12 @@ class NumericRecordDistribution(RecordDistribution):
         doesn't apply); they set ``_event_template`` explicitly in
         ``__init__`` so the auto-build never fires, and callers reach
         for :attr:`event_shapes` (per-field dict) instead.
+
+        A law that stores its event declaration reads it through the base
+        view; the abstract default is an interim implementation detail.
         """
+        if _declares_event(self):
+            return super().event_shape
         raise NotImplementedError(
             f"{type(self).__name__}.event_shape — single-leaf "
             f"subclasses must override; multi-leaf subclasses should "

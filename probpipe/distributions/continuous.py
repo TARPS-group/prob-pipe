@@ -68,8 +68,7 @@ class Normal(TFPDistribution):
     def scale(self) -> Array:
         return self._scale
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return real
 
 
@@ -104,8 +103,7 @@ class Beta(TFPDistribution):
     def beta(self) -> Array:
         return self._beta
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return unit_interval
 
 
@@ -140,8 +138,7 @@ class Gamma(TFPDistribution):
     def rate(self) -> Array:
         return self._rate
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return positive
 
 
@@ -176,8 +173,7 @@ class InverseGamma(TFPDistribution):
     def scale(self) -> Array:
         return self._scale
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return positive
 
 
@@ -206,8 +202,7 @@ class Exponential(TFPDistribution):
     def rate(self) -> Array:
         return self._rate
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return positive
 
 
@@ -242,8 +237,7 @@ class LogNormal(TFPDistribution):
     def scale(self) -> Array:
         return self._scale
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return positive
 
 
@@ -284,8 +278,7 @@ class StudentT(TFPDistribution):
     def scale(self) -> Array:
         return self._scale
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return real
 
 
@@ -320,8 +313,7 @@ class Uniform(TFPDistribution):
     def high(self) -> Array:
         return self._high
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return interval(self._low, self._high)
 
 
@@ -356,8 +348,7 @@ class Cauchy(TFPDistribution):
     def scale(self) -> Array:
         return self._scale
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return real
 
 
@@ -392,8 +383,7 @@ class Laplace(TFPDistribution):
     def scale(self) -> Array:
         return self._scale
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return real
 
 
@@ -422,8 +412,7 @@ class HalfNormal(TFPDistribution):
     def scale(self) -> Array:
         return self._scale
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return non_negative
 
 
@@ -458,8 +447,7 @@ class HalfCauchy(TFPDistribution):
     def scale(self) -> Array:
         return self._scale
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return greater_than(self._loc)
 
 
@@ -494,8 +482,7 @@ class Pareto(TFPDistribution):
     def scale(self) -> Array:
         return self._scale
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return greater_than(self._scale)
 
 
@@ -546,6 +533,5 @@ class TruncatedNormal(TFPDistribution):
     def high(self) -> Array:
         return self._high
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return interval(self._low, self._high)

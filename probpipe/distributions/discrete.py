@@ -71,8 +71,7 @@ class Bernoulli(TFPDistribution):
 
     # -- support ------------------------------------------------------------
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return boolean
 
     # -- expectation (exact over {0, 1}) ------------------------------------
@@ -145,8 +144,7 @@ class Binomial(TFPDistribution):
 
     # -- support ------------------------------------------------------------
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return integer_interval(0, self._total_count)
 
     # -- expectation (exact over {0, ..., total_count}) ---------------------
@@ -197,8 +195,7 @@ class Poisson(TFPDistribution):
 
     # -- support ------------------------------------------------------------
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return non_negative_integer
 
 
@@ -249,8 +246,7 @@ class Categorical(TFPDistribution):
         params = self._probs if self._probs is not None else self._logits
         return int(params.shape[-1])
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return integer_interval(0, self._num_categories() - 1)
 
     # -- expectation (exact over {0, ..., k-1}) ------------------------------
@@ -325,6 +321,5 @@ class NegativeBinomial(TFPDistribution):
 
     # -- support ------------------------------------------------------------
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return non_negative_integer

@@ -13,23 +13,56 @@ import numpy as np
 import pytest
 
 from probpipe import (
+    Bernoulli,
+    Beta,
+    Binomial,
     BootstrapReplicateDistribution,
+    Categorical,
+    Cauchy,
+    Dirichlet,
     Distribution,
     DistributionArray,
     DistributionSpec,
     EmpiricalDistribution,
+    Exponential,
     Gamma,
+    HalfCauchy,
+    HalfNormal,
+    InverseGamma,
+    Laplace,
+    LogNormal,
+    Multinomial,
     MultivariateNormal,
+    NegativeBinomial,
     Normal,
     NumericDistribution,
     NumericRecordSpec,
     OutputSpec,
+    Pareto,
+    Poisson,
     RandomFunction,
     RandomMeasure,
     RecordEmpiricalDistribution,
     RecordSpec,
+    StudentT,
     TransformedDistribution,
+    TruncatedNormal,
+    Uniform,
+    VonMisesFisher,
+    Wishart,
+    boolean,
     expectation,
+    greater_than,
+    integer_interval,
+    interval,
+    non_negative,
+    non_negative_integer,
+    positive,
+    positive_definite,
+    real,
+    simplex,
+    sphere,
+    unit_interval,
 )
 from probpipe.core._opaque import OpaqueSpec
 from probpipe.core._specs import NumericArraySpec
@@ -161,20 +194,20 @@ class TestWithNameSampling:
 
 
 class TestWithNameRecordSpec:
-    """with_name() regenerates the cached event_template with the new name."""
+    """with_name() changes the name and keeps the event component (III.7)."""
 
-    def test_template_field_name_updates(self):
+    def test_template_field_stays_the_component(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
-        # Touch the template on the original so it's cached
-        assert n.event_template.fields == ("x",)
         n2 = n.with_name("growth_rate")
-        assert n2.event_template.fields == ("growth_rate",)
+        assert n2.name == "growth_rate"
+        assert n2.event_spec is n.event_spec
+        assert n2.event_template.fields == ("x",)
 
     def test_template_shape_preserved(self):
         mvn = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="a")
         assert mvn.event_template["a"] == NumericArraySpec((3,))
         b = mvn.with_name("b")
-        assert b.event_template["b"] == NumericArraySpec((3,))
+        assert b.event_template["a"] == NumericArraySpec((3,))
 
 
 class TestNoBatchShape:
@@ -350,26 +383,22 @@ class TestMetaclassEnforcement:
 
 
 class TestWithNameTemplateRoundtrip:
-    """``NumericRecordDistribution.with_name`` regenerates an auto-built
-    template under the new name; explicit and multi-field templates
-    are preserved.
+    """``with_name`` keeps a declared law's event component; explicit and
+    multi-field templates are preserved.
     """
 
-    def test_with_name_rebuilds_single_field_auto_template(self):
-        """Single-field auto-built template: the clone's
-        ``event_template`` has the new field name (matches
-        ``new_name``)."""
+    def test_with_name_keeps_the_declared_component(self):
+        """A single-array law captures its component at construction, so
+        the clone draws under the original component and the original is
+        untouched."""
         from probpipe import Normal
 
         original = Normal(loc=0.0, scale=1.0, name="x")
-        # Trigger the auto-build so ``_event_template`` is cached.
-        assert original.event_template.fields == ("x",)
-
         clone = original.with_name("y")
         assert clone.name == "y"
-        # The rebuilt template uses the new name as the field key.
-        assert clone.event_template.fields == ("y",)
-        # The original is untouched (with_name returns a copy).
+        assert tuple(clone.event_spec.components) == ("x",)
+        assert clone.event_template.fields == ("x",)
+        assert original.name == "x"
         assert original.event_template.fields == ("x",)
 
     def test_with_name_preserves_multi_field_template(self):
@@ -776,6 +805,128 @@ class TestSchemaViews:
 
         with pytest.raises(AttributeError, match="the property's own message"):
             _ = _Raising("x", NumericArraySpec(())).broken
+
+
+# One construction per TFP family, with the event shape, dtype, and support each
+# reported before it stored its declaration. A dtype of None is the default float.
+_FAMILY_SCHEMAS = [
+    pytest.param(lambda: Normal("x", loc=0.0, scale=1.0), (), None, real, id="Normal"),
+    pytest.param(lambda: Beta("x", alpha=2.0, beta=3.0), (), None, unit_interval, id="Beta"),
+    pytest.param(lambda: Gamma("x", concentration=2.0, rate=1.0), (), None, positive, id="Gamma"),
+    pytest.param(
+        lambda: InverseGamma("x", concentration=2.0, scale=1.0),
+        (),
+        None,
+        positive,
+        id="InverseGamma",
+    ),
+    pytest.param(lambda: Exponential("x", rate=1.0), (), None, positive, id="Exponential"),
+    pytest.param(lambda: LogNormal("x", loc=0.0, scale=1.0), (), None, positive, id="LogNormal"),
+    pytest.param(lambda: StudentT("x", df=3.0, loc=0.0, scale=1.0), (), None, real, id="StudentT"),
+    pytest.param(
+        lambda: Uniform("x", low=-1.0, high=2.0), (), None, interval(-1.0, 2.0), id="Uniform"
+    ),
+    pytest.param(lambda: Cauchy("x", loc=0.0, scale=1.0), (), None, real, id="Cauchy"),
+    pytest.param(lambda: Laplace("x", loc=0.0, scale=1.0), (), None, real, id="Laplace"),
+    pytest.param(lambda: HalfNormal("x", scale=1.0), (), None, non_negative, id="HalfNormal"),
+    pytest.param(
+        lambda: HalfCauchy("x", loc=0.5, scale=1.0),
+        (),
+        None,
+        greater_than(0.5),
+        id="HalfCauchy",
+    ),
+    pytest.param(
+        lambda: Pareto("x", concentration=2.0, scale=1.5),
+        (),
+        None,
+        greater_than(1.5),
+        id="Pareto",
+    ),
+    pytest.param(
+        lambda: TruncatedNormal("x", loc=0.0, scale=1.0, low=-1.0, high=1.0),
+        (),
+        None,
+        interval(-1.0, 1.0),
+        id="TruncatedNormal",
+    ),
+    pytest.param(lambda: Bernoulli("x", probs=0.3), (), "int32", boolean, id="Bernoulli"),
+    pytest.param(
+        lambda: Binomial("x", total_count=5, probs=0.3),
+        (),
+        None,
+        integer_interval(0, 5),
+        id="Binomial",
+    ),
+    pytest.param(lambda: Poisson("x", rate=2.0), (), None, non_negative_integer, id="Poisson"),
+    pytest.param(
+        lambda: Categorical("x", probs=[0.2, 0.3, 0.5]),
+        (),
+        "int32",
+        integer_interval(0, 2),
+        id="Categorical",
+    ),
+    pytest.param(
+        lambda: NegativeBinomial("x", total_count=5.0, probs=0.3),
+        (),
+        None,
+        non_negative_integer,
+        id="NegativeBinomial",
+    ),
+    pytest.param(
+        lambda: MultivariateNormal("x", loc=jnp.zeros(3), cov=jnp.eye(3)),
+        (3,),
+        None,
+        real,
+        id="MultivariateNormal",
+    ),
+    pytest.param(
+        lambda: Dirichlet("x", concentration=jnp.ones(3)), (3,), None, simplex, id="Dirichlet"
+    ),
+    pytest.param(
+        lambda: Multinomial("x", total_count=4.0, probs=jnp.array([0.2, 0.3, 0.5])),
+        (3,),
+        None,
+        non_negative_integer,
+        id="Multinomial",
+    ),
+    pytest.param(
+        lambda: Wishart("x", df=4.0, scale_tril=jnp.eye(2)),
+        (2, 2),
+        None,
+        positive_definite,
+        id="Wishart",
+    ),
+    pytest.param(
+        lambda: VonMisesFisher("x", mean_direction=jnp.array([0.0, 1.0]), concentration=2.0),
+        (2,),
+        None,
+        sphere,
+        id="VonMisesFisher",
+    ),
+]
+
+
+class TestFamilyDeclarations:
+    """A TFP family declares one draw as a whole-term array under its name."""
+
+    @pytest.mark.parametrize(("make", "shape", "dtype", "support"), _FAMILY_SCHEMAS)
+    def test_the_schema_views_read_the_declaration(self, make, shape, dtype, support):
+        law = make()
+        dtype = np.dtype(dtype) if dtype is not None else jnp.asarray(0.0).dtype
+        assert law.event_spec is law.spec.event_spec
+        assert law.event_spec == OutputSpec(x=NumericArraySpec(shape, dtype, support))
+        assert law.event_shape == shape
+        assert law.dtypes == {"x": dtype}
+        assert law.dtype == dtype
+        assert law.supports == {"x": support}
+        assert law.support == support
+        assert issubclass(type(law), NumericDistribution)
+        assert isinstance(law, NumericDistribution)
+
+    def test_a_batched_backend_declares_one_cell(self):
+        arr = DistributionArray.from_batched_params(Normal, loc=jnp.zeros(4), scale=1.0, name="arr")
+        assert arr._backend._batched_dist.event_spec.spec.shape == ()
 
 
 class TestDimensionTransforms:
