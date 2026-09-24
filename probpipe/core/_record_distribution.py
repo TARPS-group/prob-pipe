@@ -21,7 +21,7 @@ import jax.numpy as jnp
 
 from ..custom_types import Array, PRNGKey
 from ..distributions._distribution import Distribution, _DistributionMeta
-from ._specs import NumericArraySpec, RecordSpec
+from ._specs import NumericArraySpec, RecordSpec, TermSpec
 from .protocols import (
     SupportsCovariance,
     SupportsLogProb,
@@ -384,8 +384,9 @@ def _build_event_template(
     Each leaf contributes a spec for the parent template:
 
     - Nested ``dict`` → recursively built nested ``RecordSpec``.
-    - :class:`NumericRecordDistribution` → the leaf's ``event_shape``
-      (numeric shape tuple).
+    - :class:`NumericRecordDistribution` → the leaf's ``event_shape``, or,
+      for a leaf that draws a record, as a nested joint does, its
+      ``event_template``.
     - Any other :class:`RecordDistribution` → the leaf's
       ``event_template`` (embedded as a nested structural template).
     - Any other :class:`Distribution` → ``None`` (opaque leaf — the
@@ -399,13 +400,34 @@ def _build_event_template(
         if isinstance(comp, dict):
             specs[name] = _build_event_template(comp)
         elif isinstance(comp, NumericRecordDistribution):
-            specs[name] = comp.event_shape
+            try:
+                specs[name] = comp.event_shape
+            except TypeError:
+                specs[name] = comp.event_template
         elif isinstance(comp, RecordDistribution):
             specs[name] = comp.event_template
         elif isinstance(comp, Distribution):
             specs[name] = None
         else:
             raise TypeError(f"Unexpected component type: {type(comp).__name__}")
+    return RecordSpec(specs)
+
+
+def _joint_event_spec(components: dict[str, Any]) -> RecordSpec:
+    """The record a joint draws: each component's declared term, a nested dict as a record.
+
+    The declaration keeps each component's dtype and support. A component that
+    declares no event yet contributes the field its template gives, an interim
+    implementation detail.
+    """
+    specs: dict[str, TermSpec] = {}
+    for name, comp in components.items():
+        if isinstance(comp, dict):
+            specs[name] = _joint_event_spec(comp)
+        elif _declares_event(comp):
+            specs[name] = comp.event_spec.spec
+        else:
+            specs[name] = _build_event_template({name: comp}).children[name]
     return RecordSpec(specs)
 
 
@@ -474,12 +496,14 @@ class RecordDistribution(Distribution, metaclass=_RecordDistributionMeta):
 
     @property
     def fields(self) -> tuple[str, ...]:
-        """Field names from the event_template.
+        """Top-level field names of one draw, the components of its declaration.
 
-        The metaclass guarantees ``event_template`` is non-``None`` on
-        every :class:`RecordDistribution` instance, so this is a direct
-        delegate (no ``None`` fallback).
+        A law that does not yet declare its event reads its ``event_template``
+        instead, an interim implementation detail; the metaclass guarantees
+        the template is non-``None``.
         """
+        if _declares_event(self):
+            return tuple(self.event_spec.components)
         return self.event_template.fields
 
     def __getitem__(self, key: str) -> _RecordDistributionView:
@@ -542,9 +566,15 @@ class RecordDistribution(Distribution, metaclass=_RecordDistributionMeta):
         """Per-field event shapes (top-level fields only).
 
         An array-valued field reports its array shape; a nested sub-structure or
-        non-array (opaque / distribution / function) field reports ``()``. The
-        metaclass guarantees ``event_template`` is non-``None``.
+        non-array (opaque / distribution / function) field reports ``()``. A law
+        that does not yet declare its event reads its ``event_template``
+        instead, an interim implementation detail.
         """
+        if _declares_event(self):
+            return {
+                name: spec.shape if isinstance(spec, NumericArraySpec) else ()
+                for name, spec in self.event_spec.components.items()
+            }
         tpl = self.event_template
         return {name: _field_event_shape(tpl, name) for name in tpl.fields}
 
