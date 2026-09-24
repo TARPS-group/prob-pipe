@@ -45,7 +45,7 @@ def _check_component(name: str, spec: TermSpec | None, *, allow_hole: bool = Fal
     _require_hashable(spec, context=f"Component {name!r} spec")
 
 
-@dataclass(frozen=True, init=False, eq=False, slots=True)
+@dataclass(frozen=True, init=False, eq=False)
 class InputSpec(Mapping[str, TermSpec]):
     """An immutable, flat mapping of input slot names to term specs.
 
@@ -142,7 +142,7 @@ class InputSpec(Mapping[str, TermSpec]):
         )
 
 
-@dataclass(frozen=True, init=False, slots=True)
+@dataclass(frozen=True, init=False)
 class OutputSpec:
     """A whole returned term or the immediate components of a returned record.
 

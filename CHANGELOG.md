@@ -23,10 +23,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   containing terms; affected persisted provenance fingerprints no longer match.
   A custom `NumericSpec` implements `_vector_size`; the public `vector_size`
   property is concrete and rejects an unbound dimension before calling it.
-  `NumericArraySpec` and `OpaqueSpec` are slotted, so they no longer carry an
-  instance `__dict__`, and `TermSpec` declares `__weakref__`, so a subclass
+  `TermSpec` declares `__weakref__`, so a subclass
   must not declare that slot again. `RecordSpec(**{"": ...})` now raises
   `ValueError` for an empty field name, matching the positional path form.
+
+- Frozen spec and workflow dataclasses now use instance dictionaries instead
+  of generated slots. This fixes Python 3.12's incorrect `TypeError` on unknown
+  attribute mutation, permits ordinary subclasses to manage their own fields,
+  and prevents discarded classes from remaining in subclass inventories (#454).
+  Their pickle state format changes; pickles from the former slotted definitions
+  are not supported. Frozen fields, constructor signatures, and value equality
+  are unchanged.
 
 - **An empty record is numeric, and a record's class agrees with its schema.**
   `Record` picks `NumericRecord` from the raw values while the carried

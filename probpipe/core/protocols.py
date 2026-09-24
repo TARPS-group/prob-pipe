@@ -528,7 +528,7 @@ def protocols_supported_by_all(
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class _WorkflowGenerativeProviderCertificate:
     """Private exact-provider authority for workflow-owned generation."""
 

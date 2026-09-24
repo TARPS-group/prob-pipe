@@ -119,7 +119,7 @@ _COMPATIBILITY_FIELDS = frozenset(
 )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class _ExpectedReplayEvent:
     """Validated event identity and its parallel effect anchor."""
 
@@ -161,7 +161,7 @@ class _ReplayEventClaim:
     successful_attempt_token: bytes | None = None
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class _ReplayClaimMutation:
     """One validated replay-claim mutation awaiting transaction commit."""
 
@@ -171,7 +171,7 @@ class _ReplayClaimMutation:
     attempt_token: bytes | None
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class _ReplaySuccessMutation:
     """One validated replay-success mutation awaiting atomic commit."""
 
@@ -703,7 +703,7 @@ class _RemoteReplayClaims:
             )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class _ReplayFunctionCall:
     """Root-call controller supplied to Function.__call__."""
 

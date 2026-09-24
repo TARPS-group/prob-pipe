@@ -121,7 +121,7 @@ def _validate_managed_effect_claim_fields(
     )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ManagedWorkItemToken:
     """Opaque, serializable ownership token for one managed work item."""
 
@@ -167,7 +167,7 @@ def _validate_managed_attempt_fields(
         raise TypeError("managed attempt tokens must contain exactly 16 bytes")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ManagedUnitFrame:
     """Canonical logical-unit binding transported with one work item."""
 
@@ -183,7 +183,7 @@ class ManagedUnitFrame:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ManagedWorkItem:
     """One immutable, canonically indexed workflow evaluation request."""
 
@@ -229,7 +229,7 @@ def _validate_managed_work_item_fields(
     )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ManagedAttemptState:
     """Operational identity for one execution attempt of a work item."""
 
@@ -248,7 +248,7 @@ class ManagedAttemptState:
         return cls(work_item_token=work_item_token, attempt_token=uuid.uuid4().bytes)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ManagedParentEnvelope:
     """Serializable root and occurrence authority for one remote managed unit."""
 
@@ -270,7 +270,7 @@ class ManagedParentEnvelope:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ManagedEffectClaim:
     """Serializable descriptor of one automatic stochastic effect claim."""
 
@@ -438,7 +438,7 @@ def _validate_managed_claim_report_fields(
         raise ValueError("managed successful effects must be claimed by the same attempt")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ManagedClaimReport:
     """Serializable claim summary returned by one remote attempt."""
 
@@ -511,7 +511,7 @@ def _validated_managed_claim_report_snapshot(
     )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ManagedPrefectPayload:
     """Serializable Prefect task input for an initial or coordinated attempt."""
 
@@ -529,7 +529,7 @@ class ManagedPrefectPayload:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ManagedExecutionOutcome:
     """Serializable Prefect result with operational claim information."""
 

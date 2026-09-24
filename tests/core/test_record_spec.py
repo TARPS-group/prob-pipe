@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import copy
+import gc
 import pickle
 import weakref
-from dataclasses import dataclass, replace
+from dataclasses import FrozenInstanceError, dataclass, replace
 from typing import Any, get_type_hints
 from unittest.mock import PropertyMock, patch
 
@@ -48,6 +49,72 @@ class _TaggedTermSpec(TermSpec):
 
     def is_valid(self, value: Any) -> bool:
         return True
+
+
+class TestFrozenDataclassSpecs:
+    @pytest.mark.parametrize(
+        ("spec", "fields"),
+        [
+            (
+                NumericArraySpec((3,), dtype="float32", support=positive),
+                ("shape", "dtype", "support"),
+            ),
+            (OpaqueSpec(meta="label"), ("meta",)),
+        ],
+    )
+    @pytest.mark.parametrize("operation", ["assign", "delete"])
+    def test_fields_and_unknown_attributes_raise_frozen_instance_error(
+        self, spec, fields, operation
+    ):
+        originals = {name: getattr(spec, name) for name in fields}
+        for name in (*fields, "unknown_attribute"):
+            with pytest.raises(FrozenInstanceError):
+                if operation == "assign":
+                    setattr(spec, name, object())
+                else:
+                    delattr(spec, name)
+        for name, original in originals.items():
+            assert getattr(spec, name) is original
+        assert not hasattr(spec, "unknown_attribute")
+
+    @pytest.mark.parametrize(
+        ("base", "args", "field"),
+        [(NumericArraySpec, ((3,),), "shape"), (OpaqueSpec, ("label",), "meta")],
+    )
+    @pytest.mark.parametrize("slotted", [False, True], ids=["dict-subclass", "slotted-subclass"])
+    def test_subclass_can_manage_own_attributes(self, base, args, field, slotted):
+        class Tagged(base):
+            if slotted:
+                __slots__ = ("tag",)
+
+            def __init__(self):
+                super().__init__(*args)
+                self.tag = "initial"
+
+        spec = Tagged()
+        assert spec.tag == "initial"
+        spec.tag = "updated"
+        assert spec.tag == "updated"
+        del spec.tag
+        assert not hasattr(spec, "tag")
+
+        original = getattr(spec, field)
+        with pytest.raises(FrozenInstanceError):
+            setattr(spec, field, object())
+        with pytest.raises(FrozenInstanceError):
+            delattr(spec, field)
+        assert getattr(spec, field) is original
+
+    @pytest.mark.parametrize("spec_type", [NumericArraySpec, OpaqueSpec])
+    def test_subclass_inventory_contains_only_the_exported_class(self, spec_type):
+        gc.collect()
+        matches = [
+            candidate
+            for candidate in spec_type.__bases__[0].__subclasses__()
+            if (candidate.__module__, candidate.__qualname__)
+            == (spec_type.__module__, spec_type.__qualname__)
+        ]
+        assert matches == [spec_type]
 
 
 # ---------------------------------------------------------------------------
@@ -743,7 +810,7 @@ class TestTermSpecs:
             pytest.param(OpaqueSpec(meta=("tag", 3)), id="opaque"),
         ],
     )
-    def test_array_and_opaque_specs_round_trip_without_instance_dict(self, spec):
+    def test_array_and_opaque_specs_preserve_values_and_weakrefs_on_round_trip(self, spec):
         for restored in (
             spec,
             copy.copy(spec),
@@ -754,7 +821,6 @@ class TestTermSpecs:
             assert type(restored) is type(spec)
             assert restored == spec
             assert hash(restored) == hash(spec)
-            assert not hasattr(restored, "__dict__")
             assert weakref.ref(restored)() is restored
 
     @pytest.mark.parametrize(
@@ -2516,35 +2582,21 @@ class TestDefaultSpecBinding:
 
     @staticmethod
     def _concrete_specs():
-        """Every live concrete ``TermSpec``, one entry per class.
-
-        Deduplicated by module and qualified name rather than by identity:
-        ``dataclass(slots=True)`` rebuilds a class and the discarded original
-        stays reachable through ``__subclasses__``, so identity alone reports
-        some specs twice.
-        """
-        import sys as _sys
-
-        seen: dict[tuple[str, str], type[TermSpec]] = {}
+        """Every concrete library ``TermSpec``, visiting shared bases only once."""
+        seen: set[type[TermSpec]] = {TermSpec}
+        specs = []
         pending = [TermSpec]
         while pending:
             for subclass in pending.pop().__subclasses__():
-                key = (subclass.__module__, subclass.__qualname__)
-                if key in seen:
+                if subclass in seen:
                     continue
-                if not subclass.__module__.startswith("probpipe."):
-                    # A spec a test defines locally is not the library's to
-                    # hold to this contract, and several deliberately break it.
-                    pending.append(subclass)
-                    continue
-                # Prefer the class the module actually exports: a rebuilt
-                # class and its discarded original share a name, and only
-                # one of them is the one everything else refers to.
-                module = _sys.modules.get(subclass.__module__)
-                live = getattr(module, subclass.__qualname__, subclass)
-                seen[key] = live if isinstance(live, type) else subclass
+                seen.add(subclass)
                 pending.append(subclass)
-        return [spec for spec in seen.values() if not getattr(spec, "__abstractmethods__", False)]
+                if subclass.__module__.startswith("probpipe.") and not getattr(
+                    subclass, "__abstractmethods__", False
+                ):
+                    specs.append(subclass)
+        return specs
 
     def test_the_inventory_is_not_vacuous(self):
         """The walk finds the specs it is meant to hold."""

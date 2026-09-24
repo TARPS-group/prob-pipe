@@ -273,7 +273,7 @@ class NumericSpec(TermSpec):
         raise NotImplementedError(f"{type(self).__name__}._vector_size is not implemented")
 
 
-@dataclass(frozen=True, eq=False, init=False, slots=True)
+@dataclass(frozen=True, eq=False, init=False)
 class NumericArraySpec(NumericSpec):
     """A numeric-array value spec: an event ``shape`` plus optional metadata.
 
@@ -475,7 +475,7 @@ def _unify_array_shape(
     return tuple(concrete)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class OpaqueSpec(TermSpec):
     """The fallback value spec, for a value no other spec describes.
 
