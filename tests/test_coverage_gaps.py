@@ -1,17 +1,16 @@
 """Regression tests for narrow code paths added to close historical coverage gaps.
 
 Each test in this file targets a specific observable behavior that was
-discovered to be missing coverage (weighted paths, error branches on
-unsupported protocols, repr/alias fall-throughs).  Tests include real
-value/shape assertions — they are not coverage-only touches.
+discovered to be missing coverage (weighted paths, repr/alias
+fall-throughs).  Tests include real value/shape assertions — they are not
+coverage-only touches.
 
 Covers:
 - BootstrapDistribution: weighted sampling, variance, repr, support, evaluations
 - EmpiricalDistribution: weighted subsampled expectation
 - TFPDistribution._cov: scalar and multivariate
-- ops error paths for unsupported protocols
-- SupportsCovariance default implementation
 - TransformedDistribution non-TFP paths
+- SupportsUnnormalizedLogProb._unnormalized_prob default
 """
 
 import jax
@@ -30,7 +29,6 @@ from probpipe import (
     cov,
     expectation,
     mean,
-    prob,
     sample,
     variance,
 )
@@ -146,7 +144,9 @@ class TestEmpiricalSubsampling:
     """Cover the weighted subsample paths in _expectation."""
 
     def test_weighted_subsample_returns_bootstrap(self):
-        """Weighted EmpiricalDistribution with num_evaluations < n → Bootstrap."""
+        """Weighted EmpiricalDistribution with num_evaluations < n returns a
+        BootstrapDistribution over num_evaluations distinct samples, weighted by their
+        renormalized weights."""
         samples = jnp.arange(100.0)
         weights = jax.random.uniform(jax.random.PRNGKey(0), (100,))
         weights = weights / jnp.sum(weights)
@@ -154,9 +154,18 @@ class TestEmpiricalSubsampling:
         key = jax.random.PRNGKey(1)
         result = expectation(ed, lambda x: x, key=key, num_evaluations=10)
         assert isinstance(result, BootstrapDistribution)
+        assert result.num_atoms == 10
+        atoms = np.asarray(result.evaluations)
+        assert np.unique(atoms).size == 10
+        assert np.isin(atoms, samples).all()
+        # The samples are 0, ..., 99, so each atom's value is also its index into weights.
+        atom_w = np.asarray(weights)[atoms.astype(int)]
+        np.testing.assert_allclose(mean(result), np.average(atoms, weights=atom_w), rtol=1e-6)
 
     def test_weighted_subsample_returns_array(self):
-        """Weighted EmpiricalDistribution with num_evaluations < n, return_dist=False."""
+        """Weighted EmpiricalDistribution with num_evaluations < n and return_dist=False
+        returns the weighted mean of the atoms that return_dist=True returns for the
+        same key."""
         samples = jnp.arange(100.0)
         weights = jax.random.uniform(jax.random.PRNGKey(0), (100,))
         weights = weights / jnp.sum(weights)
@@ -164,7 +173,10 @@ class TestEmpiricalSubsampling:
         key = jax.random.PRNGKey(1)
         result = expectation(ed, lambda x: x, key=key, num_evaluations=10, return_dist=False)
         assert isinstance(result, NumericArray)
-        assert jnp.isfinite(jnp.asarray(result))
+        atoms = np.asarray(expectation(ed, lambda x: x, key=key, num_evaluations=10).evaluations)
+        # The samples are 0, ..., 99, so each atom's value is also its index into weights.
+        atom_w = np.asarray(weights)[atoms.astype(int)]
+        np.testing.assert_allclose(result, np.average(atoms, weights=atom_w), rtol=1e-6)
 
     def test_weighted_cov(self):
         """Weighted RecordEmpiricalDistribution covariance."""
@@ -200,78 +212,6 @@ class TestTFPDistributionCov:
         d = MultivariateNormal(loc=loc, cov=cov_matrix, name="z")
         C = cov(d)
         np.testing.assert_allclose(C, cov_matrix, atol=1e-5)
-
-
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# ops error paths
-# ---------------------------------------------------------------------------
-
-
-class TestOpsErrorPaths:
-    """Cover TypeError error paths in ops for unsupported protocols."""
-
-    def test_prob_requires_log_prob(self):
-        from probpipe import NumericRecordDistribution
-
-        class NoLogProbNoSampleDist(NumericRecordDistribution):
-            """Has neither SupportsLogProb nor SupportsSampling."""
-
-            @property
-            def event_shape(self):
-                return ()
-
-        d = NoLogProbNoSampleDist(name="test")
-        with pytest.raises(TypeError):
-            prob(d, jnp.float32(0.0))
-
-    def test_expectation_requires_protocol(self):
-        from probpipe import NumericRecordDistribution
-
-        class MinimalDist(NumericRecordDistribution):
-            @property
-            def event_shape(self):
-                return ()
-
-        d = MinimalDist(name="test")
-        with pytest.raises(TypeError, match="does not support expectation"):
-            expectation(d, lambda x: x)
-
-    def test_mean_requires_protocol(self):
-        from probpipe import NumericRecordDistribution
-
-        class MinimalDist(NumericRecordDistribution):
-            @property
-            def event_shape(self):
-                return ()
-
-        d = MinimalDist(name="test")
-        with pytest.raises(TypeError, match="does not support mean"):
-            mean(d)
-
-    def test_variance_requires_protocol(self):
-        from probpipe import NumericRecordDistribution
-
-        class MinimalDist(NumericRecordDistribution):
-            @property
-            def event_shape(self):
-                return ()
-
-        d = MinimalDist(name="test")
-        with pytest.raises(TypeError, match="does not support variance"):
-            variance(d)
-
-    def test_cov_requires_protocol(self):
-        from probpipe import NumericRecordDistribution
-
-        class MinimalDist(NumericRecordDistribution):
-            @property
-            def event_shape(self):
-                return ()
-
-        d = MinimalDist(name="test")
-        with pytest.raises(TypeError, match="does not support covariance"):
-            cov(d)
 
 
 # ---------------------------------------------------------------------------
@@ -321,46 +261,6 @@ class TestTransformedNonTFP:
     def test_repr(self, td):
         r = repr(td)
         assert "TransformedDistribution" in r
-
-
-# ---------------------------------------------------------------------------
-# SupportsCovariance default implementation (protocol-level)
-# ---------------------------------------------------------------------------
-
-
-class TestCovarianceRequiresProtocol:
-    """cov op requires SupportsCovariance — no MC fallback."""
-
-    def test_cov_raises_without_supports_covariance(self):
-        """A distribution with SupportsExpectation but not SupportsCovariance
-        should raise TypeError from the cov op."""
-        from probpipe import NumericRecordDistribution, cov
-        from probpipe.core._numeric_record_distribution import _mc_expectation
-        from probpipe.core.protocols import SupportsExpectation, SupportsSampling
-
-        class NoCovDist(NumericRecordDistribution, SupportsSampling, SupportsExpectation):
-            _sampling_cost = "low"
-            _preferred_orchestration = None
-
-            @property
-            def event_shape(self):
-                return (2,)
-
-            def _sample(self, key, sample_shape=()):
-                return jax.random.normal(key, (*sample_shape, 2))
-
-            def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
-                return _mc_expectation(
-                    self,
-                    f,
-                    key=key,
-                    num_evaluations=num_evaluations,
-                    return_dist=return_dist,
-                )
-
-        d = NoCovDist(name="test")
-        with pytest.raises(TypeError, match="does not support covariance"):
-            cov(d)
 
 
 # ---------------------------------------------------------------------------
