@@ -16,7 +16,6 @@ import numpy as np
 import pytest
 
 from probpipe import (
-    Distribution,
     DistributionSpec,
     Function,
     NumericRecord,
@@ -2212,13 +2211,6 @@ class TestInferenceThroughTermSpecs:
 
         with pytest.raises(ValueError, match="does not conform to its field spec"):
             _unify_record_spec_with_value(declared, {"f": 3}, context="v")
-
-    def test_a_value_carrying_no_schema_says_so(self):
-        """A polymorphic schema needs one to bind against."""
-        declared = RecordSpec(law=DistributionSpec(OutputSpec(x=NumericArraySpec(shape=("obs",)))))
-
-        with pytest.raises(ValueError, match="declares no event"):
-            Record("r", law=Distribution(name="law"), event_template=declared)
 
     def test_a_concrete_declaration_still_requires_an_exact_match(self):
         """Inference is for the symbolic case; a fixed size is still a fixed size."""

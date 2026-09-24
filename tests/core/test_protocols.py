@@ -298,10 +298,8 @@ class TestRecordDistributionViewDynamicProtocols:
         from probpipe.core._specs import RecordSpec
 
         class _LogProbOnlyParent(RecordDistribution, SupportsLogProb):
-            event_template = RecordSpec(x=(), y=())
-
             def __init__(self):
-                self._name = "lp_only"
+                super().__init__("lp_only", RecordSpec(x=(), y=()))
 
             def _log_prob(self, value):
                 import jax.numpy as jnp

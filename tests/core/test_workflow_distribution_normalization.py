@@ -20,6 +20,7 @@ from probpipe import (
     Normal,
     NumericArrayBatch,
     NumericRecordDistribution,
+    OpaqueSpec,
     converter_registry,
     log_prob,
     mean,
@@ -312,7 +313,7 @@ def _law_claiming(capability: type) -> Distribution:
         (Distribution, capability),
         exec_body=lambda namespace: namespace.update(_condition_on=_unreachable),
     )
-    return law_type(name="law")
+    return law_type("law", OpaqueSpec())
 
 
 @pytest.mark.parametrize("capability", DISTRIBUTION_HINT_PROTOCOLS, ids=lambda c: c.__name__)

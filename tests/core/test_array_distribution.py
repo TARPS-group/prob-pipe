@@ -11,7 +11,9 @@ from probpipe import (
     FlattenedDistributionView,
     MultivariateNormal,
     Normal,
+    NumericArraySpec,
     NumericRecordDistribution,
+    OpaqueSpec,
     RecordEmpiricalDistribution,
     from_distribution,
     log_prob,
@@ -86,7 +88,7 @@ class TestDistributionBase:
         class StubDist(Distribution):
             pass
 
-        d = StubDist(name="stub")
+        d = StubDist("stub", OpaqueSpec())
         with pytest.raises(TypeError, match="does not support log_prob"):
             log_prob(d, jnp.array(0.0))
 
@@ -321,35 +323,23 @@ class TestCanonicalConvenience:
 
     @pytest.fixture
     def multi_leaf_dist(self):
-        """A synthetic ``NumericRecordDistribution`` with a multi-leaf
-        template (two scalar fields). Exercises the convenience-
-        accessor multi-leaf guards that no concrete subclass shipping
-        today triggers (every shipped class is single-leaf via the
-        auto-template helper)."""
-        from probpipe import NumericRecord
+        """A synthetic ``NumericRecordDistribution`` declaring a
+        multi-leaf record (two fields of different dtypes). Exercises the
+        convenience-accessor multi-leaf guards."""
+        from probpipe import NumericRecord, real
         from probpipe.core._specs import RecordSpec
 
         class TwoField(NumericRecordDistribution):
-            # Multi-leaf subclasses bypass the single-field auto-template
-            # by overriding ``event_template`` directly. The base
-            # ``event_shape`` raises ``NotImplementedError`` for
-            # multi-leaf templates — there's no single-field shortcut
-            # to provide — so we leave it inherited (callers should
-            # reach for ``event_shapes`` instead).
-
-            @property
-            def event_template(self):
-                return RecordSpec(a=(), b=(2,))
-
-            @property
-            def dtypes(self):
-                return {"a": jnp.float32, "b": jnp.int32}
-
-            @property
-            def supports(self):
-                from probpipe import real
-
-                return {"a": real, "b": real}
+            # A record draw has no ``event_shape``; callers reach for
+            # ``event_shapes`` instead.
+            def __init__(self, name):
+                super().__init__(
+                    name,
+                    RecordSpec(
+                        a=NumericArraySpec((), "float32", real),
+                        b=NumericArraySpec((2,), "int32", real),
+                    ),
+                )
 
             def _sample(self, key, sample_shape=()):
                 # Multi-leaf templates return a ``NumericRecord``
@@ -379,11 +369,12 @@ class TestCanonicalConvenience:
         # Two fields, different dtypes → convenience returns None.
         assert multi_leaf_dist.dtype is None
 
-    def test_support_raises_typeerror_on_multi_leaf(self, multi_leaf_dist):
-        """Multi-leaf: ``support`` (the convenience) raises TypeError
-        via the shared ``_single_field_name`` guard."""
-        with pytest.raises(TypeError, match="not array-like"):
-            _ = multi_leaf_dist.support
+    def test_support_is_the_support_every_leaf_shares(self, multi_leaf_dist):
+        """Multi-leaf with one support: ``support`` is that support, as
+        ``dtype`` is the dtype every leaf shares."""
+        from probpipe import real
+
+        assert multi_leaf_dist.support == real
 
     def test_check_support_compatible_includes_field_name_on_multi_leaf(
         self,
@@ -424,19 +415,11 @@ class TestCanonicalConvenience:
         class ThreeField(NumericRecordDistribution):
             """Multi-field target with three fields (source has two)."""
 
-            @property
-            def event_template(self):
-                return RecordSpec(a=(), b=(), c=())
-
-            @property
-            def dtypes(self):
-                return {"a": jnp.float32, "b": jnp.float32, "c": jnp.float32}
-
-            @property
-            def supports(self):
+            def __init__(self, name):
                 from probpipe import positive
 
-                return {"a": positive, "b": positive, "c": positive}
+                leaf = NumericArraySpec((), "float32", positive)
+                super().__init__(name, RecordSpec(a=leaf, b=leaf, c=leaf))
 
             def _sample(self, key, sample_shape=()):  # pragma: no cover
                 from probpipe import NumericRecord
@@ -467,17 +450,9 @@ class TestCanonicalConvenience:
         from probpipe.core._specs import RecordSpec
 
         class TwoFieldSource(NumericRecordDistribution):
-            @property
-            def event_template(self):
-                return RecordSpec(s1=(), s2=())
-
-            @property
-            def dtypes(self):
-                return {"s1": jnp.float32, "s2": jnp.float32}
-
-            @property
-            def supports(self):
-                return {"s1": real, "s2": real}
+            def __init__(self, name):
+                leaf = NumericArraySpec((), "float32", real)
+                super().__init__(name, RecordSpec(s1=leaf, s2=leaf))
 
             def _sample(self, key, sample_shape=()):  # pragma: no cover
                 return NumericRecord(
@@ -487,17 +462,9 @@ class TestCanonicalConvenience:
                 )
 
         class TwoFieldTarget(NumericRecordDistribution):
-            @property
-            def event_template(self):
-                return RecordSpec(t1=(), t2=())
-
-            @property
-            def dtypes(self):
-                return {"t1": jnp.float32, "t2": jnp.float32}
-
-            @property
-            def supports(self):
-                return {"t1": positive, "t2": positive}
+            def __init__(self, name):
+                leaf = NumericArraySpec((), "float32", positive)
+                super().__init__(name, RecordSpec(t1=leaf, t2=leaf))
 
             def _sample(self, key, sample_shape=()):  # pragma: no cover
                 return NumericRecord(
@@ -533,9 +500,7 @@ class TestCanonicalConvenience:
         scalar_normal,
     ):
         """A source whose ``supports`` property raises
-        ``NotImplementedError`` (the default for any
-        :class:`NumericRecordDistribution` subclass that hasn't
-        overridden it) is treated the same as the
+        ``NotImplementedError`` is treated the same as the
         ``AttributeError`` branch — the check returns silently.
         Exercises the ``except NotImplementedError`` clause inside
         ``_check_support_compatible`` (companion to the
@@ -547,18 +512,14 @@ class TestCanonicalConvenience:
         from probpipe.core._specs import RecordSpec
 
         class _UnimplSupportsSource(NumericRecordDistribution):
-            """Multi-field NRD that explicitly doesn't declare supports."""
+            """Multi-field NRD whose ``supports`` is not implemented."""
+
+            def __init__(self, name):
+                super().__init__(name, RecordSpec(a=(), b=()))
 
             @property
-            def event_template(self):
-                return RecordSpec(a=(), b=())
-
-            @property
-            def dtypes(self):
-                return {"a": jnp.float32, "b": jnp.float32}
-
-            # Inherits the base ``supports`` which raises
-            # ``NotImplementedError``.
+            def supports(self):
+                raise NotImplementedError("supports")
 
             def _sample(self, key, sample_shape=()):  # pragma: no cover
                 from probpipe import NumericRecord

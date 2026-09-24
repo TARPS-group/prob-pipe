@@ -33,25 +33,9 @@ from probpipe import (
 def declared_law():
     class DeclaredLaw(Distribution):
         def __init__(self, template):
-            super().__init__(name="law")
-            self.event_template = template
+            super().__init__("law", template)
 
     return DeclaredLaw
-
-
-@pytest.fixture(params=["missing", "none", "type_error"])
-def law_without_schema(request, declared_law):
-    if request.param == "missing":
-        return Distribution(name="law")
-    if request.param == "none":
-        return declared_law(None)
-
-    class UndeclaredLaw(Distribution):
-        @property
-        def event_template(self):
-            raise TypeError("draw schema is not derivable")
-
-    return UndeclaredLaw(name="law")
 
 
 class TestOutputSpec:
@@ -419,16 +403,6 @@ class TestSpecKinds:
 
 
 class TestDistributionSchemaAvailability:
-    def test_inference_keeps_a_distribution_without_schema_as_an_opaque_field(
-        self, law_without_schema
-    ):
-        inferred = RecordSpec.infer_from({"law": law_without_schema})
-        assert inferred == RecordSpec(law=OpaqueSpec())
-        record = Record("r", law=law_without_schema)
-        assert record["law"] is law_without_schema
-        assert record.spec == inferred
-        assert inferred.is_valid(record)
-
     def test_inference_preserves_an_available_distribution_schema(self, declared_law):
         template = RecordSpec(x=NumericArraySpec((3,), dtype="float64", support=positive))
         law = declared_law(template)
@@ -438,23 +412,6 @@ class TestDistributionSchemaAvailability:
         record = Record("r", law=law)
         assert record["law"] is law
         assert record.spec == inferred
-
-    @pytest.mark.parametrize("error_type", [RuntimeError, ValueError, KeyError])
-    def test_unexpected_schema_getter_errors_propagate(self, error_type):
-        error = error_type("broken schema getter")
-
-        class BrokenLaw(Distribution):
-            @property
-            def event_template(self):
-                raise error
-
-        law = BrokenLaw(name="law")
-        with pytest.raises(error_type) as caught:
-            RecordSpec.infer_from({"law": law})
-        assert caught.value is error
-        with pytest.raises(error_type) as caught:
-            DistributionSpec(RecordSpec(x=("n",))).bind_dims_from_value(law)
-        assert caught.value is error
 
 
 class TestInputSpec:
@@ -574,19 +531,6 @@ class TestNestedValueBinding:
                     return InputSpec(value=spec), {"value": value}
 
         return wrap
-
-    def test_unavailable_distribution_schema_cannot_bind(self, wrap_binding, law_without_schema):
-        spec = DistributionSpec(RecordSpec(x=("n",)))
-        declared, value = wrap_binding(spec, law_without_schema)
-        with pytest.raises(ValueError, match="declares no event") as caught:
-            declared.bind_dims_from_value(value)
-        if isinstance(declared, RecordSpec):
-            assert f"RecordSpec/{next(iter(declared))} declares" in str(caught.value)
-        assert declared.free_dims == {"n"}
-
-        concrete, value = wrap_binding(spec.with_dim_sizes(n=3), law_without_schema)
-        with pytest.raises(ValueError, match="declares no event"):
-            concrete.bind_dims_from_value(value)
 
     @pytest.mark.parametrize("kind", ["function", "distribution"])
     @pytest.mark.parametrize("size", [3, 4])

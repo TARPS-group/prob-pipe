@@ -711,45 +711,19 @@ class TestShapeSemantics:
 class TestDistributionCoverageGaps:
     """Cover the automatic template and ``dtype``/``dtypes`` defaults of numeric distributions."""
 
-    def test_auto_template_from_name_and_event_shape(self):
-        """``NumericRecordDistribution`` auto-builds a single-field
-        ``RecordSpec`` from ``name`` + ``event_shape``, so every
-        concrete subclass has a non-None template without per-subclass
-        boilerplate. ``dtypes`` is canonical (subclass must override);
-        ``dtype`` derives from it.
-        """
+    def test_the_views_read_a_declared_event(self):
+        """A subclass declares its event, and the template, ``dtypes``, and
+        ``dtype`` all read that declaration."""
+        from probpipe import NumericArraySpec
 
         class Scalar(NumericRecordDistribution):
-            @property
-            def event_shape(self):
-                return ()
+            def __init__(self, name):
+                super().__init__(name, NumericArraySpec((), "float32"))
 
-            @property
-            def dtypes(self):
-                return {name: jnp.float32 for name in self.event_template.fields}
-
-        s = Scalar(name="s")
-        assert s.event_template is not None
+        s = Scalar("s")
         assert s.event_template.fields == ("s",)
         assert s.dtypes == {"s": jnp.float32}
-        # ``dtype`` derives from ``dtypes`` (unique value → that dtype).
         assert s.dtype == jnp.float32
-
-    def test_dtypes_raises_when_not_overridden(self):
-        """``NumericRecordDistribution.dtypes`` is canonical: subclasses
-        must override. The default raises ``NotImplementedError`` rather
-        than returning a silent default-float for every field (which
-        would lie for integer-valued distributions like ``Bernoulli``).
-        """
-
-        class Scalar(NumericRecordDistribution):
-            @property
-            def event_shape(self):
-                return ()
-
-        s = Scalar(name="s")
-        with pytest.raises(NotImplementedError, match=r"Scalar.dtypes"):
-            _ = s.dtypes
 
     def test_dtype_uniform_with_template(self):
         """NumericRecordDistribution.dtype is the common dtype when all fields match."""

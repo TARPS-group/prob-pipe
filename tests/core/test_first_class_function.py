@@ -362,7 +362,7 @@ class TestApplyContract:
     def test_schema_complete_distribution_does_not_read_parallel_metadata(self):
         class SchemaCompleteDistribution(Distribution):
             def __init__(self, event_template):
-                super().__init__(name="y")
+                super().__init__("y", event_template)
                 self._event_template = event_template
 
             @property

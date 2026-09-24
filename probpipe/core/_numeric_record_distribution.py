@@ -57,14 +57,11 @@ from ..distributions._distribution import Distribution, NumericDistribution
 from . import _workflow_broker, _workflow_descendants
 from ._record_distribution import (
     RecordDistribution,
-    _declares_event,
     _field_event_shape,
-    _interim_template,
     _record_with_leaves,
 )
 from ._specs import NumericArraySpec, OutputSpec
 from .constraints import (
-    Constraint,
     _supports_compatible,
     real,
 )
@@ -178,7 +175,7 @@ def _raw_event_shape(law: Distribution) -> tuple[int, ...]:
 
     A record draw carries its own structure, so flattening one reads no shape.
     """
-    if _declares_event(law) and not isinstance(law.event_spec.spec, NumericArraySpec):
+    if not isinstance(law.event_spec.spec, NumericArraySpec):
         return ()
     return law.event_shape
 
@@ -188,7 +185,7 @@ def _raw_event_shape(law: Distribution) -> tuple[int, ...]:
 # ---------------------------------------------------------------------------
 
 
-class NumericRecordDistribution(RecordDistribution):
+class NumericRecordDistribution(RecordDistribution, NumericDistribution):
     """Distribution over numeric arrays with Record support.
 
     Extends :class:`RecordDistribution` with numeric-specific metadata
@@ -205,31 +202,15 @@ class NumericRecordDistribution(RecordDistribution):
     independent distributions live in
     :class:`~probpipe.DistributionArray`.
 
-    Canonical and convenience accessors
-    -----------------------------------
+    Schema views
+    ------------
 
-    Per-field accessors are the canonical source of truth; scalar
-    accessors are convenience shortcuts that raise on multi-leaf
-    templates. Subclasses override the canonical side; the convenience
-    accessors derive automatically.
-
-    | Concept   | Canonical (per-field)            | Convenience (single-leaf)                       |
-    |-----------|----------------------------------|-------------------------------------------------|
-    | Structure | `event_template`                | —                                               |
-    | Pytree    | `treedef` (from template)        | —                                               |
-    | Shapes    | `event_shapes : dict`            | `event_shape : tuple` (raises on multi-leaf)    |
-    | Dtypes    | `dtypes : dict`                  | `dtype : dtype \\| None` (unique or `None`)     |
-    | Supports  | `supports : dict`                | `support : Constraint` (raises on multi-leaf)   |
-    | Flat dim  | `event_size : int`               | —                                               |
-
-    Single-field auto-template
-    --------------------------
-
-    A concrete subclass that declares ``event_shape`` and is constructed
-    with a ``name=`` gets an auto-built single-field
-    ``RecordSpec(**{name: event_shape})`` on first read of
-    :attr:`event_template`. Multi-field subclasses (joints) override
-    ``event_template`` directly to skip the auto-build.
+    ``event_shape`` is the base's view on the event declaration, and
+    ``dtypes``, ``supports``, ``dtype``, and ``support`` are those of
+    :class:`~probpipe.NumericDistribution`, whose marker this class claims,
+    since every instance draws a numeric value. The per-field
+    ``event_shapes``, the flat ``event_size``, and :attr:`treedef` read the
+    record the declaration presents, an interim implementation detail.
 
     ``_sample`` contract
     --------------------
@@ -257,145 +238,6 @@ class NumericRecordDistribution(RecordDistribution):
     Standard distributions (``Normal``, ``Gamma``, ``Poisson``, ...)
     inherit from this class via :class:`TFPDistribution`.
     """
-
-    # -- event_template auto-generation ------------------------------------
-
-    @property
-    def event_template(self):
-        """Auto-build a single-field ``RecordSpec`` from
-        ``name`` + ``event_shape`` when the subclass hasn't set one.
-
-        A law that stores its event declaration and sets no template
-        presents the declaration instead, so a rename leaves the template's
-        field at the declared component; that reading is an interim
-        implementation detail.
-
-        Cached via :meth:`object.__setattr__` on first read.
-        Multi-field subclasses (joint distributions) override this
-        property to skip the auto-build.
-
-        Raises ``TypeError`` if the auto-build path can't run —
-        either ``_name`` is unset, or ``event_shape`` is not
-        derivable. Both error messages name the subclass and point at
-        the two construction paths (set ``_event_template``
-        explicitly, or declare ``event_shape`` so the auto-build can
-        proceed).
-        """
-        from ._specs import RecordSpec
-
-        tpl = getattr(self, "_event_template", None)
-        if tpl is not None:
-            return tpl
-        if _declares_event(self):
-            return _interim_template(self.event_spec)
-        name = getattr(self, "_name", None)
-        if name is None:
-            raise TypeError(
-                f"{type(self).__name__} has no event_template and "
-                f"no name; set _event_template explicitly (multi-leaf "
-                f"joints) or pass name= at construction (single-leaf)."
-            )
-        try:
-            es = self.event_shape
-        except NotImplementedError:
-            raise TypeError(
-                f"{type(self).__name__} must declare event_shape or set _event_template explicitly."
-            ) from None
-        tpl = RecordSpec(**{name: es})
-        object.__setattr__(self, "_event_template", tpl)
-        object.__setattr__(self, "_event_template_is_auto", True)
-        return tpl
-
-    def with_name(self, new_name: str) -> NumericRecordDistribution:
-        """Return a renamed copy, regenerating an auto-built template.
-
-        Extends :meth:`TrackedTerm.with_name`. When the cached template
-        is the single-field auto-build (one field keyed by the old
-        name), the clone's ``_event_template`` is cleared so the next
-        access rebuilds it under ``new_name``. Multi-leaf and
-        user-supplied templates are left intact — their field names
-        are part of the distribution's identity, not derived from
-        ``name``.
-        """
-        clone = super().with_name(new_name)
-        tpl = getattr(clone, "_event_template", None)
-        if tpl is not None and len(tpl.fields) == 1 and tpl.fields[0] == self._name:
-            object.__setattr__(clone, "_event_template", None)
-        return clone
-
-    def _per_field_dict(self, value: Any) -> dict[str, Any]:
-        """Build a ``{field: value}`` dict keyed by every field of
-        :attr:`event_template`, with *value* repeated as the value.
-
-        Single-field auto-template subclasses (the common case)
-        declare one scalar dtype / support / etc., but the
-        canonical accessor is a per-field dict. This helper saves
-        each override from spelling out
-        ``{name: value for name in event_template.fields}``.
-        """
-        return dict.fromkeys(self.event_template.fields, value)
-
-    # -- per-field metadata ---------------------------------------------------
-
-    @property
-    def dtypes(self) -> dict[str, jnp.dtype]:
-        """Per-field dtypes.
-
-        A law that stores its event declaration reads it through the view of
-        :class:`~probpipe.NumericDistribution`.
-        A class that does not yet declare overrides this, an interim
-        implementation detail, and the default raises ``NotImplementedError``
-        rather than returning a silent default-float for every field (which
-        lied for integer-valued distributions like ``Bernoulli``).
-        """
-        if _declares_event(self):
-            return NumericDistribution.dtypes.fget(self)
-        raise NotImplementedError(f"{type(self).__name__}.dtypes")
-
-    @property
-    def supports(self) -> dict[str, Constraint]:
-        """Per-field support constraints.
-
-        A law that stores its event declaration reads it through the view of
-        :class:`~probpipe.NumericDistribution`.
-        A class that does not yet declare overrides this, an interim
-        implementation detail, and the default raises ``NotImplementedError``.
-        """
-        if _declares_event(self):
-            return NumericDistribution.supports.fget(self)
-        raise NotImplementedError(f"{type(self).__name__}.supports")
-
-    @property
-    def dtype(self) -> jnp.dtype | None:
-        """Convenience: scalar dtype if all fields share one, else ``None``.
-
-        Derived from :attr:`dtypes`. ``dtypes`` is the canonical
-        per-field accessor; subclasses override that, not this.
-        """
-        per_field = self.dtypes
-        if not per_field:
-            return None
-        unique = set(per_field.values())
-        return unique.pop() if len(unique) == 1 else None
-
-    @property
-    def support(self) -> Constraint:
-        """Convenience: support for a single-field distribution.
-
-        Derived from :attr:`supports`. ``supports`` is the canonical
-        per-field accessor; subclasses override that (or, for
-        ``TFPDistribution``-backed classes that follow the existing
-        single-field override pattern, override ``support`` directly
-        to short-circuit this derivation).
-
-        Raises ``TypeError`` (via :meth:`_single_field_name`) on
-        multi-field distributions; reach for :attr:`supports` then.
-        A law that stores its event declaration reads it through the view of
-        :class:`~probpipe.NumericDistribution`.
-        """
-        if _declares_event(self):
-            return NumericDistribution.support.fget(self)
-        return self.supports[self._single_field_name()]
 
     def _check_support_compatible(
         self,
@@ -464,34 +306,6 @@ class NumericRecordDistribution(RecordDistribution):
                 f"Pass check_support=False to override."
             )
 
-    # -- event_shape ---------------------------------------------------------
-
-    @property
-    def event_shape(self) -> tuple[int, ...]:
-        """Single-leaf convenience shortcut for the lone field's shape.
-
-        **Abstract** — every single-leaf subclass must override. The
-        declared ``event_shape`` is the source of truth used by
-        :attr:`event_template`'s auto-build path; deriving it from
-        :attr:`event_shapes` here would loop back through
-        ``event_template``.
-
-        Multi-leaf subclasses don't override (single-field convenience
-        doesn't apply); they set ``_event_template`` explicitly in
-        ``__init__`` so the auto-build never fires, and callers reach
-        for :attr:`event_shapes` (per-field dict) instead.
-
-        A law that stores its event declaration reads it through the base
-        view; the abstract default is an interim implementation detail.
-        """
-        if _declares_event(self):
-            return super().event_shape
-        raise NotImplementedError(
-            f"{type(self).__name__}.event_shape — single-leaf "
-            f"subclasses must override; multi-leaf subclasses should "
-            f"use .event_shapes (per-field dict)."
-        )
-
     # -- Single-leaf pytree interface -----------------------------------------
 
     @property
@@ -516,10 +330,8 @@ class NumericRecordDistribution(RecordDistribution):
         cached = getattr(self, "_treedef", None)
         if cached is not None:
             return cached
-        # ``event_template`` is contractually non-``None`` on every
-        # ``RecordDistribution`` (metaclass-enforced); single-field
-        # templates produce a leaf treedef matching the raw-array
-        # ``_sample`` contract, multi-field templates produce a
+        # Single-field templates produce a leaf treedef matching the
+        # raw-array ``_sample`` contract, multi-field templates produce a
         # ``NumericRecord`` skeleton.
         tpl = self.event_template
         if len(tpl.fields) <= 1:

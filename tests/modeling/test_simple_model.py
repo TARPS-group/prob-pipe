@@ -16,6 +16,7 @@ import pytest
 from probpipe import (
     ApproximateDistribution,
     MultivariateNormal,
+    NumericArraySpec,
     Record,
     RecordSpec,
     ResolutionError,
@@ -87,7 +88,7 @@ class TestSimpleModel:
             """A SupportsLogProb distribution that is not a RecordDistribution."""
 
             def __init__(self) -> None:
-                self._name = "log_prob_only"
+                super().__init__("log_prob_only", NumericArraySpec(()))
 
             def _log_prob(self, value):
                 return jnp.zeros(())

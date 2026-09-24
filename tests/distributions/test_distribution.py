@@ -45,6 +45,7 @@ from probpipe import (
     ProductDistribution,
     RandomFunction,
     RandomMeasure,
+    RecordDistribution,
     RecordEmpiricalDistribution,
     RecordSpec,
     SequentialJointDistribution,
@@ -294,7 +295,7 @@ class TestDistributionRepr:
 
         class _NamedDist(Distribution):
             def __init__(self):
-                super().__init__(name="x")
+                super().__init__("x", OpaqueSpec())
 
         assert repr(_NamedDist()) == "_NamedDist(name='x')"
 
@@ -308,7 +309,7 @@ class TestConstructorNameCheck:
 
         class _Dist(Distribution):
             def __init__(self, name):
-                super().__init__(name=name)
+                super().__init__(name, OpaqueSpec())
 
         with pytest.raises(TypeError, match="requires a non-empty name"):
             _Dist(name)
@@ -360,31 +361,31 @@ class TestMetaclassEnforcement:
 
     def test_subclass_setting_name_directly_succeeds(self):
         """Bypassing ``super().__init__`` is fine as long as
-        ``self._name`` ends up set to a non-empty string."""
+        ``self._name`` ends up set to a non-empty string and the event is
+        declared."""
         from probpipe import Distribution
 
         class _DirectNameDist(Distribution):
             def __init__(self):
                 # Skip super().__init__ deliberately.
                 self._name = "direct"
+                self._init_declaration(OpaqueSpec())
 
         dist = _DirectNameDist()
         assert dist.name == "direct"
+        assert dist.event_spec == OutputSpec(direct=OpaqueSpec())
 
-    def test_record_distribution_without_template_raises(self):
-        """The ``_RecordDistributionMeta`` adds a record-template check
-        on top of the name check. A RecordDistribution subclass whose
-        ``__init__`` neither sets ``_event_template`` nor leaves
-        ``name + event_shape`` derivable can't be constructed."""
-        from probpipe import RecordDistribution
+    @pytest.mark.parametrize("base", [Distribution, RecordDistribution])
+    def test_a_law_that_leaves_its_event_undeclared_raises(self, base):
+        """Construction checks the declaration after ``__init__``, naming
+        the class, whichever base it bypasses."""
 
-        class _NoTemplate(RecordDistribution):
+        class _NoDeclaration(base):
             def __init__(self):
-                self._name = "no_template"
-                # No _event_template; no event_shape declared.
+                self._name = "undeclared"
 
-        with pytest.raises(TypeError, match="event_template"):
-            _NoTemplate()
+        with pytest.raises(TypeError, match=r"_NoDeclaration\.__init__ left the event undeclared"):
+            _NoDeclaration()
 
 
 class TestWithNameTemplateRoundtrip:
@@ -463,67 +464,9 @@ class TestDistributionSpecIsValid:
         assert not spec.is_valid(42)
         assert not spec.is_valid(RecordSpec(x=()))
 
-    def test_distribution_without_template_invalid(self):
-        # A distribution always carries the schema of its draws; one that
-        # exposes no event template cannot satisfy any DistributionSpec.
-        from probpipe import Distribution
-
-        class _NoTemplate(Distribution):
-            def __init__(self):
-                super().__init__(name="d")
-
+    def test_an_opaque_law_does_not_match_a_record_declaration(self):
         spec = DistributionSpec(event_spec=RecordSpec(x=()))
-        assert not spec.is_valid(_NoTemplate())
-
-    def test_distribution_with_none_template_invalid(self):
-        from probpipe import Distribution
-
-        class _NoneTemplate(Distribution):
-            def __init__(self):
-                super().__init__(name="d")
-
-            @property
-            def event_template(self):
-                return None
-
-        spec = DistributionSpec(event_spec=RecordSpec(x=()))
-        assert not spec.is_valid(_NoneTemplate())
-
-    def test_type_error_template_is_not_a_match(self):
-        # TypeError is the documented "template not derivable" signal (e.g. an
-        # un-named auto-deriving distribution): a non-match, so is_valid
-        # returns False.
-        from probpipe import Distribution
-
-        class _NotDerivable(Distribution):
-            def __init__(self):
-                super().__init__(name="d")
-
-            @property
-            def event_template(self):
-                raise TypeError("template not derivable")
-
-        spec = DistributionSpec(event_spec=RecordSpec(x=()))
-        assert not spec.is_valid(_NotDerivable())
-
-    @pytest.mark.parametrize("error", [RuntimeError, ValueError, KeyError])
-    def test_unexpected_template_error_propagates(self, error):
-        # An unexpected error from event_template is a malfunctioning
-        # distribution, not a clean non-match — is_valid must not mask it as
-        # invalid; it propagates so the bug surfaces.
-        from probpipe import Distribution
-
-        class _Broken(Distribution):
-            def __init__(self):
-                super().__init__(name="d")
-
-            @property
-            def event_template(self):
-                raise error("boom")
-
-        spec = DistributionSpec(event_spec=RecordSpec(x=()))
-        with pytest.raises(error):
-            spec.is_valid(_Broken())
+        assert not spec.is_valid(_DeclaredLaw("d", OpaqueSpec()))
 
 
 class TestNoTypeParameter:

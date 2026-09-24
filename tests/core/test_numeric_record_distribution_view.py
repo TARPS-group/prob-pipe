@@ -19,6 +19,7 @@ from probpipe import (
     FlatNumericRecordDistribution,
     MultivariateNormal,
     Normal,
+    NumericArraySpec,
     NumericRecord,
     NumericRecordBatch,
     NumericRecordSpec,
@@ -350,12 +351,7 @@ class TestFlatContract:
 
         class _BadFlat(_FlatNRD):
             def __init__(self):
-                self._name = "bad"
-                self._event_template = NumericRecordSpec(bad=(2, 3))
-
-            @property
-            def event_shape(self):
-                return (2, 3)
+                super().__init__("bad", NumericArraySpec((2, 3)))
 
         bad = _BadFlat()
         with pytest.raises(TypeError, match="event_shape"):

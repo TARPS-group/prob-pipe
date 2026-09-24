@@ -65,9 +65,8 @@ def no_moments():
         _sampling_cost = "low"
         _preferred_orchestration = None
 
-        @property
-        def event_shape(self):
-            return ()
+        def __init__(self, name):
+            super().__init__(name, NumericArraySpec(()))
 
         def _sample(self, key, sample_shape=()):
             return jax.random.normal(key, sample_shape)
@@ -85,9 +84,8 @@ def no_protocols():
     """A distribution that implements no operation protocol."""
 
     class NoProtocolsDist(NumericRecordDistribution):
-        @property
-        def event_shape(self):
-            return ()
+        def __init__(self, name):
+            super().__init__(name, NumericArraySpec(()))
 
     return NoProtocolsDist(name="test")
 

@@ -24,7 +24,7 @@ from ..core.protocols import (
     SupportsVariance,
 )
 from ..custom_types import Array, ArrayLike, PRNGKey
-from ._distribution import Distribution, NumericDistribution
+from ._distribution import Distribution
 
 if TYPE_CHECKING:
     from ..core._spec_base import TermSpec
@@ -80,7 +80,6 @@ def _allow_batched_tfp_init() -> Generator[None, None, None]:
 
 class TFPDistribution(
     NumericRecordDistribution,
-    NumericDistribution,
     SupportsSampling,
     SupportsLogProb,
     SupportsMean,
@@ -93,7 +92,7 @@ class TFPDistribution(
     Subclasses set ``self._tfp_dist`` in ``__init__`` and define
     :meth:`_event_support`. One draw is declared as a whole-term array under
     the law's name, with the TFP event's shape and dtype and the family's
-    support, so every instance is a :class:`NumericDistribution`. The private
+    support, so every instance is a :class:`~probpipe.NumericDistribution`. The private
     protocol methods ``_sample``, ``_expectation``, ``_log_prob``,
     ``_mean``, and ``_variance`` all delegate to TFP (or use MC
     fallback for expectations).

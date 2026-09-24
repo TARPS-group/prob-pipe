@@ -52,7 +52,7 @@ def set_return_approx_dist(value: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
-# The event declaration: completion, and the interim reading of a template
+# The event declaration: completion and class membership
 # ---------------------------------------------------------------------------
 
 
@@ -104,44 +104,15 @@ def _whole_term_component(declaration: OutputSpec) -> str | None:
     return declaration._component_name
 
 
-def _undeclared_spec(law: Any) -> DistributionSpec:
-    """The declaration of a law that stores none, read off its template.
-
-    An interim implementation detail, until every class declares its event: an
-    auto-built template reads as a whole term under the law's name, and a set one
-    as an exposed record.
-
-    Raises
-    ------
-    AttributeError
-        If the law has no template either, so it declares no event.
-    """
-    try:
-        template = getattr(law, "event_template", None)
-    except (TypeError, NotImplementedError):
-        template = None
-    if not isinstance(template, RecordSpec):
-        raise AttributeError(f"{type(law).__name__} declares no event")
-    try:
-        if getattr(law, "_event_template_is_auto", False):
-            ((field, spec),) = template.children.items()
-            return DistributionSpec(OutputSpec(**{field: spec}))
-        return DistributionSpec(OutputSpec(template))
-    except (TypeError, ValueError) as exc:
-        # A template no declaration can express, such as one with an opaque
-        # field, reads as no declaration.
-        raise AttributeError(f"{type(law).__name__} declares no event: {exc}") from None
-
-
 def _declares_numeric_event(value: Any) -> bool:
-    """Whether *value* is a law whose declared event is numeric (II.3)."""
+    """Whether *value* is a law whose declared event is numeric (II.3).
+
+    A law still under construction declares nothing yet, so it is not numeric.
+    """
     if not isinstance(value, Distribution):
         return False
-    try:
-        spec = value.event_spec.spec
-    except AttributeError:
-        return False
-    return isinstance(spec, NumericSpec)
+    declared = getattr(value, "_spec", None)
+    return declared is not None and isinstance(declared.event_spec.spec, NumericSpec)
 
 
 def _array_leaves(declaration: OutputSpec) -> dict[str, NumericArraySpec]:
@@ -163,6 +134,10 @@ def _array_leaves(declaration: OutputSpec) -> dict[str, NumericArraySpec]:
 class _DistributionMeta(_TrackedTermMeta):
     """The metaclass of every distribution.
 
+    Construction checks that the instance holds its event declaration, as the
+    tracked-term metaclass checks its name: a class that bypasses
+    ``Distribution.__init__`` calls ``_init_declaration`` itself.
+
     ``isinstance(d, NumericDistribution)`` holds exactly when ``d`` declares a
     numeric event, whatever its class, and every other class check is the ordinary
     one. A class whose every instance is numeric may claim the marker by
@@ -176,6 +151,11 @@ class _DistributionMeta(_TrackedTermMeta):
 
     def __call__(cls, *args: Any, **kwargs: Any) -> Any:
         instance = super().__call__(*args, **kwargs)
+        if not isinstance(getattr(instance, "_spec", None), DistributionSpec):
+            raise TypeError(
+                f"{cls.__name__}.__init__ left the event undeclared; pass event_spec to "
+                f"Distribution.__init__, or call _init_declaration when bypassing it"
+            )
         if issubclass(cls, NumericDistribution) and not _declares_numeric_event(instance):
             raise TypeError(
                 f"{cls.__name__} inherits NumericDistribution, so its instances must "
@@ -219,17 +199,16 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     ----------
     name : str
         Non-empty name for this distribution.
-    event_spec : OutputSpec or TermSpec, optional
-        The declaration of one draw, completed as above. It is optional only as
-        an interim implementation detail: a class that has not yet declared its
-        event reads one off its template instead.
+    event_spec : OutputSpec or TermSpec
+        The declaration of one draw, completed as above.
 
     Raises
     ------
     TypeError
         If *name* is not a non-empty string, or *event_spec* is not a spec.
     ValueError
-        If *event_spec* has a type hole.
+        If *event_spec* has a type hole, or a whole-term event's component, the
+        name, is not a valid component name.
     """
 
     # -- Immutability: deferred for this layer ------------------------------
@@ -260,7 +239,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     def __init__(
         self,
         name: str,
-        event_spec: OutputSpec | TermSpec | None = None,
+        event_spec: OutputSpec | TermSpec,
         *,
         _provenance: Provenance | None = None,
         _annotations: Mapping[str, Any] | None = None,
@@ -274,8 +253,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         # reconstruction paths are the only callers.
         self._init_tracked(name, provenance=_provenance)
         self._init_annotations(_annotations)
-        if event_spec is not None:
-            self._init_declaration(event_spec)
+        self._init_declaration(event_spec)
 
     def _init_declaration(self, event_spec: OutputSpec | TermSpec) -> None:
         """Complete *event_spec* and store it as this law's declaration.
@@ -292,10 +270,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     @property
     def spec(self) -> DistributionSpec:
         """The law's term spec, the one stored source of its event declaration."""
-        stored = getattr(self, "_spec", None)
-        if stored is not None:
-            return stored
-        return _undeclared_spec(self)
+        return self._spec
 
     @property
     def event_spec(self) -> OutputSpec:
@@ -429,16 +404,8 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         ------
         KeyError
             If a whole-term law's component is not *key*.
-        TypeError
-            If the law declares no event.
         """
-        try:
-            declaration = self.event_spec
-        except AttributeError:
-            raise TypeError(
-                f"{type(self).__name__} declares no event, so it has no components to index"
-            ) from None
-        component = _whole_term_component(declaration)
+        component = _whole_term_component(self.event_spec)
         if component is not None:
             if key == component:
                 return self
@@ -761,8 +728,7 @@ class DistributionSpec(TermSpec):
     this one: the packaging and the component names agree, and then the
     components unify in one scope. An unset dtype accepts any dtype and a set one
     requires a same-kind cast, sizes agree with symbolic dimensions bound
-    consistently, and support is not compared. A law that declares no event does
-    not match; any other error reading its declaration propagates.
+    consistently, and support is not compared.
 
     ``bind_dims_from_value`` binds a symbolic declaration from a law's own, and
     ``bind_dims_from_spec`` from another ``DistributionSpec``, by that same rule.
@@ -805,13 +771,7 @@ class DistributionSpec(TermSpec):
         """Bind the declared event against the declaration *value* carries."""
         if not isinstance(value, Distribution):
             raise ValueError(f"{path} does not conform to its field spec ({self!r})")
-        try:
-            actual = value.event_spec
-        except AttributeError:
-            raise ValueError(
-                f"{path} declares {self!r}, but {type(value).__name__} declares no event"
-            ) from None
-        _unify_declarations(self.event_spec, actual, bindings, path)
+        _unify_declarations(self.event_spec, value.event_spec, bindings, path)
 
     def _bind_dims_from_spec(self, actual: TermSpec, bindings: dict[str, int], path: str) -> bool:
         """Bind the declared event against *actual*'s own."""
@@ -825,11 +785,7 @@ class DistributionSpec(TermSpec):
         if not isinstance(value, Distribution):
             return False
         try:
-            actual = value.event_spec
-        except AttributeError:
-            return False
-        try:
-            _unify_declarations(self.event_spec, actual, {}, "the declaration")
+            _unify_declarations(self.event_spec, value.event_spec, {}, "the declaration")
         except ValueError:
             return False
         return True

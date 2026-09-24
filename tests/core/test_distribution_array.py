@@ -21,6 +21,7 @@ import pytest
 from probpipe import (
     Normal,
     NumericArrayBatch,
+    NumericArraySpec,
     NumericRecordBatch,
     ProductDistribution,
     Provenance,
@@ -898,11 +899,7 @@ class TestFromBatchedParams:
         class MyDist(Distribution):
             def __init__(self, value, *, name):
                 self._value = float(value)
-                super().__init__(name=name)
-
-            @property
-            def event_shape(self):
-                return ()
+                super().__init__(name, NumericArraySpec(()))
 
             @property
             def batch_shape(self):
@@ -1056,11 +1053,7 @@ class TestDistributionFromBatchedParamsAlias:
         class MyDist(Distribution):
             def __init__(self, value, *, name):
                 self._value = float(value)
-                super().__init__(name=name)
-
-            @property
-            def event_shape(self):
-                return ()
+                super().__init__(name, NumericArraySpec(()))
 
             @property
             def batch_shape(self):

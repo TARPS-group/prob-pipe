@@ -12,7 +12,9 @@ import pytest
 
 from probpipe import (
     Normal,
+    NumericArraySpec,
     NumericRecord,
+    OpaqueSpec,
     ProductDistribution,
     SimpleModel,
 )
@@ -303,10 +305,8 @@ class _EventShapeOnlyDist(Distribution):
     ``SupportsSampling``) — exercises the Stan ``Uniform(-2, 2)`` fallback.
     """
 
-    event_shape = (3,)
-
     def __init__(self):
-        super().__init__(name="event_shape_only")
+        super().__init__("event_shape_only", NumericArraySpec((3,)))
 
     def _unnormalized_log_prob(self, value):
         return -0.5 * jnp.sum(jnp.asarray(value) ** 2)
@@ -318,7 +318,7 @@ class _NoInitHeuristicDist(Distribution):
     """
 
     def __init__(self):
-        super().__init__(name="no_init_heuristic")
+        super().__init__("no_init_heuristic", OpaqueSpec())
 
     def _unnormalized_log_prob(self, value):
         return jnp.asarray(0.0)

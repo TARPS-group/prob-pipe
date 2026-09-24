@@ -21,6 +21,7 @@ from probpipe import (
     Gamma,
     MultivariateNormal,
     Normal,
+    NumericArraySpec,
     RecordEmpiricalDistribution,
     TransformedDistribution,
     converter_registry,
@@ -57,7 +58,7 @@ class _RecordingEmpirical(RecordEmpiricalDistribution):
 
 class _VectorSource(Distribution):
     def __init__(self, *, covariance_works: bool, calls):
-        super().__init__(name="x")
+        super().__init__("x", NumericArraySpec((2,)))
         self._covariance_works = covariance_works
         self.calls = calls
 
