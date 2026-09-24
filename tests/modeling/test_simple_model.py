@@ -99,9 +99,10 @@ class TestSimpleModel:
         """SimpleModel always satisfies SupportsLogProb."""
         assert isinstance(model, SupportsLogProb)
 
-    def test_no_event_shape(self, model):
-        """SimpleModel does not define event_shape."""
-        assert not hasattr(model, "event_shape")
+    def test_event_shape_is_undefined_for_a_record_draw(self, model):
+        """A SimpleModel draws a record, and event_shape is defined only for one array."""
+        with pytest.raises(TypeError, match="does not draw a single array"):
+            _ = model.event_shape
 
     def test_no_sample(self, model):
         """SimpleModel does not define _sample even if prior supports sampling."""

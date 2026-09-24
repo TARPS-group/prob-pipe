@@ -388,7 +388,13 @@ def _update_value_spec(
     elif isinstance(spec, RecordSpec):
         _update_event_template(h, spec, depth, max_array_bytes, state)
     elif isinstance(spec, DistributionSpec):
-        _update(h, spec.event_spec, depth + 1, max_array_bytes, state)
+        # The packaging and the component are part of the declaration, so a whole
+        # term ``x`` and a one-field record exposing ``x`` hash apart.
+        declaration = spec.event_spec
+        h.update(b"component=")
+        _update(h, declaration._component_name, depth + 1, max_array_bytes, state)
+        h.update(b":event=")
+        _update(h, declaration.spec, depth + 1, max_array_bytes, state)
     elif isinstance(spec, FunctionSpec):
         _update(h, spec.input_template, depth + 1, max_array_bytes, state)
         _update(h, spec.output_spec, depth + 1, max_array_bytes, state)

@@ -15,7 +15,15 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import DistributionSpec, Function, NumericRecord, Record, positive
+from probpipe import (
+    Distribution,
+    DistributionSpec,
+    Function,
+    NumericRecord,
+    OutputSpec,
+    Record,
+    positive,
+)
 from probpipe.core._batch import BatchSpec
 from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._opaque import OpaqueSpec
@@ -991,12 +999,15 @@ class TestTermSpecs:
         with pytest.raises(TypeError, match="symbolic dimension"):
             NumericArraySpec((dimension,))
 
-    def test_distribution_spec_requires_record_declaration(self):
-        with pytest.raises(TypeError, match="must be a RecordSpec"):
+    def test_distribution_spec_requires_an_output_declaration(self):
+        with pytest.raises(TypeError, match="must be an OutputSpec or a RecordSpec"):
             DistributionSpec(event_spec=(3,))  # type: ignore[arg-type]
-        # The current distribution declaration remains record-valued.
-        with pytest.raises(TypeError, match="must be a RecordSpec"):
+        # A bare array spec has no component name to complete it with.
+        with pytest.raises(TypeError, match="no component name"):
             DistributionSpec(event_spec=NumericArraySpec(()))  # type: ignore[arg-type]
+        whole = OutputSpec(x=NumericArraySpec(()))
+        assert DistributionSpec(whole).event_spec is whole
+        assert DistributionSpec(RecordSpec(x=())).event_spec == OutputSpec(RecordSpec(x=()))
 
 
 # ---------------------------------------------------------------------------
@@ -1737,11 +1748,11 @@ class TestTermSpecTaxonomy:
     # --- the storage rule: a declaration is stored as a TermSpec ---
 
     def test_record_schema_is_stored_directly(self):
-        """The schema already declares the kind; no wrapper is stored."""
+        """The schema already declares the kind; the declaration holds it as is."""
 
         tau = RecordSpec(x=())
-        assert DistributionSpec(tau).event_spec is tau
-        assert isinstance(DistributionSpec(tau).event_spec, TermSpec)
+        assert DistributionSpec(tau).event_spec.spec is tau
+        assert isinstance(DistributionSpec(tau).event_spec, OutputSpec)
         assert FunctionSpec(tau, tau).output_spec is tau
         assert isinstance(FunctionSpec(tau, tau).output_spec, TermSpec)
 
@@ -1759,7 +1770,7 @@ class TestTermSpecTaxonomy:
         type checker and the generated API reference read the stored type. Pins
         the split against a rewidening of the field annotations.
         """
-        assert get_type_hints(DistributionSpec)["event_spec"] is RecordSpec
+        assert get_type_hints(DistributionSpec)["event_spec"] is OutputSpec
         assert get_type_hints(FunctionSpec)["output_spec"] == TermSpec | None
         assert get_type_hints(NumericArraySpec)["dtype"] == np.dtype | None
 
@@ -1785,18 +1796,17 @@ class TestTermSpecTaxonomy:
         for inner in (DistributionSpec(tau), FunctionSpec()):
             assert FunctionSpec(tau, inner).output_spec is inner
 
-    def test_term_valued_event_declaration_is_rejected(self):
-        """An event declaration is record-valued: a term draw is not yet checkable.
+    def test_term_valued_event_declaration_needs_a_component(self):
+        """A bare term spec has no component name, so it is refused; named, it is kept.
 
-        A ``Distribution`` exposes a ``RecordSpec`` and nothing that reports
-        a term-valued draw kind, so a random-measure declaration could be
-        written but never satisfied. It is refused at construction rather than
-        accepted and always reported invalid.
+        A random measure declares a distribution-valued draw, and a random
+        function a callable one, each as a whole term under a component.
         """
         tau = RecordSpec(x=())
         for decl in (DistributionSpec(tau), FunctionSpec()):
-            with pytest.raises(TypeError, match="must be a RecordSpec"):
+            with pytest.raises(TypeError, match="no component name"):
                 DistributionSpec(decl)  # type: ignore[arg-type]
+            assert DistributionSpec(OutputSpec(m=decl)).event_spec.spec is decl
 
     def test_raw_value_output_declaration_is_stored_as_given(self):
         """An output declaration is any value specification, as in Fun(sigma, rho).
@@ -1959,7 +1969,7 @@ class TestWithDimSizes:
 
         assert bound.is_concrete
         assert bound["data"].shape == (4,)
-        assert bound["law"].event_spec["x"].shape == (4,)
+        assert bound["law"].event_spec.components["x"].shape == (4,)
 
     def test_binding_returns_a_new_template(self):
         template = RecordSpec(x=NumericArraySpec(shape=("obs",)))
@@ -2110,21 +2120,21 @@ class TestInferenceThroughTermSpecs:
         return MultivariateNormal("x", jnp.zeros(size), jnp.eye(size))
 
     def test_a_distribution_binds_the_declared_dimension(self):
-        sym = RecordSpec(x=NumericArraySpec(shape=("obs",)))
+        sym = OutputSpec(x=NumericArraySpec(shape=("obs",)))
         record = Record("r", law=self._law(3), event_template=RecordSpec(law=DistributionSpec(sym)))
 
         assert record.event_template.is_concrete
-        assert record.event_template["law"].event_spec["x"].shape == (3,)
+        assert record.event_template["law"].event_spec.spec.shape == (3,)
 
     def test_a_name_shared_across_the_boundary_binds_once(self):
         declared = RecordSpec(
             data=NumericArraySpec(shape=("obs",)),
-            law=DistributionSpec(RecordSpec(x=NumericArraySpec(shape=("obs",)))),
+            law=DistributionSpec(OutputSpec(x=NumericArraySpec(shape=("obs",)))),
         )
         record = Record("r", data=jnp.zeros(3), law=self._law(3), event_template=declared)
 
         assert record.event_template["data"].shape == (3,)
-        assert record.event_template["law"].event_spec["x"].shape == (3,)
+        assert record.event_template["law"].event_spec.spec.shape == (3,)
 
     def test_a_disagreement_binds_inner_first_then_outer(self):
         """The direction that proves the scope is shared, not merely inherited.
@@ -2135,7 +2145,7 @@ class TestInferenceThroughTermSpecs:
         inward — so this is the case that pins one scope rather than two.
         """
         declared = RecordSpec(
-            law=DistributionSpec(RecordSpec(x=NumericArraySpec(shape=("obs",)))),
+            law=DistributionSpec(OutputSpec(x=NumericArraySpec(shape=("obs",)))),
             data=NumericArraySpec(shape=("obs",)),
         )
 
@@ -2147,12 +2157,12 @@ class TestInferenceThroughTermSpecs:
     def test_field_order_does_not_change_the_outcome(self):
         """The same declaration either way round: one scope, one answer."""
         term_first = RecordSpec(
-            law=DistributionSpec(RecordSpec(x=NumericArraySpec(shape=("obs",)))),
+            law=DistributionSpec(OutputSpec(x=NumericArraySpec(shape=("obs",)))),
             data=NumericArraySpec(shape=("obs",)),
         )
         array_first = RecordSpec(
             data=NumericArraySpec(shape=("obs",)),
-            law=DistributionSpec(RecordSpec(x=NumericArraySpec(shape=("obs",)))),
+            law=DistributionSpec(OutputSpec(x=NumericArraySpec(shape=("obs",)))),
         )
 
         for declared in (term_first, array_first):
@@ -2164,7 +2174,7 @@ class TestInferenceThroughTermSpecs:
         """The point of one scope: 5 outside and 3 inside is a contradiction."""
         declared = RecordSpec(
             data=NumericArraySpec(shape=("obs",)),
-            law=DistributionSpec(RecordSpec(x=NumericArraySpec(shape=("obs",)))),
+            law=DistributionSpec(OutputSpec(x=NumericArraySpec(shape=("obs",)))),
         )
 
         with pytest.raises(
@@ -2205,14 +2215,14 @@ class TestInferenceThroughTermSpecs:
 
     def test_a_value_carrying_no_schema_says_so(self):
         """A polymorphic schema needs one to bind against."""
-        declared = RecordSpec(law=DistributionSpec(RecordSpec(x=NumericArraySpec(shape=("obs",)))))
+        declared = RecordSpec(law=DistributionSpec(OutputSpec(x=NumericArraySpec(shape=("obs",)))))
 
-        with pytest.raises(ValueError, match="exposes no schema to bind it against"):
-            Record("r", law=object(), event_template=declared)
+        with pytest.raises(ValueError, match="declares no event"):
+            Record("r", law=Distribution(name="law"), event_template=declared)
 
     def test_a_concrete_declaration_still_requires_an_exact_match(self):
         """Inference is for the symbolic case; a fixed size is still a fixed size."""
-        declared = RecordSpec(law=DistributionSpec(RecordSpec(x=NumericArraySpec(shape=(4,)))))
+        declared = RecordSpec(law=DistributionSpec(OutputSpec(x=NumericArraySpec(shape=(4,)))))
 
         with pytest.raises(ValueError, match="does not conform"):
             Record("r", law=self._law(3), event_template=declared)

@@ -21,7 +21,9 @@ from probpipe import (
     Gamma,
     MultivariateNormal,
     Normal,
+    NumericDistribution,
     NumericRecordSpec,
+    OutputSpec,
     RandomFunction,
     RandomMeasure,
     RecordEmpiricalDistribution,
@@ -29,6 +31,7 @@ from probpipe import (
     TransformedDistribution,
     expectation,
 )
+from probpipe.core._opaque import OpaqueSpec
 from probpipe.core._specs import NumericArraySpec
 from probpipe.core._workflow_distribution_normalization import DISTRIBUTION_HINT_PROTOCOLS
 from probpipe.core.provenance import Provenance, provenance_ancestors
@@ -410,7 +413,12 @@ class TestWithNameTemplateRoundtrip:
 class TestDistributionSpecIsValid:
     def test_matching_distribution_valid(self):
         dist = Normal(name="x", loc=0.0, scale=1.0)
-        assert DistributionSpec(event_spec=dist.event_template).is_valid(dist)
+        assert DistributionSpec(dist.event_spec).is_valid(dist)
+
+    def test_packaging_mismatch_invalid(self):
+        # A whole term x and a one-field record exposing x are different draws.
+        dist = Normal(name="x", loc=0.0, scale=1.0)
+        assert not DistributionSpec(RecordSpec(x=())).is_valid(dist)
 
     def test_template_mismatch_invalid(self):
         dist = Normal(name="x", loc=0.0, scale=1.0)
@@ -635,3 +643,167 @@ class TestPublicImportPaths:
     def test_core_distribution_module_is_removed(self):
         with pytest.raises(ModuleNotFoundError):
             importlib.import_module("probpipe.core." + "distribution")
+
+
+class _DeclaredLaw(Distribution):
+    """A test-only law that declares whatever event it is given."""
+
+    def __init__(self, name, event_spec):
+        super().__init__(name, event_spec)
+
+
+class TestEventDeclaration:
+    """A law stores one declaration, completed from what its constructor supplies."""
+
+    def test_a_bare_array_spec_is_a_whole_term_under_the_name(self):
+        law = _DeclaredLaw("x", NumericArraySpec((3,)))
+        assert law.event_spec == OutputSpec(x=NumericArraySpec((3,)))
+        assert law.event_spec is law.spec.event_spec
+
+    def test_a_record_spec_exposes_its_fields_even_with_one(self):
+        one = _DeclaredLaw("law", RecordSpec(x=()))
+        two = _DeclaredLaw("law", RecordSpec(x=(), y=(2,)))
+        assert one.event_spec == OutputSpec(RecordSpec(x=()))
+        assert tuple(two.event_spec.components) == ("x", "y")
+
+    def test_an_output_spec_is_stored_as_given(self):
+        declaration = OutputSpec(beta=NumericArraySpec((2,)))
+        assert _DeclaredLaw("law", declaration).event_spec is declaration
+
+    def test_a_type_hole_raises(self):
+        with pytest.raises(ValueError, match="type hole"):
+            _DeclaredLaw("x", OutputSpec(x=None))
+
+    def test_a_value_that_is_not_a_spec_raises(self):
+        with pytest.raises(TypeError, match="must be an OutputSpec or a TermSpec"):
+            _DeclaredLaw("x", (3,))
+
+    def test_with_name_keeps_the_component(self):
+        law = _DeclaredLaw("x", NumericArraySpec(()))
+        renamed = law.with_name("y")
+        assert renamed.name == "y"
+        assert renamed.event_spec == law.event_spec
+
+
+class TestComponentAccess:
+    def test_a_whole_term_is_itself_under_its_component(self):
+        law = _DeclaredLaw("x", NumericArraySpec(()))
+        assert law["x"] is law
+        with pytest.raises(KeyError):
+            law["y"]
+
+
+class TestNumericMembership:
+    def test_membership_follows_the_declaration(self):
+        assert isinstance(_DeclaredLaw("x", NumericArraySpec(())), NumericDistribution)
+        assert not isinstance(_DeclaredLaw("x", OpaqueSpec()), NumericDistribution)
+
+    def test_a_class_claiming_the_marker_must_declare_a_numeric_event(self):
+        class _Claims(NumericDistribution):
+            def __init__(self, name, event_spec):
+                super().__init__(name, event_spec)
+
+        assert issubclass(_Claims, NumericDistribution)
+        assert isinstance(_Claims("x", NumericArraySpec(())), NumericDistribution)
+        with pytest.raises(TypeError, match="must declare a numeric event"):
+            _Claims("x", OpaqueSpec())
+
+
+class TestSchemaViews:
+    def test_event_shape_is_the_declared_array_shape(self):
+        assert _DeclaredLaw("x", NumericArraySpec((3, 2))).event_shape == (3, 2)
+
+    def test_event_shape_is_undefined_for_a_record_draw(self):
+        with pytest.raises(TypeError, match="does not draw a single array"):
+            _ = _DeclaredLaw("law", RecordSpec(x=())).event_shape
+
+    def test_event_shape_needs_bound_dimensions(self):
+        with pytest.raises(ValueError, match="unbound dimensions"):
+            _ = _DeclaredLaw("x", NumericArraySpec(("n",))).event_shape
+
+    def test_dtypes_and_supports_are_keyed_by_leaf_path(self):
+        from probpipe import positive, real
+
+        law = _DeclaredLaw(
+            "law",
+            RecordSpec(
+                a=NumericArraySpec((), dtype="float32", support=positive),
+                b=RecordSpec(c=NumericArraySpec((2,), dtype="int32", support=real)),
+            ),
+        )
+        assert law.dtypes == {"a": np.dtype("float32"), "b/c": np.dtype("int32")}
+        assert law.supports == {"a": positive, "b/c": real}
+        assert law.dtype is None
+        assert law.support is None
+
+    def test_dtype_and_support_are_shared_by_every_leaf(self):
+        from probpipe import positive
+
+        law = _DeclaredLaw(
+            "law",
+            RecordSpec(
+                a=NumericArraySpec((), dtype="float32", support=positive),
+                b=RecordSpec(c=NumericArraySpec((2,), dtype="float32", support=positive)),
+            ),
+        )
+        assert law.dtype == np.dtype("float32")
+        assert law.support == positive
+
+    def test_one_array_leaf_gives_its_dtype_and_support(self):
+        from probpipe import positive
+
+        law = _DeclaredLaw("x", NumericArraySpec((), dtype="float64", support=positive))
+        assert law.dtypes == {"x": np.dtype("float64")}
+        assert law.dtype == np.dtype("float64")
+        assert law.support is positive
+
+    @pytest.mark.parametrize("view", ["dtypes", "supports", "dtype", "support"])
+    def test_the_numeric_views_belong_to_numeric_laws(self, view):
+        # A numeric law has them whatever its class; any other law has none.
+        numeric = _DeclaredLaw("x", NumericArraySpec((), dtype="float32"))
+        opaque = _DeclaredLaw("law", RecordSpec(a=NumericArraySpec(()), o=OpaqueSpec()))
+        assert not hasattr(Distribution, view)
+        assert hasattr(NumericDistribution, view)
+        assert hasattr(numeric, view)
+        with pytest.raises(AttributeError, match=f"non-numeric event, and {view} belongs"):
+            getattr(opaque, view)
+
+    def test_an_attribute_error_of_a_property_is_kept(self):
+        class _Raising(Distribution):
+            @property
+            def broken(self):
+                raise AttributeError("the property's own message")
+
+        with pytest.raises(AttributeError, match="the property's own message"):
+            _ = _Raising("x", NumericArraySpec(())).broken
+
+
+class TestDimensionTransforms:
+    def test_with_dim_sizes_binds_a_free_dimension(self):
+        law = _DeclaredLaw("x", NumericArraySpec(("n",)))
+        bound = law.with_dim_sizes(n=3)
+        assert type(bound) is type(law)
+        assert bound.name == "x"
+        assert bound.event_spec == OutputSpec(x=NumericArraySpec((3,)))
+        assert law.event_spec == OutputSpec(x=NumericArraySpec(("n",)))
+
+    def test_with_dim_sizes_refuses_a_name_that_is_not_free(self):
+        bound = _DeclaredLaw("x", NumericArraySpec(("n",))).with_dim_sizes(n=3)
+        with pytest.raises(ValueError, match=r"no free dimensions \['n'\]"):
+            bound.with_dim_sizes(n=4)
+
+    def test_with_dim_names_renames_simultaneously(self):
+        law = _DeclaredLaw("x", NumericArraySpec(("n", "m")))
+        assert law.with_dim_names(n="m", m="n").event_spec.spec.shape == ("m", "n")
+
+
+class TestDistributionSpecFingerprint:
+    def test_the_two_packagings_fingerprint_apart(self):
+        from probpipe.core._fingerprint import fingerprint
+
+        whole = DistributionSpec(OutputSpec(x=NumericArraySpec(())))
+        exposed = DistributionSpec(RecordSpec(x=()))
+        assert fingerprint(whole) != fingerprint(exposed)
+        assert fingerprint(whole) == fingerprint(
+            DistributionSpec(OutputSpec(x=NumericArraySpec(())))
+        )

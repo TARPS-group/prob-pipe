@@ -279,6 +279,7 @@ class NumericRecordDistribution(RecordDistribution):
             ) from None
         tpl = RecordSpec(**{name: es})
         object.__setattr__(self, "_event_template", tpl)
+        object.__setattr__(self, "_event_template_is_auto", True)
         return tpl
 
     def with_name(self, new_name: str) -> NumericRecordDistribution:
