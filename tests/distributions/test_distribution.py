@@ -21,6 +21,7 @@ from probpipe import (
     Gamma,
     MultivariateNormal,
     Normal,
+    NumericRecordSpec,
     RandomFunction,
     RandomMeasure,
     RecordEmpiricalDistribution,
@@ -605,6 +606,13 @@ class TestDerivedNames:
                 ),
                 jnp.mean,
                 id="bootstrap-replicate",
+            ),
+            pytest.param(
+                lambda: MultivariateNormal(
+                    "law", jnp.zeros(2), cov=jnp.eye(2)
+                ).as_record_distribution(template=NumericRecordSpec(a=(), b=())),
+                lambda x: x["a"],
+                id="record-view",
             ),
         ],
     )
