@@ -35,21 +35,17 @@ class Bernoulli(TFPDistribution):
 
     Parameters
     ----------
+    name : str
+        Distribution name.
     probs : array-like, optional
         Probability of a 1 outcome.  Exactly one of *probs* or *logits*
         must be provided.
     logits : array-like, optional
         Log-odds of a 1 outcome.
-    name : str
-        Distribution name.
     """
 
     def __init__(
-        self,
-        *,
-        probs: ArrayLike | None = None,
-        logits: ArrayLike | None = None,
-        name: str,
+        self, name: str, *, probs: ArrayLike | None = None, logits: ArrayLike | None = None
     ):
         if (probs is None) == (logits is None):
             raise ValueError("Exactly one of probs or logits must be provided.")
@@ -102,6 +98,8 @@ class Binomial(TFPDistribution):
 
     Parameters
     ----------
+    name : str
+        Distribution name.
     total_count : array-like
         Number of trials.
     probs : array-like, optional
@@ -109,17 +107,15 @@ class Binomial(TFPDistribution):
         *logits* must be provided.
     logits : array-like, optional
         Log-odds of success per trial.
-    name : str
-        Distribution name.
     """
 
     def __init__(
         self,
+        name: str,
         total_count: ArrayLike,
         *,
         probs: ArrayLike | None = None,
         logits: ArrayLike | None = None,
-        name: str,
     ):
         if (probs is None) == (logits is None):
             raise ValueError("Exactly one of probs or logits must be provided.")
@@ -182,18 +178,13 @@ class Poisson(TFPDistribution):
 
     Parameters
     ----------
-    rate : array-like
-        Rate parameter (must be positive).
     name : str
         Distribution name.
+    rate : array-like
+        Rate parameter (must be positive).
     """
 
-    def __init__(
-        self,
-        rate: ArrayLike,
-        *,
-        name: str,
-    ):
+    def __init__(self, name: str, rate: ArrayLike):
         self._rate = _as_float_array(rate)
         self._tfp_dist = tfd.Poisson(rate=self._rate)
         super().__init__(name=name)
@@ -217,21 +208,17 @@ class Categorical(TFPDistribution):
 
     Parameters
     ----------
+    name : str
+        Distribution name.
     probs : array-like, optional
         Probabilities for each category.  Exactly one of *probs* or
         *logits* must be provided.
     logits : array-like, optional
         Unnormalized log-probabilities for each category.
-    name : str
-        Distribution name.
     """
 
     def __init__(
-        self,
-        *,
-        probs: ArrayLike | None = None,
-        logits: ArrayLike | None = None,
-        name: str,
+        self, name: str, *, probs: ArrayLike | None = None, logits: ArrayLike | None = None
     ):
         if (probs is None) == (logits is None):
             raise ValueError("Exactly one of probs or logits must be provided.")
@@ -285,6 +272,8 @@ class NegativeBinomial(TFPDistribution):
 
     Parameters
     ----------
+    name : str
+        Distribution name.
     total_count : array-like
         Number of successes before stopping.
     probs : array-like, optional
@@ -292,17 +281,15 @@ class NegativeBinomial(TFPDistribution):
         *logits* must be provided.
     logits : array-like, optional
         Log-odds of success per trial.
-    name : str
-        Distribution name.
     """
 
     def __init__(
         self,
+        name: str,
         total_count: ArrayLike,
         *,
         probs: ArrayLike | None = None,
         logits: ArrayLike | None = None,
-        name: str,
     ):
         if (probs is None) == (logits is None):
             raise ValueError("Exactly one of probs or logits must be provided.")

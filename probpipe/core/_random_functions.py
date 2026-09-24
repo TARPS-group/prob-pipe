@@ -37,11 +37,14 @@ class RandomFunction(Distribution):
     approximation. Finite-dimensional subclasses that support sampling
     should inherit :class:`SupportsSampling` and implement
     ``_sample(key, sample_shape)``.
+
+    Parameters
+    ----------
+    name : str
+        Distribution name.
     """
 
-    def __init__(self, *, name: str | None = None):
-        if not name:
-            name = type(self).__name__
+    def __init__(self, name: str):
         super().__init__(name=name)
 
     # -- Fundamental interface ----------------------------------------------
@@ -102,6 +105,8 @@ class ArrayRandomFunction(RandomFunction):
 
     Parameters
     ----------
+    name : str
+        Distribution name.
     input_shape : tuple of int
         Shape of a single input point, e.g. ``(3,)`` for 3-D inputs.
     output_shape : tuple of int
@@ -114,11 +119,7 @@ class ArrayRandomFunction(RandomFunction):
     supports_joint_outputs: bool = False
 
     def __init__(
-        self,
-        input_shape: tuple[int, ...],
-        output_shape: tuple[int, ...] = (),
-        *,
-        name: str | None = None,
+        self, name: str, input_shape: tuple[int, ...], output_shape: tuple[int, ...] = ()
     ) -> None:
         super().__init__(name=name)
         self._input_shape = tuple(input_shape)

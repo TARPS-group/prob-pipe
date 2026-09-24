@@ -111,11 +111,14 @@ class RandomMeasure(Distribution):
     :class:`~probpipe.core._distribution_array.DistributionArray`, which
     treats ``RandomMeasure`` instances as scalar ``Distribution``
     components like any other.
+
+    Parameters
+    ----------
+    name : str
+        Distribution name.
     """
 
-    def __init__(self, *, name: str | None = None):
-        if name is None:
-            name = type(self).__name__
+    def __init__(self, name: str):
         super().__init__(name=name)
 
 

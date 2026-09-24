@@ -903,7 +903,7 @@ class TestReplayPreflight:
     def test_effect_descriptor_scalar_types_are_exact_before_derivation(self):
         original_root = Normal(loc=0.0, scale=1.0, name="root")
         with workflow_run(seed=4):
-            original = sample(TransformedDistribution(original_root, tfb.Shift(1.0)))
+            original = sample(TransformedDistribution("shifted", original_root, tfb.Shift(1.0)))
         payload = original.provenance.to_dict()
         descriptor = payload["controls"]["replay"]["plan"]["expected_effects"][0][
             "descendant_descriptor"
@@ -920,7 +920,7 @@ class TestReplayPreflight:
         assert replace_bool_marker(descriptor)
         changed = Provenance.from_dict(payload)
         candidate_root = Normal(loc=0.0, scale=1.0, name="root")
-        candidate = TransformedDistribution(candidate_root, tfb.Shift(1.0))
+        candidate = TransformedDistribution("candidate", candidate_root, tfb.Shift(1.0))
 
         with (
             patch.object(candidate_root, "_sample", side_effect=AssertionError("sampled")),
@@ -1002,6 +1002,7 @@ class TestReplayPreflight:
 
     def test_direct_descendant_drift_fails_before_key_derivation(self):
         original_dist = TransformedDistribution(
+            "original_dist",
             Normal(loc=0.0, scale=1.0, name="root"),
             tfb.Exp(),
         )
@@ -1011,6 +1012,7 @@ class TestReplayPreflight:
         with replay_run(original.provenance):
             replayed = sample(
                 TransformedDistribution(
+                    "transformed",
                     Normal(loc=0.0, scale=1.0, name="root"),
                     tfb.Exp(),
                 )
@@ -1018,7 +1020,7 @@ class TestReplayPreflight:
         np.testing.assert_array_equal(_sample_value(replayed), _sample_value(original))
 
         candidate_root = Normal(loc=0.0, scale=1.0, name="root")
-        candidate = TransformedDistribution(candidate_root, tfb.Square())
+        candidate = TransformedDistribution("candidate", candidate_root, tfb.Square())
         with (
             patch.object(candidate_root, "_sample", side_effect=AssertionError("sampled")),
             patch(
@@ -1444,13 +1446,13 @@ class TestReplayCoSamplingPlans:
                 root = Normal(loc=0.0, scale=1.0, name="root")
                 return {
                     "left": root,
-                    "right": TransformedDistribution(root, tfb.Exp()),
+                    "right": TransformedDistribution("right", root, tfb.Exp()),
                 }
             return {
                 "left": EmpiricalDistribution(
+                    "left",
                     jnp.asarray([1.0, 3.0]),
                     weights=jnp.asarray([0.25, 0.75]),
-                    name="left",
                 ),
                 "right": Normal(loc=0.0, scale=1.0, name="right"),
             }

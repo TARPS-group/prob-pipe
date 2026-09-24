@@ -48,7 +48,7 @@ class _RecordingEmpirical(RecordEmpiricalDistribution):
         self.calls = calls
         if values is None:
             values = [-1.0, 0.0, 1.0, 2.0]
-        super().__init__(jnp.asarray(values), name="x")
+        super().__init__("x", jnp.asarray(values))
 
     def _sample(self, key, sample_shape=()):
         self.calls.append((key, tuple(sample_shape)))
@@ -250,7 +250,7 @@ class TestBuiltInConversionPlanning:
     def test_sampled_probpipe_conversion_uses_captured_root_and_forward(self):
         calls = []
         root = _RecordingNormal(calls)
-        descendant = TransformedDistribution(root, tfb.Exp())
+        descendant = TransformedDistribution("descendant", root, tfb.Exp())
 
         with (
             patch.object(
@@ -278,6 +278,7 @@ class TestBuiltInConversionPlanning:
 
     def test_from_distribution_recipe_keeps_the_captured_descendant_plan(self):
         descendant = TransformedDistribution(
+            "descendant",
             Normal(loc=0.0, scale=1.0, name="root"),
             tfb.Exp(),
         )
@@ -296,7 +297,7 @@ class TestBuiltInConversionPlanning:
     def test_unsupported_descendant_conversion_fails_before_entropy(self):
         calls = []
         root = _RecordingNormal(calls)
-        descendant = TransformedDistribution(root, tfb.Tanh())
+        descendant = TransformedDistribution("descendant", root, tfb.Tanh())
 
         with (
             patch("probpipe.core._workflow_context._os_urandom") as urandom,
@@ -316,7 +317,7 @@ class TestBuiltInConversionPlanning:
 
     def test_explicit_key_conversion_keeps_direct_descendant_sampling(self):
         root = Normal(loc=0.0, scale=1.0, name="base")
-        descendant = TransformedDistribution(root, tfb.Tanh())
+        descendant = TransformedDistribution("descendant", root, tfb.Tanh())
         explicit = jax.random.key(37)
 
         converted = converter_registry.convert(
@@ -332,7 +333,7 @@ class TestBuiltInConversionPlanning:
     def test_mc_moment_conversion_plans_and_reuses_one_sample_batch(self):
         calls = []
         root = _RecordingEmpirical(calls)
-        descendant = TransformedDistribution(root, tfb.Exp())
+        descendant = TransformedDistribution("descendant", root, tfb.Exp())
         converter = ProbPipeConverter()
 
         plan = converter._workflow_plan_conversion(
@@ -385,7 +386,7 @@ class TestBuiltInConversionPlanning:
     def test_mc_moment_conversion_preserves_explicit_key(self, key_factory):
         calls = []
         root = _RecordingEmpirical(calls)
-        descendant = TransformedDistribution(root, tfb.Exp())
+        descendant = TransformedDistribution("descendant", root, tfb.Exp())
         explicit = key_factory()
 
         with patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit:
@@ -407,7 +408,7 @@ class TestBuiltInConversionPlanning:
             calls,
             values=[[-1.0, 0.0], [0.0, 1.0], [1.0, 2.0], [2.0, 3.0]],
         )
-        descendant = TransformedDistribution(root, tfb.Exp())
+        descendant = TransformedDistribution("descendant", root, tfb.Exp())
 
         with workflow_run(seed=47):
             converted = converter_registry.convert(
@@ -431,7 +432,7 @@ class TestBuiltInConversionPlanning:
     def test_mc_moment_target_preflight_fails_before_randomness(self):
         calls = []
         root = _RecordingEmpirical(calls)
-        descendant = TransformedDistribution(root, tfb.Exp())
+        descendant = TransformedDistribution("descendant", root, tfb.Exp())
 
         with (
             patch("probpipe.core._workflow_context._os_urandom") as urandom,

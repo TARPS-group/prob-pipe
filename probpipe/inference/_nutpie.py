@@ -106,7 +106,7 @@ def _compile_for_nutpie(model: Any, data: Any) -> tuple[Any, Any | None]:
         import nutpie
 
         if isinstance(data, dict):
-            # Keep the data the model was built with — StanModel(file, data=...)
+            # Keep the data the model was built with — StanModel(name, file, data=...)
             # stores it on ``_stan_data`` — and let the conditioning data
             # override key-by-key, mirroring the CmdStan method. Without this
             # the rebuilt BridgeStan model would see only the conditioning data

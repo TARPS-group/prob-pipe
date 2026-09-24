@@ -24,7 +24,7 @@ from probpipe.core.node import Function
 @pytest.fixture
 def initial():
     """A simple 2-D EmpiricalDistribution centered at zero."""
-    return EmpiricalDistribution(jnp.zeros((50, 2)), name="initial")
+    return EmpiricalDistribution("initial", jnp.zeros((50, 2)))
 
 
 def shift_step(dist, offset):
@@ -33,14 +33,14 @@ def shift_step(dist, offset):
     # for raw-array arithmetic.
     field = dist.samples.fields[0]
     samples = dist.samples[field] + offset
-    return EmpiricalDistribution(samples, name=field)
+    return EmpiricalDistribution(field, samples)
 
 
 def provenance_step(dist, value):
     """A step that sets its own provenance."""
     field = dist.samples.fields[0]
     samples = dist.samples[field] + value
-    new_dist = EmpiricalDistribution(samples, name=field)
+    new_dist = EmpiricalDistribution(field, samples)
     new_dist.with_provenance(Provenance("custom_step", parents=(dist,), metadata={"value": value}))
     return new_dist
 
@@ -184,7 +184,7 @@ class TestWithConversion:
         def parametric_step(dist, shift):
             key = jax.random.PRNGKey(42)
             samples = jnp.asarray(pp_sample(dist, key=key, sample_shape=(50,))) + shift
-            return EmpiricalDistribution(samples, name="x")
+            return EmpiricalDistribution("x", samples)
 
         initial = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         step = with_conversion(parametric_step, MultivariateNormal)
@@ -208,7 +208,7 @@ class TestWithResampling:
 
     def test_no_resample_uniform(self):
         """Uniform weights -> no resampling (ESS = N)."""
-        initial = EmpiricalDistribution(jnp.zeros((100, 2)), name="x")
+        initial = EmpiricalDistribution("x", jnp.zeros((100, 2)))
         step = with_resampling(shift_step, ess_threshold=0.5)
         dists = iterate(step_fn=step, initial=initial, inputs=[1.0])
         assert dists[-1].provenance.operation == "workflow.with_resampling(shift_step)"
@@ -220,9 +220,9 @@ class TestWithResampling:
         samples = jnp.arange(n * 2, dtype=jnp.float32).reshape(n, 2)
 
         def weighted_step(dist, inp):
-            return EmpiricalDistribution(samples, log_weights=log_w, name="x")
+            return EmpiricalDistribution("x", samples, log_weights=log_w)
 
-        initial = EmpiricalDistribution(jnp.zeros((n, 2)), name="x")
+        initial = EmpiricalDistribution("x", jnp.zeros((n, 2)))
         step = with_resampling(weighted_step, ess_threshold=0.5)
         dists = iterate(step_fn=step, initial=initial, inputs=[0.0])
         resampled = dists[-1]
@@ -235,9 +235,9 @@ class TestWithResampling:
         log_w = jnp.full(n, -100.0).at[0].set(0.0)
 
         def weighted_step(dist, inp):
-            return EmpiricalDistribution(jnp.zeros((n, 2)), log_weights=log_w, name="x")
+            return EmpiricalDistribution("x", jnp.zeros((n, 2)), log_weights=log_w)
 
-        initial = EmpiricalDistribution(jnp.zeros((n, 2)), name="x")
+        initial = EmpiricalDistribution("x", jnp.zeros((n, 2)))
         step = with_resampling(weighted_step, ess_threshold=0.5)
         raw = step.apply(initial, 0.0)
         wrapped = iterate(step_fn=step, initial=initial, inputs=[0.0])[-1]
@@ -265,9 +265,9 @@ class TestWithResampling:
         samples = jnp.arange(n * 2, dtype=jnp.float32).reshape(n, 2)
 
         def weighted_step(dist, inp):
-            return EmpiricalDistribution(samples, log_weights=log_w, name="x")
+            return EmpiricalDistribution("x", samples, log_weights=log_w)
 
-        initial = EmpiricalDistribution(jnp.zeros((n, 2)), name="x")
+        initial = EmpiricalDistribution("x", jnp.zeros((n, 2)))
 
         step1 = with_resampling(weighted_step, ess_threshold=0.5, seed=42)
         dists1 = iterate(step_fn=step1, initial=initial, inputs=[0.0, 0.0])
@@ -293,7 +293,7 @@ def _mock_condition_fn(model, data, **kwargs):
     key = jax.random.PRNGKey(0)
     noise = jax.random.normal(key, shape=(50, data_mean.shape[0]))
     samples = data_mean[None, :] + noise * 0.1
-    return EmpiricalDistribution(samples, name="x")
+    return EmpiricalDistribution("x", samples)
 
 
 class _SimpleLikelihood:
@@ -379,8 +379,8 @@ class TestNestability:
         def inner_step(dist, value):
             field = dist.samples.fields[0]
             return EmpiricalDistribution(
+                field,
                 dist.samples[field] + value,
-                name=field,
             )
 
         def outer_step(dist, batch):

@@ -147,6 +147,7 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
         # grads. ``dist`` is a SimpleModel (validated by ``check()``);
         # unpack its prior + CIL likelihood for the random measure.
         measure = MinibatchedDistribution(
+            "measure",
             dist.prior,
             dist.likelihood,
             observed,

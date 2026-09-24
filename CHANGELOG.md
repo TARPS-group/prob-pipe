@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- A distribution's name is the required first argument of every constructor
+  the design keeps, so `Normal("x", 0.0, 1.0)` replaces
+  `Normal(0.0, 1.0, name="x")`. A keyword `name=` still binds.
+  - The constructors are those of the parametric families and
+    `TFPDistribution`, the empirical and bootstrap laws, `KDEDistribution`,
+    `TransformedDistribution`, the random functions and measures,
+    `MinibatchedDistribution`, `StanModel`, and `PyMCModel`.
+  - A call that passes the other arguments positionally with `name=` raises
+    `TypeError`, and so does a call without a name, since no kept class
+    derives one.
+  - A law that `expectation` constructs is named `expectation`, for the
+    operation, and a result of the Gaussian random-function algebra is named
+    from its operands, as `sum(f, g)`.
+  - The joints, `BroadcastDistribution`, `DistributionArray`, `SimpleModel`,
+    `SimpleGenerativeModel`, and `ApproximateDistribution` keep a keyword
+    `name`.
 - The distribution classes and the distribution capability protocols take no
   type parameter. A draw's type follows from the distribution's event
   declaration, so a parameter could record only the declaration's kind.

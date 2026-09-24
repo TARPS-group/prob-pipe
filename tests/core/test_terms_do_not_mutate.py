@@ -71,7 +71,7 @@ class _ScalarBackend:
         self.batch_shape = (n,)
 
     def cell(self, index: int) -> Normal:
-        return Normal(float(index), 1.0, name=f"c{index}")
+        return Normal(f"c{index}", float(index), 1.0)
 
 
 class TestTheCheckItself:
@@ -145,9 +145,7 @@ class TestAQueryLeavesTheTermUnchanged:
     def test_a_tfp_product_distribution_builds_its_tfp_view_at_construction(self):
         # The combined TFP distribution is built once, by the constructor: no
         # read fills it in later.
-        joint = ProductDistribution(
-            a=Normal(0.0, 1.0, name="a"), b=Normal(1.0, 2.0, name="b"), name="j"
-        )
+        joint = ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 1.0, 2.0), name="j")
         assert hasattr(joint, "_tfp_dist")
         before = assigned_state(joint)
         _ = joint.event_shape

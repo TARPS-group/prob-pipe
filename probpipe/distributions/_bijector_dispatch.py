@@ -30,7 +30,7 @@ bijectors (see :data:`_BIJECTOR_SUPPORT_MAP` in
 The forward direction (bijector → support) in ``_BIJECTOR_SUPPORT_MAP``
 and the inverse direction (support → bijector) implemented here are
 **not** strict inverses of each other.  In particular,
-``TransformedDistribution(base, bijector_for(c)).support == c`` holds
+``TransformedDistribution(name, base, bijector_for(c)).support == c`` holds
 only for ``real``, ``positive``, and ``unit_interval`` (the cases where
 the canonical bijector is unparameterized and is in the forward map).
 For ``non_negative`` (Softplus → ``positive``), ``interval(low, high)``

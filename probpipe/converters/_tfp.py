@@ -292,7 +292,7 @@ class TFPConverter(Converter):
                 key = _resolve_conversion_key(key, plan)
                 samples = source.sample(seed=key, sample_shape=sample_shape)
                 emp_name = kwargs.get("name") or getattr(source, "name", None) or "samples"
-                emp = RecordEmpiricalDistribution(samples, name=emp_name)
+                emp = RecordEmpiricalDistribution(emp_name, samples)
                 emp.with_provenance(Provenance.create("convert_from_tfp", parents=[]))
                 if issubclass(target_type, RecordEmpiricalDistribution):
                     return emp

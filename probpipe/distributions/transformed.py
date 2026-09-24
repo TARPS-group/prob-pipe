@@ -18,7 +18,6 @@ from ..core.constraints import (
 )
 from ..core.protocols import SupportsLogProb, SupportsMean, SupportsSampling, SupportsVariance
 from ..core.provenance import Provenance
-from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ._tfp_base import TFPDistribution
 
@@ -152,41 +151,28 @@ class TransformedDistribution(NumericRecordDistribution):
 
     Parameters
     ----------
+    name : str
+        Distribution name for provenance.
     base : Distribution
         The untransformed base distribution.
     bijector : tfb.Bijector
         A TFP bijector (e.g. ``tfb.Exp()``, ``tfb.Sigmoid()``).
-    name : str, optional
-        Distribution name for provenance.
     """
 
-    def __new__(
-        cls,
-        base: NumericRecordDistribution,
-        bijector: tfb.Bijector,
-        *,
-        name: str | None = None,
-    ):
+    def __new__(cls, name: str, base: NumericRecordDistribution, bijector: tfb.Bijector):
         actual_cls = _transformed_class_for_base(base)
         return object.__new__(actual_cls)
 
-    def __init__(
-        self,
-        base: NumericRecordDistribution,
-        bijector: tfb.Bijector,
-        *,
-        name: str | None = None,
-    ):
+    def __init__(self, name: str, base: NumericRecordDistribution, bijector: tfb.Bijector):
         self._base = base
         self._bijector = bijector
-        name = auto_name(name, f"transformed({base.name})")
         super().__init__(name=name)
 
         if isinstance(base, TFPDistribution):
             self._tfp_transformed = tfd.TransformedDistribution(
                 distribution=base._tfp_dist,
                 bijector=bijector,
-                name=name or "TransformedDistribution",
+                name=name,
             )
         else:
             self._tfp_transformed = None

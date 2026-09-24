@@ -70,7 +70,7 @@ def data_record(regression_data):
 
 @pytest.fixture
 def measure(prior, likelihood, data_record):
-    return MinibatchedDistribution(prior, likelihood, data_record, batch_size=40)
+    return MinibatchedDistribution("measure", prior, likelihood, data_record, batch_size=40)
 
 
 # -- Construction --------------------------------------------------------------
@@ -78,7 +78,7 @@ def measure(prior, likelihood, data_record):
 
 class TestConstruction:
     def test_construction_basic(self, prior, likelihood, data_record):
-        m = MinibatchedDistribution(prior, likelihood, data_record, batch_size=32)
+        m = MinibatchedDistribution("m", prior, likelihood, data_record, batch_size=32)
         assert isinstance(m, MinibatchedDistribution)
         assert m.dataset_size == 200
         assert m.batch_size == 32
@@ -90,7 +90,7 @@ class TestConstruction:
             pass
 
         with pytest.raises(TypeError, match="SupportsLogProb"):
-            MinibatchedDistribution(_BarePrior(), likelihood, data_record, batch_size=32)
+            MinibatchedDistribution("measure", _BarePrior(), likelihood, data_record, batch_size=32)
 
     def test_construction_rejects_non_cil_likelihood(self, prior, data_record):
         """A bare ``Likelihood`` (no ``per_datum_log_likelihood``) is rejected."""
@@ -100,15 +100,15 @@ class TestConstruction:
                 return jnp.asarray(0.0)
 
         with pytest.raises(TypeError, match="ConditionallyIndependentLikelihood"):
-            MinibatchedDistribution(prior, _BareLikelihood(), data_record, batch_size=32)
+            MinibatchedDistribution("measure", prior, _BareLikelihood(), data_record, batch_size=32)
 
     def test_construction_validates_batch_size_too_small(self, prior, likelihood, data_record):
         with pytest.raises(ValueError, match="batch_size must be in"):
-            MinibatchedDistribution(prior, likelihood, data_record, batch_size=0)
+            MinibatchedDistribution("measure", prior, likelihood, data_record, batch_size=0)
 
     def test_construction_validates_batch_size_too_large(self, prior, likelihood, data_record):
         with pytest.raises(ValueError, match="batch_size must be in"):
-            MinibatchedDistribution(prior, likelihood, data_record, batch_size=999)
+            MinibatchedDistribution("measure", prior, likelihood, data_record, batch_size=999)
 
     def test_construction_rejects_nested_records(self, prior, likelihood):
         """Nested Records fail at construction with an actionable error."""
@@ -118,7 +118,7 @@ class TestConstruction:
             y=jnp.zeros((200,)),
         )
         with pytest.raises(ValueError, match="flat Record"):
-            MinibatchedDistribution(prior, likelihood, nested, batch_size=32)
+            MinibatchedDistribution("measure", prior, likelihood, nested, batch_size=32)
 
 
 # -- Property accessors -------------------------------------------------------
@@ -134,12 +134,12 @@ class TestAccessors:
         data_record,
     ):
         m = MinibatchedDistribution(
+            "custom_name",
             prior,
             likelihood,
             data_record,
             batch_size=25,
             with_replacement=True,
-            name="custom_name",
         )
         assert m.dataset_size == 200
         assert m.batch_size == 25
@@ -148,9 +148,6 @@ class TestAccessors:
         assert m.likelihood is likelihood
         assert m.data is data_record
         assert m.name == "custom_name"
-
-    def test_default_name_includes_batch_size(self, measure):
-        assert "batch_size=40" in measure.name
 
 
 # -- Protocol membership -------------------------------------------------------
@@ -192,7 +189,7 @@ class TestInnerDraw:
 
     def test_batch_size_one(self, prior, likelihood, data_record):
         """Exercise the vmap-over-1-element-axis edge case."""
-        m = MinibatchedDistribution(prior, likelihood, data_record, batch_size=1)
+        m = MinibatchedDistribution("m", prior, likelihood, data_record, batch_size=1)
         inner = m._draw_one(jax.random.PRNGKey(0))
         assert inner.batch["X"].shape == (1, 2)
         assert inner.batch["y"].shape == (1,)
@@ -244,8 +241,10 @@ class TestInnerDraw:
             element_spec=NumericRecordSpec(X=(X.shape[1],), y=()),
         )
 
-        m_rec = MinibatchedDistribution(prior, likelihood, record_data, batch_size=20)
-        m_batch = MinibatchedDistribution(prior, likelihood, record_batch_data, batch_size=20)
+        m_rec = MinibatchedDistribution("m_rec", prior, likelihood, record_data, batch_size=20)
+        m_batch = MinibatchedDistribution(
+            "m_batch", prior, likelihood, record_batch_data, batch_size=20
+        )
 
         # Same key → same minibatch indices → same log-density at theta.
         key = jax.random.PRNGKey(13)
@@ -257,6 +256,7 @@ class TestInnerDraw:
     def test_with_replacement_flag(self, prior, likelihood, data_record):
         """``with_replacement=True`` allows repeated indices."""
         m_wr = MinibatchedDistribution(
+            "m_wr",
             prior,
             likelihood,
             data_record,
@@ -292,6 +292,7 @@ class TestInnerDraw:
         X, _ = regression_data
         N = X.shape[0]
         m_full = MinibatchedDistribution(
+            "m_full",
             prior,
             likelihood,
             data_record,
@@ -344,6 +345,7 @@ class TestBareArrayData:
                 return -0.5 * jnp.asarray(datum) ** 2
 
         m = MinibatchedDistribution(
+            "m",
             prior,
             _ResponseOnlyLikelihood(),
             y,
@@ -490,4 +492,4 @@ def test_a_multi_axis_batch_is_refused_at_construction(prior, likelihood):
         element_spec=RecordSpec(x=NumericArraySpec(shape=())),
     )
     with pytest.raises(ValueError, match="rows are one axis"):
-        MinibatchedDistribution(prior, likelihood, grid, batch_size=2)
+        MinibatchedDistribution("measure", prior, likelihood, grid, batch_size=2)

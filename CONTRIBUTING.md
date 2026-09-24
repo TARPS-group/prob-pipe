@@ -500,15 +500,13 @@ uv build packaging/probpipe   # probpipe (metapackage)
    the mixin's metaclass enforces a non-empty `name` at construction
    for every host. `Function` is an immutable, schema-aware computation term;
    its Python signature is captured independently from its optional
-   authoritative input and output templates. Leaf distributions (Normal,
-   Gamma, etc.) require an
-   explicit `name=` at construction.  Composite distributions
-   (ProductDistribution, EmpiricalDistribution, TransformedDistribution,
-   etc.) auto-derive a name from their components when one is not
-   provided. Names are set at construction and preserved by every transform;
+   authoritative input and output templates. A distribution takes its name
+   as the required first argument (`Normal("x", 0.0, 1.0)`), as `Record`
+   does; the classes the design retires, such as `ProductDistribution`, still
+   take it as a keyword. Names are set at construction and preserved by every transform;
    only `with_name` replaces them. `ProductDistribution` validates that each
    component distribution's `name` matches its keyword key (e.g.,
-   `ProductDistribution(x=Normal(0, 1, name="x"))`).  `Record` and
+   `ProductDistribution(x=Normal("x", 0, 1))`).  `Record` and
    `NumericRecord` take the name as the required first positional
    argument (`Record(name, ...)`); an operation that produces a record
    supplies a meaningful name — the producing distribution's or model's
@@ -595,7 +593,7 @@ uv build packaging/probpipe   # probpipe (metapackage)
 | `NumericRecordDistributionView` | The inverse view, produced by `FlatNumericRecordDistribution.as_record_distribution(template=…)`. Lifts a flat distribution to a Record-keyed structure; samples come back as `NumericRecord` / `NumericRecordBatch` keyed by `template.fields`. |
 | `DistributionArray` | Shape-indexed `Array[Distribution]`; exposes only the container surface (indexing, iteration, `batch_shape`, `event_shape`, `event_template`, `components`). `event_template` is the explicitly supplied authoritative template for Function aggregates, the common component template for compatible literal arrays, or `None`. Vectorized ops are delivered by the `Function` sweep layer — passing a `DistributionArray` to an op whose hint is a scalar `Distribution` / protocol triggers cell-by-cell dispatch, and outputs stack into `NumericRecordBatch` / `RecordBatch` / (nested) `DistributionArray`. Produced by parameter-sweep Functions whose inner call returns a `Distribution`. |
 | `JointEmpirical` / `NumericJointEmpirical` | Weighted joint samples distribution. Generic base supports only sampling; the numeric subclass adds exact `SupportsMean` / `SupportsVariance`. Conditioning is not offered, since dropping stored fields is marginalization; build the marginal directly. `JointEmpirical(...)` dispatches to `NumericJointEmpirical` when every field is numeric. (Empirical distributions do not claim `SupportsLogProb`; use `from_distribution(emp, KDEDistribution, …)` for a density.) |
-| `EmpiricalDistribution` / `RecordEmpiricalDistribution` | Weighted empirical distribution. The generic base holds samples of any type; the Record-based specialisation adds `event_shapes`, exact moments (`SupportsMean` / `SupportsVariance` / `SupportsCovariance`), and TFP-style shape semantics. Numeric-array sources auto-wrap as a single-field Record (requires `name=`). Two views on the stored draws: `samples` (structured `NumericRecord`, per-field access via `samples[name]`) and `flat_samples` (flat `(n, dim)` matrix across all fields, in insertion order). Use `flat_samples` for stacked-matrix idioms like `post.flat_samples.mean(axis=0)` for per-parameter posterior summaries. |
+| `EmpiricalDistribution` / `RecordEmpiricalDistribution` | Weighted empirical distribution. The generic base holds samples of any type; the Record-based specialisation adds `event_shapes`, exact moments (`SupportsMean` / `SupportsVariance` / `SupportsCovariance`), and TFP-style shape semantics. Numeric-array sources auto-wrap as a single-field Record keyed by the name. Two views on the stored draws: `samples` (structured `NumericRecord`, per-field access via `samples[name]`) and `flat_samples` (flat `(n, dim)` matrix across all fields, in insertion order). Use `flat_samples` for stacked-matrix idioms like `post.flat_samples.mean(axis=0)` for per-parameter posterior summaries. |
 | `BootstrapReplicateDistribution` / `RecordBootstrapReplicateDistribution` | N-fold product over a source: each draw is a bootstrapped dataset of `n` i.i.d. observations. Accepts a `Record`, `RecordEmpiricalDistribution`, numeric array, or any `SupportsSampling` source (in which case `n` is mandatory). |
 | `Function` | Immutable first-class `TrackedTerm` / `Annotated`, schema-aware computation term. It owns a frozen Python `signature`, optional authoritative input/output `RecordSpec`s, and an implementation object. `apply` performs one raw evaluation; `__call__` adds lifting, variadic slot planning, sweeps, orchestration, wrapping, and Function-first provenance. Prefect is off by default; views are grouped by parent for correlated broadcasting. |
 | `Module` | Stateful workflow-aware base class (see `@workflow_method`) |
@@ -762,21 +760,21 @@ a numeric array or a `Record` automatically returns the Record-based
 subclass:
 
 ```python
-EmpiricalDistribution(jnp.ones((100, 3)), name="theta")
+EmpiricalDistribution("theta", jnp.ones((100, 3)))
 # → returns RecordEmpiricalDistribution; auto-wraps the array as a
 #   single-field record with field "theta"
 
-EmpiricalDistribution(Record("draws", x=jnp.zeros((50,)), y=jnp.zeros((50,))))
+EmpiricalDistribution("draws", Record("draws", x=jnp.zeros((50,)), y=jnp.zeros((50,))))
 # → returns RecordEmpiricalDistribution; multi-field record
 ```
 
 `__new__` on the generic base implements the dispatch. Non-array,
 non-Record inputs (lists of objects, opaque sequences) stay in the
-generic base. The numeric-array path requires `name=` so the
-auto-wrapped Record has a meaningful field key.
+generic base. On the numeric-array path the distribution's name also
+keys the auto-wrapped Record's field.
 
 `BootstrapReplicateDistribution` additionally accepts a
-`SupportsSampling` source (e.g. `Normal(0, 1, name="x")`); each
+`SupportsSampling` source (e.g. `Normal("x", 0, 1)`); each
 replicate is `n` i.i.d. draws from `source._sample`. `n` is
 mandatory in this case (no canonical observation count).
 

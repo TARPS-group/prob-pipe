@@ -47,11 +47,11 @@ class TestKwargFormScalar:
     """Single-field distributions: a field kwarg packs to the bare value."""
 
     def test_normal(self):
-        d = Normal(0.0, 1.0, name="x")
+        d = Normal("x", 0.0, 1.0)
         assert jnp.allclose(log_prob(d, x=1.5), log_prob(d, 1.5))
 
     def test_beta(self):
-        d = Beta(2.0, 3.0, name="p")
+        d = Beta("p", 2.0, 3.0)
         assert jnp.allclose(log_prob(d, p=0.4), log_prob(d, 0.4))
 
     def test_multivariate_normal_vector_event(self):
@@ -60,7 +60,7 @@ class TestKwargFormScalar:
         assert jnp.allclose(log_prob(d, z=v), log_prob(d, v))
 
     def test_record_batch_view_in_variadic_any_kwarg_is_swept(self):
-        d = Normal(0.0, 1.0, name="x")
+        d = Normal("x", 0.0, 1.0)
         rows = NumericRecordBatch.stack(
             [NumericRecord("row", x=float(value)) for value in range(3)], level_name="draw"
         )
@@ -77,13 +77,13 @@ class TestKwargFormRecord:
     """Multi-field distributions: field kwargs pack to a Record."""
 
     def test_product_distribution(self):
-        p = ProductDistribution(Normal(0.0, 1.0, name="a"), Beta(2.0, 3.0, name="b"))
+        p = ProductDistribution(Normal("a", 0.0, 1.0), Beta("b", 2.0, 3.0))
         assert jnp.allclose(log_prob(p, a=0.5, b=0.4), log_prob(p, Record("r", a=0.5, b=0.4)))
 
     def test_field_order_independent(self):
         # Distinguishable components (Normal vs Beta) so a field swap would
         # change the result — a symmetric pair could not detect mis-routing.
-        p = ProductDistribution(Normal(0.0, 1.0, name="a"), Beta(2.0, 3.0, name="b"))
+        p = ProductDistribution(Normal("a", 0.0, 1.0), Beta("b", 2.0, 3.0))
         out_of_order = log_prob(p, b=0.4, a=0.5)
         baseline = log_prob(p, Record("r", a=0.5, b=0.4))
         assert jnp.allclose(out_of_order, baseline)
@@ -104,9 +104,7 @@ class TestKwargFormSimpleModel:
         X = np.array([0.1, 0.5, -0.3], dtype=np.float32)
         y = np.array([1.0, 3.0, 0.0], dtype=np.float32)
         lik = GLMLikelihood(tfp_glm.Poisson(), X)
-        prior = ProductDistribution(
-            Normal(0.0, 1.0, name="intercept"), Normal(0.0, 1.0, name="slope")
-        )
+        prior = ProductDistribution(Normal("intercept", 0.0, 1.0), Normal("slope", 0.0, 1.0))
         return SimpleModel(prior, lik, name="m"), X, y
 
     def test_kwarg_matches_record_and_tuple(self):
@@ -125,7 +123,7 @@ class TestKwargFormSimpleModel:
             def log_likelihood(self, params, data):
                 return jnp.asarray(0.0)
 
-        prior = ProductDistribution(Normal(0.0, 1.0, name="a"), Normal(0.0, 1.0, name="b"))
+        prior = ProductDistribution(Normal("a", 0.0, 1.0), Normal("b", 0.0, 1.0))
         model = SimpleModel(prior, _NoTemplateLikelihood(), name="m")
         with pytest.raises(TypeError, match="no named data fields"):
             log_prob(model, a=0.5, b=0.5)
@@ -144,7 +142,7 @@ class TestKwargFormSimpleModel:
                 # params is the bare scalar from the single-field prior
                 return -0.5 * jnp.sum((data["y"] - params) ** 2)
 
-        model = SimpleModel(Normal(0.0, 1.0, name="theta"), _ScalarLikelihood(), name="m")
+        model = SimpleModel(Normal("theta", 0.0, 1.0), _ScalarLikelihood(), name="m")
         y = jnp.array([0.2, -0.1, 0.4])
         kw = log_prob(model, theta=0.5, y=y)
         rec = log_prob(model, Record("r", theta=0.5, y=y))
@@ -200,45 +198,45 @@ class TestStanViewsPackValue:
 
 class TestKwargErrors:
     def test_missing_field(self):
-        p = ProductDistribution(Normal(0.0, 1.0, name="a"), Normal(0.0, 1.0, name="b"))
+        p = ProductDistribution(Normal("a", 0.0, 1.0), Normal("b", 0.0, 1.0))
         with pytest.raises(TypeError, match="missing"):
             log_prob(p, a=0.5)
 
     def test_extra_field(self):
-        d = Normal(0.0, 1.0, name="x")
+        d = Normal("x", 0.0, 1.0)
         with pytest.raises(TypeError, match="unexpected"):
             log_prob(d, x=1.0, bogus=2.0)
 
     def test_positional_value_and_kwargs(self):
-        d = Normal(0.0, 1.0, name="x")
+        d = Normal("x", 0.0, 1.0)
         with pytest.raises(TypeError, match="not both"):
             log_prob(d, 1.0, x=2.0)
 
     def test_neither_value_nor_kwargs(self):
-        d = Normal(0.0, 1.0, name="x")
+        d = Normal("x", 0.0, 1.0)
         with pytest.raises(TypeError, match="value is required"):
             log_prob(d)
 
 
 class TestProbAndUnnormalizedKwargForm:
     def test_prob_kwarg(self):
-        d = Normal(0.0, 1.0, name="x")
+        d = Normal("x", 0.0, 1.0)
         assert jnp.allclose(prob(d, x=0.0), prob(d, 0.0))
 
     def test_unnormalized_log_prob_kwarg(self):
-        d = Normal(0.0, 1.0, name="x")
+        d = Normal("x", 0.0, 1.0)
         assert jnp.allclose(unnormalized_log_prob(d, x=1.2), unnormalized_log_prob(d, 1.2))
 
     def test_unnormalized_prob_kwarg(self):
-        d = Normal(0.0, 1.0, name="x")
+        d = Normal("x", 0.0, 1.0)
         assert jnp.allclose(unnormalized_prob(d, x=0.3), unnormalized_prob(d, 0.3))
 
     def test_prob_multifield_kwarg_matches_record(self):
-        p = ProductDistribution(Normal(0.0, 1.0, name="a"), Beta(2.0, 3.0, name="b"))
+        p = ProductDistribution(Normal("a", 0.0, 1.0), Beta("b", 2.0, 3.0))
         assert jnp.allclose(prob(p, a=0.5, b=0.4), prob(p, Record("r", a=0.5, b=0.4)))
 
     def test_unnormalized_prob_multifield_kwarg_matches_record(self):
-        p = ProductDistribution(Normal(0.0, 1.0, name="a"), Beta(2.0, 3.0, name="b"))
+        p = ProductDistribution(Normal("a", 0.0, 1.0), Beta("b", 2.0, 3.0))
         assert jnp.allclose(
             unnormalized_prob(p, a=0.5, b=0.4),
             unnormalized_prob(p, Record("r", a=0.5, b=0.4)),
@@ -257,14 +255,14 @@ class TestWorkflowControlFieldNames:
     def test_construction_does_not_warn_for_control_names(self, name):
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            Normal(0.0, 1.0, name=name)
+            Normal(name, 0.0, 1.0)
         assert not caught
 
     @pytest.mark.parametrize("name", ["seed", "n_broadcast_samples", "include_inputs"])
     def test_keyword_form_addresses_the_field(self, name):
         # The field name is not swallowed by the workflow layer — it packs
         # into the value, matching the positional form.
-        d = Normal(0.0, 1.0, name=name)
+        d = Normal(name, 0.0, 1.0)
         assert jnp.allclose(log_prob(d, **{name: 1.5}), log_prob(d, 1.5))
 
 
@@ -278,7 +276,7 @@ class TestControlsViaWithOptions:
         [{"n_broadcast_samples": 8}, {"include_inputs": True}],
     )
     def test_with_options_accepts_controls(self, control):
-        d = Normal(0.0, 1.0, name="x")
+        d = Normal("x", 0.0, 1.0)
         log_prob.with_options(**control)(d, 1.5)
 
     def test_with_options_rejects_removed_rng_seed_control(self):
@@ -296,7 +294,7 @@ class TestControlsViaWithOptions:
     def test_with_options_supports_both_value_forms(self):
         # Because the op is a real WF with **field_kwargs, with_options accepts
         # the positional and keyword value forms alike.
-        d = Normal(0.0, 1.0, name="x")
+        d = Normal("x", 0.0, 1.0)
         base = log_prob(d, 1.5)
         assert jnp.allclose(log_prob.with_options()(d, 1.5), base)
         assert jnp.allclose(log_prob.with_options()(d, x=1.5), base)
@@ -304,7 +302,7 @@ class TestControlsViaWithOptions:
     def test_control_as_call_kwarg_is_rejected(self):
         # Controls are not call kwargs on the density ops; with a positional
         # value present, a stray control name collides with the keyword form.
-        d = Normal(0.0, 1.0, name="x")
+        d = Normal("x", 0.0, 1.0)
         with pytest.raises(TypeError, match="not both"):
             log_prob(d, 1.5, seed=3)
 
@@ -315,7 +313,7 @@ class TestValueKeywordBackwardCompat:
     additive and does not break the legacy ``log_prob(dist, value=x)`` call."""
 
     def test_value_keyword_equals_positional(self):
-        d = Normal(0.0, 1.0, name="x")
+        d = Normal("x", 0.0, 1.0)
         assert jnp.allclose(log_prob(d, value=1.5), log_prob(d, 1.5))
 
 
@@ -362,7 +360,7 @@ class TestRandomMeasureKwargForm:
         y = jnp.array([1.0, 0.0, 1.0, 0.0])
         prior = MultivariateNormal(loc=jnp.zeros(4), cov=jnp.eye(4), name="theta")
         lik = GLMLikelihood(tfp_glm.Bernoulli(), x=X)
-        return MinibatchedDistribution(prior, lik, Record("r", X=X, y=y), batch_size=2)
+        return MinibatchedDistribution("measure", prior, lik, Record("r", X=X, y=y), batch_size=2)
 
     def test_value_omitted_returns_callable_with_options(self):
         m = self._measure()
@@ -388,11 +386,11 @@ class TestKwargShapeAndBroadcast:
     the positional form still broadcasts after the `value=None` default."""
 
     def test_kwarg_result_is_scalar_for_scalar_dist(self):
-        d = Normal(0.0, 1.0, name="x")
+        d = Normal("x", 0.0, 1.0)
         assert jnp.asarray(log_prob(d, x=1.5)).shape == ()
 
     def test_positional_still_broadcasts(self):
-        d = Normal(0.0, 1.0, name="x")
+        d = Normal("x", 0.0, 1.0)
         out = log_prob(d, jnp.array([0.0, 1.0, 2.0]))
         assert jnp.asarray(out).shape == (3,)
 
@@ -402,7 +400,7 @@ class TestFieldNameCollision:
     the escape differs by single- vs multi-field (#228, see CHANGELOG)."""
 
     def test_multifield_value_field_via_positional_record(self):
-        p = ProductDistribution(Normal(0.0, 1.0, name="value"), Beta(2.0, 3.0, name="b"))
+        p = ProductDistribution(Normal("value", 0.0, 1.0), Beta("b", 2.0, 3.0))
         # the keyword form can't address the 'value' field (binds to the param):
         with pytest.raises(TypeError, match="not both"):
             log_prob(p, value=0.5, b=0.4)
@@ -410,7 +408,7 @@ class TestFieldNameCollision:
         assert jnp.isfinite(log_prob(p, Record("r", value=0.5, b=0.4)))
 
     def test_singlefield_value_field_via_bare_positional(self):
-        d = Normal(0.0, 1.0, name="value")
+        d = Normal("value", 0.0, 1.0)
         # bare positional works (and equals value=, which binds to the param):
         assert jnp.allclose(log_prob(d, 1.5), log_prob(d, value=1.5))
         # a positional single-field Record promotes to NumericRecord, whose

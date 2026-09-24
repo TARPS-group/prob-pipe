@@ -186,13 +186,13 @@ class TestDistributionSupport:
         return jax.random.PRNGKey(42)
 
     def test_normal_support(self):
-        assert Normal(0.0, 1.0, name="x").support == real
+        assert Normal("x", 0.0, 1.0).support == real
 
     def test_beta_support(self):
-        assert Beta(2.0, 5.0, name="b").support == unit_interval
+        assert Beta("b", 2.0, 5.0).support == unit_interval
 
     def test_gamma_support(self):
-        assert Gamma(3.0, 1.0, name="g").support == positive
+        assert Gamma("g", 3.0, 1.0).support == positive
 
     def test_uniform_support(self):
         assert Uniform(low=-1.0, high=2.0, name="u").support == interval(-1.0, 2.0)
@@ -217,19 +217,19 @@ class TestDistributionSupport:
         assert Poisson(rate=3.0, name="p").support == non_negative_integer
 
     def test_dirichlet_support(self):
-        assert Dirichlet([1.0, 2.0], name="d").support == simplex
+        assert Dirichlet("d", [1.0, 2.0]).support == simplex
 
     def test_wishart_support(self):
         assert Wishart(df=5.0, scale_tril=jnp.eye(3), name="w").support == positive_definite
 
     def test_vonmisesfisher_support(self):
-        assert VonMisesFisher([1.0, 0.0, 0.0], 5.0, name="v").support == sphere
+        assert VonMisesFisher("v", [1.0, 0.0, 0.0], 5.0).support == sphere
 
     def test_mvn_support(self):
-        assert MultivariateNormal(jnp.zeros(2), cov=jnp.eye(2), name="z").support == real
+        assert MultivariateNormal("z", jnp.zeros(2), cov=jnp.eye(2)).support == real
 
     def test_empirical_support(self):
-        ed = RecordEmpiricalDistribution(jnp.ones((5, 2)), name="x")
+        ed = RecordEmpiricalDistribution("x", jnp.ones((5, 2)))
         assert ed.support == real
 
 
@@ -308,7 +308,7 @@ class TestFromDistribution:
     # -- multivariate --
     def test_mvn_from_empirical(self, key):
         samples = jax.random.normal(key, (100, 3))
-        ed = RecordEmpiricalDistribution(samples, name="x")
+        ed = RecordEmpiricalDistribution("x", samples)
         mvn = from_distribution(ed, MultivariateNormal)
         assert mvn.dim == 3
 

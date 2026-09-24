@@ -204,9 +204,9 @@ class TestExecuteDistributionBroadcast:
 
     def test_weighted_empirical_aliases_enumerate_once(self):
         shared = EmpiricalDistribution(
+            "shared",
             jnp.asarray([1.0, 4.0]),
             weights=jnp.asarray([0.2, 0.8]),
-            name="shared",
         )
         values = {"first": shared, "second": shared}
 
@@ -234,13 +234,13 @@ class TestExecuteDistributionBroadcast:
 
     def test_weighted_record_root_and_view_enumerate_once(self):
         shared = EmpiricalDistribution(
+            "shared",
             Record(
                 "draws",
                 x=jnp.asarray([1.0, 4.0]),
                 y=jnp.asarray([10.0, 40.0]),
             ),
             weights=jnp.asarray([0.3, 0.7]),
-            name="shared",
         )
         values = {"root": shared, "x": shared["x"]}
 
@@ -319,14 +319,14 @@ class TestExecuteDistributionBroadcast:
     def test_empirical_enumeration_preserves_alignment_and_weights(self):
         values = {
             "x": EmpiricalDistribution(
+                "x",
                 jnp.asarray([[1.0], [2.0]]),
                 weights=jnp.asarray([0.25, 0.75]),
-                name="x",
             ),
             "y": EmpiricalDistribution(
+                "y",
                 jnp.asarray([[10.0], [20.0]]),
                 weights=jnp.asarray([0.4, 0.6]),
-                name="y",
             ),
         }
 
@@ -369,7 +369,7 @@ class TestExecuteDistributionBroadcast:
         )
 
     def test_exact_empirical_size_must_match_the_frozen_plan(self):
-        empirical = EmpiricalDistribution([1.0, 2.0, 3.0], name="x")
+        empirical = EmpiricalDistribution("x", [1.0, 2.0, 3.0])
         values = {"x": empirical}
         plan = _stochastic_plan(values, 8)
         empirical._samples = np.asarray([1.0, 2.0], dtype=object)
@@ -534,8 +534,8 @@ class TestExecuteDistributionBroadcast:
         sampled_calls = []
         values = {
             "exact": EmpiricalDistribution(
+                "exact",
                 jnp.asarray([1.0, 2.0]),
-                name="exact",
             ),
             "sampled": _RecordingNormal(sampled_calls, name="sampled"),
         }
@@ -793,7 +793,7 @@ class TestCoSamplingThroughACall:
         differently as ``n_broadcast_samples`` fell below the product size —
         enumerating both, then enumerating one and sampling the other.
         """
-        empirical = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), name="e")
+        empirical = EmpiricalDistribution("e", jnp.array([1.0, 2.0, 3.0]))
         result = self._run(
             self._difference(n_broadcast_samples=n_broadcast_samples),
             empirical,
@@ -842,8 +842,8 @@ class TestCoSamplingThroughACall:
         cannot take; they stack through ``RecordBatch.stack`` instead.
         """
         empirical = RecordEmpiricalDistribution(
+            "e",
             Record("r", x=jnp.array([1.0, 2.0, 3.0]), y=jnp.array([10.0, 20.0, 30.0])),
-            name="e",
         )
         lifted = Function(func=lambda a: a["y"], dispatch="sequential", n_broadcast_samples=8)
 
@@ -860,8 +860,8 @@ class TestCoSamplingThroughACall:
         record-valued input carries its rows in fields rather than along a shape.
         """
         empirical = RecordEmpiricalDistribution(
+            "e",
             Record("r", x=jnp.array([1.0, 2.0, 3.0]), y=jnp.array([10.0, 20.0, 30.0])),
-            name="e",
         )
         lifted = Function(
             func=lambda a: a["y"],
@@ -893,7 +893,7 @@ class TestCoSamplingThroughACall:
         record batch, which reports no ``batch_shape`` — the rows are on a leaf.
         """
         empirical = RecordEmpiricalDistribution(
-            Record("r", x=jnp.arange(10.0), y=jnp.arange(10.0) * 10), name="e"
+            "e", Record("r", x=jnp.arange(10.0), y=jnp.arange(10.0) * 10)
         )
         lifted = Function(func=lambda a: a["y"], dispatch="sequential", n_broadcast_samples=5)
 
@@ -916,10 +916,10 @@ class TestCoSamplingThroughACall:
         """A column is keyed by leaf path, so a nested record batches like a
         flat one — the case #340 was opened for."""
         empirical = RecordEmpiricalDistribution(
+            "e",
             Record(
                 "r", group={"x": jnp.array([1.0, 2.0, 3.0]), "y": jnp.array([10.0, 20.0, 30.0])}
             ),
-            name="e",
         )
         lifted = Function(
             func=lambda a: a["group/y"],
@@ -980,8 +980,8 @@ class TestCoSamplingThroughACall:
 
     def test_a_record_valued_empirical_passed_twice_shares_its_atom(self):
         empirical = RecordEmpiricalDistribution(
+            "e",
             Record("r", x=jnp.array([1.0, 2.0, 3.0]), y=jnp.array([10.0, 20.0, 30.0])),
-            name="e",
         )
         lifted = Function(
             func=lambda a, b: a["y"] - b["y"],
@@ -996,7 +996,7 @@ class TestCoSamplingThroughACall:
 
     def test_an_aliased_empirical_counts_its_weight_once(self):
         """Weights are per group, so an alias does not square them."""
-        empirical = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), name="e")
+        empirical = EmpiricalDistribution("e", jnp.array([1.0, 2.0, 3.0]))
         result = self._run(self._difference(include_inputs=True), empirical, empirical)
 
         np.testing.assert_allclose(np.asarray(result.weights), np.full(3, 1 / 3))
@@ -1235,7 +1235,7 @@ class TestTheProbeModelsItsExecutorsTransform:
         of that path rather than of the mapped one.
         """
         law = RecordEmpiricalDistribution(
-            Record("r", {"a": jnp.arange(6.0), "b": jnp.arange(6.0) + 10.0})
+            "law", Record("r", {"a": jnp.arange(6.0), "b": jnp.arange(6.0) + 10.0})
         )
         totals = Function(func=lambda r: r["a"] + r["b"], n_broadcast_samples=6)
         sequential = Function(

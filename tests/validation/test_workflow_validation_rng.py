@@ -261,8 +261,8 @@ class TestSimulationBasedCalibrationBroker:
             del model, data, method, kwargs
             inference_seeds.append(random_seed)
             return RecordEmpiricalDistribution(
+                "beta",
                 jnp.zeros((num_results, 1)),
-                name="beta",
             )
 
         monkeypatch.setattr(
@@ -320,8 +320,8 @@ class TestSimulationBasedCalibrationBroker:
         ):
             del model, data, kwargs
             return RecordEmpiricalDistribution(
+                "beta",
                 jnp.zeros((num_results, 1)),
-                name="beta",
             )
 
         monkeypatch.setattr(

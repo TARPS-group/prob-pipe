@@ -72,7 +72,7 @@ class _RecordingMultivariateNormal(MultivariateNormal):
 )
 def test_approved_bijectors_capture_root_and_live_forward(bijector):
     base = Normal(loc=0.0, scale=1.0, name="base")
-    descendant = TransformedDistribution(base, bijector)
+    descendant = TransformedDistribution("descendant", base, bijector)
 
     captured = _workflow_descendants.capture_stochastic_consumer(descendant)
     key = jax.random.PRNGKey(9)
@@ -116,7 +116,8 @@ def test_captured_bijector_snapshot_does_not_drift_after_original_mutation(
     expected,
 ):
     descendant = TransformedDistribution(
-        Normal(0.0, 1.0, name="base"),
+        "descendant",
+        Normal("base", 0.0, 1.0),
         bijector,
     )
     captured = _workflow_descendants.capture_stochastic_consumer(descendant)
@@ -134,8 +135,8 @@ def test_captured_bijector_snapshot_does_not_drift_after_original_mutation(
 
 
 def test_bijector_snapshot_failure_and_semantic_drift_fail_closed():
-    base = Normal(0.0, 1.0, name="base")
-    descendant = TransformedDistribution(base, tfb.Shift(1.0))
+    base = Normal("base", 0.0, 1.0)
+    descendant = TransformedDistribution("descendant", base, tfb.Shift(1.0))
 
     with (
         patch.object(tfb.Shift, "copy", side_effect=RuntimeError("copy failed")),
@@ -151,8 +152,8 @@ def test_bijector_snapshot_failure_and_semantic_drift_fail_closed():
 
 
 def test_plan_capture_memoizes_repeated_descendant_identity():
-    base = Normal(0.0, 1.0, name="base")
-    descendant = TransformedDistribution(base, tfb.Shift(1.0))
+    base = Normal("base", 0.0, 1.0)
+    descendant = TransformedDistribution("descendant", base, tfb.Shift(1.0))
 
     with patch.object(
         _workflow_descendants,
@@ -167,11 +168,11 @@ def test_plan_capture_memoizes_repeated_descendant_identity():
 
 
 def test_plan_capture_memoizes_shared_transformed_ancestor():
-    base = Normal(0.0, 1.0, name="base")
+    base = Normal("base", 0.0, 1.0)
     shared_bijector = tfb.Exp()
-    shared = TransformedDistribution(base, shared_bijector)
-    left = TransformedDistribution(shared, tfb.Shift(1.0))
-    right = TransformedDistribution(shared, tfb.Scale(2.0))
+    shared = TransformedDistribution("shared", base, shared_bijector)
+    left = TransformedDistribution("left", shared, tfb.Shift(1.0))
+    right = TransformedDistribution("right", shared, tfb.Scale(2.0))
 
     with patch.object(
         _workflow_descendants,
@@ -186,8 +187,8 @@ def test_plan_capture_memoizes_shared_transformed_ancestor():
 
 def test_plan_capture_memoizes_shared_bijector_identity():
     shared_bijector = tfb.Shift(1.0)
-    left = TransformedDistribution(Normal(0.0, 1.0, name="left"), shared_bijector)
-    right = TransformedDistribution(Normal(0.0, 1.0, name="right"), shared_bijector)
+    left = TransformedDistribution("left", Normal("left", 0.0, 1.0), shared_bijector)
+    right = TransformedDistribution("right", Normal("right", 0.0, 1.0), shared_bijector)
 
     with patch.object(
         _workflow_descendants,
@@ -203,8 +204,8 @@ def test_plan_capture_memoizes_shared_bijector_identity():
 def test_plan_capture_keeps_equal_distinct_bijectors_independent():
     left_bijector = tfb.Shift(1.0)
     right_bijector = tfb.Shift(1.0)
-    left = TransformedDistribution(Normal(0.0, 1.0, name="left"), left_bijector)
-    right = TransformedDistribution(Normal(0.0, 1.0, name="right"), right_bijector)
+    left = TransformedDistribution("left", Normal("left", 0.0, 1.0), left_bijector)
+    right = TransformedDistribution("right", Normal("right", 0.0, 1.0), right_bijector)
 
     with patch.object(
         _workflow_descendants,
@@ -220,7 +221,8 @@ def test_plan_capture_keeps_equal_distinct_bijectors_independent():
 
 def test_capture_memo_is_scoped_to_one_plan_build():
     descendant = TransformedDistribution(
-        Normal(0.0, 1.0, name="base"),
+        "descendant",
+        Normal("base", 0.0, 1.0),
         tfb.Shift(1.0),
     )
 
@@ -237,7 +239,8 @@ def test_capture_memo_is_scoped_to_one_plan_build():
 
 def test_capture_session_does_not_cache_failed_bijector_capture():
     descendant = TransformedDistribution(
-        Normal(0.0, 1.0, name="base"),
+        "descendant",
+        Normal("base", 0.0, 1.0),
         tfb.Shift(1.0),
     )
     session = _workflow_descendants._StochasticCaptureSession()
@@ -266,8 +269,8 @@ def test_capture_session_does_not_cache_failed_bijector_capture():
 
 def test_capture_session_rejects_corrupted_identity_cache_entries():
     session = _workflow_descendants._StochasticCaptureSession()
-    cached_source = Normal(0.0, 1.0, name="cached")
-    requested_source = Normal(0.0, 1.0, name="requested")
+    cached_source = Normal("cached", 0.0, 1.0)
+    requested_source = Normal("requested", 0.0, 1.0)
     captured_source = session.capture_consumer(cached_source)
     session.consumers[id(requested_source)] = (cached_source, captured_source)
 
@@ -290,9 +293,9 @@ def test_golden_shift_descriptor_and_digest_are_hard_coded():
         name="base",
     )
     descendant = TransformedDistribution(
+        "also-ignored",
         base,
         tfb.Shift(jnp.asarray([1.0, -2.0], dtype=jnp.float32), name="ignored-name"),
-        name="also-ignored",
     )
     expected = (
         "stochastic-descendant",
@@ -380,9 +383,9 @@ def test_array_state_is_c_contiguous_little_endian_and_complete():
 
 def test_names_are_excluded_but_semantic_parameters_are_not():
     base = Normal(loc=0.0, scale=1.0, name="base")
-    first = TransformedDistribution(base, tfb.Shift(1.0, name="first"), name="first")
-    renamed = TransformedDistribution(base, tfb.Shift(1.0, name="second"), name="second")
-    changed = TransformedDistribution(base, tfb.Shift(2.0, name="first"), name="first")
+    first = TransformedDistribution("first", base, tfb.Shift(1.0, name="first"))
+    renamed = TransformedDistribution("second", base, tfb.Shift(1.0, name="second"))
+    changed = TransformedDistribution("first", base, tfb.Shift(2.0, name="first"))
 
     first_descriptor = _workflow_descendants.capture_stochastic_consumer(
         first
@@ -400,10 +403,14 @@ def test_names_are_excluded_but_semantic_parameters_are_not():
 
 def test_nested_transforms_and_chain_child_order_are_structural():
     base = Normal(loc=0.0, scale=1.0, name="base")
-    inner = TransformedDistribution(base, tfb.Exp())
-    nested = TransformedDistribution(inner, tfb.Shift(2.0))
-    first_chain = TransformedDistribution(base, tfb.Chain([tfb.Exp(), tfb.Shift(2.0)]))
-    reversed_chain = TransformedDistribution(base, tfb.Chain([tfb.Shift(2.0), tfb.Exp()]))
+    inner = TransformedDistribution("inner", base, tfb.Exp())
+    nested = TransformedDistribution("nested", inner, tfb.Shift(2.0))
+    first_chain = TransformedDistribution(
+        "first_chain", base, tfb.Chain([tfb.Exp(), tfb.Shift(2.0)])
+    )
+    reversed_chain = TransformedDistribution(
+        "reversed_chain", base, tfb.Chain([tfb.Shift(2.0), tfb.Exp()])
+    )
 
     nested_capture = _workflow_descendants.capture_stochastic_consumer(nested)
     first_descriptor = _workflow_descendants.capture_stochastic_consumer(
@@ -424,8 +431,8 @@ def test_root_projection_and_multiple_descendants_form_one_plan_group():
         y=Normal(loc=2.0, scale=1.0, name="y"),
     )
     x = root["x"]
-    exp_x = TransformedDistribution(x, tfb.Exp())
-    shifted_x = TransformedDistribution(x, tfb.Shift(3.0))
+    exp_x = TransformedDistribution("exp_x", x, tfb.Exp())
+    shifted_x = TransformedDistribution("shifted_x", x, tfb.Shift(3.0))
 
     plan = _stochastic_plan({"root": root, "x": x, "exp_x": exp_x, "shifted_x": shifted_x})
 
@@ -446,8 +453,8 @@ def test_root_projection_and_multiple_descendants_form_one_plan_group():
 
 def test_captured_record_projection_does_not_reread_the_live_view_path():
     root = ProductDistribution(
-        x=Normal(0.0, 1.0, name="x"),
-        y=Normal(1.0, 1.0, name="y"),
+        x=Normal("x", 0.0, 1.0),
+        y=Normal("y", 1.0, 1.0),
     )
     view = root["x"]
     captured = _workflow_descendants.capture_stochastic_consumer(view)
@@ -461,12 +468,12 @@ def test_captured_record_projection_does_not_reread_the_live_view_path():
 
 
 def test_descriptor_records_its_plan_local_base_source_slot():
-    root = Normal(0.0, 1.0, name="root")
-    descendant = TransformedDistribution(root, tfb.Exp())
+    root = Normal("root", 0.0, 1.0)
+    descendant = TransformedDistribution("descendant", root, tfb.Exp())
 
     plan = _stochastic_plan(
         {
-            "independent": Normal(1.0, 1.0, name="independent"),
+            "independent": Normal("independent", 1.0, 1.0),
             "descendant": descendant,
         }
     )
@@ -481,11 +488,13 @@ def test_descriptor_records_its_plan_local_base_source_slot():
     ("make_bad", "message"),
     [
         (
-            lambda base: TransformedDistribution(base, tfb.Tanh()),
+            lambda base: TransformedDistribution("transformed", base, tfb.Tanh()),
             "does not support this bijector type",
         ),
         (
-            lambda base: TransformedDistribution(base, type("CustomExp", (tfb.Exp,), {})()),
+            lambda base: TransformedDistribution(
+                "transformed", base, type("CustomExp", (tfb.Exp,), {})()
+            ),
             "subclasses of approved bijectors",
         ),
     ],
@@ -500,7 +509,7 @@ def test_unsupported_bijector_types_fail_closed(make_bad, message):
 def test_instance_forward_override_fails_closed():
     bijector = tfb.Exp()
     object.__setattr__(bijector, "_forward", lambda value: value)
-    descendant = TransformedDistribution(Normal(0.0, 1.0, name="base"), bijector)
+    descendant = TransformedDistribution("descendant", Normal("base", 0.0, 1.0), bijector)
 
     with pytest.raises(TypeError, match="instance method/property overrides"):
         _workflow_descendants.capture_stochastic_consumer(descendant)
@@ -508,12 +517,12 @@ def test_instance_forward_override_fails_closed():
 
 def test_transformed_subclass_and_instance_sampling_override_fail_closed():
     class CustomTransformedDistribution(TransformedDistribution):
-        def __new__(cls, base, bijector, **kwargs):
+        def __new__(cls, name, base, bijector, **kwargs):
             return object.__new__(cls)
 
-    base = Normal(0.0, 1.0, name="base")
-    subclassed = CustomTransformedDistribution(base, tfb.Exp())
-    overridden = TransformedDistribution(base, tfb.Exp())
+    base = Normal("base", 0.0, 1.0)
+    subclassed = CustomTransformedDistribution("subclassed", base, tfb.Exp())
+    overridden = TransformedDistribution("overridden", base, tfb.Exp())
     object.__setattr__(overridden, "_sample", lambda key, sample_shape=(): 0.0)
 
     with pytest.raises(TypeError, match="rejects TransformedDistribution subclasses"):
@@ -525,7 +534,7 @@ def test_transformed_subclass_and_instance_sampling_override_fail_closed():
 def test_nonzero_forward_event_rank_fails_closed():
     bijector = tfb.Exp()
     object.__setattr__(bijector, "_forward_min_event_ndims", 1)
-    descendant = TransformedDistribution(Normal(0.0, 1.0, name="base"), bijector)
+    descendant = TransformedDistribution("descendant", Normal("base", 0.0, 1.0), bijector)
 
     with pytest.raises(TypeError, match="forward_min_event_ndims == 0"):
         _workflow_descendants.capture_stochastic_consumer(descendant)
@@ -535,7 +544,7 @@ def test_nonzero_forward_event_rank_fails_closed():
 def test_non_integer_forward_event_rank_fails_closed(event_rank):
     bijector = tfb.Exp()
     object.__setattr__(bijector, "_forward_min_event_ndims", event_rank)
-    descendant = TransformedDistribution(Normal(0.0, 1.0, name="base"), bijector)
+    descendant = TransformedDistribution("descendant", Normal("base", 0.0, 1.0), bijector)
 
     with pytest.raises(TypeError, match="concrete non-boolean integer"):
         _workflow_descendants.capture_stochastic_consumer(descendant)
@@ -544,22 +553,22 @@ def test_non_integer_forward_event_rank_fails_closed(event_rank):
 def test_unencodable_semantic_state_fails_closed():
     bijector = tfb.Shift(1.0)
     object.__setattr__(bijector, "_shift", object())
-    descendant = TransformedDistribution(Normal(0.0, 1.0, name="base"), bijector)
+    descendant = TransformedDistribution("descendant", Normal("base", 0.0, 1.0), bijector)
 
     with pytest.raises(TypeError, match="semantic state"):
         _workflow_descendants.capture_stochastic_consumer(descendant)
 
 
 def test_cyclic_descendant_and_chain_graphs_fail_closed():
-    base = Normal(0.0, 1.0, name="base")
-    descendant = TransformedDistribution(base, tfb.Exp())
+    base = Normal("base", 0.0, 1.0)
+    descendant = TransformedDistribution("descendant", base, tfb.Exp())
     object.__setattr__(descendant, "_base", descendant)
 
     with pytest.raises(TypeError, match="Cyclic TransformedDistribution"):
         _workflow_descendants.capture_stochastic_consumer(descendant)
 
     chain = tfb.Chain([tfb.Exp()])
-    cyclic_chain_descendant = TransformedDistribution(base, chain)
+    cyclic_chain_descendant = TransformedDistribution("cyclic_chain_descendant", base, chain)
     object.__setattr__(chain, "_bijectors", (chain,))
     with pytest.raises(TypeError, match="Cyclic TFP Chain"):
         _workflow_descendants.capture_stochastic_consumer(cyclic_chain_descendant)
@@ -568,8 +577,8 @@ def test_cyclic_descendant_and_chain_graphs_fail_closed():
 @pytest.mark.parametrize("cycle_kind", ["self", "pair"])
 def test_cyclic_record_view_graphs_fail_closed(cycle_kind):
     root = ProductDistribution(
-        x=Normal(0.0, 1.0, name="x"),
-        y=Normal(1.0, 1.0, name="y"),
+        x=Normal("x", 0.0, 1.0),
+        y=Normal("y", 1.0, 1.0),
     )
     first = root["x"]
     if cycle_kind == "self":
@@ -584,7 +593,7 @@ def test_cyclic_record_view_graphs_fail_closed(cycle_kind):
 
 
 def test_known_unapproved_record_wrappers_fail_closed():
-    root = ProductDistribution(x=Normal(0.0, 1.0, name="x"))
+    root = ProductDistribution(x=Normal("x", 0.0, 1.0))
     flattened = root.as_flat_distribution()
     lifted = MultivariateNormal(
         loc=jnp.zeros(2),
@@ -601,8 +610,8 @@ def test_known_unapproved_record_wrappers_fail_closed():
 
 
 def test_unsupported_preflight_does_not_read_entropy_or_sample():
-    base = Normal(0.0, 1.0, name="base")
-    descendant = TransformedDistribution(base, tfb.Tanh())
+    base = Normal("base", 0.0, 1.0)
+    descendant = TransformedDistribution("descendant", base, tfb.Tanh())
     workflow = Function(
         func=lambda value: value,
         dispatch="sequential",
@@ -625,8 +634,8 @@ def test_unsupported_preflight_does_not_read_entropy_or_sample():
 def test_function_co_samples_root_and_multiple_descendants(dispatch):
     calls = []
     root = _RecordingNormal(calls)
-    exponentiated = TransformedDistribution(root, tfb.Exp())
-    shifted = TransformedDistribution(root, tfb.Shift(2.0))
+    exponentiated = TransformedDistribution("exponentiated", root, tfb.Exp())
+    shifted = TransformedDistribution("shifted", root, tfb.Shift(2.0))
     workflow = Function(
         func=lambda base, exp_base, shifted_base: jnp.stack(
             (
@@ -648,7 +657,7 @@ def test_function_co_samples_root_and_multiple_descendants(dispatch):
 def test_function_descendant_only_samples_its_captured_root_once():
     calls = []
     root = _RecordingNormal(calls)
-    descendant = TransformedDistribution(root, tfb.Exp())
+    descendant = TransformedDistribution("descendant", root, tfb.Exp())
     workflow = Function(
         func=lambda value: value,
         dispatch="sequential",
@@ -669,7 +678,7 @@ def test_function_descendant_only_samples_its_captured_root_once():
 def test_sequential_and_jax_consume_the_same_captured_graph():
     calls = []
     root = _RecordingNormal(calls)
-    exponentiated = TransformedDistribution(root, tfb.Exp())
+    exponentiated = TransformedDistribution("exponentiated", root, tfb.Exp())
 
     def difference(base, exp_base):
         return exp_base - jnp.exp(base)
@@ -702,11 +711,11 @@ def test_sequential_and_jax_consume_the_same_captured_graph():
 
 def test_exact_empirical_root_and_descendant_keep_weights_once():
     root = EmpiricalDistribution(
+        "base",
         jnp.asarray([1.0, 4.0]),
         weights=jnp.asarray([0.2, 0.8]),
-        name="base",
     )
-    exponentiated = TransformedDistribution(root, tfb.Exp())
+    exponentiated = TransformedDistribution("exponentiated", root, tfb.Exp())
     workflow = Function(
         func=lambda base, exp_base: exp_base - jnp.exp(base),
         dispatch="sequential",
@@ -729,16 +738,16 @@ def test_exact_empirical_root_and_descendant_keep_weights_once():
 
 def test_exact_record_projection_then_transform_stays_diagonal():
     root = EmpiricalDistribution(
+        "joint",
         Record(
             "draws",
             x=jnp.asarray([1.0, 4.0]),
             y=jnp.asarray([10.0, 40.0]),
         ),
         weights=jnp.asarray([0.3, 0.7]),
-        name="joint",
     )
     x = root["x"]
-    exponentiated_x = TransformedDistribution(x, tfb.Exp())
+    exponentiated_x = TransformedDistribution("exponentiated_x", x, tfb.Exp())
     workflow = Function(
         func=lambda joint, x_value, exp_x: jnp.stack(
             (joint["x"] - x_value, exp_x - jnp.exp(x_value))
@@ -757,11 +766,11 @@ def test_exact_record_projection_then_transform_stays_diagonal():
 
 def test_mixed_empirical_descendant_multiplies_root_weight_once():
     exact_root = EmpiricalDistribution(
+        "exact",
         jnp.asarray([1.0, 4.0]),
         weights=jnp.asarray([0.2, 0.8]),
-        name="exact",
     )
-    exponentiated = TransformedDistribution(exact_root, tfb.Exp())
+    exponentiated = TransformedDistribution("exponentiated", exact_root, tfb.Exp())
     sampled_calls = []
     sampled = _RecordingNormal(sampled_calls, name="sampled")
     workflow = Function(
@@ -792,7 +801,7 @@ def test_mixed_empirical_descendant_multiplies_root_weight_once():
 def test_elementwise_transform_of_vector_event_matches_direct_sampling():
     calls = []
     root = _RecordingMultivariateNormal(calls)
-    descendant = TransformedDistribution(root, tfb.Exp())
+    descendant = TransformedDistribution("descendant", root, tfb.Exp())
     captured = _workflow_descendants.capture_stochastic_consumer(descendant)
     key = jax.random.key(43)
 
@@ -811,7 +820,7 @@ def test_nested_sweep_samples_shared_transform_root_once_per_cell(dispatch):
     )
     calls = []
     root = _RecordingNormal(calls)
-    exponentiated = TransformedDistribution(root, tfb.Exp())
+    exponentiated = TransformedDistribution("exponentiated", root, tfb.Exp())
     workflow = Function(
         func=lambda row, base, exp_base: exp_base - jnp.exp(base),
         dispatch=dispatch,

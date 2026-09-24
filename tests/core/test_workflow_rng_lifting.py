@@ -230,7 +230,7 @@ class TestSequentialLiftingWorkflowRun:
             return x + 1
 
         normal = Normal(loc=0.0, scale=1.0, name="x")
-        empirical = EmpiricalDistribution(jnp.asarray([1.0, 2.0, 3.0]), name="x")
+        empirical = EmpiricalDistribution("x", jnp.asarray([1.0, 2.0, 3.0]))
 
         def baseline():
             with workflow_run(seed=7):

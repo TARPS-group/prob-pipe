@@ -2107,7 +2107,7 @@ class TestInferenceThroughTermSpecs:
 
         from probpipe import MultivariateNormal
 
-        return MultivariateNormal(jnp.zeros(size), jnp.eye(size), name="x")
+        return MultivariateNormal("x", jnp.zeros(size), jnp.eye(size))
 
     def test_a_distribution_binds_the_declared_dimension(self):
         sym = RecordSpec(x=NumericArraySpec(shape=("obs",)))

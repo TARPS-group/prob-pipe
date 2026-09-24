@@ -88,9 +88,13 @@ class _RecordMarginal(RecordEmpiricalDistribution):
             template = None
         # Default field name for bare-array outputs (the WF marginal
         # context doesn't carry a more meaningful name).
-        if not isinstance(samples, Record) and not name:
-            name = "marginal"
-        super().__init__(samples, weights=weights, log_weights=log_weights, name=name)
+        if not name:
+            name = (
+                f"empirical({','.join(samples.fields)})"
+                if isinstance(samples, Record)
+                else "marginal"
+            )
+        super().__init__(name, samples, weights=weights, log_weights=log_weights)
         if event_template is not None:
             self._event_template = event_template
         elif template is not None:
@@ -1324,6 +1328,7 @@ class BroadcastDistribution(Distribution, SupportsSampling):
         Ordered names of the broadcast arguments.
     name : str or None
         Distribution name for provenance.
+        Keyword-only, as an interim detail (see :class:`~probpipe.Distribution`).
     """
 
     #: The memo is not state: a copy recomputes rather than inheriting one. It
@@ -1397,7 +1402,7 @@ class BroadcastDistribution(Distribution, SupportsSampling):
             return self.marginalize()
         if key in self._input_samples:
             arr = self._input_samples[key]
-            return EmpiricalDistribution(arr, weights=self._w, name=key)
+            return EmpiricalDistribution(key, arr, weights=self._w)
         raise KeyError(f"Unknown component {key!r}; available: {self.fields}")
 
     # -- joint sampling -----------------------------------------------------

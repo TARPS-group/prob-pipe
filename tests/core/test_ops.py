@@ -49,12 +49,12 @@ def mvn():
 @pytest.fixture
 def empirical():
     samples = jax.random.normal(jax.random.PRNGKey(0), (200, 2))
-    return RecordEmpiricalDistribution(samples, name="x")
+    return RecordEmpiricalDistribution("x", samples)
 
 
 @pytest.fixture
 def joint():
-    return ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
+    return ProductDistribution(x=Normal("x", 0, 1), y=Normal("y", 1, 2))
 
 
 @pytest.fixture
@@ -179,7 +179,7 @@ class TestSample:
         "event", [("a", "b"), (("a", "b"), ("c", "d")), ()], ids=["pair", "matrix", "empty"]
     )
     def test_sample_preserves_complete_opaque_events(self, sample_shape, event):
-        law = EmpiricalDistribution([event], name="objects")
+        law = EmpiricalDistribution("objects", [event])
 
         result = ops.sample(law, key=jax.random.PRNGKey(0), sample_shape=sample_shape)
 
@@ -317,7 +317,7 @@ class TestMean:
 
     def test_exact_mean_bootstrap(self):
         evals = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        bd = BootstrapDistribution(evals)
+        bd = BootstrapDistribution("bd", evals)
         np.testing.assert_allclose(float(ops.mean(bd)), 3.0)
 
     def test_raises_without_supports_mean(self, no_moments):
@@ -413,7 +413,7 @@ class TestConditionOn:
 
     def test_condition_sequential(self):
         sjd = SequentialJointDistribution(
-            x=Normal(0, 1, name="x"),
+            x=Normal("x", 0, 1),
             y=lambda x: Normal(loc=x, scale=1.0, name="y"),
         )
         conditioned = ops.condition_on(sjd, x=jnp.array(3.0))
@@ -437,7 +437,7 @@ class TestConditionOn:
 
             def _condition_on(self, observed, /, **kwargs):
                 Recorder.seen = dict(kwargs)
-                return Normal(0, 1, name="posterior")
+                return Normal("posterior", 0, 1)
 
         ops.condition_on(Recorder(), 1.0, exact_only=True, num_results=5)
         assert Recorder.seen == {"num_results": 5}
@@ -451,7 +451,7 @@ class TestConditionOn:
 
             def _condition_on(self, observed, /, **kwargs):
                 Amortized.calls += 1
-                return Normal(0, 1, name="amortized")
+                return Normal("amortized", 0, 1)
 
         class ExactMethod(UnaryDispatchMethod):
             ran = False
@@ -476,7 +476,7 @@ class TestConditionOn:
 
             def execute(self, *args, **kwargs):
                 ExactMethod.ran = True
-                return Normal(0, 1, name="exact")
+                return Normal("exact", 0, 1)
 
         registry = UnaryDispatchRegistry()
         registry.register(ExactMethod())
@@ -495,7 +495,7 @@ class TestConditionOn:
 
             def _condition_on(self, observed, /, **kwargs):
                 Amortized.calls += 1
-                return Normal(0, 1, name="amortized")
+                return Normal("amortized", 0, 1)
 
         monkeypatch.setattr("probpipe.inference.inference_method_registry", UnaryDispatchRegistry())
         ops.condition_on(Amortized(), 1.0)
@@ -512,7 +512,7 @@ class TestConditionOn:
 
             def _condition_on(self, observed, /, **kwargs):
                 Amortized.calls += 1
-                return Normal(0, 1, name="amortized")
+                return Normal("amortized", 0, 1)
 
         class UnresolvedExact(UnaryDispatchMethod):
             ran = False
@@ -537,7 +537,7 @@ class TestConditionOn:
 
             def execute(self, *args, **kwargs):
                 UnresolvedExact.ran = True
-                return Normal(0, 1, name="exact")
+                return Normal("exact", 0, 1)
 
         registry = UnaryDispatchRegistry()
         registry.register(UnresolvedExact())
@@ -555,7 +555,7 @@ class TestConditionOn:
 
             def _condition_on(self, observed, /, **kwargs):
                 Amortized.calls += 1
-                return Normal(0, 1, name="posterior")
+                return Normal("posterior", 0, 1)
 
         amortized = Amortized()
         ops.condition_on(amortized, 1.0)
@@ -641,7 +641,7 @@ class TestSplitDataKwargs:
     def test_empty_kwargs(self):
         from probpipe.core.ops import _split_data_kwargs
 
-        dist = ProductDistribution(x=Normal(0.0, 1.0, name="x"))
+        dist = ProductDistribution(x=Normal("x", 0.0, 1.0))
         data, inference = _split_data_kwargs(dist, {})
         assert data == {}
         assert inference == {}
@@ -649,7 +649,7 @@ class TestSplitDataKwargs:
     def test_all_data_kwargs(self):
         from probpipe.core.ops import _split_data_kwargs
 
-        dist = ProductDistribution(x=Normal(0.0, 1.0, name="x"), y=Normal(0.0, 1.0, name="y"))
+        dist = ProductDistribution(x=Normal("x", 0.0, 1.0), y=Normal("y", 0.0, 1.0))
         data, inference = _split_data_kwargs(
             dist,
             {"x": jnp.array(1.0), "y": jnp.array(2.0)},
@@ -660,7 +660,7 @@ class TestSplitDataKwargs:
     def test_all_inference_kwargs(self):
         from probpipe.core.ops import _split_data_kwargs
 
-        dist = ProductDistribution(x=Normal(0.0, 1.0, name="x"))
+        dist = ProductDistribution(x=Normal("x", 0.0, 1.0))
         data, inference = _split_data_kwargs(
             dist,
             {"num_results": 100, "random_seed": 42},
@@ -671,7 +671,7 @@ class TestSplitDataKwargs:
     def test_mixed_kwargs(self):
         from probpipe.core.ops import _split_data_kwargs
 
-        dist = ProductDistribution(x=Normal(0.0, 1.0, name="x"), y=Normal(0.0, 1.0, name="y"))
+        dist = ProductDistribution(x=Normal("x", 0.0, 1.0), y=Normal("y", 0.0, 1.0))
         data, inference = _split_data_kwargs(
             dist,
             {"x": jnp.array(1.0), "num_results": 100},
@@ -683,7 +683,7 @@ class TestSplitDataKwargs:
         """Distribution without fields → all kwargs are inference."""
         from probpipe.core.ops import _split_data_kwargs
 
-        dist = Normal(0.0, 1.0, name="x")
+        dist = Normal("x", 0.0, 1.0)
         data, inference = _split_data_kwargs(
             dist,
             {"num_results": 100},
@@ -697,7 +697,7 @@ class TestSplitDataKwargs:
         inference params (issue #228)."""
         from probpipe.core.ops import _split_data_kwargs
 
-        dist = ProductDistribution(X=Normal(0.0, 1.0, name="X"), y=Normal(0.0, 1.0, name="y"))
+        dist = ProductDistribution(X=Normal("X", 0.0, 1.0), y=Normal("y", 0.0, 1.0))
         with pytest.raises(TypeError, match="did you mean X"):
             _split_data_kwargs(dist, {"x": jnp.array(1.0)})
 
@@ -706,7 +706,7 @@ class TestSplitDataKwargs:
         genuine inference parameter — no false positive."""
         from probpipe.core.ops import _split_data_kwargs
 
-        dist = ProductDistribution(X=Normal(0.0, 1.0, name="X"), y=Normal(0.0, 1.0, name="y"))
+        dist = ProductDistribution(X=Normal("X", 0.0, 1.0), y=Normal("y", 0.0, 1.0))
         data, inference = _split_data_kwargs(
             dist,
             {"X": jnp.array(1.0), "num_results": 100},

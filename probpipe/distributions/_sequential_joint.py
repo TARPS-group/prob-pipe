@@ -154,6 +154,7 @@ class SequentialJointDistribution(
     ----------
     name : str, optional
         Distribution name.
+        Keyword-only, as an interim detail (see :class:`~probpipe.Distribution`).
     **components : Distribution or Callable[..., Distribution]
         Named components in topological (dependency) order.
     """

@@ -488,32 +488,32 @@ class TestFactoryDispatch:
     def test_empirical_numeric_returns_array_variant(self):
         from probpipe import EmpiricalDistribution, RecordEmpiricalDistribution
 
-        dist = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), name="x")
+        dist = EmpiricalDistribution("x", jnp.array([1.0, 2.0, 3.0]))
         assert isinstance(dist, RecordEmpiricalDistribution)
 
     def test_empirical_numpy_numeric_returns_array_variant(self):
         from probpipe import EmpiricalDistribution, RecordEmpiricalDistribution
 
-        dist = EmpiricalDistribution(np.array([1.0, 2.0, 3.0]), name="x")
+        dist = EmpiricalDistribution("x", np.array([1.0, 2.0, 3.0]))
         assert isinstance(dist, RecordEmpiricalDistribution)
 
     def test_empirical_object_stays_generic(self):
         from probpipe import EmpiricalDistribution, RecordEmpiricalDistribution
 
-        dist = EmpiricalDistribution(["hello", "world"], name="x")
+        dist = EmpiricalDistribution("x", ["hello", "world"])
         assert not isinstance(dist, RecordEmpiricalDistribution)
         assert isinstance(dist, EmpiricalDistribution)
 
     def test_empirical_numpy_object_stays_generic(self):
         from probpipe import EmpiricalDistribution, RecordEmpiricalDistribution
 
-        dist = EmpiricalDistribution(np.array(["a", "b"], dtype=object), name="x")
+        dist = EmpiricalDistribution("x", np.array(["a", "b"], dtype=object))
         assert not isinstance(dist, RecordEmpiricalDistribution)
 
     def test_bootstrap_numeric_returns_array_variant(self):
         from probpipe import BootstrapReplicateDistribution, RecordBootstrapReplicateDistribution
 
-        dist = BootstrapReplicateDistribution(jnp.ones((5, 2)), name="x")
+        dist = BootstrapReplicateDistribution("x", jnp.ones((5, 2)))
         assert isinstance(dist, RecordBootstrapReplicateDistribution)
 
     def test_bootstrap_from_empirical_returns_array_variant(self):
@@ -523,20 +523,20 @@ class TestFactoryDispatch:
             RecordBootstrapReplicateDistribution,
         )
 
-        emp = EmpiricalDistribution(jnp.ones((5, 2)), name="x")
-        dist = BootstrapReplicateDistribution(emp, name="x")
+        emp = EmpiricalDistribution("x", jnp.ones((5, 2)))
+        dist = BootstrapReplicateDistribution("x", emp)
         assert isinstance(dist, RecordBootstrapReplicateDistribution)
 
     def test_bootstrap_object_stays_generic(self):
         from probpipe import BootstrapReplicateDistribution, RecordBootstrapReplicateDistribution
 
-        dist = BootstrapReplicateDistribution(["a", "b", "c"], name="x")
+        dist = BootstrapReplicateDistribution("x", ["a", "b", "c"])
         assert not isinstance(dist, RecordBootstrapReplicateDistribution)
 
     def test_subclass_not_redirected(self):
         from probpipe import RecordEmpiricalDistribution
 
-        dist = RecordEmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), name="x")
+        dist = RecordEmpiricalDistribution("x", jnp.array([1.0, 2.0, 3.0]))
         assert type(dist) is RecordEmpiricalDistribution
 
 
@@ -550,7 +550,7 @@ class TestSampleShape:
         from probpipe import RecordEmpiricalDistribution
 
         samples = jnp.ones((100, 3))
-        dist = RecordEmpiricalDistribution(samples, name="x")
+        dist = RecordEmpiricalDistribution("x", samples)
         assert dist.num_atoms == 100
         assert dist.event_shape == (3,)
 
@@ -558,7 +558,7 @@ class TestSampleShape:
         from probpipe import RecordEmpiricalDistribution
 
         samples = jnp.ones((100, 3))
-        dist = RecordEmpiricalDistribution(samples, sample_shape=(100,), name="x")
+        dist = RecordEmpiricalDistribution("x", samples, sample_shape=(100,))
         assert dist.num_atoms == 100
         assert dist.event_shape == (3,)
 
@@ -566,7 +566,7 @@ class TestSampleShape:
         from probpipe import RecordEmpiricalDistribution
 
         samples = jnp.ones((10, 5, 3))
-        dist = RecordEmpiricalDistribution(samples, sample_shape=(10, 5), name="x")
+        dist = RecordEmpiricalDistribution("x", samples, sample_shape=(10, 5))
         assert dist.num_atoms == 50
         assert dist.event_shape == (3,)
 
@@ -575,14 +575,14 @@ class TestSampleShape:
 
         samples = jnp.ones((10, 3))
         with pytest.raises(ValueError, match="do not match"):
-            RecordEmpiricalDistribution(samples, sample_shape=(20,), name="x")
+            RecordEmpiricalDistribution("x", samples, sample_shape=(20,))
 
     def test_moments_with_sample_shape(self):
         from probpipe import RecordEmpiricalDistribution, mean, variance
 
         key = jax.random.PRNGKey(0)
         samples = jax.random.normal(key, (10, 5, 2))
-        dist = RecordEmpiricalDistribution(samples, sample_shape=(10, 5), name="x")
+        dist = RecordEmpiricalDistribution("x", samples, sample_shape=(10, 5))
         m = mean(dist)
         v = variance(dist)
         assert m.shape == (2,)

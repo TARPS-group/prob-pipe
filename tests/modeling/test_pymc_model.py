@@ -67,7 +67,7 @@ class TestPyMCModel:
 
     @pytest.fixture
     def model(self):
-        return PyMCModel(simple_model_fn, name="test_pymc")
+        return PyMCModel("test_pymc", simple_model_fn)
 
     def test_construction(self, model):
         assert isinstance(model, PyMCModel)
@@ -295,7 +295,7 @@ class TestRecordSpec:
                 pm.Normal("y", 0, 1, observed=y)
             return m
 
-        tpl = PyMCModel(model_fn).event_template
+        tpl = PyMCModel("model", model_fn).event_template
         assert tpl.fields == ("intercept", "slope")
         assert tpl["intercept"] == NumericArraySpec(())
         assert tpl["slope"] == NumericArraySpec((3,))
@@ -309,7 +309,7 @@ class TestRecordSpec:
                 pm.Normal("y", 0, 1, observed=y)
             return m
 
-        tpl = PyMCModel(model_fn).event_template
+        tpl = PyMCModel("model", model_fn).event_template
         assert tpl.fields == ("mu",)
         assert "y" not in tpl.fields
 
@@ -326,7 +326,7 @@ class TestRecordSpec:
         per-call mutable state, so concurrent inference on one instance
         can't race.
         """
-        model = PyMCModel(per_observation_effect_model_fn)
+        model = PyMCModel("model", per_observation_effect_model_fn)
         # Declared (no-data) property: sentinel (1,) for alpha.
         tpl = model.event_template
         assert tpl.fields == ("intercept", "alpha")
@@ -363,7 +363,7 @@ class TestRecordSpec:
         rng = np.random.default_rng(0)
         X = np.arange(N, dtype=np.float32)
         y = rng.normal(size=N).astype(np.float32)
-        model = PyMCModel(per_observation_effect_model_fn)
+        model = PyMCModel("model", per_observation_effect_model_fn)
         result = condition_on(
             model,
             {"X": X, "y": y},
@@ -401,7 +401,7 @@ class TestRecordSpec:
 
         y = np.zeros(8, dtype=np.float32)
         result = condition_on.apply(
-            PyMCModel(model_fn),
+            PyMCModel("model", model_fn),
             {"y": y},
             method="pymc_advi",
             num_iterations=200,
@@ -432,7 +432,7 @@ class TestRecordSpec:
                 pm.Normal("y", mu=mu, sigma=1.0, observed=y)
             return m
 
-        model = PyMCModel(model_fn)
+        model = PyMCModel("model", model_fn)
         assert "ghost" in model.parameter_names
         conditioned = model._pymc_model(data={"y": np.zeros(5, dtype=np.float32)})
         with pytest.raises(ValueError, match="dynamic random variables"):
@@ -456,7 +456,7 @@ class TestRecordSpec:
                 pm.Normal("y", mu=mu, sigma=1.0, observed=y)
             return m
 
-        model = PyMCModel(model_fn)
+        model = PyMCModel("model", model_fn)
         assert model.parameter_names == ("mu",)  # extra absent at construction
         conditioned = model._pymc_model(data={"y": np.zeros(5, dtype=np.float32)})
         with pytest.raises(ValueError, match="dynamic random variables"):
@@ -479,7 +479,7 @@ class TestRecordSpec:
                 pm.Normal("y", mu=mu + X_rv, sigma=1.0, observed=y)
             return m
 
-        model = PyMCModel(model_fn)
+        model = PyMCModel("model", model_fn)
         # Declared template excludes observed names entirely.
         assert model.event_template.fields == ("mu",)
 
@@ -502,7 +502,7 @@ class TestRecordSpec:
                 pm.Normal("y", mu=mu + X_rv, sigma=1.0, observed=y)
             return m
 
-        model = PyMCModel(model_fn)
+        model = PyMCModel("model", model_fn)
         result = condition_on(
             model,
             {"y": np.zeros(5, dtype=np.float32)},
@@ -533,7 +533,7 @@ class TestRecordSpec:
                 pm.Normal("y", mu=mu + X_rv, sigma=1000.0, observed=y)
             return m
 
-        model = PyMCModel(model_fn)
+        model = PyMCModel("model", model_fn)
         result = condition_on(
             model,
             {"y": np.zeros(5, dtype=np.float32)},
@@ -570,7 +570,7 @@ class TestRecordSpec:
                 pm.Normal("y", mu=zeta + alpha + mu, sigma=1000.0, observed=y)
             return m
 
-        model = PyMCModel(model_fn)
+        model = PyMCModel("model", model_fn)
         result = condition_on(
             model,
             {"y": np.zeros(5, dtype=np.float32)},
@@ -604,7 +604,7 @@ class TestRecordSpec:
                 pm.Normal("y", mu=mu, sigma=1.0, observed=y)
             return m
 
-        model = PyMCModel(model_fn)
+        model = PyMCModel("model", model_fn)
         with pytest.raises(ValueError, match="dynamic random variables"):
             condition_on(
                 model,
@@ -636,7 +636,7 @@ class TestRecordSpec:
             return m
 
         with pytest.raises(ValueError, match="non-concrete shape"):
-            _ = PyMCModel(model_fn).event_template
+            _ = PyMCModel("model", model_fn).event_template
 
     def test_event_shape_rejects_non_concrete_shape(self):
         """``event_shape`` derives from ``event_template``, so it rejects
@@ -652,7 +652,7 @@ class TestRecordSpec:
             return m
 
         with pytest.raises(ValueError, match="non-concrete shape"):
-            _ = PyMCModel(model_fn).event_shape
+            _ = PyMCModel("model", model_fn).event_shape
 
 
 class TestRecordDataUnpacking:
@@ -686,7 +686,7 @@ class TestRecordDataUnpacking:
         y = rng.poisson(2.0, size=N).astype(np.float32)
         data = Record("r", X=jnp.asarray(X), y=jnp.asarray(y))
 
-        model = PyMCModel(self._xy_model)
+        model = PyMCModel("model", self._xy_model)
         # _pymc_model unpacks and coerces. Result is a PyMC model built
         # against the *real* X and y (not the unconditioned-build sentinel).
         built = model._pymc_model(data=data)
@@ -700,7 +700,7 @@ class TestRecordDataUnpacking:
         N = 15
         X = np.asarray(rng.randn(N))[:, None].astype(np.float32)
         y = rng.poisson(2.0, size=N).astype(np.float32)
-        model = PyMCModel(self._xy_model)
+        model = PyMCModel("model", self._xy_model)
         built = model._pymc_model(data={"X": X, "y": y})
         y_rv = next(rv for rv in built.observed_RVs if rv.name == "y")
         assert y_rv.eval().shape == (N,)
@@ -716,7 +716,7 @@ class TestRecordDataUnpacking:
 
         X = jnp.ones((5, 2), dtype=jnp.float32)  # JAX array
         y = jnp.zeros(5, dtype=jnp.float32)
-        model = PyMCModel(self._xy_model)
+        model = PyMCModel("model", self._xy_model)
         # Just confirm this doesn't raise the
         # "unsupported operand type(s) for *: 'TensorVariable' and
         #  'jaxlib._jax.ArrayImpl'" error from the un-coerced path.
