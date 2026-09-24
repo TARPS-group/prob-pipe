@@ -27,6 +27,7 @@ from ._batch import _ranks_of
 from ._empirical import (
     EmpiricalDistribution,
     RecordEmpiricalDistribution,
+    _atom_declaration,
 )
 from ._function_batch import FunctionBatch
 from ._immutable import constructing, transient_memo
@@ -37,7 +38,7 @@ from ._object_batch import _from_iterable, _is_object_array, _ObjectBatch
 from ._opaque_batch import OpaqueBatch
 from ._record_batch import RecordBatch, _batch_class_for, _MappedBatchColumns
 from ._spec_base import _full_array_shape_or_none
-from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
+from ._specs import NumericArraySpec, NumericRecordSpec, OpaqueSpec, RecordSpec
 from .protocols import (
     SupportsLogProb,
     SupportsMean,
@@ -100,6 +101,9 @@ class _RecordMarginal(RecordEmpiricalDistribution):
         elif template is not None:
             # Preserve the exact template the batch carried.
             self._event_template = template
+        if event_template is not None or template is not None:
+            # The kept template is what a draw is declared as.
+            self._init_declaration(_atom_declaration(self._event_template, self._record_data))
 
     def __repr__(self):
         return (
@@ -132,7 +136,10 @@ class _MixtureMarginal(Distribution):
         self._components = components
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         name = auto_name(name, "mixture_marginal")
-        super().__init__(name=name)
+        from ._distribution_array import _cell_declaration
+
+        # A draw is one component's draw.
+        super().__init__(name, _cell_declaration(tuple(components), name))
         self._approximate = True
         self._event_template = event_template
 
@@ -325,7 +332,7 @@ class _ListMarginal(Distribution):
         self._items = items
         self._w = Weights(n=len(items), weights=weights, log_weights=log_weights)
         name = auto_name(name, "list_marginal")
-        super().__init__(name=name)
+        super().__init__(name, OpaqueSpec())
 
     @property
     def num_atoms(self) -> int:
@@ -1361,7 +1368,10 @@ class BroadcastDistribution(Distribution, SupportsSampling):
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         self._broadcast_args = list(broadcast_args)
         name = auto_name(name, "broadcast")
-        super().__init__(name=name)
+        # A draw pairs one row of every argument with its output, keyed by the
+        # argument labels, which need not be component names; the draw is
+        # opaque, an interim implementation detail of a class the design retires.
+        super().__init__(name, OpaqueSpec())
         self._approximate = True
         # A memo, filled on first read. Reading fills it in place, which leaves
         # the term's own attributes as construction set them — what the

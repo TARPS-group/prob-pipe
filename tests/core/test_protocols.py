@@ -357,7 +357,10 @@ class TestFlattenedDistributionViewDynamicProtocols:
             event_template = RecordSpec(x=())
 
             def __init__(self):
+                from probpipe import NumericArraySpec
+
                 self._name = "sample_only"
+                self._init_declaration(NumericArraySpec((), "float32"))
 
             @property
             def event_shape(self):
@@ -386,7 +389,10 @@ class TestFlattenedDistributionViewDynamicProtocols:
             event_template = RecordSpec(x=())
 
             def __init__(self):
+                from probpipe import NumericArraySpec
+
                 self._name = "lpo_base"
+                self._init_declaration(NumericArraySpec((), "float32"))
 
             @property
             def event_shape(self):
@@ -813,7 +819,7 @@ class TestSupportsArrayBackendProtocolSurface:
 
         # Protocol attributes via __annotations__ / methods via vars.
         members = set(dir(_DistributionArrayBackend))
-        for required in ("batch_shape", "event_shape", "cell"):
+        for required in ("batch_shape", "event_shape", "cell_spec", "cell"):
             assert required in members, (
                 f"_DistributionArrayBackend missing required attr {required!r}"
             )

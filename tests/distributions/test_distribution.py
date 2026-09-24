@@ -1122,6 +1122,83 @@ class TestDerivedDeclarations:
         assert at_point.event_spec == OutputSpec(log_prob=NumericArraySpec(()))
 
 
+class TestViewAndWrapperDeclarations:
+    """Views declare the term they select, and collections of laws their cells'."""
+
+    def test_a_field_view_is_a_whole_term_under_its_last_segment(self):
+        product = ProductDistribution(
+            a=Normal("a", 0.0, 1.0), b={"c": Gamma("c", 2.0, 1.0)}, name="p"
+        )
+        dtype = jnp.asarray(0.0).dtype
+        assert product["a"].event_spec == OutputSpec(a=NumericArraySpec((), dtype, real))
+        nested = product["b"]["c"]
+        assert nested.name == "b/c"
+        assert nested.event_spec == OutputSpec(c=NumericArraySpec((), dtype, positive))
+
+    def test_a_slash_path_selects_the_field_it_names(self):
+        product = ProductDistribution(
+            a=Normal("a", 0.0, 1.0), b={"c": Gamma("c", 2.0, 1.0)}, name="p"
+        )
+        view = product["b/c"]
+        assert view.name == "b/c"
+        assert view.event_spec == product[("b", "c")].event_spec
+
+    def test_the_flat_view_draws_one_real_vector(self):
+        product = ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0))
+        flat = product.as_flat_distribution()
+        assert flat.event_spec == OutputSpec(
+            to_vector=NumericArraySpec((2,), jnp.asarray(0.0).dtype, real)
+        )
+
+    def test_a_record_view_of_a_vector_draws_its_template(self):
+        mvn = MultivariateNormal("theta", loc=jnp.zeros(3), cov=jnp.eye(3))
+        view = mvn.as_record_distribution(template=NumericRecordSpec(a=(), b=(2,)))
+        dtype = jnp.asarray(0.0).dtype
+        assert view.event_spec == OutputSpec(
+            RecordSpec(a=NumericArraySpec((), dtype, real), b=NumericArraySpec((2,), dtype, real))
+        )
+
+    def test_a_batched_array_declares_one_cell_under_its_name(self):
+        array = DistributionArray.from_batched_params(Normal, loc=jnp.zeros(3), scale=1.0, name="x")
+        assert array.event_spec == OutputSpec(x=NumericArraySpec((), jnp.asarray(0.0).dtype, real))
+
+    def test_an_empty_batch_declares_one_cell_without_one(self):
+        array = Normal.from_batched_params(name="x", loc=jnp.zeros(0), scale=1.0)
+        assert array.batch_shape == (0,)
+        assert list(array) == []
+        assert array.event_spec == OutputSpec(x=NumericArraySpec((), jnp.asarray(0.0).dtype, real))
+
+    def test_a_support_holding_batched_parameters_is_unset(self):
+        array = DistributionArray.from_batched_params(
+            Uniform, low=jnp.zeros(3), high=jnp.arange(1.0, 4.0), name="u"
+        )
+        # Each cell has its own interval, so no one support holds for every cell.
+        assert array.event_spec == OutputSpec(u=NumericArraySpec((), jnp.asarray(0.0).dtype))
+
+    def test_cells_sharing_a_declaration_keep_it(self):
+        cells = [Normal("y", float(i), 1.0) for i in range(3)]
+        assert DistributionArray(cells).event_spec is cells[0].event_spec
+
+    def test_cells_that_differ_keep_the_metadata_they_share(self):
+        dtype = jnp.asarray(0.0).dtype
+        # Each cell has its own interval, so no one support holds for every cell.
+        intervals = DistributionArray([Uniform("a", 0.0, 1.0), Uniform("b", 0.0, 2.0)], name="u")
+        assert intervals.event_spec == OutputSpec(u=NumericArraySpec((), dtype))
+        assert intervals.support is None
+        mixed = DistributionArray([Normal("a", 0.0, 1.0), Bernoulli("b", probs=0.5)], name="m")
+        assert mixed.event_spec == OutputSpec(m=NumericArraySpec(()))
+        records = DistributionArray(
+            [
+                ProductDistribution(a=Uniform("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)),
+                ProductDistribution(a=Uniform("a", 0.0, 2.0), b=Normal("b", 0.0, 1.0)),
+            ],
+            name="r",
+        )
+        assert records.event_spec == OutputSpec(
+            RecordSpec(a=NumericArraySpec((), dtype), b=NumericArraySpec((), dtype, real))
+        )
+
+
 class TestDimensionTransforms:
     def test_with_dim_sizes_binds_a_free_dimension(self):
         law = _DeclaredLaw("x", NumericArraySpec(("n",)))
