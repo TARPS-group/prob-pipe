@@ -395,6 +395,21 @@ class _TFPArrayBackend:
     def dtype(self) -> jnp.dtype:
         return self._batched_dist.dtype
 
+    @property
+    def cell_spec(self) -> NumericArraySpec:
+        """The term every cell draws, read without materialising a cell.
+
+        The batched law declares the TFP event's array with its dtype, and its
+        support is the family's at the batched parameters. That support holds for
+        every cell only when no parameter is batched into it, so a support that
+        holds a batched parameter is left unset.
+        """
+        spec = self._batched_dist.event_spec.spec
+        support = spec.support
+        if support is not None and any(jnp.ndim(value) > 0 for value in vars(support).values()):
+            support = None
+        return NumericArraySpec(spec.shape, spec.dtype, support)
+
     # -- per-cell materialisation -------------------------------------------
 
     def cell(self, index: int | tuple[int, ...]) -> Distribution:

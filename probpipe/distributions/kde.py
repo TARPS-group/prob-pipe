@@ -20,31 +20,17 @@ from ..core._empirical import RecordEmpiricalDistribution
 from ..core._numeric_record import NumericRecord
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._numeric_record_distribution import NumericRecordDistribution
-from ..core._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
+from ..core._record_distribution import _record_with_leaves
+from ..core._specs import NumericArraySpec, NumericRecordSpec
 from ..core.constraints import real
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike
 from ._tfp_base import TFPDistribution
 
 if TYPE_CHECKING:
-    import numpy as np
-
-    from ..core._spec_base import TermSpec
+    from ..core._specs import RecordSpec
 
 __all__ = ["KDEDistribution"]
-
-
-def _draw_spec(template: RecordSpec, dtype: np.dtype) -> RecordSpec:
-    """*template* with each array leaf declaring *dtype* on the real line, as a KDE draws it."""
-
-    def leaf(spec: TermSpec) -> TermSpec:
-        if isinstance(spec, RecordSpec):
-            return _draw_spec(spec, dtype)
-        if isinstance(spec, NumericArraySpec):
-            return NumericArraySpec(spec.shape, dtype, real)
-        return spec
-
-    return RecordSpec({field: leaf(spec) for field, spec in template.children.items()})
 
 
 class KDEDistribution(TFPDistribution):
@@ -128,7 +114,7 @@ class KDEDistribution(TFPDistribution):
                     f"{event_template.fields}"
                 )
             object.__setattr__(self, "_event_template", event_template)
-            event_spec = _draw_spec(event_template, samples.dtype)
+            event_spec = _record_with_leaves(event_template, samples.dtype, real)
         else:
             # A one-column KDE mixes scalar kernels, so it draws scalars.
             event_spec = NumericArraySpec((d,) if d > 1 else (), samples.dtype, real)
