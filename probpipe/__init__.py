@@ -190,6 +190,7 @@ from probpipe.distributions._distribution import (
     RETURN_APPROX_DIST,
     Distribution,
     DistributionSpec,
+    NumericDistribution,
     set_default_num_evaluations,
     set_return_approx_dist,
 )
@@ -283,6 +284,7 @@ __all__ = [
     "NumericArray",
     "NumericArrayBatch",
     "NumericArraySpec",
+    "NumericDistribution",
     "NumericJointEmpirical",
     "NumericRandomMeasure",
     "NumericRecord",
