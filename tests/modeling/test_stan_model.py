@@ -197,11 +197,9 @@ class TestStanModelSurface:
     def test_as_unconstrained_distribution(self, conjugate_model):
         assert isinstance(conjugate_model.as_unconstrained_distribution(), _UnconstrainedStanView)
 
-    def test_name_defaults_to_class_name(self, conjugate_stan_file):
-        # Without an explicit name, StanModel falls back to the class name to
-        # satisfy the TrackedTerm metaclass's non-empty-name requirement.
+    def test_name_is_kept(self, conjugate_stan_file):
         model = StanModel("model", conjugate_stan_file, data={"N": 3, "y": [1.0, 2.0, 3.0]})
-        assert model.name == "StanModel"
+        assert model.name == "model"
 
 
 class TestStanModelDensity:
@@ -423,11 +421,6 @@ class TestUnconstrainedStanView:
 
     def test_name_with_base(self, structured_model):
         assert structured_model.as_unconstrained_distribution().name == "structured_unconstrained"
-
-    def test_name_without_base(self, conjugate_stan_file):
-        model = StanModel("model", conjugate_stan_file, data={"N": 3, "y": [1.0, 2.0, 3.0]})
-        view = model.as_unconstrained_distribution()
-        assert view.name == "StanModel_unconstrained"
 
     def test_event_shape_matches_model(self, structured_model):
         view = structured_model.as_unconstrained_distribution()
