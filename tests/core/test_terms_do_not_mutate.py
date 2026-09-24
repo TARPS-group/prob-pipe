@@ -70,6 +70,10 @@ class _ScalarBackend:
     def __init__(self, n: int):
         self.batch_shape = (n,)
 
+    @property
+    def cell_spec(self):
+        return self.cell(0).event_spec.spec
+
     def cell(self, index: int) -> Normal:
         return Normal(f"c{index}", float(index), 1.0)
 

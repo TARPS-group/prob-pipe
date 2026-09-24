@@ -61,10 +61,14 @@ from ._record_distribution import (
     _declares_event,
     _field_event_shape,
     _interim_template,
+    _record_with_leaves,
 )
-from ._specs import NumericArraySpec
+from ._specs import NumericArraySpec, OutputSpec
 from .constraints import (
     Constraint,
+    _PositiveDefinite,
+    _Simplex,
+    _Sphere,
     _supports_compatible,
     real,
 )
@@ -1009,12 +1013,13 @@ class FlattenedDistributionView(FlatNumericRecordDistribution):
 
     def __init__(self, base: Distribution):
         self._base = base
-        # The view preserves the base's construction-time name.
+        # The view preserves the base's construction-time name. A draw is one
+        # real vector, whose component is named for the flat map, as a base's
+        # name need not be a component name.
         self._init_tracked(base.name)
-
-    @property
-    def event_shape(self) -> tuple[int, ...]:
-        return (self._base.event_size,)
+        self._init_declaration(
+            OutputSpec(to_vector=NumericArraySpec((base.event_size,), base.dtype, real))
+        )
 
     def _expectation(
         self,
@@ -1031,11 +1036,6 @@ class FlattenedDistributionView(FlatNumericRecordDistribution):
             num_evaluations=num_evaluations,
             return_dist=return_dist,
         )
-
-    @property
-    def supports(self) -> dict[str, Constraint]:
-        """Per-field support — the flattened view is real-valued."""
-        return self._per_field_dict(real)
 
     @property
     def base_distribution(self) -> Distribution:
@@ -1252,13 +1252,26 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
     return new_cls
 
 
+def _piecewise_support(support: Constraint | None) -> Constraint | None:
+    """*support* when every piece of a draw satisfies it too, else None.
+
+    A joint constraint such as ``simplex`` holds for the whole vector only, and a
+    bound that varies by element does not carry over to a piece of another shape.
+    """
+    if support is None or isinstance(support, (_Simplex, _Sphere, _PositiveDefinite)):
+        return None
+    if any(jnp.ndim(value) > 0 for value in vars(support).values()):
+        return None
+    return support
+
+
 class NumericRecordDistributionView(NumericRecordDistribution):
     """View that lifts a flat distribution to a Record-keyed structure.
 
     Inverse of :class:`FlattenedDistributionView`. ``self._base`` is a
     :class:`FlatNumericRecordDistribution` (single-field, ``event_shape
     == (N,)``); ``self.event_template`` is the user-supplied
-    :class:`NumericRecordSpec` (not the source's auto-template).
+    :class:`NumericRecordSpec`.
 
     Sampling, log-prob, and moments delegate to ``self._base`` and
     reshape via the template's flatten / unflatten machinery.
@@ -1300,35 +1313,15 @@ class NumericRecordDistributionView(NumericRecordDistribution):
             # Fall back to the base's name.
             self._init_tracked(base.name)
         # Pre-set the user-supplied template so the auto-build path in
-        # ``NumericRecordDistribution.event_template`` is skipped.
+        # ``NumericRecordDistribution.event_template`` is skipped. A draw is
+        # that record, every leaf taking the source's dtype, and the source's
+        # support where it holds piecewise.
         object.__setattr__(self, "_event_template", template)
+        self._init_declaration(
+            _record_with_leaves(template, base.dtype, _piecewise_support(base.support))
+        )
 
     # ---- structural ---------------------------------------------------------
-
-    @property
-    def event_shape(self) -> tuple[int, ...]:
-        """Single-field shortcut: the lone field's shape.
-
-        Raises ``TypeError`` via :meth:`_single_field_name` for
-        multi-field templates; reach for :attr:`event_shapes` (dict)
-        in that case.
-        """
-        return self.event_shapes[self._single_field_name()]
-
-    @property
-    def event_shapes(self) -> dict[str, tuple[int, ...]]:
-        """Per-leaf event shapes from the user-supplied template."""
-        return dict(self.event_template.leaf_shapes)
-
-    @property
-    def dtypes(self) -> dict[str, jnp.dtype]:
-        """Per-field dtypes — all fields inherit the source's single dtype."""
-        return self._per_field_dict(self._base.dtype)
-
-    @property
-    def supports(self) -> dict[str, Constraint]:
-        """Per-field supports — all fields inherit the source's single support."""
-        return self._per_field_dict(self._base.support)
 
     @property
     def base_distribution(self) -> Distribution:

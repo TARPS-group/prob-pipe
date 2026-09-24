@@ -14,14 +14,16 @@ whose ``event_template`` is set.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import jax
 import jax.numpy as jnp
 
 from ..custom_types import Array, PRNGKey
 from ..distributions._distribution import Distribution, _DistributionMeta
-from ._specs import NumericArraySpec, RecordSpec, TermSpec
+from ._specs import NumericArraySpec, OutputSpec, RecordSpec, TermSpec
+from .constraints import Constraint
+from .named_tree import _PATH_SEP
 from .protocols import (
     SupportsCovariance,
     SupportsLogProb,
@@ -30,9 +32,6 @@ from .protocols import (
     SupportsVariance,
 )
 from .record import Record
-
-if TYPE_CHECKING:
-    from ._specs import OutputSpec
 
 __all__ = ["RecordDistribution", "_RecordDistributionView"]
 
@@ -207,9 +206,10 @@ class _RecordDistributionView(Distribution):
     Parameters
     ----------
     parent : Distribution
-        A distribution with ``event_template`` set.
-    key : str
-        Field name in the parent's ``event_template``.
+        The law whose field the view reads.
+    key : str or tuple of str
+        The field's path in the parent's draw, as a slash path or a tuple of
+        segments.
     """
 
     _sampling_cost = "low"
@@ -217,17 +217,18 @@ class _RecordDistributionView(Distribution):
 
     def __new__(
         cls,
-        parent: RecordDistribution,
+        parent: Distribution,
         key: str | tuple[str, ...],
     ) -> _RecordDistributionView:
         actual_cls = _view_class_for_parent(parent)
         return object.__new__(actual_cls)
 
-    def __init__(self, parent: RecordDistribution, key: str | tuple[str, ...]) -> None:
+    def __init__(self, parent: Distribution, key: str | tuple[str, ...]) -> None:
         # ``parent.event_template`` is contractually non-``None``
         # (metaclass-enforced on every ``RecordDistribution`` instance).
         template = parent.event_template
-        key_path = (key,) if isinstance(key, str) else tuple(key)
+        # A string key is a slash path, as a tuple key is.
+        key_path = tuple(key.split(_PATH_SEP)) if isinstance(key, str) else tuple(key)
         if not key_path:
             raise KeyError("Record distribution view path must not be empty")
         try:
@@ -244,6 +245,33 @@ class _RecordDistributionView(Distribution):
         self._key = key_path[-1]
         self._key_path = key_path
         self._template_field = template_field
+        # The parent's declared term at the path, a whole term under the
+        # path's last segment (III.7); a parent that declares no event yet
+        # gives its template's.
+        declared = _declared_at_path(parent, key_path)
+        self._init_declaration(
+            OutputSpec(**{self._key: template_field if declared is None else declared})
+        )
+
+    def __getitem__(self, key: str | tuple[str, ...]) -> Distribution:
+        """This view under its component, or the parent's view at a path within it.
+
+        A path into the group this view covers, as a slash path or a tuple, joins
+        the view's own path, so ``d["a"]["b/c"]`` is ``d["a/b/c"]``.
+
+        Raises
+        ------
+        KeyError
+            If the joined path is not a field of the parent.
+        TypeError
+            If *key* is neither a string nor a tuple of strings.
+        """
+        if not isinstance(key, (str, tuple)):
+            raise TypeError(f"key must be str or a tuple of str, got {type(key).__name__}")
+        path = tuple(key.split(_PATH_SEP)) if isinstance(key, str) else tuple(key)
+        if path == (self._key,):
+            return self
+        return self._parent[(*self._key_path, *path)]
 
     # -- Parent identity ---------------------------------------------------
 
@@ -267,44 +295,12 @@ class _RecordDistributionView(Distribution):
         """Name of the viewed field (the final segment of its parent path)."""
         return self._key
 
-    def __getitem__(self, key: str) -> _RecordDistributionView:
-        """Return a view of one child below a structured record field."""
-        if not isinstance(key, str):
-            raise TypeError(f"key must be str, got {type(key).__name__}")
-        if not isinstance(self._template_field, RecordSpec):
-            raise KeyError(f"{self._key_path!r} is a field, not a nested record")
-        if key not in self._template_field.children:
-            raise KeyError(
-                f"No field {key!r} below {self._key_path!r} "
-                f"(available: {tuple(self._template_field.children)})"
-            )
-        return _RecordDistributionView(self._parent, (*self._key_path, key))
-
-    # -- Shape info ---------------------------------------------------------
-
-    @property
-    def event_shape(self) -> tuple[int, ...]:
-        f = self._template_field
-        if isinstance(f, NumericArraySpec):
-            # Numeric array leaf — its event shape is the spec shape.
-            return f.shape
-        # Nested template / opaque / distribution / function leaf.
-        return ()
-
     # -- Single-field array-like shims -------------------------------------
 
     @property
     def shape(self) -> tuple[int, ...]:
         """Shape of one draw from this view — equals ``event_shape``."""
         return self.event_shape
-
-    @property
-    def dtype(self) -> jnp.dtype | None:
-        """Dtype of a single draw, if the parent exposes ``dtypes``."""
-        dtypes = getattr(self._parent, "dtypes", None)
-        if isinstance(dtypes, dict):
-            return dtypes.get("/".join(self._key_path), dtypes.get(self._key))
-        return None
 
     @property
     def ndim(self) -> int:
@@ -411,6 +407,31 @@ def _build_event_template(
         else:
             raise TypeError(f"Unexpected component type: {type(comp).__name__}")
     return RecordSpec(specs)
+
+
+def _record_with_leaves(template: RecordSpec, dtype: Any, support: Constraint | None) -> RecordSpec:
+    """*template* with every array leaf declaring *dtype* and *support*."""
+
+    def leaf(spec: TermSpec) -> TermSpec:
+        if isinstance(spec, RecordSpec):
+            return _record_with_leaves(spec, dtype, support)
+        if isinstance(spec, NumericArraySpec):
+            return NumericArraySpec(spec.shape, dtype, support)
+        return spec
+
+    return RecordSpec({field: leaf(spec) for field, spec in template.children.items()})
+
+
+def _declared_at_path(law: Distribution, path: tuple[str, ...]) -> TermSpec | None:
+    """The term *law* declares at *path* through its components, or None if it declares none."""
+    if not _declares_event(law):
+        return None
+    spec = law.event_spec.components.get(path[0])
+    for segment in path[1:]:
+        if not isinstance(spec, RecordSpec) or segment not in spec.children:
+            return None
+        spec = spec.children[segment]
+    return spec
 
 
 def _joint_event_spec(components: dict[str, Any]) -> RecordSpec:
