@@ -377,8 +377,8 @@ Commit the resulting `uv.lock` change alongside the `pyproject.toml` change.
 
 ```
 probpipe/
-├── core/           # Base abstractions: Distribution, protocols, ops, node, transition
-├── distributions/  # Concrete distributions (continuous, discrete, multivariate, ...)
+├── core/           # Base abstractions: protocols, ops, node, transition
+├── distributions/  # The Distribution base and the concrete distributions
 ├── record/         # Record-adjacent constructions: parameter-sweep Designs
 ├── modeling/       # Model wrappers (SimpleModel, StanModel, PyMCModel, likelihoods)
 ├── inference/      # Inference methods + registry (BlackJAX, TFP, nutpie, RWMH)
@@ -399,9 +399,9 @@ underscore modules directly.  See `probpipe/__init__.py` for the
 full public API surface.
 
 The diagnostics accessor is the one documented package-graph edge from
-`core/` back to a feature subpackage: `Distribution.diagnostics` lazily imports
-`probpipe.diagnostics.views.DiagnosticsView` only when the accessor is read.
-Keep this edge lazy so importing `probpipe.core` does not import the diagnostics
+`distributions/` back to a feature subpackage: `Distribution.diagnostics` lazily
+imports `probpipe.diagnostics.views.DiagnosticsView` only when the accessor is
+read. Keep this edge lazy so importing `probpipe` does not import the diagnostics
 subpackage or its optional ArviZ-facing dependencies.
 
 ### Distributions: `probpipe-core` and `probpipe`

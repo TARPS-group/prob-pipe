@@ -11,10 +11,8 @@ from typing import Any
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
-from ..core.distribution import (
-    NumericRecordDistribution,
-    RecordEmpiricalDistribution,
-)
+from ..core._empirical import RecordEmpiricalDistribution
+from ..core._numeric_record_distribution import NumericRecordDistribution
 from ..core.provenance import Provenance
 from ._registry import (
     _TFP_PROVIDER_ABI,

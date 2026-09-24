@@ -232,7 +232,7 @@ class _NormalizedTarget:
 
 
 def _make_unnormalized_distribution():
-    from probpipe.core._distribution_base import Distribution
+    from probpipe.distributions._distribution import Distribution
 
     class UnnormalizedDist(_UnnormalizedTarget, Distribution):
         event_shape = (2,)
@@ -244,8 +244,8 @@ def _make_unnormalized_distribution():
 
 
 def _make_normalized_distribution():
-    from probpipe.core._distribution_base import Distribution
     from probpipe.core.protocols import SupportsLogProb
+    from probpipe.distributions._distribution import Distribution
 
     class NormalizedDist(_NormalizedTarget, Distribution, SupportsLogProb):
         # Inheriting SupportsLogProb gives the default
@@ -343,7 +343,7 @@ class TestUnnormalizedLogProbInference:
 
     def test_check_description_names_unnormalized_protocol(self):
         """When MCMC methods are infeasible, error string names the right protocol."""
-        from probpipe.core._distribution_base import Distribution
+        from probpipe.distributions._distribution import Distribution
 
         class NoDensityDist(Distribution):
             event_shape = (2,)

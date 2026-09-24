@@ -28,8 +28,8 @@ from probpipe import (
     workflow_run,
 )
 from probpipe.core._record_batch import RecordBatch
+from probpipe.core._record_distribution import _RecordDistributionView
 from probpipe.core._specs import NumericArraySpec
-from probpipe.core.distribution import _RecordDistributionView
 from probpipe.inference import rwmh
 from probpipe.inference._approximate_distribution import make_posterior
 from probpipe.inference._inference_utils import build_mcmc_datatree

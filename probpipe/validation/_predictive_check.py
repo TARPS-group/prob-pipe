@@ -8,11 +8,12 @@ from typing import Any
 import jax
 import numpy as np
 
+from ..core._empirical import RecordEmpiricalDistribution
 from ..core._numeric_record import NumericRecord
-from ..core.distribution import Distribution, RecordEmpiricalDistribution
 from ..core.node import function
 from ..core.protocols import GenerativeLikelihood, SupportsSampling
 from ..custom_types import PRNGKey
+from ..distributions._distribution import Distribution
 from ._workflow_rng import (
     _require_certified_generative_provider,
     _resolve_validation_key,

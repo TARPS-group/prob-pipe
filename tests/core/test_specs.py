@@ -196,6 +196,7 @@ class TestDeclarationRoundTrips:
             OutputSpec(x=NumericArraySpec(("n",))),
             OutputSpec(RecordSpec(x=("n",))),
             RecordSpec(group=RecordSpec(x=("n",))),
+            DistributionSpec(RecordSpec(x=("n",))),
         ],
     )
     def test_declaration_copy_and_pickle(self, decl):

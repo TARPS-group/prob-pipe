@@ -19,7 +19,6 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
-from ..core._distribution_base import Distribution
 from ..core._numeric_record_distribution import (
     NumericRecordDistribution,
     _mc_expectation,
@@ -42,6 +41,7 @@ from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike, PRNGKey
+from ._distribution import Distribution
 from ._joint_utils import (
     KeyPath,
     _parse_condition_args,

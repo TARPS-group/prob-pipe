@@ -29,13 +29,10 @@ from typing import Any
 from .._array_utils import _is_numeric_array
 from .._dtype import _as_float_array
 from .._weights import Weights
+from ..core._empirical import RecordEmpiricalDistribution
+from ..core._numeric_record_distribution import NumericRecordDistribution, _mc_expectation
 from ..core._record_distribution import RecordDistribution, _build_event_template
 from ..core._specs import RecordSpec
-from ..core.distribution import (
-    NumericRecordDistribution,
-    RecordEmpiricalDistribution,
-    _mc_expectation,
-)
 from ..core.protocols import (
     SupportsMean,
     SupportsSampling,

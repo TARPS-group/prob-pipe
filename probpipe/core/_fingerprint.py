@@ -360,10 +360,10 @@ def _update_value_spec(
     state: _FingerprintState,
 ) -> None:
     """Hash a built-in TermSpec by the declaration fields that define it."""
+    from ..distributions._distribution import DistributionSpec
     from ._batch import BatchSpec
     from ._opaque import OpaqueSpec
     from ._specs import (
-        DistributionSpec,
         FunctionSpec,
         NumericArraySpec,
         RecordSpec,
@@ -634,7 +634,7 @@ def _update_record(
 
 def _is_distribution(obj: Any) -> bool:
     try:
-        from ._distribution_base import Distribution
+        from ..distributions._distribution import Distribution
 
         return isinstance(obj, Distribution)
     except ImportError:

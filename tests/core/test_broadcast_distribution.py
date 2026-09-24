@@ -24,7 +24,7 @@ from probpipe import (
     variance,
     workflow_run,
 )
-from probpipe.core.distribution import (
+from probpipe.core._broadcast_distributions import (
     _ListMarginal,
     _make_marginal,
     _make_mixture_marginal,
@@ -397,7 +397,7 @@ class TestMixtureMarginal:
 
     def test_no_sampling_when_components_lack_it(self):
         """Components without SupportsSampling → marginal shouldn't support it."""
-        from probpipe.core.distribution import Distribution
+        from probpipe import Distribution
 
         class NoSampleDist(Distribution):
             pass
@@ -635,7 +635,7 @@ class TestArrayMarginalAdditional:
 
     def test_expectation_subsampled(self, key):
         """Subsampled expectation returns BootstrapDistribution by default."""
-        from probpipe.core.distribution import BootstrapDistribution
+        from probpipe import BootstrapDistribution
 
         samples = jnp.arange(100, dtype=jnp.float32).reshape(-1, 1)
         m = _RecordMarginal(samples, None)
@@ -651,7 +651,7 @@ class TestArrayMarginalAdditional:
 
     def test_expectation_subsampled_weighted(self, key):
         """Subsampled expectation with weights."""
-        from probpipe.core.distribution import BootstrapDistribution
+        from probpipe import BootstrapDistribution
 
         n = 50
         samples = jnp.arange(n, dtype=jnp.float32).reshape(-1, 1)

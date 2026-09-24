@@ -381,9 +381,9 @@ from probpipe.core.record import Record
 ```
 
 A handful of `core/` and `distributions/` modules fit this profile —
-`protocols.py`, `named_tree.py`, `record.py`, `distribution.py`, `ops.py`,
-`constraints.py`, `provenance.py`, `tracked.py`, `transition.py`, `node.py`,
-`continuous.py`, `discrete.py`, `multivariate.py`, `transformed.py`.
+`protocols.py`, `named_tree.py`, `record.py`, `ops.py`, `constraints.py`,
+`provenance.py`, `tracked.py`, `transition.py`, `node.py`, `continuous.py`,
+`discrete.py`, `multivariate.py`, `transformed.py`.
 Everything else in those subpackages (the `_*.py` files) is an
 implementation detail re-exported via the package `__init__.py`.
 
@@ -505,9 +505,10 @@ Separate each group with a blank line.
 Always use **relative imports** for internal references:
 
 ```python
-from ..core.distribution import Distribution, Provenance
 from ..core.protocols import SupportsSampling
+from ..core.provenance import Provenance
 from ..custom_types import Array, PRNGKey
+from ..distributions._distribution import Distribution
 ```
 
 ### 4.4 Optional dependencies
@@ -610,10 +611,16 @@ validation/   (imports core/, inference/, custom_types)
 diagnostics/  (imports core/, inference/, validation/, custom_types)
 ```
 
+`distributions/_distribution.py` is the distribution base: it defines
+`Distribution` and `DistributionSpec` and imports only from `core/` at module
+level. Every package that works with distributions may import it, and `core/`
+does so under the first exception below.
+
 ### Rules
 
-1. **`core/`** must never import from `distributions/`, `record/`,
-   `linalg/`, `converters/`, `inference/`, or `modeling/`.
+1. **`core/`** must never import from `record/`, `linalg/`,
+   `converters/`, `inference/`, or `modeling/`, and it imports only the
+   distribution base from `distributions/`.
 2. **`distributions/`** must never import from `record/`, `linalg/`,
    `converters/`, `inference/`, or `modeling/`.
 3. **`record/`** must never import from `distributions/`, `linalg/`,
@@ -633,16 +640,26 @@ diagnostics/  (imports core/, inference/, validation/, custom_types)
 
 > **Exceptions** (intentional reverse edges):
 >
+> - `core/` → `distributions/_distribution.py` (module-level imports of the
+>   distribution base). The base is defined at its target location, while the
+>   `core/` modules that build on it have not yet moved out of `core/`.
+>   Importing the base initializes `probpipe.distributions`, whose families
+>   import those modules back, so the two packages form a cycle. The cycle stays
+>   benign because `probpipe/__init__.py` imports `probpipe.distributions` before
+>   any other first-party module. A `core/` module therefore imports the base
+>   from `..distributions._distribution`, never through the names
+>   `probpipe.distributions` re-exports, since that package's `__init__` is still
+>   running when the module loads.
 > - `inference/` → `modeling/` (lazy imports for model-type dispatch in
 >   `_tfp_mcmc`, `_nutpie`, `_cmdstan_method`, `_pymc_method`)
 > - `inference/` → `distributions/` (lazy imports: prior-type dispatch on
 >   distribution classes in `_blackjax_ess`, `bijector_for` constraint
 >   reparameterization in `_bayesflow_posteriors`)
-> - `core/` → `diagnostics.views` (lazy import inside
+> - `distributions/` → `diagnostics.views` (lazy import inside
 >   `Distribution.diagnostics` to construct the read-only diagnostics accessor)
 >
-> These use lazy (in-function) imports to avoid circular imports at
-> module load time.  Do not add new reverse edges without discussion.
+> Apart from the first, these use lazy (in-function) imports to avoid circular
+> imports at module load time. Do not add new reverse edges without discussion.
 
 ---
 

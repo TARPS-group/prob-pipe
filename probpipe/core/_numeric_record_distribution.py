@@ -52,9 +52,9 @@ import jax.numpy as jnp
 from .._dtype import _as_float_array
 from .._weights import Weights
 from ..custom_types import Array, ArrayLike, PRNGKey
-from . import _distribution_base as _base
+from ..distributions import _distribution as _base
+from ..distributions._distribution import Distribution
 from . import _workflow_broker, _workflow_descendants
-from ._distribution_base import Distribution
 from ._record_distribution import RecordDistribution, _field_event_shape
 from .constraints import (
     Constraint,

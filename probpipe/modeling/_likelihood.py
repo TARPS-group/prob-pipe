@@ -12,10 +12,10 @@ from types import MappingProxyType
 from typing import Any
 
 from ..core.config import WorkflowKind
-from ..core.distribution import Distribution
 from ..core.node import Function, Module
 from ..core.protocols import ConditionallyIndependentLikelihood, GenerativeLikelihood, Likelihood
 from ..core.transition import iterate
+from ..distributions._distribution import Distribution
 
 logger = logging.getLogger(__name__)
 

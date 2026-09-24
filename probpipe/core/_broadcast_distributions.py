@@ -21,9 +21,9 @@ import numpy as np
 
 from .._weights import Weights
 from ..custom_types import Array
+from ..distributions._distribution import Distribution
 from ._array_backend import _event_shape_of, _is_numeric_leaf, _to_jax_array
 from ._batch import _ranks_of
-from ._distribution_base import Distribution
 from ._empirical import (
     EmpiricalDistribution,
     RecordEmpiricalDistribution,

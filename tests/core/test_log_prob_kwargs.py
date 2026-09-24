@@ -20,6 +20,7 @@ import tensorflow_probability.substrates.jax.glm as tfp_glm
 
 from probpipe import (
     Beta,
+    Distribution,
     GLMLikelihood,
     JointGaussian,
     MinibatchedDistribution,
@@ -40,7 +41,6 @@ from probpipe import (
     unnormalized_prob,
 )
 from probpipe.core._specs import RecordSpec
-from probpipe.core.distribution import Distribution
 
 
 class TestKwargFormScalar:

@@ -18,12 +18,9 @@ from typing import Any
 
 import jax.numpy as jnp
 
-from ..core.distribution import (
-    Distribution,
-    EmpiricalDistribution,
-    RecordEmpiricalDistribution,
-)
+from ..core._empirical import EmpiricalDistribution, RecordEmpiricalDistribution
 from ..core.provenance import Provenance
+from ..distributions._distribution import Distribution
 from ..distributions._tfp_base import _allow_batched_tfp_init
 from ..distributions.transformed import TransformedDistribution
 from ._registry import (
@@ -193,7 +190,7 @@ def _mm_provenance(source, mean_result=None, var_result=None):
     instances (from MC fallback), they are stored in the metadata so
     users can inspect conversion error.
     """
-    from ..core.distribution import BootstrapDistribution
+    from ..core._numeric_record_distribution import BootstrapDistribution
 
     metadata = {}
     if isinstance(mean_result, BootstrapDistribution):
@@ -209,7 +206,7 @@ def _point_estimate(x):
     ``RecordEmpiricalDistribution._mean`` — numeric arrays auto-wrap
     as a single-field Record)."""
     from ..core._numeric_record import NumericRecord
-    from ..core.distribution import BootstrapDistribution
+    from ..core._numeric_record_distribution import BootstrapDistribution
 
     if isinstance(x, BootstrapDistribution):
         x = x._mean()

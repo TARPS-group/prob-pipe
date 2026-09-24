@@ -42,8 +42,8 @@ import numpy as np
 import xarray as xr
 
 from ..core import _workflow_broker, _workflow_context
-from ..core.distribution import Distribution
 from ..custom_types import PRNGKey
+from ..distributions._distribution import Distribution
 from ..validation._predictive_check import (
     _predictive_check_batched,
     _predictive_check_loop,

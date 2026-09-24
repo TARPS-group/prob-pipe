@@ -632,7 +632,7 @@ class TestDistributionABC:
 
     def test_mean_requires_supports_mean(self):
         """mean op raises TypeError for distributions without SupportsMean."""
-        from probpipe.core.distribution import _mc_expectation
+        from probpipe.core._numeric_record_distribution import _mc_expectation
         from probpipe.core.protocols import SupportsExpectation, SupportsSampling
 
         class MinimalDist(NumericRecordDistribution, SupportsSampling, SupportsExpectation):
@@ -657,7 +657,7 @@ class TestDistributionABC:
 
     def test_variance_requires_supports_variance(self):
         """variance op raises TypeError for distributions without SupportsVariance."""
-        from probpipe.core.distribution import _mc_expectation
+        from probpipe.core._numeric_record_distribution import _mc_expectation
         from probpipe.core.protocols import SupportsExpectation, SupportsSampling
 
         class MinimalDist(NumericRecordDistribution, SupportsSampling, SupportsExpectation):
@@ -759,7 +759,7 @@ class TestShapeSemantics:
 
 
 class TestDistributionCoverageGaps:
-    """Cover otherwise-uncovered defaults and helpers in core.distribution."""
+    """Cover the automatic template and ``dtype``/``dtypes`` defaults of numeric distributions."""
 
     def test_auto_template_from_name_and_event_shape(self):
         """``NumericRecordDistribution`` auto-builds a single-field

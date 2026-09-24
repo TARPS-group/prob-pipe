@@ -15,14 +15,10 @@ from types import MappingProxyType
 import jax
 import jax.numpy as jnp
 
+from ..core._numeric_record_distribution import NumericRecordDistribution, _mc_expectation
 from ..core._record_distribution import (
     RecordDistribution,
     _build_event_template,
-)
-from ..core.distribution import (
-    Distribution,
-    NumericRecordDistribution,
-    _mc_expectation,
 )
 from ..core.protocols import (
     SupportsExactConditioning,
@@ -36,6 +32,7 @@ from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike, PRNGKey
+from ._distribution import Distribution
 from ._joint_utils import (
     KeyPath,
     _parse_condition_args,

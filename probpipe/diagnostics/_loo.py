@@ -35,8 +35,8 @@ import arviz as az
 import numpy as np
 import xarray as xr
 
-from ..core.distribution import Distribution
 from ..core.record import Record
+from ..distributions._distribution import Distribution
 from ._datatree import _add_group
 from ._utils import _json_dumps_safe, _leaf_keys, _record_get, _safe_float
 

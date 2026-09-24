@@ -14,10 +14,11 @@ from math import prod
 from types import UnionType
 from typing import Any, Literal, Union, get_args, get_origin
 
+from ..distributions._distribution import Distribution
 from . import _workflow_call, _workflow_descendants, _workflow_distribution_normalization
 from ._batch import Batch
 from ._distribution_array import DistributionArray
-from .distribution import Distribution, EmpiricalDistribution
+from ._empirical import EmpiricalDistribution
 
 BroadcastRegime = Literal["none", "distribution", "sweep", "nested"]
 StochasticExecutionMode = Literal["exact", "sampled"]

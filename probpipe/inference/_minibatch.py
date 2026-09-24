@@ -40,7 +40,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..core._distribution_base import Distribution
 from ..core._object_batch import _is_object_array
 from ..core._random_functions import RandomFunction
 from ..core._random_measures import RandomMeasure
@@ -55,6 +54,7 @@ from ..core.protocols import (
 from ..core.record import Record
 from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike, PRNGKey
+from ..distributions._distribution import Distribution
 
 if TYPE_CHECKING:
     from ..core.protocols import ConditionallyIndependentLikelihood

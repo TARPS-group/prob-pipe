@@ -13,7 +13,7 @@ from typing import Any
 import numpy as np
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
-from ._distribution_base import Distribution
+from ..distributions._distribution import Distribution
 from ._record_distribution import _RecordDistributionView
 
 _DESCENDANT_ADAPTER_ABI = "probpipe.transformed_descendant/v1"

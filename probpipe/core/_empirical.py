@@ -49,9 +49,9 @@ from .._array_utils import _is_numeric_array
 from .._dtype import _as_float_array
 from .._weights import Weights
 from ..custom_types import Array, ArrayLike, PRNGKey
-from . import _distribution_base as _base
+from ..distributions import _distribution as _base
+from ..distributions._distribution import Distribution
 from . import _workflow_broker
-from ._distribution_base import Distribution
 from ._numeric_record import NumericRecord
 from ._numeric_record_distribution import (
     BootstrapDistribution,

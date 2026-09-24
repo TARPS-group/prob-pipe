@@ -12,10 +12,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..core.distribution import (
-    NumericRecordDistribution,
-    RecordEmpiricalDistribution,
-)
+from ..core._empirical import RecordEmpiricalDistribution
+from ..core._numeric_record_distribution import NumericRecordDistribution
 from ..core.provenance import Provenance
 from ._registry import (
     _SCIPY_PROVIDER_ABI,

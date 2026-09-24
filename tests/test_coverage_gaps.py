@@ -335,7 +335,7 @@ class TestCovarianceRequiresProtocol:
         """A distribution with SupportsExpectation but not SupportsCovariance
         should raise TypeError from the cov op."""
         from probpipe import NumericRecordDistribution, cov
-        from probpipe.core.distribution import _mc_expectation
+        from probpipe.core._numeric_record_distribution import _mc_expectation
         from probpipe.core.protocols import SupportsExpectation, SupportsSampling
 
         class NoCovDist(NumericRecordDistribution, SupportsSampling, SupportsExpectation):

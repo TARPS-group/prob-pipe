@@ -94,7 +94,7 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
     def supported_types(self) -> tuple[type, ...]:
         # Filter at the registry-level by Distribution; the SimpleModel +
         # ConditionallyIndependentLikelihood constraint is enforced in check().
-        from ..core._distribution_base import Distribution
+        from ..distributions._distribution import Distribution
 
         return (Distribution,)
 

@@ -32,8 +32,8 @@ import jax.scipy.linalg as jsl
 import numpy as np
 
 from ..core._dispatch import Feasibility
-from ..core.distribution import Distribution
 from ..custom_types import Array, ArrayLike
+from ..distributions._distribution import Distribution
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._inference_utils import (
     build_likelihood_flat,

@@ -9,15 +9,12 @@ import tensorflow_probability.substrates.jax.bijectors as tfb
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ..core import _workflow_descendants
+from ..core._numeric_record_distribution import NumericRecordDistribution, _mc_expectation
 from ..core.constraints import (
     Constraint,
     positive,
     real,
     unit_interval,
-)
-from ..core.distribution import (
-    NumericRecordDistribution,
-    _mc_expectation,
 )
 from ..core.protocols import SupportsLogProb, SupportsMean, SupportsSampling, SupportsVariance
 from ..core.provenance import Provenance

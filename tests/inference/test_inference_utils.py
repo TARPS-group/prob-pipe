@@ -16,8 +16,8 @@ from probpipe import (
     ProductDistribution,
     SimpleModel,
 )
-from probpipe.core._distribution_base import Distribution
 from probpipe.core.protocols import SupportsSampling
+from probpipe.distributions._distribution import Distribution
 from probpipe.inference._inference_utils import (
     as_prng_key,
     build_likelihood_flat,

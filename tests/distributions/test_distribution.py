@@ -1,6 +1,8 @@
-"""Tests for Distribution base-class machinery (name, with_name, provenance)."""
+"""Tests for the distribution base classes, ``Distribution`` and ``DistributionSpec``."""
 
 from __future__ import annotations
+
+import importlib
 
 import jax
 import jax.numpy as jnp
@@ -8,10 +10,12 @@ import numpy as np
 import pytest
 
 from probpipe import (
+    DistributionSpec,
     Gamma,
     MultivariateNormal,
     Normal,
     RecordEmpiricalDistribution,
+    RecordSpec,
     TransformedDistribution,
 )
 from probpipe.core._specs import NumericArraySpec
@@ -29,7 +33,7 @@ def _make_transformed():
 
 
 # Distribution-instance factories used by ``TestNoBatchShape``. Mirrors
-# the ``DISTRIBUTIONS`` table in ``test_iteration_protocol.py`` but with
+# the ``DISTRIBUTIONS`` table in ``tests/core/test_iteration_protocol.py`` but with
 # a smaller set covering the canonical TFP-backed scalars + the most
 # distinct subclasses (TransformedDistribution / KDEDistribution /
 # RecordEmpiricalDistribution).
@@ -232,13 +236,28 @@ class TestAnnotationsDiagnosticsAccessor:
 
 class TestDistributionRepr:
     def test_base_repr_includes_class_and_name(self):
-        from probpipe.core.distribution import Distribution
+        from probpipe import Distribution
 
         class _NamedDist(Distribution):
             def __init__(self):
                 super().__init__(name="x")
 
         assert repr(_NamedDist()) == "_NamedDist(name='x')"
+
+
+class TestConstructorNameCheck:
+    """``Distribution.__init__`` rejects a name that is not a non-empty string."""
+
+    @pytest.mark.parametrize("name", ["", 123, None])
+    def test_invalid_name_raises(self, name):
+        from probpipe import Distribution
+
+        class _Dist(Distribution):
+            def __init__(self, name):
+                super().__init__(name=name)
+
+        with pytest.raises(TypeError, match="requires a non-empty name"):
+            _Dist(name)
 
 
 class TestMetaclassEnforcement:
@@ -251,7 +270,7 @@ class TestMetaclassEnforcement:
         """A subclass whose ``__init__`` doesn't set ``_name`` cannot be
         constructed — the metaclass post-init check fires before the
         instance escapes."""
-        from probpipe.core.distribution import Distribution
+        from probpipe import Distribution
 
         class _NoNameDist(Distribution):
             def __init__(self):
@@ -265,7 +284,7 @@ class TestMetaclassEnforcement:
     def test_subclass_with_empty_string_name_raises(self):
         """An empty-string ``_name`` is also rejected — the check
         insists on a truthy string."""
-        from probpipe.core.distribution import Distribution
+        from probpipe import Distribution
 
         class _EmptyNameDist(Distribution):
             def __init__(self):
@@ -276,7 +295,7 @@ class TestMetaclassEnforcement:
 
     def test_subclass_with_non_string_name_raises(self):
         """The metaclass requires the final ``_name`` to be a string."""
-        from probpipe.core.distribution import Distribution
+        from probpipe import Distribution
 
         class _NonStringNameDist(Distribution):
             def __init__(self):
@@ -288,7 +307,7 @@ class TestMetaclassEnforcement:
     def test_subclass_setting_name_directly_succeeds(self):
         """Bypassing ``super().__init__`` is fine as long as
         ``self._name`` ends up set to a non-empty string."""
-        from probpipe.core.distribution import Distribution
+        from probpipe import Distribution
 
         class _DirectNameDist(Distribution):
             def __init__(self):
@@ -303,7 +322,7 @@ class TestMetaclassEnforcement:
         on top of the name check. A RecordDistribution subclass whose
         ``__init__`` neither sets ``_event_template`` nor leaves
         ``name + event_shape`` derivable can't be constructed."""
-        from probpipe.core.distribution import RecordDistribution
+        from probpipe import RecordDistribution
 
         class _NoTemplate(RecordDistribution):
             def __init__(self):
@@ -373,3 +392,96 @@ class TestWithNameTemplateRoundtrip:
         clone = je.with_name("renamed_je")
         assert clone.event_template is not None
         assert clone.event_template.fields == original_fields
+
+
+class TestDistributionSpecIsValid:
+    def test_matching_distribution_valid(self):
+        dist = Normal(name="x", loc=0.0, scale=1.0)
+        assert DistributionSpec(event_spec=dist.event_template).is_valid(dist)
+
+    def test_template_mismatch_invalid(self):
+        dist = Normal(name="x", loc=0.0, scale=1.0)
+        assert not DistributionSpec(event_spec=RecordSpec(y=())).is_valid(dist)
+
+    def test_non_distribution_invalid(self):
+        spec = DistributionSpec(event_spec=RecordSpec(x=()))
+        assert not spec.is_valid(42)
+        assert not spec.is_valid(RecordSpec(x=()))
+
+    def test_distribution_without_template_invalid(self):
+        # A distribution always carries the schema of its draws; one that
+        # exposes no event template cannot satisfy any DistributionSpec.
+        from probpipe import Distribution
+
+        class _NoTemplate(Distribution):
+            def __init__(self):
+                super().__init__(name="d")
+
+        spec = DistributionSpec(event_spec=RecordSpec(x=()))
+        assert not spec.is_valid(_NoTemplate())
+
+    def test_distribution_with_none_template_invalid(self):
+        from probpipe import Distribution
+
+        class _NoneTemplate(Distribution):
+            def __init__(self):
+                super().__init__(name="d")
+
+            @property
+            def event_template(self):
+                return None
+
+        spec = DistributionSpec(event_spec=RecordSpec(x=()))
+        assert not spec.is_valid(_NoneTemplate())
+
+    def test_type_error_template_is_not_a_match(self):
+        # TypeError is the documented "template not derivable" signal (e.g. an
+        # un-named auto-deriving distribution): a non-match, so is_valid
+        # returns False.
+        from probpipe import Distribution
+
+        class _NotDerivable(Distribution):
+            def __init__(self):
+                super().__init__(name="d")
+
+            @property
+            def event_template(self):
+                raise TypeError("template not derivable")
+
+        spec = DistributionSpec(event_spec=RecordSpec(x=()))
+        assert not spec.is_valid(_NotDerivable())
+
+    @pytest.mark.parametrize("error", [RuntimeError, ValueError, KeyError])
+    def test_unexpected_template_error_propagates(self, error):
+        # An unexpected error from event_template is a malfunctioning
+        # distribution, not a clean non-match — is_valid must not mask it as
+        # invalid; it propagates so the bug surfaces.
+        from probpipe import Distribution
+
+        class _Broken(Distribution):
+            def __init__(self):
+                super().__init__(name="d")
+
+            @property
+            def event_template(self):
+                raise error("boom")
+
+        spec = DistributionSpec(event_spec=RecordSpec(x=()))
+        with pytest.raises(error):
+            spec.is_valid(_Broken())
+
+
+class TestPublicImportPaths:
+    """Both public namespaces export the distribution base classes."""
+
+    def test_distributions_package_exports_the_base(self):
+        import probpipe
+        import probpipe.distributions as distributions
+
+        assert distributions.Distribution is probpipe.Distribution
+        assert distributions.DistributionSpec is probpipe.DistributionSpec
+        assert {"Distribution", "DistributionSpec"} <= set(distributions.__all__)
+
+    def test_core_distribution_module_is_removed(self):
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module("probpipe.core." + "distribution")

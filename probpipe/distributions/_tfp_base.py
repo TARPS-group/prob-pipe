@@ -1,9 +1,4 @@
-"""TFPDistribution base class for distributions backed by TFP instances.
-
-Factored out of ``core/distribution.py`` because no ``core/`` module
-imports ``TFPDistribution`` – it is only used by the concrete
-distribution modules in ``distributions/``.
-"""
+"""TFPDistribution base class for distributions backed by TFP instances."""
 
 from __future__ import annotations
 
@@ -18,12 +13,8 @@ import numpy as np
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from .._array_utils import _slice_leading_axes
-from ..core._distribution_base import Distribution
+from ..core._numeric_record_distribution import NumericRecordDistribution, _mc_expectation
 from ..core.constraints import Constraint
-from ..core.distribution import (
-    NumericRecordDistribution,
-    _mc_expectation,
-)
 from ..core.protocols import (
     SupportsCovariance,
     SupportsLogProb,
@@ -32,6 +23,7 @@ from ..core.protocols import (
     SupportsVariance,
 )
 from ..custom_types import Array, ArrayLike, PRNGKey
+from ._distribution import Distribution
 
 # ---------------------------------------------------------------------------
 # Internal bypass for the batched-parameters rejection

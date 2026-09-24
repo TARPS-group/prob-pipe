@@ -17,6 +17,7 @@ from probpipe import (
     ConversionInfo,
     ConversionMethod,
     Converter,
+    Distribution,
     Gamma,
     MultivariateNormal,
     Normal,
@@ -30,7 +31,6 @@ from probpipe.converters import ConverterRegistry, _probpipe, _scipy, _tfp
 from probpipe.converters._probpipe import ProbPipeConverter
 from probpipe.converters._tfp import TFPConverter
 from probpipe.core import _workflow_context
-from probpipe.core.distribution import Distribution
 
 
 class _RecordingNormal(Normal):
