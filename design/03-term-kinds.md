@@ -356,8 +356,6 @@ It declares the operations it supports as **capabilities** (III.8), so operation
 
 `with_path_names` renames or moves event fields under the rules of II.6 and renames a whole-term output component by its declared name. On an exposed record, its component names are derived from the renamed immediate children. On a named whole record, renaming the outer component leaves the record's own fields unchanged. An unqualified name that could address both is ambiguous and raises; the caller disambiguates with a full event path where available. Restructuring never silently changes the event kind or the declaration's exposure form: a path-valued target for a whole-term component is refused. `with_name` changes only the object label. A polymorphic law is legal and binds as II.1 specifies.
 
-A `NumericDistribution` is a `Distribution` whose `event_spec.spec` is a `NumericSpec` (II.3), so its draws implement `Numeric` and the flat-vector interface applies; a scalar `Normal`'s `NumericArraySpec` event qualifies as a record event does.
-
 ```python
 class Distribution(TrackedTerm):
     def __init__(self, name: str, event_spec: OutputSpec | TermSpec) -> None: ...
@@ -379,8 +377,25 @@ class Distribution(TrackedTerm):
     def with_dim_names(self, **names: str) -> Self: ...   # rename symbolic dimensions before composing (IV.2)
     def __getitem__(self, key: str | tuple[str, ...]) -> Distribution: ...
     # the field view at a leaf or group path; raises on a term-drawing law, which has no fields
+```
 
-class NumericDistribution(Distribution): ...   # marker: the event spec is a NumericSpec
+**Numeric distributions.** A `NumericDistribution` is a `Distribution` whose `event_spec.spec` is a `NumericSpec` (II.3), so its draws implement `Numeric` and the flat-vector interface applies; a scalar `Normal`'s `NumericArraySpec` event qualifies as a record event does. Membership is read from the declaration, so `isinstance(d, NumericDistribution)` holds if and only if the declaration of `d` is numeric, whatever its class. A class whose every instance is numeric may inherit the marker, and construction checks that claim. Every numeric law has the marker's views, which, like `event_shape`, read the declaration and are never stored or overridden:
+
+- `dtypes` and `supports`: the declared dtype and support of each array leaf, keyed by the leaf's path.
+- `dtype` and `support`: the dtype and the support every array leaf shares, each `None` when the leaves differ.
+
+A law whose declaration is not numeric has none of them.
+
+```python
+class NumericDistribution(Distribution):   # the event spec is a NumericSpec
+    @property
+    def dtypes(self) -> Mapping[str, np.dtype | None]: ...       # each array leaf's dtype, by path
+    @property
+    def supports(self) -> Mapping[str, Constraint | None]: ...   # each array leaf's support, by path
+    @property
+    def dtype(self) -> np.dtype | None: ...          # the dtype every array leaf shares, else None
+    @property
+    def support(self) -> Constraint | None: ...      # the support every array leaf shares, else None
 ```
 
 **Field views.** `d[path]` returns a `FieldView`: a `Distribution` over the field or field group at `path`, holding a reference to its parent rather than a detached law. Sibling views co-sample from one parent draw, so correlation between them is preserved. The capabilities a view offers are derived from its parent's, one by one (III.8).
@@ -397,7 +412,7 @@ class FieldView(Distribution):
     # the declaration is the parent's schema at path; a view (II.4)
 ```
 
-**The distribution term specification.** `DistributionSpec` is the distribution kind's term spec. As a leaf, it types a field holding a matching `Distribution`. As an event declaration, it declares a random measure: a distribution whose draws are themselves `Distribution`s.
+**The distribution term specification.** `DistributionSpec` is the distribution kind's term spec. As a leaf, it types a field holding a matching `Distribution`: one whose own event declaration unifies with the declared one, so the packaging and component names agree and the components bind in one dimension scope (II.1). As an event declaration, it declares a random measure: a distribution whose draws are themselves `Distribution`s.
 
 ```python
 class DistributionSpec(TermSpec):  # a Distribution; is_valid accepts a matching Distribution
