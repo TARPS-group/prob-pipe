@@ -402,7 +402,7 @@ class TestColumnBatchForms:
         is declared."""
         from probpipe import DistributionSpec, Normal
 
-        law = Normal(0.0, 1.0, name="n")
+        law = Normal("n", 0.0, 1.0)
         spec = RecordSpec({"d": DistributionSpec(law.event_template), "x": ()})
         with pytest.raises(TypeError, match="DistributionSpec, which has no batch form"):
             RecordBatch(

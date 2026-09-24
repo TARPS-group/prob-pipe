@@ -94,6 +94,11 @@ class TFPDistribution(
     ``_unnormalized_log_prob``, ``_unnormalized_prob`` defaults),
     :class:`SupportsMean`, and :class:`SupportsVariance`.
 
+    Parameters
+    ----------
+    name : str
+        Distribution name.
+
     Rejects batched parameters
     --------------------------
     Per the framework hierarchy "one random variable per
@@ -124,7 +129,7 @@ class TFPDistribution(
     _sampling_cost: str = "low"
     _preferred_orchestration: str | None = None
 
-    def __init__(self, *, name: str) -> None:
+    def __init__(self, name: str) -> None:
         """Final-stage initializer for TFP-backed distributions.
 
         Concrete subclasses (``Normal``, ``Beta``, …) set

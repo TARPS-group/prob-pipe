@@ -69,7 +69,6 @@ from .protocols import (
     SupportsSampling,
     SupportsVariance,
 )
-from .tracked import auto_name
 
 # ---------------------------------------------------------------------------
 # Sampling & expectation helpers
@@ -163,7 +162,7 @@ def _mc_expectation(
 
     rd = return_dist if return_dist is not None else _base.RETURN_APPROX_DIST
     if rd:
-        return BootstrapDistribution(evals, name="E[f(X)]")
+        return BootstrapDistribution("expectation", evals)
     return jax.tree.map(lambda v: jnp.mean(v, axis=0), evals)
 
 
@@ -641,6 +640,8 @@ class BootstrapDistribution(
 
     Parameters
     ----------
+    name : str
+        Distribution name.
     evaluations : array-like, shape ``(n, *stat_shape)``
         The individual ``f(x_i)`` values.
     weights : array-like, :class:`~probpipe.Weights`, or None
@@ -651,17 +652,15 @@ class BootstrapDistribution(
     log_weights : array-like, :class:`~probpipe.Weights`, or None
         Log-unnormalized weights.  A pre-built :class:`~probpipe.Weights`
         object is also accepted.  Mutually exclusive with *weights*.
-    name : str, optional
-        Distribution name.
     """
 
     def __init__(
         self,
+        name: str,
         evaluations: ArrayLike,
         *,
         weights: ArrayLike | Weights | None = None,
         log_weights: ArrayLike | Weights | None = None,
-        name: str | None = None,
     ):
         self._evaluations = _as_float_array(evaluations)
         if self._evaluations.ndim == 0:
@@ -672,7 +671,6 @@ class BootstrapDistribution(
             weights=weights,
             log_weights=log_weights,
         )
-        name = auto_name(name, "bootstrap_dist")
         super().__init__(name=name)
         self._approximate = True
 
@@ -1173,7 +1171,7 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
             evals = jax.vmap(_f_on_flat)(flat_samples)
             rd = return_dist if return_dist is not None else _base.RETURN_APPROX_DIST
             if rd:
-                return BootstrapDistribution(evals, name="E[f(X)]")
+                return BootstrapDistribution("expectation", evals)
             return jax.tree.map(lambda v: jnp.mean(v, axis=0), evals)
 
         extra_methods["_expectation"] = _expectation

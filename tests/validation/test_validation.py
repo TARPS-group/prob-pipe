@@ -173,7 +173,7 @@ class TestPredictiveCheck:
         numeric = NumericRecord("posterior", x=np.array([0.0, 1.0, 2.0]))
 
         class _FakeRecordEmpiricalDistribution:
-            def __init__(self, values, name=None):
+            def __init__(self, name, values):
                 self.values = values
                 self.name = name
 
@@ -449,7 +449,7 @@ class TestPredictiveCheckNonJax:
     def test_empirical_distribution_as_source(self):
         """Use an EmpiricalDistribution (non-parametric) as the source."""
         samples = jnp.array([0.5, 1.0, 1.5, 2.0, 2.5])
-        dist = EmpiricalDistribution(samples, name="x")
+        dist = EmpiricalDistribution("x", samples)
         lik = NumpyGaussianLikelihood(rng_seed=11)
 
         result = predictive_check(

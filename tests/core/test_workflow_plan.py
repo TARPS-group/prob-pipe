@@ -477,8 +477,8 @@ class TestStochasticSourceGrouping:
 class TestStochasticEvaluationPlanning:
     def test_wholly_exact_empiricals_record_cartesian_order_and_no_events(self):
         values = {
-            "a": EmpiricalDistribution(jnp.asarray([1.0, 2.0]), name="a"),
-            "b": EmpiricalDistribution(jnp.asarray([10.0, 20.0, 30.0]), name="b"),
+            "a": EmpiricalDistribution("a", jnp.asarray([1.0, 2.0])),
+            "b": EmpiricalDistribution("b", jnp.asarray([10.0, 20.0, 30.0])),
         }
 
         plan = _stochastic_plan(values, n_broadcast_samples=10)
@@ -505,8 +505,8 @@ class TestStochasticEvaluationPlanning:
 
     def test_mixed_plan_preserves_stable_greedy_order_and_actual_sample_shape(self):
         values = {
-            "large_first": EmpiricalDistribution(jnp.arange(5.0), name="large_first"),
-            "small_second": EmpiricalDistribution(jnp.arange(2.0), name="small_second"),
+            "large_first": EmpiricalDistribution("large_first", jnp.arange(5.0)),
+            "small_second": EmpiricalDistribution("small_second", jnp.arange(2.0)),
             "sampled": Normal(loc=0.0, scale=1.0, name="sampled"),
         }
 
@@ -529,7 +529,7 @@ class TestStochasticEvaluationPlanning:
 
     def test_over_budget_empirical_is_sampled(self):
         plan = _stochastic_plan(
-            {"x": EmpiricalDistribution(jnp.arange(20.0), name="x")},
+            {"x": EmpiricalDistribution("x", jnp.arange(20.0))},
             n_broadcast_samples=5,
         )
 
@@ -542,9 +542,9 @@ class TestStochasticEvaluationPlanning:
     def test_equal_size_empiricals_keep_first_consumer_order_at_greedy_cutoff(self):
         plan = _stochastic_plan(
             {
-                "first": EmpiricalDistribution(jnp.arange(3.0), name="first"),
-                "second": EmpiricalDistribution(jnp.arange(3.0), name="second"),
-                "third": EmpiricalDistribution(jnp.arange(3.0), name="third"),
+                "first": EmpiricalDistribution("first", jnp.arange(3.0)),
+                "second": EmpiricalDistribution("second", jnp.arange(3.0)),
+                "third": EmpiricalDistribution("third", jnp.arange(3.0)),
             },
             n_broadcast_samples=10,
         )

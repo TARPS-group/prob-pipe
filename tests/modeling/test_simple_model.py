@@ -65,7 +65,7 @@ class TestSimpleModel:
         """SimpleModel rejects priors that don't support SupportsLogProb."""
         from probpipe import EmpiricalDistribution
 
-        emp = EmpiricalDistribution(jnp.ones((10, 2)), name="x")
+        emp = EmpiricalDistribution("x", jnp.ones((10, 2)))
         lik = GaussianLikelihood()
         with pytest.raises(TypeError, match="SupportsLogProb"):
             SimpleModel(emp, lik)

@@ -23,7 +23,6 @@ from ..core._numeric_record_distribution import NumericRecordDistribution
 from ..core._specs import NumericRecordSpec
 from ..core.constraints import Constraint, real
 from ..core.record import Record
-from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike
 from ._tfp_base import TFPDistribution
 
@@ -43,6 +42,8 @@ class KDEDistribution(TFPDistribution):
 
     Parameters
     ----------
+    name : str
+        Distribution name for provenance.
     samples : array-like
         Sample matrix of shape ``(n,)`` or ``(n, d)``.
     weights : array-like, :class:`~probpipe.Weights`, or None
@@ -66,19 +67,17 @@ class KDEDistribution(TFPDistribution):
         being routed through KDE as the new prior in
         :class:`~probpipe.modeling.IncrementalConditioner`. The template's
         ``vector_size`` must equal ``samples.shape[1]``.
-    name : str or None
-        Distribution name for provenance.
     """
 
     def __init__(
         self,
+        name: str,
         samples: ArrayLike,
         weights: ArrayLike | Weights | None = None,
         *,
         log_weights: ArrayLike | Weights | None = None,
         bandwidth: ArrayLike | None = None,
         event_template: RecordSpec | None = None,
-        name: str | None = None,
     ):
         samples = _as_float_array(samples)
         if samples.ndim == 0:
@@ -92,7 +91,6 @@ class KDEDistribution(TFPDistribution):
         n, d = samples.shape
         self._samples = samples
         self._d = d
-        name = auto_name(name, "kde")
 
         # Multi-field template support: when the caller supplies a template
         # with more than one field, preset ``_event_template`` so that
@@ -220,13 +218,13 @@ class KDEDistribution(TFPDistribution):
         if len(tpl.fields) == 1:
             field = tpl.fields[0]
             arr = source.samples[field]
-            return cls(arr, weights=source._w, bandwidth=bandwidth, name=name)
+            return cls(name, arr, weights=source._w, bandwidth=bandwidth)
         return cls(
+            name,
             source.flat_samples,
             weights=source._w,
             bandwidth=bandwidth,
             event_template=tpl,
-            name=name,
         )
 
     def __repr__(self) -> str:

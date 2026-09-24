@@ -80,6 +80,7 @@ class JointEmpirical(RecordDistribution, SupportsSampling):
         exclusive with *weights*.
     name : str, optional
         Distribution name.
+        Keyword-only, as an interim detail (see :class:`~probpipe.Distribution`).
     **samples : array-like
         Named component sample arrays. Each must have the same number of
         rows (first dimension = ``n``).
@@ -324,7 +325,7 @@ class NumericJointEmpirical(
 
     def _build_component_dists(self) -> dict[str, NumericRecordDistribution]:
         return {
-            cname: RecordEmpiricalDistribution(arr, weights=self._w, name=cname)
+            cname: RecordEmpiricalDistribution(cname, arr, weights=self._w)
             for cname, arr in self._joint_samples.items()
         }
 

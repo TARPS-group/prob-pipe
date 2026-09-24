@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib
+import inspect
+import pkgutil
 from typing import Any
 
 import jax
@@ -24,6 +26,7 @@ from probpipe import (
     RecordEmpiricalDistribution,
     RecordSpec,
     TransformedDistribution,
+    expectation,
 )
 from probpipe.core._specs import NumericArraySpec
 from probpipe.core._workflow_distribution_normalization import DISTRIBUTION_HINT_PROTOCOLS
@@ -35,6 +38,7 @@ def _make_transformed():
     import tensorflow_probability.substrates.jax.bijectors as tfb
 
     return TransformedDistribution(
+        "transformed",
         Normal(loc=0.0, scale=1.0, name="x"),
         tfb.Exp(),
     )
@@ -54,11 +58,11 @@ _NO_BATCH_SHAPE_DISTS = [
     ),
     pytest.param(_make_transformed, id="TransformedDistribution"),
     pytest.param(
-        lambda: KDEDistribution(jnp.zeros((20, 3)), name="kde"),
+        lambda: KDEDistribution("kde", jnp.zeros((20, 3))),
         id="KDEDistribution",
     ),
     pytest.param(
-        lambda: RecordEmpiricalDistribution(jnp.zeros((10, 3)), name="x"),
+        lambda: RecordEmpiricalDistribution("x", jnp.zeros((10, 3))),
         id="RecordEmpiricalDistribution",
     ),
 ]
@@ -503,6 +507,110 @@ class TestNoTypeParameter:
         assert cls.__type_params__ == ()
         with pytest.raises(TypeError):
             cls[Any]
+
+
+def _public_distribution_classes() -> list[type]:
+    """Every public distribution class in the package, found by a subclass walk."""
+    import probpipe
+
+    for module in pkgutil.walk_packages(probpipe.__path__, "probpipe."):
+        try:
+            importlib.import_module(module.name)
+        except ImportError as exc:
+            # An optional backend that is not installed is skipped.
+            if (exc.name or "").partition(".")[0] == "probpipe":
+                raise
+    found: list[type] = []
+    stack = [Distribution]
+    while stack:
+        for sub in stack.pop().__subclasses__():
+            if sub.__module__.startswith("probpipe") and sub not in found:
+                found.append(sub)
+                stack.append(sub)
+    return [cls for cls in found if not cls.__name__.startswith("_")]
+
+
+# The classes the design retires keep a keyword name until they are removed.
+_RETIRING = {
+    "ApproximateDistribution",
+    "BayesFlowModel",
+    "BroadcastDistribution",
+    "DistributionArray",
+    "FlattenedDistributionView",
+    "JointEmpirical",
+    "JointGaussian",
+    "NumericJointEmpirical",
+    "NumericRecordDistributionView",
+    "ProductDistribution",
+    "SequentialJointDistribution",
+    "SimpleGenerativeModel",
+    "SimpleModel",
+    "TFPProductDistribution",
+}
+_PUBLIC_CLASSES = _public_distribution_classes()
+
+
+class TestNameFirstSignature:
+    """Every constructor the design keeps takes ``name`` first, required."""
+
+    @pytest.mark.parametrize(
+        "cls",
+        [cls for cls in _PUBLIC_CLASSES if cls.__name__ not in _RETIRING],
+        ids=lambda cls: cls.__name__,
+    )
+    def test_name_is_the_required_first_parameter(self, cls):
+        first = next(iter(inspect.signature(cls.__init__).parameters.values()))
+        if first.name == "self":
+            first = list(inspect.signature(cls.__init__).parameters.values())[1]
+        assert first.name == "name"
+        assert first.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+        assert first.default is inspect.Parameter.empty
+
+    def test_retiring_list_names_existing_classes(self):
+        assert {cls.__name__ for cls in _PUBLIC_CLASSES} >= _RETIRING
+
+
+class TestNameBinding:
+    def test_positional_name_binds(self):
+        assert Normal("x", 0.0, 1.0).name == "x"
+
+    def test_keyword_name_binds(self):
+        assert Normal(loc=0.0, scale=1.0, name="x").name == "x"
+
+    def test_name_given_both_ways_raises(self):
+        with pytest.raises(TypeError, match="multiple values for argument 'name'"):
+            Normal("x", 0.0, 1.0, name="y")
+
+
+class TestDerivedNames:
+    """A law that ``expectation`` constructs is named for the operation."""
+
+    @pytest.mark.parametrize(
+        ("make_operand", "f"),
+        [
+            pytest.param(lambda: Normal("law", 0.0, 1.0), lambda x: x, id="monte-carlo"),
+            pytest.param(
+                lambda: EmpiricalDistribution("law", ["a", "b", "c", "d"]),
+                lambda x: jnp.asarray(1.0),
+                id="generic-empirical",
+            ),
+            pytest.param(
+                lambda: RecordEmpiricalDistribution("law", jnp.arange(10.0)),
+                lambda x: x,
+                id="record-empirical",
+            ),
+            pytest.param(
+                lambda: BootstrapReplicateDistribution(
+                    "law", EmpiricalDistribution("data", jnp.arange(5.0))
+                ),
+                jnp.mean,
+                id="bootstrap-replicate",
+            ),
+        ],
+    )
+    def test_expectation_bootstrap_is_named_for_the_operation(self, make_operand, f):
+        result = expectation(make_operand(), f, num_evaluations=3, key=jax.random.PRNGKey(0))
+        assert result.name == "expectation"
 
 
 class TestPublicImportPaths:

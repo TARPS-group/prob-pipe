@@ -52,7 +52,6 @@ from ..core.protocols import (
     SupportsUnnormalizedLogProb,
 )
 from ..core.record import Record
-from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..distributions._distribution import Distribution
 
@@ -211,6 +210,8 @@ class MinibatchedDistribution(
 
     Parameters
     ----------
+    name : str
+        Distribution name.
     prior : SupportsLogProb
         Prior distribution over parameters; provides the log-prior
         term :math:`\\log p(\\theta)`.
@@ -226,8 +227,6 @@ class MinibatchedDistribution(
     with_replacement : bool, default False
         Sample minibatch indices with replacement. Default is
         without-replacement (uniform permutation, take first ``b``).
-    name : str, optional
-        Distribution name.
 
     Raises
     ------
@@ -246,13 +245,13 @@ class MinibatchedDistribution(
 
     def __init__(
         self,
+        name: str,
         prior: SupportsLogProb,
         likelihood: ConditionallyIndependentLikelihood,
         data: ArrayLike | Record | RecordBatch,
         batch_size: int,
         *,
         with_replacement: bool = False,
-        name: str | None = None,
     ):
         from ..core.protocols import ConditionallyIndependentLikelihood
 
@@ -284,7 +283,6 @@ class MinibatchedDistribution(
         self._with_replacement = bool(with_replacement)
         self._rescale_factor = float(self._n / batch_size)
 
-        name = auto_name(name, f"MinibatchedDistribution(batch_size={batch_size})")
         super().__init__(name=name)
 
     # -- read-only metadata --------------------------------------------------

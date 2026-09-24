@@ -355,7 +355,7 @@ class TestSpecKinds:
     def test_record_schema_infers_distribution_and_callable_kinds(self):
         from probpipe import Function, Normal
 
-        law = Normal(0.0, 1.0, name="x")
+        law = Normal("x", 0.0, 1.0)
         function = Function(
             func=lambda x: x, input_template=RecordSpec(x=()), output_template=RecordSpec(y=())
         )
@@ -369,7 +369,7 @@ class TestSpecKinds:
     def test_empirical_without_event_template_remains_a_record_field(self):
         from probpipe import EmpiricalDistribution
 
-        law = EmpiricalDistribution(["a", "b"], name="law")
+        law = EmpiricalDistribution("law", ["a", "b"])
         schema = RecordSpec.infer_from({"law": law})
         assert schema["law"] == OpaqueSpec()
 
@@ -600,8 +600,8 @@ class TestNestedValueBinding:
             actual = Function(func=lambda x: x, input_template=RecordSpec(x=(size,)))
         else:
             spec_type = DistributionSpec
-            reference = EmpiricalDistribution(np.zeros((2, 3)), name="x")
-            actual = EmpiricalDistribution(np.zeros((2, size)), name="x")
+            reference = EmpiricalDistribution("x", np.zeros((2, 3)))
+            actual = EmpiricalDistribution("x", np.zeros((2, size)))
 
         # Concrete distributions require exact metadata; function binding reads
         # the available declarations without checking callable compatibility.

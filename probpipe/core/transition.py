@@ -248,8 +248,8 @@ def with_resampling(
                     {k: v[indices] for k, v in out_dist.samples.items()},
                 )
                 resampled = EmpiricalDistribution(
+                    out_dist.name,
                     new_record,
-                    name=out_dist.name,
                 )
                 resampled.with_provenance(
                     Provenance.create(

@@ -616,7 +616,7 @@ def _convert_to_empirical(source, key, **kw):
     if isinstance(source, RecordEmpiricalDistribution):
         return source
     samples = _sample_with_execution_plan(source, key, kw)
-    r = RecordEmpiricalDistribution(samples, name=kw.get("name") or source.name)
+    r = RecordEmpiricalDistribution(kw.get("name") or source.name, samples)
     r.with_provenance(_mm_provenance(source))
     return r
 
@@ -667,7 +667,7 @@ def _convert_to_kde(source, key, **kw):
         )
 
     samples = _sample_with_execution_plan(source, key, kw)
-    r = KDEDistribution(samples, bandwidth=bandwidth, name=name)
+    r = KDEDistribution(name, samples, bandwidth=bandwidth)
     r.with_provenance(_mm_provenance(source))
     return r
 

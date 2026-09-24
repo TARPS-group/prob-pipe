@@ -44,18 +44,18 @@ def normal():
 @pytest.fixture
 def empirical():
     samples = jax.random.normal(jax.random.PRNGKey(0), (100, 2))
-    return EmpiricalDistribution(samples, name="x")
+    return EmpiricalDistribution("x", samples)
 
 
 @pytest.fixture
 def bootstrap():
     evals = jax.random.normal(jax.random.PRNGKey(1), (50,))
-    return BootstrapDistribution(evals)
+    return BootstrapDistribution("bootstrap", evals)
 
 
 @pytest.fixture
 def joint():
-    return ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
+    return ProductDistribution(x=Normal("x", 0, 1), y=Normal("y", 1, 2))
 
 
 # ---------------------------------------------------------------------------
@@ -191,14 +191,14 @@ class TestSupportsMean:
 
     def test_empirical_generic_no_moments(self):
         """Non-numeric EmpiricalDistribution does not support moments."""
-        dist = EmpiricalDistribution(["a", "b", "c"], name="x")
+        dist = EmpiricalDistribution("x", ["a", "b", "c"])
         assert not isinstance(dist, SupportsMean)
         assert not isinstance(dist, SupportsVariance)
         assert not isinstance(dist, SupportsCovariance)
 
     def test_array_empirical(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (100, 2))
-        dist = RecordEmpiricalDistribution(samples, name="x")
+        dist = RecordEmpiricalDistribution("x", samples)
         assert isinstance(dist, SupportsMean)
         assert isinstance(dist, SupportsVariance)
         assert isinstance(dist, SupportsCovariance)
@@ -219,7 +219,7 @@ class TestConditioningCapabilities:
 
     def test_sequential_joint(self):
         sjd = SequentialJointDistribution(
-            x=Normal(0, 1, name="x"),
+            x=Normal("x", 0, 1),
             y=lambda x: Normal(loc=x, scale=1.0, name="y"),
         )
         assert isinstance(sjd, SupportsExactConditioning)
@@ -450,8 +450,8 @@ class TestSampleReturnTypeConvention:
                 a=Normal(loc=0.0, scale=1.0, name="a"),
                 b=Normal(loc=0.0, scale=1.0, name="b"),
             ),
-            RecordEmpiricalDistribution(jnp.arange(5.0), name="x"),
-            BootstrapDistribution(jnp.arange(5.0)),
+            RecordEmpiricalDistribution("x", jnp.arange(5.0)),
+            BootstrapDistribution("bootstrap", jnp.arange(5.0)),
         ]
         for d in distributions:
             assert not hasattr(d, "_sample_one"), (
@@ -544,7 +544,7 @@ class TestTransformedDistributionDynamicProtocols:
 
         from probpipe import Normal
 
-        td = TransformedDistribution(Normal(loc=0.0, scale=1.0, name="x"), tfb.Exp())
+        td = TransformedDistribution("td", Normal(loc=0.0, scale=1.0, name="x"), tfb.Exp())
         assert isinstance(td, SupportsSampling)
         assert isinstance(td, SupportsLogProb)
         assert isinstance(td, SupportsMean)
@@ -580,7 +580,7 @@ class TestTransformedDistributionDynamicProtocols:
                 return jnp.asarray(0.0)
 
         base = _LogProbOnly()
-        td = TransformedDistribution(base, tfb.Identity())
+        td = TransformedDistribution("td", base, tfb.Identity())
         assert isinstance(td, SupportsLogProb)
         assert not isinstance(td, SupportsSampling)
 
@@ -602,7 +602,7 @@ class TestSequentialJointDynamicProtocols:
     def test_bootstrap_component_drops_log_prob(self):
         """``BootstrapDistribution`` lacks ``SupportsLogProb``; a
         sequential joint containing one should not claim it."""
-        boot = BootstrapDistribution(jnp.array([1.0, 2.0, 3.0]), name="boot")
+        boot = BootstrapDistribution("boot", jnp.array([1.0, 2.0, 3.0]))
         joint = SequentialJointDistribution(
             z=Normal(loc=0.0, scale=1.0, name="z"),
             b=lambda z: boot,
@@ -710,7 +710,7 @@ class TestProtocolsSupportedByAll:
         """A leaf missing one protocol removes that protocol from the result."""
         from probpipe.core.protocols import protocols_supported_by_all
 
-        boot = BootstrapDistribution(jnp.array([1.0, 2.0, 3.0]), name="b")
+        boot = BootstrapDistribution("b", jnp.array([1.0, 2.0, 3.0]))
         leaves = [Normal(loc=0.0, scale=1.0, name="n"), boot]
         result = protocols_supported_by_all(
             leaves,

@@ -51,9 +51,9 @@ def _make_transformed():
     import tensorflow_probability.substrates.jax.bijectors as tfb
 
     return TransformedDistribution(
+        "td",
         Normal(loc=0.0, scale=1.0, name="base"),
         tfb.Exp(),
-        name="td",
     )
 
 
@@ -88,25 +88,26 @@ DISTRIBUTIONS = [
         id="TransformedDistribution",
     ),
     pytest.param(
-        lambda: KDEDistribution(jnp.zeros((20, 3)), name="kde"),
+        lambda: KDEDistribution("kde", jnp.zeros((20, 3))),
         id="KDEDistribution",
     ),
     pytest.param(
         lambda: EmpiricalDistribution(
+            "theta",
             jnp.zeros((10, 3)),
-            name="theta",
         ),
         id="RecordEmpiricalDistribution",
     ),
     pytest.param(
         lambda: BootstrapReplicateDistribution(
+            "obs",
             jnp.zeros((10, 2)),
-            name="obs",
         ),
         id="RecordBootstrapReplicateDistribution",
     ),
     pytest.param(
         lambda: BootstrapReplicateDistribution(
+            "boot",
             Normal(loc=0.0, scale=1.0, name="x"),
             replicate_size=5,
         ),
@@ -134,7 +135,7 @@ def _make_minibatched_distribution():
     y = jnp.array([1.0, 0.0, 1.0, 0.0])
     prior = MultivariateNormal(loc=jnp.zeros(4), cov=jnp.eye(4), name="theta")
     lik = GLMLikelihood(tfp_glm.Bernoulli(), x=X)
-    return MinibatchedDistribution(prior, lik, Record("r", X=X, y=y), batch_size=2)
+    return MinibatchedDistribution("measure", prior, lik, Record("r", X=X, y=y), batch_size=2)
 
 
 @pytest.mark.parametrize("make_dist", DISTRIBUTIONS)

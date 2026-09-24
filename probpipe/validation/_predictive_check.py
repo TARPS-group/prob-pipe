@@ -99,8 +99,8 @@ def predictive_check[P, D](
     # -- Unwrap NumericRecord if the node system resolved the distribution --
     if isinstance(distribution, NumericRecord):
         distribution = RecordEmpiricalDistribution(
+            getattr(distribution, "name", "posterior"),
             distribution,  # NumericRecord is a Record subclass — accepted directly
-            name=getattr(distribution, "name", "posterior"),
         )
     if not callable(getattr(distribution, "_sample", None)):
         raise TypeError(f"{type(distribution).__name__} does not support predictive sampling")
@@ -139,8 +139,8 @@ def predictive_check[P, D](
         )
 
     replicated_dist = RecordEmpiricalDistribution(
+        "replicated_statistics",
         stats_array,
-        name="replicated_statistics",
     )
 
     test_fn_name = getattr(test_fn, "__name__", repr(test_fn))

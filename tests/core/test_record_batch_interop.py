@@ -944,7 +944,7 @@ class TestAnEmpiricalTakesABatch:
             element_spec=RecordSpec(X=(), y=()),
         )
 
-        empirical = EmpiricalDistribution(data)
+        empirical = EmpiricalDistribution("empirical", data)
 
         assert isinstance(empirical, RecordEmpiricalDistribution)
         assert empirical.num_atoms == 4

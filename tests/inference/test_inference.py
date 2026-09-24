@@ -1053,7 +1053,7 @@ class TestViewProtocolDuckTyping:
         """ProductDistribution supports SupportsLogProb → so does view."""
         from probpipe import ProductDistribution, SupportsLogProb
 
-        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(3, 2, name="y"))
+        joint = ProductDistribution(x=Normal("x", 0, 1), y=Normal("y", 3, 2))
         view = joint["x"]
         assert isinstance(view, SupportsLogProb)
 
@@ -1072,12 +1072,12 @@ class TestViewProtocolDuckTyping:
         """Every view is SupportsSampling regardless of parent type."""
         from probpipe import ProductDistribution, SupportsSampling
 
-        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(3, 2, name="y"))
+        joint = ProductDistribution(x=Normal("x", 0, 1), y=Normal("y", 3, 2))
         assert isinstance(joint["x"], SupportsSampling)
 
         template = RecordSpec(a=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 1))
-        prior = Normal(0, 1, name="x")
+        prior = Normal("x", 0, 1)
         post = make_posterior([chain], parents=(prior,), algorithm="test", event_template=template)
         assert isinstance(post["a"], SupportsSampling)
 
@@ -1085,7 +1085,7 @@ class TestViewProtocolDuckTyping:
         """Every view is SupportsMean and SupportsVariance."""
         from probpipe import ProductDistribution, SupportsMean, SupportsVariance
 
-        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(3, 2, name="y"))
+        joint = ProductDistribution(x=Normal("x", 0, 1), y=Normal("y", 3, 2))
         view = joint["x"]
         assert isinstance(view, SupportsMean)
         assert isinstance(view, SupportsVariance)
@@ -1096,9 +1096,7 @@ class TestViewProtocolDuckTyping:
 
         from probpipe import ProductDistribution
 
-        joint = ProductDistribution(
-            x=Normal(loc=2.0, scale=0.5, name="x"), y=Normal(0, 1, name="y")
-        )
+        joint = ProductDistribution(x=Normal(loc=2.0, scale=0.5, name="x"), y=Normal("y", 0, 1))
         view = joint["x"]
         lp = float(view._log_prob(jnp.array(2.0)))
         expected = scipy.stats.norm.logpdf(2.0, loc=2.0, scale=0.5)
@@ -1108,7 +1106,7 @@ class TestViewProtocolDuckTyping:
         """View lacks SupportsCovariance when parent doesn't have it."""
         from probpipe import ProductDistribution, SupportsCovariance
 
-        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(3, 2, name="y"))
+        joint = ProductDistribution(x=Normal("x", 0, 1), y=Normal("y", 3, 2))
         view = joint["x"]
         assert not isinstance(view, SupportsCovariance)
 
@@ -1117,14 +1115,14 @@ class TestViewProtocolDuckTyping:
         from probpipe import ProductDistribution, SupportsLogProb
 
         # ProductDistribution parent → isinstance True
-        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(3, 2, name="y"))
+        joint = ProductDistribution(x=Normal("x", 0, 1), y=Normal("y", 3, 2))
         view_with = joint["x"]
         assert isinstance(view_with, SupportsLogProb)
 
         # ApproximateDistribution parent → isinstance False
         template = RecordSpec(a=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 1))
-        prior = Normal(0, 1, name="x")
+        prior = Normal("x", 0, 1)
         post = make_posterior([chain], parents=(prior,), algorithm="test", event_template=template)
         view_without = post["a"]
         assert not isinstance(view_without, SupportsLogProb)
@@ -1133,7 +1131,7 @@ class TestViewProtocolDuckTyping:
         """Dynamic subclass is still isinstance of _RecordDistributionView."""
         from probpipe import ProductDistribution
 
-        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(3, 2, name="y"))
+        joint = ProductDistribution(x=Normal("x", 0, 1), y=Normal("y", 3, 2))
         view = joint["x"]
         assert isinstance(view, _RecordDistributionView)
 
@@ -1401,7 +1399,7 @@ class TestEndToEndValuesPipeline:
         with workflow_run(seed=0):
             result = noisy_predict(
                 **posterior.select("params"),
-                noise=Normal(0, 0.01, name="noise"),
+                noise=Normal("noise", 0, 0.01),
             )
         assert result.num_atoms == posterior.num_atoms
         # Across workflow seeds 0-15, mean errors were 0.000003-0.000526 and

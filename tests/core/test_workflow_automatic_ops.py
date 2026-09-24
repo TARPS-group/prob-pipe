@@ -151,7 +151,7 @@ class TestAutomaticSample:
     def test_supported_descendant_samples_captured_root_and_forward(self):
         calls = []
         root = _RecordingNormal(calls)
-        descendant = TransformedDistribution(root, tfb.Exp())
+        descendant = TransformedDistribution("descendant", root, tfb.Exp())
 
         with (
             patch.object(
@@ -171,7 +171,7 @@ class TestAutomaticSample:
     def test_unsupported_descendant_fails_before_entropy_but_explicit_key_is_direct(self):
         calls = []
         root = _RecordingNormal(calls)
-        descendant = TransformedDistribution(root, tfb.Tanh())
+        descendant = TransformedDistribution("descendant", root, tfb.Tanh())
 
         with (
             patch("probpipe.core._workflow_context._os_urandom") as urandom,
@@ -193,7 +193,7 @@ class TestAutomaticSample:
 
 class TestAutomaticExpectation:
     def test_exact_empirical_expectation_claims_no_event(self):
-        dist = EmpiricalDistribution(jnp.asarray([1.0, 2.0, 3.0]), name="x")
+        dist = EmpiricalDistribution("x", jnp.asarray([1.0, 2.0, 3.0]))
 
         with (
             patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
@@ -205,7 +205,7 @@ class TestAutomaticExpectation:
         commit.assert_not_called()
 
     def test_empirical_subsample_claims_one_event(self):
-        dist = EmpiricalDistribution(jnp.arange(20.0), name="x")
+        dist = EmpiricalDistribution("x", jnp.arange(20.0))
 
         with (
             patch(
@@ -224,7 +224,7 @@ class TestAutomaticExpectation:
         assert derive.call_count == 1
 
     def test_generic_empirical_subsample_uses_num_atoms(self):
-        dist = EmpiricalDistribution(["a", "bb", "ccc"])
+        dist = EmpiricalDistribution("dist", ["a", "bb", "ccc"])
 
         with workflow_run(seed=7):
             result = expectation(
@@ -269,7 +269,7 @@ class TestAutomaticExpectation:
     def test_supported_descendant_mc_uses_captured_root_and_forward(self):
         calls = []
         root = _RecordingNormal(calls)
-        descendant = TransformedDistribution(root, tfb.Exp())
+        descendant = TransformedDistribution("descendant", root, tfb.Exp())
 
         with (
             patch.object(
@@ -294,7 +294,7 @@ class TestAutomaticExpectation:
     def test_unsupported_descendant_mc_fails_before_entropy_and_explicit_key_works(self):
         calls = []
         root = _RecordingNormal(calls)
-        descendant = TransformedDistribution(root, tfb.Tanh())
+        descendant = TransformedDistribution("descendant", root, tfb.Tanh())
 
         with (
             patch("probpipe.core._workflow_context._os_urandom") as urandom,

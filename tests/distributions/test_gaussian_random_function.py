@@ -106,7 +106,7 @@ class _ScalarGP(GaussianRandomFunction):
     supports_joint_inputs = True
 
     def __init__(self, lengthscale=1.0, variance=1.0, noise=0.01):
-        super().__init__(input_shape=(2,), output_shape=())
+        super().__init__("gp", input_shape=(2,), output_shape=())
         self._ls = lengthscale
         self._var = variance
         self._noise = noise
@@ -143,7 +143,7 @@ class _MultiOutputGRF(GaussianRandomFunction):
     supports_joint_outputs = True
 
     def __init__(self):
-        super().__init__(input_shape=(2,), output_shape=(2,))
+        super().__init__("grf", input_shape=(2,), output_shape=(2,))
 
     def predict_mean(self, X):
         s = jnp.sum(X, axis=-1)  # (*eb, n)
@@ -178,7 +178,7 @@ class _MarginalOnlyGRF(GaussianRandomFunction):
     """GRF that only supports marginal predictions."""
 
     def __init__(self):
-        super().__init__(input_shape=(2,), output_shape=())
+        super().__init__("marginal_only", input_shape=(2,), output_shape=())
 
     def predict_mean(self, X):
         extra_batch, n = self._parse_X(X)
@@ -287,6 +287,7 @@ def scalar_lbf():
         cov=0.01 * jnp.eye(3),
     )
     return LinearBasisFunction(
+        "f",
         feature_map=_polynomial_feature_map,
         weights=weights,
         input_shape=(1,),
@@ -302,6 +303,7 @@ def multi_output_lbf():
         cov=0.01 * jnp.eye(2),
     )
     return LinearBasisFunction(
+        "f",
         feature_map=_multi_output_feature_map,
         weights=weights,
         input_shape=(1,),
@@ -466,6 +468,7 @@ class TestLinearBasisFunction:
     def test_invalid_weights_type(self):
         with pytest.raises(TypeError, match="MultivariateNormal"):
             LinearBasisFunction(
+                "f",
                 feature_map=_polynomial_feature_map,
                 weights="not_a_distribution",
                 input_shape=(1,),
@@ -494,6 +497,7 @@ def weight_grf():
         cov=0.01 * jnp.eye(2),
     )
     return LinearBasisFunction(
+        "f",
         feature_map=_weight_feature_map,
         weights=weights,
         input_shape=(1,),
@@ -896,6 +900,7 @@ def correlated_lbf(correctness_w_mean, correctness_w_cov):
         cov=correctness_w_cov,
     )
     return LinearBasisFunction(
+        "f",
         feature_map=_simple_multi_output_features,
         weights=weights,
         input_shape=(1,),
@@ -922,6 +927,7 @@ def scalar_correctness_lbf():
     )
     weights = MultivariateNormal(name="weights", loc=w_mean, cov=w_cov)
     return LinearBasisFunction(
+        "f",
         feature_map=_simple_scalar_features,
         weights=weights,
         input_shape=(1,),
@@ -1106,6 +1112,7 @@ class TestLinearMapCorrectness:
         w_cov = jnp.array([[1.0, 0.3], [0.3, 0.5]])
         weights = MultivariateNormal(name="weights", loc=w_mean, cov=w_cov)
         base = LinearBasisFunction(
+            "base",
             feature_map=_simple_multi_output_features,
             weights=weights,
             input_shape=(1,),
@@ -1224,11 +1231,13 @@ class TestIndependentSumCorrectness:
             cov=0.2 * jnp.eye(3),
         )
         lbf1 = LinearBasisFunction(
+            "lbf1",
             feature_map=_simple_scalar_features,
             weights=w1,
             input_shape=(1,),
         )
         lbf2 = LinearBasisFunction(
+            "lbf2",
             feature_map=_simple_scalar_features,
             weights=w2,
             input_shape=(1,),
@@ -1261,11 +1270,13 @@ class TestIndependentSumCorrectness:
         w1 = MultivariateNormal(name="w1", loc=jnp.zeros(3), cov=jnp.array(C1))
         w2 = MultivariateNormal(name="w2", loc=jnp.zeros(3), cov=jnp.array(C2))
         lbf1 = LinearBasisFunction(
+            "lbf1",
             feature_map=_simple_scalar_features,
             weights=w1,
             input_shape=(1,),
         )
         lbf2 = LinearBasisFunction(
+            "lbf2",
             feature_map=_simple_scalar_features,
             weights=w2,
             input_shape=(1,),
@@ -1296,11 +1307,13 @@ class TestIndependentSumCorrectness:
         w1 = MultivariateNormal(name="w1", loc=jnp.zeros(3), cov=jnp.array(C1))
         w2 = MultivariateNormal(name="w2", loc=jnp.zeros(3), cov=jnp.array(C2))
         lbf1 = LinearBasisFunction(
+            "lbf1",
             feature_map=_simple_scalar_features,
             weights=w1,
             input_shape=(1,),
         )
         lbf2 = LinearBasisFunction(
+            "lbf2",
             feature_map=_simple_scalar_features,
             weights=w2,
             input_shape=(1,),
@@ -1481,11 +1494,13 @@ class TestMonteCarlo:
             cov=0.3 * jnp.eye(3),
         )
         lbf1 = LinearBasisFunction(
+            "lbf1",
             feature_map=_simple_scalar_features,
             weights=w1,
             input_shape=(1,),
         )
         lbf2 = LinearBasisFunction(
+            "lbf2",
             feature_map=_simple_scalar_features,
             weights=w2,
             input_shape=(1,),

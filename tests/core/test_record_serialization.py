@@ -220,14 +220,14 @@ def test_numeric_record_batch_cloudpickle_roundtrip():
 
 
 def test_empirical_distribution_pickle():
-    dist = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0, 4.0]), name="x")
+    dist = EmpiricalDistribution("x", jnp.array([1.0, 2.0, 3.0, 4.0]))
     dist2 = roundtrip(dist)
     assert dist2.num_atoms == 4
 
 
 def test_bootstrap_replicate_pickle():
-    base = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), name="x")
-    brd = BootstrapReplicateDistribution(base, name="x")
+    base = EmpiricalDistribution("x", jnp.array([1.0, 2.0, 3.0]))
+    brd = BootstrapReplicateDistribution("x", base)
     brd2 = roundtrip(brd)
     # Verify it round-tripped as the right type and is callable
     assert type(brd2).__name__ == "RecordBootstrapReplicateDistribution"
@@ -393,7 +393,7 @@ class TestRoundTripPreservesAnnotations:
             pytest.param(lambda: Record("r", {"x": jnp.ones(3), "tag": "meters"}), id="record"),
             pytest.param(lambda: NumericRecord("nr", {"x": jnp.ones(3)}), id="numeric-record"),
             pytest.param(
-                lambda: ProductDistribution(value=Normal(0.0, 1.0, name="value"), name="joint"),
+                lambda: ProductDistribution(value=Normal("value", 0.0, 1.0), name="joint"),
                 id="product-distribution",
             ),
         ]
@@ -424,7 +424,7 @@ class TestRoundTripPreservesAnnotations:
 
     def test_unannotated_term_stays_unannotated(self):
         assert roundtrip(Record("r", {"x": jnp.ones(3)})).annotations is None
-        assert roundtrip(ProductDistribution(v=Normal(0.0, 1.0, name="v"))).annotations is None
+        assert roundtrip(ProductDistribution(v=Normal("v", 0.0, 1.0))).annotations is None
 
     def test_the_reconstruction_has_the_same_type(self, term):
         # A term whose class is chosen from its constructor arguments — a record

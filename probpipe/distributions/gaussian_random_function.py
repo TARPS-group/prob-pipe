@@ -299,6 +299,8 @@ class LinearBasisFunction(GaussianRandomFunction, SupportsSampling):
 
     Parameters
     ----------
+    name : str
+        Distribution name.
     feature_map : callable
         Maps input ``X`` of shape ``(*extra_batch, n, *input_shape)`` to
         features:
@@ -325,6 +327,7 @@ class LinearBasisFunction(GaussianRandomFunction, SupportsSampling):
 
     def __init__(
         self,
+        name: str,
         feature_map: Callable[[Array], Array],
         weights,  # MultivariateNormal — avoid top-level import
         input_shape: tuple[int, ...],
@@ -350,7 +353,7 @@ class LinearBasisFunction(GaussianRandomFunction, SupportsSampling):
         else:
             self._bias = jnp.zeros((), dtype=bias_dtype)
 
-        super().__init__(input_shape=input_shape, output_shape=output_shape)
+        super().__init__(name=name, input_shape=input_shape, output_shape=output_shape)
 
         # Multi-output with shared weights implies coupled outputs.
         if self._output_shape:
@@ -485,6 +488,7 @@ class _LinearMapGRF(GaussianRandomFunction):
         self._A = A
 
         super().__init__(
+            name=f"linear_map({base.name})",
             input_shape=base.input_shape,
             output_shape=(d_out,),
         )
@@ -585,6 +589,7 @@ class _ShiftedGRF(GaussianRandomFunction):
         self._base = base
         self._b = b
         super().__init__(
+            name=f"shift({base.name})",
             input_shape=base.input_shape,
             output_shape=base.output_shape,
         )
@@ -621,6 +626,7 @@ class _ScaledGRF(GaussianRandomFunction):
         self._base = base
         self._alpha = alpha
         super().__init__(
+            name=f"scale({base.name})",
             input_shape=base.input_shape,
             output_shape=base.output_shape,
         )
@@ -675,6 +681,7 @@ class _IndependentSumGRF(GaussianRandomFunction):
         self._left = left
         self._right = right
         super().__init__(
+            name=f"sum({left.name}, {right.name})",
             input_shape=left.input_shape,
             output_shape=left.output_shape,
         )

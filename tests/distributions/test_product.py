@@ -185,7 +185,7 @@ class TestProductDistribution:
     def test_supports_per_field(self):
         """``supports`` maps each field to its component's support constraint
         (heterogeneous constraints preserved per field)."""
-        joint = ProductDistribution(Gamma(2.0, 1.0, name="g"), Normal(loc=0.0, scale=1.0, name="x"))
+        joint = ProductDistribution(Gamma("g", 2.0, 1.0), Normal(loc=0.0, scale=1.0, name="x"))
         sup = joint.supports
         assert set(sup.keys()) == {"g", "x"}
         assert sup["g"] == joint.components["g"].support
@@ -200,7 +200,7 @@ class TestProductDistribution:
             name="joint",
             outer={
                 "a": Normal(loc=0.0, scale=1.0, name="a"),
-                "deep": {"g": Gamma(2.0, 1.0, name="g")},
+                "deep": {"g": Gamma("g", 2.0, 1.0)},
             },
             m=Normal(loc=0.0, scale=1.0, name="m"),
         )
@@ -402,7 +402,7 @@ class TestDistributionView:
         # Regression: the _map_components loop variable must not shadow the
         # threaded name, or mean/variance come back named after the last
         # component ("y") instead of the product distribution.
-        prod = ProductDistribution(x=Normal(0.0, 1.0, name="x"), y=Normal(0.0, 1.0, name="y"))
+        prod = ProductDistribution(x=Normal("x", 0.0, 1.0), y=Normal("y", 0.0, 1.0))
         assert mean(prod).name == prod.name
         assert variance(prod).name == prod.name
         assert mean(prod).name != "y"
@@ -670,14 +670,14 @@ class TestProductProtocolDuckTyping:
         """All Normal components → isinstance SupportsLogProb True."""
         from probpipe import SupportsLogProb
 
-        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
+        joint = ProductDistribution(x=Normal("x", 0, 1), y=Normal("y", 1, 2))
         assert isinstance(joint, SupportsLogProb)
 
     def test_all_mean_variance_components(self):
         """All Normal components → isinstance SupportsMean/SupportsVariance True."""
         from probpipe import SupportsMean, SupportsVariance
 
-        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
+        joint = ProductDistribution(x=Normal("x", 0, 1), y=Normal("y", 1, 2))
         assert isinstance(joint, SupportsMean)
         assert isinstance(joint, SupportsVariance)
 
@@ -685,27 +685,27 @@ class TestProductProtocolDuckTyping:
         """Component lacking SupportsLogProb → product lacks it too."""
         from probpipe import BootstrapDistribution, SupportsLogProb
 
-        boot = BootstrapDistribution(jnp.array([1.0, 2.0, 3.0]), name="y")
-        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=boot)
+        boot = BootstrapDistribution("y", jnp.array([1.0, 2.0, 3.0]))
+        joint = ProductDistribution(x=Normal("x", 0, 1), y=boot)
         assert not isinstance(joint, SupportsLogProb)
 
     def test_always_supports_sampling(self):
         """ProductDistribution always supports SupportsSampling."""
         from probpipe import SupportsSampling
 
-        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
+        joint = ProductDistribution(x=Normal("x", 0, 1), y=Normal("y", 1, 2))
         assert isinstance(joint, SupportsSampling)
 
     def test_always_supports_conditioning(self):
         """ProductDistribution always claims SupportsExactConditioning."""
         from probpipe import SupportsExactConditioning
 
-        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
+        joint = ProductDistribution(x=Normal("x", 0, 1), y=Normal("y", 1, 2))
         assert isinstance(joint, SupportsExactConditioning)
 
     def test_dynamic_subclass_pytree_roundtrip(self):
         """Dynamic ProductDistribution subclass is JAX pytree-compatible."""
-        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
+        joint = ProductDistribution(x=Normal("x", 0, 1), y=Normal("y", 1, 2))
         children, aux = jax.tree.flatten(joint)
         reconstructed = jax.tree.unflatten(aux, children)
         assert isinstance(reconstructed, ProductDistribution)
@@ -717,8 +717,8 @@ class TestProductProtocolDuckTyping:
         exposes the numeric API.
         """
         joint = ProductDistribution(
-            x=Normal(0, 1, name="x"),
-            y=Normal(1, 2, name="y"),
+            x=Normal("x", 0, 1),
+            y=Normal("y", 1, 2),
         )
         assert isinstance(joint, NumericRecordDistribution)
         # Numeric API is available.
@@ -745,7 +745,7 @@ class TestProductProtocolDuckTyping:
             name="je",
         )
         # Combine with a numeric Normal: mixed leaves.
-        joint = ProductDistribution(x=Normal(0, 1, name="x"), je=je)
+        joint = ProductDistribution(x=Normal("x", 0, 1), je=je)
         assert isinstance(joint, ProductDistribution)
         assert isinstance(joint, RecordDistribution)
         # No numeric mixin → numeric API methods are absent.
@@ -774,7 +774,7 @@ class TestProductProtocolDuckTyping:
             ids=np.array([0, 1, 2]),
             name="je",
         )
-        joint = ProductDistribution(x=Normal(0, 1, name="x"), je=je)
+        joint = ProductDistribution(x=Normal("x", 0, 1), je=je)
         r = repr(joint)
         assert "x=Normal" in r
         # Non-numeric leaf prints its class name, not ``{...}``.
@@ -1012,7 +1012,7 @@ class TestEnumerateWithDistributionViews:
         view_y = joint["y"]
 
         # Small empirical that will be enumerated
-        ed = EmpiricalDistribution(jnp.array([[10.0], [20.0]]), name="x")
+        ed = EmpiricalDistribution("x", jnp.array([[10.0], [20.0]]))
 
         def compute(a: float, b: float, c: float) -> float:
             return (a - b) + c
@@ -1039,8 +1039,8 @@ class TestNestedProductDistribution:
     A nested ProductDistribution groups components into sub-dicts::
 
         ProductDistribution(
-            physics={"force": Normal(0, 1, name="force"), "mass": Gamma(2, 1, name="mass")},
-            observation=Normal(0, 0.1, name="observation"),
+            physics={"force": Normal("force", 0, 1), "mass": Gamma("mass", 2, 1)},
+            observation=Normal("observation", 0, 0.1),
         )
 
     The nesting is purely organizational — all leaf components remain
