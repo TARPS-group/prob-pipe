@@ -8,7 +8,7 @@ that receive previously-sampled values and return a ``Distribution``
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from functools import partial
 from types import MappingProxyType
 
@@ -19,7 +19,10 @@ from ..core._numeric_record_distribution import NumericRecordDistribution, _mc_e
 from ..core._record_distribution import (
     RecordDistribution,
     _build_event_template,
+    _joint_event_spec,
 )
+from ..core._record_spec import RecordSpec
+from ..core._spec_base import NumericArraySpec, TermSpec
 from ..core.protocols import (
     SupportsExactConditioning,
     SupportsLogProb,
@@ -106,6 +109,39 @@ def _sequential_class_for_components(components: dict) -> type:
     return cls
 
 
+def _support_every_draw_shares(spec: TermSpec) -> TermSpec:
+    """*spec* with a leaf's support kept only when the constraint takes no parameters.
+
+    A conditional component's prototype takes its parameters from one draw of its
+    parents, so a support built from them, such as ``interval(0, z)``, holds for
+    that draw only. A constraint without parameters, such as ``real`` or
+    ``positive``, holds for every draw.
+    """
+    if isinstance(spec, RecordSpec):
+        return spec.map(_support_every_draw_shares)
+    if isinstance(spec, NumericArraySpec) and spec.support is not None and vars(spec.support):
+        return NumericArraySpec(spec.shape, spec.dtype, None)
+    return spec
+
+
+def _sequential_event_spec(
+    components: Mapping[str, Distribution],
+    callable_parents: Mapping[str, tuple[str, ...]],
+) -> RecordSpec:
+    """The record a sequential joint over *components* declares.
+
+    A component with parents keeps only the supports every draw of its parents
+    shares, as :func:`_support_every_draw_shares` decides.
+    """
+    declared = _joint_event_spec(components)
+    return RecordSpec(
+        {
+            cname: _support_every_draw_shares(spec) if callable_parents.get(cname) else spec
+            for cname, spec in declared.children.items()
+        }
+    )
+
+
 class SequentialJointDistribution(
     RecordDistribution,
     SupportsSampling,
@@ -175,7 +211,6 @@ class SequentialJointDistribution(
             components
         )
         name = auto_name(name, "sequential(" + ",".join(components.keys()) + ")")
-        super().__init__(name=name)
         self._conditioned_names: frozenset[str] = frozenset()
         self._conditioned_values: dict[str, Array] = {}
         self._sampleable_error: str | None = None
@@ -213,7 +248,7 @@ class SequentialJointDistribution(
             if isinstance(comp, Distribution):
                 resolved[cname] = comp
             else:
-                # Resolve the callable with zero-valued parents to get shape info
+                # Resolve the callable at the prototype draw of its parents
                 parent_vals = {}
                 for prev_name in list(self._raw_components.keys()):
                     if prev_name == cname:
@@ -224,8 +259,10 @@ class SequentialJointDistribution(
                 resolved[cname] = comp(**call_kw)
         self._proto_components = resolved
 
-        # Build _components dict from resolved prototypes (for shape introspection)
+        # Build _components dict from resolved prototypes (for shape introspection);
+        # the declaration is known only once the callables have resolved.
         self._components = resolved
+        super().__init__(name, _sequential_event_spec(resolved, self._callable_parents))
         self._event_template = _build_event_template(self._components)
 
         # Reparent to the dynamic subclass whose protocol bases match the
@@ -281,11 +318,6 @@ class SequentialJointDistribution(
     def components(self):
         """Read-only view of the component distributions."""
         return MappingProxyType(self._components)
-
-    @property
-    def dtypes(self) -> dict[str, jnp.dtype]:
-        """Per-component dtypes from the resolved prototype distributions."""
-        return {name: component.dtype for name, component in self._components.items()}
 
     def _sample_sequential(
         self,
@@ -515,6 +547,7 @@ class SequentialJointDistribution(
 
         # Expose only unconditioned components
         set_attribute("_components", unconditioned_pre)
+        result._init_declaration(_sequential_event_spec(unconditioned_pre, self._callable_parents))
         set_attribute("_event_template", _build_event_template(unconditioned_pre))
 
         result.with_provenance(

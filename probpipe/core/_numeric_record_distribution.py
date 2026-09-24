@@ -62,6 +62,7 @@ from ._record_distribution import (
     _field_event_shape,
     _interim_template,
 )
+from ._specs import NumericArraySpec
 from .constraints import (
     Constraint,
     _supports_compatible,
@@ -172,9 +173,43 @@ def _mc_expectation(
     return jax.tree.map(lambda v: jnp.mean(v, axis=0), evals)
 
 
+def _raw_event_shape(law: Distribution) -> tuple[int, ...]:
+    """The shape of a raw array draw of *law*, which ``flatten_value`` needs, else ``()``.
+
+    A record draw carries its own structure, so flattening one reads no shape.
+    """
+    if _declares_event(law) and not isinstance(law.event_spec.spec, NumericArraySpec):
+        return ()
+    return law.event_shape
+
+
 # ---------------------------------------------------------------------------
 # NumericRecordDistribution — RecordDistribution + numeric shape semantics
 # ---------------------------------------------------------------------------
+
+
+def _pairs_by_path(
+    source: dict[str, Any], target: dict[str, Any]
+) -> list[tuple[tuple[str, Any], tuple[str, Any]]] | None:
+    """Pair each target leaf with the source leaf whose path holds it, or ``None``.
+
+    A source leaf holds the target leaf of its own path and the target leaves
+    under it, as a posterior's flat chunk holds a nested component's leaves. The
+    pairing exists when the source leaves, in order, hold consecutive runs of
+    the target leaves that together cover them all.
+    """
+    targets = list(target.items())
+    pairs: list[tuple[tuple[str, Any], tuple[str, Any]]] = []
+    i = 0
+    for source_item in source.items():
+        path = source_item[0]
+        start = i
+        while i < len(targets) and (targets[i][0] == path or targets[i][0].startswith(path + "/")):
+            pairs.append((source_item, targets[i]))
+            i += 1
+        if i == start:
+            return None
+    return pairs if i == len(targets) else None
 
 
 class NumericRecordDistribution(RecordDistribution):
@@ -398,8 +433,10 @@ class NumericRecordDistribution(RecordDistribution):
         approximation. For a single-field target (the common case),
         every source field's support is compared against the lone
         target support. For a multi-field target, supports pair up
-        field-by-field in insertion order; field-count mismatches raise
-        ``ValueError`` rather than silently truncating via ``zip``.
+        field-by-field in insertion order, or else a source field pairs
+        with each target leaf under its path. Any other field-count
+        mismatch raises ``ValueError`` rather than silently truncating
+        via ``zip``.
 
         Sources that don't expose per-field supports (non-NRD endpoints
         like ``EmpiricalDistribution`` with object-dtype data) are
@@ -427,10 +464,15 @@ class NumericRecordDistribution(RecordDistribution):
                 )
             return
 
-        # Multi-field target — field counts must match to pair
-        # positionally; ``zip`` would silently truncate, hiding bugs
-        # where the converter produced a target with the wrong arity.
-        if len(source_per_field) != len(target_per_field):
+        # Multi-field target. Equal field counts pair positionally. Otherwise
+        # a source leaf that holds a flattened group, as a posterior holds a
+        # nested component, pairs with each target leaf under its path, and any
+        # other mismatch raises, since ``zip`` would silently truncate.
+        if len(source_per_field) == len(target_per_field):
+            pairs = list(zip(source_per_field.items(), target_per_field.items()))
+        else:
+            pairs = _pairs_by_path(source_per_field, target_per_field)
+        if pairs is None:
             raise ValueError(
                 f"Cannot convert {type(source).__name__} "
                 f"({len(source_per_field)} fields: "
@@ -439,10 +481,7 @@ class NumericRecordDistribution(RecordDistribution):
                 f"{tuple(target_per_field)}): field-count mismatch. "
                 f"Pass check_support=False to override."
             )
-        for (s_name, s_sup), (t_name, t_sup) in zip(
-            source_per_field.items(),
-            target_per_field.items(),
-        ):
+        for (s_name, s_sup), (t_name, t_sup) in pairs:
             if _supports_compatible(s_sup, t_sup):
                 continue
             raise ValueError(
@@ -918,7 +957,7 @@ def _flattened_distribution_view_class_for_base(base: Distribution) -> type:
             pytree_samples = self._base._sample(key, sample_shape)
             return self._base.flatten_value(
                 pytree_samples,
-                event_shape=self._base.event_shape,
+                event_shape=_raw_event_shape(self._base),
             )
 
         extra_methods["_sample"] = _sample
