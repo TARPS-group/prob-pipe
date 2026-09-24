@@ -404,6 +404,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Contributors install pre-commit as a uv tool.** The hooks are installed
+  with `uv tool install pre-commit` and then `pre-commit install`, replacing
+  `uvx pre-commit install`: its hook called an interpreter in the uv cache, so
+  every commit failed once `uv cache clean` deleted it. See
+  [CONTRIBUTING.md](CONTRIBUTING.md#linting--pre-commit).
+
 ### Removed (breaking)
 
 - **`RecordArray` and `NumericRecordArray` are gone; the batch of records is

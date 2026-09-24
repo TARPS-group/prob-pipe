@@ -220,19 +220,27 @@ than no comment.
 ### Linting & pre-commit
 
 Linting uses [ruff](https://docs.astral.sh/ruff/) (configured in
-`pyproject.toml`). Install the pre-commit hooks once:
+`pyproject.toml`). Install pre-commit as a uv tool, then install the hooks, once:
 
 ```bash
-uvx pre-commit install      # or: pre-commit install
+uv tool install pre-commit
+pre-commit install
 ```
 
-Thereafter `ruff` (lint + format) plus a few file-hygiene hooks run on your staged
-files at commit time. The hooks see only the files you're changing, so a commit is
-checked without re-linting the whole tree. To run manually:
+The hook script calls the Python interpreter that ran `pre-commit install`. With
+`uvx pre-commit install`, that interpreter is kept in the uv cache, so once
+`uv cache clean` deletes it, every commit fails with "`pre-commit` not found"
+unless another `pre-commit` is on your `PATH`. A `pre-commit` already installed by
+Homebrew or pipx works too.
+
+Once the hooks are installed, `ruff` (lint + format) plus a few file-hygiene hooks
+run on your staged files at commit time. The hooks see only the files you're
+changing, so a commit is checked without re-linting the whole tree. To run
+manually:
 
 ```bash
-uv run ruff check .              # lint the whole tree (uses the uv.lock-pinned ruff)
-uvx pre-commit run --all-files   # run every hook over everything
+uv run ruff check .          # lint the whole tree (uses the uv.lock-pinned ruff)
+pre-commit run --all-files   # run every hook over everything
 ```
 
 `ruff check .` and `ruff format --check .` are clean tree-wide. A full
