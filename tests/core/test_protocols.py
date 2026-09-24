@@ -564,7 +564,11 @@ class TestTransformedDistributionDynamicProtocols:
             event_template = RecordSpec(x=())
 
             def __init__(self):
+                from probpipe import NumericArraySpec
+                from probpipe.core.constraints import real
+
                 self._name = "lpo"
+                self._init_declaration(NumericArraySpec((), "float32", real))
 
             @property
             def event_shape(self):

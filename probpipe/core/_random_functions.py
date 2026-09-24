@@ -15,6 +15,8 @@ import jax.numpy as jnp
 
 from ..custom_types import Array, ArrayLike
 from ..distributions._distribution import Distribution
+from ._kind_specs import FunctionSpec
+from ._specs import OutputSpec
 
 # ---------------------------------------------------------------------------
 # RandomFunction
@@ -42,10 +44,13 @@ class RandomFunction(Distribution):
     ----------
     name : str
         Distribution name.
+    event_spec : OutputSpec, optional
+        The declaration of one draw. By default a draw is a callable whose
+        input and output are left unspecified, a whole term under *name*.
     """
 
-    def __init__(self, name: str):
-        super().__init__(name=name)
+    def __init__(self, name: str, event_spec: OutputSpec | None = None):
+        super().__init__(name, FunctionSpec() if event_spec is None else event_spec)
 
     # -- Fundamental interface ----------------------------------------------
 
@@ -112,6 +117,8 @@ class ArrayRandomFunction(RandomFunction):
     output_shape : tuple of int
         Shape of a single output, e.g. ``(2,)`` for two outputs, ``()``
         for a scalar output.
+    event_spec : OutputSpec, optional
+        The declaration of one draw, as for :class:`RandomFunction`.
     """
 
     # -- Capability flags (override in subclasses) --------------------------
@@ -119,9 +126,14 @@ class ArrayRandomFunction(RandomFunction):
     supports_joint_outputs: bool = False
 
     def __init__(
-        self, name: str, input_shape: tuple[int, ...], output_shape: tuple[int, ...] = ()
+        self,
+        name: str,
+        input_shape: tuple[int, ...],
+        output_shape: tuple[int, ...] = (),
+        *,
+        event_spec: OutputSpec | None = None,
     ) -> None:
-        super().__init__(name=name)
+        super().__init__(name, event_spec)
         self._input_shape = tuple(input_shape)
         self._output_shape = tuple(output_shape)
 
