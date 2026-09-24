@@ -20,16 +20,31 @@ from ..core._empirical import RecordEmpiricalDistribution
 from ..core._numeric_record import NumericRecord
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._numeric_record_distribution import NumericRecordDistribution
-from ..core._specs import NumericRecordSpec
-from ..core.constraints import Constraint, real
+from ..core._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
+from ..core.constraints import real
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike
 from ._tfp_base import TFPDistribution
 
 if TYPE_CHECKING:
-    from ..core._specs import RecordSpec
+    import numpy as np
+
+    from ..core._spec_base import TermSpec
 
 __all__ = ["KDEDistribution"]
+
+
+def _draw_spec(template: RecordSpec, dtype: np.dtype) -> RecordSpec:
+    """*template* with each array leaf declaring *dtype* on the real line, as a KDE draws it."""
+
+    def leaf(spec: TermSpec) -> TermSpec:
+        if isinstance(spec, RecordSpec):
+            return _draw_spec(spec, dtype)
+        if isinstance(spec, NumericArraySpec):
+            return NumericArraySpec(spec.shape, dtype, real)
+        return spec
+
+    return RecordSpec({field: leaf(spec) for field, spec in template.children.items()})
 
 
 class KDEDistribution(TFPDistribution):
@@ -59,12 +74,13 @@ class KDEDistribution(TFPDistribution):
         rule is used: ``n^{-1/(d+4)} * std_j`` for each dimension *j*.
     event_template : RecordSpec or None
         Structural template for the KDE's value type. When ``None`` (the
-        default) a single-field template keyed by ``name`` is auto-built,
-        matching the historical behavior. When supplied with multiple
-        fields, the template defines how the flat ``(n, d)`` sample matrix
-        maps back to a structured ``NumericRecord`` / ``NumericRecordBatch``
-        — preserving named fields end-to-end across e.g. an MCMC posterior
-        being routed through KDE as the new prior in
+        default) or single-field, one draw is declared as an array under
+        ``name``. When supplied with multiple fields, the template defines
+        how the flat ``(n, d)`` sample matrix maps back to a structured
+        ``NumericRecord`` / ``NumericRecordBatch``, and one draw is declared
+        as that record, each array leaf taking the samples' dtype on the
+        real line. This preserves named fields end-to-end across e.g. an
+        MCMC posterior being routed through KDE as the new prior in
         :class:`~probpipe.modeling.IncrementalConditioner`. The template's
         ``vector_size`` must equal ``samples.shape[1]``.
     """
@@ -112,8 +128,12 @@ class KDEDistribution(TFPDistribution):
                     f"{event_template.fields}"
                 )
             object.__setattr__(self, "_event_template", event_template)
+            event_spec = _draw_spec(event_template, samples.dtype)
+        else:
+            # A one-column KDE mixes scalar kernels, so it draws scalars.
+            event_spec = NumericArraySpec((d,) if d > 1 else (), samples.dtype, real)
 
-        super().__init__(name=name)
+        super().__init__(name, event_spec)
 
         # Weights
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
@@ -155,10 +175,6 @@ class KDEDistribution(TFPDistribution):
     def num_atoms(self) -> int:
         """Number of kernel centres (atoms) backing the KDE."""
         return self._samples.shape[0]
-
-    @property
-    def support(self) -> Constraint:
-        return real
 
     # -- sampling & density (template-aware overrides) ------------------------
     #
@@ -228,4 +244,7 @@ class KDEDistribution(TFPDistribution):
         )
 
     def __repr__(self) -> str:
-        return f"KDEDistribution(num_atoms={self.num_atoms}, event_shape={self.event_shape})"
+        return (
+            f"KDEDistribution(num_atoms={self.num_atoms}, "
+            f"event_shape={tuple(self._tfp_dist.event_shape)})"
+        )

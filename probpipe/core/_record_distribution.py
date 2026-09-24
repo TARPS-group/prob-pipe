@@ -14,7 +14,7 @@ whose ``event_template`` is set.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
@@ -31,7 +31,33 @@ from .protocols import (
 )
 from .record import Record
 
+if TYPE_CHECKING:
+    from ._specs import OutputSpec
+
 __all__ = ["RecordDistribution", "_RecordDistributionView"]
+
+
+def _declares_event(law: Distribution) -> bool:
+    """Whether *law* stores its event declaration, which the schema views read.
+
+    An interim implementation detail: until every class declares its event, the
+    tower's own schema properties answer for a class that does not.
+    """
+    return getattr(law, "_spec", None) is not None
+
+
+def _interim_template(declaration: OutputSpec) -> RecordSpec:
+    """The record template a declared law presents, until its readers move to the declaration.
+
+    An interim implementation detail. An exposed record is its own template. A
+    whole term presents as a one-field record under its component, holding only
+    an array's shape, as the template built from a name and a shape did.
+    """
+    component = declaration._component_name
+    if component is None:
+        return declaration.spec
+    spec = declaration.spec
+    return RecordSpec(**{component: spec.shape if isinstance(spec, NumericArraySpec) else spec})
 
 
 def _field_event_shape(template: RecordSpec, name: str) -> tuple[int, ...]:
