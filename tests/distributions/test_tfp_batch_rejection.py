@@ -18,7 +18,8 @@ These tests pin:
   predictions) continues to work.
 * Subclasses that set ``_tfp_dist`` *after* calling
   ``super().__init__`` (the KDE pattern) are unaffected — the
-  rejection skips when ``_tfp_dist`` isn't yet present.
+  rejection skips when ``_tfp_dist`` isn't yet present. Such a
+  subclass must pass its own ``event_spec``.
 * Scalar (non-batched) construction is unchanged.
 """
 
@@ -34,7 +35,8 @@ from probpipe import (
     MultivariateNormal,
     Normal,
 )
-from probpipe.distributions._tfp_base import _allow_batched_tfp_init
+from probpipe.core.constraints import real
+from probpipe.distributions._tfp_base import TFPDistribution, _allow_batched_tfp_init
 from probpipe.distributions.kde import KDEDistribution
 
 # ---------------------------------------------------------------------------
@@ -257,3 +259,18 @@ class TestKDEStyleSubclasses:
     def test_kde_with_1d_samples(self):
         kde = KDEDistribution("kde1d", jnp.linspace(0.0, 1.0, 10))
         assert kde is not None
+
+    def test_a_late_backend_needs_its_own_declaration(self):
+        """No backend exists yet to read the event from, so the error names
+        the missing ``event_spec``."""
+
+        class _LateBackend(TFPDistribution):
+            def __init__(self, name):
+                super().__init__(name)
+                self._tfp_dist = Normal("unused", 0.0, 1.0)._tfp_dist
+
+            def _event_support(self):
+                return real
+
+        with pytest.raises(TypeError, match=r"_LateBackend sets _tfp_dist after .* own event_spec"):
+            _LateBackend("late")

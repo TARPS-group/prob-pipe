@@ -37,8 +37,10 @@ from ._numeric_record_batch import NumericRecordBatch
 from ._object_batch import _from_iterable, _is_object_array, _ObjectBatch
 from ._opaque_batch import OpaqueBatch
 from ._record_batch import RecordBatch, _batch_class_for, _MappedBatchColumns
+from ._record_spec import _reshaped_template
 from ._spec_base import _full_array_shape_or_none
-from ._specs import NumericArraySpec, NumericRecordSpec, OpaqueSpec, RecordSpec
+from ._specs import NumericArraySpec, NumericRecordSpec, OpaqueSpec, RecordSpec, TermSpec
+from .named_tree import _PATH_SEP
 from .protocols import (
     SupportsLogProb,
     SupportsMean,
@@ -1201,6 +1203,17 @@ def _record_rows(record: Record, rows: Any) -> Record:
     return type(record)(record.name, {path: record[path][rows] for path in paths})
 
 
+def _row_spec(component: Any) -> TermSpec:
+    """What one row of a batched component is: a record's element, an array's row, or opaque."""
+    if isinstance(component, RecordBatch):
+        return component.event_template
+    if isinstance(component, Record):
+        return _reshaped_template(component.event_template, lambda shape: shape[1:])
+    if _is_numeric_leaf(component) and getattr(component, "ndim", 0) > 0:
+        return NumericArraySpec(tuple(component.shape[1:]), component.dtype)
+    return OpaqueSpec()
+
+
 def _row_count(component: Any) -> int:
     """How many rows one batched component holds.
 
@@ -1364,10 +1377,21 @@ class BroadcastDistribution(Distribution, SupportsSampling):
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         self._broadcast_args = list(broadcast_args)
         name = auto_name(name, "broadcast")
-        # A draw pairs one row of every argument with its output, keyed by the
-        # argument labels, which need not be component names; the draw is
-        # opaque, an interim implementation detail of a class the design retires.
-        super().__init__(name, OpaqueSpec())
+        # A draw pairs one row of every argument with its output, a record keyed
+        # by the argument labels, which name its fields as a variadic argument's
+        # label ``*args[0]`` does. A label with a ``/``, which no field name has,
+        # leaves the draw opaque, an interim implementation detail of a class the
+        # design retires.
+        labels = (*self._broadcast_args, "_output")
+        if all(label and _PATH_SEP not in label for label in labels):
+            fields = {arg: _row_spec(input_samples[arg]) for arg in self._broadcast_args}
+            fields["_output"] = (
+                output_template if output_template is not None else _row_spec(output_samples)
+            )
+            event_spec = RecordSpec(fields)
+        else:
+            event_spec = OpaqueSpec()
+        super().__init__(name, event_spec)
         self._approximate = True
         # A memo, filled on first read. Reading fills it in place, which leaves
         # the term's own attributes as construction set them — what the

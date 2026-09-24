@@ -55,8 +55,8 @@ class SimpleModel[P, D](ProbabilisticModel, SupportsLogProb):
         # runtime checks remain as a backstop for callers who bypass
         # the type system: the prior must be both ``SupportsLogProb``
         # (so the joint log-density is computable) and a
-        # ``RecordDistribution`` (so its ``event_template`` is a
-        # required, non-``None`` ``RecordSpec``).
+        # ``RecordDistribution`` (so it presents its parameters as a record,
+        # ``event_template``).
         from ..core._record_distribution import RecordDistribution
 
         if not isinstance(prior, SupportsLogProb):
@@ -82,10 +82,9 @@ class SimpleModel[P, D](ProbabilisticModel, SupportsLogProb):
         # so condition_on can use component names as the sole signal for
         # splitting data kwargs from inference kwargs.
         #
-        # ``prior_tpl`` is contractually non-``None`` (the
-        # ``isinstance(prior, RecordDistribution)`` guard above implies
-        # the metaclass invariant); ``data_tpl`` may be ``None`` for
-        # likelihoods that don't declare a data template.
+        # ``prior_tpl`` is a ``RecordSpec``, since a ``RecordDistribution``
+        # presents its template or its declaration read as one; ``data_tpl``
+        # may be ``None`` for likelihoods that don't declare a data template.
         prior_tpl: RecordSpec = prior.event_template
         data_tpl = getattr(likelihood, "data_template", None)
         # Convert legacy ``Record``-typed data templates to
@@ -144,9 +143,9 @@ class SimpleModel[P, D](ProbabilisticModel, SupportsLogProb):
         ``SimpleModel`` is not itself a :class:`RecordDistribution`, but
         it carries a template so :attr:`fields`, conditioning, and
         inference kwarg splitting can address parameters and data
-        uniformly. The template is always set — the prior's template
-        is guaranteed non-``None`` by the ``RecordDistribution``
-        invariant, and the prior's fields are the floor.
+        uniformly. The template is always set, since a
+        ``RecordDistribution`` prior presents one, and the prior's fields are
+        the floor.
         """
         return self._event_template
 

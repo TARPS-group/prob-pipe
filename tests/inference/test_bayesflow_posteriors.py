@@ -23,7 +23,6 @@ from probpipe import (
     Normal,
     NumericRecord,
     ProductDistribution,
-    RecordSpec,
     condition_on,
     learn_amortized_posterior,
 )
@@ -957,17 +956,11 @@ class TestBayesFlowValidation:
         with pytest.raises(ValueError, match="discrete"):
             learn_amortized_posterior(bad_prior, _ToyLikelihood(), num_simulations=8, epochs=1)
 
-    def test_rejects_multifield_prior_without_supports(self):
-        """A multi-field prior implementing no per-field ``supports`` accessor is
-        rejected: spreading the single whole-distribution ``support`` across
-        heterogeneous fields could silently pick the wrong bijector."""
-
-        class _NoSupports:
-            event_template = RecordSpec(a=(), b=())
-
-            @property
-            def supports(self):
-                raise NotImplementedError
-
-        with pytest.raises(TypeError, match="per-field"):
-            learn_amortized_posterior(_NoSupports(), _ToyLikelihood(), num_simulations=8, epochs=1)
+    def test_rejects_a_prior_parameter_whose_support_is_not_declared(self):
+        """A support that depends on another parameter is not declared, so no
+        bijector to R^d can be chosen for it."""
+        prior = pp.SequentialJointDistribution(
+            z=pp.Exponential("z", 1.0), x=lambda z: pp.Uniform("x", 0.0, z)
+        )
+        with pytest.raises(ValueError, match="'x': its support is not declared"):
+            learn_amortized_posterior(prior, _ToyLikelihood(), num_simulations=8, epochs=1)

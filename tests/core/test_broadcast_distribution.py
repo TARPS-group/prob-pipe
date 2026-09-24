@@ -9,6 +9,7 @@ from probpipe import (
     BroadcastDistribution,
     EmpiricalDistribution,
     Normal,
+    OpaqueSpec,
     ProductDistribution,
     Provenance,
     Record,
@@ -405,7 +406,7 @@ class TestMixtureMarginal:
         class NoSampleDist(Distribution):
             pass
 
-        components = [NoSampleDist(name="test"), NoSampleDist(name="test")]
+        components = [NoSampleDist("test", OpaqueSpec()), NoSampleDist("test", OpaqueSpec())]
         m = _make_mixture_marginal(components, None)
         assert not isinstance(m, SupportsSampling)
 

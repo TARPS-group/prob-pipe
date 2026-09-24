@@ -872,9 +872,7 @@ class ProbPipeConverter(Converter):
         # built. Targets that aren't ``NumericRecordDistribution``
         # don't carry the method (skipped via the ``getattr`` fallback);
         # sources that don't expose per-field ``supports`` raise
-        # ``AttributeError`` inside the check (caught here and treated
-        # as "unknown", same as the ``NotImplementedError`` branch
-        # inside ``_check_support_compatible``).
+        # ``AttributeError``, which counts as "unknown".
         if check_support:
             check = getattr(result, "_check_support_compatible", None)
             if check is not None:

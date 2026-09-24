@@ -112,20 +112,16 @@ def _field_bijectors(prior: Distribution, keys: tuple[str, ...]) -> dict[str, tf
     """
     from ..distributions import bijector_for  # lazy: inference/ -> distributions/
 
-    try:
-        supports = prior.supports
-    except NotImplementedError:
-        if len(keys) > 1:
-            raise TypeError(
-                f"{type(prior).__name__} has {len(keys)} parameters but does not "
-                "implement per-field `supports`; cannot infer per-field constraints "
-                "from the single `support`. Implement `supports` on the prior."
-            ) from None
-        # Single-field priors: the whole-distribution support is the field's support.
-        supports = {k: prior.support for k in keys}
+    supports = prior.supports
     bijectors: dict[str, tfb.Bijector] = {}
     for k in keys:
         constraint = supports[k]
+        if constraint is None:
+            raise ValueError(
+                f"learn_amortized_posterior cannot handle prior parameter {k!r}: its "
+                "support is not declared, so no bijector to R^d can be chosen. Give the "
+                "prior a declared support, for example by building it from a family."
+            )
         try:
             bijectors[k] = bijector_for(constraint)
         except NotImplementedError as e:
@@ -188,11 +184,7 @@ class BayesFlowModel(Distribution, SupportsApproximateConditioning):
         # derived default is an auto name.
         self._init_tracked(f"BayesFlowModel({method})")
         # A law over the prior's parameters, declared as the prior declares them.
-        try:
-            declaration = prior.event_spec
-        except AttributeError:
-            declaration = prior.event_template
-        self._init_declaration(declaration)
+        self._init_declaration(prior.event_spec)
 
     @property
     def prior(self) -> Distribution:
@@ -353,13 +345,12 @@ def learn_amortized_posterior(
         If ``method`` is not one of ``"npe"`` / ``"fmpe"`` / ``"cmpe"``,
         ``sim_backend`` is not ``"jax"`` / ``"sequential"``, any of
         ``num_simulations`` / ``batch_size`` / ``epochs`` / ``num_results`` is
-        less than one, or a prior field's support admits no smooth bijector to
-        ``R^d`` (e.g. a discrete prior).
+        less than one, or a prior field's support is not declared or admits no
+        smooth bijector to ``R^d`` (e.g. a discrete prior).
     TypeError
         If a count parameter is not an integer, ``simulator`` lacks
-        ``generate_data``, ``prior`` is not a ``RecordDistribution`` (has no
-        ``event_template``), or a multi-field prior implements no per-field
-        ``supports`` accessor.
+        ``generate_data``, or ``prior`` is not a ``RecordDistribution`` (has no
+        ``event_template``).
     ImportError
         If the ``[bayesflow]`` extra is not installed.
     """
