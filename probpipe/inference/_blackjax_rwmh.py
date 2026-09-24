@@ -9,11 +9,16 @@ Two execution paths share the same BlackJAX kernel:
   external-simulator likelihoods). BlackJAX's ``sampler.step`` accepts
   concrete arrays and runs the user's log-density host-side.
 
-The default warmup is a Stan-style window adaptation: ``n_windows``
-geometrically-growing windows each sample with the current proposal
-Cholesky and accumulate Welford statistics on positions, refreshing
-the proposal at window boundaries. Production samples with
-``proposal = chol(Sigma_hat) * 2.38 / sqrt(d)``, the
+The default warmup is a Stan-style window adaptation. It splits into up
+to ``n_windows`` geometrically growing windows of at least 25 steps each,
+or runs as one window when it is too short to split. Each window samples
+with the current proposal Cholesky and accumulates Welford statistics on
+positions. At each window boundary the proposal covariance is refit as
+the Welford estimate shrunk toward the covariance the proposal in use
+assumes, so it stays positive definite even when the warmup positions
+have no spread. Production samples with
+``proposal = chol(Sigma) * 2.38 / sqrt(d)``, where ``Sigma`` is the last
+refit covariance; the factor ``2.38 / sqrt(d)`` is the
 Roberts-Gelman-Gilks scaling
 ([Roberts, Gelman & Gilks 1997](https://projecteuclid.org/journals/annals-of-applied-probability/volume-7/issue-1/Weak-convergence-and-optimal-scaling-of-random-walk-Metropolis-algorithms/10.1214/aoap/1034625254.full)).
 The ``adapt=False`` path uses ``sigma = step_size * I`` throughout.
@@ -74,28 +79,79 @@ def _initial_sigma(d: int) -> Array:
 
 
 def _production_sigma(cov: Array, d: int) -> Array:
-    """RGG-scaled Cholesky of an empirical covariance estimate.
+    """RGG-scaled Cholesky factor ``chol(cov) * 2.38 / sqrt(d)``.
 
     Returns a lower-triangular ``(d, d)`` matrix usable as the BlackJAX
-    ``normal_random_walk`` ``sigma`` argument. Adds a small diagonal
-    jitter before factorising so the call is safe inside ``lax.scan`` /
-    ``vmap`` — under tracing, ``cholesky`` of a non-positive-definite
-    matrix yields silent NaNs rather than raising, so a Python-level
-    ``try/except`` cannot protect the fast path.
-
-    The jitter is *scale-relative* (``1e-8 * mean(diag(cov))``): an
-    absolute ``1e-8`` would be a no-op for large-variance targets (e.g.
-    a coordinate with variance ~1e3) and could be too large for tiny-
-    variance ones. Scaling by the mean diagonal keeps the regularisation
-    proportionate to the magnitudes actually present in ``cov``.
+    ``normal_random_walk`` ``sigma`` argument. JAX's ``cholesky`` returns
+    non-finite entries rather than raising when ``cov`` is not
+    numerically positive definite, so callers check the factor; see
+    :func:`_refit_proposal`.
     """
-    # ``mean(diag(cov))`` == ``trace(cov) / d``. Floor at a tiny absolute
-    # value so an all-zero covariance (degenerate single-sample warmup)
-    # still factorises to a (vanishing but finite) lower-triangular form.
-    scale = jnp.maximum(jnp.trace(cov) / d, 1e-12)
-    jitter = jnp.eye(d, dtype=cov.dtype) * (1e-8 * scale)
-    chol = jsl.cholesky(cov + jitter, lower=True)
-    return chol * _rgg_scale(d)
+    return jsl.cholesky(cov, lower=True) * _rgg_scale(d)
+
+
+# Stan's covariance-regularization weight: a refit counts the proposal in
+# use as this many pseudo-draws alongside the warmup positions.
+_SHRINKAGE_COUNT = 5
+
+
+def _refit_proposal(
+    welford_cov: Array,
+    count: int | Array,
+    proposal_cov: Array,
+    sigma: Array,
+) -> tuple[Array, Array]:
+    """Refit the proposal from warmup positions, keeping it positive definite.
+
+    The refit covariance is
+    ``(count * welford_cov + 5 * proposal_cov) / (count + 5)``, which
+    shrinks the Welford estimate toward the covariance the proposal in use
+    assumes. The refit proposal is its RGG-scaled Cholesky factor.
+
+    Parameters
+    ----------
+    welford_cov : Array
+        ``(d, d)`` Welford covariance of the warmup positions so far.
+        Treated as zero when ``count < 2``, where Welford reports ``0 / 0``.
+    count : int or Array
+        Number of warmup positions behind ``welford_cov``.
+    proposal_cov : Array
+        ``(d, d)`` positive-definite covariance the proposal in use
+        assumes, so that ``sigma == chol(proposal_cov) * 2.38 / sqrt(d)``.
+    sigma : Array
+        ``(d, d)`` lower-triangular Cholesky factor of the proposal in use.
+
+    Returns
+    -------
+    tuple of Array
+        ``(proposal_cov, sigma)`` for the next window, each ``(d, d)``.
+        When the refit factor has a non-finite entry, the inputs are
+        returned unchanged.
+
+    Notes
+    -----
+    This is Stan's covariance regularization with the proposal in use,
+    rather than ``1e-3 * I``, as the shrinkage target. The refit
+    covariance is at least ``5 / (count + 5) * proposal_cov`` in the
+    Loewner order, so it is positive definite even when ``welford_cov``
+    is singular. That happens when every proposal is rejected, which
+    leaves the positions without spread, and when fewer than ``d``
+    proposals are accepted, which leaves them spanning fewer than ``d``
+    directions. With no spread the refit shrinks the proposal covariance
+    by the factor ``5 / (count + 5)``, so the window after a fully
+    rejecting one proposes smaller steps. The shrinkage imposes no
+    absolute scale: scaling ``welford_cov`` and ``proposal_cov`` by ``c``
+    scales the refit covariance by ``c``.
+    """
+    d = proposal_cov.shape[0]
+    welford_cov = jnp.where(count > 1, welford_cov, jnp.zeros_like(welford_cov))
+    refit_cov = (count * welford_cov + _SHRINKAGE_COUNT * proposal_cov) / (count + _SHRINKAGE_COUNT)
+    refit_sigma = _production_sigma(refit_cov, d)
+    finite = jnp.all(jnp.isfinite(refit_sigma))
+    return (
+        jnp.where(finite, refit_cov, proposal_cov),
+        jnp.where(finite, refit_sigma, sigma),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -103,35 +159,58 @@ def _production_sigma(cov: Array, d: int) -> Array:
 # ---------------------------------------------------------------------------
 
 
-_MIN_STEPS_PER_WINDOW = 25  # minimum steps for Welford to settle
+_MIN_STEPS_PER_WINDOW = 25  # Stan's base adaptation window
 
 
 def _window_sizes(num_warmup: int, n_windows: int, ratio: float = 2.0) -> list[int]:
-    """Geometric window sizes summing to ``num_warmup``.
+    """Split ``num_warmup`` steps into geometrically growing adaptation windows.
 
-    Stan-style window adaptation uses growing windows so the first
-    (badly-mixed) window contributes little to the cov estimate while
-    later (well-mixed) windows dominate. We mirror that: window
-    ``i`` has weight ``ratio ** i``, normalised to sum to one and
-    rounded to integer step counts.
+    Window ``i`` gets weight ``ratio ** i``; the weights are normalised to
+    sum to one and rounded to integer step counts, and the last window
+    absorbs the rounding remainder. The schedule starts from a single
+    window and adds windows, up to ``n_windows``, while every window of
+    the next split still holds at least :data:`_MIN_STEPS_PER_WINDOW`
+    (= 25) steps.
 
-    ``n_windows`` is automatically clamped so each window holds at
-    least :data:`_MIN_STEPS_PER_WINDOW` (= 25) steps — Stan's default
-    minimum. Short warmups (``num_warmup < 50``) collapse to a single
-    phase: a fixed RGG-scaled identity proposal throughout with a
-    one-shot Welford fit at the end.
+    Parameters
+    ----------
+    num_warmup : int
+        Total number of warmup steps.
+    n_windows : int
+        Maximum number of windows.
+    ratio : float
+        Growth factor between consecutive window weights, at least 1.
+
+    Returns
+    -------
+    list of int
+        Window sizes in sampling order, summing to ``num_warmup``; empty
+        when ``num_warmup <= 0``. The result is the single window
+        ``[num_warmup]`` when ``n_windows <= 1`` or when the warmup is too
+        short for two windows of 25 steps, which at ``ratio=2`` means
+        fewer than 74 steps. That window holds fewer than 25 steps when
+        ``num_warmup < 25``.
+
+    Notes
+    -----
+    Stan-style window adaptation uses growing windows so the first,
+    badly mixed window contributes little to the covariance estimate
+    while later, well-mixed windows dominate.
     """
     if num_warmup <= 0:
         return []
-    max_windows = max(1, num_warmup // _MIN_STEPS_PER_WINDOW)
-    n = min(int(n_windows), max_windows)
-    if n <= 1:
-        return [num_warmup]
-    weights = np.asarray([ratio**i for i in range(n)], dtype=float)
-    weights = weights / weights.sum()
-    sizes = np.maximum(1, np.round(weights * num_warmup).astype(int))
-    sizes[-1] += num_warmup - int(sizes.sum())
-    return [int(s) for s in sizes]
+    sizes = [num_warmup]
+    # With ``ratio >= 1`` the first window is the smallest, and adding a
+    # window only shrinks it, so the first split that breaks the minimum
+    # ends the search.
+    for n in range(2, int(n_windows) + 1):
+        weights = ratio ** np.arange(n, dtype=float)
+        split = np.round(weights / weights.sum() * num_warmup).astype(int)
+        split[-1] += num_warmup - int(split.sum())
+        if split.min() < _MIN_STEPS_PER_WINDOW:
+            break
+        sizes = [int(s) for s in split]
+    return sizes
 
 
 # ---------------------------------------------------------------------------
@@ -149,12 +228,14 @@ def _adaptive_warmup_fast(
 ) -> tuple[Any, Array, Array]:
     """Window-style adaptive warmup via ``lax.scan`` inside each window.
 
-    Splits ``num_warmup`` into ``n_windows`` geometrically-growing
-    windows. Each window samples with the current proposal Cholesky
-    (initially ``2.38 / sqrt(d) * I``) while accumulating Welford
-    statistics on positions; at the window boundary, the Cholesky is
-    refreshed from the cumulative Welford state. The last window's
-    estimate is returned as the production proposal cov.
+    Splits ``num_warmup`` into at most ``n_windows`` geometrically
+    growing windows (see :func:`_window_sizes`). Each window samples with
+    the current proposal Cholesky (initially ``2.38 / sqrt(d) * I``)
+    while accumulating Welford statistics on positions; at the window
+    boundary, :func:`_refit_proposal` refits the proposal from the
+    cumulative Welford state. Returns ``(state, sigma, warmup_positions)``:
+    the final random-walk state, the last refit's Cholesky factor (the
+    production proposal), and the ``(num_warmup, d)`` warmup positions.
 
     Welford state is *cumulative* across windows — the geometric
     schedule already downweights the early biased samples without
@@ -164,6 +245,7 @@ def _adaptive_warmup_fast(
     welf_init, welf_update, welf_final = welford_algorithm(is_diagonal_matrix=False)
     sizes = _window_sizes(num_warmup, n_windows)
 
+    proposal_cov = jnp.eye(d)
     sigma = _initial_sigma(d)
     rw_state = blackjax.normal_random_walk(target_log_prob_fn, sigma=sigma).init(init_state)
     welf_state = welf_init(d)
@@ -193,16 +275,14 @@ def _adaptive_warmup_fast(
         )
         window_positions.append(positions)
 
-        cov, _, _ = welf_final(welf_state)
-        sigma = _production_sigma(cov, d)
+        welford_cov, count, _ = welf_final(welf_state)
+        proposal_cov, sigma = _refit_proposal(welford_cov, count, proposal_cov, sigma)
 
     if sizes:
         warmup_positions = jnp.concatenate(window_positions, axis=0)
-        final_cov, _, _ = welf_final(welf_state)
     else:
         warmup_positions = jnp.empty((0, d), dtype=init_state.dtype)
-        final_cov = jnp.eye(d)
-    return rw_state, final_cov, warmup_positions
+    return rw_state, sigma, warmup_positions
 
 
 def _adaptive_warmup_eager(
@@ -217,11 +297,14 @@ def _adaptive_warmup_eager(
 
     BlackJAX primitives all work on concrete JAX arrays without
     tracing, so this path supports non-JAX-traceable log-densities.
+    Returns ``(state, sigma, warmup_positions)`` as
+    :func:`_adaptive_warmup_fast` does.
     """
     d = init_state.shape[0]
     welf_init, welf_update, welf_final = welford_algorithm(is_diagonal_matrix=False)
     sizes = _window_sizes(num_warmup, n_windows)
 
+    proposal_cov = jnp.eye(d)
     sigma = _initial_sigma(d)
     rw_state = blackjax.normal_random_walk(target_log_prob_fn, sigma=sigma).init(init_state)
     welf_state = welf_init(d)
@@ -236,16 +319,14 @@ def _adaptive_warmup_eager(
             rw_state, _info = sampler.step(sub, rw_state)
             welf_state = welf_update(welf_state, rw_state.position)
             positions.append(rw_state.position)
-        cov, _, _ = welf_final(welf_state)
-        sigma = _production_sigma(cov, d)
+        welford_cov, count, _ = welf_final(welf_state)
+        proposal_cov, sigma = _refit_proposal(welford_cov, count, proposal_cov, sigma)
 
     if positions:
         warmup_positions = jnp.stack(positions)
-        final_cov, _, _ = welf_final(welf_state)
     else:
         warmup_positions = jnp.empty((0, d), dtype=init_state.dtype)
-        final_cov = jnp.eye(d)
-    return rw_state, final_cov, warmup_positions
+    return rw_state, sigma, warmup_positions
 
 
 # ---------------------------------------------------------------------------
@@ -368,14 +449,13 @@ def _run_one_chain(
         )
     elif adapt and num_warmup > 0:
         warmup_fn = _adaptive_warmup_fast if traceable else _adaptive_warmup_eager
-        rw_state, cov, warmup_positions = warmup_fn(
+        rw_state, sigma, warmup_positions = warmup_fn(
             target_log_prob_fn,
             init_state,
             warmup_key,
             num_warmup,
             n_windows=n_windows,
         )
-        sigma = _production_sigma(cov, d)
         init_position = rw_state.position
     else:
         sigma = jnp.eye(d) * step_size
@@ -524,24 +604,25 @@ def rwmh(
     num_results, num_warmup, num_chains
         MCMC tuning parameters.
     step_size
-        Diagonal proposal scale used when ``adapt=False`` and
-        ``proposal_cov=None``.
+        Diagonal proposal scale used when ``proposal_cov=None`` and
+        either ``adapt=False`` or ``num_warmup == 0``.
     adapt
-        When ``True`` (default), runs a window-style adaptive warmup —
-        ``n_windows`` geometrically-growing windows that each sample
-        with the current proposal Cholesky and accumulate Welford
-        statistics on positions, refreshing the proposal at window
-        boundaries. Production samples with
-        ``proposal = chol(Sigma_hat) * 2.38 / sqrt(d)`` (the
-        Roberts-Gelman-Gilks scaling). When ``False``, skips
-        adaptation and uses ``sigma = step_size * I`` throughout.
+        When ``True`` (default), runs a window-style adaptive warmup:
+        geometrically growing windows that each sample with the current
+        proposal Cholesky and accumulate Welford statistics on
+        positions, refitting the proposal at every window boundary (see
+        Notes). Production samples with
+        ``proposal = chol(Sigma) * 2.38 / sqrt(d)``, which applies the
+        Roberts-Gelman-Gilks scaling to the last refit covariance
+        ``Sigma``. When ``False``, skips adaptation and uses
+        ``sigma = step_size * I`` throughout.
     n_windows
-        Number of geometric warmup windows when ``adapt=True``. The
-        Stan-style window-adaptation pattern downweights the early
-        biased samples by giving later windows more steps. Default
-        ``4``; ``n_windows=1`` collapses to a single-phase warmup with
-        a fixed RGG-scaled identity proposal throughout. Ignored when
-        ``adapt=False``.
+        Maximum number of geometric warmup windows when ``adapt=True``.
+        Windows are added only while each holds at least 25 steps, so a
+        warmup shorter than 74 steps runs as a single window: a fixed
+        RGG-scaled identity proposal throughout, refit once at the end.
+        Default ``4``; ``n_windows <= 1`` always gives the single window.
+        Ignored when ``adapt=False``.
     proposal_cov
         Explicit ``(d, d)`` proposal Cholesky factor, where ``d`` is the
         target dimension. Overrides both the adaptive fit and
@@ -561,6 +642,36 @@ def rwmh(
         Posterior samples with chain structure and an annotations
         ArviZ-shaped ``DataTree`` carrying per-step acceptance stats
         and warmup positions.
+
+    Raises
+    ------
+    TypeError
+        If ``dist`` does not implement ``SupportsUnnormalizedLogProb``.
+    ValueError
+        If ``proposal_cov`` is not a ``(d, d)`` matrix, or if ``init`` is
+        ``None`` and no initial state can be derived from ``dist``.
+
+    Warns
+    -----
+    UserWarning
+        If ``adapt=True`` and ``num_warmup == 0`` without ``proposal_cov``.
+        There are then no warmup positions to adapt on, so the proposal is
+        ``sigma = step_size * I``.
+
+    Notes
+    -----
+    At each window boundary the adaptive warmup refits the proposal
+    covariance as ``(n * Sigma_hat + 5 * Sigma_prev) / (n + 5)``, where
+    ``Sigma_hat`` is the Welford covariance of the ``n`` warmup positions
+    so far and ``Sigma_prev`` is the covariance the proposal in use
+    assumes, which is the identity before the first refit. This is Stan's
+    covariance regularization with ``Sigma_prev`` in place of
+    ``1e-3 * I``. The refit stays positive definite when the positions
+    have no spread, as when every proposal in a window is rejected, and
+    when they span fewer than ``d`` directions. The proposal therefore
+    never collapses to zero, and the correction vanishes as ``n`` grows.
+    The growing windows downweight the early, badly mixed positions by
+    giving later windows more steps.
     """
     if not isinstance(dist, SupportsUnnormalizedLogProb):
         raise TypeError(

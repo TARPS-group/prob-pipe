@@ -4,6 +4,7 @@ Covers behavior beyond the generic ``TestRWMH`` suite in
 ``test_inference.py``:
 
 * the adaptive warmup (RGG-scaled proposal with Welford covariance refit),
+* the refit guard that keeps the proposal from collapsing,
 * the eager-fallback path for non-JAX-traceable log-densities,
 * fast-vs-eager equivalence: both paths recover the same analytic target.
 """
@@ -12,11 +13,12 @@ from __future__ import annotations
 
 import warnings
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import MultivariateNormal, NumericRecordDistribution
+from probpipe import Distribution, MultivariateNormal, NumericRecordDistribution
 from probpipe.core.protocols import SupportsLogProb
 from probpipe.inference import (
     inference_method_registry,
@@ -24,8 +26,11 @@ from probpipe.inference import (
 )
 from probpipe.inference._blackjax_rwmh import (
     BlackJAXRWMHMethod,
+    _initial_sigma,
     _production_sigma,
+    _refit_proposal,
     _rgg_scale,
+    _window_sizes,
 )
 
 # Suppress an unrelated TFP/JAX deprecation that fires during random-key
@@ -109,18 +114,112 @@ class TestProductionSigma:
         assert _rgg_scale(1) == pytest.approx(2.38)
         assert _rgg_scale(4) == pytest.approx(2.38 / 2.0)
 
-    def test_jitter_is_scale_relative(self):
-        """A large-variance target still gets a Cholesky close to the
-        un-jittered factor — the scale-relative jitter doesn't dominate
-        (an absolute 1e-8 jitter would be negligible here too, but a
-        tiny-variance target is where scale-relative matters)."""
-        # Tiny-variance covariance: absolute 1e-8 jitter would be ~comparable
-        # to the signal; scale-relative jitter stays proportionate.
-        cov = jnp.eye(2) * 1e-6
-        sigma = np.asarray(_production_sigma(cov, 2))
-        expected = np.linalg.cholesky(np.asarray(cov)) * (2.38 / np.sqrt(2))
-        # Within 0.1% — jitter is 1e-8 * scale, far below the signal.
-        np.testing.assert_allclose(sigma, expected, rtol=1e-3)
+    def test_non_positive_definite_input_gives_non_finite_factor(self):
+        """A singular covariance yields non-finite entries rather than an
+        exception; ``_refit_proposal`` relies on that to detect a failed
+        factorization."""
+        sigma = np.asarray(_production_sigma(jnp.zeros((2, 2)), 2))
+        assert not np.isfinite(sigma).all()
+
+
+# ---------------------------------------------------------------------------
+# Refit guard — the proposal never collapses
+# ---------------------------------------------------------------------------
+
+
+class TestRefitProposal:
+    """``_refit_proposal`` refits to
+    ``(n * welford_cov + 5 * proposal_cov) / (n + 5)``, which shrinks the
+    Welford covariance toward the proposal in use, so the refit proposal is
+    positive definite even when the estimate is singular."""
+
+    def test_matches_shrinkage_formula(self):
+        welford_cov = jnp.array([[4.0, 1.0], [1.0, 2.0]])
+        proposal_cov = jnp.array([[1.0, 0.5], [0.5, 3.0]])
+        sigma = _production_sigma(proposal_cov, 2)
+        cov, new_sigma = _refit_proposal(welford_cov, 45, proposal_cov, sigma)
+        expected = (45 * np.asarray(welford_cov) + 5 * np.asarray(proposal_cov)) / 50
+        np.testing.assert_allclose(np.asarray(cov), expected, rtol=1e-6)
+        np.testing.assert_allclose(
+            np.asarray(new_sigma),
+            np.linalg.cholesky(expected) * _rgg_scale(2),
+            rtol=1e-5,
+        )
+
+    def test_zero_spread_shrinks_proposal_in_use(self):
+        """A window that rejects every proposal leaves ``welford_cov == 0``;
+        the refit is ``5 / (n + 5)`` times the proposal in use."""
+        d, n = 2, 33
+        cov, sigma = _refit_proposal(jnp.zeros((d, d)), n, jnp.eye(d), _initial_sigma(d))
+        np.testing.assert_allclose(np.asarray(cov), 5 / (n + 5) * np.eye(d), rtol=1e-6)
+        np.testing.assert_allclose(
+            np.asarray(sigma),
+            np.sqrt(5 / (n + 5)) * _rgg_scale(d) * np.eye(d),
+            rtol=1e-6,
+        )
+
+    def test_rank_deficient_estimate_gives_positive_definite_proposal(self):
+        """Eight accepted moves in a 33-step window leave the positions in an
+        eight-dimensional affine subspace of the 20-dimensional target; every
+        singular value of the refit factor is still at least
+        ``sqrt(5 / (n + 5))`` times the RGG scale."""
+        d, n = 20, 33
+        rng = np.random.default_rng(0)
+        steps = np.zeros((n, d), dtype=np.float32)
+        accepted = rng.choice(n, size=8, replace=False)
+        steps[accepted] = 0.5 * rng.normal(size=(8, d))
+        positions = np.cumsum(steps, axis=0)
+        welford_cov = jnp.asarray(np.cov(positions, rowvar=False), dtype=jnp.float32)
+        assert np.linalg.matrix_rank(np.asarray(welford_cov)) < d
+
+        _, sigma = _refit_proposal(welford_cov, n, jnp.eye(d), _initial_sigma(d))
+        singular_values = np.linalg.svd(np.asarray(sigma), compute_uv=False)
+        assert np.isfinite(singular_values).all()
+        assert singular_values.min() >= np.sqrt(5 / (n + 5)) * _rgg_scale(d) * (1 - 1e-4)
+
+    def test_single_position_estimate_is_ignored(self):
+        """With one position Welford reports ``0 / 0``; the refit treats the
+        estimate as zero and shrinks the proposal in use."""
+        d = 2
+        nan_cov = jnp.full((d, d), jnp.nan)
+        cov, sigma = _refit_proposal(nan_cov, 1, jnp.eye(d), _initial_sigma(d))
+        np.testing.assert_allclose(np.asarray(cov), 5 / 6 * np.eye(d), rtol=1e-6)
+        assert np.isfinite(np.asarray(sigma)).all()
+
+    def test_non_finite_factor_keeps_proposal_in_use(self):
+        """An estimate with an infinite variance gives a non-finite refit
+        factor, so the proposal in use is returned unchanged."""
+        bad_cov = jnp.array([[jnp.inf, 0.0], [0.0, 1.0]])
+        proposal_cov = jnp.array([[2.0, 0.3], [0.3, 1.0]])
+        sigma = _production_sigma(proposal_cov, 2)
+        cov, new_sigma = _refit_proposal(bad_cov, 50, proposal_cov, sigma)
+        np.testing.assert_array_equal(np.asarray(cov), np.asarray(proposal_cov))
+        np.testing.assert_array_equal(np.asarray(new_sigma), np.asarray(sigma))
+
+    def test_refit_is_scale_equivariant(self):
+        """The shrinkage imposes no absolute scale: scaling both covariances
+        by ``c`` scales the refit covariance by ``c`` and its factor by
+        ``sqrt(c)``."""
+        welford_cov = jnp.array([[4.0, 1.0], [1.0, 2.0]])
+        base_cov, base_sigma = _refit_proposal(welford_cov, 40, jnp.eye(2), _initial_sigma(2))
+        c = 1e-6
+        cov, sigma = _refit_proposal(
+            c * welford_cov, 40, c * jnp.eye(2), np.sqrt(c) * _initial_sigma(2)
+        )
+        np.testing.assert_allclose(np.asarray(cov), c * np.asarray(base_cov), rtol=1e-5)
+        np.testing.assert_allclose(
+            np.asarray(sigma), np.sqrt(c) * np.asarray(base_sigma), rtol=1e-5
+        )
+
+    def test_jit_matches_eager(self):
+        """The fast path calls the refit under tracing, with a traced
+        ``count``; the jitted result equals the eager one."""
+        welford_cov = jnp.array([[4.0, 1.0], [1.0, 2.0]])
+        args = (welford_cov, jnp.asarray(33), jnp.eye(2), _initial_sigma(2))
+        eager = _refit_proposal(*args)
+        jitted = jax.jit(_refit_proposal)(*args)
+        for e, j in zip(eager, jitted, strict=True):
+            np.testing.assert_allclose(np.asarray(j), np.asarray(e), rtol=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -131,8 +230,9 @@ class TestProductionSigma:
 class TestAdaptiveWarmup:
     """The default ``adapt=True`` warmup must recover near-RGG acceptance.
 
-    Production proposal is ``chol(Sigma_hat) * 2.38 / sqrt(d)`` after
-    Welford on the warmup positions. Acceptance shouldn't be perfectly
+    Production proposal is ``chol(Sigma) * 2.38 / sqrt(d)``, where
+    ``Sigma`` is the regularized Welford refit on the warmup positions.
+    Acceptance shouldn't be perfectly
     on target (we don't dual-average), but should sit comfortably in
     the operating range — small enough that the chain isn't trivially
     rejecting, large enough that we aren't stuck.
@@ -274,6 +374,35 @@ class TestNumWarmupZeroWarning:
                 random_seed=0,
             )
 
+    def test_step_size_sets_proposal_without_warmup(self, iso_gaussian):
+        """With no warmup positions to adapt on, ``adapt=True`` samples with
+        ``sigma = step_size * I``, so a tiny ``step_size`` is almost always
+        accepted, whereas an adapted proposal accepts about 0.3 to 0.5."""
+        # Observed across seeds 0-3: accept 0.99-1.0.
+        with pytest.warns(UserWarning, match="num_warmup=0"):
+            result = rwmh(
+                dist=iso_gaussian,
+                num_results=400,
+                num_warmup=0,
+                step_size=0.01,
+                adapt=True,
+                random_seed=0,
+            )
+        assert result.provenance.metadata["accept_rate"] > 0.9
+
+    def test_target_without_density_raises_typeerror(self):
+        """A target that does not implement ``SupportsUnnormalizedLogProb``
+        is rejected before any sampling."""
+
+        class NoDensityDist(Distribution):
+            event_shape = (2,)
+
+            def __init__(self):
+                super().__init__(name="no_density")
+
+        with pytest.raises(TypeError, match="SupportsUnnormalizedLogProb"):
+            rwmh(dist=NoDensityDist(), num_results=10, num_warmup=10, random_seed=0)
+
     def test_bad_proposal_cov_shape_raises_valueerror(self, iso_gaussian):
         """A wrong-shape ``proposal_cov`` (here ``(3, 3)`` for a 2-D target)
         is validated up front: ``rwmh`` raises a ``ValueError`` naming the
@@ -291,51 +420,57 @@ class TestNumWarmupZeroWarning:
 
 
 class TestWindowSizing:
-    """``_window_sizes`` clamps short warmups to a single phase."""
+    """``_window_sizes`` splits a warmup into geometric windows of at least
+    25 steps, using fewer windows than requested when the warmup is short."""
 
     def test_zero_warmup_returns_empty(self):
-        from probpipe.inference._blackjax_rwmh import _window_sizes
-
         assert _window_sizes(0, n_windows=4) == []
 
-    def test_short_warmup_collapses_to_single_window(self):
-        """Under 50 warmup steps → single window (Stan's threshold).
+    @pytest.mark.parametrize("n_windows", [1, 2, 3, 4, 6])
+    def test_every_window_holds_min_steps(self, n_windows):
+        """For every warmup length below 1500 steps, the window sizes:
 
-        Avoids degenerate cov fits from too-few-sample windows.
+        - sum to ``num_warmup``;
+        - never decrease;
+        - number at most ``n_windows``;
+        - hold at least 25 steps each whenever there are two or more.
         """
-        from probpipe.inference._blackjax_rwmh import _window_sizes
+        for num_warmup in range(1, 1500):
+            sizes = _window_sizes(num_warmup, n_windows=n_windows)
+            assert sum(sizes) == num_warmup
+            assert 1 <= len(sizes) <= n_windows
+            assert sizes == sorted(sizes)
+            if len(sizes) > 1:
+                assert min(sizes) >= 25, (num_warmup, sizes)
 
-        assert _window_sizes(20, n_windows=4) == [20]
-        assert _window_sizes(40, n_windows=4) == [40]
+    def test_short_warmup_is_one_window(self):
+        """A warmup too short for two windows of 25 steps runs as one window,
+        even when that window is shorter than 25 steps."""
+        assert _window_sizes(10, n_windows=4) == [10]
+        assert _window_sizes(50, n_windows=4) == [50]
+        assert _window_sizes(73, n_windows=4) == [73]
 
-    def test_single_window_boundary(self):
-        """The 50-step threshold (= 2 * _MIN_STEPS_PER_WINDOW): 49 still
-        collapses to one window, 50 is the first to split."""
-        from probpipe.inference._blackjax_rwmh import _window_sizes
+    @pytest.mark.parametrize("n_windows", [1, 0, -3])
+    def test_n_windows_at_most_one_gives_single_window(self, n_windows):
+        assert _window_sizes(500, n_windows=n_windows) == [500]
 
-        # 49 // 25 == 1 → single window.
-        assert _window_sizes(49, n_windows=4) == [49]
-        # 50 // 25 == 2 → at least two windows.
-        assert len(_window_sizes(50, n_windows=4)) >= 2
+    def test_window_count_boundaries(self):
+        """Each extra window starts at the first warmup length whose
+        geometric split keeps every window at 25 steps or more."""
+        assert _window_sizes(74, n_windows=4) == [25, 49]
+        assert _window_sizes(171, n_windows=4) == [57, 114]
+        assert _window_sizes(172, n_windows=4) == [25, 49, 98]
+        assert _window_sizes(367, n_windows=4) == [52, 105, 210]
+        assert _window_sizes(368, n_windows=4) == [25, 49, 98, 196]
 
-    def test_moderate_warmup_uses_three_windows(self):
-        from probpipe.inference._blackjax_rwmh import _window_sizes
-
-        # 80 steps / 25 = 3 max windows, clamped from 4 requested.
-        sizes = _window_sizes(80, n_windows=4)
-        assert len(sizes) == 3
-        assert sum(sizes) == 80
-        # Geometric — sizes should be non-decreasing.
-        assert sizes == sorted(sizes)
+    def test_window_count_reduced_below_request(self):
+        """A 100-step warmup splits into four windows as ``[7, 13, 27, 53]``
+        and into three as ``[14, 29, 57]``; both break the minimum, so it
+        uses two windows."""
+        assert _window_sizes(100, n_windows=4) == [33, 67]
 
     def test_long_warmup_uses_all_windows(self):
-        from probpipe.inference._blackjax_rwmh import _window_sizes
-
-        sizes = _window_sizes(1000, n_windows=4)
-        assert len(sizes) == 4
-        assert sum(sizes) == 1000
-        # Last window is the largest under geometric (ratio=2) growth.
-        assert sizes[-1] > sizes[0]
+        assert _window_sizes(1000, n_windows=4) == [67, 133, 267, 533]
 
 
 class TestWindowedWarmup:
@@ -405,6 +540,76 @@ class TestWindowedWarmup:
 
 
 # ---------------------------------------------------------------------------
+# End to end: every chain moves after adaptive warmup
+# ---------------------------------------------------------------------------
+
+
+def _assert_every_chain_moves(result, min_std):
+    """Each chain accepts some but not all proposals and spreads in every
+    coordinate.
+
+    A collapsed proposal leaves its chain at a single position: a zero-scale
+    proposal is always accepted and a NaN one never is, and either leaves
+    the coordinates' standard deviations at zero.
+    """
+    is_accepted = np.asarray(result.inference_data["sample_stats"]["is_accepted"])
+    for accept_rate, chain in zip(is_accepted.mean(axis=1), result.chains, strict=True):
+        assert 0.1 < accept_rate < 0.9, f"accept rate {accept_rate}"
+        stds = np.asarray(chain).std(0, ddof=1)
+        assert stds.min() > min_std, f"per-coordinate std {stds}"
+
+
+class TestProposalNeverCollapses:
+    """Adaptive warmup leaves a proposal that moves every chain, however
+    short the warmup or high the target dimension."""
+
+    def test_short_warmup_moves_every_chain(self, iso_gaussian):
+        # Eight chains run eight independent warmups on the vmap path.
+        # Observed across seeds 0-5: per-chain accept 0.23-0.54, per-chain
+        # min std 0.75.
+        result = rwmh(
+            dist=iso_gaussian,
+            num_results=200,
+            num_warmup=100,
+            num_chains=8,
+            random_seed=1,
+        )
+        _assert_every_chain_moves(result, min_std=0.35)
+
+    @pytest.mark.parametrize("num_warmup", [1, 10])
+    def test_warmup_below_min_window_moves_every_chain(self, iso_gaussian, num_warmup):
+        """A single window shorter than 25 steps still refits to a moving
+        proposal. That includes a one-step warmup, whose Welford covariance
+        is ``0 / 0``."""
+        # Observed across seeds 0-5: per-chain accept 0.27-0.59, per-chain
+        # min std 0.73.
+        result = rwmh(
+            dist=iso_gaussian,
+            num_results=200,
+            num_warmup=num_warmup,
+            num_chains=4,
+            random_seed=1,
+        )
+        _assert_every_chain_moves(result, min_std=0.35)
+
+    def test_rank_deficient_first_window_in_high_dimension(self):
+        """At ``d = 20`` the first 33-step window accepts far fewer than 20
+        proposals, so its covariance estimate is singular; the default warmup
+        still moves every chain."""
+        dist = MultivariateNormal(loc=jnp.zeros(20), cov=jnp.eye(20), name="z")
+        # Observed across seeds 0-7: per-chain accept 0.42-0.48, per-chain
+        # min std 0.42.
+        result = rwmh(
+            dist=dist,
+            num_results=1000,
+            num_warmup=500,
+            num_chains=2,
+            random_seed=0,
+        )
+        _assert_every_chain_moves(result, min_std=0.2)
+
+
+# ---------------------------------------------------------------------------
 # Eager fallback (non-traceable log-density)
 # ---------------------------------------------------------------------------
 
@@ -459,8 +664,28 @@ class _NumpyAnisoLogProbDist(_NumpyLogProbDist):
     precision = (1.0, 0.25)  # 1 / var = (1/1, 1/4)
 
 
+class _NumpyStdNormal10(_NumpyLogProbDist):
+    """Non-traceable 10-D standard normal, which runs a target of more than
+    two dimensions on the eager path."""
+
+    precision = (1.0,) * 10
+
+    @property
+    def event_shape(self):
+        return (10,)
+
+
 class TestEagerFallback:
     """The eager Python-loop path supports non-JAX-traceable targets."""
+
+    def test_short_warmup_moves_chain_in_ten_dimensions(self):
+        """The eager warmup uses the same refit, so a 100-step warmup in ten
+        dimensions leaves a proposal that moves the chain."""
+        dist = _NumpyStdNormal10(name="np10")
+        # Observed across seeds 0-3: accept 0.33-0.43, min std 0.58.
+        result = rwmh(dist=dist, num_results=300, num_warmup=100, random_seed=0)
+        assert result.event_shape == (10,)
+        _assert_every_chain_moves(result, min_std=0.25)
 
     def test_runs_end_to_end(self):
         dist = _NumpyLogProbDist(name="np_dist")

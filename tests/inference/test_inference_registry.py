@@ -302,12 +302,18 @@ class TestUnnormalizedLogProbInference:
         posterior = condition_on(
             dist,
             method="blackjax_rwmh",
-            num_results=200,
+            num_results=2000,
             num_warmup=100,
             step_size=0.5,
             random_seed=0,
         )
         assert isinstance(posterior, ApproximateDistribution)
+        # Standard normal target. Observed across seeds 0-7: max |mean|
+        # 0.01-0.14, max |std - 1| 0.04-0.10. A wrong target such as
+        # N(3, 0.25 I) fails both bounds.
+        draws = np.asarray(posterior.draws()).reshape(-1, 2)
+        np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.3)
+        np.testing.assert_allclose(draws.std(0), [1.0, 1.0], atol=0.25)
 
     def test_normalized_only_still_works_via_nuts(self):
         """SupportsLogProb-only dist still flows through unchanged.
@@ -321,11 +327,17 @@ class TestUnnormalizedLogProbInference:
         dist = _make_normalized_distribution()
         posterior = condition_on(
             dist,
-            num_results=100,
-            num_warmup=50,
+            num_results=1000,
+            num_warmup=200,
             random_seed=0,
         )
         assert isinstance(posterior, ApproximateDistribution)
+        # Standard normal target. Observed across seeds 0-7: max |mean|
+        # 0.02-0.06, max |std - 1| 0.01-0.08. A wrong target such as
+        # N(3, 0.25 I) fails both bounds.
+        draws = np.asarray(posterior.draws()).reshape(-1, 2)
+        np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.15)
+        np.testing.assert_allclose(draws.std(0), [1.0, 1.0], atol=0.2)
 
     def test_normalized_only_still_works_via_rwmh(self):
         from probpipe import ApproximateDistribution
@@ -334,12 +346,18 @@ class TestUnnormalizedLogProbInference:
         posterior = condition_on(
             dist,
             method="blackjax_rwmh",
-            num_results=100,
+            num_results=2000,
             num_warmup=50,
             step_size=0.5,
             random_seed=0,
         )
         assert isinstance(posterior, ApproximateDistribution)
+        # Standard normal target. Observed across seeds 0-7: max |mean|
+        # 0.01-0.11, max |std - 1| 0.02-0.06. A wrong target such as
+        # N(3, 0.25 I) fails both bounds.
+        draws = np.asarray(posterior.draws()).reshape(-1, 2)
+        np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.3)
+        np.testing.assert_allclose(draws.std(0), [1.0, 1.0], atol=0.2)
 
     def test_check_description_names_unnormalized_protocol(self):
         """When MCMC methods are infeasible, error string names the right protocol."""
