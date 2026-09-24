@@ -1,5 +1,6 @@
-# Pre-commit hooks for ProbPipe. Install once with `uvx pre-commit install`
-# (or `pre-commit install`); thereafter they run on staged files at commit time.
+# Pre-commit hooks for ProbPipe. Install them once as CONTRIBUTING.md
+# ("Linting & pre-commit") describes; thereafter they run on staged files at
+# commit time.
 #
 # Hooks only see the files you're changing, so a commit is checked without
 # re-running over the whole tree. `ruff` here flags but
