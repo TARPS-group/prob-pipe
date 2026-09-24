@@ -40,13 +40,13 @@ __all__ = [
 
 
 @function
-def iterate[T, S](
-    step_fn: Callable[[Distribution[T], S], Distribution[T]],
-    initial: Distribution[T],
+def iterate[S](
+    step_fn: Callable[[Distribution, S], Distribution],
+    initial: Distribution,
     inputs: Iterable[S],
     *,
-    callback: Callable[[int, Distribution[T]], Any] | None = None,
-) -> list[Distribution[T]]:
+    callback: Callable[[int, Distribution], Any] | None = None,
+) -> list[Distribution]:
     """Fold a step function over inputs, accumulating a distribution sequence.
 
     Starting from *initial*, applies ``step_fn(dist, inp)`` for each
@@ -61,10 +61,10 @@ def iterate[T, S](
     Parameters
     ----------
     step_fn : callable
-        ``(Distribution[T], S) -> Distribution[T]``.
+        ``(Distribution, S) -> Distribution``.
         Any callable matching this signature — plain functions,
         :class:`Function` instances, or bound methods.
-    initial : Distribution[T]
+    initial : Distribution
         The starting distribution.
     inputs : Iterable[S]
         Sequence of inputs to pass to the step function.
@@ -75,10 +75,10 @@ def iterate[T, S](
 
     Returns
     -------
-    list[Distribution[T]]
+    list[Distribution]
         The full sequence: ``[initial, dist_1, dist_2, ...]``.
     """
-    dists: list[Distribution[T]] = [initial]
+    dists: list[Distribution] = [initial]
     current = initial
 
     for i, inp in enumerate(inputs):

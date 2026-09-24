@@ -1,7 +1,7 @@
 """The distribution base class, its term spec, and minimal helpers.
 
 Provides:
-  - ``Distribution[T]`` – Abstract base for all ProbPipe distributions.
+  - ``Distribution`` – Abstract base for all ProbPipe distributions.
   - ``DistributionSpec`` – The term spec of the distribution kind.
   - Global defaults for expectation sampling.
 """
@@ -49,14 +49,13 @@ def set_return_approx_dist(value: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Distribution[T] — generic base class
+# Distribution — the base class
 # ---------------------------------------------------------------------------
 
 
-class Distribution[T](TrackedTerm, Annotated, ABC):
+class Distribution(TrackedTerm, Annotated, ABC):
     """
-    Abstract base for all ProbPipe distributions, parameterized by
-    value type ``T``.
+    Abstract base for all ProbPipe distributions.
 
     Every distribution is a tracked term: it is
     :class:`~probpipe.core.tracked.TrackedTerm` (a :attr:`~TrackedTerm.name` and a write-once

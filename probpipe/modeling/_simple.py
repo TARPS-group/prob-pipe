@@ -16,11 +16,11 @@ from ._likelihood import Likelihood
 __all__ = ["SimpleModel"]
 
 
-class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
+class SimpleModel[P, D](ProbabilisticModel, SupportsLogProb):
     """Probabilistic model as a joint distribution over (parameters, data).
 
-    A ``SimpleModel[P, D]`` is a ``Distribution[tuple[P, D]]`` — the joint
-    distribution $p(\\theta, y) = p(\\theta) \\, p(y \\mid \\theta)$.
+    A ``SimpleModel`` is the joint distribution
+    $p(\\theta, y) = p(\\theta) \\, p(y \\mid \\theta)$ over parameters and data.
     The prior must support :class:`SupportsLogProb` so that the joint
     log-density is always computable.
 
@@ -32,7 +32,7 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
 
     Parameters
     ----------
-    prior : Distribution[P] that supports SupportsLogProb
+    prior : Distribution that supports SupportsLogProb
         Prior distribution over model parameters.
     likelihood : Likelihood[P, D]
         Must have a ``log_likelihood(params, data)`` method.
@@ -45,12 +45,12 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
 
     def __init__(
         self,
-        prior: SupportsLogProb[P],
+        prior: SupportsLogProb,
         likelihood: Likelihood[P, D],
         *,
         name: str | None = None,
     ):
-        # Type-annotated as ``SupportsLogProb[P]`` so static type
+        # Type-annotated as ``SupportsLogProb`` so static type
         # checkers catch a wrong-type prior at the call site. The
         # runtime checks remain as a backstop for callers who bypass
         # the type system: the prior must be both ``SupportsLogProb``
@@ -109,7 +109,7 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
     # -- Distribution interface ---------------------------------------------
 
     @property
-    def prior(self) -> SupportsLogProb[P]:
+    def prior(self) -> SupportsLogProb:
         """The prior distribution over parameters."""
         return self._prior
 

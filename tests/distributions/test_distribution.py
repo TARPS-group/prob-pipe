@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -10,15 +11,22 @@ import numpy as np
 import pytest
 
 from probpipe import (
+    BootstrapReplicateDistribution,
+    Distribution,
+    DistributionArray,
     DistributionSpec,
+    EmpiricalDistribution,
     Gamma,
     MultivariateNormal,
     Normal,
+    RandomFunction,
+    RandomMeasure,
     RecordEmpiricalDistribution,
     RecordSpec,
     TransformedDistribution,
 )
 from probpipe.core._specs import NumericArraySpec
+from probpipe.core._workflow_distribution_normalization import DISTRIBUTION_HINT_PROTOCOLS
 from probpipe.core.provenance import Provenance, provenance_ancestors
 from probpipe.distributions.kde import KDEDistribution
 
@@ -469,6 +477,32 @@ class TestDistributionSpecIsValid:
         spec = DistributionSpec(event_spec=RecordSpec(x=()))
         with pytest.raises(error):
             spec.is_valid(_Broken())
+
+
+class TestNoTypeParameter:
+    """The distribution kinds and their capabilities are not generic.
+
+    A draw's type follows from the event declaration, so a static parameter
+    could record only the declaration's kind.
+    """
+
+    @pytest.mark.parametrize(
+        "cls",
+        [
+            Distribution,
+            EmpiricalDistribution,
+            BootstrapReplicateDistribution,
+            DistributionArray,
+            RandomFunction,
+            RandomMeasure,
+            *DISTRIBUTION_HINT_PROTOCOLS,
+        ],
+        ids=lambda cls: cls.__name__,
+    )
+    def test_class_takes_no_type_parameter(self, cls):
+        assert cls.__type_params__ == ()
+        with pytest.raises(TypeError):
+            cls[Any]
 
 
 class TestPublicImportPaths:

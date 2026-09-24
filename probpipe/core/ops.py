@@ -371,16 +371,15 @@ def unnormalized_prob(
 def mean(dist: SupportsMean) -> Any:
     """Compute ``E[X]`` where ``X ~ dist``.
 
-    The return type is ``T``-shaped where ``T`` is *dist*'s sample type:
+    The result is shaped like one draw of *dist*:
 
-    * Numeric distributions (``T = Array``) — returns
+    * Numeric distributions, whose draws are arrays — returns
       :class:`~probpipe.custom_types.Array`.
-    * Structured distributions (``T = Record``) — returns
+    * Structured distributions, whose draws are records — returns
       :class:`~probpipe.record.Record`.
-    * :class:`~probpipe.core._random_measures.RandomMeasure[T]` (``T``
-      itself a :class:`~probpipe.Distribution[T]`)
-      — returns the marginalised ``Distribution[T]`` with marginal
-      ``D̄(A) = ∫ D(A) dM(D)``.
+    * :class:`~probpipe.core._random_measures.RandomMeasure`, whose draws are
+      distributions — returns the marginalised :class:`~probpipe.Distribution`
+      with marginal ``D̄(A) = ∫ D(A) dM(D)``.
 
     Requires the distribution to implement :class:`SupportsMean`.
     """
@@ -468,14 +467,14 @@ def random_log_prob(
 ) -> RandomFunction | Distribution:
     """Return the random (normalized) log-density of a random measure.
 
-    For a ``RandomMeasure[T]`` ``M`` with draws ``D ~ M``, the random
+    For a ``RandomMeasure`` ``M`` with draws ``D ~ M``, the random
     function ``x ↦ log D(x)`` is itself a callable returning a
     distribution over scalars at every input.
 
     When *value* is omitted, returns that callable as a
     :class:`~probpipe.core._random_functions.RandomFunction`. When *value* is
     provided (positionally, or built from field kwargs via
-    :meth:`Distribution._pack_value`), returns the ``Distribution[Array]`` over
+    :meth:`Distribution._pack_value`), returns the array-valued distribution over
     ``log D(value)`` directly — equivalent to ``random_log_prob(dist)(value)``.
     The positional and keyword forms mirror :func:`log_prob`.
 
@@ -501,7 +500,7 @@ def random_unnormalized_log_prob(
 ) -> RandomFunction | Distribution:
     """Return the random unnormalized log-density of a random measure.
 
-    For a ``RandomMeasure[T]`` ``M`` with draws ``D ~ M``, the random
+    For a ``RandomMeasure`` ``M`` with draws ``D ~ M``, the random
     function ``x ↦ log D̃(x)`` (where ``D̃`` is the unnormalized density
     of ``D``) is itself a callable returning a distribution over
     scalars at every input.
@@ -509,7 +508,7 @@ def random_unnormalized_log_prob(
     When *value* is omitted, returns that callable as a
     :class:`~probpipe.core._random_functions.RandomFunction`. When *value* is
     provided (positionally, or built from field kwargs via
-    :meth:`Distribution._pack_value`), returns the ``Distribution[Array]`` over
+    :meth:`Distribution._pack_value`), returns the array-valued distribution over
     ``log D̃(value)`` directly — equivalent to
     ``random_unnormalized_log_prob(dist)(value)``. The positional and keyword
     forms mirror :func:`unnormalized_log_prob`.

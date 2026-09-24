@@ -69,7 +69,7 @@ from typing import (
     runtime_checkable,
 )
 
-from ..custom_types import Array, ArrayLike, PRNGKey
+from ..custom_types import Array, PRNGKey
 
 if TYPE_CHECKING:
     from ..distributions._distribution import Distribution
@@ -182,19 +182,19 @@ class SupportsSampling(Protocol):
 
 
 @runtime_checkable
-class SupportsUnnormalizedLogProb[T](Protocol):
+class SupportsUnnormalizedLogProb(Protocol):
     """Distribution with an unnormalized log-density.
 
     Provides ``_unnormalized_log_prob(value)``, where *value* is a single
-    draw of the distribution's sample type ``T`` (or the batched form;
-    see :class:`SupportsLogProb`).
+    draw of the distribution (or the batched form; see
+    :class:`SupportsLogProb`).
     """
 
-    def _unnormalized_log_prob(self, value: T | ArrayLike) -> Array: ...
+    def _unnormalized_log_prob(self, value: Any) -> Array: ...
 
 
 @runtime_checkable
-class SupportsLogProb[T](SupportsUnnormalizedLogProb[T], Protocol):
+class SupportsLogProb(SupportsUnnormalizedLogProb, Protocol):
     """Distribution with a (normalized) log-density.
 
     Extends :class:`SupportsUnnormalizedLogProb` because any distribution
@@ -202,20 +202,18 @@ class SupportsLogProb[T](SupportsUnnormalizedLogProb[T], Protocol):
     The base :class:`~probpipe.Distribution` class
     provides ``_unnormalized_log_prob`` defaulting to ``_log_prob``.
 
-    ``_log_prob`` accepts a single draw of the distribution's sample type
-    ``T`` or the batched form (``Array`` → ``Array`` with leading batch
-    axes; ``Record`` → ``RecordBatch``; ``NumericRecord`` →
-    ``NumericRecordBatch``). The ``T | ArrayLike`` annotation is
-    deliberately loose: ``ArrayLike`` covers the scalar batched case,
-    while Record-based batched forms follow the convention above. The
-    kwarg form ``log_prob(dist, field=value, ...)`` builds a single ``T``
-    via :meth:`Distribution._pack_value`; batched evaluation goes through
-    the positional path.
+    ``_log_prob`` accepts a single draw of the distribution or the batched
+    form (``Array`` → ``Array`` with leading batch axes; ``Record`` →
+    ``RecordBatch``; ``NumericRecord`` → ``NumericRecordBatch``), so its
+    ``value`` is annotated ``Any``. The kwarg form
+    ``log_prob(dist, field=value, ...)`` builds a single draw via
+    :meth:`Distribution._pack_value`; batched evaluation goes through the
+    positional path.
     """
 
-    def _log_prob(self, value: T | ArrayLike) -> Array: ...
+    def _log_prob(self, value: Any) -> Array: ...
 
-    def _unnormalized_log_prob(self, value: T | ArrayLike) -> Array:
+    def _unnormalized_log_prob(self, value: Any) -> Array:
         """Default: delegates to ``_log_prob``."""
         return self._log_prob(value)
 
@@ -229,16 +227,16 @@ class SupportsLogProb[T](SupportsUnnormalizedLogProb[T], Protocol):
 class SupportsMean(Protocol):
     """Distribution with an exact mean via ``_mean()``.
 
-    The return type is ``T``-shaped where ``T`` is the distribution's
-    sample type. For the common cases this is:
+    The result is shaped like one draw. For the common cases this is:
 
     * :class:`~probpipe.core._numeric_record_distribution.NumericRecordDistribution`
-      and friends (``T = Array``) — returns :class:`~probpipe.custom_types.Array`.
+      and friends, whose draws are arrays — returns
+      :class:`~probpipe.custom_types.Array`.
     * :class:`~probpipe.core._record_distribution.RecordDistribution` and
-      friends (``T = Record``) — returns :class:`~probpipe.record.Record`.
-    * :class:`~probpipe.core._random_measures.RandomMeasure[T]`
-      (``T = Distribution[T]``) — returns the marginalised
-      ``Distribution[T]`` with marginal ``D̄(A) = ∫ D(A) dM(D)``.
+      friends, whose draws are records — returns :class:`~probpipe.record.Record`.
+    * :class:`~probpipe.core._random_measures.RandomMeasure`, whose draws are
+      distributions — returns the marginalised ``Distribution`` with marginal
+      ``D̄(A) = ∫ D(A) dM(D)``.
 
     The protocol is sample-type-polymorphic by design: the array-valued
     and structured paths are unchanged; ``RandomMeasure`` opts in by
@@ -301,7 +299,7 @@ class SupportsQuantile(Protocol):
 class SupportsRandomLogProb(Protocol):
     """Distribution over distributions with a random (normalized) log-density.
 
-    For a ``RandomMeasure[T]`` ``M``, ``_random_log_prob`` returns the
+    For a ``RandomMeasure`` ``M``, ``_random_log_prob`` returns the
     random function ``x ↦ log D(x)`` where ``D ~ M`` as a
     :class:`~probpipe.core._random_functions.RandomFunction`. The op
     layer (:func:`~probpipe.core.ops.random_log_prob`) optionally
@@ -459,7 +457,7 @@ class SupportsArrayBackend(Protocol):
     A distribution class declares the capability by implementing the
     classmethod::
 
-        class MyDistribution(Distribution[T]):
+        class MyDistribution(Distribution):
             @classmethod
             def _make_array_backend(
                 cls,

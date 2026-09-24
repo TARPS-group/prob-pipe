@@ -1,6 +1,6 @@
 """Tests for :class:`MinibatchedDistribution`.
 
-A ``RandomMeasure[Record]`` whose draws are unbiased stochastic
+A ``RandomMeasure`` whose draws are unbiased stochastic
 surrogates of the full-data unnormalized log-posterior. Consumed by
 stochastic-gradient MCMC kernels and by tempered SMC.
 """
@@ -443,7 +443,7 @@ class TestRandomLogProbOp:
 
     def test_two_arg_form_returns_distribution_at_theta(self, measure):
         """``random_unnormalized_log_prob(measure, theta)`` returns a
-        ``Distribution[Array]`` over log-density estimates at theta.
+        array-valued distribution over log-density estimates at theta.
         """
         theta = jnp.array([0.0, 0.0])
         dist_at_theta = random_unnormalized_log_prob(measure, theta)

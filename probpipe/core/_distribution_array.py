@@ -65,7 +65,7 @@ __all__ = ["DistributionArray"]
 # ---------------------------------------------------------------------------
 
 
-class DistributionArray[T](Distribution[T]):
+class DistributionArray(Distribution):
     """Ordered collection of independent scalar distributions
     addressed by a (multi-d) ``batch_shape``.
 

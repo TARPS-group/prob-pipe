@@ -54,7 +54,7 @@ def predictive_check[P, D](
 
     Parameters
     ----------
-    distribution : Distribution[P]
+    distribution : Distribution
         Prior or posterior to sample parameters from.
     generative_likelihood : GenerativeLikelihood[P, D]
         Must have ``generate_data(params: P, num_observations: int, *,

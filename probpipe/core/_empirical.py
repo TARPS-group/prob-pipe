@@ -22,14 +22,14 @@ sources, and stays in the generic base for non-array
 
 Provides:
 
-- :class:`EmpiricalDistribution[T]` — generic weighted empirical
-  distribution.
+- :class:`EmpiricalDistribution` — weighted empirical distribution over
+  samples of any type.
 - :class:`RecordEmpiricalDistribution` — Record-valued empirical
   distribution with per-field weighted moments and TFP-style shape
   semantics. Accepts a ``Record`` or (with ``name=...``) a numeric
   array which is auto-wrapped as a single-field Record.
-- :class:`BootstrapReplicateDistribution[T]` — generic bootstrap
-  replicate distribution. Accepts arbitrary samples, an
+- :class:`BootstrapReplicateDistribution` — bootstrap replicate
+  distribution. Accepts arbitrary samples, an
   ``EmpiricalDistribution``, or any ``SupportsSampling`` source.
 - :class:`RecordBootstrapReplicateDistribution` — Record-valued
   bootstrap replicate with joint row resampling.
@@ -240,16 +240,15 @@ def _validate_record_samples(record_data: Record) -> int:
 # ---------------------------------------------------------------------------
 
 
-class EmpiricalDistribution[T](
-    Distribution[T],
+class EmpiricalDistribution(
+    Distribution,
     SupportsSampling,
     SupportsExpectation,
 ):
     """Weighted empirical distribution over a finite set of samples.
 
-    This is the generic base. Concrete sample types ``T`` (objects,
-    callables, opaque user values, ...) are stored in a numpy object
-    array.
+    This is the general base. Samples of any type (objects, callables,
+    opaque user values, ...) are stored in a numpy object array.
 
     **Automatic Record dispatch:** ``EmpiricalDistribution(samples,
     ...)`` returns a :class:`RecordEmpiricalDistribution` when
@@ -312,7 +311,7 @@ class EmpiricalDistribution[T](
 
     def __init__(
         self,
-        samples: Sequence[T] | ArrayLike,
+        samples: Sequence[Any] | ArrayLike,
         weights: ArrayLike | Weights | None = None,
         *,
         log_weights: ArrayLike | Weights | None = None,
@@ -434,7 +433,7 @@ class EmpiricalDistribution[T](
 
 
 class RecordEmpiricalDistribution(
-    EmpiricalDistribution[Record],
+    EmpiricalDistribution,
     NumericRecordDistribution,
     SupportsMean,
     SupportsVariance,
@@ -485,8 +484,8 @@ class RecordEmpiricalDistribution(
     Notes
     -----
     Construction calls ``Distribution.__init__`` directly rather than
-    chaining through ``super().__init__()``. The reason: the generic
-    ``EmpiricalDistribution[T]`` base stores samples as a flat numpy
+    chaining through ``super().__init__()``. The reason: the general
+    ``EmpiricalDistribution`` base stores samples as a flat numpy
     object array (``self._samples``), which is incompatible with the
     Record-structured layout this subclass uses (``self._record_data``).
     Subclasses that further specialise this class (e.g.
@@ -823,8 +822,8 @@ class RecordEmpiricalDistribution(
 # ---------------------------------------------------------------------------
 
 
-class BootstrapReplicateDistribution[T](
-    Distribution[T],
+class BootstrapReplicateDistribution(
+    Distribution,
     SupportsSampling,
     SupportsExpectation,
 ):
@@ -1105,7 +1104,7 @@ class BootstrapReplicateDistribution[T](
 
 
 class RecordBootstrapReplicateDistribution(
-    BootstrapReplicateDistribution[Record],
+    BootstrapReplicateDistribution,
     NumericRecordDistribution,
 ):
     """Bootstrap replicate distribution over Record-structured data.

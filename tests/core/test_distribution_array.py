@@ -977,7 +977,7 @@ class TestFromBatchedParams:
 
 
 class TestDistributionFromBatchedParamsAlias:
-    """Ergonomic per-class alias on Distribution[T]."""
+    """Ergonomic per-class alias on Distribution."""
 
     def test_alias_dispatches_to_distribution_array_factory(self):
         from probpipe import DistributionArray, Normal
