@@ -9,6 +9,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- A distribution stores the `OutputSpec` of one draw as its event declaration,
+  and every schema view reads it.
+  - `Distribution.__init__` takes the declaration as the required second
+    argument `event_spec`, and construction raises `TypeError` for a class that
+    leaves its event undeclared. A class that bypasses the base constructor
+    calls `_init_declaration`.
+  - A bare `RecordSpec` exposes its fields, even when it has one, and any other
+    term spec is a whole-term event whose component is the law's name. A law
+    that draws one array, such as a parametric family, therefore declares a
+    whole term, and its name must be a Python identifier that is not a keyword.
+  - `with_name` no longer moves the event component, so a renamed family keeps
+    the template field it was constructed with.
+  - `event_shape` is defined only for a law that draws a single array: it raises
+    `TypeError` for any other draw and `ValueError` for unbound dimensions, so
+    `hasattr(law, "event_shape")` raises for a law that draws a record. A
+    TFP-backed product no longer reports the flat shape of its blockwise
+    backend. An auto-wrapped empirical law, a posterior, and the Stan and PyMC
+    models keep their single-field or flat `event_shape` for now.
+  - `dtypes`, `supports`, `dtype`, and `support` belong to
+    `NumericDistribution`, so a law whose declaration is not numeric has none of
+    them and raises `AttributeError`. `dtypes` and `supports` are keyed by the
+    path of each array leaf, and `dtype` and `support` are the dtype and the
+    support every leaf shares, each `None` when the leaves differ, so `support`
+    no longer raises `TypeError` for a draw with several array leaves. A family
+    defines `_event_support()` instead of overriding `support`.
+  - A `DistributionArray` declares the term its cells draw. It keeps a dtype or
+    a support only when every cell declares the same one, and a batched array
+    leaves unset a support that depends on a batched parameter, so the
+    `support` of an array of `Uniform` laws with different bounds is `None`.
+  - `NumericRecordDistribution` claims the `NumericDistribution` marker. It no
+    longer builds a template from `name` and `event_shape`, and its `dtypes`,
+    `supports`, and `event_shape` no longer raise `NotImplementedError`.
+    `event_template` is an interim record view of the declaration.
+  - `DistributionSpec` takes an `OutputSpec`, completing a bare `RecordSpec` to
+    the exposed form, and matches a law by unifying the two declarations. An
+    unset dtype accepts any dtype and a set one a same-kind cast, sizes agree,
+    and support is not compared. `DistributionSpec(RecordSpec(x=()))` therefore
+    no longer matches a `Normal` named `x`, which declares a whole term.
+  - `law[name]` returns a whole-term law itself under its component and raises
+    `KeyError` under any other name, and `RecordSpec.infer_from` gives a
+    distribution-valued field the law's own `spec`.
+  - Fingerprints of distribution specs change, since they hash the packaging and
+    the component. This matters to caches once #364 wires fingerprints into
+    Prefect's cache key.
 - A distribution's name is the required first argument of every constructor
   the design keeps, so `Normal("x", 0.0, 1.0)` replaces
   `Normal(0.0, 1.0, name="x")`. A keyword `name=` still binds.
@@ -385,6 +429,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shapes the result, being a caller's declaration rather than a default.
 
 ### Added
+
+- **The event declaration on `Distribution`.** `spec` holds a law's
+  `DistributionSpec` and `event_spec` its declaration of one draw, which
+  `event_shape` reads. `with_dim_sizes` binds and `with_dim_names` renames
+  symbolic dimensions of the declaration, each returning a copy of the same
+  class, and `with_dim_sizes` raises `ValueError` for a name that is not free.
+- **`NumericDistribution`.** `isinstance(law, NumericDistribution)` holds when
+  the declaration is numeric, and a class whose every instance is numeric, such
+  as `NumericRecordDistribution`, inherits the marker, which construction
+  checks. Every numeric law has its views `dtypes`, `supports`, `dtype`, and
+  `support`, whatever its class.
 
 - **`NumericArray` and `NumericArrayBatch` (#398).** The tracked class of the
   numeric-array kind and its batch form, so `NumericArraySpec` has the pair every

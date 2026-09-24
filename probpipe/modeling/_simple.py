@@ -83,9 +83,8 @@ class SimpleModel[P, D](ProbabilisticModel, SupportsLogProb):
         # so condition_on can use component names as the sole signal for
         # splitting data kwargs from inference kwargs.
         #
-        # ``prior_tpl`` is contractually non-``None`` (the
-        # ``isinstance(prior, RecordDistribution)`` guard above implies
-        # the metaclass invariant); ``data_tpl`` may be ``None`` for
+        # ``prior_tpl`` is always a record, since a ``RecordDistribution``
+        # presents its declaration as one; ``data_tpl`` may be ``None`` for
         # likelihoods that don't declare a data template.
         prior_tpl: RecordSpec = prior.event_template
         data_tpl = getattr(likelihood, "data_template", None)

@@ -138,7 +138,7 @@ class _DistributionMeta(_TrackedTermMeta):
     tracked-term metaclass checks its name: a class that bypasses
     ``Distribution.__init__`` calls ``_init_declaration`` itself.
 
-    ``isinstance(d, NumericDistribution)`` holds exactly when ``d`` declares a
+    ``isinstance(d, NumericDistribution)`` holds if and only if ``d`` declares a
     numeric event, whatever its class, and every other class check is the ordinary
     one. A class whose every instance is numeric may claim the marker by
     inheriting it, and construction checks the claim.
@@ -630,7 +630,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
 class NumericDistribution(Distribution):
     """The marker of a law whose event declaration is numeric (II.3), with its views.
 
-    ``isinstance(d, NumericDistribution)`` holds exactly when
+    ``isinstance(d, NumericDistribution)`` holds if and only if
     ``d.event_spec.spec`` is a :class:`~probpipe.core._spec_base.NumericSpec`,
     so a draw implements ``Numeric`` and the flat-vector interface applies. A
     class whose every instance is numeric may inherit the marker, and
@@ -698,7 +698,7 @@ def _unify_declarations(
         raise ValueError(
             f"{path} declares the component {wanted!r}, but the law declares {found!r}"
         )
-    # A whole term's spec sits under its component, as a record field's does.
+    # A whole term's spec is bound under its component's path, as a record field's is.
     _unify_specs(
         expected.spec, actual.spec, bindings, path if wanted is None else f"{path}/{wanted}"
     )

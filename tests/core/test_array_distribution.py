@@ -330,7 +330,7 @@ class TestCanonicalConvenience:
         from probpipe.core._specs import RecordSpec
 
         class TwoField(NumericRecordDistribution):
-            # A record draw has no ``event_shape``; callers reach for
+            # A record draw has no ``event_shape``; callers read
             # ``event_shapes`` instead.
             def __init__(self, name):
                 super().__init__(

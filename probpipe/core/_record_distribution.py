@@ -1,14 +1,12 @@
 """RecordDistribution — generic Record-based distribution base.
 
-Provides the named-component layer (``fields``, ``__getitem__``,
-``select()``) and Record-aware flatten/unflatten, without imposing
-the numeric shape / dtype conventions (``dtype``, ``support``,
-``event_shape``).  Those live on ``NumericRecordDistribution`` and
-its consumers.
+Provides the named-component layer (``fields``, ``select()``) and
+Record-aware flatten/unflatten over the event declaration. ``event_shape`` and
+``d[name]`` belong to :class:`~probpipe.Distribution`, and ``dtypes``,
+``supports``, ``dtype``, and ``support`` to :class:`~probpipe.NumericDistribution`.
 
-``_RecordDistributionView`` is the lightweight component reference,
-analogous to the former ``DistributionView`` but for any distribution
-whose ``event_template`` is set.
+``_RecordDistributionView`` is the lightweight component reference that
+``d[name]`` returns for a law exposing a record.
 """
 
 from __future__ import annotations
@@ -237,8 +235,8 @@ class _RecordDistributionView(Distribution):
         self._key_path = key_path
         self._template_field = template_field
         # The parent's declared term at the path, a whole term under the
-        # path's last segment (III.7); a parent that declares no event yet
-        # gives its template's.
+        # path's last segment (III.7); a path only the parent's stored
+        # template has gives the template's field.
         declared = _declared_at_path(parent, key_path)
         self._init_declaration(
             OutputSpec(**{self._key: template_field if declared is None else declared})

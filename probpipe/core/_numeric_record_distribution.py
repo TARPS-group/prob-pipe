@@ -1,12 +1,11 @@
 """``NumericRecordDistribution`` and its closely-related helpers.
 
 The primary class is :class:`NumericRecordDistribution` — a
-:class:`~probpipe.core._record_distribution.RecordDistribution` that
-additionally enforces numeric-leaf shape, dtype, and support
-semantics via the canonical ``event_shapes`` / ``dtypes`` /
-``supports`` accessors and their scalar convenience shortcuts
-(``event_shape`` / ``dtype`` / ``support``). It is the base class
-for every numeric ProbPipe distribution (``Normal``, ``Beta``,
+:class:`~probpipe.core._record_distribution.RecordDistribution` whose
+draws are numeric, adding the flat-vector interface (``event_size``,
+``flatten_value`` / ``unflatten_value``, ``as_flat_distribution``) to the
+schema views every distribution reads off its declaration. It is the base
+class for every numeric ProbPipe distribution (``Normal``, ``Beta``,
 ``ProductDistribution``, ...).
 
 Provides:
@@ -1038,7 +1037,7 @@ class NumericRecordDistributionView(NumericRecordDistribution):
     Inverse of :class:`FlattenedDistributionView`. ``self._base`` is a
     :class:`FlatNumericRecordDistribution` (single-field, ``event_shape
     == (N,)``); ``self.event_template`` is the user-supplied
-    :class:`NumericRecordSpec` (not the source's auto-template).
+    :class:`NumericRecordSpec`, not the source's.
 
     Sampling, log-prob, and moments delegate to ``self._base`` and
     reshape via the template's flatten / unflatten machinery.
@@ -1079,9 +1078,8 @@ class NumericRecordDistributionView(NumericRecordDistribution):
         else:
             # Fall back to the base's name.
             self._init_tracked(base.name)
-        # Pre-set the user-supplied template so the auto-build path in
-        # ``NumericRecordDistribution.event_template`` is skipped. A draw is
-        # that record, every leaf taking the source's dtype and support.
+        # A draw is the user-supplied record, every leaf taking the source's
+        # dtype and support.
         object.__setattr__(self, "_event_template", template)
         self._init_declaration(_record_with_leaves(template, base.dtype, base.support))
 
