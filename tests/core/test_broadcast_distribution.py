@@ -394,6 +394,9 @@ class TestMixtureMarginal:
         # Should be bimodal around -100 and 100
         assert float(jnp.min(draws)) < -50
         assert float(jnp.max(draws)) > 50
+        # Equal component weights put half the draws in each mode. Observed across
+        # five seeds: positive fraction 0.467-0.514 (binomial sd 0.016).
+        np.testing.assert_allclose(float(jnp.mean(draws > 0)), 0.5, rtol=0, atol=0.05)
 
     def test_no_sampling_when_components_lack_it(self):
         """Components without SupportsSampling → marginal shouldn't support it."""
