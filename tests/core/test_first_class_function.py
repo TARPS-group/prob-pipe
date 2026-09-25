@@ -391,10 +391,15 @@ class TestApplyContract:
         assert result is not returned
         assert result.event_template is intrinsic
 
-    def test_distribution_requires_metadata_in_its_own_event_template(self):
+    def test_distribution_must_declare_the_metadata_its_template_sets(self):
+        class _Undtyped(Distribution):
+            # Declares its array's shape and nothing else.
+            def __init__(self):
+                super().__init__("y", NumericArraySpec(()))
+
         cases = [
             (
-                Normal("y", 0, 1),
+                _Undtyped(),
                 RecordSpec(y=NumericArraySpec((), dtype="float32")),
             ),
             (
@@ -441,11 +446,8 @@ class TestApplyContract:
             jax.jit(wrapped.apply)(jnp.asarray(1.0))
 
     def test_input_template_support_remains_descriptive_for_lifting(self):
-        class SupportAnnotatedNormal(Normal):
-            @property
-            def event_template(self):
-                return RecordSpec(x=NumericArraySpec((), support=real))
-
+        # A Normal declares its support as real, which the declared positive
+        # support describes rather than constrains.
         wrapped = Function(
             func=lambda x: x,
             input_template=RecordSpec(x=NumericArraySpec((), support=positive)),
@@ -454,7 +456,7 @@ class TestApplyContract:
         )
 
         with workflow_run(seed=0):
-            result = wrapped(SupportAnnotatedNormal("x", 0, 1))
+            result = wrapped(Normal("x", 0, 1))
 
         assert result.num_atoms == 5
 
@@ -465,9 +467,9 @@ class TestApplyContract:
     )
     def test_sampling_lift_does_not_flatten_record_structure(self, template):
         class StructuredNormal(Normal):
-            @property
-            def event_template(self):
-                return template
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self._init_declaration(template)
 
             def _sample(self, key, sample_shape=()):
                 raise AssertionError("An incompatible schema must be rejected before sampling")
@@ -491,9 +493,9 @@ class TestApplyContract:
         from probpipe.core._function_contract import _bind_planned_function_inputs
 
         class StructuredNormal(Normal):
-            @property
-            def event_template(self):
-                return template
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self._init_declaration(template)
 
         declared = RecordSpec(v=template)
         bound, bindings = _bind_planned_function_inputs(
@@ -856,7 +858,7 @@ class TestSymbolicCalls:
         assert regression_function.input_template is declaration
         assert declaration == RecordSpec(X=("obs", "p"), p=("p",))
 
-    def test_template_less_distribution_array_reports_lifting_contract(self):
+    def test_a_distribution_array_of_laws_is_not_an_array_input(self):
         def identity(x):
             return x
 
@@ -872,15 +874,8 @@ class TestSymbolicCalls:
             ]
         )
 
-        assert values.event_template is None
-        with pytest.raises(
-            ValueError,
-            match=(
-                r"Function 'identity' input 'x' states no element specification for "
-                r"lifting: a DistributionArray reports neither an element_spec nor an "
-                r"event_template"
-            ),
-        ):
+        # Each cell is a law, which an array input does not admit.
+        with pytest.raises(ValueError, match=r"input/x does not conform to its field spec"):
             wrapped(values)
 
     def test_repeated_input_symbol_conflict_has_function_path(self, regression_function):
@@ -1123,11 +1118,12 @@ class TestSymbolicCalls:
             np.ones(8),
         )
 
-    def test_distribution_broadcast_rejects_incomplete_intrinsic_template(self):
+    def test_distribution_broadcast_rejects_mismatching_declared_metadata(self):
+        # A Normal declares its support as real, not the template's positive.
         wrapped = Function(
             func=lambda x: Normal("y", x, 1),
             input_template=RecordSpec(x=()),
-            output_template=RecordSpec(y=NumericArraySpec((), support=real)),
+            output_template=RecordSpec(y=NumericArraySpec((), support=positive)),
             dispatch="sequential",
             n_broadcast_samples=8,
         )

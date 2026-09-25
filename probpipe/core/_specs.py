@@ -237,3 +237,39 @@ def _components_record(declaration: OutputSpec) -> RecordSpec:
     if declaration._component_name is None:
         return cast(RecordSpec, declaration.spec)
     return RecordSpec(**{declaration._component_name: declaration.spec})
+
+
+def _metadata_the_template_sets(actual: RecordSpec, template: RecordSpec) -> RecordSpec:
+    """*actual* keeping the dtype and support of a leaf only where *template* sets them.
+
+    A law declares its full metadata, whereas an output template may state only
+    shapes. An equality test after this projection therefore requires each dtype
+    and support that the template sets, and accepts any that it leaves unset. A
+    field the template lacks, or the reverse, is kept, so the test still fails on
+    it.
+    """
+    children: dict[str, TermSpec] = {}
+    for field, spec in actual.children.items():
+        declared = template.children.get(field)
+        if isinstance(spec, RecordSpec) and isinstance(declared, RecordSpec):
+            children[field] = _metadata_the_template_sets(spec, declared)
+        elif isinstance(spec, NumericArraySpec) and isinstance(declared, NumericArraySpec):
+            children[field] = NumericArraySpec(
+                spec.shape,
+                spec.dtype if declared.dtype is not None else None,
+                spec.support if declared.support is not None else None,
+            )
+        else:
+            children[field] = spec
+    return RecordSpec(children)
+
+
+def _matches_output_template(declaration: OutputSpec, template: RecordSpec) -> bool:
+    """Whether a law declaring *declaration* matches a Function's output *template*.
+
+    The record the law's components form must equal *template* in its fields and
+    shapes, and in each dtype and support the template sets; metadata the
+    template leaves unset matches any. An interim implementation detail, until a
+    Function declares an output spec.
+    """
+    return _metadata_the_template_sets(_components_record(declaration), template) == template
