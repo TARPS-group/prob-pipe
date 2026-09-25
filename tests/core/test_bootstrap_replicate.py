@@ -18,7 +18,6 @@ from probpipe import (
     expectation,
     sample,
 )
-from probpipe.core._specs import NumericArraySpec
 
 # ---------------------------------------------------------------------------
 # Construction
@@ -499,12 +498,11 @@ class TestValuesEmpiricalDistribution:
         assert s["X"].shape == (5, 3)
         assert s["y"].shape == (5,)
 
-    def test_event_template(self, values_data):
+    def test_the_declaration_holds_each_field(self, values_data):
         emp = EmpiricalDistribution("x", values_data)
-        tpl = emp.event_template
-        assert tpl is not None
-        assert tpl["X"] == NumericArraySpec((3,))
-        assert tpl["y"] == NumericArraySpec(())
+        declared = emp.event_spec.spec
+        assert declared["X"].shape == (3,)
+        assert declared["y"].shape == ()
 
     def test_fields(self, values_data):
         emp = EmpiricalDistribution("x", values_data)

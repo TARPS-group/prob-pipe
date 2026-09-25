@@ -251,9 +251,9 @@ class NumericRecordDistribution(RecordDistribution, NumericDistribution):
     ``sample`` op on ``self`` — call ``self._sample(key, sample_shape)``
     directly to avoid the ops layer.
 
-    The shape of one draw is fully determined by the event declaration:
+    The declaration determines the shape of one draw:
 
-    - **A whole-term array** → ``_sample(key, sample_shape)`` returns a raw
+    - **An array** → ``_sample(key, sample_shape)`` returns a raw
       ``jax.Array`` of shape ``sample_shape + event_shape``.
     - **A record** → ``_sample(key, sample_shape)`` returns a
       :class:`~probpipe.NumericRecord` (or a
@@ -261,7 +261,7 @@ class NumericRecordDistribution(RecordDistribution, NumericDistribution):
       non-empty ``sample_shape``) keyed by the record's fields.
 
     The :attr:`treedef` property locks this invariant by deriving from the
-    record the declaration presents.
+    declaration.
 
     Standard distributions (``Normal``, ``Gamma``, ``Poisson``, ...)
     inherit from this class via :class:`TFPDistribution`.
@@ -1056,7 +1056,7 @@ class NumericRecordDistributionView(NumericRecordDistribution):
 
     Inverse of :class:`FlattenedDistributionView`. ``self._base`` is a
     :class:`FlatNumericRecordDistribution` (single-field, ``event_shape
-    == (N,)``); ``self.event_template`` is the user-supplied
+    == (N,)``); the view declares the user-supplied
     :class:`NumericRecordSpec`.
 
     Sampling, log-prob, and moments delegate to ``self._base`` and
@@ -1100,7 +1100,6 @@ class NumericRecordDistributionView(NumericRecordDistribution):
             self._init_tracked(base.name)
         # A draw is the user-supplied record, every leaf taking the source's
         # dtype, and the source's support where it holds piecewise.
-        object.__setattr__(self, "_event_template", template)
         self._init_declaration(
             _record_with_leaves(template, base.dtype, _piecewise_support(base.support))
         )

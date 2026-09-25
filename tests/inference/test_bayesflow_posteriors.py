@@ -230,7 +230,7 @@ def _nested_observe(r, m, c, seed):
     """Observe ``_NestedLikelihood`` at a given (r, m, c) by building the nested
     per-draw record via ``from_vector`` (leaf order ``[r, m, c]``) -- the same
     structured object the offline simulator passes the simulator at train time."""
-    rec = NumericRecord.from_vector("nr", _nested_prior().event_template, jnp.array([r, m, c]))
+    rec = NumericRecord.from_vector("nr", _nested_prior().event_spec.spec, jnp.array([r, m, c]))
     return _NestedLikelihood().generate_data(rec, 1, key=jax.random.PRNGKey(seed))[0]
 
 
@@ -313,7 +313,7 @@ class TestBayesFlowNPE:
         for forward simulation by hand)."""
         with pytest.raises(NotImplementedError, match="condition_on"):
             npe_model._sample(jax.random.PRNGKey(0))
-        assert npe_model.prior.event_template.fields == ("a", "b")
+        assert tuple(npe_model.prior.event_spec.components) == ("a", "b")
         assert isinstance(npe_model.simulator, _ToyLikelihood)
 
     def test_condition_random_seed_reproducible(self, npe_model):

@@ -483,8 +483,8 @@ class RecordEmpiricalDistribution(
     ``name=`` so the field's identity is unambiguous downstream.
 
     Inherits :class:`NumericRecordDistribution` shape semantics
-    (``event_template``, ``event_shapes``, ``event_size``,
-    ``batch_shape``) plus exact weighted moments
+    (``event_shapes``, ``event_size``, ``batch_shape``) plus exact
+    weighted moments
     (``mean``, ``variance``, ``cov``) and weighted ``quantile`` over each
     field.
 
@@ -587,7 +587,7 @@ class RecordEmpiricalDistribution(
             element_declaration = _reshaped_template(
                 samples.event_template, lambda shape: shape[1:]
             )
-        self._event_template = (
+        atom_template = (
             element_declaration
             if element_declaration is not None
             else _event_template_from_data(samples)
@@ -595,9 +595,7 @@ class RecordEmpiricalDistribution(
         # Skip EmpiricalDistribution.__init__ (different storage shape) and
         # call Distribution.__init__ directly. A draw is a row, so the atoms
         # declare an exposed record, the auto-wrapped array's included.
-        Distribution.__init__(
-            self, name, _atom_declaration(self._event_template, self._record_data)
-        )
+        Distribution.__init__(self, name, _atom_declaration(atom_template, self._record_data))
         self._approximate = True
 
     # -- properties ---------------------------------------------------------
@@ -1137,7 +1135,7 @@ class RecordBootstrapReplicateDistribution(
     applied jointly across fields.
 
     Inherits :class:`NumericRecordDistribution` shape semantics
-    (``event_template``, ``event_shapes``, ...). A bare numeric array
+    (``event_shapes``, ``event_size``, ...). A bare numeric array
     source auto-wraps as a single-field Record keyed by ``name`` —
     matching the migration path for the previous
     ``ArrayBootstrapReplicateDistribution(arr)`` form.
@@ -1224,12 +1222,9 @@ class RecordBootstrapReplicateDistribution(
         self._source_kind = "data"
         self._source_dist = None
         # An empirical source's declaration gives the replicate's leaves.
-        try:
-            self._source_declaration = (
-                source.event_spec.spec if isinstance(source, Distribution) else None
-            )
-        except AttributeError:
-            self._source_declaration = None
+        self._source_declaration = (
+            source.event_spec.spec if isinstance(source, Distribution) else None
+        )
         self._data = self._record_data
         # A replicate is ``replicate_size`` atoms, so its template is the atom's
         # with a rows axis in front. Taken from the source's declaration rather
@@ -1248,9 +1243,9 @@ class RecordBootstrapReplicateDistribution(
             if isinstance(atom, RecordSpec):
                 atom = _reshaped_template(atom, lambda shape: shape[1:])
         if isinstance(atom, RecordSpec):
-            self._event_template = _reshaped_template(atom, lambda shape: (size, *shape))
+            self._replicate_record = _reshaped_template(atom, lambda shape: (size, *shape))
         else:
-            self._event_template = _event_template_from_data(
+            self._replicate_record = _event_template_from_data(
                 self._record_data,
                 leading_shape=(size,),
             )
@@ -1279,7 +1274,7 @@ class RecordBootstrapReplicateDistribution(
                     else leaf
                 )
             )
-        return _atom_declaration(self._event_template, self._record_data)
+        return _atom_declaration(self._replicate_record, self._record_data)
 
     # -- shape ---------------------------------------------------------------
 

@@ -64,8 +64,8 @@ class TestConstruction:
             x=1,
             yz=3,
         )
-        # One entry per field, aligned with event_template.fields, all the
-        # shared (float) dtype of the promoted mean / covariance.
+        # One entry per declared field, all the shared (float) dtype of the
+        # promoted mean / covariance.
         assert set(jg.dtypes) == {"x", "yz"}
         assert all(jnp.issubdtype(dt, jnp.floating) for dt in jg.dtypes.values())
         # `.dtype` collapses to the single shared dtype.
@@ -464,7 +464,7 @@ class TestFlattenUnflatten:
         s = sample(jg, key=key, sample_shape=(5,))
         flat = jg.flatten_value(s)
         assert flat.shape == (5, 3)
-        unflat = jg.unflatten_value(flat, template=jg.event_template)
+        unflat = jg.unflatten_value(flat, template=jg.event_spec.spec)
         np.testing.assert_allclose(unflat["a"], s["a"], atol=1e-6)
         np.testing.assert_allclose(unflat["bc"], s["bc"], atol=1e-6)
 
