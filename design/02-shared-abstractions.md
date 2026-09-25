@@ -107,9 +107,13 @@ class Numeric(ABC):                         # the flat-vector interface of the n
     def vector_size(self) -> int: ...       # total flat dimension; defined only when concrete
     @abstractmethod
     def to_vector(self) -> Array: ...       # the coordinates: one flat vector, canonical order
+    @classmethod
+    @abstractmethod
+    def from_vector(cls, name: str, spec: NumericSpec, vec: Array) -> Self: ...  # the inverse of to_vector
 
-    # supplied once, so no kind restates them: numpy and JAX see to_vector
-    def __array__(self) -> np.ndarray: ...  # and therefore return bare arrays
+    # the coordinate protocols: NumPy and JAX read the value as to_vector(),
+    # so their functions return bare arrays
+    def __array__(self) -> np.ndarray: ...
     def __jax_array__(self) -> Array: ...
 ```
 
@@ -135,7 +139,7 @@ class Constraint(ABC):
 
 ### Rationale
 
-One flat-vector interface over the numeric kinds is `D2 – Generality first`: everything that consumes flat numeric values types against it once, and the coordinate protocols keep foreign array functions usable with no ProbPipe-specific code (`C3 – Computational detail hidden by default, available on demand`). The spec-side mixin is the same generality at the type level, whether the event is one array or a named tree of them. Both are abstract bases rather than protocols, which keeps the pair symmetric and follows the rule the library uses throughout: an interface a closed set of ProbPipe kinds implements is a base, while an open claim any object may make is a structural protocol. The base also holds the shared coordinate protocols once rather than four times (`D6 – Single source of truth`). A constraint is data, not behavior: comparing and hashing by value lets a support key a registry, so the bijector factories select by the mathematics rather than by class identity (`D3 – Capability-based operations`).
+One flat-vector interface over the numeric kinds is `D2 – Generality first`: everything that consumes flat numeric values types against it once, and the coordinate protocols keep foreign array functions usable with no ProbPipe-specific code (`C3 – Computational detail hidden by default, available on demand`). The spec-side mixin is the same generality at the type level, whether the event is one array or a named tree of them. Both are abstract bases rather than protocols, which keeps the pair symmetric and follows the rule the library uses throughout: an interface a closed set of ProbPipe kinds implements is a base, while an open claim any object may make is a structural protocol. The base also holds the shared coordinate protocols once rather than in each kind (`D6 – Single source of truth`). A constraint is data, not behavior: comparing and hashing by value lets a support key a registry, so the bijector factories select by the mathematics rather than by class identity (`D3 – Capability-based operations`).
 
 ## II.4 — Identity, type & metadata: `TrackedTerm`, `Provenance`
 
