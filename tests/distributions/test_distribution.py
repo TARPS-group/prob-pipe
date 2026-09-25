@@ -1079,7 +1079,7 @@ class TestEmpiricalDeclarations:
         posterior = ApproximateDistribution(
             [jnp.ones((10, 4))],
             name="post",
-            event_template=RecordSpec(a=RecordSpec(b=(2,), c=()), d=()),
+            event_spec=RecordSpec(a=RecordSpec(b=(2,), c=()), d=()),
         )
         replicate = BootstrapReplicateDistribution("rep", posterior)
         spec = replicate.event_spec.spec
@@ -1393,7 +1393,7 @@ class TestModelDeclarations:
             [jnp.zeros((10, 2))],
             parents=(prior,),
             algorithm="test",
-            event_template=RecordSpec(a=(), b=()),
+            event_spec=RecordSpec(a=(), b=()),
         )
         dtype = jnp.asarray(0.0).dtype
         assert post.event_spec == OutputSpec(

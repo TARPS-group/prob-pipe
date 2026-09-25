@@ -240,3 +240,22 @@ class OutputSpec:
     def with_dim_names(self, **names: str) -> OutputSpec:
         """Rename dimensions while preserving component exposure and holes."""
         return self._with_spec(None if self.spec is None else self.spec.with_dim_names(**names))
+
+
+def _components_record(declaration: OutputSpec) -> RecordSpec:
+    """The record of *declaration*'s components, one field per component.
+
+    An exposed record is that record, and a whole term is a one-field record
+    under its component, which is how a model or a posterior names the
+    parameters of one draw.
+
+    Raises
+    ------
+    TypeError
+        If *declaration* exposes a spec that is not a ``RecordSpec``.
+    """
+    if declaration._component_name is None:
+        if not isinstance(declaration.spec, RecordSpec):
+            raise TypeError(f"an exposed declaration holds a RecordSpec, got {declaration.spec!r}")
+        return declaration.spec
+    return RecordSpec(**{declaration._component_name: declaration.spec})

@@ -6,6 +6,7 @@ import os
 from typing import Any
 
 from ..core._dispatch import Feasibility
+from ..core._specs import OutputSpec
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._inference_utils import extract_chain_columns, posterior_var_order
 from ._registry import InferenceMethod
@@ -61,10 +62,10 @@ class PyMCNutsMethod(InferenceMethod):
         random_seed = kwargs.get("random_seed", 0)
 
         model = dist._pymc_model(data=observed)
-        # Build the template in canonical field order before sampling
+        # Build the parameter record in canonical field order before sampling
         # (fail fast on a dynamic-RV / non-concrete model).
         param_names = dist._conditioned_param_names(model)
-        event_template = dist._event_template_for(model, param_names)
+        event_spec = OutputSpec(dist._parameter_record_for(model, param_names))
         with model:
             trace = pm.sample(
                 draws=num_results,
@@ -77,7 +78,7 @@ class PyMCNutsMethod(InferenceMethod):
             )
 
         # Extract in the trace's natural order; field_order lets
-        # make_posterior realign columns to the template by name.
+        # make_posterior realign columns to the parameters by name.
         order = posterior_var_order(trace, param_names)
         chains = extract_chain_columns(trace, order, num_chains)
 
@@ -86,7 +87,7 @@ class PyMCNutsMethod(InferenceMethod):
             parents=(dist,),
             algorithm="pymc_nuts",
             annotations=trace,
-            event_template=event_template,
+            event_spec=event_spec,
             field_order=order,
             num_results=num_results,
             num_warmup=num_warmup,
@@ -138,10 +139,10 @@ class PyMCADVIMethod(InferenceMethod):
         vi_method = kwargs.get("vi_method", "advi")
 
         model = dist._pymc_model(data=observed)
-        # Build the template in canonical field order before fitting (fail
+        # Build the parameter record in canonical field order before fitting (fail
         # fast on a dynamic-RV / non-concrete model).
         param_names = dist._conditioned_param_names(model)
-        event_template = dist._event_template_for(model, param_names)
+        event_spec = OutputSpec(dist._parameter_record_for(model, param_names))
         with model:
             approx = pm.fit(n=num_iterations, method=vi_method, random_seed=random_seed)
             trace = approx.sample(num_results)
@@ -157,7 +158,7 @@ class PyMCADVIMethod(InferenceMethod):
             parents=(dist,),
             algorithm=algorithm,
             annotations=trace,
-            event_template=event_template,
+            event_spec=event_spec,
             field_order=order,
             num_iterations=num_iterations,
         )

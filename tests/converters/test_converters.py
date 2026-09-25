@@ -893,7 +893,7 @@ class TestProtocolConversion:
         approx = ApproximateDistribution(
             chains,
             name="posterior",
-            event_template=NumericRecordSpec(intercept=(), slope=()),
+            event_spec=NumericRecordSpec(intercept=(), slope=()),
         )
         result = converter_registry.convert(approx, SupportsLogProb)
         assert isinstance(result, KDEDistribution)

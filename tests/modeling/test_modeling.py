@@ -221,7 +221,7 @@ class TestIncrementalConditioner:
                 [chain],
                 parents=(model.prior,),
                 algorithm="test",
-                event_template=model.prior.event_template,
+                event_spec=model.prior.event_spec,
             )
 
         class _Flat:
