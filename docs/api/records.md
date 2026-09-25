@@ -135,6 +135,8 @@ and `batch[0:0]` both give one, since zero is a count the level can carry. What 
 batch does need is an *axis* — a single object with none has no level to count
 along, and is refused.
 
+::: probpipe.Numeric
+
 ::: probpipe.NumericArray
 
 ::: probpipe.NumericArrayBatch

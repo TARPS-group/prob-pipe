@@ -184,10 +184,10 @@ When supplied, templates are authoritative:
   result can satisfy only a single-leaf output template;
 - existing `Record` results must conform to the same field tree and concrete
   shapes. Dtypes use same-kind conformance, just like bare values;
-- an existing `Distribution` must expose an `event_template` exactly equal to
-  the concrete declaration. Function does not reconcile separate `dtypes` or
-  `supports` accessors, so a metadata-bearing declaration requires the
-  Distribution's own template to be schema-complete;
+- an existing `Distribution` must declare components that form the template's
+  record, with its fields and shapes and with each dtype and support that the
+  template sets. A law that draws a whole term forms one field under its name,
+  and a dtype or support that the template leaves unset matches any;
 - every declared output support is checked against concrete scalar, array,
   mapping, or Record data.
 
@@ -218,8 +218,8 @@ cleared, and the current Function and tracked inputs become the new direct
 parents. With an authoritative output declaration, this public result copy
 carries the concrete declared template for `Record` and `RecordBatch` results
 even when the raw implementation result had a weaker inferred template.
-Distribution results instead retain their intrinsic, already-matching
-`event_template`; Function never rewrites it. Value data remains shared and
+Distribution results instead retain their own event declaration, which
+Function never rewrites. Value data remains shared and
 `apply` leaves every raw object's template unchanged. This copy is still made
 when provenance tracking is disabled.
 
@@ -231,12 +231,11 @@ execution, while a direct `jax.jit(function.apply)` preserves JAX's native
 tracer error. Neither path silently omits the support guarantee. Output
 templates without support constraints retain their existing JAX path.
 
-When a sweep returns distributions, its `DistributionArray.event_template`
-records the concrete authoritative output template. Ordinary
-`DistributionArray` construction exposes a common component template when all
-components agree, and otherwise returns `None`. Broadcast marginals and nested
-sweeps preserve the same concrete template rather than re-inferring it from an
-arbitrary result cell.
+When a sweep returns distributions, every cell must match the concrete
+output template, and the resulting `DistributionArray` declares the term its
+cells draw in its `event_spec`. A broadcast marginal of a sweep that
+returns records declares the output template's record rather than one inferred
+from an arbitrary result cell.
 
 ## Wrappers and decorators
 
