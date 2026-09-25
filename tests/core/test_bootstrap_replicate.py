@@ -593,11 +593,14 @@ class TestValuesBootstrapReplicateDistribution:
         assert s["X"].shape == (4, 20, 3)
         assert s["y"].shape == (4, 20)
 
-    def test_event_template(self, bootstrap):
-        tpl = bootstrap.event_template
-        assert tpl is not None
-        assert tpl["X"] == NumericArraySpec((20, 3))
-        assert tpl["y"] == NumericArraySpec((20,))
+    def test_the_declaration_stacks_the_source_terms(self, bootstrap):
+        from probpipe.core.constraints import real
+
+        # Each of the source's declared terms, with the replicate axis in front.
+        declared = bootstrap.event_spec.spec
+        assert declared["X"].shape == (20, 3)
+        assert declared["y"].shape == (20,)
+        assert declared["X"].support == real
 
     def test_fields(self, bootstrap):
         assert bootstrap.fields == ("X", "y")

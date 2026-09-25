@@ -324,7 +324,7 @@ class ProductDistribution(
                 self.name,
                 _sample_columns(self._components, key, sample_shape),
                 "sample",
-                element_spec=self.event_template,
+                element_spec=self.event_spec.spec,
                 axes_per_level=(len(sample_shape),),
             )
 
