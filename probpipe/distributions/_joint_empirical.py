@@ -31,7 +31,7 @@ from .._dtype import _as_float_array
 from .._weights import Weights
 from ..core._empirical import RecordEmpiricalDistribution
 from ..core._numeric_record_distribution import NumericRecordDistribution, _mc_expectation
-from ..core._record_distribution import RecordDistribution, _build_event_template
+from ..core._record_distribution import RecordDistribution
 from ..core._specs import NumericArraySpec, OpaqueSpec, RecordSpec
 from ..core.constraints import real
 from ..core.protocols import (
@@ -157,20 +157,6 @@ class JointEmpirical(RecordDistribution, SupportsSampling):
                 }
             ),
         )
-        if self._components is not None:
-            self._event_template = _build_event_template(self._components)
-        else:
-            # Generic (non-numeric) path: derive a structural
-            # ``RecordSpec`` directly from the stored samples. Each
-            # field's per-row shape becomes its spec; object-dtype leaves
-            # report ``None``. No numeric coercion is required.
-            specs: dict[str, Any] = {}
-            for cname, arr in stored.items():
-                if _is_numeric_array(arr):
-                    specs[cname] = tuple(arr.shape[1:])
-                else:
-                    specs[cname] = None
-            self._event_template = RecordSpec(specs)
 
     # Hook for NumericJointEmpirical to override; base class returns None
     # because generic joint samples can't be expressed as per-component

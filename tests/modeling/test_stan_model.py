@@ -334,10 +334,10 @@ class TestStanModelParameters:
             "p.3",
         )
 
-    def test_event_template_shapes(self, structured_model):
-        # leaf_shapes is keyed by leaf path; this template is flat, so the
+    def test_the_declared_record_shapes(self, structured_model):
+        # leaf_shapes is keyed by leaf path; this record is flat, so the
         # paths are the field names.
-        assert structured_model.event_template.leaf_shapes == {
+        assert structured_model.event_spec.spec.leaf_shapes == {
             "mu": (),
             "theta": (3,),
             "L": (2, 2),
@@ -430,8 +430,8 @@ class TestUnconstrainedStanView:
         view = structured_model.as_unconstrained_distribution()
         assert view.fields == ("mu", "theta", "L", "p")
         # The simplex is unconstrained in (n-1) free coordinates.
-        assert structured_model.event_template["p"] == NumericArraySpec((3,))
-        assert view.event_template["p"] == NumericArraySpec((2,))
+        assert structured_model.event_spec.spec["p"] == NumericArraySpec((3,))
+        assert view.event_spec.spec["p"] == NumericArraySpec((2,))
 
     def test_log_prob_finite_and_unnormalized_agrees(self, structured_model):
         view = structured_model.as_unconstrained_distribution()

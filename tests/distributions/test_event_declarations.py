@@ -345,6 +345,37 @@ def test_a_law_has_the_numeric_views_when_it_is_numeric(make):
         assert hasattr(law, view) is numeric
 
 
+# The interim ``event_shape`` overrides: an empirical law over an array still
+# draws a one-field record, and the Stan and PyMC models count flat parameters.
+_EVENT_SHAPE_OVERRIDES = {
+    "RecordEmpiricalDistribution",
+    "RecordBootstrapReplicateDistribution",
+    "PyMCModel",
+    "StanModel",
+    "_UnconstrainedStanView",
+}
+
+
+def test_the_declaration_is_the_one_schema_source():
+    _library_classes()  # imports every module, so every class is loaded
+    classes: set[type] = set()
+    pending = [Distribution]
+    while pending:
+        for cls in pending.pop().__subclasses__():
+            if cls not in classes:
+                classes.add(cls)
+                pending.append(cls)
+    for cls in classes:
+        if not cls.__module__.startswith("probpipe."):
+            continue
+        defined = vars(cls)
+        assert "event_template" not in defined, cls
+        if cls is not NumericDistribution:
+            assert not {"dtypes", "supports", "dtype", "support"} & defined.keys(), cls
+        if cls.__name__ not in _EVENT_SHAPE_OVERRIDES:
+            assert "event_shape" not in defined, cls
+
+
 # The term kind a draw is, by the kind of spec that declares it.
 _DRAWN_KINDS = {
     NumericArraySpec: NumericArray,

@@ -185,11 +185,6 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
         return NumericRecordSpec({b.name: b.shape for b in self._blocks})
 
     @property
-    def event_template(self) -> NumericRecordSpec:
-        """The parameter record, an interim implementation detail."""
-        return self._parameter_record
-
-    @property
     def fields(self) -> tuple[str, ...]:
         return self._parameter_record.fields
 
@@ -286,11 +281,6 @@ class _UnconstrainedStanView(Distribution, SupportsLogProb):
     def _parameter_record(self) -> NumericRecordSpec:
         """One field per unconstrained Stan parameter block."""
         return NumericRecordSpec({b.name: b.shape for b in self._blocks})
-
-    @property
-    def event_template(self) -> NumericRecordSpec:
-        """The parameter record, an interim implementation detail."""
-        return self._parameter_record
 
     @property
     def fields(self) -> tuple[str, ...]:
