@@ -110,7 +110,7 @@ def execute_sweep(
             axis_groups=plan.sweep_axis_groups,
             name=workflow_name,
             field_name=workflow_name,
-            event_template=output_template,
+            output_template=output_template,
         )
         provenance = make_sweep_provenance(
             values=values,
@@ -156,7 +156,7 @@ def execute_sweep(
         per_row_marginals,
         batch_shape=plan.sweep_batch_shape,
         name=workflow_name or "sweep",
-        event_template=output_template,
+        output_template=output_template,
     )
     provenance = make_sweep_provenance(
         values=values,

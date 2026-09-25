@@ -776,7 +776,7 @@ class TestAnEmptySweepIsNotAMissingOutput:
             batch_shape=(0,),
             field_name="fit",
             level_names=("design",),
-            event_template=RecordSpec(y=()),
+            output_template=RecordSpec(y=()),
         )
 
         assert list(out.event_template) == ["y"]
@@ -793,7 +793,7 @@ class TestAnEmptySweepIsNotAMissingOutput:
                 n=3,
                 field_name="fit",
                 level_names=("s",),
-                event_template=RecordSpec(y=()),
+                output_template=RecordSpec(y=()),
             )
 
 

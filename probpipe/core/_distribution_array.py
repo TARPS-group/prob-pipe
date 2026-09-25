@@ -640,7 +640,7 @@ class DistributionArray(Distribution):
             new_components,
             batch_shape=sliced.shape,
             name=self._name,
-            event_template=self._event_template,
+            output_template=self._event_template,
         )
 
     def __iter__(self):
@@ -778,7 +778,7 @@ def _make_distribution_array(
     *,
     batch_shape: tuple[int, ...] | None = None,
     name: str | None = None,
-    event_template: RecordSpec | None = None,
+    output_template: RecordSpec | None = None,
 ) -> DistributionArray:
     """Factory: build a ``DistributionArray``.
 
@@ -800,17 +800,17 @@ def _make_distribution_array(
         ``len(components)``.
     name : str, optional
         Name for provenance.
-    event_template : RecordSpec, optional
+    output_template : RecordSpec, optional
         Authoritative template for a Function-produced aggregate. Every
         component's declaration must match it, as a Function's output does.
     """
     array = DistributionArray(components, batch_shape=batch_shape, name=name)
-    if event_template is not None:
+    if output_template is not None:
         for index, component in enumerate(array.components):
             _check_output_template(
                 _components_record(component.event_spec),
-                event_template,
+                output_template,
                 f"DistributionArray component {index}",
             )
-        object.__setattr__(array, "_event_template", event_template)
+        object.__setattr__(array, "_event_template", output_template)
     return array
