@@ -871,7 +871,7 @@ class TestProtocolConversion:
         emp = RecordEmpiricalDistribution("emp", rec)
         result = converter_registry.convert(emp, SupportsLogProb)
         assert isinstance(result, KDEDistribution)
-        assert result.event_template.fields == ("intercept", "slope")
+        assert result.event_spec.spec.fields == ("intercept", "slope")
 
     def test_approximate_distribution_preserves_template_through_kde(self):
         """``ApproximateDistribution`` (inherits from RecordEmpirical) →
@@ -897,7 +897,7 @@ class TestProtocolConversion:
         )
         result = converter_registry.convert(approx, SupportsLogProb)
         assert isinstance(result, KDEDistribution)
-        assert result.event_template.fields == ("intercept", "slope")
+        assert result.event_spec.spec.fields == ("intercept", "slope")
 
 
 # ---------------------------------------------------------------------------

@@ -233,20 +233,6 @@ class PyMCModel(ProbabilisticModel):
             fields[name] = tuple(int(s) for s in raw_shape)
         return NumericRecordSpec(**fields)
 
-    @property
-    def event_template(self) -> NumericRecordSpec:
-        """Declared parameter template from the no-data build (canonical
-        parameters, observed variables excluded).
-
-        Data-dependent shapes, and any observed variable left free under
-        partial conditioning, are resolved at inference time via
-        :meth:`_parameter_record_for`; this property reflects neither.
-        """
-        return self._parameter_record_for(
-            self._unconditioned_model,
-            self._param_names,
-        )
-
     # -- Named components interface ------------------------------------------
 
     @property

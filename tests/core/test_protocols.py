@@ -349,11 +349,8 @@ class TestFlattenedDistributionViewDynamicProtocols:
             FlattenedDistributionView,
             NumericRecordDistribution,
         )
-        from probpipe.core._specs import RecordSpec
 
         class _SampleOnlyBase(NumericRecordDistribution, SupportsSampling):
-            event_template = RecordSpec(x=())
-
             def __init__(self):
                 from probpipe import NumericArraySpec
 
@@ -381,11 +378,8 @@ class TestFlattenedDistributionViewDynamicProtocols:
             FlattenedDistributionView,
             NumericRecordDistribution,
         )
-        from probpipe.core._specs import RecordSpec
 
         class _LogProbOnlyBase(NumericRecordDistribution, SupportsLogProb):
-            event_template = RecordSpec(x=())
-
             def __init__(self):
                 from probpipe import NumericArraySpec
 
@@ -559,13 +553,11 @@ class TestTransformedDistributionDynamicProtocols:
         import tensorflow_probability.substrates.jax.bijectors as tfb
 
         from probpipe import NumericRecordDistribution
-        from probpipe.core._specs import RecordSpec
         from probpipe.core.protocols import SupportsLogProb
 
         class _LogProbOnly(NumericRecordDistribution, SupportsLogProb):
             _sampling_cost = "low"
             _preferred_orchestration = None
-            event_template = RecordSpec(x=())
 
             def __init__(self):
                 from probpipe import NumericArraySpec

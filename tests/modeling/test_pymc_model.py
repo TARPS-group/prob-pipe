@@ -281,8 +281,8 @@ class TestPyMCModel:
 
 
 class TestRecordSpec:
-    """``PyMCModel.event_template`` exposes the free-RV layout that
-    inference methods thread through to the resulting posterior.
+    """``PyMCModel`` declares the free-RV layout that inference methods
+    thread through to the resulting posterior.
     """
 
     def test_mixed_scalar_and_vector_rvs(self):
@@ -295,7 +295,7 @@ class TestRecordSpec:
                 pm.Normal("y", 0, 1, observed=y)
             return m
 
-        tpl = PyMCModel("model", model_fn).event_template
+        tpl = PyMCModel("model", model_fn).event_spec.spec
         assert tpl.fields == ("intercept", "slope")
         assert tpl["intercept"] == NumericArraySpec(())
         assert tpl["slope"] == NumericArraySpec((3,))
@@ -325,26 +325,25 @@ class TestRecordSpec:
                 pm.Normal("y", 0, 1, observed=y)
             return m
 
-        tpl = PyMCModel("model", model_fn).event_template
+        tpl = PyMCModel("model", model_fn).event_spec.spec
         assert tpl.fields == ("mu",)
         assert "y" not in tpl.fields
 
     def test_data_dependent_shape_reflects_conditioned_build(self):
         """``_parameter_record_for(model)`` reports the data-conditioned
-        shape for an RV whose shape depends on data size, while the bare
-        ``event_template`` property reports the declared (no-data)
-        shape (issue #224).
+        shape for an RV whose shape depends on data size, while the
+        declaration reports the declared (no-data) shape.
 
         The inference paths call ``_parameter_record_for`` with the model
-        they build from data, so the template matches the chain. The
-        property cannot know the conditioned shape without data, so it
+        they build from data, so the parameter record matches the chain.
+        The declaration cannot know the conditioned shape without data, so it
         stays at the declared sentinel — and, crucially, holds no
         per-call mutable state, so concurrent inference on one instance
         can't race.
         """
         model = PyMCModel("model", per_observation_effect_model_fn)
         # Declared (no-data) property: sentinel (1,) for alpha.
-        tpl = model.event_template
+        tpl = model.event_spec.spec
         assert tpl.fields == ("intercept", "alpha")
         assert tpl["intercept"] == NumericArraySpec(())
         assert tpl["alpha"] == NumericArraySpec((1,))
@@ -365,7 +364,7 @@ class TestRecordSpec:
         assert tpl_c["alpha"] == NumericArraySpec((N,))
         assert not hasattr(model, "_last_conditioned_model")
         # Property still reports the declared shape (no hidden mutation).
-        assert model.event_template["alpha"] == NumericArraySpec((1,))
+        assert model.event_spec.spec["alpha"] == NumericArraySpec((1,))
 
     def test_data_dependent_shape_inference_recovers_correct_layout(self):
         """End-to-end: NUTS with a per-observation effect produces a
@@ -497,7 +496,7 @@ class TestRecordSpec:
 
         model = PyMCModel("model", model_fn)
         # Declared template excludes observed names entirely.
-        assert model.event_template.fields == ("mu",)
+        assert tuple(model.event_spec.components) == ("mu",)
 
         # Condition on y only — X is left free and should be inferred.
         conditioned = model._pymc_model(data={"y": np.zeros(5, dtype=np.float32)})
@@ -632,14 +631,14 @@ class TestRecordSpec:
                 random_seed=0,
             )
 
-    def test_non_concrete_shape_rejected(self):
-        """A free RV with a ``None`` dimension raises ``ValueError``.
+    def test_a_none_dimension_is_declared_symbolic(self):
+        """A free RV with a ``None`` dimension is declared with a symbolic one.
 
         Build the RV via ``pm.Normal`` with a tensor-valued ``mu`` whose
         first axis is shared across an unknown number of observations —
         a setup that gives the RV a ``None`` leading axis at the PyTensor
-        type level. The template builder should refuse it cleanly rather
-        than silently emit an under-shaped template.
+        type level. The flat parameter count refuses it cleanly rather than
+        silently under-counting.
         """
         import pytensor.tensor as pt
 
@@ -651,8 +650,12 @@ class TestRecordSpec:
                 pm.Normal("y", 0, 1, observed=y)
             return m
 
+        # The declaration holds a symbolic dimension, which data binds, and
+        # the flat parameter count refuses to guess it.
+        model = PyMCModel("model", model_fn)
+        assert model.event_spec.spec["z"].shape == ("z_0",)
         with pytest.raises(ValueError, match="non-concrete shape"):
-            _ = PyMCModel("model", model_fn).event_template
+            _ = model.event_shape
 
     def test_event_shape_rejects_non_concrete_shape(self):
         """``event_shape`` counts the elements of the parameter record, so it rejects

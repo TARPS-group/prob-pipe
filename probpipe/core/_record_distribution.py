@@ -33,20 +33,6 @@ from .record import Record
 __all__ = ["RecordDistribution", "_RecordDistributionView"]
 
 
-def _interim_template(declaration: OutputSpec) -> RecordSpec:
-    """The record template a declared law presents, until its readers move to the declaration.
-
-    An interim implementation detail. An exposed record is its own template. A
-    whole term presents as a one-field record under its component, holding only
-    an array's shape, as the template built from a name and a shape did.
-    """
-    component = declaration._component_name
-    if component is None:
-        return declaration.spec
-    spec = declaration.spec
-    return RecordSpec(**{component: spec.shape if isinstance(spec, NumericArraySpec) else spec})
-
-
 def _field_event_shape(template: RecordSpec, name: str) -> tuple[int, ...]:
     """Event shape of one top-level field of *template*.
 
@@ -340,45 +326,8 @@ class _RecordDistributionView(Distribution):
 
 
 # ---------------------------------------------------------------------------
-# Record template builder
+# Record declaration builders
 # ---------------------------------------------------------------------------
-
-
-def _build_event_template(
-    components: dict[str, Any],
-) -> RecordSpec:
-    """Build a RecordSpec from a component pytree.
-
-    Each leaf contributes a spec for the parent template:
-
-    - Nested ``dict`` → recursively built nested ``RecordSpec``.
-    - :class:`NumericRecordDistribution` → the leaf's ``event_shape``, or,
-      for a leaf that draws a record, as a nested joint does, its
-      ``event_template``.
-    - Any other :class:`RecordDistribution` → the leaf's
-      ``event_template`` (embedded as a nested structural template).
-    - Any other :class:`Distribution` → ``None`` (opaque leaf — the
-      template records the field name but not a shape).
-    """
-    from ..distributions._distribution import Distribution
-    from ._numeric_record_distribution import NumericRecordDistribution
-
-    specs: dict[str, Any] = {}
-    for name, comp in components.items():
-        if isinstance(comp, dict):
-            specs[name] = _build_event_template(comp)
-        elif isinstance(comp, NumericRecordDistribution):
-            try:
-                specs[name] = comp.event_shape
-            except TypeError:
-                specs[name] = comp.event_template
-        elif isinstance(comp, RecordDistribution):
-            specs[name] = comp.event_template
-        elif isinstance(comp, Distribution):
-            specs[name] = None
-        else:
-            raise TypeError(f"Unexpected component type: {type(comp).__name__}")
-    return RecordSpec(specs)
 
 
 def _record_with_leaves(template: RecordSpec, dtype: Any, support: Any) -> RecordSpec:
@@ -419,20 +368,6 @@ class RecordDistribution(Distribution):
     Record-aware flatten / unflatten over the event declaration, an interim
     implementation detail of a class the design retires.
     """
-
-    # -- Record template --------------------------------------------------------
-
-    @property
-    def event_template(self) -> RecordSpec:
-        """The declaration presented as a record template.
-
-        An interim implementation detail, until its readers move to
-        :attr:`event_spec`: a class that stores a template presents it, and any
-        other law presents its declaration, a whole term as a one-field record
-        under its component.
-        """
-        stored = getattr(self, "_event_template", None)
-        return stored if stored is not None else _interim_template(self.event_spec)
 
     # -- Named component access ---------------------------------------------
 

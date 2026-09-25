@@ -11,7 +11,7 @@ import jax.numpy as jnp
 
 from .._dtype import _promote_floats
 from ..core._numeric_record_distribution import NumericRecordDistribution, _mc_expectation
-from ..core._record_distribution import _build_event_template, _joint_event_spec
+from ..core._record_distribution import _joint_event_spec
 from ..core.protocols import (
     SupportsCovariance,
     SupportsExactConditioning,
@@ -116,7 +116,6 @@ class JointGaussian(
         self._components = components
         self._component_slices = slices  # still needed for Gaussian conditioning
         super().__init__(name, _joint_event_spec(components))
-        self._event_template = _build_event_template(self._components)
         self._total_dim = total_dim  # still needed for Gaussian conditioning
 
     @property

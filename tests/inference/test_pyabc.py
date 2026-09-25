@@ -59,7 +59,7 @@ def _product(*names: str):
 
 def _means(post) -> dict[str, np.ndarray]:
     m = mean(post)
-    return {f: np.asarray(m[f]).reshape(-1) for f in post.event_template.fields}
+    return {f: np.asarray(m[f]).reshape(-1) for f in post.fields}
 
 
 class TestPyABCCheck:
@@ -217,7 +217,7 @@ class TestPyABCWeightsAndDraws:
             max_populations=3,
             random_seed=0,
         )
-        assert set(post.event_template.fields) == {"a", "b"}
+        assert set(post.fields) == {"a", "b"}
 
     def test_custom_distance_fn_is_used(self):
         """A user-supplied distance_fn over the {"y": vector} sumstats replaces

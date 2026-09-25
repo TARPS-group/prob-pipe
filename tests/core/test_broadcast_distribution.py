@@ -463,7 +463,7 @@ class TestMakeMarginal:
 
         marginal = _make_marginal(samples, None, output_template=template)
 
-        assert marginal.event_template == template
+        assert marginal.event_spec.spec.leaf_shapes == template.leaf_shapes
         np.testing.assert_allclose(marginal.samples["stats/value"], samples)
 
     def test_list_of_arrays(self):

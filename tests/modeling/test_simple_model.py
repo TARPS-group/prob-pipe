@@ -354,7 +354,7 @@ class TestSimpleModelWithValues:
         model = SimpleModel(prior, GaussianLikelihood())
         assert "params" in model.fields
         assert model.parameter_names == ("params",)
-        assert model.event_template is not None
+        assert "params" in model.event_spec.components
 
     def test_field_overlap_raises(self):
         """SimpleModel rejects overlapping prior and data field names."""

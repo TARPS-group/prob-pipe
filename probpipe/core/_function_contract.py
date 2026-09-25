@@ -322,7 +322,7 @@ def _validate_function_output(
         if isinstance(result, Distribution):
             if not _matches_output_template(result.event_spec, concrete):
                 raise ValueError(
-                    f"Function {function_name!r} output event_template {actual_template!r} "
+                    f"Function {function_name!r} output record {actual_template!r} "
                     f"does not exactly match declared concrete template {concrete!r}"
                 )
             return concrete

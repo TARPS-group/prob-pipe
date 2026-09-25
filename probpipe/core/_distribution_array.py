@@ -144,8 +144,8 @@ class DistributionArray(Distribution):
     """Ordered collection of independent scalar distributions
     addressed by a (multi-d) ``batch_shape``.
 
-    Exposes only the container surface (indexing, iteration,
-    ``components``, ``batch_shape``, ``event_shape``, ``event_template``).
+    Exposes only the container interface (indexing, iteration,
+    ``components``, ``batch_shape``, ``event_shape``, ``event_spec``).
     Vectorized
     ops (``sample``, ``mean``, ``variance``, ``log_prob``, …) are
     delivered by the :class:`~probpipe.core.node.Function`
@@ -257,7 +257,6 @@ class DistributionArray(Distribution):
         # leaves it ``None`` and uses ``_components`` as the
         # storage-of-truth.
         self._backend = None
-        self._event_template: RecordSpec | None = None
         name = auto_name(name, "distribution_array")
         super().__init__(name, _cell_declaration(components, name))
         # A DistributionArray holding MC-marginal components inherits
@@ -437,7 +436,6 @@ class DistributionArray(Distribution):
         set_attribute("_memo", {})
         set_attribute("_batch_shape", tuple(backend.batch_shape))
         set_attribute("_backend", backend)
-        set_attribute("_event_template", None)
         name = auto_name(name, "distribution_array")
         # Cells are named after the array, so one cell's term is declared
         # under the array's own name.
@@ -492,27 +490,6 @@ class DistributionArray(Distribution):
         1-D form is ``(n,)``.
         """
         return tuple(self._batch_shape)
-
-    @property
-    def event_template(self) -> RecordSpec | None:
-        """Authoritative template shared by the component distributions.
-
-        Function-produced arrays store the declared template explicitly.
-        Other arrays expose a template only when all materialized components
-        carry the same non-``None`` template.
-        """
-        if self._event_template is not None:
-            return self._event_template
-        if self._backend is not None:
-            return None
-        templates = [getattr(component, "event_template", None) for component in self.components]
-        if (
-            templates
-            and templates[0] is not None
-            and all(template == templates[0] for template in templates[1:])
-        ):
-            return templates[0]
-        return None
 
     @property
     def size(self) -> int:
@@ -612,7 +589,6 @@ class DistributionArray(Distribution):
             new_components,
             batch_shape=sliced.shape,
             name=self._name,
-            output_template=self._event_template,
         )
 
     def __iter__(self):
@@ -780,5 +756,4 @@ def _make_distribution_array(
                     f"{_components_record(component.event_spec)!r}, which "
                     f"does not match declared template {output_template!r}"
                 )
-        object.__setattr__(array, "_event_template", output_template)
     return array

@@ -67,9 +67,9 @@ class TestConstruction:
         rec = mvn4.as_record_distribution(template=split_template)
         assert isinstance(rec, NumericRecordDistributionView)
 
-    def test_event_template_carried_through(self, mvn4, split_template):
+    def test_the_template_is_declared(self, mvn4, split_template):
         rec = mvn4.as_record_distribution(template=split_template)
-        assert rec.event_template is split_template
+        assert rec.event_spec.spec.leaf_shapes == split_template.leaf_shapes
 
     def test_event_shapes_match_template(self, mvn4, split_template):
         rec = mvn4.as_record_distribution(template=split_template)
@@ -154,8 +154,8 @@ class TestSampling:
             b=Normal(loc=-2.0, scale=2.0, name="b"),
         )
         flat = joint.as_flat_distribution()
-        rec = flat.as_record_distribution(template=joint.event_template)
-        assert rec.event_template is joint.event_template
+        rec = flat.as_record_distribution(template=joint.event_spec.spec)
+        assert rec.event_spec.spec.leaf_shapes == joint.event_spec.spec.leaf_shapes
 
         # Capability passthrough: FlattenedDistributionView has Sampling + LogProb only.
         assert isinstance(rec, SupportsSampling)
@@ -301,7 +301,7 @@ class TestErrors:
         )
         assert hasattr(joint, "as_record_distribution")
         with pytest.raises(TypeError, match="FlatNumericRecordDistribution"):
-            joint.as_record_distribution(template=joint.event_template)
+            joint.as_record_distribution(template=joint.event_spec.spec)
 
 
 # -- FlatNumericRecordDistribution membership ----------------------------------

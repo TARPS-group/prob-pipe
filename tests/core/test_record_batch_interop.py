@@ -272,7 +272,7 @@ class TestBroadcastComponents:
 
         marginal = _RecordMarginal(batch, None)
 
-        assert marginal.event_template == batch.event_template
+        assert marginal.event_spec.spec.leaf_shapes == batch.event_template.leaf_shapes
         assert marginal.num_atoms == 4
 
 

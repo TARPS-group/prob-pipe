@@ -98,14 +98,11 @@ class _RecordMarginal(RecordEmpiricalDistribution):
                 else "marginal"
             )
         super().__init__(name, samples, weights=weights, log_weights=log_weights)
-        if output_template is not None:
-            self._event_template = output_template
-        elif template is not None:
-            # Preserve the exact template the batch carried.
-            self._event_template = template
-        if output_template is not None or template is not None:
-            # The kept template is what a draw is declared as.
-            self._init_declaration(_atom_declaration(self._event_template, self._record_data))
+        # The declared output template, else the exact one the batch carried,
+        # is what a draw is declared as.
+        record = output_template if output_template is not None else template
+        if record is not None:
+            self._init_declaration(_atom_declaration(record, self._record_data))
 
     def __repr__(self):
         return (
@@ -132,7 +129,6 @@ class _MixtureMarginal(Distribution):
         *,
         log_weights: Array | Weights | None = None,
         name: str | None = None,
-        output_template: RecordSpec | None = None,
     ):
         n = len(components)
         self._components = components
@@ -143,7 +139,6 @@ class _MixtureMarginal(Distribution):
         # A draw is one component's draw.
         super().__init__(name, _cell_declaration(tuple(components), name))
         self._approximate = True
-        self._event_template = output_template
 
     @property
     def num_atoms(self) -> int:
@@ -156,11 +151,6 @@ class _MixtureMarginal(Distribution):
     @property
     def weights(self) -> Array:
         return self._w.normalized
-
-    @property
-    def event_template(self) -> RecordSpec | None:
-        """Authoritative template shared by the mixture components."""
-        return self._event_template
 
     def __repr__(self):
         return f"MarginalizedBroadcastDistribution(mixture, num_atoms={self.num_atoms})"
@@ -280,7 +270,6 @@ def _make_mixture_marginal(
     weights: Array | Weights | None = None,
     *,
     name: str | None = None,
-    output_template: RecordSpec | None = None,
 ) -> _MixtureMarginal:
     """Factory that builds a mixture marginal with dynamic protocol support.
 
@@ -312,7 +301,6 @@ def _make_mixture_marginal(
             components,
             weights,
             name=name,
-            output_template=output_template,
         )
     return obj
 
@@ -497,7 +485,6 @@ def _make_marginal(
             output_distributions,
             weights,
             name=name,
-            output_template=output_template,
         )
 
     if output_template is not None and isinstance(output_samples, list):
@@ -605,7 +592,6 @@ def _make_marginal(
                 output_samples,
                 weights,
                 name=name,
-                output_template=output_template,
             )
         return _ListMarginal(output_samples, weights, name=name)
 

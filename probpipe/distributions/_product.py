@@ -25,7 +25,6 @@ from ..core._numeric_record_distribution import (
 )
 from ..core._record_distribution import (
     RecordDistribution,
-    _build_event_template,
     _joint_event_spec,
     _register_dynamic_subclass,
 )
@@ -275,7 +274,6 @@ class ProductDistribution(
             _provenance=_provenance,
             _annotations=_annotations,
         )
-        self._event_template = _build_event_template(self._components)
 
     def __reduce__(self):
         # Annotations are threaded explicitly: they are written after

@@ -287,7 +287,6 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
                 Record(name or "posterior", fields),
                 weights=weights,
             )
-            self._event_template = record
         else:
             # One component or none: the component (default ``name``, then
             # ``"posterior"``) becomes the auto-wrapped field name.
@@ -295,8 +294,6 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
             if record is not None and len(record.fields) == 1:
                 field_name = record.fields[0]
             super().__init__(field_name, flat, weights=weights)
-            if record is not None:
-                self._event_template = record
 
     def _concat_chains(self) -> Array:
         """Lazily concatenated view of all chains."""

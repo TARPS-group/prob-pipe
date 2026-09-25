@@ -102,11 +102,11 @@ class SimpleModel[P, D](ProbabilisticModel, SupportsLogProb):
             # subtree is carried over whole rather than indexed by a top-level
             # subtree name (which leaf-keyed ``[]`` would reject).
             merged: dict[str, Any] = {**dict(prior_tpl.children), **dict(data_tpl.children)}
-            self._event_template: RecordSpec = RecordSpec(merged)
+            record: RecordSpec = RecordSpec(merged)
         else:
-            self._event_template = prior_tpl
+            record = prior_tpl
         # The model is a law over its parameters and data, the merged record.
-        self._init_declaration(OutputSpec(self._event_template))
+        self._init_declaration(OutputSpec(record))
 
     # -- Distribution interface ---------------------------------------------
 
@@ -119,19 +119,6 @@ class SimpleModel[P, D](ProbabilisticModel, SupportsLogProb):
     def likelihood(self) -> Likelihood[P, D]:
         """The likelihood function ``log p(D | params)``."""
         return self._likelihood
-
-    @property
-    def event_template(self) -> RecordSpec:
-        """Merged ``RecordSpec`` over prior fields + likelihood data fields.
-
-        ``SimpleModel`` is not itself a :class:`RecordDistribution`, but
-        it carries a template so :attr:`fields`, conditioning, and
-        inference kwarg splitting can address parameters and data
-        uniformly. The template is always set — the prior's template
-        is guaranteed non-``None`` by the ``RecordDistribution``
-        invariant, and the prior's fields are the floor.
-        """
-        return self._event_template
 
     # -- Named components interface ------------------------------------------
 

@@ -296,8 +296,8 @@ class TestApproximateDistributionValuesTemplate:
         assert isinstance(draws, jnp.ndarray)
         assert draws.shape == (50, 3)
 
-    def test_event_template_property(self, posterior_with_template, template):
-        assert posterior_with_template.event_template is template
+    def test_the_target_names_the_fields(self, posterior_with_template, template):
+        assert posterior_with_template.fields == template.fields
 
     def test_field_order_reassembles_by_name(self):
         """field_order maps chain column-blocks to template fields by name.
@@ -524,8 +524,8 @@ class TestApproximateDistributionValuesTemplate:
         ``ApproximateDistribution`` is keyed by the user-supplied
         template's top-level fields. Nested ``RecordSpec`` fields
         are stored as a flat ``(n, nested_vector_size)`` slice under the
-        top-level field name; the nested structure is recoverable via
-        ``event_template[field]`` and ``draws()``.
+        top-level field name; ``draws()`` recovers the nested structure
+        from the target's declaration.
         """
         template = RecordSpec(
             params=RecordSpec(a=(), b=()),
@@ -547,19 +547,17 @@ class TestApproximateDistributionValuesTemplate:
         # Template + ops all keyed by the top-level template fields,
         # with no leftover ``"posterior"`` auto-wrap leaking through.
         expected_fields = ("params", "scale")
-        assert post.event_template.fields == expected_fields
         assert post.fields == expected_fields
-        # ``event_shapes['params']`` reports the nested template's
+        # ``event_shapes['params']`` reports the nested record's
         # flat size as a 1-D event; the nested structure is
-        # recoverable via ``event_template['params']``.
+        # recoverable through ``draws()``.
         assert post.event_shapes == {"params": (2,), "scale": ()}
         # ``event_shape`` (singular) raises on multi-field — different
         # code path, separate guard.
         with pytest.raises(AttributeError, match="multiple fields"):
             _ = post.event_shape
-        # The nested template is preserved on ``event_template``.
-        assert isinstance(post.event_template.at_path("params"), RecordSpec)
-        assert tuple(post.event_template.at_path("params").children) == ("a", "b")
+        # ``draws()`` rebuilds the nesting from the target's declaration.
+        assert tuple(post.draws()["params"].event_template.keys()) == ("a", "b")
         # Moments key by the user's top-level fields, not by an
         # auto-wrap leaf.
         from probpipe import mean as op_mean
@@ -1148,7 +1146,7 @@ class TestRecordDistributionProperties:
         v = Record("r", K=jnp.array(1.0), phi=jnp.array(2.0), r=jnp.array(3.0))
         flat = posterior.flatten_value(v)
         np.testing.assert_allclose(flat, [1.0, 2.0, 3.0])  # insertion: K, phi, r
-        v2 = posterior.unflatten_value(flat, template=posterior.event_template)
+        v2 = posterior.unflatten_value(flat, template=posterior.event_spec.spec)
         assert isinstance(v2, Record)
         np.testing.assert_allclose(float(v2["K"]), 1.0)
         np.testing.assert_allclose(float(v2["r"]), 3.0)
@@ -1157,25 +1155,20 @@ class TestRecordDistributionProperties:
         v = Record("r", K=jnp.array(1.0), phi=jnp.array(2.0), r=jnp.array(3.0))
         flat = posterior.flatten_value(v)
         assert flat.shape == (3,)
-        v2 = posterior.unflatten_value(flat, template=posterior.event_template)
+        v2 = posterior.unflatten_value(flat, template=posterior.event_spec.spec)
         assert isinstance(v2, Record)
         np.testing.assert_allclose(float(v2["K"]), 1.0)
         np.testing.assert_allclose(float(v2["r"]), 3.0)
 
     def test_unflatten_without_template_uses_single_field_autowrap(self):
-        """Without a multi-field event_template, ApproximateDistribution
-        auto-wraps the chain as a single-field Record keyed by ``name=``.
-        ``unflatten_value`` round-trips a flat vector through that
-        single-field template (no RuntimeError)."""
+        """Without a target, ApproximateDistribution auto-wraps the chain as
+        a one-field Record keyed by ``name=``, and ``unflatten_value``
+        rebuilds that record from a flat vector."""
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
         dist = ApproximateDistribution([chain], name="x")
-        # Single-field auto-wrap → ``unflatten_value`` reshapes to the
-        # lone field's event shape (raw array, ``fields == ("x",)``).
-        result = dist.unflatten_value(jnp.zeros(3), template=dist.event_template)
-        # Single-field path returns a raw array; the template carries
-        # the single field name.
-        assert result.shape == (3,)
-        assert dist.event_template.fields == ("x",)
+        result = dist.unflatten_value(jnp.zeros(3), template=dist.event_spec.spec)
+        assert result["x"].shape == (3,)
+        assert tuple(dist.event_spec.components) == ("x",)
 
     def test_record_distribution_event_shapes(self, posterior):
         """``event_shapes`` returns per-field dict."""
@@ -1257,8 +1250,7 @@ class TestEndToEndValuesPipeline:
 
     def test_template_propagation(self, posterior):
         """The prior's declaration names the posterior's fields and their terms."""
-        tpl = posterior.event_template
-        assert tpl is not None
+        tpl = posterior.event_spec.spec
         assert tpl.fields == ("params",)
         assert tpl["params"].shape == (2,)
         assert tpl["params"].dtype == jnp.asarray(0.0).dtype
