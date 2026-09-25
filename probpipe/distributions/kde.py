@@ -191,10 +191,9 @@ class KDEDistribution(TFPDistribution):
     ) -> KDEDistribution:
         """Build a KDE from a :class:`RecordEmpiricalDistribution` source.
 
-        Reuses the source's stored samples, weights, and record template,
-        so the resulting KDE preserves the source's named-field structure
-        end-to-end. Works for any subclass (notably
-        :class:`~probpipe.inference.ApproximateDistribution`).
+        Reuses the source's stored samples, weights, and declared record, so
+        the resulting KDE keeps the source's named fields. Works for any
+        subclass, such as :class:`~probpipe.inference.ApproximateDistribution`.
 
         Parameters
         ----------
@@ -211,7 +210,7 @@ class KDEDistribution(TFPDistribution):
                 f"(or subclass); got {type(source).__name__}"
             )
         name = name or source.name
-        tpl = source.event_template
+        tpl = source.event_spec.spec
         if len(tpl.fields) == 1:
             field = tpl.fields[0]
             arr = source.samples[field]

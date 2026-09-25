@@ -160,7 +160,7 @@ class JointGaussian(
                 self.name,
                 result,
                 "sample",
-                element_spec=self.event_template,
+                element_spec=self.event_spec.spec,
                 axes_per_level=(len(sample_shape),),
             )
         return Record(self.name, result)

@@ -228,14 +228,14 @@ class JointEmpirical(RecordDistribution, SupportsSampling):
             return Record(self.name, rows)
         cls = (
             NumericRecordBatch
-            if isinstance(self.event_template, NumericRecordSpec)
+            if isinstance(self.event_spec.spec, NumericRecordSpec)
             else RecordBatch
         )
         return cls(
             self.name,
             rows,
             "sample",
-            element_spec=self.event_template,
+            element_spec=self.event_spec.spec,
             axes_per_level=(len(sample_shape),),
         )
 
