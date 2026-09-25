@@ -76,13 +76,13 @@ class TestBuildTargetLogProbFlat:
     def test_flat_target_matches_record_target(self, small_model):
         observed = jnp.zeros((4,))
         target_record = build_target_log_prob(small_model, observed)
-        target_flat, flat_init, template = build_target_log_prob_flat(
+        target_flat, flat_init, event_spec = build_target_log_prob_flat(
             small_model,
             observed,
         )
         # Round-trip: unflatten the flat init back to a Record and confirm
         # the two callables agree.
-        record_init = NumericRecord.from_vector("nr", template, flat_init)
+        record_init = NumericRecord.from_vector("nr", event_spec.spec, flat_init)
         np.testing.assert_allclose(
             float(target_flat(flat_init)),
             float(target_record(record_init)),
@@ -90,26 +90,26 @@ class TestBuildTargetLogProbFlat:
             atol=1e-6,
         )
 
-    def test_flat_init_dim_matches_template_vector_size(self, small_model):
-        _, flat_init, template = build_target_log_prob_flat(
+    def test_flat_init_dim_matches_the_declared_vector_size(self, small_model):
+        _, flat_init, event_spec = build_target_log_prob_flat(
             small_model,
             observed=None,
         )
         # Both fields are scalar Normals: vector_size == 2.
-        assert flat_init.shape == (template.vector_size,) == (2,)
+        assert flat_init.shape == (event_spec.spec.vector_size,) == (2,)
 
-    def test_template_field_order_preserved(self, small_model):
-        _, _, template = build_target_log_prob_flat(small_model, observed=None)
+    def test_the_declared_component_order_is_preserved(self, small_model):
+        _, _, event_spec = build_target_log_prob_flat(small_model, observed=None)
         # Insertion order from the ProductDistribution constructor.
-        assert template.fields == ("a", "b")
+        assert tuple(event_spec.components) == ("a", "b")
 
     def test_bare_distribution_falls_through_unwrapped(self):
         """A target with no Record-shaped prior round-trips its log-prob unchanged.
 
         For a bare ``SupportsLogProb`` whose ``_unnormalized_log_prob``
         already takes a flat array, ``build_target_log_prob_flat``
-        passes the callable through verbatim and returns
-        ``event_template=None``. This is the path BlackJAX MCMC uses
+        passes the callable through verbatim and returns no declaration.
+        This is the path BlackJAX MCMC uses
         for hand-rolled distributions that don't carry a Record-shaped
         prior.
         """
@@ -120,11 +120,11 @@ class TestBuildTargetLogProbFlat:
             def _unnormalized_log_prob(self, x):
                 return -0.5 * jnp.sum(jnp.asarray(x) ** 2)
 
-        target_flat, flat_init, template = build_target_log_prob_flat(
+        target_flat, flat_init, event_spec = build_target_log_prob_flat(
             _FlatGaussian(),
             observed=None,
         )
-        assert template is None
+        assert event_spec is None
         assert flat_init.shape == (2,)
         np.testing.assert_allclose(
             float(target_flat(jnp.asarray([1.0, -1.0]))),

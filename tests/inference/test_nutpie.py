@@ -68,7 +68,7 @@ class TestCompileForNutpie:
 
     def test_pymc_path(self):
         """Models with _pymc_model use nutpie.compile_pymc_model and
-        return the conditioned build for event_template derivation."""
+        return the conditioned build, from which the parameter record is read."""
         model = MagicMock(spec=[])
         model._pymc_model = MagicMock(return_value="pm_model")
         with patch.object(nutpie, "compile_pymc_model", return_value="compiled") as compile_pymc:

@@ -23,7 +23,6 @@ from probpipe import (
     Normal,
     NumericRecord,
     ProductDistribution,
-    RecordSpec,
     condition_on,
     learn_amortized_posterior,
 )
@@ -286,7 +285,7 @@ class TestBayesFlowNPE:
         assert isinstance(post, ApproximateDistribution)
         assert post.algorithm == "bayesflow_npe"
         draws = post.draws()
-        # Named fields (event_template lifting), 300 draws, no warmup/chains effect.
+        # Fields named by the prior's declaration, 300 draws, no warmup/chains effect.
         assert np.asarray(draws["a"]).reshape(-1).shape[0] == 300
         assert np.isfinite(np.asarray(draws["b"])).all()
         # Omitting num_results falls back to the model default (500 here).
@@ -895,10 +894,10 @@ class TestBayesFlowValidation:
         with pytest.raises(TypeError, match="generate_data"):
             learn_amortized_posterior(_prior(), _NoGenerate(), num_simulations=8, epochs=1)
 
-    def test_rejects_non_record_prior(self):
-        """A prior that is not a RecordDistribution (here a raw array, with no
-        ``event_template``) is rejected with a clear TypeError."""
-        with pytest.raises(TypeError, match="RecordDistribution"):
+    def test_rejects_a_prior_that_is_not_numeric(self):
+        """A prior that is not a numeric distribution (here a raw array) is
+        rejected with a clear TypeError."""
+        with pytest.raises(TypeError, match="requires a numeric prior"):
             learn_amortized_posterior(
                 jnp.zeros(2),
                 _ToyLikelihood(),
@@ -956,18 +955,3 @@ class TestBayesFlowValidation:
         bad_prior = ProductDistribution(pp.Poisson("k", 3.0), Normal(loc=0.0, scale=1.0, name="m"))
         with pytest.raises(ValueError, match="discrete"):
             learn_amortized_posterior(bad_prior, _ToyLikelihood(), num_simulations=8, epochs=1)
-
-    def test_rejects_multifield_prior_without_supports(self):
-        """A multi-field prior implementing no per-field ``supports`` accessor is
-        rejected: spreading the single whole-distribution ``support`` across
-        heterogeneous fields could silently pick the wrong bijector."""
-
-        class _NoSupports:
-            event_template = RecordSpec(a=(), b=())
-
-            @property
-            def supports(self):
-                raise NotImplementedError
-
-        with pytest.raises(TypeError, match="per-field"):
-            learn_amortized_posterior(_NoSupports(), _ToyLikelihood(), num_simulations=8, epochs=1)

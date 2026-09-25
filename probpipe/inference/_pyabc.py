@@ -288,14 +288,13 @@ class PyABCSMCMethod(InferenceMethod):
         flat = df.reindex(columns=[_flat_key(i) for i in range(d)]).to_numpy(dtype=float)
         weights = np.asarray(weights, dtype=float)
 
-        # Lift the flat columns back to name-keyed Records via the prior's layout.
-        template = prior.event_template
+        # Lift the flat columns back to name-keyed Records via the prior's declaration.
         return make_posterior(
             [jnp.asarray(flat)],
             parents=(dist,),
             algorithm="pyabc_smcabc",
             weights=jnp.asarray(weights / weights.sum()),
-            event_template=template,
+            event_spec=prior.event_spec,
             field_order=list(prior.event_shapes),
             annotations=_smc_diagnostics(history),
             n_particles=n_particles,

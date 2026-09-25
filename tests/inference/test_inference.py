@@ -240,7 +240,7 @@ class TestApproximateDistribution:
 
 
 class TestApproximateDistributionValuesTemplate:
-    """draws() returns named Record when an event_template is provided."""
+    """draws() returns a named Record when the target is declared."""
 
     @pytest.fixture
     def template(self):
@@ -255,7 +255,7 @@ class TestApproximateDistributionValuesTemplate:
             [chain],
             parents=(prior,),
             algorithm="test",
-            event_template=template,
+            event_spec=template,
         )
 
     def test_draws_returns_values(self, posterior_with_template):
@@ -318,7 +318,7 @@ class TestApproximateDistributionValuesTemplate:
             [chain],
             parents=(prior,),
             algorithm="test",
-            event_template=template,
+            event_spec=template,
             field_order=["b", "a"],
         )
         draws = post.draws()
@@ -335,7 +335,7 @@ class TestApproximateDistributionValuesTemplate:
             [chain],
             parents=(prior,),
             algorithm="test",
-            event_template=template,
+            event_spec=template,
         )
         draws = post.draws()
         np.testing.assert_allclose(np.asarray(draws["a"]), [1.0, 2.0])
@@ -351,7 +351,7 @@ class TestApproximateDistributionValuesTemplate:
                 [chain],
                 parents=(prior,),
                 algorithm="test",
-                event_template=template,
+                event_spec=template,
                 field_order=["a", "c"],
             )
 
@@ -367,7 +367,7 @@ class TestApproximateDistributionValuesTemplate:
                 [chain],
                 parents=(prior,),
                 algorithm="test",
-                event_template=template,
+                event_spec=template,
                 field_order=["a", "b"],
             )
 
@@ -383,16 +383,16 @@ class TestApproximateDistributionValuesTemplate:
                 [chain],
                 parents=(prior,),
                 algorithm="test",
-                event_template=template,
+                event_spec=template,
                 field_order=["a", "b", "c"],
             )
 
     def test_field_order_without_template_raises(self):
-        """field_order without an event_template is a caller error, not a
+        """field_order without an event_spec is a caller error, not a
         silent no-op."""
         chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
-        with pytest.raises(ValueError, match="requires an event_template"):
+        with pytest.raises(ValueError, match="requires an event_spec"):
             make_posterior(
                 [chain],
                 parents=(prior,),
@@ -411,7 +411,7 @@ class TestApproximateDistributionValuesTemplate:
                 [chain],
                 parents=(prior,),
                 algorithm="test",
-                event_template=template,
+                event_spec=template,
                 field_order=["b"],
             )
 
@@ -426,7 +426,7 @@ class TestApproximateDistributionValuesTemplate:
                 [chain],
                 parents=(prior,),
                 algorithm="test",
-                event_template=template,
+                event_spec=template,
                 field_order=["a"],
             )
 
@@ -440,7 +440,7 @@ class TestApproximateDistributionValuesTemplate:
                 [chain],
                 parents=(prior,),
                 algorithm="test",
-                event_template=template,
+                event_spec=template,
                 field_order=["a", "b"],
             )
 
@@ -454,7 +454,7 @@ class TestApproximateDistributionValuesTemplate:
                 [chain],
                 parents=(prior,),
                 algorithm="test",
-                event_template=template,
+                event_spec=template,
             )
 
     def test_array_shaped_fields(self):
@@ -470,7 +470,7 @@ class TestApproximateDistributionValuesTemplate:
             [chain],
             parents=(prior,),
             algorithm="test",
-            event_template=template,
+            event_spec=template,
         )
         draws = post.draws()
         assert draws["mean"].shape == (20, 3)
@@ -488,14 +488,14 @@ class TestApproximateDistributionValuesTemplate:
             parents=(prior,),
             algorithm="test",
             annotations=annotations,
-            event_template=template,
+            event_spec=template,
         )
         draws = post.draws(include_warmup=True)
         assert isinstance(draws, NumericRecordBatch)
         assert draws["a"].shape == (60,)  # 10 warmup + 50 draws
         assert draws["b"].shape == (60,)
 
-    def test_nested_event_template_unflatten(self):
+    def test_nested_target_unflatten(self):
         """Nested Record template unflattens draws into nested structure."""
         template = RecordSpec(
             params=RecordSpec(a=(), b=()),
@@ -508,7 +508,7 @@ class TestApproximateDistributionValuesTemplate:
             [chain],
             parents=(prior,),
             algorithm="test",
-            event_template=template,
+            event_spec=template,
         )
         draws = post.draws()
         assert isinstance(draws, NumericRecordBatch)
@@ -542,7 +542,7 @@ class TestApproximateDistributionValuesTemplate:
             [chain],
             parents=(prior,),
             algorithm="test",
-            event_template=template,
+            event_spec=template,
         )
         # Template + ops all keyed by the top-level template fields,
         # with no leftover ``"posterior"`` auto-wrap leaking through.
@@ -920,7 +920,7 @@ class TestRecordDistributionView:
             [chain],
             parents=(prior,),
             algorithm="test",
-            event_template=template,
+            event_spec=template,
         )
 
     def test_getitem_returns_view(self, posterior):
@@ -962,7 +962,7 @@ class TestRecordDistributionView:
         template = RecordSpec(vec=(5,), scalar=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (50, 6))
         prior = MultivariateNormal(loc=jnp.zeros(6), cov=jnp.eye(6), name="z")
-        post = make_posterior([chain], parents=(prior,), algorithm="test", event_template=template)
+        post = make_posterior([chain], parents=(prior,), algorithm="test", event_spec=template)
         assert post["scalar"].event_shape == ()
         assert post["vec"].event_shape == (5,)
 
@@ -1008,7 +1008,7 @@ class TestRecordDistributionView:
         template = RecordSpec(a=(), b=())
         chain = jnp.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
-        post = make_posterior([chain], parents=(prior,), algorithm="test", event_template=template)
+        post = make_posterior([chain], parents=(prior,), algorithm="test", event_spec=template)
         view = post["a"]
         # Mean of column 0 (field "a"): (1+3+5)/3 = 3.0
         np.testing.assert_allclose(float(view._mean()), 3.0, atol=1e-5)
@@ -1053,7 +1053,7 @@ class TestViewProtocolDuckTyping:
         template = RecordSpec(a=(), b=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (50, 2))
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
-        post = make_posterior([chain], parents=(prior,), algorithm="test", event_template=template)
+        post = make_posterior([chain], parents=(prior,), algorithm="test", event_spec=template)
         view = post["a"]
         assert not isinstance(view, SupportsLogProb)
 
@@ -1067,7 +1067,7 @@ class TestViewProtocolDuckTyping:
         template = RecordSpec(a=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 1))
         prior = Normal("x", 0, 1)
-        post = make_posterior([chain], parents=(prior,), algorithm="test", event_template=template)
+        post = make_posterior([chain], parents=(prior,), algorithm="test", event_spec=template)
         assert isinstance(post["a"], SupportsSampling)
 
     def test_view_always_isinstance_mean_variance(self):
@@ -1112,7 +1112,7 @@ class TestViewProtocolDuckTyping:
         template = RecordSpec(a=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 1))
         prior = Normal("x", 0, 1)
-        post = make_posterior([chain], parents=(prior,), algorithm="test", event_template=template)
+        post = make_posterior([chain], parents=(prior,), algorithm="test", event_spec=template)
         view_without = post["a"]
         assert not isinstance(view_without, SupportsLogProb)
 
@@ -1140,7 +1140,7 @@ class TestRecordDistributionProperties:
             [chain],
             parents=(prior,),
             algorithm="test",
-            event_template=template,
+            event_spec=template,
         )
 
     def test_record_distribution_flatten_unflatten(self, posterior):
@@ -1256,11 +1256,12 @@ class TestEndToEndValuesPipeline:
         )
 
     def test_template_propagation(self, posterior):
-        """event_template flows from named prior through to posterior."""
+        """The prior's declaration names the posterior's fields and their terms."""
         tpl = posterior.event_template
         assert tpl is not None
         assert tpl.fields == ("params",)
-        assert tpl["params"] == NumericArraySpec((2,))
+        assert tpl["params"].shape == (2,)
+        assert tpl["params"].dtype == jnp.asarray(0.0).dtype
 
     def test_draws_are_named_values(self, posterior):
         """draws() returns Record with correct field names and shapes."""
@@ -1356,7 +1357,7 @@ class TestEndToEndValuesPipeline:
             [chain],
             parents=(prior,),
             algorithm="test",
-            event_template=template,
+            event_spec=template,
         )
         draws = post.draws()
         assert isinstance(draws, NumericRecordBatch)
