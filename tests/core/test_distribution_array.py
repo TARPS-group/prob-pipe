@@ -73,7 +73,7 @@ class TestConstruction:
         array = _make_distribution_array(
             components,
             name="declared",
-            event_template=RecordSpec(y=()),
+            output_template=RecordSpec(y=()),
         )
 
         assert array.event_template == RecordSpec(y=())
@@ -81,7 +81,7 @@ class TestConstruction:
             _make_distribution_array(
                 components,
                 name="invalid",
-                event_template=RecordSpec(z=()),
+                output_template=RecordSpec(z=()),
             )
 
     def test_indexing_returns_component(self):

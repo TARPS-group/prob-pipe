@@ -21,7 +21,7 @@ from ..core._numeric_record import NumericRecord
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._numeric_record_distribution import NumericRecordDistribution
 from ..core._record_distribution import _record_with_leaves
-from ..core._specs import NumericArraySpec, NumericRecordSpec
+from ..core._specs import NumericArraySpec, NumericRecordSpec, OutputSpec, RecordSpec
 from ..core.constraints import real
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike
@@ -58,17 +58,16 @@ class KDEDistribution(TFPDistribution):
         Per-dimension bandwidth (standard deviation of each Gaussian
         kernel), shape ``(d,)`` or scalar.  If ``None``, Silverman's
         rule is used: ``n^{-1/(d+4)} * std_j`` for each dimension *j*.
-    event_template : RecordSpec or None
-        Structural template for the KDE's value type. When ``None`` (the
-        default) or single-field, one draw is declared as an array under
-        ``name``. When supplied with multiple fields, the template defines
-        how the flat ``(n, d)`` sample matrix maps back to a structured
-        ``NumericRecord`` / ``NumericRecordBatch``, and one draw is declared
-        as that record, each array leaf taking the samples' dtype on the
-        real line. This preserves named fields end-to-end across e.g. an
-        MCMC posterior being routed through KDE as the new prior in
-        :class:`~probpipe.modeling.IncrementalConditioner`. The template's
-        ``vector_size`` must equal ``samples.shape[1]``.
+    event_spec : OutputSpec, RecordSpec, or None
+        The record one draw is. When ``None`` (the default), or a record with
+        one field, one draw is declared as an array under ``name``. A record
+        with several fields defines how the flat ``(n, d)`` sample matrix
+        maps back to a structured ``NumericRecord`` / ``NumericRecordBatch``,
+        and one draw is declared as that record, each array leaf declaring the
+        samples' dtype and the real line as its support. The named fields
+        therefore persist when, for example, an MCMC posterior passes through
+        KDE as the new prior in :class:`~probpipe.modeling.IncrementalConditioner`.
+        The record's ``vector_size`` must equal ``samples.shape[1]``.
     """
 
     def __init__(
@@ -79,7 +78,7 @@ class KDEDistribution(TFPDistribution):
         *,
         log_weights: ArrayLike | Weights | None = None,
         bandwidth: ArrayLike | None = None,
-        event_template: RecordSpec | None = None,
+        event_spec: OutputSpec | RecordSpec | None = None,
     ):
         samples = _as_float_array(samples)
         if samples.ndim == 0:
@@ -94,30 +93,28 @@ class KDEDistribution(TFPDistribution):
         self._samples = samples
         self._d = d
 
-        # Multi-field template support: a template with more than one field
-        # is stored and declared, after checking that its flat width matches
-        # the samples' trailing dimension.
-        if event_template is not None and len(event_template.fields) > 1:
-            if isinstance(event_template, NumericRecordSpec):
-                expected = event_template.vector_size
+        # A record with more than one field is declared, after checking that
+        # its flat width matches the samples' trailing dimension.
+        record = event_spec.spec if isinstance(event_spec, OutputSpec) else event_spec
+        if isinstance(record, RecordSpec) and len(record.fields) > 1:
+            if isinstance(record, NumericRecordSpec):
+                expected = record.vector_size
             else:
                 expected = sum(
                     int(jnp.prod(jnp.array(shape))) if shape else 1
-                    for shape in event_template.leaf_shapes.values()
+                    for shape in record.leaf_shapes.values()
                 )
             if expected != d:
                 raise ValueError(
-                    f"event_template vector_size ({expected}) does not match "
-                    f"samples flat dimension ({d}); template fields="
-                    f"{event_template.fields}"
+                    f"event_spec vector_size ({expected}) does not match "
+                    f"samples flat dimension ({d}); record fields={record.fields}"
                 )
-            object.__setattr__(self, "_event_template", event_template)
-            event_spec = _record_with_leaves(event_template, samples.dtype, real)
+            declaration = _record_with_leaves(record, samples.dtype, real)
         else:
             # A one-column KDE mixes scalar kernels, so it draws scalars.
-            event_spec = NumericArraySpec((d,) if d > 1 else (), samples.dtype, real)
+            declaration = NumericArraySpec((d,) if d > 1 else (), samples.dtype, real)
 
-        super().__init__(name, event_spec)
+        super().__init__(name, declaration)
 
         # Weights
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
@@ -220,7 +217,7 @@ class KDEDistribution(TFPDistribution):
             source.flat_samples,
             weights=source._w,
             bandwidth=bandwidth,
-            event_template=tpl,
+            event_spec=tpl,
         )
 
     def __repr__(self) -> str:

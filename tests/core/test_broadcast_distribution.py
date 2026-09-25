@@ -452,7 +452,7 @@ class TestMakeMarginal:
             _make_marginal(
                 jnp.ones((5, 2)),
                 None,
-                event_template=RecordSpec(left=(2,), right=(2,)),
+                output_template=RecordSpec(left=(2,), right=(2,)),
             )
 
     def test_declared_bare_array_preserves_nested_single_leaf_path(self):
@@ -461,7 +461,7 @@ class TestMakeMarginal:
         samples = jnp.arange(10.0).reshape(5, 2)
         template = RecordSpec(stats=RecordSpec(value=(2,)))
 
-        marginal = _make_marginal(samples, None, event_template=template)
+        marginal = _make_marginal(samples, None, output_template=template)
 
         assert marginal.event_template == template
         np.testing.assert_allclose(marginal.samples["stats/value"], samples)
@@ -1004,7 +1004,7 @@ class TestMakeStack:
                 jnp.ones((4, 2)),
                 n=4,
                 field_name="demo",
-                event_template=RecordSpec(left=(2,), right=(2,)),
+                output_template=RecordSpec(left=(2,), right=(2,)),
                 level_names=("sweep",),
             )
 
@@ -1019,7 +1019,7 @@ class TestMakeStack:
             values,
             n=4,
             field_name="demo",
-            event_template=template,
+            output_template=template,
             level_names=("sweep",),
         )
 
@@ -1037,7 +1037,7 @@ class TestMakeStack:
             values,
             batch_shape=(2, 3),
             field_name="demo",
-            event_template=template,
+            output_template=template,
             level_names=("sweep",),
         )
 
