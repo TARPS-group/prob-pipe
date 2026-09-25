@@ -1,6 +1,6 @@
 """Diagnostics export paths: leaf-keyed variables, nested and flat.
 
-A posterior over a *nested* event template exports one variable per leaf,
+A posterior over a *nested* record exports one variable per leaf,
 named by the leaf's full ``/``-path, with values drawn from the leaf's column
 of the flat draw matrix (canonical leaf order). A *flat* posterior must keep
 its plain, un-prefixed variable names — existing user code addresses ArviZ
@@ -30,7 +30,7 @@ def _posterior(template, vector_size, *, n_chains=2, n_draws=30, seed0=0):
         jax.random.normal(jax.random.PRNGKey(seed0 + i), (n_draws, vector_size))
         for i in range(n_chains)
     ]
-    post = make_posterior(chains, parents=(prior,), algorithm="test", event_template=template)
+    post = make_posterior(chains, parents=(prior,), algorithm="test", event_spec=template)
     return post, chains
 
 

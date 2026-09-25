@@ -1179,7 +1179,7 @@ class TestModelDeclarations:
             [jnp.zeros((10, 2))],
             parents=(prior,),
             algorithm="test",
-            event_template=RecordSpec(a=(), b=()),
+            event_spec=RecordSpec(a=(), b=()),
         )
         dtype = jnp.asarray(0.0).dtype
         assert post.event_spec == OutputSpec(

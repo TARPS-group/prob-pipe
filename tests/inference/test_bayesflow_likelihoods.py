@@ -483,8 +483,8 @@ class TestValidation:
         with pytest.raises(TypeError, match="generate_data"):
             learn_amortized_likelihood(_prior(), _NoGenerate(), num_simulations=8, epochs=1)
 
-    def test_rejects_non_record_prior(self):
-        with pytest.raises(TypeError, match="RecordDistribution"):
+    def test_rejects_a_prior_that_is_not_numeric(self):
+        with pytest.raises(TypeError, match="requires a numeric prior"):
             learn_amortized_ratio(jnp.zeros(2), _SIM, num_simulations=8, epochs=1)
 
     def test_dequantize_rejects_counts_at_float32_cell_limit(self):

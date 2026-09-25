@@ -24,10 +24,11 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..core._numeric_record_batch import NumericRecordBatch
+from ..core._specs import _components_record
 from ..core.ops import sample as _sample_op
 from ..core.protocols import GenerativeLikelihood
 from ..custom_types import Array, PRNGKey
-from ..distributions._distribution import Distribution
+from ..distributions._distribution import Distribution, NumericDistribution
 
 if TYPE_CHECKING:
     # Type-only: tfp is a hard dependency but is only needed here for
@@ -82,7 +83,7 @@ def _adapter_field_keys(keys: tuple[str, ...]) -> tuple[str, ...]:
     """Positional internal keys (``theta_0``, ``theta_1``, ...) for the adapter.
 
     Both the training dict and the sample-side extraction derive these from the
-    prior's ``event_template`` leaf order (``leaf_shapes`` keys; ==
+    leaf order of the record the prior's components form (``leaf_shapes`` keys; ==
     ``fields`` for a flat prior), so the mapping is deterministic across train
     and inference without storing it, and slash-delimited nested leaf paths
     never reach BayesFlow's key namespace.
@@ -99,7 +100,7 @@ def _validate_learn_inputs(
     counts: tuple[tuple[str, Any], ...],
 ) -> Any:
     """Shared train-time validation for the amortized learners; returns the
-    prior's record template. Raises before any simulation runs."""
+    record the prior's components form. Raises before any simulation runs."""
     if sim_backend not in ("jax", "sequential"):
         raise ValueError(f"Unknown sim_backend: {sim_backend!r}. Supported: 'jax', 'sequential'.")
     for _name, _val in counts:
@@ -112,14 +113,13 @@ def _validate_learn_inputs(
             "simulator must be a GenerativeLikelihood with a generate_data method, "
             f"got {type(simulator).__name__}"
         )
-    event_template = getattr(prior, "event_template", None)
-    if event_template is None:
+    if not isinstance(prior, NumericDistribution):
         raise TypeError(
-            f"{caller} requires a RecordDistribution prior with named parameter "
-            "fields -- typically a ProductDistribution of named distributions -- "
-            f"but got {type(prior).__name__}, which has no event_template."
+            f"{caller} requires a numeric prior with named parameter fields -- "
+            "typically a ProductDistribution of named distributions -- "
+            f"but got {type(prior).__name__}, which declares no numeric event."
         )
-    return event_template
+    return _components_record(prior.event_spec)
 
 
 @contextmanager
@@ -162,7 +162,7 @@ def _simulate_offline(
     density), the raw constrained draws are returned.  The simulator itself always
     sees the constrained, structured draws.
     """
-    template = prior.event_template
+    template = _components_record(prior.event_spec)
     # Iterate numeric leaves (slash paths like "outer/a" for nested priors; ==
     # top-level fields for flat priors). The adapter re-keys positionally, so
     # leaf paths never reach BayesFlow's namespace.

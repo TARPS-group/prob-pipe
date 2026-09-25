@@ -19,7 +19,7 @@ from ._inference_utils import (
     as_prng_key,
     build_mcmc_datatree,
     build_target_log_prob,
-    extract_event_template,
+    extract_event_spec,
     get_init_state,
     get_prior,
     is_jax_traceable,
@@ -171,7 +171,7 @@ class _TFPGradientMethod(InferenceMethod):
             kwargs.get("init"),
             random_seed=random_seed,
         )
-        event_template = extract_event_template(dist)
+        event_spec = extract_event_spec(dist)
 
         num_results = kwargs.get("num_results", 1000)
         num_warmup = kwargs.get("num_warmup", 500)
@@ -193,7 +193,7 @@ class _TFPGradientMethod(InferenceMethod):
             parents=(prior,),
             algorithm=self._method_name,
             annotations=annotations,
-            event_template=event_template,
+            event_spec=event_spec,
             num_results=num_results,
             num_warmup=num_warmup,
             num_chains=num_chains,

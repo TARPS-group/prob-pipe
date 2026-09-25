@@ -330,12 +330,12 @@ class TestRecordSpec:
         assert "y" not in tpl.fields
 
     def test_data_dependent_shape_reflects_conditioned_build(self):
-        """``_event_template_for(model)`` reports the data-conditioned
+        """``_parameter_record_for(model)`` reports the data-conditioned
         shape for an RV whose shape depends on data size, while the bare
         ``event_template`` property reports the declared (no-data)
         shape (issue #224).
 
-        The inference paths call ``_event_template_for`` with the model
+        The inference paths call ``_parameter_record_for`` with the model
         they build from data, so the template matches the chain. The
         property cannot know the conditioned shape without data, so it
         stays at the declared sentinel — and, crucially, holds no
@@ -360,7 +360,7 @@ class TestRecordSpec:
             }
         )
         names = model._conditioned_param_names(conditioned)
-        tpl_c = model._event_template_for(conditioned, names)
+        tpl_c = model._parameter_record_for(conditioned, names)
         assert tpl_c.fields == ("intercept", "alpha")
         assert tpl_c["alpha"] == NumericArraySpec((N,))
         assert not hasattr(model, "_last_conditioned_model")
@@ -503,7 +503,7 @@ class TestRecordSpec:
         conditioned = model._pymc_model(data={"y": np.zeros(5, dtype=np.float32)})
         names = model._conditioned_param_names(conditioned)
         assert set(names) == {"mu", "X"}
-        tpl = model._event_template_for(conditioned, names)
+        tpl = model._parameter_record_for(conditioned, names)
         assert set(tpl.fields) == {"mu", "X"}
 
     def test_partial_conditioning_via_inference(self):
@@ -655,7 +655,7 @@ class TestRecordSpec:
             _ = PyMCModel("model", model_fn).event_template
 
     def test_event_shape_rejects_non_concrete_shape(self):
-        """``event_shape`` derives from ``event_template``, so it rejects
+        """``event_shape`` counts the elements of the parameter record, so it rejects
         a non-concrete free-RV shape rather than silently under-counting.
         """
         import pytensor.tensor as pt
