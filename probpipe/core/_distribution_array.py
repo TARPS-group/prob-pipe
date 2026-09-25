@@ -50,7 +50,15 @@ import numpy as np
 from .._array_utils import _slice_leading_axes
 from ..distributions._distribution import Distribution
 from ._immutable import transient_memo
-from ._specs import NumericArraySpec, NumericRecordSpec, OutputSpec, RecordSpec, TermSpec
+from ._specs import (
+    NumericArraySpec,
+    NumericRecordSpec,
+    OutputSpec,
+    RecordSpec,
+    TermSpec,
+    _components_record,
+    _matches_output_template,
+)
 from .protocols import SupportsArrayBackend
 from .tracked import auto_name
 
@@ -761,15 +769,15 @@ def _make_distribution_array(
         Name for provenance.
     event_template : RecordSpec, optional
         Authoritative template for a Function-produced aggregate. Every
-        component must expose the same template.
+        component's declaration must match it, as a Function's output does.
     """
     array = DistributionArray(components, batch_shape=batch_shape, name=name)
     if event_template is not None:
         for index, component in enumerate(array.components):
-            actual = getattr(component, "event_template", None)
-            if actual != event_template:
+            if not _matches_output_template(component.event_spec, event_template):
                 raise ValueError(
-                    f"DistributionArray component {index} event_template {actual!r} "
+                    f"DistributionArray component {index} declares "
+                    f"{_components_record(component.event_spec)!r}, which "
                     f"does not match declared template {event_template!r}"
                 )
         object.__setattr__(array, "_event_template", event_template)
