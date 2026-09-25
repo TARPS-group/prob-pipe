@@ -19,7 +19,7 @@ import jax.numpy as jnp
 
 from ..custom_types import Array, PRNGKey
 from ..distributions._distribution import Distribution
-from ._specs import NumericArraySpec, OutputSpec, RecordSpec, TermSpec
+from ._specs import NumericArraySpec, OutputSpec, RecordSpec, TermSpec, _components_record
 from .constraints import Constraint
 from .named_tree import _PATH_SEP
 from .protocols import (
@@ -213,11 +213,12 @@ class _RecordDistributionView(Distribution):
         return object.__new__(actual_cls)
 
     def __init__(self, parent: Distribution, key: str | tuple[str, ...]) -> None:
-        # The record the parent presents: its stored template, or its
-        # declaration read as one.
-        template = getattr(parent, "event_template", None)
+        # The record the parent's declared components form. A posterior's
+        # target record keeps the nesting its stored chunks flatten, an interim
+        # reader until the posterior declares the nesting itself.
+        template = getattr(parent, "_target_record", None)
         if template is None:
-            template = _interim_template(parent.event_spec)
+            template = _components_record(parent.event_spec)
         # A string key is a slash path, as a tuple key is.
         key_path = tuple(key.split(_PATH_SEP)) if isinstance(key, str) else tuple(key)
         if not key_path:
@@ -236,13 +237,8 @@ class _RecordDistributionView(Distribution):
         self._key = key_path[-1]
         self._key_path = key_path
         self._template_field = template_field
-        # The parent's declared term at the path, a whole term under the
-        # path's last segment; a path only the parent's stored
-        # template has gives the template's field.
-        declared = _declared_at_path(parent, key_path)
-        self._init_declaration(
-            OutputSpec(**{self._key: template_field if declared is None else declared})
-        )
+        # The term at the path, a whole term under the path's last segment.
+        self._init_declaration(OutputSpec(**{self._key: template_field}))
 
     def __getitem__(self, key: str | tuple[str, ...]) -> Distribution:
         """This view under its component, or the parent's view at a path within it.
@@ -318,10 +314,7 @@ class _RecordDistributionView(Distribution):
                 f"on {type(self._parent).__name__}: parent does not "
                 f"implement unflatten_value."
             )
-        result = unflatten(
-            jnp.asarray(structured),
-            template=self._parent.event_template,
-        )
+        result = unflatten(jnp.asarray(structured), template=self._parent.event_spec.spec)
         if isinstance(result, Record):
             return result.at_path(self._key_path)
         if isinstance(result, RecordBatch):
@@ -347,7 +340,7 @@ class _RecordDistributionView(Distribution):
         from ._numeric_record import _reconstruct_from_vector
 
         result = _reconstruct_from_vector(
-            self._parent.name, self._parent.event_template, jnp.asarray(draws)
+            self._parent.name, _components_record(self._parent.event_spec), jnp.asarray(draws)
         )
         return jnp.asarray(self._extract(result))
 
@@ -411,16 +404,6 @@ def _record_with_leaves(template: RecordSpec, dtype: Any, support: Constraint | 
         return spec
 
     return RecordSpec({field: leaf(spec) for field, spec in template.children.items()})
-
-
-def _declared_at_path(law: Distribution, path: tuple[str, ...]) -> TermSpec | None:
-    """The term *law* declares at *path* through its components, or None if there is none."""
-    spec = law.event_spec.components.get(path[0])
-    for segment in path[1:]:
-        if not isinstance(spec, RecordSpec) or segment not in spec.children:
-            return None
-        spec = spec.children[segment]
-    return spec
 
 
 def _joint_event_spec(components: dict[str, Any]) -> RecordSpec:
@@ -557,7 +540,7 @@ class RecordDistribution(Distribution):
         multi-field distributions.
         """
         name = self._single_field_name()
-        return _field_event_shape(self.event_template, name)
+        return _field_event_shape(_components_record(self.event_spec), name)
 
     @property
     def ndim(self) -> int:

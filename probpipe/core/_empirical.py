@@ -973,10 +973,9 @@ class BootstrapReplicateDistribution(
 
         An array-valued source's draws are stacked into one array. A record-valued
         source's come back as a batch of records on the level that ``sample``
-        mints, declared with the element a batch reads off its columns, which has
-        the source record's fields and shapes. A replicate of anything else is
-        opaque: the object data of a sequence source, and the draws of a sampler
-        that implements ``SupportsSampling`` without being a
+        mints, whose element is the record the source declares. A replicate of
+        anything else is opaque: the object data of a sequence source, and the
+        draws of a sampler that implements ``SupportsSampling`` without being a
         :class:`~probpipe.Distribution`, which declares no event.
         """
         if not isinstance(self._source_dist, Distribution):
@@ -988,12 +987,7 @@ class BootstrapReplicateDistribution(
             from ._batch import BatchSpec
             from ._broadcast_distributions import SAMPLE_LEVEL
 
-            element = spec.map(
-                lambda leaf: (
-                    NumericArraySpec(leaf.shape) if isinstance(leaf, NumericArraySpec) else leaf
-                )
-            )
-            return BatchSpec(element, ((self._replicate_size,),), (SAMPLE_LEVEL,))
+            return BatchSpec(spec, ((self._replicate_size,),), (SAMPLE_LEVEL,))
         return OpaqueSpec()
 
     # -- properties ---------------------------------------------------------
@@ -1241,16 +1235,19 @@ class RecordBootstrapReplicateDistribution(
         # with a rows axis in front. Taken from the source's declaration rather
         # than from the stored data, which would drop what the declaration
         # carries and inference cannot rebuild.
-        # An empirical source's ``event_template`` is already one atom's; a raw
-        # ``Record`` source's still carries the rows axis its leaves are stacked
-        # along, so that comes off before the replicate axis goes on. Getting this
-        # backwards advertises ``(n, rows, *event)`` where a draw is
+        # An empirical source's declaration is already one atom's record; a raw
+        # ``Record`` source's template still carries the rows axis its leaves are
+        # stacked along, so that comes off before the replicate axis goes on.
+        # Getting this backwards advertises ``(n, rows, *event)`` where a draw is
         # ``(n, *event)``.
         size = _checked_replicate_size(default_replicate_size, replicate_size)
-        atom = getattr(source, "event_template", None)
-        if isinstance(atom, RecordSpec):
-            if not isinstance(source, EmpiricalDistribution):
+        if isinstance(source, EmpiricalDistribution):
+            atom = source.event_spec.spec
+        else:
+            atom = getattr(source, "event_template", None)
+            if isinstance(atom, RecordSpec):
                 atom = _reshaped_template(atom, lambda shape: shape[1:])
+        if isinstance(atom, RecordSpec):
             self._event_template = _reshaped_template(atom, lambda shape: (size, *shape))
         else:
             self._event_template = _event_template_from_data(

@@ -517,6 +517,21 @@ class TestApproximateDistributionValuesTemplate:
         assert draws["params/b"].shape == (30,)
         assert draws["scale"].shape == (30,)
 
+    def test_a_nested_posterior_keeps_its_nesting_for_views_and_kde(self):
+        """A field view and a KDE of the posterior read its target record."""
+        from probpipe import KDEDistribution
+
+        prior = ProductDistribution(
+            params=ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)),
+            s=Normal("s", 0.0, 1.0),
+        )
+        chain = jax.random.normal(jax.random.PRNGKey(0), (40, 3))
+        post = make_posterior(
+            [chain], parents=(prior,), algorithm="test", event_spec=prior.event_spec
+        )
+        assert post["params/a"].event_spec.spec == prior.event_spec.spec.at_path(("params", "a"))
+        assert KDEDistribution.from_empirical(post).event_spec == prior.event_spec
+
     def test_nested_template_accessors_match_top_level_fields(self):
         """Pin the accessor surface for a nested-template posterior.
 
