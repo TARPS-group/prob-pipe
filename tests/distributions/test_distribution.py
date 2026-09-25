@@ -1155,7 +1155,8 @@ class TestModelDeclarations:
                 return jnp.asarray(0.0)
 
         model = SimpleModel(Normal("theta", 0.0, 1.0), _Likelihood())
-        assert model.event_spec == OutputSpec(RecordSpec(theta=(), y=(3,)))
+        theta = NumericArraySpec((), jnp.asarray(0.0).dtype, real)
+        assert model.event_spec == OutputSpec(RecordSpec(theta=theta, y=(3,)))
 
     def test_a_simple_generative_model_draws_an_opaque_pair(self):
         from probpipe import SimpleGenerativeModel

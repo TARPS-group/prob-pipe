@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from ._utils import _leaf_keys
+from ._utils import _is_structured, _leaf_keys
 from ._view_base import NotComputed
 
 if TYPE_CHECKING:
@@ -167,13 +167,13 @@ def to_named_posterior_dataset(
 
     data_vars: dict[str, xr.DataArray] = {}
 
-    # One variable per leaf field, keyed by its full /-path (see ``_leaf_keys``
-    # for the nested-vs-duck-typed rule).
-    for field in _leaf_keys(posterior):
-        stacked = np.stack(
-            [np.asarray(posterior.draws(chain=i)[field]) for i in range(posterior.num_chains)],
-            axis=0,
-        )
+    # One variable per leaf field of the draws, keyed by its full /-path (see
+    # ``_leaf_keys`` for the nested-vs-duck-typed rule). Draws that are not a
+    # record, as a test double's mapping is, take the posterior's own fields.
+    per_chain = [posterior.draws(chain=i) for i in range(posterior.num_chains)]
+    keyed = per_chain[0] if _is_structured(per_chain[0]) else posterior
+    for field in _leaf_keys(keyed):
+        stacked = np.stack([np.asarray(draws[field]) for draws in per_chain], axis=0)
         event_dims = [f"{field}_dim_{i}" for i in range(max(stacked.ndim - 2, 0))]
         data_vars[field] = xr.DataArray(
             stacked,

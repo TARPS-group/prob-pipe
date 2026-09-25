@@ -17,6 +17,7 @@ from probpipe import (
     ApproximateDistribution,
     MultivariateNormal,
     NumericArraySpec,
+    NumericRecordSpec,
     Record,
     RecordSpec,
     ResolutionError,
@@ -290,21 +291,21 @@ class _ValuesAwareLikelihood:
 
 
 class TestSimpleModelWithValues:
-    """SimpleModel propagates event_template and accepts Record data."""
+    """SimpleModel propagates the prior's declaration and accepts Record data."""
 
     @pytest.fixture
     def prior_with_template(self):
+        # A record view of the vector, whose declaration names its two entries.
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params")
-        prior._event_template = RecordSpec(a=(), b=())
-        return prior
+        return prior.as_record_distribution(template=NumericRecordSpec(a=(), b=()))
 
     @pytest.fixture
     def likelihood(self):
         return _ValuesAwareLikelihood()
 
-    def test_event_template_propagated(self, prior_with_template, likelihood):
+    def test_the_prior_record_propagates(self, prior_with_template, likelihood):
         model = SimpleModel(prior_with_template, likelihood)
-        assert model.event_template is prior_with_template.event_template
+        assert model.event_spec.spec is prior_with_template.event_spec.spec
 
     def test_fields_from_template(self, prior_with_template, likelihood):
         model = SimpleModel(prior_with_template, likelihood)
@@ -358,7 +359,7 @@ class TestSimpleModelWithValues:
     def test_field_overlap_raises(self):
         """SimpleModel rejects overlapping prior and data field names."""
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params")
-        prior._event_template = RecordSpec(X=(), y=())
+        prior = prior.as_record_distribution(template=NumericRecordSpec(X=(), y=()))
 
         class _OverlapLikelihood:
             def log_likelihood(self, params, data):

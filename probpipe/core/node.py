@@ -55,7 +55,7 @@ from ._numeric_record_batch import NumericRecordBatch
 from ._record_batch import RecordBatch
 from ._record_distribution import RecordDistribution
 from ._record_spec import _concretize_record_spec
-from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
+from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec, _components_record
 from .provenance import Provenance
 from .tracked import Annotated, TrackedTerm, auto_name
 
@@ -1073,11 +1073,11 @@ class Function(Node, TrackedTerm, Annotated):
                     for group in sampled_groups:
                         binding = stochastic_plan.runtime_bindings[group.index]
                         root = binding.root
-                        template = root.event_template
+                        template = _components_record(root.event_spec)
                         if not isinstance(template, NumericRecordSpec) or not template.is_concrete:
                             raise TypeError(
                                 f"{type(root).__name__} does not declare a concrete numeric "
-                                "event template for side-effect-free JAX probing"
+                                "event for side-effect-free JAX probing"
                             )
                         try:
                             dtypes = root.dtypes
