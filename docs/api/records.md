@@ -58,8 +58,8 @@ array shapes and dtypes. Binding from another spec uses only the information
 that declaration supplies. The same spec-binding rules apply directly and
 inside records, input slots, or batches.
 
-These shared declarations do not yet replace the legacy live `Function`
-input/output-template or distribution event-template constructor APIs.
+These shared declarations do not yet replace the `Function` input and output
+templates or the `event_template=` argument of the record constructors.
 
 `DistributionSpec` carries the `OutputSpec` of a law's draw and matches a
 `Distribution` whose own declaration unifies with it. Dimension binding learns
@@ -134,6 +134,8 @@ array they passed. And a batch of no elements is a batch: `OpaqueBatch("draws", 
 and `batch[0:0]` both give one, since zero is a count the level can carry. What a
 batch does need is an *axis* — a single object with none has no level to count
 along, and is refused.
+
+::: probpipe.Numeric
 
 ::: probpipe.NumericArray
 
