@@ -6,9 +6,11 @@ See design III.1.
 from __future__ import annotations
 
 import operator
+from math import prod
 from typing import Any
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 
 from ._array_backend import (
@@ -18,6 +20,7 @@ from ._array_backend import (
     _to_jax_array,
     _to_numpy_array,
 )
+from ._numeric import Numeric
 from ._specs import NumericArraySpec
 from .provenance import Provenance
 from .tracked import Annotated, TrackedTerm
@@ -25,7 +28,7 @@ from .tracked import Annotated, TrackedTerm
 __all__ = ["NumericArray"]
 
 
-class NumericArray(TrackedTerm, Annotated):
+class NumericArray(TrackedTerm, Annotated, Numeric):
     """One numeric array value, with identity.
 
     The tracked class of the numeric-array kind, as :class:`~probpipe.Record` is
@@ -72,6 +75,9 @@ class NumericArray(TrackedTerm, Annotated):
     It carries the full array surface: arithmetic, comparison, and the
     conversion hooks. With one value and no fields, ``arr + 1`` has a single
     meaning, which is what lets :class:`~probpipe.Record` stay a container.
+    It implements :class:`~probpipe.Numeric`: its vector is the array raveled in
+    row-major order, and its conversion hooks present the array itself rather
+    than that vector, so NumPy and JAX functions see its shape.
     The operators forward to the stored value and return what it returns, so
     arithmetic on a numpy-backed one yields ``numpy``, and identity stays with
     the operations that attach it.
@@ -186,6 +192,71 @@ class NumericArray(TrackedTerm, Annotated):
     def ndim(self) -> int:
         return len(self.shape)
 
+    # -- 1-D vector conversion ----------------------------------------------
+
+    @property
+    def vector_size(self) -> int:
+        """Length of this array's 1-D vector, the number of its elements."""
+        return prod(self.shape)
+
+    def to_vector(self) -> jax.Array:
+        """Serialize to the dense 1-D vector of shape ``(vector_size,)``, in row-major order.
+
+        The value converts to ``jax.Array`` at the compute boundary, as
+        :meth:`as_jax` does. The inverse is :meth:`from_vector`.
+        """
+        return jnp.reshape(self.as_jax(), -1)
+
+    @classmethod
+    def from_vector(cls, name: str, spec: NumericArraySpec, vec: Any) -> NumericArray:
+        """Reconstruct a single array from its dense 1-D vector.
+
+        The value-level inverse of :meth:`to_vector`: reshapes *vec* to the shape
+        *spec* declares, casts it to the declared dtype when there is one, and
+        returns a ``NumericArray`` carrying *spec* under *name*. The rebuilt
+        value is a bare ``jax.Array``, since a flat vector carries no native
+        container to restore.
+
+        Parameters
+        ----------
+        name : str
+            Name for the reconstructed array.
+        spec : NumericArraySpec
+            The declaration supplying the shape and dtype, with every dimension
+            bound.
+        vec : Array
+            A vector of shape ``(spec.vector_size,)``, one unbatched value.
+
+        Returns
+        -------
+        NumericArray
+            The reconstructed array, whose ``to_vector()`` equals *vec*.
+
+        Raises
+        ------
+        TypeError
+            If *vec* is not one-dimensional; a batch of vectors belongs to
+            :class:`~probpipe.NumericArrayBatch`.
+        ValueError
+            If *spec* has unbound dimensions, or the vector's length is not
+            ``spec.vector_size``.
+        """
+        vec = jnp.asarray(vec)
+        if vec.ndim != 1:
+            raise TypeError(
+                f"NumericArray.from_vector expects a 1-D vector (one value); "
+                f"got shape {tuple(vec.shape)}"
+            )
+        if vec.shape[0] != spec.vector_size:
+            raise ValueError(
+                f"NumericArray.from_vector: the vector has length {vec.shape[0]}, "
+                f"expected vector_size={spec.vector_size}"
+            )
+        value = jnp.reshape(vec, spec.shape)
+        if spec.dtype is not None:
+            value = value.astype(spec.dtype)
+        return cls(name, value, spec=spec)
+
     def __len__(self) -> int:
         return len(self._value)
 
@@ -194,6 +265,7 @@ class NumericArray(TrackedTerm, Annotated):
 
     # -- the array surface --------------------------------------------------
 
+    # The coordinate protocols present the array itself, not Numeric's flat vector.
     def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
         arr = _to_numpy_array(self._value)
         arr = np.asarray(arr, dtype=dtype) if dtype is not None else arr
