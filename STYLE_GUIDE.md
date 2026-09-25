@@ -294,10 +294,7 @@ views like an array, and its fields are read from `event_template`.
 `DistributionArray` is positional and follows numpy/jax conventions:
 `len(da)` is the leading-axis dim and `da.size` is the total cell
 count (`prod(da.batch_shape)`); elements are accessed via `da[i]`.
-Its `event_spec` declares the term every cell draws. Its read-only
-`event_template`, an interim view, is an explicitly supplied authoritative
-Function aggregate template, a common template derived from compatible literal
-components, or `None` when no common declaration exists.
+Its `event_spec` declares the term every cell draws.
 Iteration walks the leading axis — for a 1-D `DistributionArray`
 it yields scalar cells; for a multi-d one it yields sub-arrays of
 shape `batch_shape[1:]`, mirroring `iter(np.zeros((2, 3)))`. For
