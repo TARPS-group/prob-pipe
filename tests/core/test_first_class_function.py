@@ -27,6 +27,7 @@ from probpipe import (
     NumericArraySpec,
     NumericRecord,
     NumericRecordBatch,
+    ProductDistribution,
     Provenance,
     ProvenanceMode,
     Record,
@@ -391,27 +392,37 @@ class TestApplyContract:
         assert result is not returned
         assert result.event_template is intrinsic
 
-    def test_distribution_requires_metadata_in_its_own_event_template(self):
-        cases = [
-            (
-                Normal("y", 0, 1),
-                RecordSpec(y=NumericArraySpec((), dtype="float32")),
-            ),
-            (
-                Gamma("y", 1, 1),
-                RecordSpec(y=NumericArraySpec((), support=real)),
-            ),
-        ]
+    def test_a_returned_law_meets_its_template_as_a_returned_record_does(self):
+        class _Undtyped(Distribution):
+            # Declares its array's shape and nothing else.
+            def __init__(self):
+                super().__init__("y", NumericArraySpec(()))
 
-        for returned, declared in cases:
-            with pytest.raises(
-                ValueError,
-                match="does not exactly match declared concrete template",
-            ):
-                Function(
-                    func=lambda returned=returned: returned,
-                    output_template=declared,
-                ).apply()
+        def apply(returned, declared):
+            return Function(func=lambda: returned, output_template=declared).apply()
+
+        # Unset metadata matches any, a dtype admits a same-kind cast, and a
+        # support may lie within the template's.
+        for returned, declared in [
+            (_Undtyped(), RecordSpec(y=NumericArraySpec((), dtype="float32"))),
+            (Normal("y", 0, 1), RecordSpec(y=NumericArraySpec((), dtype="float64"))),
+            (Gamma("y", 1, 1), RecordSpec(y=NumericArraySpec((), support=real))),
+        ]:
+            assert apply(returned, declared) is returned
+        with pytest.raises(ValueError, match="output/y dtype float32 does not conform to int32"):
+            apply(Normal("y", 0, 1), RecordSpec(y=NumericArraySpec((), dtype="int32")))
+        with pytest.raises(ValueError, match="output/y support real does not conform to positive"):
+            apply(Normal("y", 0, 1), RecordSpec(y=NumericArraySpec((), support=positive)))
+
+    def test_a_returned_law_with_nested_components_meets_a_nested_template(self):
+        law = ProductDistribution(
+            params=ProductDistribution(a=Normal("a", 0, 1), b=Normal("b", 0, 1)),
+            s=Normal("s", 0, 1),
+        )
+        nested = RecordSpec(params=RecordSpec(a=(), b=()), s=())
+        assert Function(func=lambda: law, output_template=nested).apply() is law
+        with pytest.raises(ValueError, match=r"output/params spec .* does not conform to"):
+            Function(func=lambda: law, output_template=RecordSpec(params=(2,), s=())).apply()
 
     @pytest.mark.parametrize(
         ("support", "valid", "invalid"),
@@ -441,11 +452,8 @@ class TestApplyContract:
             jax.jit(wrapped.apply)(jnp.asarray(1.0))
 
     def test_input_template_support_remains_descriptive_for_lifting(self):
-        class SupportAnnotatedNormal(Normal):
-            @property
-            def event_template(self):
-                return RecordSpec(x=NumericArraySpec((), support=real))
-
+        # A Normal declares its support as real, which the declared positive
+        # support describes rather than constrains.
         wrapped = Function(
             func=lambda x: x,
             input_template=RecordSpec(x=NumericArraySpec((), support=positive)),
@@ -454,7 +462,7 @@ class TestApplyContract:
         )
 
         with workflow_run(seed=0):
-            result = wrapped(SupportAnnotatedNormal("x", 0, 1))
+            result = wrapped(Normal("x", 0, 1))
 
         assert result.num_atoms == 5
 
@@ -465,9 +473,9 @@ class TestApplyContract:
     )
     def test_sampling_lift_does_not_flatten_record_structure(self, template):
         class StructuredNormal(Normal):
-            @property
-            def event_template(self):
-                return template
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self._init_declaration(template)
 
             def _sample(self, key, sample_shape=()):
                 raise AssertionError("An incompatible schema must be rejected before sampling")
@@ -491,9 +499,9 @@ class TestApplyContract:
         from probpipe.core._function_contract import _bind_planned_function_inputs
 
         class StructuredNormal(Normal):
-            @property
-            def event_template(self):
-                return template
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self._init_declaration(template)
 
         declared = RecordSpec(v=template)
         bound, bindings = _bind_planned_function_inputs(
@@ -699,7 +707,7 @@ class TestApplyContract:
         assert wrapped.apply(1) is matching
 
         mismatching = Normal("other", 0, 1)
-        with pytest.raises(ValueError, match="does not exactly match declared concrete template"):
+        with pytest.raises(ValueError, match=r"fields \['other'\] do not match template fields"):
             Function(
                 func=lambda x: mismatching,
                 output_template=matching.event_template,
@@ -856,7 +864,7 @@ class TestSymbolicCalls:
         assert regression_function.input_template is declaration
         assert declaration == RecordSpec(X=("obs", "p"), p=("p",))
 
-    def test_template_less_distribution_array_reports_lifting_contract(self):
+    def test_a_distribution_array_of_laws_is_not_an_array_input(self):
         def identity(x):
             return x
 
@@ -872,15 +880,8 @@ class TestSymbolicCalls:
             ]
         )
 
-        assert values.event_template is None
-        with pytest.raises(
-            ValueError,
-            match=(
-                r"Function 'identity' input 'x' states no element specification for "
-                r"lifting: a DistributionArray reports neither an element_spec nor an "
-                r"event_template"
-            ),
-        ):
+        # Each cell is a law, which an array input does not admit.
+        with pytest.raises(ValueError, match=r"input/x does not conform to its field spec"):
             wrapped(values)
 
     def test_repeated_input_symbol_conflict_has_function_path(self, regression_function):
@@ -1123,19 +1124,17 @@ class TestSymbolicCalls:
             np.ones(8),
         )
 
-    def test_distribution_broadcast_rejects_incomplete_intrinsic_template(self):
+    def test_distribution_broadcast_rejects_mismatching_declared_metadata(self):
+        # A Normal declares its support as real, not the template's positive.
         wrapped = Function(
             func=lambda x: Normal("y", x, 1),
             input_template=RecordSpec(x=()),
-            output_template=RecordSpec(y=NumericArraySpec((), support=real)),
+            output_template=RecordSpec(y=NumericArraySpec((), support=positive)),
             dispatch="sequential",
             n_broadcast_samples=8,
         )
 
-        with pytest.raises(
-            ValueError,
-            match="does not exactly match declared concrete template",
-        ):
+        with pytest.raises(ValueError, match="output/y support real does not conform to positive"):
             wrapped(Normal("x", 0, 1))
 
     def test_distribution_outputs_keep_declared_template_through_sweep(self):
