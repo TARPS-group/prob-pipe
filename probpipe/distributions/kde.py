@@ -160,24 +160,21 @@ class KDEDistribution(TFPDistribution):
         """Number of kernel centres (atoms) backing the KDE."""
         return self._samples.shape[0]
 
-    # -- sampling & density (template-aware overrides) ------------------------
+    # -- sampling & density ---------------------------------------------------
     #
-    # When ``_event_template`` is multi-field, sample output is unflattened
-    # back into ``NumericRecord`` / ``NumericRecordBatch`` keyed by the
-    # template, and log_prob accepts both structured and flat inputs. A KDE
-    # that draws one array falls through to the TFP base class behaviour, so
-    # existing call sites are unchanged.
+    # A KDE that declares a record unflattens its draws into ``NumericRecord``
+    # / ``NumericRecordBatch``, and its log_prob accepts structured and flat
+    # inputs alike. A KDE that draws one array behaves as the TFP base class.
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
         flat = self._tfp_dist.sample(seed=key, sample_shape=sample_shape)
-        tpl = getattr(self, "_event_template", None)
-        if tpl is None or len(tpl.fields) <= 1:
+        spec = self.event_spec.spec
+        if isinstance(spec, NumericArraySpec):
             return flat
-        return NumericRecordDistribution.unflatten_value(flat, template=tpl)
+        return NumericRecordDistribution.unflatten_value(flat, template=spec)
 
     def _log_prob(self, value: Any) -> Array:
-        tpl = getattr(self, "_event_template", None)
-        if tpl is not None and len(tpl.fields) > 1:
+        if not isinstance(self.event_spec.spec, NumericArraySpec):
             if isinstance(value, (Record, NumericRecord, NumericRecordBatch)):
                 value = NumericRecordDistribution.flatten_value(value)
         return self._tfp_dist.log_prob(jnp.asarray(value))

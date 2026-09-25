@@ -309,38 +309,33 @@ class NumericRecordDistribution(RecordDistribution, NumericDistribution):
 
     @property
     def treedef(self) -> jax.tree_util.PyTreeDef:
-        """Treedef of one sample, derived from :attr:`event_template`.
+        """Treedef of one sample, derived from the declaration.
 
-        Locks the relationship between the structural template and
-        the sample's pytree shape:
+        Locks the relationship between the declared kind and the sample's
+        pytree structure:
 
-        - Single-leaf template (``len(fields) <= 1``) → a leaf
-          treedef (``jax.tree.structure(None)``). Matches the
-          ``_sample`` contract that single-leaf distributions
-          return a raw ``jax.Array``.
-        - Multi-leaf template → the treedef of a ``NumericRecord``
-          skeleton with the same field names. Matches the
-          ``_sample`` contract that multi-leaf distributions
-          return a ``NumericRecord``.
+        - A law that draws one array → a leaf treedef
+          (``jax.tree.structure(None)``), since ``_sample`` returns a raw
+          ``jax.Array``.
+        - A law that draws a record → the treedef of a ``NumericRecord``
+          skeleton with the same field names, since ``_sample`` returns a
+          ``NumericRecord``.
 
-        Cached on first read; the underlying template is immutable
-        post-construction so the cache is always valid.
+        Cached on first read; the declaration is immutable after
+        construction, so the cache is always valid.
         """
         cached = getattr(self, "_treedef", None)
         if cached is not None:
             return cached
-        # Single-field templates produce a leaf treedef matching the
-        # raw-array ``_sample`` contract, multi-field templates produce a
-        # ``NumericRecord`` skeleton.
-        tpl = self.event_template
-        if len(tpl.fields) <= 1:
+        spec = self.event_spec.spec
+        if isinstance(spec, NumericArraySpec):
             td = jax.tree.structure(None)
         else:
             from .record import Record
 
             placeholder = Record(
                 self.name,
-                {name: jnp.zeros(_field_event_shape(tpl, name)) for name in tpl.fields},
+                {name: jnp.zeros(_field_event_shape(spec, name)) for name in spec.fields},
             )
             td = jax.tree.structure(placeholder)
         object.__setattr__(self, "_treedef", td)
@@ -358,20 +353,14 @@ class NumericRecordDistribution(RecordDistribution, NumericDistribution):
 
     @property
     def event_size(self) -> int:
-        """Total number of scalar elements in one sample.
+        """Total number of scalar elements in one sample, the declaration's ``vector_size``.
 
-        For a :class:`NumericRecordSpec` this is the cached
-        ``vector_size``. For a general ``RecordSpec``, sums the
-        numeric-leaf shapes; opaque leaves contribute zero.
+        Raises
+        ------
+        ValueError
+            If the declaration has unbound dimensions.
         """
-        from ._specs import NumericRecordSpec
-
-        tpl = self.event_template
-        if isinstance(tpl, NumericRecordSpec):
-            return tpl.vector_size
-        return sum(
-            prod(shape) if shape else 1 for shape in tpl.leaf_shapes.values() if shape is not None
-        )
+        return self.event_spec.spec.vector_size
 
     @staticmethod
     def flatten_value(value, *, event_shape: tuple[int, ...] = ()) -> Array:
@@ -400,28 +389,22 @@ class NumericRecordDistribution(RecordDistribution, NumericDistribution):
 
     @staticmethod
     def unflatten_value(flat, *, template):
-        """Unflatten a flat trailing axis back to event dims, a record, or a batch.
+        """Unflatten a flat trailing axis back to what *template* declares.
 
-        Multi-field templates → ``NumericRecord`` (single sample, i.e.
-        ``flat.ndim == 1``) or ``NumericRecordBatch`` (batched). Single-
-        field templates → raw array reshaped to ``(*batch, *event_shape)``
-        for ``_log_prob`` compatibility (preserves the original "single-
-        leaf returns raw array" contract).
+        *template* is a law's declared term. An array spec rebuilds a raw
+        array of shape ``(*batch, *shape)``, as a law drawing one array
+        samples and ``_log_prob`` reads. A record spec rebuilds a
+        ``NumericRecord`` from a 1-D *flat* and a ``NumericRecordBatch`` from
+        a batched one, whatever its number of fields.
         """
         flat = jnp.asarray(flat)
-        if template is not None and len(template.fields) > 1:
-            from ._numeric_record import _reconstruct_from_vector
+        if isinstance(template, NumericArraySpec):
+            return flat.reshape(*flat.shape[:-1], *template.shape)
+        from ._numeric_record import _reconstruct_from_vector
 
-            # ``_reconstruct_from_vector`` selects single (NumericRecord) vs
-            # batched (NumericRecordBatch) from the rank of ``flat``.
-            return _reconstruct_from_vector("value", template, flat)
-        # Single-field path
-        if template is None or not template.fields:
-            return flat[..., 0]
-        es = _field_event_shape(template, template.fields[0])
-        if not es:
-            return flat[..., 0]
-        return flat.reshape(*flat.shape[:-1], *es)
+        # ``_reconstruct_from_vector`` selects single (NumericRecord) vs
+        # batched (NumericRecordBatch) from the rank of ``flat``.
+        return _reconstruct_from_vector("value", template, flat)
 
     def as_flat_distribution(self) -> FlatNumericRecordDistribution:
         """View this distribution as a flat distribution.
@@ -739,10 +722,7 @@ def _flattened_distribution_view_class_for_base(base: Distribution) -> type:
 
         def _log_prob(self, x: ArrayLike) -> Array:
             x = jnp.asarray(x)
-            value = self._base.unflatten_value(
-                x,
-                template=self._base.event_template,
-            )
+            value = self._base.unflatten_value(x, template=self._base.event_spec.spec)
             return self._base._log_prob(value)
 
         extra_methods["_log_prob"] = _log_prob
@@ -825,7 +805,7 @@ class FlattenedDistributionView(FlatNumericRecordDistribution):
         """Convenience: unflatten a flat sample back to the pytree structure."""
         return self._base.unflatten_value(
             jnp.asarray(flat_sample),
-            template=self._base.event_template,
+            template=self._base.event_spec.spec,
         )
 
     def __repr__(self) -> str:
@@ -898,7 +878,7 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
             # ``_reconstruct_from_vector`` selects single (NumericRecord, flat
             # is 1-D) vs batched (NumericRecordBatch, batch_shape ==
             # sample_shape) from the rank of ``flat``.
-            return _reconstruct_from_vector(self.name, self.event_template, flat)
+            return _reconstruct_from_vector(self.name, self.event_spec.spec, flat)
 
         extra_methods["_sample"] = _sample
 
@@ -910,10 +890,7 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
                 flat = x.to_vector()
             else:
                 flat = jnp.asarray(x)
-            value = self._base.unflatten_value(
-                flat,
-                template=self._base.event_template,
-            )
+            value = self._base.unflatten_value(flat, template=self._base.event_spec.spec)
             return self._base._log_prob(value)
 
         extra_methods["_log_prob"] = _log_prob
@@ -928,7 +905,7 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
                 self._base._mean(),
                 event_shape=self._base.event_shape,
             )
-            return _reconstruct_from_vector(self.name, self.event_template, flat)
+            return _reconstruct_from_vector(self.name, self.event_spec.spec, flat)
 
         extra_methods["_mean"] = _mean
 
@@ -942,7 +919,7 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
                 self._base._variance(),
                 event_shape=self._base.event_shape,
             )
-            return _reconstruct_from_vector(self.name, self.event_template, flat)
+            return _reconstruct_from_vector(self.name, self.event_spec.spec, flat)
 
         extra_methods["_variance"] = _variance
 
@@ -998,7 +975,7 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
                 base_samples,
                 event_shape=self._base.event_shape,
             )
-            template = self.event_template
+            template = self.event_spec.spec
             dist_name = self.name
 
             def _f_on_flat(flat_row):
@@ -1093,7 +1070,7 @@ class NumericRecordDistributionView(NumericRecordDistribution):
     def __repr__(self) -> str:
         return (
             f"NumericRecordDistributionView(base={type(self._base).__name__}, "
-            f"template={self.event_template!r})"
+            f"event_spec={self.event_spec.spec!r})"
         )
 
 

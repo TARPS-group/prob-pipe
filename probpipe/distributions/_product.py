@@ -370,14 +370,7 @@ class ProductDistribution(
             flat = jnp.asarray(value)
             if flat.ndim == 0:
                 flat = flat[None]
-            value = self.unflatten_value(flat, template=self.event_template)
-            # Single-field templates return a raw array (preserving the
-            # "single-leaf returns raw" contract on the static method);
-            # the tree-map below expects a per-field structure, so
-            # re-key it under the lone field name.
-            if isinstance(value, jnp.ndarray):
-                (field_name,) = self.event_template.fields
-                value = {field_name: value}
+            value = self.unflatten_value(flat, template=self.event_spec.spec)
         if isinstance(value, RecordBatch):
             # Leaf-keyed columns, re-nested, so the tree map below pairs each
             # column with the component that declared it.
