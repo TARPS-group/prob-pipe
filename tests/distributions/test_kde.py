@@ -22,6 +22,7 @@ from probpipe import (
     Record,
     RecordSpec,
     real,
+    sample,
 )
 from probpipe.core._empirical import RecordEmpiricalDistribution
 from probpipe.core._numeric_record import NumericRecord as _NumericRecord
@@ -63,33 +64,32 @@ class TestRecordSpecConstructor:
         with pytest.raises(ValueError, match="vector_size"):
             KDEDistribution("bad", flat_samples, event_spec=bad_tpl)
 
-    def test_a_one_field_record_draws_an_array(self, flat_samples):
-        """A record with one field declares an array under the name, as no
-        record does."""
-        single = RecordSpec(theta=(2,))
-        kde = KDEDistribution(
-            "post",
-            flat_samples,
-            event_spec=single,
+    def test_a_one_field_record_is_declared_as_a_record(self, flat_samples):
+        kde = KDEDistribution("post", flat_samples, event_spec=RecordSpec(theta=(2,)))
+        assert kde.event_spec == OutputSpec(
+            RecordSpec(theta=NumericArraySpec((2,), "float32", real))
         )
-        assert kde.event_spec == OutputSpec(post=NumericArraySpec((2,), "float32", real))
+        assert isinstance(sample(kde, key=jax.random.PRNGKey(0)), NumericRecord)
 
-    def test_a_whole_term_of_the_drawn_shape_is_declared_under_the_name(self, flat_samples):
-        kde = KDEDistribution(
-            "post", flat_samples, event_spec=OutputSpec(theta=NumericArraySpec((2,)))
-        )
-        assert kde.event_spec == OutputSpec(post=NumericArraySpec((2,), "float32", real))
+    def test_a_whole_term_is_completed_under_its_component(self, flat_samples):
+        kde = KDEDistribution("post", flat_samples, event_spec=OutputSpec(theta=None))
+        assert kde.event_spec == OutputSpec(theta=NumericArraySpec((2,), "float32", real))
 
     @pytest.mark.parametrize(
-        "event_spec",
+        ("event_spec", "message"),
         [
-            pytest.param(OutputSpec(theta=NumericArraySpec((1, 2))), id="whole-term"),
-            pytest.param(RecordSpec(theta=(3,)), id="one-field-record"),
+            pytest.param(
+                OutputSpec(theta=NumericArraySpec((1, 2))),
+                "Declared component 'theta' has rank 1",
+                id="whole-term",
+            ),
+            pytest.param(RecordSpec(theta=(3,)), "vector_size", id="one-field-record"),
         ],
     )
-    def test_a_declaration_of_another_shape_is_refused(self, flat_samples, event_spec):
-        # Only a record with several fields gives the draws a structure.
-        with pytest.raises(ValueError, match=r"draws arrays of shape \(2,\)"):
+    def test_a_declaration_the_draws_do_not_match_is_refused(
+        self, flat_samples, event_spec, message
+    ):
+        with pytest.raises(ValueError, match=message):
             KDEDistribution("post", flat_samples, event_spec=event_spec)
 
     def test_without_a_record_one_draw_is_an_array_under_the_name(self, flat_samples):
