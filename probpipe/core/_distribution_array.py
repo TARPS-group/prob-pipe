@@ -154,12 +154,14 @@ def _cell_declaration(cells: tuple[Distribution, ...], name: str) -> OutputSpec:
         return OutputSpec(**{name: OpaqueSpec()})
     first = declarations[0]
     if all(
-        d._component_name == first._component_name and _same_term(d.spec, first.spec)
+        d.exposes_record == first.exposes_record
+        and tuple(d.components) == tuple(first.components)
+        and _same_term(d.spec, first.spec)
         for d in declarations[1:]
     ):
         return first
     spec = _shared_term([d.spec for d in declarations])
-    if first._component_name is None:
+    if first.exposes_record:
         return OutputSpec(cast(RecordSpec, spec))
     return OutputSpec(**{name: spec})
 

@@ -84,10 +84,8 @@ def _complete_event_spec(event_spec: Any, name: str) -> OutputSpec:
     """
     if isinstance(event_spec, OutputSpec):
         declaration = event_spec
-    elif isinstance(event_spec, RecordSpec):
-        declaration = OutputSpec(event_spec)
     elif isinstance(event_spec, TermSpec):
-        declaration = OutputSpec(**{name: event_spec})
+        declaration = OutputSpec.default(event_spec, component=name)
     else:
         raise TypeError(
             f"event_spec must be an OutputSpec or a TermSpec, got {type(event_spec).__name__}"
@@ -102,7 +100,10 @@ def _complete_event_spec(event_spec: Any, name: str) -> OutputSpec:
 
 def _whole_term_component(declaration: OutputSpec) -> str | None:
     """The component of a whole-term declaration, or None for an exposed record."""
-    return declaration._component_name
+    if declaration.exposes_record:
+        return None
+    (component,) = declaration.components
+    return component
 
 
 def _declares_numeric_event(value: Any) -> bool:
