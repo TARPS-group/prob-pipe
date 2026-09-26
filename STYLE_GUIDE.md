@@ -264,10 +264,10 @@ inside a `Record`; use a non-mapping container if you need one leaf.
 
 **Renaming fields.** `with_path_names(old=new, ...)` returns a
 same-family tree with the given nodes (leaves or whole subtrees)
-renamed. Keys are node paths, or bare names when unambiguous — a bare
-name resolves to the unique node so named and raises `ValueError`
-when the tree contains it more than once. It renames fields *within*
-the tree; renaming the object itself is `with_name`.
+renamed. Each key is the exact path of a node, so a single name
+addresses a top-level node and a nested node takes its full path. It
+renames fields *within* the tree; renaming the object itself is
+`with_name`.
 
 When adding new Record-based containers, follow these conventions:
 preserve first-appearance order, reject `/` in field names, materialize

@@ -35,16 +35,25 @@ inputs = InputSpec(data=NumericArraySpec(("n", "p")))
 whole_array = OutputSpec(beta=beta)
 pending_type = OutputSpec(beta=None)
 one_field_record = OutputSpec(RecordSpec(beta=beta))
-record_fields = OutputSpec(beta=beta, sigma=sigma)
+record_fields = OutputSpec(RecordSpec(beta=beta, sigma=sigma))
 whole_record = OutputSpec(parameters=RecordSpec(beta=beta, sigma=sigma))
 ```
 
-The single-keyword form describes the whole returned value; it inserts no
-single-field record. The positional record form exposes immediate children
-regardless of field count. `spec` and `components` are read-only derived views;
-nested records stay nested. Only a single named whole value can carry a `None`
-type hole. Replace that declaration with the same component name and a known
-spec when the type becomes available.
+The keyword form takes one keyword, which names the whole returned value.
+The positional record form exposes immediate
+children, while `spec`, `components`, and `exposes_record`
+are read-only derived views. Only a named whole
+value can carry a `None` type hole.
+
+A producer completes a declaration with the spec of the term it returns.
+`with_spec(spec)` returns the declaration with its type set to `spec`: it fills
+a pending type and checks a declared type against `spec`.
+`OutputSpec.default(spec, component=c)` is the declaration a producer uses when
+it is given none: `OutputSpec(spec)` if `spec` is a `RecordSpec`, whose fields
+become the components, and `OutputSpec(**{c: spec})` otherwise.
+A declaration's paths start with a component, so the `whole_record` declaration
+has the paths `parameters`, `parameters/beta`, and `parameters/sigma`.
+`with_path_names` renames nodes by these paths and keeps the packaging.
 
 Symbolic dimensions share one scope across nested specs and input slots.
 `TermSpec`, `InputSpec`, and `OutputSpec` provide `with_dim_sizes` to substitute

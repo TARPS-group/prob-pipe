@@ -100,7 +100,7 @@ if it were user-guide reference text.
 | `NumericDistribution` (membership read from the declaration; `dtypes`, `supports`, `dtype`, and `support` belong to numeric laws only) | docstrings in `probpipe/distributions/_distribution.py`; design III.7 |
 | `DistributionSpec` (the distribution kind's declaration) | docstrings in `probpipe/distributions/_distribution.py`; design III.7 |
 | `FunctionSpec` (the callable kind's declaration) | docstrings in `probpipe/core/_kind_specs.py`; design III.3 |
-| `InputSpec` / `OutputSpec` (slots, component exposure, type holes) | docstrings in `probpipe/core/_specs.py`; design II.2 |
+| `InputSpec` / `OutputSpec` (slots, component exposure, paths, type holes, completion) | docstrings in `probpipe/core/_specs.py`; design II.2 |
 | `RecordSpec` / `NumericRecordSpec` (the record kind spec is its schema) | docstrings in `probpipe/core/_record_spec.py`; design III.5 |
 | the kind table (which tracked class and which batch form each value spec has) | docstrings in `probpipe/core/_kinds.py` |
 | `NumericArray` / `Opaque` (the tracked classes of the two raw-value kinds) | docstrings in `probpipe/core/_numeric_array.py`, `_opaque.py` |

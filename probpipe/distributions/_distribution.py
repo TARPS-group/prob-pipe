@@ -65,9 +65,9 @@ def _complete_event_spec(event_spec: Any, name: str) -> OutputSpec:
     event_spec : OutputSpec or TermSpec
         The declaration a constructor supplies. A ``RecordSpec`` exposes its
         fields, even when it has one; any other term spec is a whole term whose
-        component is *name*; an ``OutputSpec`` is kept as given.
+        component defaults to *name*; an ``OutputSpec`` is kept as given.
     name : str
-        The law's name, captured as the component of a whole-term event.
+        The law's name, the default component of a whole-term event.
 
     Returns
     -------
@@ -195,8 +195,8 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     **The event declaration.** A law stores one ``DistributionSpec``, its
     :attr:`spec`, whose :attr:`event_spec` is the output declaration of one
     draw. A bare ``RecordSpec`` exposes its fields; any other term spec is a
-    whole-term event whose component is the law's ``name``, captured once, so
-    ``with_name`` never moves it. :attr:`event_shape` reads the declaration, and
+    whole-term event whose component defaults to the law's ``name``, captured
+    once at construction. :attr:`event_shape` reads the declaration, and
     a law whose declaration is numeric also has the views of
     :class:`NumericDistribution`; none of them is stored.
 
@@ -212,8 +212,8 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     TypeError
         If *name* is not a non-empty string, or *event_spec* is not a spec.
     ValueError
-        If *event_spec* has a type hole, or a whole-term event's component, the
-        name, is not a valid component name.
+        If *event_spec* has a type hole, or it is a bare term spec other than a
+        record and *name* is not a valid component name.
     """
 
     # -- Immutability: deferred for this layer ------------------------------

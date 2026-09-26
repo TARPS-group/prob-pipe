@@ -971,7 +971,7 @@ _FAMILY_SCHEMAS = [
 
 
 class TestFamilyDeclarations:
-    """A TFP family declares one draw as a whole-term array under its name."""
+    """A TFP family declares one draw as a whole-term array whose component defaults to its name."""
 
     @pytest.mark.parametrize(("make", "shape", "dtype", "support"), _FAMILY_SCHEMAS)
     def test_the_schema_views_read_the_declaration(self, make, shape, dtype, support):
