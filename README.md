@@ -55,8 +55,8 @@ damage = jnp.asarray(df["damage"].values, dtype=jnp.float32)
 # --- 1. Build a model with named parameters ---
 likelihood = GLMLikelihood(tfp_glm.Bernoulli(), temperature)
 prior = ProductDistribution(
-    intercept=Normal(loc=0.0, scale=10.0, name="intercept"),
-    slope=Normal(loc=0.0, scale=1.0, name="slope"),
+    intercept=Normal("intercept", 0.0, 10.0),
+    slope=Normal("slope", 0.0, 1.0),
 )
 model = SimpleModel(prior, likelihood)
 
@@ -219,5 +219,3 @@ If you use ProbPipe in your research, please cite it:
 
 See the **[citation page](https://tarps-group.github.io/prob-pipe/cite/)** for
 version-specific DOIs and how to cite the inference backends ProbPipe builds on.
-
-

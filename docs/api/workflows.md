@@ -67,7 +67,7 @@ wrapped function's own `seed` parameter remains an ordinary input.
 ```python
 from probpipe import Normal, sample, workflow_run
 
-dist = Normal(loc=0.0, scale=1.0, name="value")
+dist = Normal("value", 0.0, 1.0)
 
 with workflow_run(seed=42):
     first = sample(dist)

@@ -427,12 +427,12 @@ class Normal(TFPDistribution):
 
     Parameters
     ----------
+    name : str
+        Distribution name.
     loc : array-like
         Mean of the distribution.
     scale : array-like
         Standard deviation (> 0).
-    name : str
-        Distribution name (required for leaf distributions).
     """
 ```
 
@@ -732,7 +732,7 @@ Define reusable fixtures at module scope:
 ```python
 @pytest.fixture
 def normal():
-    return Normal(loc=2.0, scale=0.5, name="x")
+    return Normal("x", 2.0, 0.5)
 ```
 
 Use `@pytest.fixture(params=...)` for parametrized testing across
