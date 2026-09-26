@@ -76,7 +76,7 @@ class _RecordMarginal(RecordEmpiricalDistribution):
         *,
         log_weights: Array | Weights | None = None,
         name: str | None = None,
-        event_template: RecordSpec | None = None,
+        output_template: RecordSpec | None = None,
     ):
         # A batch of records holds its rows axis in the batch, and the merged
         # constructor wants one row per batch index, so peel it: the leaves keep
@@ -98,14 +98,11 @@ class _RecordMarginal(RecordEmpiricalDistribution):
                 else "marginal"
             )
         super().__init__(name, samples, weights=weights, log_weights=log_weights)
-        if event_template is not None:
-            self._event_template = event_template
-        elif template is not None:
-            # Preserve the exact template the batch carried.
-            self._event_template = template
-        if event_template is not None or template is not None:
-            # The kept template is what a draw is declared as.
-            self._init_declaration(_atom_declaration(self._event_template, self._record_data))
+        # The declared output template, else the exact one the batch carried,
+        # is what a draw is declared as.
+        record = output_template if output_template is not None else template
+        if record is not None:
+            self._init_declaration(_atom_declaration(record, self._record_data))
 
     def __repr__(self):
         return (
@@ -132,7 +129,6 @@ class _MixtureMarginal(Distribution):
         *,
         log_weights: Array | Weights | None = None,
         name: str | None = None,
-        event_template: RecordSpec | None = None,
     ):
         n = len(components)
         self._components = components
@@ -143,7 +139,6 @@ class _MixtureMarginal(Distribution):
         # A draw is one component's draw.
         super().__init__(name, _cell_declaration(tuple(components), name))
         self._approximate = True
-        self._event_template = event_template
 
     @property
     def num_atoms(self) -> int:
@@ -156,11 +151,6 @@ class _MixtureMarginal(Distribution):
     @property
     def weights(self) -> Array:
         return self._w.normalized
-
-    @property
-    def event_template(self) -> RecordSpec | None:
-        """Authoritative template shared by the mixture components."""
-        return self._event_template
 
     def __repr__(self):
         return f"MarginalizedBroadcastDistribution(mixture, num_atoms={self.num_atoms})"
@@ -280,7 +270,6 @@ def _make_mixture_marginal(
     weights: Array | Weights | None = None,
     *,
     name: str | None = None,
-    event_template: RecordSpec | None = None,
 ) -> _MixtureMarginal:
     """Factory that builds a mixture marginal with dynamic protocol support.
 
@@ -312,7 +301,6 @@ def _make_mixture_marginal(
             components,
             weights,
             name=name,
-            event_template=event_template,
         )
     return obj
 
@@ -489,7 +477,7 @@ def _make_marginal(
     *,
     output_distributions: list | None = None,
     name: str | None = None,
-    event_template: RecordSpec | None = None,
+    output_template: RecordSpec | None = None,
 ) -> MarginalizedBroadcastDistribution:
     """Factory to construct the appropriate marginal subtype."""
     if output_distributions is not None:
@@ -497,28 +485,27 @@ def _make_marginal(
             output_distributions,
             weights,
             name=name,
-            event_template=event_template,
         )
 
-    if event_template is not None and isinstance(output_samples, list):
+    if output_template is not None and isinstance(output_samples, list):
         from ._function_contract import _wrap_declared_function_output
 
         output_samples = [
             _wrap_declared_function_output(
                 output,
                 function_name=name or "marginal",
-                output_template=event_template,
+                output_template=output_template,
             )
             for output in output_samples
         ]
 
-    if event_template is not None and isinstance(output_samples, jnp.ndarray):
-        if len(event_template) != 1:
+    if output_template is not None and isinstance(output_samples, jnp.ndarray):
+        if len(output_template) != 1:
             raise ValueError(
-                "bare array aggregation requires a single-leaf event_template; "
+                "bare array aggregation requires a single-leaf output_template; "
                 "authoritative Function outputs must be wrapped before aggregation"
             )
-        only_path = next(iter(event_template.keys()))
+        only_path = next(iter(output_template.keys()))
         output_samples = Record(
             name or "marginal",
             {only_path: output_samples},
@@ -541,7 +528,7 @@ def _make_marginal(
             output_samples,
             weights,
             name=name,
-            event_template=event_template,
+            output_template=output_template,
         )
 
     # Record with batched leaves (e.g., from jax.vmap over a Record-returning fn).
@@ -557,7 +544,7 @@ def _make_marginal(
                     output_samples,
                     weights,
                     name=name,
-                    event_template=event_template,
+                    output_template=output_template,
                 )
 
     if isinstance(output_samples, jnp.ndarray):
@@ -565,20 +552,20 @@ def _make_marginal(
             output_samples,
             weights,
             name=name or "marginal",
-            event_template=event_template,
+            output_template=output_template,
         )
 
     if isinstance(output_samples, list):
         if output_samples and all(isinstance(r, Record) for r in output_samples):
             try:
-                if event_template is not None:
+                if output_template is not None:
                     aggregate = _stack_declared_columns(
                         name or "marginal",
                         output_samples,
                         batch_shape=(len(output_samples),),
                         axes_per_level=(1,),
                         level_names=(DRAW_LEVEL,),
-                        template=event_template,
+                        template=output_template,
                     )
                 else:
                     aggregate = RecordBatch.stack(output_samples, level_name=DRAW_LEVEL)
@@ -586,7 +573,7 @@ def _make_marginal(
                     aggregate,
                     weights,
                     name=name,
-                    event_template=event_template,
+                    output_template=output_template,
                 )
             except (ValueError, TypeError):
                 pass
@@ -596,7 +583,7 @@ def _make_marginal(
                 stacked,
                 weights,
                 name=name or "marginal",
-                event_template=event_template,
+                output_template=output_template,
             )
         except (ValueError, TypeError):
             pass
@@ -605,7 +592,6 @@ def _make_marginal(
                 output_samples,
                 weights,
                 name=name,
-                event_template=event_template,
             )
         return _ListMarginal(output_samples, weights, name=name)
 
@@ -615,7 +601,7 @@ def _make_marginal(
         arr,
         weights,
         name=name or "marginal",
-        event_template=event_template,
+        output_template=output_template,
     )
 
 
@@ -758,7 +744,7 @@ def _make_stack(
     axis_groups: tuple[tuple[int, ...], ...] | None = None,
     name: str | None = None,
     field_name: str,
-    event_template: RecordSpec | None = None,
+    output_template: RecordSpec | None = None,
 ) -> Any:
     """Wrap inner Function outputs as a shape-``batch_shape``
     aggregate.
@@ -867,11 +853,11 @@ def _make_stack(
         # sweep that *expects* zero rows takes this path — an empty list where
         # rows were expected is a missing-output error, and fabricating the
         # declared fields would hide it.
-        if not inner_outputs and n_total == 0 and event_template is not None:
+        if not inner_outputs and n_total == 0 and output_template is not None:
             return _empty_declared_stack(
                 result_name,
                 batch_shape,
-                template=event_template,
+                template=output_template,
                 level_names=level_names,
                 axes_per_level=_ranks_of(sweep_groups),
             )
@@ -882,14 +868,14 @@ def _make_stack(
                 f"(batch_shape={batch_shape})."
             )
         outs: Any = inner_outputs
-        if event_template is not None:
+        if output_template is not None:
             from ._function_contract import _wrap_declared_function_output
 
             outs = [
                 _wrap_declared_function_output(
                     output,
                     function_name=field_name,
-                    output_template=event_template,
+                    output_template=output_template,
                 )
                 for output in outs
             ]
@@ -961,14 +947,14 @@ def _make_stack(
         # columns manually so non-numeric leaves (strings, xarray objects, ...)
         # survive.
         if outs and all(isinstance(o, Record) for o in outs):
-            if event_template is not None:
+            if output_template is not None:
                 return _stack_declared_columns(
                     result_name,
                     outs,
                     batch_shape=batch_shape,
                     axes_per_level=_ranks_of(sweep_groups),
                     level_names=level_names,
-                    template=event_template,
+                    template=output_template,
                 )
             # Stack flat, then reshape the leading axis to batch_shape.
             try:
@@ -1021,7 +1007,7 @@ def _make_stack(
                 outs,
                 batch_shape=batch_shape,
                 name=name,
-                event_template=event_template,
+                output_template=output_template,
             )
 
         # Numeric scalars / arrays → the batch form of their own kind, with the
@@ -1119,13 +1105,13 @@ def _make_stack(
                 f"(batch_shape={batch_shape})."
             )
         event_shape = tuple(inner_outputs.shape[1:])
-        if event_template is not None:
-            if len(event_template) != 1:
+        if output_template is not None:
+            if len(output_template) != 1:
                 raise ValueError(
-                    "bare array aggregation requires a single-leaf event_template; "
+                    "bare array aggregation requires a single-leaf output_template; "
                     "authoritative Function outputs must be wrapped before aggregation"
                 )
-            output_field = next(iter(event_template.keys()))
+            output_field = next(iter(output_template.keys()))
             batched_record = Record(
                 result_name,
                 {output_field: inner_outputs},
@@ -1136,7 +1122,7 @@ def _make_stack(
                 batch_shape=batch_shape,
                 axes_per_level=_ranks_of(sweep_groups),
                 level_names=level_names,
-                template=event_template,
+                template=output_template,
             )
         return NumericArrayBatch(
             result_name,
@@ -1150,21 +1136,21 @@ def _make_stack(
     # (each leaf has leading axis n_total). Promote it to a batch — numeric when
     # every leaf is — with the leading axis reshaped to batch_shape.
     if isinstance(inner_outputs, Record) and inner_outputs.children:
-        if event_template is not None:
+        if output_template is not None:
             return _stack_declared_columns(
                 result_name,
                 inner_outputs,
                 batch_shape=batch_shape,
                 axes_per_level=_ranks_of(sweep_groups),
                 level_names=level_names,
-                template=event_template,
+                template=output_template,
             )
         # Leaf-keyed, so a nested output is one column per leaf and needs no
         # flattening by the caller.
         paths = list(inner_outputs.event_template)
         resolved = [inner_outputs[path] for path in paths]
         if all(hasattr(v, "shape") and v.shape[:1] == (n_total,) for v in resolved):
-            tpl = event_template or RecordSpec(
+            tpl = output_template or RecordSpec(
                 dict(zip(paths, (v.shape[1:] for v in resolved), strict=True))
             )
             columns = {
@@ -1475,7 +1461,7 @@ class BroadcastDistribution(Distribution, SupportsSampling):
                 self._output_samples,
                 self._w,
                 output_distributions=self._output_distributions,
-                event_template=self._output_template,
+                output_template=self._output_template,
             )
             if self.provenance is not None and isinstance(marginal, Distribution):
                 marginal.with_provenance(self.provenance)

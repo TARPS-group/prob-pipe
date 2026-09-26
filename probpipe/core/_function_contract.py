@@ -19,7 +19,14 @@ from ._record_spec import (
     _unify_record_spec_with_value,
 )
 from ._spec_base import _full_array_shape_or_none, _unify_specs
-from ._specs import NumericArraySpec, RecordSpec, TermSpec
+from ._specs import (
+    NumericArraySpec,
+    OutputSpec,
+    RecordSpec,
+    TermSpec,
+    _components_record,
+    _matches_output_template,
+)
 from .constraints import _supports_compatible
 from .record import Record
 
@@ -217,30 +224,31 @@ def _lifted_element_spec(
     A :class:`~probpipe.core._batch.Batch` states this uniformly in
     ``element_spec``, at every kind: a batch of records answers with a
     ``RecordSpec``, one of arrays with a ``NumericArraySpec``, one of callables
-    with a ``FunctionSpec``. Reading the record-only ``event_template`` view
-    instead let only a batch of records be swept by a declared function, and made
-    a batch of records satisfy a declaration that named a bare array.
+    with a ``FunctionSpec``. A law's element is one draw of the term that its
+    declaration names.
 
-    Temporary legacy-template adapter (#448): live distributions still carry
-    event templates. The current sampling lift passes a sole immediate field as
-    a bare value when the callable declares a leaf, and as a record for a record declaration.
-    Resolve that legacy packaging here, before strict spec unification. Batch
-    element specs already name their actual kinds and need no adaptation.
-    Remove this unwrapping once live distributions carry OutputSpec declarations.
+    A law declaring a one-field record is swept as its sole field when the
+    callable declares a leaf, since the sampling lift passes that field as a
+    bare value, an interim implementation detail.
     """
     from ._batch import Batch
 
     if isinstance(value, Batch):
         return value.element_spec
-    template = getattr(value, "event_template", None)
-    if isinstance(template, RecordSpec):
-        if not isinstance(expected, RecordSpec) and len(template.children) == 1:
-            return next(iter(template.children.values()))
-        return template
+    declaration = getattr(value, "event_spec", None)
+    if isinstance(declaration, OutputSpec):
+        spec = declaration.spec
+        if (
+            isinstance(spec, RecordSpec)
+            and not isinstance(expected, RecordSpec)
+            and len(spec.children) == 1
+        ):
+            return next(iter(spec.children.values()))
+        return spec
     raise ValueError(
         f"Function {function_name!r} input {name!r} states no element specification for "
         f"lifting: a {type(value).__name__} reports neither an element_spec nor an "
-        f"event_template"
+        f"event declaration"
     )
 
 
@@ -295,7 +303,14 @@ def _validate_function_output(
     # and are validated by their TermSpec (for example, FunctionSpec).
     if isinstance(result, (Record, RecordBatch, Distribution)):
         try:
-            actual_template = cast(Any, result).event_template
+            # A law's record is the one its declared components form, the
+            # comparison the declared output template can make until a
+            # Function declares an output spec, an interim implementation detail.
+            actual_template = (
+                _components_record(result.event_spec)
+                if isinstance(result, Distribution)
+                else cast(Any, result).event_template
+            )
         except (AttributeError, TypeError) as error:
             raise ValueError(
                 f"Function {function_name!r} output does not expose an authoritative event_template"
@@ -305,9 +320,9 @@ def _validate_function_output(
                 f"Function {function_name!r} output does not expose an authoritative event_template"
             )
         if isinstance(result, Distribution):
-            if actual_template != concrete:
+            if not _matches_output_template(result.event_spec, concrete):
                 raise ValueError(
-                    f"Function {function_name!r} output event_template {actual_template!r} "
+                    f"Function {function_name!r} output record {actual_template!r} "
                     f"does not exactly match declared concrete template {concrete!r}"
                 )
             return concrete

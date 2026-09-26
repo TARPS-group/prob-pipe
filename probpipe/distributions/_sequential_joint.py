@@ -18,7 +18,6 @@ import jax.numpy as jnp
 from ..core._numeric_record_distribution import NumericRecordDistribution, _mc_expectation
 from ..core._record_distribution import (
     RecordDistribution,
-    _build_event_template,
     _joint_event_spec,
 )
 from ..core.protocols import (
@@ -228,7 +227,6 @@ class SequentialJointDistribution(
         # the declaration is known only once the callables have resolved.
         self._components = resolved
         super().__init__(name, _joint_event_spec(resolved))
-        self._event_template = _build_event_template(self._components)
 
         # Reparent to the dynamic subclass whose protocol bases match the
         # resolved components' capabilities. Done after component
@@ -273,7 +271,7 @@ class SequentialJointDistribution(
 
     # ``fields`` / ``event_shapes`` are inherited from
     # :class:`RecordDistribution` (one entry per top-level field,
-    # delegated to ``event_template``); ``flatten_value`` /
+    # read from the declaration); ``flatten_value`` /
     # ``unflatten_value`` are inherited from
     # :class:`NumericRecordDistribution` when every leaf is numeric
     # (the dynamic class factory adds the mixin) — otherwise they
@@ -331,7 +329,7 @@ class SequentialJointDistribution(
                 self.name,
                 fields,
                 "sample",
-                element_spec=self.event_template,
+                element_spec=self.event_spec.spec,
                 axes_per_level=(len(sample_shape),),
             )
         return Record(self.name, fields)
@@ -513,7 +511,6 @@ class SequentialJointDistribution(
         # Expose only unconditioned components
         set_attribute("_components", unconditioned_pre)
         result._init_declaration(_joint_event_spec(unconditioned_pre))
-        set_attribute("_event_template", _build_event_template(unconditioned_pre))
 
         result.with_provenance(
             Provenance.create(

@@ -686,24 +686,6 @@ def _concretize_record_spec(
     return template._substitute_dims(bindings)
 
 
-def _schema_carried_by(value: Any, spec: TermSpec, path: str) -> RecordSpec:
-    """The :class:`RecordSpec` *value* carries, for binding *spec* against.
-
-    A value carrying none raises, since the declaration would otherwise stay
-    symbolic with nothing left to resolve it.
-    """
-    try:
-        template = getattr(value, "event_template", None)
-    except TypeError:
-        template = None
-    if not isinstance(template, RecordSpec):
-        raise ValueError(
-            f"{path} declares the polymorphic schema {spec!r}, but "
-            f"{type(value).__name__} exposes no schema to bind it against"
-        )
-    return template
-
-
 def _check_kind_of(around: TermSpec, value: Any, spec: TermSpec, path: str) -> None:
     """Refuse *value* unless it satisfies *spec*'s kind.
 

@@ -712,7 +712,7 @@ class TestDistributionCoverageGaps:
     """Cover the automatic template and ``dtype``/``dtypes`` defaults of numeric distributions."""
 
     def test_the_views_read_a_declared_event(self):
-        """A subclass declares its event, and the template, ``dtypes``, and
+        """A subclass declares its event, and its components, ``dtypes``, and
         ``dtype`` all read that declaration."""
         from probpipe import NumericArraySpec
 
@@ -721,7 +721,7 @@ class TestDistributionCoverageGaps:
                 super().__init__(name, NumericArraySpec((), "float32"))
 
         s = Scalar("s")
-        assert s.event_template.fields == ("s",)
+        assert tuple(s.event_spec.components) == ("s",)
         assert s.dtypes == {"s": jnp.float32}
         assert s.dtype == jnp.float32
 

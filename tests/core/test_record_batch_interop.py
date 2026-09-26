@@ -272,7 +272,7 @@ class TestBroadcastComponents:
 
         marginal = _RecordMarginal(batch, None)
 
-        assert marginal.event_template == batch.event_template
+        assert marginal.event_spec.spec.leaf_shapes == batch.event_template.leaf_shapes
         assert marginal.num_atoms == 4
 
 
@@ -776,7 +776,7 @@ class TestAnEmptySweepIsNotAMissingOutput:
             batch_shape=(0,),
             field_name="fit",
             level_names=("design",),
-            event_template=RecordSpec(y=()),
+            output_template=RecordSpec(y=()),
         )
 
         assert list(out.event_template) == ["y"]
@@ -793,7 +793,7 @@ class TestAnEmptySweepIsNotAMissingOutput:
                 n=3,
                 field_name="fit",
                 level_names=("s",),
-                event_template=RecordSpec(y=()),
+                output_template=RecordSpec(y=()),
             )
 
 

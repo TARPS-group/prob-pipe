@@ -38,7 +38,7 @@ from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._inference_utils import (
     build_likelihood_flat,
     build_mcmc_datatree,
-    extract_event_template,
+    extract_event_spec,
     get_init_state,
     get_prior,
     is_jax_traceable,
@@ -62,7 +62,7 @@ def _gaussian_prior_params(prior: Distribution) -> tuple[Array, Array] | None:
 
     Parameters are returned in the flat-vector layout matching the
     convention used by the other MCMC backends — concatenation in
-    ``event_template.fields`` order for composite priors.
+    the order of the prior's components for composite priors.
 
     Recognises:
 
@@ -70,7 +70,7 @@ def _gaussian_prior_params(prior: Distribution) -> tuple[Array, Array] | None:
       directly.
     * :class:`~probpipe.distributions.JointGaussian` — a named multi-field
       Gaussian *with cross-covariance*. Its ``(mean_vector, covariance)``
-      are already laid out in ``event_template.fields`` order, so they
+      are already laid out in the order of its components, so they
       plug straight in; unlike a ``ProductDistribution`` of Gaussians, the
       off-diagonal cross-field covariance is preserved.
     * :class:`~probpipe.distributions.Normal` — ``(loc, diag(scale**2))``
@@ -254,13 +254,13 @@ def elliptical_slice(
     )
 
     annotations = build_mcmc_datatree(chains, sample_stats, warmup_chains=warmups)
-    event_template = extract_event_template(model)
+    event_spec = extract_event_spec(model)
     return make_posterior(
         chains,
         parents=(prior,),
         algorithm="elliptical_slice",
         annotations=annotations,
-        event_template=event_template,
+        event_spec=event_spec,
         num_results=num_results,
         num_warmup=num_warmup,
         num_chains=num_chains,

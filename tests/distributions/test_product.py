@@ -205,7 +205,7 @@ class TestProductDistribution:
             m=Normal(loc=0.0, scale=1.0, name="m"),
         )
         sup = joint.supports
-        assert set(sup.keys()) == set(joint.event_template.leaf_shapes.keys())
+        assert set(sup.keys()) == set(joint.event_spec.spec.leaf_shapes.keys())
         assert "outer/deep/g" in sup
         assert sup["outer/deep/g"] != sup["outer/a"]  # positive vs real
         assert sup["outer/a"] == sup["m"]  # both real
@@ -239,7 +239,7 @@ class TestFlattenUnflatten:
         assert flat.shape == (2,)
         recovered = joint_xy.unflatten_value(
             flat,
-            template=joint_xy.event_template,
+            template=joint_xy.event_spec.spec,
         )
         assert isinstance(recovered, Record)
         np.testing.assert_allclose(recovered["x"], s["x"], atol=1e-6)
@@ -253,7 +253,7 @@ class TestFlattenUnflatten:
         assert flat.shape == (4,)
         recovered = joint_xz.unflatten_value(
             flat,
-            template=joint_xz.event_template,
+            template=joint_xz.event_spec.spec,
         )
         assert isinstance(recovered, Record)
         np.testing.assert_allclose(recovered["x"], s["x"], atol=1e-6)
@@ -267,7 +267,7 @@ class TestFlattenUnflatten:
         assert flat.shape == (2,)
         recovered = joint_xy.unflatten_value(
             flat,
-            template=joint_xy.event_template,
+            template=joint_xy.event_spec.spec,
         )
         assert isinstance(recovered, Record)
         np.testing.assert_allclose(recovered["x"], s["x"], atol=1e-6)
@@ -326,7 +326,7 @@ class TestNestedSampleFlatten:
 
     def test_batched_nested_flatten_roundtrip(self, nested):
         s = sample(nested, key=jax.random.PRNGKey(1), sample_shape=(6,))
-        leaves = list(nested.event_template.leaf_shapes)
+        leaves = list(nested.event_spec.spec.leaf_shapes)
         flat = s.to_vector()
         assert flat.shape == (6, len(leaves))  # ('outer/a', 'outer/b', 'm')
         # Primary check: flatten places each sampled leaf into its own column in
@@ -336,7 +336,9 @@ class TestNestedSampleFlatten:
         for i, leaf in enumerate(leaves):
             np.testing.assert_allclose(flat[:, i], s[leaf], atol=1e-6)
         # Secondary: the columns round-trip back to the same leaves via unflatten.
-        rec = NumericRecordBatch.from_vector("nrb", nested.event_template, flat, level_names="draw")
+        rec = NumericRecordBatch.from_vector(
+            "nrb", nested.event_spec.spec, flat, level_names="draw"
+        )
         for leaf in leaves:
             np.testing.assert_allclose(rec[leaf], s[leaf], atol=1e-6)
 
@@ -1160,7 +1162,7 @@ class TestNestedProductDistribution:
         assert flat.shape == (3,)
         recovered = nested_joint.unflatten_value(
             flat,
-            template=nested_joint.event_template,
+            template=nested_joint.event_spec.spec,
         )
         assert isinstance(recovered, Record)
         # Check all leaves match
@@ -1409,7 +1411,7 @@ class TestNestedWithMVN:
 
         recovered = nested_mvn.unflatten_value(
             flat,
-            template=nested_mvn.event_template,
+            template=nested_mvn.event_spec.spec,
         )
         assert isinstance(recovered, Record)
         np.testing.assert_allclose(

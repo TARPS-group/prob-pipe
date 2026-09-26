@@ -336,7 +336,7 @@ def _train_offline(
     jitter is added to the simulated observations after simulation (the
     simulator stays untouched). Returns ``(approximator, d_y)``.
     """
-    event_template = _validate_learn_inputs(
+    record = _validate_learn_inputs(
         prior,
         simulator,
         caller=caller,
@@ -349,7 +349,7 @@ def _train_offline(
     )
     # Numeric leaves (slash paths for a nested prior; == fields for a flat one).
     # NLE/NRE feed raw theta to the network, so no bijectors -- just the keying.
-    leaf_keys = tuple(event_template.leaf_shapes)
+    leaf_keys = tuple(record.leaf_shapes)
 
     bf = _import_bayesflow()
     with _isolated_keras_seeding(random_seed):
@@ -430,9 +430,9 @@ def learn_amortized_likelihood(
     Parameters
     ----------
     prior : Distribution
-        Prior over the model parameters; a ``RecordDistribution`` with named
-        fields, which may be nested (a ``ProductDistribution`` of named
-        distributions, possibly nested). Sampled (only) to draw training thetas;
+        Prior over the model parameters; a numeric distribution whose
+        components name them, which may be nested (a ``ProductDistribution``
+        of named distributions, possibly nested). Sampled (only) to draw training thetas;
         constrained and discrete-valued parameter fields are both fine here,
         since theta is a network *input* (whether the downstream sampler can
         handle the prior is the sampler's concern).
@@ -497,7 +497,7 @@ def learn_amortized_likelihood(
         simulated observations reach ``2**23``.
     TypeError
         If a count parameter is not an integer, ``simulator`` lacks
-        ``generate_data``, or ``prior`` is not a ``RecordDistribution``.
+        ``generate_data``, or ``prior`` is not a numeric distribution.
     ImportError
         If the ``[bayesflow]`` extra is not installed.
     """
@@ -560,7 +560,7 @@ def learn_amortized_ratio(
     Parameters
     ----------
     prior : Distribution
-        Prior over the model parameters; a ``RecordDistribution``, possibly
+        Prior over the model parameters; a numeric distribution, possibly
         nested (as in :func:`learn_amortized_likelihood` -- constrained and
         discrete-valued parameter fields are fine, theta is a network input).
     simulator : GenerativeLikelihood
@@ -595,7 +595,7 @@ def learn_amortized_ratio(
         (no minimum observation dimension, unlike NLE).
     TypeError
         If a count parameter is not an integer, ``simulator`` lacks
-        ``generate_data``, or ``prior`` is not a ``RecordDistribution``.
+        ``generate_data``, or ``prior`` is not a numeric distribution.
     ImportError
         If the ``[bayesflow]`` extra is not installed.
     """

@@ -25,7 +25,6 @@ from ..core._numeric_record_distribution import (
 )
 from ..core._record_distribution import (
     RecordDistribution,
-    _build_event_template,
     _joint_event_spec,
     _register_dynamic_subclass,
 )
@@ -275,7 +274,6 @@ class ProductDistribution(
             _provenance=_provenance,
             _annotations=_annotations,
         )
-        self._event_template = _build_event_template(self._components)
 
     def __reduce__(self):
         # Annotations are threaded explicitly: they are written after
@@ -324,7 +322,7 @@ class ProductDistribution(
                 self.name,
                 _sample_columns(self._components, key, sample_shape),
                 "sample",
-                element_spec=self.event_template,
+                element_spec=self.event_spec.spec,
                 axes_per_level=(len(sample_shape),),
             )
 
@@ -370,14 +368,7 @@ class ProductDistribution(
             flat = jnp.asarray(value)
             if flat.ndim == 0:
                 flat = flat[None]
-            value = self.unflatten_value(flat, template=self.event_template)
-            # Single-field templates return a raw array (preserving the
-            # "single-leaf returns raw" contract on the static method);
-            # the tree-map below expects a per-field structure, so
-            # re-key it under the lone field name.
-            if isinstance(value, jnp.ndarray):
-                (field_name,) = self.event_template.fields
-                value = {field_name: value}
+            value = self.unflatten_value(flat, template=self.event_spec.spec)
         if isinstance(value, RecordBatch):
             # Leaf-keyed columns, re-nested, so the tree map below pairs each
             # column with the component that declared it.

@@ -173,7 +173,7 @@ class TestArrayDistFlattenUnflatten:
         flat = vector_mvn.flatten_value(s, event_shape=vector_mvn.event_shape)
         restored = vector_mvn.unflatten_value(
             flat,
-            template=vector_mvn.event_template,
+            template=vector_mvn.event_spec.spec,
         )
         np.testing.assert_allclose(restored, s, atol=1e-6)
 
@@ -186,7 +186,7 @@ class TestArrayDistFlattenUnflatten:
         assert flat.shape == (5, 3)
         restored = vector_mvn.unflatten_value(
             flat,
-            template=vector_mvn.event_template,
+            template=vector_mvn.event_spec.spec,
         )
         np.testing.assert_allclose(restored, samples, atol=1e-6)
 
@@ -196,7 +196,7 @@ class TestArrayDistFlattenUnflatten:
         assert flat.shape == (4,)
         restored = matrix_mvn.unflatten_value(
             flat,
-            template=matrix_mvn.event_template,
+            template=matrix_mvn.event_spec.spec,
         )
         np.testing.assert_allclose(restored, s, atol=1e-6)
 
@@ -254,7 +254,7 @@ class TestFlattenedDistributionView:
             restored,
             vector_mvn.unflatten_value(
                 flat_sample,
-                template=vector_mvn.event_template,
+                template=vector_mvn.event_spec.spec,
             ),
             atol=1e-6,
         )
@@ -541,7 +541,7 @@ class TestCanonicalConvenience:
     def test_treedef_record_for_multi_leaf(self, multi_leaf_dist):
         """Multi-leaf: ``treedef`` matches an operation-derived
         ``NumericRecord`` skeleton with the same field names — locks the
-        relationship between ``event_template`` and the sample pytree.
+        relationship between the declaration and the sample pytree.
         The pytree aux carries the record identity, so the skeleton must
         use the distribution's own name (``"two_field"``), which the
         treedef derives and marks auto."""

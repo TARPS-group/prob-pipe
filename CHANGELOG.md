@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- `event_template` is removed from every distribution, so a law's event
+  declaration is the one schema it records. Read the declaration instead:
+  replace `law.event_template` with `law.event_spec.spec` for a law that draws
+  a record, and read the names of its components from `law.fields`. The
+  declaration's array leaves state their dtypes and supports as well as their
+  shapes.
+  - `KDEDistribution` and `ApproximateDistribution` take `event_spec=` in place
+    of `event_template=`. Each accepts an `OutputSpec` or a bare `RecordSpec`,
+    which exposes its fields.
+  - `unflatten_value(flat, template=...)` takes a law's declared term. An array
+    spec reshapes the trailing axis, and a record spec rebuilds a
+    `NumericRecord` or a `NumericRecordBatch` whatever its number of fields, so
+    a one-field record no longer comes back as a bare array. `treedef` follows
+    the same rule.
+  - A Function with an output template accepts a returned distribution when the
+    record its components form matches the template in fields and shapes, and
+    in each dtype and support that the template sets. Before, the law's
+    `event_template` had to equal the template, and a parametric family's
+    template carried no dtype or support, so a template that set either
+    rejected such a law.
+  - The BayesFlow learners accept a prior whose declaration is numeric,
+    whatever its class, and raise `TypeError` for any other before simulating.
+- `NumericRecord.from_vector` names its second parameter `spec` rather than
+  `template`, as `Numeric.from_vector` does, so a call that passes it by
+  keyword passes `spec=`.
 - A distribution stores the `OutputSpec` of one draw as its event declaration,
   and every schema view reads it.
   - `Distribution.__init__` takes the declaration as the required second
@@ -41,7 +66,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `NumericRecordDistribution` claims the `NumericDistribution` marker. It no
     longer builds a template from `name` and `event_shape`, and its `dtypes`,
     `supports`, and `event_shape` no longer raise `NotImplementedError`.
-    `event_template` is an interim record view of the declaration.
   - `DistributionSpec` takes an `OutputSpec`, completing a bare `RecordSpec` to
     the exposed form, and matches a law by unifying the two declarations. An
     unset dtype accepts any dtype and a set one a same-kind cast, sizes agree,
@@ -430,6 +454,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`Numeric`, the flat-vector interface of the numeric kinds.** `NumericArray`
+  and `NumericRecord` inherit the abstract base `probpipe.Numeric`, which
+  declares `vector_size`, `to_vector`, and `from_vector` and supplies coordinate
+  protocols that present `to_vector()` to NumPy and JAX. The batch forms are
+  not `Numeric`.
+  - `NumericArray` gains the three members. `to_vector()` returns the array's
+    elements as a 1-D vector in row-major order, and
+    `NumericArray.from_vector(name, spec, vec)` rebuilds the array that a
+    `NumericArraySpec` declares from such a vector. `from_vector` raises
+    `TypeError` for a vector that is not 1-D and `ValueError` for one whose
+    length is not `spec.vector_size`. Its coordinate protocols present the
+    array itself, so NumPy and JAX functions see its shape.
+  - `NumericRecord` keeps presenting its sole field to NumPy and JAX for now.
 - **The event declaration on `Distribution`.** `spec` holds a law's
   `DistributionSpec` and `event_spec` its declaration of one draw, which
   `event_shape` reads. `with_dim_sizes` binds and `with_dim_names` renames

@@ -1055,3 +1055,42 @@ class TestUnflattenChecksTheElementItRebuilds:
         _, treedef = jax.tree_util.tree_flatten(self._batch())
 
         assert isinstance(jax.tree_util.tree_unflatten(treedef, [jnp.zeros((3,))]), NumericArray)
+
+
+class TestTheFlatVector:
+    """``to_vector`` lays one array out flat, and ``from_vector`` rebuilds it."""
+
+    def test_the_vector_is_the_array_in_row_major_order(self):
+        x = NumericArray("x", jnp.arange(6.0).reshape(2, 3))
+        assert x.vector_size == 6
+        np.testing.assert_array_equal(x.to_vector(), jnp.arange(6.0))
+
+    def test_a_scalar_is_a_vector_of_one(self):
+        x = NumericArray("x", 2.5)
+        assert x.vector_size == 1
+        assert x.to_vector().shape == (1,)
+
+    def test_from_vector_inverts_to_vector(self):
+        spec = NumericArraySpec((2, 3), jnp.float32)
+        x = NumericArray("x", jnp.arange(6.0, dtype=jnp.float32).reshape(2, 3), spec=spec)
+        rebuilt = NumericArray.from_vector("y", spec, x.to_vector())
+        assert rebuilt.name == "y"
+        assert rebuilt.spec is spec
+        np.testing.assert_array_equal(rebuilt.value, x.value)
+
+    def test_from_vector_casts_to_the_declared_dtype(self):
+        spec = NumericArraySpec((3,), jnp.int32)
+        rebuilt = NumericArray.from_vector("n", spec, jnp.array([1.0, 2.0, 3.0]))
+        assert rebuilt.dtype == np.dtype("int32")
+
+    def test_from_vector_refuses_a_batch_of_vectors(self):
+        with pytest.raises(TypeError, match="1-D vector"):
+            NumericArray.from_vector("x", NumericArraySpec((2,)), jnp.zeros((4, 2)))
+
+    def test_from_vector_refuses_the_wrong_length(self):
+        with pytest.raises(ValueError, match="expected vector_size=6"):
+            NumericArray.from_vector("x", NumericArraySpec((2, 3)), jnp.zeros(5))
+
+    def test_from_vector_needs_bound_dimensions(self):
+        with pytest.raises(ValueError):
+            NumericArray.from_vector("x", NumericArraySpec(("n",)), jnp.zeros(3))

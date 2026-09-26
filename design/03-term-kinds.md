@@ -30,6 +30,17 @@ class NumericArraySpec(NumericSpec):  # the numeric-array kind's spec, a Numeric
 
 It carries the full set of array operators, for example arithmetic and comparison, and the coordinate protocols. Its arithmetic returns tracked terms under a deterministically derived, evaluation-order name, with identity attached as for any operation (II.4).
 
+`NumericArray` implements the `Numeric` interface of II.3. Its vector is the array raveled in row-major order, and its coordinate protocols present the array itself rather than that vector, so NumPy and JAX functions see its shape:
+
+```python
+class NumericArray(TrackedTerm, Numeric):
+    @property
+    def vector_size(self) -> int: ...     # the number of elements
+    def to_vector(self) -> Array: ...     # the array raveled in row-major order
+    @classmethod
+    def from_vector(cls, name: str, spec: NumericArraySpec, vec: Array) -> NumericArray: ...
+```
+
 `NumericArrayBatch` is the kind's batch form: a `Batch` whose `element_spec` is the `NumericArraySpec` and whose storage is one array with the batch axes leading — the same split `RecordBatch` uses, with one column instead of many. An array with leading axes is just an array; the batch form is what carries the level names, the shared spec, and provenance.
 
 ### Rationale
@@ -274,7 +285,9 @@ class Record(NamedTree[Any], TrackedTerm):
 When every leaf is numeric, a `Record` is a `NumericRecord`. Leaves are stored in native form, for example a bare array or an `xarray` container, and convert to `jax.Array` only at the compute boundary, which is the pytree flatten that `grad`, `vmap`, and `jit` traverse and `to_vector`; each leaf converts at most once. A `Record` is promoted exactly as its schema is (above): when every leaf is numeric and no explicit non-numeric schema vetoes it, re-derived by every transform. Flat vectorization reads its layout from the schema: `leaf_shapes`, `vector_size`, and the canonical order. Flattening is numeric-only, which is why `NamedTree` itself has no `flatten`.
 
 ```python
-class NumericRecord(Record):
+class NumericRecord(Record, Numeric):
+    @property
+    def vector_size(self) -> int: ...
     def to_vector(self) -> Array: ...
     @classmethod
     def from_vector(cls, name: str, spec: NumericRecordSpec, vec: Array) -> NumericRecord: ...
@@ -324,6 +337,8 @@ class NumericRecordBatch(RecordBatch):
                     axes_per_level: Iterable[int] | None = None) -> NumericRecordBatch: ...
     # vec has shape (*batch_shape, vector_size): the last axis is the flat dimension
 ```
+
+A batch is not itself `Numeric` (II.3): its elements are, and its `to_vector` stacks their vectors.
 
 A constructor that mints a level takes the name to give it (II.5), so both constructions here require one: `from_vector` names the levels it reconstructs, which is what lets a multi-level batch round-trip, and `stack` names the single level it introduces.
 

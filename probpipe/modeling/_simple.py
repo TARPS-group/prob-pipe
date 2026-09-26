@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..core._specs import OutputSpec, RecordSpec
+from ..core._specs import OutputSpec, RecordSpec, _components_record
 from ..core.protocols import SupportsLogProb
 from ..core.record import Record
 from ..core.tracked import auto_name
@@ -24,8 +24,8 @@ class SimpleModel[P, D](ProbabilisticModel, SupportsLogProb):
     The prior must support :class:`SupportsLogProb` so that the joint
     log-density is always computable.
 
-    **Named components:** merged from the prior's ``event_template``
-    and the likelihood's ``data_template`` when both are available.
+    **Named components:** merged from the prior's declared components
+    and the likelihood's ``data_template`` when it has one.
     For example, a GLM model might have
     ``fields == ("X", "intercept", "slope", "y")``.
     Falls back to ``("parameters", "data")`` when templates are absent.
@@ -56,8 +56,8 @@ class SimpleModel[P, D](ProbabilisticModel, SupportsLogProb):
         # runtime checks remain as a backstop for callers who bypass
         # the type system: the prior must be both ``SupportsLogProb``
         # (so the joint log-density is computable) and a
-        # ``RecordDistribution`` (so its ``event_template`` is a
-        # required, non-``None`` ``RecordSpec``).
+        # ``RecordDistribution``, whose declared components name the
+        # parameters.
         from ..core._record_distribution import RecordDistribution
 
         if not isinstance(prior, SupportsLogProb):
@@ -68,8 +68,8 @@ class SimpleModel[P, D](ProbabilisticModel, SupportsLogProb):
         if not isinstance(prior, RecordDistribution):
             raise TypeError(
                 f"SimpleModel requires a prior that is a "
-                f"RecordDistribution (has named fields via "
-                f"event_template); got {type(prior).__name__}."
+                f"RecordDistribution, whose declared components name the "
+                f"parameters; got {type(prior).__name__}."
             )
         self._prior = prior
         self._likelihood = likelihood
@@ -78,15 +78,15 @@ class SimpleModel[P, D](ProbabilisticModel, SupportsLogProb):
         name = auto_name(name or None, "SimpleModel")
         self._init_tracked(name)
 
-        # Build merged event_template: prior params + likelihood data fields.
-        # This makes fields include both parameter and data names,
+        # The merged record: the prior's parameters and the likelihood's data
+        # fields. This makes fields include both parameter and data names,
         # so condition_on can use component names as the sole signal for
         # splitting data kwargs from inference kwargs.
         #
-        # ``prior_tpl`` is always a record, since a ``RecordDistribution``
-        # presents its declaration as one; ``data_tpl`` may be ``None`` for
-        # likelihoods that don't declare a data template.
-        prior_tpl: RecordSpec = prior.event_template
+        # ``prior_tpl`` is the record the prior's declared components form;
+        # ``data_tpl`` may be ``None`` for likelihoods that don't declare a
+        # data template.
+        prior_tpl: RecordSpec = _components_record(prior.event_spec)
         data_tpl = getattr(likelihood, "data_template", None)
         # Convert legacy ``Record``-typed data templates to
         # ``RecordSpec``. ``Record`` and ``RecordSpec`` are
@@ -102,11 +102,11 @@ class SimpleModel[P, D](ProbabilisticModel, SupportsLogProb):
             # subtree is carried over whole rather than indexed by a top-level
             # subtree name (which leaf-keyed ``[]`` would reject).
             merged: dict[str, Any] = {**dict(prior_tpl.children), **dict(data_tpl.children)}
-            self._event_template: RecordSpec = RecordSpec(merged)
+            record: RecordSpec = RecordSpec(merged)
         else:
-            self._event_template = prior_tpl
+            record = prior_tpl
         # The model is a law over its parameters and data, the merged record.
-        self._init_declaration(OutputSpec(self._event_template))
+        self._init_declaration(OutputSpec(record))
 
     # -- Distribution interface ---------------------------------------------
 
@@ -120,29 +120,16 @@ class SimpleModel[P, D](ProbabilisticModel, SupportsLogProb):
         """The likelihood function ``log p(D | params)``."""
         return self._likelihood
 
-    @property
-    def event_template(self) -> RecordSpec:
-        """Merged ``RecordSpec`` over prior fields + likelihood data fields.
-
-        ``SimpleModel`` is not itself a :class:`RecordDistribution`, but
-        it carries a template so :attr:`fields`, conditioning, and
-        inference kwarg splitting can address parameters and data
-        uniformly. The template is always set — the prior's template
-        is guaranteed non-``None`` by the ``RecordDistribution``
-        invariant, and the prior's fields are the floor.
-        """
-        return self._event_template
-
     # -- Named components interface ------------------------------------------
 
     @property
     def fields(self) -> tuple[str, ...]:
-        return self.event_template.fields
+        return tuple(self.event_spec.components)
 
     @property
     def _prior_fields(self) -> tuple[str, ...]:
-        """Prior field names in template (insertion) order."""
-        return self._prior.event_template.fields
+        """Prior field names, the prior's declared components in order."""
+        return tuple(self._prior.event_spec.components)
 
     @property
     def _data_fields(self) -> tuple[str, ...]:

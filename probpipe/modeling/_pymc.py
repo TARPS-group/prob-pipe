@@ -180,23 +180,24 @@ class PyMCModel(ProbabilisticModel):
     def event_shape(self) -> tuple[int, ...]:
         """Total number of scalar free parameters (observed excluded).
 
-        Derived from :attr:`event_template`; raises on a non-concrete
-        free-RV shape, as the template does. An interim implementation
-        detail: the declaration is the record of free RVs, and the
-        flat-vector readers still ask for this.
+        Read from the no-data build's free RVs; raises on a non-concrete
+        free-RV shape. An interim implementation detail: the flat-vector
+        readers still ask for this.
         """
-        return (self.event_template.vector_size,)
+        return (
+            self._parameter_record_for(self._unconditioned_model, self._param_names).vector_size,
+        )
 
-    def _event_template_for(
+    def _parameter_record_for(
         self,
         model: Any,
         names: tuple[str, ...] | list[str],
     ) -> NumericRecordSpec:
-        """Parameter template over *names*, read from a PyMC *model* build.
+        """Parameter record over *names*, read from a PyMC *model* build.
 
         Inference passes the data-conditioned build and the names from
-        :meth:`_conditioned_param_names`; the :attr:`event_template`
-        property passes the no-data build and ``_param_names``. Scalar
+        :meth:`_conditioned_param_names`; the declaration reads the no-data
+        build and ``_param_names``. Scalar
         PyMC RVs become fields with event shape ``()``; shape-:math:`k`
         RVs become fields with event shape ``(k,)``.
 
@@ -231,20 +232,6 @@ class PyMCModel(ProbabilisticModel):
                 )
             fields[name] = tuple(int(s) for s in raw_shape)
         return NumericRecordSpec(**fields)
-
-    @property
-    def event_template(self) -> NumericRecordSpec:
-        """Declared parameter template from the no-data build (canonical
-        parameters, observed variables excluded).
-
-        Data-dependent shapes, and any observed variable left free under
-        partial conditioning, are resolved at inference time via
-        :meth:`_event_template_for`; this property reflects neither.
-        """
-        return self._event_template_for(
-            self._unconditioned_model,
-            self._param_names,
-        )
 
     # -- Named components interface ------------------------------------------
 

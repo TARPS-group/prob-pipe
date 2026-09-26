@@ -159,7 +159,7 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
         self._bs_model = bridgestan.StanModel(stan_file, data=data)
         self._num_params = self._bs_model.param_unc_num()
         # The parameters are the declared record, one field per Stan block.
-        self._init_declaration(self.event_template)
+        self._init_declaration(self._parameter_record)
 
     # -- Distribution interface ---------------------------------------------
 
@@ -180,13 +180,13 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
         return _param_blocks(self._bs_model.param_names())
 
     @cached_property
-    def event_template(self) -> NumericRecordSpec:
+    def _parameter_record(self) -> NumericRecordSpec:
         """One field per Stan parameter block, shaped from BridgeStan's names."""
         return NumericRecordSpec({b.name: b.shape for b in self._blocks})
 
     @property
     def fields(self) -> tuple[str, ...]:
-        return self.event_template.fields
+        return self._parameter_record.fields
 
     def __getitem__(self, key: str) -> Any:
         if key in self.fields:
@@ -265,7 +265,7 @@ class _UnconstrainedStanView(Distribution, SupportsLogProb):
         # ``base.name`` is guaranteed non-empty by the TrackedTerm
         # metaclass check — wrap with an ``_unconstrained`` suffix (derived, so auto).
         self._init_tracked(f"{model.name}_unconstrained")
-        self._init_declaration(self.event_template)
+        self._init_declaration(self._parameter_record)
 
     @property
     def event_shape(self) -> tuple[int, ...]:
@@ -278,13 +278,13 @@ class _UnconstrainedStanView(Distribution, SupportsLogProb):
         return _param_blocks(self._model._bs_model.param_unc_names())
 
     @cached_property
-    def event_template(self) -> NumericRecordSpec:
+    def _parameter_record(self) -> NumericRecordSpec:
         """One field per unconstrained Stan parameter block."""
         return NumericRecordSpec({b.name: b.shape for b in self._blocks})
 
     @property
     def fields(self) -> tuple[str, ...]:
-        return self.event_template.fields
+        return self._parameter_record.fields
 
     def _pack_value(self, **field_kwargs: Any) -> Array:
         """Keyword form: one array per Stan parameter block in the unconstrained

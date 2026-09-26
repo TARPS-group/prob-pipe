@@ -483,8 +483,8 @@ class RecordEmpiricalDistribution(
     ``name=`` so the field's identity is unambiguous downstream.
 
     Inherits :class:`NumericRecordDistribution` shape semantics
-    (``event_template``, ``event_shapes``, ``event_size``,
-    ``batch_shape``) plus exact weighted moments
+    (``event_shapes``, ``event_size``, ``batch_shape``) plus exact
+    weighted moments
     (``mean``, ``variance``, ``cov``) and weighted ``quantile`` over each
     field.
 
@@ -587,7 +587,7 @@ class RecordEmpiricalDistribution(
             element_declaration = _reshaped_template(
                 samples.event_template, lambda shape: shape[1:]
             )
-        self._event_template = (
+        atom_template = (
             element_declaration
             if element_declaration is not None
             else _event_template_from_data(samples)
@@ -595,9 +595,7 @@ class RecordEmpiricalDistribution(
         # Skip EmpiricalDistribution.__init__ (different storage shape) and
         # call Distribution.__init__ directly. A draw is a row, so the atoms
         # declare an exposed record, the auto-wrapped array's included.
-        Distribution.__init__(
-            self, name, _atom_declaration(self._event_template, self._record_data)
-        )
+        Distribution.__init__(self, name, _atom_declaration(atom_template, self._record_data))
         self._approximate = True
 
     # -- properties ---------------------------------------------------------
@@ -1129,7 +1127,7 @@ class RecordBootstrapReplicateDistribution(
     applied jointly across fields.
 
     Inherits :class:`NumericRecordDistribution` shape semantics
-    (``event_template``, ``event_shapes``, ...). A bare numeric array
+    (``event_shapes``, ``event_size``, ...). A bare numeric array
     source auto-wraps as a single-field Record keyed by ``name`` —
     matching the migration path for the previous
     ``ArrayBootstrapReplicateDistribution(arr)`` form.
@@ -1220,19 +1218,22 @@ class RecordBootstrapReplicateDistribution(
         # with a rows axis in front. Taken from the source's declaration rather
         # than from the stored data, which would drop what the declaration
         # carries and inference cannot rebuild.
-        # An empirical source's ``event_template`` is already one atom's; a raw
-        # ``Record`` source's still carries the rows axis its leaves are stacked
-        # along, so that comes off before the replicate axis goes on. Getting this
-        # backwards advertises ``(n, rows, *event)`` where a draw is
+        # An empirical source's declaration is already one atom's record; a raw
+        # ``Record`` source's template still carries the rows axis its leaves are
+        # stacked along, so that comes off before the replicate axis goes on.
+        # Getting this backwards advertises ``(n, rows, *event)`` where a draw is
         # ``(n, *event)``.
         size = _checked_replicate_size(default_replicate_size, replicate_size)
-        atom = getattr(source, "event_template", None)
-        if isinstance(atom, RecordSpec):
-            if not isinstance(source, EmpiricalDistribution):
-                atom = _reshaped_template(atom, lambda shape: shape[1:])
-            self._event_template = _reshaped_template(atom, lambda shape: (size, *shape))
+        if isinstance(source, EmpiricalDistribution):
+            atom = source.event_spec.spec
         else:
-            self._event_template = _event_template_from_data(
+            atom = getattr(source, "event_template", None)
+            if isinstance(atom, RecordSpec):
+                atom = _reshaped_template(atom, lambda shape: shape[1:])
+        if isinstance(atom, RecordSpec):
+            self._replicate_record = _reshaped_template(atom, lambda shape: (size, *shape))
+        else:
+            self._replicate_record = _event_template_from_data(
                 self._record_data,
                 leading_shape=(size,),
             )
@@ -1245,7 +1246,7 @@ class RecordBootstrapReplicateDistribution(
 
     def _replicate_event_spec(self) -> RecordSpec:
         """One replicate: the stacked record a draw is, each leaf ``(replicate_size, *event)``."""
-        return _atom_declaration(self._event_template, self._record_data)
+        return _atom_declaration(self._replicate_record, self._record_data)
 
     # -- shape ---------------------------------------------------------------
 

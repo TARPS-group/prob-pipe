@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from ..core._dispatch import Feasibility
+from ..core._specs import OutputSpec
 from ..core.node import function
 from ..custom_types import ArrayLike
 from ._approximate_distribution import ApproximateDistribution, make_posterior
@@ -47,15 +48,15 @@ def condition_on_nutpie(
 
     compiled, pymc_build = _compile_for_nutpie(model, data)
 
-    # Build the template in canonical field order from the conditioned
-    # build before sampling (fail fast on a dynamic-RV / non-concrete
-    # model). Stan models carry their own event_template, if any.
+    # Build the parameter record in canonical field order from the
+    # conditioned build before sampling (fail fast on a dynamic-RV /
+    # non-concrete model). A Stan model declares its own parameters.
     if pymc_build is not None:
         param_names = list(model._conditioned_param_names(pymc_build))
-        event_template = model._event_template_for(pymc_build, param_names)
+        event_spec = OutputSpec(model._parameter_record_for(pymc_build, param_names))
     else:
         param_names = None
-        event_template = getattr(model, "event_template", None)
+        event_spec = getattr(model, "event_spec", None)
 
     trace = nutpie.sample(
         compiled,
@@ -68,7 +69,7 @@ def condition_on_nutpie(
 
     # Extract in nutpie's natural ``data_vars`` order (it sorts
     # alphabetically); ``field_order`` lets make_posterior realign columns
-    # to the template by name, so we don't depend on the orders matching.
+    # to the parameters by name, so we don't depend on the orders matching.
     if param_names is not None:
         field_order = posterior_var_order(trace, param_names)
         chains, _ = _extract_chains(trace, num_chains, keep_names=field_order)
@@ -81,7 +82,7 @@ def condition_on_nutpie(
         parents=(model,),
         algorithm="nutpie_nuts",
         annotations=trace,
-        event_template=event_template,
+        event_spec=event_spec,
         field_order=field_order,
         num_results=num_results,
         num_warmup=num_warmup,
@@ -99,7 +100,7 @@ def _compile_for_nutpie(model: Any, data: Any) -> tuple[Any, Any | None]:
 
     Returns ``(compiled, pymc_build)``. ``pymc_build`` is the
     data-conditioned ``pm.Model`` for PyMCModel targets (so the caller
-    can derive a matching ``event_template``), and ``None`` for Stan
+    can derive a matching parameter record), and ``None`` for Stan
     targets.
     """
     if hasattr(model, "_bridgestan_model"):
