@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..core._specs import OpaqueSpec
 from ..core.protocols import SupportsSampling
 from ..core.tracked import auto_name
 from ._base import ProbabilisticModel
@@ -100,6 +101,8 @@ class SimpleGenerativeModel[P, D](ProbabilisticModel, SupportsSampling):
         # the default is an auto-derived name.
         name = auto_name(name or None, "SimpleGenerativeModel")
         self._init_tracked(name)
+        # A draw is a ``(params, data)`` tuple, a value of no other kind.
+        self._init_declaration(OpaqueSpec())
 
     # -- Distribution interface ---------------------------------------------
 

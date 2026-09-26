@@ -33,25 +33,9 @@ from probpipe import (
 def declared_law():
     class DeclaredLaw(Distribution):
         def __init__(self, template):
-            super().__init__(name="law")
-            self.event_template = template
+            super().__init__("law", template)
 
     return DeclaredLaw
-
-
-@pytest.fixture(params=["missing", "none", "type_error"])
-def law_without_schema(request, declared_law):
-    if request.param == "missing":
-        return Distribution(name="law")
-    if request.param == "none":
-        return declared_law(None)
-
-    class UndeclaredLaw(Distribution):
-        @property
-        def event_template(self):
-            raise TypeError("draw schema is not derivable")
-
-    return UndeclaredLaw(name="law")
 
 
 class TestOutputSpec:
@@ -307,7 +291,7 @@ class TestDimensionBinding:
         assert renamed["batch"].axis_groups == (("n",),)
         assert renamed["batch"].element_spec.shape == ("m",)
         assert renamed["batch"].level_names == ("draw",)
-        assert renamed["law"].event_spec["x"].shape == ("m",)
+        assert renamed["law"].event_spec.components["x"].shape == ("m",)
         assert renamed["function"].input_template["x"].shape == ("n",)
         assert renamed["function"].output_spec.shape == ("m",)
         assert spec["data"].shape == ("n", "m")
@@ -362,16 +346,17 @@ class TestSpecKinds:
         schema = RecordSpec.infer_from(
             {"law": law, "function": function, "raw_callable": lambda x: x}
         )
-        assert schema["law"] == DistributionSpec(law.event_template)
+        assert schema["law"] == law.spec
         assert schema["function"] == FunctionSpec(RecordSpec(x=()), RecordSpec(y=()))
         assert schema["raw_callable"] == FunctionSpec()
 
-    def test_empirical_without_event_template_remains_a_record_field(self):
+    def test_an_empirical_over_opaque_atoms_is_a_distribution_field(self):
         from probpipe import EmpiricalDistribution
 
         law = EmpiricalDistribution("law", ["a", "b"])
         schema = RecordSpec.infer_from({"law": law})
-        assert schema["law"] == OpaqueSpec()
+        assert schema["law"] == law.spec
+        assert law.event_spec == OutputSpec(law=OpaqueSpec())
 
         record = Record("r", law=law)
         assert record["law"] is law
@@ -418,42 +403,15 @@ class TestSpecKinds:
 
 
 class TestDistributionSchemaAvailability:
-    def test_inference_keeps_a_distribution_without_schema_as_an_opaque_field(
-        self, law_without_schema
-    ):
-        inferred = RecordSpec.infer_from({"law": law_without_schema})
-        assert inferred == RecordSpec(law=OpaqueSpec())
-        record = Record("r", law=law_without_schema)
-        assert record["law"] is law_without_schema
-        assert record.spec == inferred
-        assert inferred.is_valid(record)
-
     def test_inference_preserves_an_available_distribution_schema(self, declared_law):
         template = RecordSpec(x=NumericArraySpec((3,), dtype="float64", support=positive))
         law = declared_law(template)
         inferred = RecordSpec.infer_from({"law": law})
         assert inferred["law"] == DistributionSpec(template)
-        assert inferred["law"].event_spec is template
+        assert inferred["law"].event_spec.spec is template
         record = Record("r", law=law)
         assert record["law"] is law
         assert record.spec == inferred
-
-    @pytest.mark.parametrize("error_type", [RuntimeError, ValueError, KeyError])
-    def test_unexpected_schema_getter_errors_propagate(self, error_type):
-        error = error_type("broken schema getter")
-
-        class BrokenLaw(Distribution):
-            @property
-            def event_template(self):
-                raise error
-
-        law = BrokenLaw(name="law")
-        with pytest.raises(error_type) as caught:
-            RecordSpec.infer_from({"law": law})
-        assert caught.value is error
-        with pytest.raises(error_type) as caught:
-            DistributionSpec(RecordSpec(x=("n",))).bind_dims_from_value(law)
-        assert caught.value is error
 
 
 class TestInputSpec:
@@ -574,19 +532,6 @@ class TestNestedValueBinding:
 
         return wrap
 
-    def test_unavailable_distribution_schema_cannot_bind(self, wrap_binding, law_without_schema):
-        spec = DistributionSpec(RecordSpec(x=("n",)))
-        declared, value = wrap_binding(spec, law_without_schema)
-        with pytest.raises(ValueError, match="exposes no schema to bind it against") as caught:
-            declared.bind_dims_from_value(value)
-        if isinstance(declared, RecordSpec):
-            assert f"RecordSpec/{next(iter(declared))} declares" in str(caught.value)
-        assert declared.free_dims == {"n"}
-
-        concrete, value = wrap_binding(spec.with_dim_sizes(n=3), law_without_schema)
-        with pytest.raises(ValueError, match="does not conform"):
-            concrete.bind_dims_from_value(value)
-
     @pytest.mark.parametrize("kind", ["function", "distribution"])
     @pytest.mark.parametrize("size", [3, 4])
     def test_fixed_and_concretized_specs_follow_the_same_binding_rules(
@@ -603,8 +548,8 @@ class TestNestedValueBinding:
             reference = EmpiricalDistribution("x", np.zeros((2, 3)))
             actual = EmpiricalDistribution("x", np.zeros((2, size)))
 
-        # Concrete distributions require exact metadata; function binding reads
-        # the available declarations without checking callable compatibility.
+        # Both kinds bind by unification; function binding reads the available
+        # declarations without checking callable compatibility.
         dtype = "float64" if kind == "function" else None
         symbolic = spec_type(RecordSpec(x=NumericArraySpec(("n",), dtype=dtype)))
         fixed = spec_type(RecordSpec(x=NumericArraySpec((3,), dtype=dtype)))
@@ -620,62 +565,73 @@ class TestNestedValueBinding:
             if size == 3:
                 assert declared.bind_dims_from_value(value) == declared
             else:
-                message = "dimension 4, expected 3" if kind == "function" else "does not conform"
-                with pytest.raises(ValueError, match=message):
+                with pytest.raises(ValueError, match="dimension 4, expected 3"):
                     declared.bind_dims_from_value(value)
         assert symbolic.free_dims == {"n"}
 
     @pytest.mark.parametrize(
-        "expected, actual",
+        ("declared", "actual", "matches"),
         [
-            (
-                RecordSpec(x=NumericArraySpec((3,), dtype="float64")),
-                RecordSpec(x=NumericArraySpec((3,), dtype="float32")),
+            pytest.param(
+                NumericArraySpec((3,)),
+                NumericArraySpec((3,), dtype="int32"),
+                True,
+                id="unset-dtype",
             ),
-            (RecordSpec(x=(3,), y=()), RecordSpec(y=(), x=(3,))),
-            (
-                RecordSpec(x=NumericArraySpec((3,), support=positive)),
-                RecordSpec(x=(3,)),
+            pytest.param(
+                NumericArraySpec((3,), dtype="float64"),
+                NumericArraySpec((3,), dtype="float32"),
+                True,
+                id="same-kind-float",
             ),
-            (
-                RecordSpec(x=(3,)),
-                RecordSpec(x=NumericArraySpec((3,), support=positive)),
+            pytest.param(
+                NumericArraySpec((3,), dtype="int32"),
+                NumericArraySpec((3,), dtype="float32"),
+                False,
+                id="float-against-int",
             ),
+            pytest.param(
+                NumericArraySpec((3,), support=positive), NumericArraySpec((3,)), True, id="support"
+            ),
+            pytest.param(NumericArraySpec((3,)), NumericArraySpec((4,)), False, id="size"),
         ],
-        ids=["dtype", "field_order", "missing_support", "extra_support"],
     )
-    def test_concrete_distribution_values_require_exact_schemas(
-        self, wrap_binding, declared_law, expected, actual
+    def test_concrete_distribution_values_match_by_unification(
+        self, wrap_binding, declared_law, declared, actual, matches
     ):
-        law = declared_law(actual)
-        spec = DistributionSpec(expected)
-        declared, value = wrap_binding(spec, law)
-        with pytest.raises(ValueError, match="does not conform"):
-            declared.bind_dims_from_value(value)
+        """A law matches when its declaration unifies with the declared one.
+
+        An unset dtype accepts any dtype and a set one a same-kind cast, sizes must
+        agree, and support is not compared.
+        """
+        law = declared_law(RecordSpec(x=actual))
+        spec = DistributionSpec(RecordSpec(x=declared))
         schema = RecordSpec(law=spec)
-        assert not spec.is_valid(law)
-        assert not schema.is_valid({"law": law})
-        assert not schema.is_valid(Record("value", law=law))
-        with pytest.raises(ValueError):
-            Record("value", law=law, event_template=schema)
+        declared_spec, value = wrap_binding(spec, law)
+        assert spec.is_valid(law) is matches
+        assert schema.is_valid({"law": law}) is matches
+        if matches:
+            assert declared_spec.bind_dims_from_value(value) == declared_spec
+            assert schema.is_valid(Record("value", law=law, event_template=schema))
+        else:
+            with pytest.raises(ValueError):
+                declared_spec.bind_dims_from_value(value)
+            with pytest.raises(ValueError):
+                Record("value", law=law, event_template=schema)
 
-        matching = declared_law(expected)
-        declared, value = wrap_binding(spec, matching)
-        assert declared.bind_dims_from_value(value) == declared
-        assert schema.is_valid(Record("value", law=matching, event_template=schema))
+    def test_field_order_does_not_change_a_match(self, declared_law):
+        law = declared_law(RecordSpec(y=(), x=(3,)))
+        assert DistributionSpec(RecordSpec(x=(3,), y=())).is_valid(law)
 
-    def test_concretized_distribution_uses_the_same_strict_metadata_check(
-        self, wrap_binding, declared_law
-    ):
+    def test_concretized_distribution_binds_like_a_fixed_one(self, wrap_binding, declared_law):
         symbolic = DistributionSpec(RecordSpec(x=NumericArraySpec(("n",), dtype="float64")))
-        law = declared_law(RecordSpec(x=(3,)))
+        law = declared_law(RecordSpec(x=NumericArraySpec((3,), dtype="float32")))
         bound = symbolic.bind_dims_from_value(law)
         fixed = DistributionSpec(RecordSpec(x=NumericArraySpec((3,), dtype="float64")))
         for spec in (bound, symbolic.with_dim_sizes(n=3), fixed):
             assert spec == fixed
             declared, value = wrap_binding(spec, law)
-            with pytest.raises(ValueError, match="does not conform"):
-                declared.bind_dims_from_value(value)
+            assert declared.bind_dims_from_value(value) == declared
 
     def test_missing_callable_declarations_remain_unspecified(self, wrap_binding):
         symbolic = FunctionSpec(RecordSpec(x=("n",)))

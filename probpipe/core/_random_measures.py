@@ -84,7 +84,9 @@ from __future__ import annotations
 
 from abc import abstractmethod
 
-from ..distributions._distribution import Distribution
+from ..distributions._distribution import Distribution, DistributionSpec
+from ._spec_base import TermSpec
+from ._specs import OpaqueSpec, OutputSpec
 from .constraints import Constraint
 
 # ---------------------------------------------------------------------------
@@ -116,10 +118,16 @@ class RandomMeasure(Distribution):
     ----------
     name : str
         Distribution name.
+    event_spec : OutputSpec or TermSpec, optional
+        The declaration of one draw, a ``DistributionSpec``. By default a draw
+        is a law whose event is opaque, a whole term under *name*; that default
+        is provisional.
     """
 
-    def __init__(self, name: str):
-        super().__init__(name=name)
+    def __init__(self, name: str, event_spec: OutputSpec | TermSpec | None = None):
+        if event_spec is None:
+            event_spec = DistributionSpec(OutputSpec(**{name: OpaqueSpec()}))
+        super().__init__(name, event_spec)
 
 
 # ---------------------------------------------------------------------------

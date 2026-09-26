@@ -19,6 +19,7 @@ from probpipe import (
     FlatNumericRecordDistribution,
     MultivariateNormal,
     Normal,
+    NumericArraySpec,
     NumericRecord,
     NumericRecordBatch,
     NumericRecordSpec,
@@ -74,16 +75,18 @@ class TestConstruction:
         rec = mvn4.as_record_distribution(template=split_template)
         assert rec.event_shapes == {"intercept": (), "slope": (3,)}
 
-    def test_event_shape_single_field(self, mvn4):
-        """Single-field template: event_shape returns that field's shape."""
+    def test_event_shape_is_undefined_for_a_one_field_record(self, mvn4):
+        """A view draws a record even with one field, so it has no event_shape."""
         single = NumericRecordSpec(theta=(4,))
         rec = mvn4.as_record_distribution(template=single)
-        assert rec.event_shape == (4,)
+        assert rec.event_shapes == {"theta": (4,)}
+        with pytest.raises(TypeError, match="does not draw a single array"):
+            _ = rec.event_shape
 
     def test_event_shape_multi_field_raises(self, mvn4, split_template):
-        """Multi-field template: event_shape raises, point user at event_shapes."""
+        """Multi-field template: event_shape raises; event_shapes is per field."""
         rec = mvn4.as_record_distribution(template=split_template)
-        with pytest.raises(TypeError, match="event_shapes"):
+        with pytest.raises(TypeError, match="does not draw a single array"):
             _ = rec.event_shape
 
     def test_base_distribution_accessor(self, mvn4, split_template):
@@ -348,12 +351,7 @@ class TestFlatContract:
 
         class _BadFlat(_FlatNRD):
             def __init__(self):
-                self._name = "bad"
-                self._event_template = NumericRecordSpec(bad=(2, 3))
-
-            @property
-            def event_shape(self):
-                return (2, 3)
+                super().__init__("bad", NumericArraySpec((2, 3)))
 
         bad = _BadFlat()
         with pytest.raises(TypeError, match="event_shape"):

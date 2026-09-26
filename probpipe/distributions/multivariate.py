@@ -103,8 +103,7 @@ class MultivariateNormal(TFPDistribution, FlatNumericRecordDistribution):
 
     # -- support ------------------------------------------------------------
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return real
 
 
@@ -146,8 +145,7 @@ class Dirichlet(TFPDistribution, FlatNumericRecordDistribution):
 
     # -- support ------------------------------------------------------------
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return simplex
 
 
@@ -214,8 +212,7 @@ class Multinomial(TFPDistribution, FlatNumericRecordDistribution):
 
     # -- support ------------------------------------------------------------
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return non_negative_integer
 
 
@@ -287,8 +284,7 @@ class Wishart(TFPDistribution):
 
     # -- support ------------------------------------------------------------
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return positive_definite
 
 
@@ -337,6 +333,5 @@ class VonMisesFisher(TFPDistribution, FlatNumericRecordDistribution):
 
     # -- support ------------------------------------------------------------
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return sphere

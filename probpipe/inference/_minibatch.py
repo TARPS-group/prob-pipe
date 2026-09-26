@@ -40,11 +40,13 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from ..core._kind_specs import FunctionSpec
 from ..core._object_batch import _is_object_array
 from ..core._random_functions import RandomFunction
 from ..core._random_measures import RandomMeasure
 from ..core._record_batch import RecordBatch, _batch_class_for
 from ..core._record_spec import _reshaped_template
+from ..core._specs import NumericArraySpec, OpaqueSpec, OutputSpec
 from ..core.protocols import (
     SupportsLogProb,
     SupportsRandomUnnormalizedLogProb,
@@ -53,7 +55,7 @@ from ..core.protocols import (
 )
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike, PRNGKey
-from ..distributions._distribution import Distribution
+from ..distributions._distribution import Distribution, DistributionSpec
 
 if TYPE_CHECKING:
     from ..core.protocols import ConditionallyIndependentLikelihood
@@ -180,6 +182,18 @@ def _draw_indices(
     return jax.random.permutation(key, n)[:batch_size]
 
 
+def _parameter_declaration(prior: Any, component: str) -> OutputSpec:
+    """The declaration of the parameters *prior* is a law over.
+
+    A prior that is not a distribution declares nothing, so its parameters are
+    opaque under *component*.
+    """
+    try:
+        return prior.event_spec
+    except AttributeError:
+        return OutputSpec(**{component: OpaqueSpec()})
+
+
 # ---------------------------------------------------------------------------
 # MinibatchedDistribution — the outer random measure
 # ---------------------------------------------------------------------------
@@ -282,8 +296,11 @@ class MinibatchedDistribution(
         self._batch_size = int(batch_size)
         self._with_replacement = bool(with_replacement)
         self._rescale_factor = float(self._n / batch_size)
+        # A draw is a law over the prior's parameters, declared as the prior
+        # declares them.
+        self._draw_event_spec = _parameter_declaration(prior, name)
 
-        super().__init__(name=name)
+        super().__init__(name, DistributionSpec(self._draw_event_spec))
 
     # -- read-only metadata --------------------------------------------------
 
@@ -342,6 +359,7 @@ class MinibatchedDistribution(
             batch=batch,
             rescale_factor=self._rescale_factor,
             name=f"{self.name}/draw",
+            event_spec=self._draw_event_spec,
         )
 
     # -- SupportsRandomUnnormalizedLogProb -----------------------------------
@@ -398,10 +416,13 @@ class _FixedMinibatchDistribution(
         rescale_factor: float,
         *,
         name: str | None = None,
+        event_spec: OutputSpec | None = None,
     ):
         if not name:
             name = "fixed_minibatch_distribution"
-        super().__init__(name=name)
+        if event_spec is None:
+            event_spec = _parameter_declaration(prior, "parameters")
+        super().__init__(name, event_spec)
         self._prior = prior
         self._likelihood = likelihood
         self._batch = batch
@@ -467,7 +488,9 @@ class _RandomMinibatchLogProb(
     _preferred_orchestration: str | None = None
 
     def __init__(self, measure: MinibatchedDistribution):
-        super().__init__(name=f"{measure.name}/random_log_prob")
+        super().__init__(
+            f"{measure.name}/random_log_prob", OutputSpec(random_log_prob=FunctionSpec())
+        )
         self._measure = measure
 
     # -- RandomFunction.__call__ --------------------------------------------
@@ -526,7 +549,8 @@ class _MinibatchLogProbAtPoint(Distribution, SupportsSampling):
     _preferred_orchestration: str | None = None
 
     def __init__(self, measure: MinibatchedDistribution, theta: Any):
-        super().__init__(name=f"{measure.name}@theta")
+        # A draw is one scalar log-density value.
+        super().__init__(f"{measure.name}@theta", OutputSpec(log_prob=NumericArraySpec(())))
         self._measure = measure
         self._theta = theta
 

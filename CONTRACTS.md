@@ -95,6 +95,8 @@ if it were user-guide reference text.
 | `NamedTree` (shared name-keyed tree substrate) | docstrings in `probpipe/core/named_tree.py`; #235 Chapter 1 |
 | `TermSpec` / `NumericSpec` (one spec protocol across all kinds) | docstrings in `probpipe/core/_spec_base.py`; design II.1–II.3 |
 | `NumericArraySpec` / `OpaqueSpec` (numeric-array and opaque value declarations) | docstrings in `probpipe/core/_spec_base.py`; design III.1–III.2 |
+| `Distribution` (stores one `DistributionSpec`; `event_spec` and the schema views read it, and construction checks it is stored) | docstrings in `probpipe/distributions/_distribution.py`; design III.7 |
+| `NumericDistribution` (membership read from the declaration; `dtypes`, `supports`, `dtype`, and `support` belong to numeric laws only) | docstrings in `probpipe/distributions/_distribution.py`; design III.7 |
 | `DistributionSpec` (the distribution kind's declaration) | docstrings in `probpipe/distributions/_distribution.py`; design III.7 |
 | `FunctionSpec` (the callable kind's declaration) | docstrings in `probpipe/core/_kind_specs.py`; design III.3 |
 | `InputSpec` / `OutputSpec` (slots, component exposure, type holes) | docstrings in `probpipe/core/_specs.py`; design II.2 |
@@ -122,7 +124,7 @@ if it were user-guide reference text.
 | the spec every element of a batch satisfies | `element_spec` |
 | the objects a batch is built from | `elements` |
 | independent-draw shape prefix for `sample` | `sample_shape` |
-| a distribution's current structural schema | `event_template` (RecordSpec; declaration migration is separate) |
+| a distribution's event declaration | `event_spec` (an `OutputSpec`; `event_template` is an interim record view of it) |
 | PRNG key | `key` |
 | a tracked object's own identity name (the required first arg of `Record` / a distribution) | `name` |
 | a field key within a tree / the name being assigned to a field | `field_name` / `key` |

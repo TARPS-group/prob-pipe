@@ -11,6 +11,7 @@ Provides:
 
 from __future__ import annotations
 
+import keyword
 from dataclasses import replace
 from math import prod
 from typing import Any
@@ -27,6 +28,7 @@ from ._batch import _ranks_of
 from ._empirical import (
     EmpiricalDistribution,
     RecordEmpiricalDistribution,
+    _atom_declaration,
 )
 from ._function_batch import FunctionBatch
 from ._immutable import constructing, transient_memo
@@ -36,8 +38,9 @@ from ._numeric_record_batch import NumericRecordBatch
 from ._object_batch import _from_iterable, _is_object_array, _ObjectBatch
 from ._opaque_batch import OpaqueBatch
 from ._record_batch import RecordBatch, _batch_class_for, _MappedBatchColumns
+from ._record_spec import _reshaped_template
 from ._spec_base import _full_array_shape_or_none
-from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
+from ._specs import NumericArraySpec, NumericRecordSpec, OpaqueSpec, RecordSpec, TermSpec
 from .protocols import (
     SupportsLogProb,
     SupportsMean,
@@ -100,6 +103,9 @@ class _RecordMarginal(RecordEmpiricalDistribution):
         elif template is not None:
             # Preserve the exact template the batch carried.
             self._event_template = template
+        if event_template is not None or template is not None:
+            # The kept template is what a draw is declared as.
+            self._init_declaration(_atom_declaration(self._event_template, self._record_data))
 
     def __repr__(self):
         return (
@@ -132,7 +138,10 @@ class _MixtureMarginal(Distribution):
         self._components = components
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         name = auto_name(name, "mixture_marginal")
-        super().__init__(name=name)
+        from ._distribution_array import _cell_declaration
+
+        # A draw is one component's draw.
+        super().__init__(name, _cell_declaration(tuple(components), name))
         self._approximate = True
         self._event_template = event_template
 
@@ -325,7 +334,7 @@ class _ListMarginal(Distribution):
         self._items = items
         self._w = Weights(n=len(items), weights=weights, log_weights=log_weights)
         name = auto_name(name, "list_marginal")
-        super().__init__(name=name)
+        super().__init__(name, OpaqueSpec())
 
     @property
     def num_atoms(self) -> int:
@@ -1197,6 +1206,17 @@ def _record_rows(record: Record, rows: Any) -> Record:
     return type(record)(record.name, {path: record[path][rows] for path in paths})
 
 
+def _row_spec(component: Any) -> TermSpec:
+    """What one row of a batched component is: a record's element, an array's row, or opaque."""
+    if isinstance(component, RecordBatch):
+        return component.event_template
+    if isinstance(component, Record):
+        return _reshaped_template(component.event_template, lambda shape: shape[1:])
+    if _is_numeric_leaf(component) and getattr(component, "ndim", 0) > 0:
+        return NumericArraySpec(tuple(component.shape[1:]), component.dtype)
+    return OpaqueSpec()
+
+
 def _row_count(component: Any) -> int:
     """How many rows one batched component holds.
 
@@ -1361,7 +1381,20 @@ class BroadcastDistribution(Distribution, SupportsSampling):
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         self._broadcast_args = list(broadcast_args)
         name = auto_name(name, "broadcast")
-        super().__init__(name=name)
+        # A draw pairs one row of every argument with its output, a record keyed
+        # by the argument labels. A label need not be a component name, as a
+        # variadic argument's is not, and then the draw is declared opaque, an
+        # interim implementation detail of a class the design retires.
+        labels = (*self._broadcast_args, "_output")
+        if all(label.isidentifier() and not keyword.iskeyword(label) for label in labels):
+            fields = {arg: _row_spec(input_samples[arg]) for arg in self._broadcast_args}
+            fields["_output"] = (
+                output_template if output_template is not None else _row_spec(output_samples)
+            )
+            event_spec = RecordSpec(fields)
+        else:
+            event_spec = OpaqueSpec()
+        super().__init__(name, event_spec)
         self._approximate = True
         # A memo, filled on first read. Reading fills it in place, which leaves
         # the term's own attributes as construction set them — what the

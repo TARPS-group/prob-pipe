@@ -758,9 +758,8 @@ class TestRWMH:
         from probpipe import NumericRecordDistribution
 
         class NoLogProbNoSample(NumericRecordDistribution):
-            @property
-            def event_shape(self):
-                return (2,)
+            def __init__(self, name):
+                super().__init__(name, NumericArraySpec((2,)))
 
         dist = NoLogProbNoSample(name="test")
         with pytest.raises(TypeError):
@@ -841,13 +840,8 @@ class TestRWMH:
         from probpipe.core.protocols import SupportsLogProb
 
         class LogProbOnlyDist(NumericRecordDistribution, SupportsLogProb):
-            @property
-            def event_shape(self):
-                return (2,)
-
-            @property
-            def dtypes(self):
-                return self._per_field_dict(jnp.float32)
+            def __init__(self, name):
+                super().__init__(name, NumericArraySpec((2,), "float32"))
 
             def _log_prob(self, value):
                 return -0.5 * jnp.sum(value**2)
@@ -877,13 +871,8 @@ class TestRWMH:
         from probpipe.core.protocols import SupportsLogProb, SupportsMean
 
         class BrokenMeanLogProbDist(NumericRecordDistribution, SupportsLogProb, SupportsMean):
-            @property
-            def event_shape(self):
-                return (2,)
-
-            @property
-            def dtypes(self):
-                return self._per_field_dict(jnp.float32)
+            def __init__(self, name):
+                super().__init__(name, NumericArraySpec((2,), "float32"))
 
             def _log_prob(self, value):
                 return -0.5 * jnp.sum(value**2)

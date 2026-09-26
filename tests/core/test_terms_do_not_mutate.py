@@ -70,6 +70,10 @@ class _ScalarBackend:
     def __init__(self, n: int):
         self.batch_shape = (n,)
 
+    @property
+    def cell_spec(self):
+        return self.cell(0).event_spec.spec
+
     def cell(self, index: int) -> Normal:
         return Normal(f"c{index}", float(index), 1.0)
 
@@ -148,7 +152,7 @@ class TestAQueryLeavesTheTermUnchanged:
         joint = ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 1.0, 2.0), name="j")
         assert hasattr(joint, "_tfp_dist")
         before = assigned_state(joint)
-        _ = joint.event_shape
+        _ = joint.dtypes
         assert assigned_state(joint) == before
 
 

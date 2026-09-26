@@ -29,6 +29,7 @@ from probpipe import (
     NumericArrayBatch,
     NumericRecord,
     NumericRecordBatch,
+    OpaqueSpec,
     ProductDistribution,
     Record,
     SequentialJointDistribution,
@@ -336,7 +337,7 @@ class _FieldlessRandomMeasure(Distribution):
     """
 
     def __init__(self):
-        super().__init__(name="fieldless_rm")
+        super().__init__("fieldless_rm", OpaqueSpec())
 
     def _random_log_prob(self):
         return lambda v: v

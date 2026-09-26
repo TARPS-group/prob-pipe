@@ -58,8 +58,8 @@ from ._numeric_record_distribution import (
 )
 from ._record_batch import RecordBatch
 from ._record_spec import _reshaped_template
-from ._specs import NumericRecordSpec, RecordSpec
-from .constraints import Constraint, real
+from ._specs import NumericArraySpec, NumericRecordSpec, OpaqueSpec, RecordSpec, TermSpec
+from .constraints import real
 from .protocols import (
     SupportsCovariance,
     SupportsExpectation,
@@ -91,6 +91,36 @@ def _event_template_from_data(
         arr = jnp.asarray(val)
         specs[key] = (*leading_shape, *arr.shape[1:])
     return RecordSpec(specs)
+
+
+def _atom_declaration(template: RecordSpec, record_data: Record, prefix: str = "") -> RecordSpec:
+    """The declaration of one draw laid out as *template*, over the stored *record_data*.
+
+    Each array leaf keeps what *template* declares, taking the stored leaf's
+    dtype when it declares none and the real line when it declares no support,
+    as the empirical's moments treat every leaf as real-valued.
+    """
+
+    def leaf(path: str, spec: TermSpec) -> TermSpec:
+        if isinstance(spec, RecordSpec):
+            return _atom_declaration(spec, record_data, f"{path}/")
+        if not isinstance(spec, NumericArraySpec):
+            return spec
+        dtype = spec.dtype if spec.dtype is not None else jnp.asarray(record_data[path]).dtype
+        return NumericArraySpec(spec.shape, dtype, real if spec.support is None else spec.support)
+
+    return RecordSpec(
+        {field: leaf(f"{prefix}{field}", spec) for field, spec in template.children.items()}
+    )
+
+
+def _checked_replicate_size(default: int, requested: int | None) -> int:
+    """The number of items per replicate: *requested*, which must be positive, else *default*."""
+    if requested is None:
+        return default
+    if requested < 1:
+        raise ValueError(f"replicate_size must be positive, got {requested}")
+    return requested
 
 
 def _fieldwise_op(record_data: Record, op: Callable) -> NumericRecord:
@@ -324,7 +354,8 @@ class EmpiricalDistribution(
         if n == 0:
             raise ValueError("samples must be a non-empty sequence.")
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
-        super().__init__(name=name)
+        # Atoms of no known kind form a whole-term event under the name.
+        super().__init__(name, OpaqueSpec())
         self._approximate = True
 
     _sampling_cost: str = "low"
@@ -545,10 +576,6 @@ class RecordEmpiricalDistribution(
         self._record_data = samples
         self._num_atoms = n
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
-        # Skip EmpiricalDistribution.__init__ (different storage shape);
-        # call Distribution.__init__ directly for name registration.
-        Distribution.__init__(self, name=name)
-        self._approximate = True
         # A batch already declares what one element is, pinned dtypes and all;
         # re-deriving it from the stacked leaves would lose whatever inference
         # cannot recover.
@@ -565,6 +592,13 @@ class RecordEmpiricalDistribution(
             if element_declaration is not None
             else _event_template_from_data(samples)
         )
+        # Skip EmpiricalDistribution.__init__ (different storage shape) and
+        # call Distribution.__init__ directly. A draw is a row, so the atoms
+        # declare an exposed record, the auto-wrapped array's included.
+        Distribution.__init__(
+            self, name, _atom_declaration(self._event_template, self._record_data)
+        )
+        self._approximate = True
 
     # -- properties ---------------------------------------------------------
 
@@ -638,6 +672,10 @@ class RecordEmpiricalDistribution(
         ``EmpiricalDistribution(name, arr)``), returns the field's
         event shape — i.e. ``arr.shape[1:]``.
 
+        The shortcut is an interim implementation detail: this class draws a
+        one-field record even for an auto-wrapped array, whose declaration
+        therefore defines no ``event_shape``, and its readers still ask for one.
+
         For multi-field records, raises :class:`AttributeError` rather
         than returning ``()``: a silent scalar fallback would let
         callers that aren't multi-field-aware mis-classify a
@@ -669,31 +707,9 @@ class RecordEmpiricalDistribution(
         )
 
     @property
-    def event_shapes(self) -> dict[str, tuple[int, ...]]:
-        """Per-field event shapes (sample axis stripped).
-
-        Always available, including for single-field records. Compare
-        :attr:`event_shape` (singular), which is single-field-only and
-        raises on multi-field.
-        """
-        return {k: tuple(jnp.asarray(v).shape[1:]) for k, v in self._record_data.items()}
-
-    @property
-    def dtypes(self) -> dict[str, jnp.dtype]:
-        return {k: jnp.asarray(v).dtype for k, v in self._record_data.items()}
-
-    @property
     def dim(self) -> int:
         """Flat dimensionality of a single Record draw."""
-        return sum(max(1, prod(shape)) for shape in self.event_shapes.values())
-
-    @property
-    def support(self) -> Constraint:
-        return real
-
-    @property
-    def supports(self) -> dict[str, Constraint]:
-        return dict.fromkeys(self._record_data, real)
+        return sum(max(1, prod(jnp.asarray(v).shape[1:])) for _, v in self._record_data.items())
 
     # -- sampling -----------------------------------------------------------
 
@@ -941,13 +957,8 @@ class BootstrapReplicateDistribution(
         name: str,
         source_size: int | None = None,
     ) -> None:
-        if replicate_size is None:
-            self._replicate_size = default_replicate_size
-        else:
-            if replicate_size < 1:
-                raise ValueError(f"replicate_size must be positive, got {replicate_size}")
-            self._replicate_size = replicate_size
-        super().__init__(name=name)
+        self._replicate_size = _checked_replicate_size(default_replicate_size, replicate_size)
+        super().__init__(name, self._replicate_event_spec())
         if self._source_kind == "sampleable":
             self._source_size = None
         else:
@@ -956,6 +967,20 @@ class BootstrapReplicateDistribution(
             # (matches the old behaviour where source size == default).
             self._source_size = source_size if source_size is not None else default_replicate_size
         self._approximate = True
+
+    def _replicate_event_spec(self) -> TermSpec:
+        """One replicate: ``replicate_size`` stacked draws of an array-valued source.
+
+        A replicate of anything else is opaque: the object data of a sequence
+        source, and the draws of a sampler that implements ``SupportsSampling``
+        without being a :class:`~probpipe.Distribution`, which declares no event.
+        """
+        if not isinstance(self._source_dist, Distribution):
+            return OpaqueSpec()
+        spec = self._source_dist.event_spec.spec
+        if not isinstance(spec, NumericArraySpec):
+            return OpaqueSpec()
+        return NumericArraySpec((self._replicate_size, *spec.shape), spec.dtype, spec.support)
 
     # -- properties ---------------------------------------------------------
 
@@ -1191,12 +1216,6 @@ class RecordBootstrapReplicateDistribution(
         self._source_kind = "data"
         self._source_dist = None
         self._data = self._record_data
-        self._init_bootstrap_state(
-            default_replicate_size,
-            replicate_size=replicate_size,
-            name=name,
-            source_size=default_replicate_size,
-        )
         # A replicate is ``replicate_size`` atoms, so its template is the atom's
         # with a rows axis in front. Taken from the source's declaration rather
         # than from the stored data, which would drop what the declaration
@@ -1206,32 +1225,29 @@ class RecordBootstrapReplicateDistribution(
         # along, so that comes off before the replicate axis goes on. Getting this
         # backwards advertises ``(n, rows, *event)`` where a draw is
         # ``(n, *event)``.
+        size = _checked_replicate_size(default_replicate_size, replicate_size)
         atom = getattr(source, "event_template", None)
         if isinstance(atom, RecordSpec):
             if not isinstance(source, EmpiricalDistribution):
                 atom = _reshaped_template(atom, lambda shape: shape[1:])
-            self._event_template = _reshaped_template(
-                atom, lambda shape: (self._replicate_size, *shape)
-            )
+            self._event_template = _reshaped_template(atom, lambda shape: (size, *shape))
         else:
             self._event_template = _event_template_from_data(
                 self._record_data,
-                leading_shape=(self._replicate_size,),
+                leading_shape=(size,),
             )
+        self._init_bootstrap_state(
+            default_replicate_size,
+            replicate_size=replicate_size,
+            name=name,
+            source_size=default_replicate_size,
+        )
+
+    def _replicate_event_spec(self) -> RecordSpec:
+        """One replicate: the stacked record a draw is, each leaf ``(replicate_size, *event)``."""
+        return _atom_declaration(self._event_template, self._record_data)
 
     # -- shape ---------------------------------------------------------------
-
-    @property
-    def event_shapes(self) -> dict[str, tuple[int, ...]]:
-        """Per-field replicate event shapes ``(n, *obs_event_shape)``."""
-        return {
-            f: (self._replicate_size, *jnp.asarray(self._record_data[f]).shape[1:])
-            for f in self._record_data.fields
-        }
-
-    @property
-    def dtypes(self) -> dict[str, jnp.dtype]:
-        return {f: jnp.asarray(self._record_data[f]).dtype for f in self._record_data.fields}
 
     @property
     def event_shape(self) -> tuple[int, ...]:
@@ -1245,6 +1261,10 @@ class RecordBootstrapReplicateDistribution(
         :attr:`event_shapes` (plural, per-field) for the multi-field
         case, or :attr:`obs_shape` for the per-observation shape on
         single-field replicates.
+
+        The shortcut is an interim implementation detail: this class draws a
+        one-field record even for an auto-wrapped array, whose declaration
+        therefore defines no ``event_shape``, and its readers still ask for one.
 
         See Also
         --------
@@ -1315,14 +1335,6 @@ class RecordBootstrapReplicateDistribution(
         Sum across fields of ``n * max(1, prod(obs_event_shape))``.
         """
         return sum(self._replicate_size * max(1, prod(shape)) for shape in self.obs_shapes.values())
-
-    @property
-    def support(self) -> Constraint:
-        return real
-
-    @property
-    def supports(self) -> dict[str, Constraint]:
-        return dict.fromkeys(self._record_data.fields, real)
 
     # -- sampling -----------------------------------------------------------
 

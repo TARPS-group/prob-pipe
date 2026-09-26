@@ -356,13 +356,13 @@ class TestApplyContract:
         result = wrapped()
 
         assert result is not returned
-        assert result.event_template is intrinsic
-        assert returned.event_template is intrinsic
+        assert result.spec is returned.spec
+        assert result.event_template == intrinsic
 
     def test_schema_complete_distribution_does_not_read_parallel_metadata(self):
         class SchemaCompleteDistribution(Distribution):
             def __init__(self, event_template):
-                super().__init__(name="y")
+                super().__init__("y", event_template)
                 self._event_template = event_template
 
             @property

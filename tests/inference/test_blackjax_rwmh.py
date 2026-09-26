@@ -16,7 +16,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import MultivariateNormal, NumericRecordDistribution
+from probpipe import MultivariateNormal, NumericArraySpec, NumericRecordDistribution
 from probpipe.core.protocols import SupportsLogProb
 from probpipe.inference import (
     inference_method_registry,
@@ -423,13 +423,8 @@ class _NumpyLogProbDist(NumericRecordDistribution, SupportsLogProb):
     # 1 / variance per coordinate. Standard normal by default.
     precision = (1.0, 1.0)
 
-    @property
-    def event_shape(self):
-        return (2,)
-
-    @property
-    def dtypes(self):
-        return self._per_field_dict(jnp.float32)
+    def __init__(self, name):
+        super().__init__(name, NumericArraySpec((2,), "float32"))
 
     def _log_prob(self, value):
         v = np.asarray(value)

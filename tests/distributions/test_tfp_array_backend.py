@@ -538,6 +538,10 @@ class TestBackendApproximate:
             event_shape = ()
             is_approximate = True
 
+            @property
+            def cell_spec(self):
+                return self.cell(0).event_spec.spec
+
             def cell(self, i):
                 return Normal(loc=0.0, scale=1.0, name=f"x_{i}")
 

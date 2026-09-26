@@ -73,6 +73,7 @@ from ..custom_types import Array, PRNGKey
 
 if TYPE_CHECKING:
     from ..distributions._distribution import Distribution
+    from ._spec_base import TermSpec
 
 
 # ---------------------------------------------------------------------------
@@ -400,7 +401,7 @@ class _DistributionArrayBackend(Protocol):
 
     Required surface
     ----------------
-    Every backend exposes ``batch_shape``, ``event_shape``, ``cell``,
+    Every backend exposes ``batch_shape``, ``event_shape``, ``cell_spec``, ``cell``,
     and the ``_sample``/``_log_prob``/``_mean``/``_variance``/``_cov``
     methods that mirror whichever moment / density protocols the
     underlying distribution class supports. ``DistributionArray``
@@ -418,6 +419,11 @@ class _DistributionArrayBackend(Protocol):
 
     @property
     def event_shape(self) -> tuple[int, ...]: ...
+
+    @property
+    def cell_spec(self) -> TermSpec:
+        """The term every cell draws, which an empty batch reports too."""
+        ...
 
     def cell(self, index: int | tuple[int, ...]) -> Distribution:
         """Fabricate a scalar ``Distribution`` for the cell at ``index``."""

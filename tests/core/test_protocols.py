@@ -298,10 +298,8 @@ class TestRecordDistributionViewDynamicProtocols:
         from probpipe.core._specs import RecordSpec
 
         class _LogProbOnlyParent(RecordDistribution, SupportsLogProb):
-            event_template = RecordSpec(x=(), y=())
-
             def __init__(self):
-                self._name = "lp_only"
+                super().__init__("lp_only", RecordSpec(x=(), y=()))
 
             def _log_prob(self, value):
                 import jax.numpy as jnp
@@ -357,7 +355,10 @@ class TestFlattenedDistributionViewDynamicProtocols:
             event_template = RecordSpec(x=())
 
             def __init__(self):
+                from probpipe import NumericArraySpec
+
                 self._name = "sample_only"
+                self._init_declaration(NumericArraySpec((), "float32"))
 
             @property
             def event_shape(self):
@@ -386,7 +387,10 @@ class TestFlattenedDistributionViewDynamicProtocols:
             event_template = RecordSpec(x=())
 
             def __init__(self):
+                from probpipe import NumericArraySpec
+
                 self._name = "lpo_base"
+                self._init_declaration(NumericArraySpec((), "float32"))
 
             @property
             def event_shape(self):
@@ -564,7 +568,11 @@ class TestTransformedDistributionDynamicProtocols:
             event_template = RecordSpec(x=())
 
             def __init__(self):
+                from probpipe import NumericArraySpec
+                from probpipe.core.constraints import real
+
                 self._name = "lpo"
+                self._init_declaration(NumericArraySpec((), "float32", real))
 
             @property
             def event_shape(self):
@@ -809,7 +817,7 @@ class TestSupportsArrayBackendProtocolSurface:
 
         # Protocol attributes via __annotations__ / methods via vars.
         members = set(dir(_DistributionArrayBackend))
-        for required in ("batch_shape", "event_shape", "cell"):
+        for required in ("batch_shape", "event_shape", "cell_spec", "cell"):
             assert required in members, (
                 f"_DistributionArrayBackend missing required attr {required!r}"
             )

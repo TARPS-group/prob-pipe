@@ -10,6 +10,7 @@ from probpipe import (
     GLMLikelihood,
     MultivariateNormal,
     Normal,
+    NumericArraySpec,
     ProductDistribution,
     SimpleModel,
     condition_on,
@@ -235,10 +236,8 @@ def _make_unnormalized_distribution():
     from probpipe.distributions._distribution import Distribution
 
     class UnnormalizedDist(_UnnormalizedTarget, Distribution):
-        event_shape = (2,)
-
         def __init__(self):
-            super().__init__(name="unnorm")
+            super().__init__("unnorm", NumericArraySpec((2,)))
 
     return UnnormalizedDist()
 
@@ -250,10 +249,8 @@ def _make_normalized_distribution():
     class NormalizedDist(_NormalizedTarget, Distribution, SupportsLogProb):
         # Inheriting SupportsLogProb gives the default
         # _unnormalized_log_prob (delegating to _log_prob) for free.
-        event_shape = (2,)
-
         def __init__(self):
-            super().__init__(name="norm")
+            super().__init__("norm", NumericArraySpec((2,)))
 
     return NormalizedDist()
 
@@ -346,10 +343,8 @@ class TestUnnormalizedLogProbInference:
         from probpipe.distributions._distribution import Distribution
 
         class NoDensityDist(Distribution):
-            event_shape = (2,)
-
             def __init__(self):
-                super().__init__(name="no_density")
+                super().__init__("no_density", NumericArraySpec((2,)))
 
         dist = NoDensityDist()
         for method in ("tfp_nuts", "tfp_hmc", "blackjax_rwmh"):

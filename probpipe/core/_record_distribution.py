@@ -1,14 +1,12 @@
 """RecordDistribution — generic Record-based distribution base.
 
-Provides the named-component layer (``fields``, ``__getitem__``,
-``select()``) and Record-aware flatten/unflatten, without imposing
-the numeric shape / dtype conventions (``dtype``, ``support``,
-``event_shape``).  Those live on ``NumericRecordDistribution`` and
-its consumers.
+Provides the named-component layer (``fields``, ``select()``) and
+Record-aware flatten/unflatten over the event declaration. ``event_shape`` and
+``d[name]`` belong to :class:`~probpipe.Distribution`, and ``dtypes``,
+``supports``, ``dtype``, and ``support`` to :class:`~probpipe.NumericDistribution`.
 
-``_RecordDistributionView`` is the lightweight component reference,
-analogous to the former ``DistributionView`` but for any distribution
-whose ``event_template`` is set.
+``_RecordDistributionView`` is the lightweight component reference that
+``d[name]`` returns for a law exposing a record.
 """
 
 from __future__ import annotations
@@ -21,7 +19,8 @@ import jax.numpy as jnp
 
 from ..custom_types import Array, PRNGKey
 from ..distributions._distribution import Distribution
-from ._specs import NumericArraySpec, RecordSpec
+from ._specs import NumericArraySpec, OutputSpec, RecordSpec, TermSpec
+from .named_tree import _PATH_SEP
 from .protocols import (
     SupportsCovariance,
     SupportsLogProb,
@@ -30,9 +29,22 @@ from .protocols import (
     SupportsVariance,
 )
 from .record import Record
-from .tracked import _TrackedTermMeta
 
 __all__ = ["RecordDistribution", "_RecordDistributionView"]
+
+
+def _interim_template(declaration: OutputSpec) -> RecordSpec:
+    """The record template a declared law presents, until its readers move to the declaration.
+
+    An interim implementation detail. An exposed record is its own template. A
+    whole term presents as a one-field record under its component, holding only
+    an array's shape, as the template built from a name and a shape did.
+    """
+    component = declaration._component_name
+    if component is None:
+        return declaration.spec
+    spec = declaration.spec
+    return RecordSpec(**{component: spec.shape if isinstance(spec, NumericArraySpec) else spec})
 
 
 def _field_event_shape(template: RecordSpec, name: str) -> tuple[int, ...]:
@@ -199,10 +211,13 @@ class _RecordDistributionView(Distribution):
         return object.__new__(actual_cls)
 
     def __init__(self, parent: RecordDistribution, key: str | tuple[str, ...]) -> None:
-        # ``parent.event_template`` is contractually non-``None``
-        # (metaclass-enforced on every ``RecordDistribution`` instance).
-        template = parent.event_template
-        key_path = (key,) if isinstance(key, str) else tuple(key)
+        # The record the parent presents: its stored template, or its
+        # declaration read as one.
+        template = getattr(parent, "event_template", None)
+        if template is None:
+            template = _interim_template(parent.event_spec)
+        # A string key is a slash path, as a tuple key is.
+        key_path = tuple(key.split(_PATH_SEP)) if isinstance(key, str) else tuple(key)
         if not key_path:
             raise KeyError("Record distribution view path must not be empty")
         try:
@@ -219,6 +234,13 @@ class _RecordDistributionView(Distribution):
         self._key = key_path[-1]
         self._key_path = key_path
         self._template_field = template_field
+        # The parent's declared term at the path, a whole term under the
+        # path's last segment (III.7); a path only the parent's stored
+        # template has gives the template's field.
+        declared = _declared_at_path(parent, key_path)
+        self._init_declaration(
+            OutputSpec(**{self._key: template_field if declared is None else declared})
+        )
 
     # -- Parent identity ---------------------------------------------------
 
@@ -255,31 +277,12 @@ class _RecordDistributionView(Distribution):
             )
         return _RecordDistributionView(self._parent, (*self._key_path, key))
 
-    # -- Shape info ---------------------------------------------------------
-
-    @property
-    def event_shape(self) -> tuple[int, ...]:
-        f = self._template_field
-        if isinstance(f, NumericArraySpec):
-            # Numeric array leaf — its event shape is the spec shape.
-            return f.shape
-        # Nested template / opaque / distribution / function leaf.
-        return ()
-
     # -- Single-field array-like shims -------------------------------------
 
     @property
     def shape(self) -> tuple[int, ...]:
         """Shape of one draw from this view — equals ``event_shape``."""
         return self.event_shape
-
-    @property
-    def dtype(self) -> jnp.dtype | None:
-        """Dtype of a single draw, if the parent exposes ``dtypes``."""
-        dtypes = getattr(self._parent, "dtypes", None)
-        if isinstance(dtypes, dict):
-            return dtypes.get("/".join(self._key_path), dtypes.get(self._key))
-        return None
 
     @property
     def ndim(self) -> int:
@@ -359,8 +362,9 @@ def _build_event_template(
     Each leaf contributes a spec for the parent template:
 
     - Nested ``dict`` → recursively built nested ``RecordSpec``.
-    - :class:`NumericRecordDistribution` → the leaf's ``event_shape``
-      (numeric shape tuple).
+    - :class:`NumericRecordDistribution` → the leaf's ``event_shape``, or,
+      for a leaf that draws a record, as a nested joint does, its
+      ``event_template``.
     - Any other :class:`RecordDistribution` → the leaf's
       ``event_template`` (embedded as a nested structural template).
     - Any other :class:`Distribution` → ``None`` (opaque leaf — the
@@ -374,7 +378,10 @@ def _build_event_template(
         if isinstance(comp, dict):
             specs[name] = _build_event_template(comp)
         elif isinstance(comp, NumericRecordDistribution):
-            specs[name] = comp.event_shape
+            try:
+                specs[name] = comp.event_shape
+            except TypeError:
+                specs[name] = comp.event_template
         elif isinstance(comp, RecordDistribution):
             specs[name] = comp.event_template
         elif isinstance(comp, Distribution):
@@ -384,81 +391,75 @@ def _build_event_template(
     return RecordSpec(specs)
 
 
+def _record_with_leaves(template: RecordSpec, dtype: Any, support: Any) -> RecordSpec:
+    """*template* with every array leaf declaring *dtype* and *support*."""
+
+    def leaf(spec: TermSpec) -> TermSpec:
+        if isinstance(spec, RecordSpec):
+            return _record_with_leaves(spec, dtype, support)
+        if isinstance(spec, NumericArraySpec):
+            return NumericArraySpec(spec.shape, dtype, support)
+        return spec
+
+    return RecordSpec({field: leaf(spec) for field, spec in template.children.items()})
+
+
+def _declared_at_path(law: Distribution, path: tuple[str, ...]) -> TermSpec | None:
+    """The term *law* declares at *path* through its components, or None if there is none."""
+    spec = law.event_spec.components.get(path[0])
+    for segment in path[1:]:
+        if not isinstance(spec, RecordSpec) or segment not in spec.children:
+            return None
+        spec = spec.children[segment]
+    return spec
+
+
+def _joint_event_spec(components: dict[str, Any]) -> RecordSpec:
+    """The record a joint draws: each component's declared term, a nested dict as a record.
+
+    The declaration keeps each component's dtype and support.
+    """
+    return RecordSpec(
+        {
+            name: _joint_event_spec(comp) if isinstance(comp, dict) else comp.event_spec.spec
+            for name, comp in components.items()
+        }
+    )
+
+
 # ---------------------------------------------------------------------------
 # RecordDistribution
 # ---------------------------------------------------------------------------
 
 
-class _RecordDistributionMeta(_TrackedTermMeta):
-    """Metaclass adding the ``event_template`` set-or-derivable check
-    on top of the base ``name`` check.
-
-    After ``__init__`` returns, accesses ``instance.event_template``
-    once. Either path is fine: ``_event_template`` was set directly
-    (multi-leaf joints), or the auto-build path on
-    :class:`~probpipe.core._numeric_record_distribution.NumericRecordDistribution`
-    derives a single-field template from ``name`` + ``event_shape``.
-    Both paths must yield a non-``None`` ``RecordSpec``.
-    """
-
-    def __call__(cls, *args: Any, **kwargs: Any) -> Any:
-        instance = super().__call__(*args, **kwargs)
-        try:
-            tpl = instance.event_template
-        except (TypeError, NotImplementedError) as exc:
-            raise TypeError(
-                f"{cls.__name__}.__init__ left event_template unresolved: {exc}"
-            ) from exc
-        if tpl is None:
-            raise TypeError(
-                f"{cls.__name__}.__init__ must leave event_template "
-                f"set — either assign self._event_template = ..., "
-                f"or declare event_shape so the auto-build path can "
-                f"derive a single-field template."
-            )
-        return instance
-
-
-class RecordDistribution(Distribution, metaclass=_RecordDistributionMeta):
+class RecordDistribution(Distribution):
     """Generic Record-based distribution.
 
-    Provides named component access (``fields``, ``__getitem__``,
-    ``select()``) and Record-aware flatten / unflatten.  Does NOT impose
-    numeric shape / dtype conventions (``dtype``, ``support``,
-    ``event_shape``) — those belong on ``NumericRecordDistribution``
-    and its consumers.
-
-    Concrete subclasses must set ``_event_template`` (a
-    :class:`~probpipe.core.record.RecordSpec` describing the named
-    structure) and implement the relevant sampling / log-prob protocols.
+    Provides named component access (``fields``, ``select()``) and
+    Record-aware flatten / unflatten over the event declaration, an interim
+    implementation detail of a class the design retires.
     """
 
-    # -- Record template (owned here, NOT on Distribution base) -------------
+    # -- Record template --------------------------------------------------------
 
     @property
-    def event_template(self) -> RecordSpec | None:
-        """Structural template describing this distribution's samples.
+    def event_template(self) -> RecordSpec:
+        """The declaration presented as a record template.
 
-        Returns a :class:`~probpipe.core.record.RecordSpec` with
-        field names and per-field shapes, or ``None`` if no template
-        is set.
+        An interim implementation detail, until its readers move to
+        :attr:`event_spec`: a class that stores a template presents it, and any
+        other law presents its declaration, a whole term as a one-field record
+        under its component.
         """
-        return getattr(self, "_event_template", None)
+        stored = getattr(self, "_event_template", None)
+        return stored if stored is not None else _interim_template(self.event_spec)
 
     # -- Named component access ---------------------------------------------
 
     @property
     def fields(self) -> tuple[str, ...]:
-        """Field names from the event_template.
-
-        The metaclass guarantees ``event_template`` is non-``None`` on
-        every :class:`RecordDistribution` instance, so this is a direct
-        delegate (no ``None`` fallback).
-        """
-        return self.event_template.fields
-
-    def __getitem__(self, key: str) -> _RecordDistributionView:
-        return _RecordDistributionView(self, key)
+        """Top-level field names of one draw, the components of its declaration."""
+        return tuple(self.event_spec.components)
 
     def select(self, *fields: str, **mapping: str) -> dict[str, _RecordDistributionView]:
         """Select named fields as views for Function broadcasting.
@@ -517,11 +518,12 @@ class RecordDistribution(Distribution, metaclass=_RecordDistributionMeta):
         """Per-field event shapes (top-level fields only).
 
         An array-valued field reports its array shape; a nested sub-structure or
-        non-array (opaque / distribution / function) field reports ``()``. The
-        metaclass guarantees ``event_template`` is non-``None``.
+        non-array (opaque / distribution / function) field reports ``()``.
         """
-        tpl = self.event_template
-        return {name: _field_event_shape(tpl, name) for name in tpl.fields}
+        return {
+            name: spec.shape if isinstance(spec, NumericArraySpec) else ()
+            for name, spec in self.event_spec.components.items()
+        }
 
     # -- Single-field array-like shims --------------------------------------
     # On a single-field distribution, ``.shape`` / ``.ndim`` delegate to

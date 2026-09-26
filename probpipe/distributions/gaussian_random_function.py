@@ -491,6 +491,7 @@ class _LinearMapGRF(GaussianRandomFunction):
             name=f"linear_map({base.name})",
             input_shape=base.input_shape,
             output_shape=(d_out,),
+            event_spec=base.event_spec,
         )
         self.supports_joint_inputs = base.supports_joint_inputs
         self.supports_joint_outputs = True
@@ -592,6 +593,7 @@ class _ShiftedGRF(GaussianRandomFunction):
             name=f"shift({base.name})",
             input_shape=base.input_shape,
             output_shape=base.output_shape,
+            event_spec=base.event_spec,
         )
         self.supports_joint_inputs = base.supports_joint_inputs
         self.supports_joint_outputs = base.supports_joint_outputs
@@ -629,6 +631,7 @@ class _ScaledGRF(GaussianRandomFunction):
             name=f"scale({base.name})",
             input_shape=base.input_shape,
             output_shape=base.output_shape,
+            event_spec=base.event_spec,
         )
         self.supports_joint_inputs = base.supports_joint_inputs
         self.supports_joint_outputs = base.supports_joint_outputs
@@ -684,6 +687,7 @@ class _IndependentSumGRF(GaussianRandomFunction):
             name=f"sum({left.name}, {right.name})",
             input_shape=left.input_shape,
             output_shape=left.output_shape,
+            event_spec=left.event_spec,
         )
         self.supports_joint_inputs = left.supports_joint_inputs and right.supports_joint_inputs
         self.supports_joint_outputs = left.supports_joint_outputs and right.supports_joint_outputs

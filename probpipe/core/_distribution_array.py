@@ -42,7 +42,7 @@ from __future__ import annotations
 
 from functools import partial
 from math import prod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -50,7 +50,7 @@ import numpy as np
 from .._array_utils import _slice_leading_axes
 from ..distributions._distribution import Distribution
 from ._immutable import transient_memo
-from ._specs import RecordSpec
+from ._specs import NumericArraySpec, NumericRecordSpec, OutputSpec, RecordSpec, TermSpec
 from .protocols import SupportsArrayBackend
 from .tracked import auto_name
 
@@ -58,6 +58,73 @@ if TYPE_CHECKING:
     from .protocols import _DistributionArrayBackend
 
 __all__ = ["DistributionArray"]
+
+
+def _drawn_shapes(component: Distribution) -> object:
+    """The shapes one draw of *component* has, which the cells of an array share.
+
+    An array draw has its shape and a record draw the shape of each leaf, by
+    path. A one-field record reads as its field, as ``event_shape`` read it, an
+    interim implementation detail.
+    """
+    spec = component.event_spec.spec
+    if isinstance(spec, RecordSpec) and len(spec.children) == 1:
+        (spec,) = spec.children.values()
+    if isinstance(spec, NumericArraySpec):
+        return spec.shape
+    if isinstance(spec, NumericRecordSpec):
+        return spec.leaf_shapes
+    return None
+
+
+def _shared_term(specs: list[TermSpec]) -> TermSpec:
+    """The term that every one of *specs* declares, keeping the metadata they share.
+
+    Cells share their shapes, which construction checks, so an array keeps a
+    dtype or a support only when every cell declares it, and a record does so
+    field by field. Terms of different kinds keep the first, an interim
+    implementation detail.
+    """
+    first = specs[0]
+    if all(spec == first for spec in specs[1:]):
+        return first
+    if all(isinstance(spec, NumericArraySpec) for spec in specs):
+        head = cast(NumericArraySpec, first)
+        arrays = cast(list[NumericArraySpec], specs)
+        return NumericArraySpec(
+            head.shape,
+            head.dtype if all(spec.dtype == head.dtype for spec in arrays) else None,
+            head.support if all(spec.support == head.support for spec in arrays) else None,
+        )
+    if isinstance(first, RecordSpec) and all(
+        isinstance(spec, RecordSpec) and spec.fields == first.fields for spec in specs
+    ):
+        records = cast(list[RecordSpec], specs)
+        return RecordSpec(
+            {
+                field: _shared_term([record.children[field] for record in records])
+                for field in first.fields
+            }
+        )
+    return first
+
+
+def _cell_declaration(cells: tuple[Distribution, ...], name: str) -> OutputSpec:
+    """The declaration of one draw of a cell, which a collection of laws declares.
+
+    An interim implementation detail of the classes the design retires. The first
+    cell's declaration stands when every cell shares it. Otherwise the array
+    declares the term every cell draws, with the metadata the cells share, and
+    whole-term cells declare it under *name*.
+    """
+    declarations = [cell.event_spec for cell in cells]
+    first = declarations[0]
+    if all(d == first for d in declarations[1:]):
+        return first
+    spec = _shared_term([d.spec for d in declarations])
+    if first._component_name is None:
+        return OutputSpec(cast(RecordSpec, spec))
+    return OutputSpec(**{name: spec})
 
 
 # ---------------------------------------------------------------------------
@@ -154,14 +221,14 @@ class DistributionArray(Distribution):
         # Components must share event_shape. Batching lives on the
         # DistributionArray itself; per the "one random variable per
         # Distribution" rule, components have no batch_shape.
-        es0 = getattr(components[0], "event_shape", ())
+        es0 = _drawn_shapes(components[0])
         for i, c in enumerate(components):
-            es = getattr(c, "event_shape", ())
+            es = _drawn_shapes(c)
             if es != es0:
                 raise ValueError(
                     f"DistributionArray requires matching event_shape "
-                    f"across components; components[0].event_shape={es0} "
-                    f"but components[{i}].event_shape={es}."
+                    f"across components; components[0] draws {es0} "
+                    f"but components[{i}] draws {es}."
                 )
         # ``batch_shape`` defaults to (n,) for backward compatibility
         # with the 1-D-only form used until now. Multi-d broadcasting
@@ -184,7 +251,7 @@ class DistributionArray(Distribution):
         self._backend = None
         self._event_template: RecordSpec | None = None
         name = auto_name(name, "distribution_array")
-        super().__init__(name=name)
+        super().__init__(name, _cell_declaration(components, name))
         # A DistributionArray holding MC-marginal components inherits
         # their approximation status; if any component is approximate
         # (a _MixtureMarginal or RecordEmpiricalDistribution), so is
@@ -364,7 +431,9 @@ class DistributionArray(Distribution):
         set_attribute("_backend", backend)
         set_attribute("_event_template", None)
         name = auto_name(name, "distribution_array")
-        Distribution.__init__(instance, name=name)
+        # Cells are named after the array, so one cell's term is declared
+        # under the array's own name.
+        Distribution.__init__(instance, name, OutputSpec(**{name: backend.cell_spec}))
         # Approximation status flows from the backend. TFP-backed
         # arrays are exact; a future Record-backend (over a
         # ``RecordEmpiricalDistribution``) will report
@@ -417,13 +486,6 @@ class DistributionArray(Distribution):
         return tuple(self._batch_shape)
 
     @property
-    def event_shape(self) -> tuple[int, ...]:
-        """Shared ``event_shape`` across components."""
-        if self._backend is not None:
-            return tuple(self._backend.event_shape)
-        return getattr(self._components[0], "event_shape", ())
-
-    @property
     def event_template(self) -> RecordSpec | None:
         """Authoritative template shared by the component distributions.
 
@@ -443,20 +505,6 @@ class DistributionArray(Distribution):
         ):
             return templates[0]
         return None
-
-    @property
-    def dtype(self):
-        """Per-cell dtype.
-
-        Cells share an event shape and (in practice) a dtype because
-        homogeneous backends produce uniformly-typed cells and
-        literal-array constructions inherit from the source.
-        Backend-delegated arrays read it from the backend; literal
-        arrays read it from the first component.
-        """
-        if self._backend is not None:
-            return getattr(self._backend, "dtype", None)
-        return getattr(self._components[0], "dtype", None)
 
     @property
     def size(self) -> int:

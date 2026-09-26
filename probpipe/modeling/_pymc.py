@@ -11,7 +11,7 @@ from typing import Any
 
 import jax.numpy as jnp
 
-from ..core._specs import NumericRecordSpec
+from ..core._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
 from ._base import ProbabilisticModel
 
 logger = logging.getLogger(__name__)
@@ -87,6 +87,22 @@ class PyMCModel(ProbabilisticModel):
         observed_set = set(self._observed_names)
         self._param_names = tuple(
             rv.name for rv in self._unconditioned_model.free_RVs if rv.name not in observed_set
+        )
+        # The parameters are the declared record, one field per free RV. A size
+        # the no-data build leaves unknown is a symbolic dimension, which the
+        # data binds.
+        self._init_declaration(
+            RecordSpec(
+                {
+                    name: NumericArraySpec(
+                        tuple(
+                            f"{name}_{axis}" if size is None else int(size)
+                            for axis, size in enumerate(rv.type.shape)
+                        )
+                    )
+                    for name, rv in self._param_rvs(self._unconditioned_model, self._param_names)
+                }
+            )
         )
 
     # -- Distribution interface ---------------------------------------------
@@ -165,7 +181,9 @@ class PyMCModel(ProbabilisticModel):
         """Total number of scalar free parameters (observed excluded).
 
         Derived from :attr:`event_template`; raises on a non-concrete
-        free-RV shape, as the template does.
+        free-RV shape, as the template does. An interim implementation
+        detail: the declaration is the record of free RVs, and the
+        flat-vector readers still ask for this.
         """
         return (self.event_template.vector_size,)
 

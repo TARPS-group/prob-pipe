@@ -2,6 +2,7 @@
 
 Provides:
   - ``Distribution`` – Abstract base for all ProbPipe distributions.
+  - ``NumericDistribution`` – The marker of a law whose event is numeric, with its views.
   - ``DistributionSpec`` – The term spec of the distribution kind.
   - Global defaults for expectation sampling.
 """
@@ -11,16 +12,18 @@ from __future__ import annotations
 from abc import ABC
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 if TYPE_CHECKING:
     from ..core._distribution_array import DistributionArray
+    from ..core.constraints import Constraint
     from ..diagnostics.views import DiagnosticsView
 
-from ..core._record_spec import RecordSpec, _check_kind_of, _schema_carried_by
-from ..core._spec_base import TermSpec, _unify_specs
+from ..core._record_spec import RecordSpec
+from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
+from ..core._specs import OutputSpec
 from ..core.provenance import Provenance
-from ..core.tracked import Annotated, TrackedTerm
+from ..core.tracked import Annotated, TrackedTerm, _TrackedTermMeta
 
 # ---------------------------------------------------------------------------
 # Global defaults
@@ -49,11 +52,124 @@ def set_return_approx_dist(value: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
+# The event declaration: completion and class membership
+# ---------------------------------------------------------------------------
+
+
+def _complete_event_spec(event_spec: Any, name: str) -> OutputSpec:
+    """Complete *event_spec* into the output declaration of one draw (II.2, III.7).
+
+    Parameters
+    ----------
+    event_spec : OutputSpec or TermSpec
+        The declaration a constructor supplies. A ``RecordSpec`` exposes its
+        fields, even when it has one; any other term spec is a whole term whose
+        component is *name*; an ``OutputSpec`` is kept as given.
+    name : str
+        The law's name, captured as the component of a whole-term event.
+
+    Returns
+    -------
+    OutputSpec
+        The complete declaration.
+
+    Raises
+    ------
+    TypeError
+        If *event_spec* is neither an ``OutputSpec`` nor a ``TermSpec``.
+    ValueError
+        If the declaration has a type hole, since filling one is the
+        constructor's job, or *name* is not a valid component name.
+    """
+    if isinstance(event_spec, OutputSpec):
+        declaration = event_spec
+    elif isinstance(event_spec, RecordSpec):
+        declaration = OutputSpec(event_spec)
+    elif isinstance(event_spec, TermSpec):
+        declaration = OutputSpec(**{name: event_spec})
+    else:
+        raise TypeError(
+            f"event_spec must be an OutputSpec or a TermSpec, got {type(event_spec).__name__}"
+        )
+    if declaration.spec is None:
+        raise ValueError(
+            f"the event declaration of {name!r} has a type hole; a distribution stores "
+            f"only a complete declaration"
+        )
+    return declaration
+
+
+def _whole_term_component(declaration: OutputSpec) -> str | None:
+    """The component of a whole-term declaration, or None for an exposed record."""
+    return declaration._component_name
+
+
+def _declares_numeric_event(value: Any) -> bool:
+    """Whether *value* is a law whose declared event is numeric (II.3).
+
+    A law still under construction declares nothing yet, so it is not numeric.
+    """
+    if not isinstance(value, Distribution):
+        return False
+    declared = getattr(value, "_spec", None)
+    return declared is not None and isinstance(declared.event_spec.spec, NumericSpec)
+
+
+def _array_leaves(declaration: OutputSpec) -> dict[str, NumericArraySpec]:
+    """Each array leaf of *declaration*, keyed by its path through the components."""
+    leaves: dict[str, NumericArraySpec] = {}
+
+    def visit(path: str, spec: TermSpec | None) -> None:
+        if isinstance(spec, NumericArraySpec):
+            leaves[path] = spec
+        elif isinstance(spec, RecordSpec):
+            for child, child_spec in spec.children.items():
+                visit(f"{path}/{child}", child_spec)
+
+    for component, spec in declaration.components.items():
+        visit(component, spec)
+    return leaves
+
+
+class _DistributionMeta(_TrackedTermMeta):
+    """The metaclass of every distribution.
+
+    Construction checks that the instance holds its event declaration, as the
+    tracked-term metaclass checks its name: a class that bypasses
+    ``Distribution.__init__`` calls ``_init_declaration`` itself.
+
+    ``isinstance(d, NumericDistribution)`` holds if and only if ``d`` declares a
+    numeric event, whatever its class, and every other class check is the ordinary
+    one. A class whose every instance is numeric may claim the marker by
+    inheriting it, and construction checks the claim.
+    """
+
+    def __instancecheck__(cls, instance: Any) -> bool:
+        if cls is NumericDistribution:
+            return _declares_numeric_event(instance)
+        return super().__instancecheck__(instance)
+
+    def __call__(cls, *args: Any, **kwargs: Any) -> Any:
+        instance = super().__call__(*args, **kwargs)
+        if not isinstance(getattr(instance, "_spec", None), DistributionSpec):
+            raise TypeError(
+                f"{cls.__name__}.__init__ left the event undeclared; pass event_spec to "
+                f"Distribution.__init__, or call _init_declaration when bypassing it"
+            )
+        if issubclass(cls, NumericDistribution) and not _declares_numeric_event(instance):
+            raise TypeError(
+                f"{cls.__name__} inherits NumericDistribution, so its instances must "
+                f"declare a numeric event"
+            )
+        return instance
+
+
+# ---------------------------------------------------------------------------
 # Distribution — the base class
 # ---------------------------------------------------------------------------
 
 
-class Distribution(TrackedTerm, Annotated, ABC):
+class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     """
     Abstract base for all ProbPipe distributions.
 
@@ -71,15 +187,28 @@ class Distribution(TrackedTerm, Annotated, ABC):
     Sampling and expectation capabilities are provided by the
     :class:`~probpipe.core.protocols.SupportsSampling` protocol.
 
+    **The event declaration.** A law stores one ``DistributionSpec``, its
+    :attr:`spec`, whose :attr:`event_spec` is the output declaration of one draw
+    (II.2). A bare ``RecordSpec`` exposes its fields; any other term spec is a
+    whole-term event whose component is the law's ``name``, captured once, so
+    ``with_name`` never moves it. :attr:`event_shape` reads the declaration, and
+    a law whose declaration is numeric also has the views of
+    :class:`NumericDistribution`; none of them is stored.
+
     Parameters
     ----------
     name : str
         Non-empty name for this distribution.
+    event_spec : OutputSpec or TermSpec
+        The declaration of one draw, completed as above.
 
     Raises
     ------
     TypeError
-        If *name* is not a non-empty string.
+        If *name* is not a non-empty string, or *event_spec* is not a spec.
+    ValueError
+        If *event_spec* has a type hole, or a whole-term event's component, the
+        name, is not a valid component name.
     """
 
     # -- Immutability: deferred for this layer ------------------------------
@@ -110,6 +239,7 @@ class Distribution(TrackedTerm, Annotated, ABC):
     def __init__(
         self,
         name: str,
+        event_spec: OutputSpec | TermSpec,
         *,
         _provenance: Provenance | None = None,
         _annotations: Mapping[str, Any] | None = None,
@@ -123,6 +253,166 @@ class Distribution(TrackedTerm, Annotated, ABC):
         # reconstruction paths are the only callers.
         self._init_tracked(name, provenance=_provenance)
         self._init_annotations(_annotations)
+        self._init_declaration(event_spec)
+
+    def _init_declaration(self, event_spec: OutputSpec | TermSpec) -> None:
+        """Complete *event_spec* and store it as this law's declaration.
+
+        The constructor calls this after setting the name; a class that bypasses
+        the constructor calls it itself.
+        """
+        object.__setattr__(
+            self, "_spec", DistributionSpec(_complete_event_spec(event_spec, self._name))
+        )
+
+    # -- the event declaration ----------------------------------------------
+
+    @property
+    def spec(self) -> DistributionSpec:
+        """The law's term spec, the one stored source of its event declaration."""
+        return self._spec
+
+    @property
+    def event_spec(self) -> OutputSpec:
+        """The output declaration of one draw (II.2), a view on :attr:`spec`."""
+        return self.spec.event_spec
+
+    @property
+    def event_shape(self) -> tuple[int, ...]:
+        """The shape of one draw, defined only when a draw is a single array.
+
+        Raises
+        ------
+        TypeError
+            If a draw is not a single array, a one-field record included.
+        ValueError
+            If the declared shape has unbound dimensions.
+        """
+        spec = self.event_spec.spec
+        if not isinstance(spec, NumericArraySpec):
+            raise TypeError(
+                f"{type(self).__name__} {self.name!r} does not draw a single array; "
+                f"event_shape is defined only for one"
+            )
+        free = spec.free_dims
+        if free:
+            raise ValueError(
+                f"{type(self).__name__} {self.name!r} has unbound dimensions "
+                f"{sorted(free)}; bind them with with_dim_sizes"
+            )
+        return spec.shape
+
+    def __getattr__(self, name: str) -> Any:
+        """Resolve a view of :class:`NumericDistribution` for a numeric law of another class.
+
+        Python calls this only when ordinary lookup fails. A law whose declaration
+        is numeric has the views of the marker whatever its class, so they resolve
+        through the marker, and any other missing attribute raises as usual.
+
+        Raises
+        ------
+        AttributeError
+            If *name* is not an attribute of the law, a view of the marker on a law
+            whose declaration is not numeric included.
+        """
+        view = _NUMERIC_VIEWS.get(name)
+        if view is None:
+            # Repeat ordinary lookup, so the error it met stands, a property's own
+            # message included.
+            return object.__getattribute__(self, name)
+        if not _declares_numeric_event(self):
+            raise AttributeError(
+                f"{type(self).__name__} declares a non-numeric event, and {name} belongs to "
+                f"NumericDistribution"
+            )
+        return view.__get__(self, type(self))
+
+    # -- dimension transforms -------------------------------------------------
+
+    def with_dim_sizes(self, **sizes: int) -> Self:
+        """Bind named symbolic dimensions of the declaration (II.1).
+
+        Parameters
+        ----------
+        **sizes : int
+            Sizes for free dimensions of the declaration.
+
+        Returns
+        -------
+        Self
+            A copy of the same class and name whose declaration has the sizes
+            substituted; the original is unchanged.
+
+        Raises
+        ------
+        ValueError
+            If a name is not a free dimension of the declaration, one an earlier
+            call bound included, or a size is negative.
+        TypeError
+            If a size is not an integer.
+        """
+        unbound = set(sizes) - self.event_spec.spec.free_dims
+        if unbound:
+            raise ValueError(
+                f"{type(self).__name__} {self.name!r} has no free dimensions "
+                f"{sorted(unbound)} to bind"
+            )
+        return self._with_declaration(
+            self.event_spec.with_dim_sizes(**sizes), "with_dim_sizes", sizes
+        )
+
+    def with_dim_names(self, **names: str) -> Self:
+        """Rename symbolic dimensions of the declaration, simultaneously (II.1).
+
+        Parameters
+        ----------
+        **names : str
+            New names keyed by old; names that are not free are ignored.
+
+        Returns
+        -------
+        Self
+            A copy of the same class and name whose declaration has the
+            dimensions renamed; the original is unchanged.
+        """
+        return self._with_declaration(
+            self.event_spec.with_dim_names(**names), "with_dim_names", names
+        )
+
+    def _with_declaration(
+        self, event_spec: OutputSpec, operation: str, arguments: Mapping[str, Any]
+    ) -> Self:
+        """A copy of this law holding *event_spec*, with provenance recording *operation*."""
+        clone = self._shallow_copy()
+        object.__setattr__(clone, "_spec", DistributionSpec(event_spec))
+        object.__setattr__(clone, "_provenance", None)
+        clone.with_provenance(
+            Provenance.create(operation, parents=[self], metadata=dict(arguments))
+        )
+        return clone
+
+    # -- components -----------------------------------------------------------
+
+    def __getitem__(self, key: str | tuple[str, ...]) -> Distribution:
+        """The law of the component or field at *key* (III.7).
+
+        A whole-term law is itself under its component, so ``d[name]`` returns
+        ``d``. For an exposed record, the result is today's field view, an interim
+        implementation detail.
+
+        Raises
+        ------
+        KeyError
+            If a whole-term law's component is not *key*.
+        """
+        component = _whole_term_component(self.event_spec)
+        if component is not None:
+            if key == component:
+                return self
+            raise KeyError(key)
+        from ..core._record_distribution import _RecordDistributionView
+
+        return _RecordDistributionView(self, key)
 
     # -- keyword-form value construction ------------------------------------
 
@@ -337,110 +627,165 @@ class Distribution(TrackedTerm, Annotated, ABC):
         return f"{parts[0]}({', '.join(parts[1:])})"
 
 
+class NumericDistribution(Distribution):
+    """The marker of a law whose event declaration is numeric (II.3), with its views.
+
+    ``isinstance(d, NumericDistribution)`` holds if and only if
+    ``d.event_spec.spec`` is a :class:`~probpipe.core._spec_base.NumericSpec`,
+    so a draw implements ``Numeric`` and the flat-vector interface applies. A
+    class whose every instance is numeric may inherit the marker, and
+    construction checks that each instance declares a numeric event.
+
+    Every numeric law has the views below, whatever its class: a class that
+    inherits the marker has them directly, and any other numeric law resolves
+    them through the marker. A law whose declaration is not numeric has none of
+    them. Like ``event_shape``, they read the declaration and are never stored.
+    """
+
+    @property
+    def dtypes(self) -> dict[str, Any]:
+        """The declared dtype of each array leaf of a draw, keyed by leaf path."""
+        return {path: spec.dtype for path, spec in _array_leaves(self.event_spec).items()}
+
+    @property
+    def supports(self) -> dict[str, Constraint | None]:
+        """The declared support of each array leaf of a draw, keyed by leaf path."""
+        return {path: spec.support for path, spec in _array_leaves(self.event_spec).items()}
+
+    @property
+    def dtype(self) -> Any:
+        """The dtype every array leaf shares, or None when they differ or there are none."""
+        dtypes = set(self.dtypes.values())
+        return dtypes.pop() if len(dtypes) == 1 else None
+
+    @property
+    def support(self) -> Constraint | None:
+        """The support every array leaf shares, or None when they differ or there are none."""
+        supports = set(self.supports.values())
+        return supports.pop() if len(supports) == 1 else None
+
+
+# The views a numeric law has whatever its class, which ``Distribution.__getattr__``
+# resolves for a class that does not inherit the marker.
+_NUMERIC_VIEWS: dict[str, property] = {
+    name: vars(NumericDistribution)[name] for name in ("dtypes", "supports", "dtype", "support")
+}
+
+
 # ---------------------------------------------------------------------------
 # DistributionSpec — the term spec of the distribution kind
 # ---------------------------------------------------------------------------
 
 
+def _unify_declarations(
+    expected: OutputSpec, actual: OutputSpec, bindings: dict[str, int], path: str
+) -> None:
+    """Match *actual* against *expected*: packaging and components, then their specs.
+
+    Raises
+    ------
+    ValueError
+        If the packaging or the whole-term component differs, or the specs do not
+        unify in the shared scope *bindings*.
+    """
+    wanted, found = _whole_term_component(expected), _whole_term_component(actual)
+    if (wanted is None) != (found is None):
+        raise ValueError(
+            f"{path} declares {'an exposed record' if wanted is None else f'the whole term {wanted!r}'}, "
+            f"but the law declares {'an exposed record' if found is None else f'the whole term {found!r}'}"
+        )
+    if wanted != found:
+        raise ValueError(
+            f"{path} declares the component {wanted!r}, but the law declares {found!r}"
+        )
+    # A whole term's spec is bound under its component's path, as a record field's is.
+    _unify_specs(
+        expected.spec, actual.spec, bindings, path if wanted is None else f"{path}/{wanted}"
+    )
+
+
 @dataclass(frozen=True, init=False)
 class DistributionSpec(TermSpec):
-    """A distribution-kind spec whose current draw schema is a RecordSpec.
+    """The distribution kind's term spec: the output declaration of one draw.
 
     Parameters
     ----------
-    event_spec : RecordSpec
-        The record schema describing one draw.
+    event_spec : OutputSpec or RecordSpec
+        The declaration of one draw (II.2). A bare ``RecordSpec`` completes to the
+        exposed form.
 
     Raises
     ------
     TypeError
-        If the draw schema is not a RecordSpec.
+        If *event_spec* is neither, since a bare spec of another kind has no
+        component name to complete it with.
+    ValueError
+        If the declaration has a type hole.
 
     Notes
     -----
-    ``is_valid`` requires a Distribution whose ``event_template`` equals
-    ``event_spec``, including field order, dtype, and support metadata. A missing
-    template, or a getter raising AttributeError or TypeError because the schema
-    is unavailable, gives False; other getter errors propagate.
+    ``is_valid`` accepts a ``Distribution`` whose own declaration unifies with
+    this one: the packaging and the component names agree, and then the
+    components unify in one scope. An unset dtype accepts any dtype and a set one
+    requires a same-kind cast, sizes agree with symbolic dimensions bound
+    consistently, and support is not compared.
 
-    ``bind_dims_from_value`` validates a concrete declaration by that same rule.
-    For a symbolic declaration it instead learns sizes from the distribution's
-    schema, without sampling. An unavailable schema raises ValueError.
-    ``bind_dims_from_spec`` reads another DistributionSpec using declaration
-    compatibility: matching structure, compatible declared dtypes, and consistent
-    sizes; field order and support metadata need not be equal.
-
-    Binding returns a new spec retaining the declared metadata. Repeated symbols
-    share one scope, including surrounding records or input slots; conflicting
-    sizes raise ValueError. ``with_dim_sizes`` may leave unsupplied dimensions symbolic.
+    ``bind_dims_from_value`` binds a symbolic declaration from a law's own, and
+    ``bind_dims_from_spec`` from another ``DistributionSpec``, by that same rule.
+    Repeated symbols share one scope, and conflicting sizes raise ValueError.
 
     Examples
     --------
-    >>> from probpipe import DistributionSpec, RecordSpec
-    >>> declared = DistributionSpec(RecordSpec(x=("n",)))
-    >>> bound = declared.bind_dims_from_spec(DistributionSpec(RecordSpec(x=(3,))))
-    >>> bound.event_spec["x"].shape
+    >>> from probpipe import DistributionSpec, OutputSpec, NumericArraySpec
+    >>> declared = DistributionSpec(OutputSpec(x=NumericArraySpec(("n",))))
+    >>> bound = declared.bind_dims_from_spec(DistributionSpec(OutputSpec(x=NumericArraySpec((3,)))))
+    >>> bound.event_spec.spec.shape
     (3,)
     """
 
-    event_spec: RecordSpec
+    event_spec: OutputSpec
 
-    def __init__(self, event_spec: RecordSpec) -> None:
-        if not isinstance(event_spec, RecordSpec):
+    def __init__(self, event_spec: OutputSpec | RecordSpec) -> None:
+        if isinstance(event_spec, RecordSpec):
+            event_spec = OutputSpec(event_spec)
+        elif not isinstance(event_spec, OutputSpec):
             raise TypeError(
-                f"DistributionSpec.event_spec must be a RecordSpec, got {type(event_spec).__name__}"
+                f"DistributionSpec.event_spec must be an OutputSpec or a RecordSpec, got "
+                f"{type(event_spec).__name__}, which has no component name to complete it with"
             )
+        if event_spec.spec is None:
+            raise ValueError("DistributionSpec.event_spec has a type hole")
         object.__setattr__(self, "event_spec", event_spec)
 
     @property
     def free_dims(self) -> frozenset[str]:
         """The unbound dimensions of the draw this declares."""
-        return self.event_spec.free_dims
+        return self.event_spec.spec.free_dims
 
     def _substitute_dims(self, bindings: Mapping[str, int | str]) -> DistributionSpec:
         """This spec around a substituted event declaration."""
-        return DistributionSpec(self.event_spec._substitute_dims(bindings))
+        declaration = self.event_spec
+        return DistributionSpec(declaration._with_spec(declaration.spec._substitute_dims(bindings)))
 
     def _bind_dims_from_value(self, value: Any, bindings: dict[str, int], path: str) -> None:
-        """Validate a concrete draw schema, or bind a symbolic one from *value*."""
-        if not self.free_dims:
-            super()._bind_dims_from_value(value, bindings, path)
-            return
-        actual = _schema_carried_by(value, self, path)
-        _check_kind_of(DistributionSpec(actual), value, self, path)
-        _unify_specs(self.event_spec, actual, bindings, path)
+        """Bind the declared event against the declaration *value* carries."""
+        if not isinstance(value, Distribution):
+            raise ValueError(f"{path} does not conform to its field spec ({self!r})")
+        _unify_declarations(self.event_spec, value.event_spec, bindings, path)
 
     def _bind_dims_from_spec(self, actual: TermSpec, bindings: dict[str, int], path: str) -> bool:
-        """Bind the declared draw schema against *actual*'s own."""
+        """Bind the declared event against *actual*'s own."""
         if not isinstance(actual, DistributionSpec):
             return False
-        _unify_specs(self.event_spec, actual.event_spec, bindings, path)
+        _unify_declarations(self.event_spec, actual.event_spec, bindings, path)
         return True
 
     def is_valid(self, value: Any) -> bool:
-        """Whether *value* is a ``Distribution`` matching this event declaration.
-
-        *value* must be a :class:`~probpipe.Distribution` whose own
-        ``event_template`` equals the declared record template. A distribution
-        that is not one, or that legitimately exposes no template — no
-        ``event_template`` attribute, or a template that cannot yet be
-        derived — does not satisfy the spec and returns ``False``. These are
-        the only two "schema unavailable" conditions treated as a non-match;
-        any *other* error raised while reading ``event_template`` signals a
-        malfunctioning distribution and is left to propagate rather than being
-        masked as invalid.
-        """
+        """Whether *value* is a ``Distribution`` whose declaration matches this one."""
         if not isinstance(value, Distribution):
             return False
         try:
-            template = value.event_template
-        except (AttributeError, TypeError):
-            # The two documented "schema unavailable" signals: no
-            # ``event_template`` attribute (AttributeError) or a template that
-            # cannot be derived (TypeError — e.g. an un-named auto-deriving
-            # distribution). Both mean the value can't be certified. A
-            # narrower catch than ``Exception`` on purpose: an unexpected
-            # error is a bug to surface, not a silent "invalid".
+            _unify_declarations(self.event_spec, value.event_spec, {}, "the declaration")
+        except ValueError:
             return False
-        # Normalised at construction, so the declaration is always a RecordSpec.
-        return template == self.event_spec
+        return True
