@@ -831,6 +831,34 @@ class TestAlgebraComposition:
         )
 
 
+def _named_weight_grf(name):
+    weights = MultivariateNormal("weights", jnp.array([1.0, 0.5]), cov=0.01 * jnp.eye(2))
+    return LinearBasisFunction(
+        name,
+        feature_map=_weight_feature_map,
+        weights=weights,
+        input_shape=(1,),
+        output_shape=(3,),
+    )
+
+
+class TestAlgebraNames:
+    """A result of the algebra is named from its operands."""
+
+    @pytest.mark.parametrize(
+        ("build", "expected"),
+        [
+            pytest.param(lambda f, g: jnp.eye(3) @ f, "linear_map(f)", id="linear-map"),
+            pytest.param(lambda f, g: f + 1.0, "shift(f)", id="shift"),
+            pytest.param(lambda f, g: 2.0 * f, "scale(f)", id="scale"),
+            pytest.param(lambda f, g: f + g, "sum(f,g)", id="sum"),
+            pytest.param(lambda f, g: (f + g) + f, "sum(sum(f,g),f)", id="nested"),
+        ],
+    )
+    def test_a_result_is_named_from_its_operands(self, build, expected):
+        assert build(_named_weight_grf("f"), _named_weight_grf("g")).name == expected
+
+
 # ---------------------------------------------------------------------------
 # Mathematical correctness tests (ground-truth verification)
 # ---------------------------------------------------------------------------

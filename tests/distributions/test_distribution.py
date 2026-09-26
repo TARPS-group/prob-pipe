@@ -24,6 +24,7 @@ from probpipe import (
     NumericRecordSpec,
     RandomFunction,
     RandomMeasure,
+    RecordBootstrapReplicateDistribution,
     RecordEmpiricalDistribution,
     RecordSpec,
     TransformedDistribution,
@@ -581,6 +582,26 @@ class TestNameBinding:
     def test_name_given_both_ways_raises(self):
         with pytest.raises(TypeError, match="multiple values for argument 'name'"):
             Normal("x", 0.0, 1.0, name="y")
+
+    # The dispatching constructors read their data argument by keyword as well
+    # as by position, so a keyword call still reaches the record class.
+    @pytest.mark.parametrize(
+        "make",
+        [
+            pytest.param(lambda s: EmpiricalDistribution(name="x", samples=s), id="all-keywords"),
+            pytest.param(lambda s: EmpiricalDistribution("x", samples=s), id="samples-keyword"),
+        ],
+    )
+    def test_keyword_samples_reach_the_record_empirical(self, make):
+        law = make(jnp.arange(4.0))
+        assert type(law) is RecordEmpiricalDistribution
+        assert law.name == "x"
+
+    def test_a_keyword_source_reaches_the_record_bootstrap(self):
+        source = RecordEmpiricalDistribution("r", jnp.arange(4.0))
+        law = BootstrapReplicateDistribution("b", source=source)
+        assert type(law) is RecordBootstrapReplicateDistribution
+        assert law.name == "b"
 
 
 class TestDerivedNames:
