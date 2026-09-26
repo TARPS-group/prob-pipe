@@ -79,8 +79,8 @@ class JointEmpirical(RecordDistribution, SupportsSampling):
         :class:`~probpipe.Weights` object is also accepted. Mutually
         exclusive with *weights*.
     name : str, optional
-        Distribution name.
-        Keyword-only, as an interim detail (see :class:`~probpipe.Distribution`).
+        Distribution name. Keyword-only; defaults to ``joint_empirical(a,b)``
+        over the component names.
     **samples : array-like
         Named component sample arrays. Each must have the same number of
         rows (first dimension = ``n``).

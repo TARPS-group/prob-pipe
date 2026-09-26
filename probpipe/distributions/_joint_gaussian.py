@@ -51,8 +51,8 @@ class JointGaussian(
     cov : array-like, shape ``(d, d)``
         Full (flat) covariance matrix.
     name : str, optional
-        Distribution name.
-        Keyword-only, as an interim detail (see :class:`~probpipe.Distribution`).
+        Distribution name. Keyword-only; defaults to ``joint_gaussian(a,b)``
+        over the component names.
     **component_shapes : int
         Named components with their dimensionality.  The sum of all
         dimensions must equal ``d``.

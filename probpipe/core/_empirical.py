@@ -173,10 +173,10 @@ def _wrap_numeric_array_as_record(
     """
     if not name:
         raise ValueError(
-            f"{role} from a numeric array requires a non-empty name=, "
+            f"{role} from a numeric array requires a non-empty name, "
             f"so the auto-wrapped Record has a meaningful field name. "
-            f"Pass name='theta' (or similar), or wrap the array yourself: "
-            f"Record('theta', theta=arr)."
+            f"Pass it first, as {role}('theta', arr), or wrap the array "
+            f"yourself: Record('theta', theta=arr)."
         )
     arr = _as_float_array(arr)
     if arr.ndim == 0:

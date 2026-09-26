@@ -63,10 +63,10 @@ class Distribution(TrackedTerm, Annotated, ABC):
     :class:`~probpipe.core.tracked.Annotated` (free-form
     :attr:`~Annotated.annotations`).  A distribution's constructor takes
     its name as the required first argument, as ``Normal("x", 0.0, 1.0)``
-    does. The classes the design retires, such as ``ProductDistribution``
-    and ``DistributionArray``, still take it as a keyword and some derive one
-    when it is omitted, an interim implementation detail. Every transform
-    preserves the name; only ``with_name`` replaces it.
+    does. A few classes, such as ``ProductDistribution`` and
+    ``DistributionArray``, take it as a keyword instead and derive one when it
+    is omitted. Every transform preserves the name; only ``with_name``
+    replaces it.
 
     Sampling and expectation capabilities are provided by the
     :class:`~probpipe.core.protocols.SupportsSampling` protocol.
@@ -115,7 +115,9 @@ class Distribution(TrackedTerm, Annotated, ABC):
         _annotations: Mapping[str, Any] | None = None,
     ):
         if not isinstance(name, str) or not name:
-            raise TypeError(f"{type(self).__name__} requires a non-empty name= argument")
+            raise TypeError(
+                f"{type(self).__name__} requires a non-empty name as its first argument"
+            )
         # ``_provenance`` and ``_annotations`` carry state a reconstruction
         # already holds and that construction cannot otherwise reach: provenance
         # is write-once, and annotations are written after construction, so a

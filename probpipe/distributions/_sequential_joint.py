@@ -50,10 +50,10 @@ def _resolve_callable_component(
     Filters ``namespace`` by ``inspect.signature(comp)`` parameters,
     then calls ``comp(**filtered)`` under the
     :func:`_allow_batched_tfp_init` bypass — the user lambda
-    typically writes ``Normal(loc=parent, scale=...)`` with batched
+    typically writes ``Normal("x", parent, ...)`` with batched
     parents, so the standard rejection of batched-parameter
     constructors must not fire here. Internal infra; user-facing
-    construction of ``Normal(loc=arr, ...)`` is rejected as usual.
+    construction of ``Normal("x", arr, ...)`` is rejected as usual.
     """
     sig = inspect.signature(comp)
     call_kw = {p: namespace[p] for p in sig.parameters if p in namespace}
@@ -137,9 +137,9 @@ class SequentialJointDistribution(
     Example::
 
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0, name="z"),
-            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
-            y=lambda z, x: Normal(loc=z + x, scale=0.1, name="y"),
+            z=Normal("z", 0.0, 1.0),
+            x=lambda z: Normal("x", z, 0.5),
+            y=lambda z, x: Normal("y", z + x, 0.1),
         )
 
     Callable signatures are inspected: parameter names must match earlier
@@ -153,8 +153,8 @@ class SequentialJointDistribution(
     Parameters
     ----------
     name : str, optional
-        Distribution name.
-        Keyword-only, as an interim detail (see :class:`~probpipe.Distribution`).
+        Distribution name. Keyword-only; defaults to ``sequential(a,b)`` over
+        the component names.
     **components : Distribution or Callable[..., Distribution]
         Named components in topological (dependency) order.
     """

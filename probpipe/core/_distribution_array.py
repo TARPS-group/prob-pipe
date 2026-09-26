@@ -29,8 +29,8 @@ differs:
 
 - :class:`DistributionArray` bundles **positionally-indexed components**
   along a batch axis — e.g.
-  ``DistributionArray([Normal(loc=i, scale=1.0, name=f"n{i}") for i in
-  range(5)])``. ``sample(da)`` vectorizes over cells and returns a
+  ``DistributionArray([Normal(f"n{i}", i, 1.0) for i in range(5)])``.
+  ``sample(da)`` vectorizes over cells and returns a
   ``NumericRecordBatch`` at ``batch_shape=da.batch_shape``.
 
 Rule of thumb: if you'd write ``d["sigma"]`` to pull out a specific
@@ -86,9 +86,8 @@ class DistributionArray(Distribution):
         Leading batch shape. Defaults to ``(len(components),)`` for the
         1-D form; ``prod(batch_shape)`` must equal ``len(components)``.
     name : str, optional
-        Name for provenance / introspection. Defaults to
+        Name for provenance / introspection. Keyword-only; defaults to
         ``"distribution_array"``.
-        Keyword-only, as an interim detail (see :class:`~probpipe.Distribution`).
 
     Notes
     -----

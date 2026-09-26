@@ -192,8 +192,8 @@ class ProductDistribution(
         Named distributions.  Each distribution's ``.name`` is used as
         the component key.
     name : str, optional
-        Distribution name for the joint.
-        Keyword-only, as an interim detail (see :class:`~probpipe.Distribution`).
+        Distribution name for the joint. Keyword-only; defaults to
+        ``product(a,b)`` over the component names.
     **components : NumericRecordDistribution or dict
         Named independent component distributions.  Values may be
         ``NumericRecordDistribution`` instances (leaves) or nested dicts

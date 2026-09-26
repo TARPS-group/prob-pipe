@@ -27,8 +27,9 @@ Provides:
 Distinct from :class:`~probpipe.DistributionArray` (housed in
 :mod:`_distribution_array`), which represents *n independent
 distributions stacked along a batch axis* — many random variables
-indexed by position, e.g. ``Normal(loc=jnp.zeros(5), scale=1.0)``
-stored as a length-5 array of independent ``Normal`` instances. A
+indexed by position, e.g. ``Normal.from_batched_params(name="x",
+loc=jnp.zeros(5), scale=1.0)``, a length-5 array of independent ``Normal``
+instances. A
 ``NumericRecordDistribution`` represents *one* random variable
 whose draw can itself have a numeric-valued event structure (a
 scalar, a vector, or a multi-field record), and ``DistributionArray``

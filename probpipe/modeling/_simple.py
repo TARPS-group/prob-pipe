@@ -37,8 +37,7 @@ class SimpleModel[P, D](ProbabilisticModel, SupportsLogProb):
     likelihood : Likelihood[P, D]
         Must have a ``log_likelihood(params, data)`` method.
     name : str or None
-        Model name for provenance.
-        Keyword-only, as an interim detail (see :class:`~probpipe.Distribution`).
+        Model name for provenance. Keyword-only; defaults to ``"SimpleModel"``.
     """
 
     _sampling_cost: str = "medium"

@@ -10,7 +10,7 @@ Usage::
 
     from probpipe import sample, mean, log_prob, condition_on
 
-    dist = Normal(loc=0.0, scale=1.0)
+    dist = Normal("x", 0.0, 1.0)
     s = sample(dist, key=jax.random.PRNGKey(0), sample_shape=(100,))
     m = mean(dist)
     lp = log_prob(dist, jnp.array(1.5))

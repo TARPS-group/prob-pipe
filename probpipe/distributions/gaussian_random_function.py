@@ -681,7 +681,7 @@ class _IndependentSumGRF(GaussianRandomFunction):
         self._left = left
         self._right = right
         super().__init__(
-            name=f"sum({left.name}, {right.name})",
+            name=f"sum({left.name},{right.name})",
             input_shape=left.input_shape,
             output_shape=left.output_shape,
         )
