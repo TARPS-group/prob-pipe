@@ -1,7 +1,7 @@
 """The distribution base class, its term spec, and minimal helpers.
 
 Provides:
-  - ``Distribution[T]`` – Abstract base for all ProbPipe distributions.
+  - ``Distribution`` – Abstract base for all ProbPipe distributions.
   - ``DistributionSpec`` – The term spec of the distribution kind.
   - Global defaults for expectation sampling.
 """
@@ -49,14 +49,13 @@ def set_return_approx_dist(value: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Distribution[T] — generic base class
+# Distribution — the base class
 # ---------------------------------------------------------------------------
 
 
-class Distribution[T](TrackedTerm, Annotated, ABC):
+class Distribution(TrackedTerm, Annotated, ABC):
     """
-    Abstract base for all ProbPipe distributions, parameterized by
-    value type ``T``.
+    Abstract base for all ProbPipe distributions.
 
     Every distribution is a tracked term: it is
     :class:`~probpipe.core.tracked.TrackedTerm` (a :attr:`~TrackedTerm.name` and a write-once
@@ -127,7 +126,7 @@ class Distribution[T](TrackedTerm, Annotated, ABC):
     # -- keyword-form value construction ------------------------------------
 
     def _pack_value(self, **field_kwargs: Any) -> Any:
-        """Build a single draw of this distribution's value type ``T`` from
+        """Build a single draw of this distribution from
         named field kwargs — the adapter behind the keyword form of the
         log_prob-family ops (``log_prob(dist, field=value, ...)``).
 
@@ -135,10 +134,10 @@ class Distribution[T](TrackedTerm, Annotated, ABC):
         :func:`~probpipe.core.record._pack_fields` and layers this
         distribution's value-type convention on top:
 
-        * **single field** → the bare field value (``T = Array``), so a
-          scalar distribution's ``_log_prob`` still receives a raw array.
+        * **single field** → the bare field value, an array, so a scalar
+          distribution's ``_log_prob`` still receives a raw array.
         * **multiple fields** → the :class:`~probpipe.core.record.Record`
-          built from the named fields (``T = Record``).
+          built from the named fields.
 
         Distributions whose ``_log_prob`` consumes a Record but splits it
         internally (e.g. ``SimpleModel`` → ``(params, data)``) keep this

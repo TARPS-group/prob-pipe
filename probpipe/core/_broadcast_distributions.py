@@ -2,8 +2,8 @@
 
 Provides:
   - ``_RecordMarginal``                    – Record-shaped output marginal.
-  - ``_MixtureMarginal[T]``                – Distribution output marginal (mixture).
-  - ``_ListMarginal[T]``                   – Non-stackable output marginal.
+  - ``_MixtureMarginal``                   – Distribution output marginal (mixture).
+  - ``_ListMarginal``                      – Non-stackable output marginal.
   - ``MarginalizedBroadcastDistribution``  – Union type alias.
   - ``_make_marginal()``                   – Factory for marginal construction.
   - ``BroadcastDistribution``              – Joint over broadcast inputs and output.
@@ -104,7 +104,7 @@ class _RecordMarginal(RecordEmpiricalDistribution):
         )
 
 
-class _MixtureMarginal[T](Distribution[T]):
+class _MixtureMarginal(Distribution):
     """Output marginal when broadcast outputs are Distribution objects.
 
     Acts as a finite mixture: ``p(y) = Σ_i w_i p_i(y)``.  Protocol support
@@ -304,7 +304,7 @@ def _make_mixture_marginal(
     return obj
 
 
-class _ListMarginal[T](Distribution[T]):
+class _ListMarginal(Distribution):
     """Output marginal when broadcast outputs are non-stackable (e.g., strings).
 
     No protocol support — outputs cannot be resampled or summarised.
@@ -1273,7 +1273,7 @@ def _one_row(component: Any) -> Any:
     return component[0] if hasattr(component, "__getitem__") else component
 
 
-class BroadcastDistribution(Distribution[dict], SupportsSampling):
+class BroadcastDistribution(Distribution, SupportsSampling):
     """Joint distribution over broadcast inputs and function output.
 
     Stores the paired input–output samples from a

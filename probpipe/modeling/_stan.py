@@ -260,7 +260,7 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
         return f"StanModel(stan_file={self._stan_file!r}, num_params={self._num_params})"
 
 
-class _UnconstrainedStanView(Distribution[Any], SupportsLogProb):
+class _UnconstrainedStanView(Distribution, SupportsLogProb):
     """View of a StanModel in the unconstrained parameter space."""
 
     def __init__(self, model: StanModel):

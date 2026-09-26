@@ -20,7 +20,7 @@ Parts III, IV, and VI fixed what a distribution *is* and what the operations do 
 A single backend adapter, `TFPDistribution`, implements the capability set on raw arrays, and every parametric family is a thin constructor over it: continuous (`Normal`, `Beta`, `Gamma`, `InverseGamma`, `Exponential`, `LogNormal`, `StudentT`, `Uniform`, `Cauchy`, `Laplace`, `HalfNormal`, `HalfCauchy`, `Pareto`, `TruncatedNormal`), discrete (`Bernoulli`, `Binomial`, `Poisson`, `Categorical`, `NegativeBinomial`), and multivariate (`MultivariateNormal`, `Dirichlet`, `Multinomial`, `Wishart`, `VonMisesFisher`). Each family derives its event term spec from its parameters, including shape, dtype, and support, and wraps it in the component declaration of II.2. The array event's component is the law's `name`, captured once at construction, unless `component_name` gives another (III.7). Each family auto-promotes to a `NumericDistribution`. The adapter is the only class that knows the backend exists, and its `raw()` is the wrapped backend distribution (II.4).
 
 ```python
-class TFPDistribution(Distribution[Array]):
+class TFPDistribution(Distribution):
     def __init__(self, name: str, backend_dist: Any, *, component_name: str | None = None) -> None: ...   # the wrapped backend object
     # closed-form _sample, _log_prob, _mean, _variance, and _quantile;
     # _cov and _marginal where the family defines them
@@ -39,24 +39,24 @@ One adapter with thin family constructors keeps the backend a computational deta
 
 ### Contract
 
-An `EmpiricalDistribution[T]` is a finite, possibly weighted set of atoms of any event type. It samples by weighted resampling, its moments are weighted sample estimates when the event is numeric, and its marginals are exact. Atoms are stored in the event type's native batch form, with the weights a parallel array. An explicit `event_spec` preserves component names and exposure form; atoms alone determine the returned term kind but cannot recover an independent whole-term component name. Without a declaration, record atoms expose their fields and any other atoms form a whole-term event under the law's `name` (III.7); a type hole is filled from the atoms. It doesn't support log probability calculations, since an empirical measure doesn't, in general, have a density.
+An `EmpiricalDistribution` is a finite, possibly weighted set of atoms of any event type. It samples by weighted resampling, its moments are weighted sample estimates when the event is numeric, and its marginals are exact. Atoms are stored in the event type's native batch form, with the weights a parallel array. An explicit `event_spec` preserves component names and exposure form; atoms alone determine the returned term kind but cannot recover an independent whole-term component name. Without a declaration, record atoms expose their fields and any other atoms form a whole-term event under the law's `name` (III.7); a type hole is filled from the atoms. It doesn't support log probability calculations, since an empirical measure doesn't, in general, have a density.
 
 Two bootstrap forms share one convention: the **source** may be any distribution implementing `SupportsSampling`, which covers the nonparametric bootstrap, where an empirical source is resampled, and the parametric bootstrap, where a fitted law is redrawn, in one interface; `replicate_size` defaults to the source's atom count when the source is empirical and is required otherwise.
-- A `BootstrapReplicateDistribution` is the `replicate_size`-fold iid product of the source law: a draw is one **replicate**, `replicate_size` draws from the source in `T`'s batch form.
+- A `BootstrapReplicateDistribution` is the `replicate_size`-fold iid product of the source law: a draw is one **replicate**, `replicate_size` draws from the source in the event's batch form.
 - A `BootstrapDistribution` is the corresponding random measure: a draw is the empirical measure of one replicate, an `EmpiricalDistribution`. The bootstrap distribution of a statistic is `evaluate(stat, ...)` over whichever form the statistic reads, a replicate dataset or a replicate measure. Replicate batches preserve the source event's term kind, and empirical measures built from replicates carry the source's complete event declaration. Their outer event declaration, for the batch-valued replicate or the measure-valued draw, is derived from the source and the replicate size and is distinct from the source's event interface; its component is the law's `name` unless `component_name` gives another. A new bootstrap or replicate object label never renames either interface.
 
 A `KDEDistribution` smooths the atoms with a **smoothing kernel**: a mean-zero density `K` recentered at each atom and scaled by the bandwidth, so its law is the weighted mixture `Σᵢ wᵢ h⁻ᵈ K((x − xᵢ)/h)`. `SmoothingKernel` carries a uniform construction contract: `build_kernels(centers, scales)` returns the bank of placed copies, one per atom, whatever the concrete kernel, so the KDE holds the kernel class and never reads kernel-specific parameters. `bandwidth` accepts a value, the name of a selection rule such as `"scott"` or `"silverman"`, or `None` for the default rule, and is resolved before the copies are built. The bank supplies indexed sampling and per-copy log-densities with the scale Jacobian included. On the KDE, `_sample` draws an atom by weight and then a draw from that copy, exact for the KDE law, and `_log_prob` is the weighted log-sum-exp of the per-copy densities, also exact. The mean is the weighted atom mean, and the variance adds `h²` times the kernel's variance to the atoms' weighted sample variance. Numeric events only. Event completion follows `EmpiricalDistribution`: record atoms expose their fields, array atoms form a whole-term event under the law's `name` unless `event_spec` names the component otherwise, and every placed kernel carries the completed declaration.
 
 ```python
-class EmpiricalDistribution[T](Distribution[T]):
+class EmpiricalDistribution(Distribution):
     def __init__(self, name: str, atoms: Batch | Array, weights: Array | None = None, *,
                  event_spec: OutputSpec | None = None) -> None: ...
-    # atoms are given in T's batch form; weights default to uniform
+    # atoms are given in the event's batch form; weights default to uniform
 
 class BootstrapReplicateDistribution(Distribution):
     def __init__(self, name: str, source: SupportsSampling, replicate_size: int | None = None, *,
                  component_name: str | None = None) -> None: ...
-    # a draw is one replicate in T's batch form: replicate_size iid draws from source
+    # a draw is one replicate in the event's batch form: replicate_size iid draws from source
 
 class BootstrapDistribution(Distribution):   # a random measure: a draw is an EmpiricalDistribution
     def __init__(self, name: str, source: SupportsSampling, replicate_size: int | None = None, *,
@@ -76,7 +76,7 @@ class SmoothingKernel(ABC):                # a bank of mean-zero kernel copies, 
 class GaussianKernel(SmoothingKernel): ...
 class EpanechnikovKernel(SmoothingKernel): ...
 
-class KDEDistribution(Distribution[Array]):
+class KDEDistribution(Distribution):
     def __init__(self, name: str, atoms: Array | NumericRecordBatch, bandwidth: ArrayLike | str | None = None,
                  weights: Array | None = None, kernel: type[SmoothingKernel] = GaussianKernel, *,
                  event_spec: OutputSpec | None = None) -> None: ...
@@ -97,7 +97,7 @@ All four are genuine laws whose declared capabilities are those they can provide
 A `MixtureDistribution` is a convex combination of component distributions over one shared event declaration, including names, kind, and packaging. Component object labels may differ. A rename or event transformation is explicit when their declarations differ. It implements `_sample` when all of its components do, and the same holds for `_log_prob` (as the weighted log-sum-exp). Moments combine componentwise when every component provides them: the mean is `Σ wᵢ mᵢ` and the covariance is `Σ wᵢ (Σᵢ + mᵢ mᵢᵀ) − m mᵀ`. It is what `mixture` returns for a finite mixing distribution, and the form a dependent joint's detached marginal takes under finite mixing.
 
 ```python
-class MixtureDistribution(Distribution[T]):
+class MixtureDistribution(Distribution):
     def __init__(self, name: str, components: Sequence[Distribution], weights: Array) -> None: ...
     # components share one event declaration; weights are nonnegative and sum to one
 ```
@@ -120,7 +120,7 @@ class LinearPushforwardDistribution(Distribution):
     # E[A X] = A E[X] and Cov(A X) = A Cov(X) Aᵀ, lazily through the operator algebra;
     # _log_prob only when op is invertible, by change of variables
 
-class BijectorTransformedDistribution(Distribution[T]):
+class BijectorTransformedDistribution(Distribution):
     def __init__(self, name: str, base: Distribution, bijector: Function) -> None: ...
     # bijector must satisfy is_invertible and claim SupportsLogDetJacobian, checked at construction;
     # _sample pushes base draws through the bijector;
@@ -142,10 +142,10 @@ Typing evaluation results as catalog families keeps the operation closed and its
 A `RandomFunction` is a distribution declaring a `FunctionSpec` as its event: a draw is a callable, `mean` returns the mean function, and `variance` returns the pointwise variance function when the family provides it. Calling it at a point returns a distribution over outputs, the law of `f(x)` for `f` drawn from the random function. A `RandomMeasure` is a distribution whose event is a `DistributionSpec` leaf: a draw is a `Distribution`, `mean` returns the marginalized law, and no event-typed variance is claimed in general. A draw's log-density is itself random, so `_random_log_prob()` returns the law of `x ↦ log D(x)`, a `RandomFunction`. A `BootstrapDistribution` is a member.
 
 ```python
-class RandomFunction[X, Y](Distribution[Callable[[X], Y]]):
-    def __call__(self, x: X) -> Distribution: ...       # the distribution over outputs at x
+class RandomFunction(Distribution):
+    def __call__(self, x: Any) -> Distribution: ...     # the distribution over outputs at x
 
-class RandomMeasure[T](Distribution[Distribution[T]]):
+class RandomMeasure(Distribution):
     def _random_log_prob(self) -> RandomFunction: ...   # the law of x ↦ log D(x) for D ~ M
 ```
 
@@ -168,7 +168,7 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution): ...   # derived
 **The Gaussian random function.** A `GaussianRandomFunction` is abstract, covering any model with Gaussian predictions rather than Gaussian processes alone. A concrete member implements `predict_mean` and `predict_variance`, and `predict_covariance` when it supports joint evaluation; `__call__` assembles these into the exact finite-dimensional law, a `Normal` at a single point and a `MultivariateNormal` over stacked points when the covariance is available. These laws preserve the evaluated function's output component name independently of their distribution labels. The drawn function's output component and the function-valued event's component both default to the random function's `name`; `output_spec` names the former otherwise, and `component_name` the latter. A type hole in either is filled from the model, and evaluated shapes may stay symbolic until inputs bind them (II.1). Its `mean` is the mean function and its `variance` the pointwise variance function, the event-typed moments of a random function. A `GaussianProcess`, which is specified by a mean function and a covariance kernel, is the canonical member; a `LinearBasisFunction`, which is `f(x) = φ(x)ᵀw` with Gaussian weights `w`, is another. Conditioning on noisy linear observations of finitely many evaluations is exact and yields another `GaussianRandomFunction` as the posterior law, and shifts, scalings, output-side linear maps, and sums of independent members are again members by closed-form evaluation rules.
 
 ```python
-class GaussianRandomFunction(RandomFunction[Array, Array], ABC):
+class GaussianRandomFunction(RandomFunction, ABC):
     @abstractmethod
     def predict_mean(self, X: Array) -> Array: ...        # X stacks n input points
     @abstractmethod

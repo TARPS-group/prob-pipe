@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import types
 from typing import Any, Protocol, runtime_checkable
 from unittest.mock import patch
 
@@ -26,6 +27,7 @@ from probpipe import (
 )
 from probpipe.core._workflow_call import make_signature_info_from_signature
 from probpipe.core._workflow_distribution_normalization import (
+    DISTRIBUTION_HINT_PROTOCOLS,
     normalize_distribution_values,
 )
 from probpipe.core.node import Function
@@ -295,3 +297,37 @@ def test_non_distribution_capability_protocol_does_not_disable_lifting():
     assert result.num_atoms == 8
     assert len(seen) == 8
     assert all(not isinstance(value, Distribution) for value in seen)
+
+
+def _unreachable(self, *args, **kwargs):
+    raise AssertionError("a law that passes through unlifted is not evaluated")
+
+
+def _law_claiming(capability: type) -> Distribution:
+    """Return a minimal law whose class inherits *capability*."""
+    # The conditioning capabilities are abstract, so the class implements
+    # ``_condition_on``; the structural protocols need nothing further.
+    law_type = types.new_class(
+        f"_Claims{capability.__name__}",
+        (Distribution, capability),
+        exec_body=lambda namespace: namespace.update(_condition_on=_unreachable),
+    )
+    return law_type(name="law")
+
+
+@pytest.mark.parametrize("capability", DISTRIBUTION_HINT_PROTOCOLS, ids=lambda c: c.__name__)
+def test_capability_annotation_passes_the_law_through(capability):
+    seen = []
+
+    def consume(law):
+        seen.append(law)
+        return 0.0
+
+    consume.__annotations__ = {"law": capability}
+    law = _law_claiming(capability)
+    wrapped = Function(func=consume, n_broadcast_samples=8, dispatch="sequential")
+
+    wrapped(law)
+
+    assert len(seen) == 1
+    assert seen[0] is law

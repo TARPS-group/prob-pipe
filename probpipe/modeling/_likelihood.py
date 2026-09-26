@@ -56,7 +56,7 @@ class _ConditioningStep[P, D](Function):
     likelihood : Likelihood[P, D]
         Likelihood object.
     condition_fn : callable or None
-        ``(model, data, **kw) -> Distribution[P]``.  Defaults to
+        ``(model, data, **kw) -> Distribution``.  Defaults to
         the global ``condition_on`` operation, which dispatches through
         the inference method registry.  Override to use a custom
         conditioning strategy.
@@ -66,14 +66,14 @@ class _ConditioningStep[P, D](Function):
     """
 
     _likelihood: Likelihood[P, D]
-    _condition_fn: Callable[..., Distribution[P]]
+    _condition_fn: Callable[..., Distribution]
     _condition_kwargs: Mapping[str, Any]
 
     def __init__(
         self,
         likelihood: Likelihood[P, D],
         *,
-        condition_fn: Callable[..., Distribution[P]] | None = None,
+        condition_fn: Callable[..., Distribution] | None = None,
         workflow_kind: WorkflowKind = WorkflowKind.OFF,
         **condition_kwargs: Any,
     ):
@@ -137,7 +137,7 @@ class IncrementalConditioner[P, D](Module):
 
     Parameters
     ----------
-    prior : Distribution[P]
+    prior : Distribution
         Initial prior distribution over model parameters.
     likelihood : Likelihood[P, D]
         Likelihood object.
@@ -170,15 +170,15 @@ class IncrementalConditioner[P, D](Module):
 
     def __init__(
         self,
-        prior: Distribution[P],
+        prior: Distribution,
         likelihood: Likelihood[P, D],
         *,
-        condition_fn: Callable[..., Distribution[P]] | None = None,
+        condition_fn: Callable[..., Distribution] | None = None,
         **condition_kwargs: Any,
     ):
         self._prior = prior
         self._likelihood = likelihood
-        self._curr_posterior: Distribution[P] = prior
+        self._curr_posterior: Distribution = prior
         self._step: _ConditioningStep[P, D] = _ConditioningStep(
             likelihood,
             condition_fn=condition_fn,
@@ -186,7 +186,7 @@ class IncrementalConditioner[P, D](Module):
         )
 
     @property
-    def curr_posterior(self) -> Distribution[P]:
+    def curr_posterior(self) -> Distribution:
         """The current posterior (initially the prior)."""
         return self._curr_posterior
 
@@ -195,7 +195,7 @@ class IncrementalConditioner[P, D](Module):
         """The underlying step function, for use with ``iterate``."""
         return self._step
 
-    def update(self, data: D | None = None, **kwargs) -> Distribution[P]:
+    def update(self, data: D | None = None, **kwargs) -> Distribution:
         """Condition on new data, updating the current posterior.
 
         Data can be passed positionally, as ``data=``, or as named
@@ -214,7 +214,7 @@ class IncrementalConditioner[P, D](Module):
 
         Returns
         -------
-        Distribution[P]
+        Distribution
             The updated posterior distribution.
         """
         if kwargs:
@@ -227,7 +227,7 @@ class IncrementalConditioner[P, D](Module):
         self._curr_posterior = posterior
         return posterior
 
-    def update_all(self, data_batches: Iterable[D]) -> list[Distribution[P]]:
+    def update_all(self, data_batches: Iterable[D]) -> list[Distribution]:
         """Condition on multiple data batches sequentially.
 
         Calls ``iterate(self.step, self.curr_posterior, data_batches)``
@@ -240,7 +240,7 @@ class IncrementalConditioner[P, D](Module):
 
         Returns
         -------
-        list[Distribution[P]]
+        list[Distribution]
             Sequence ``[starting_posterior, post_1, post_2, ...]``.
         """
         dists = iterate(self._step, self._curr_posterior, data_batches)

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- The distribution classes and the distribution capability protocols take no
+  type parameter. A draw's type follows from the distribution's event
+  declaration, so a parameter could record only the declaration's kind.
+  `Distribution`, `EmpiricalDistribution`, `BootstrapReplicateDistribution`,
+  `DistributionArray`, `RandomFunction`, `RandomMeasure`, `SupportsLogProb`, and
+  `SupportsUnnormalizedLogProb` lose theirs, so a subscripted annotation such as
+  `Distribution[Array]` now raises `TypeError` where it is evaluated. Annotate
+  with the class alone. A parameter annotated with a capability protocol now
+  receives the distribution itself, as one annotated `Distribution` does.
 - `Distribution` and `DistributionSpec` are defined in the distributions
   package, and the `probpipe.core.distribution` module is removed. Its public
   classes and functions are importable from `probpipe`, and

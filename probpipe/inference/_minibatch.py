@@ -2,14 +2,14 @@
 
 Provides:
 
-* :class:`MinibatchedDistribution` — a ``RandomMeasure[Record]`` whose
+* :class:`MinibatchedDistribution` — a ``RandomMeasure`` whose
   draws are unbiased stochastic surrogates of the full-data
   unnormalized log-posterior. Consumed by stochastic-gradient MCMC
   kernels and (future) tempered SMC.
 * :class:`_FixedMinibatchDistribution` (private) — one realisation of
   the measure, holding a single fixed minibatch.
 * :class:`_RandomMinibatchLogProb` (private) — the
-  ``RandomFunction[Record, Array]`` returned by
+  ``RandomFunction`` from parameter records to arrays returned by
   ``random_unnormalized_log_prob(measure)``; its ``_sample(key)``
   yields a deterministic unnormalized-log-density callable for one
   minibatch.
@@ -187,7 +187,7 @@ def _draw_indices(
 
 
 class MinibatchedDistribution(
-    RandomMeasure[Record],
+    RandomMeasure,
     SupportsRandomUnnormalizedLogProb,
 ):
     """Random measure realised by uniform minibatching.
@@ -367,7 +367,7 @@ class MinibatchedDistribution(
 
 
 class _FixedMinibatchDistribution(
-    Distribution[Record],
+    Distribution,
     SupportsUnnormalizedLogProb,
 ):
     """One sampled inner distribution from a :class:`MinibatchedDistribution`.
@@ -442,12 +442,12 @@ class _FixedMinibatchDistribution(
 
 
 # ---------------------------------------------------------------------------
-# _RandomMinibatchLogProb — RandomFunction[Record, Array]
+# _RandomMinibatchLogProb — a RandomFunction from parameter records to arrays
 # ---------------------------------------------------------------------------
 
 
 class _RandomMinibatchLogProb(
-    RandomFunction[Record, Array],
+    RandomFunction,
     SupportsSampling,
 ):
     """The function-valued random variable :math:`\\theta \\mapsto \\log \\tilde{D}_B(\\theta)`.
@@ -458,9 +458,9 @@ class _RandomMinibatchLogProb(
       *deterministic* unnormalized log-density callable for one
       minibatch draw — the primary form stochastic-gradient kernels
       consume.
-    * :meth:`__call__` (``theta``) returns a ``Distribution[Array]``
-      over log-density estimates at a fixed :math:`\\theta`. The
-      ``Distribution[Array]``'s :meth:`_sample` draws minibatched
+    * :meth:`__call__` (``theta``) returns an array-valued distribution
+      over log-density estimates at a fixed :math:`\\theta`. That
+      distribution's :meth:`_sample` draws minibatched
       log-density values, so its Monte-Carlo mean recovers
       :math:`\\log p_\\text{full}(\\theta)`.
     """
@@ -506,11 +506,11 @@ class _RandomMinibatchLogProb(
 
 
 # ---------------------------------------------------------------------------
-# _MinibatchLogProbAtPoint — Distribution[Array] over log-density at fixed theta
+# _MinibatchLogProbAtPoint — the distribution over log-density values at a fixed theta
 # ---------------------------------------------------------------------------
 
 
-class _MinibatchLogProbAtPoint(Distribution[Array], SupportsSampling):
+class _MinibatchLogProbAtPoint(Distribution, SupportsSampling):
     """Distribution over minibatched log-density values at a fixed ``theta``.
 
     Returned by ``_RandomMinibatchLogProb(theta)`` — the two-argument
