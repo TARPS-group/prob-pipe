@@ -105,33 +105,31 @@ def _wrap_as_term(
         return _wrap_declared_function_output(
             value, function_name=result_name, output_spec=output_spec
         )
-    if isinstance(value, TrackedTerm):
-        return value
-    if isinstance(value, Mapping):
-        return Record(result_name, dict(value))
-    if isinstance(value, (list, tuple)):
-        if not value:
-            from ..core._opaque_batch import OpaqueBatch
-
-            return OpaqueBatch(result_name, [], field_name)
-        return _make_stack(
-            list(value),
-            n=len(value),
-            level_names=(field_name,),
-            field_name=field_name,
-            name=result_name,
-        )
-    if _is_numeric_leaf(value):
-        from ..core._numeric_array import NumericArray
-
-        return NumericArray(result_name, value)
-    if callable(value):
-        from ..values import Function
-
-        return Function(result_name, value)
-    from ..core._opaque import Opaque
-
-    return Opaque(result_name, value)
+    match value:
+        case TrackedTerm():
+            return value
+        case Mapping():
+            return Record(result_name, dict(value))
+        case list() | tuple():
+            if not value:
+                from ..core._opaque_batch import OpaqueBatch
+                return OpaqueBatch(result_name, [], field_name)
+            return _make_stack(
+                list(value),
+                n=len(value),
+                level_names=(field_name,),
+                field_name=field_name,
+                name=result_name,
+            )
+        case _ if _is_numeric_leaf(value):
+            from ..core._numeric_array import NumericArray
+            return NumericArray(result_name, value)
+        case _ if callable(value):
+            from ..values import Function
+            return Function(result_name, value)
+        case _:
+            from ..core._opaque import Opaque
+            return Opaque(result_name, value)
 
 
 def _coerce_output(

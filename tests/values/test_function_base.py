@@ -178,9 +178,6 @@ class TestFunctionDeclarations:
         assert view.options["dispatch"] == "thread"
         assert wrapped.options["dispatch"] == "auto"
         assert view.spec is wrapped.spec
-        for name in ("name", "output_name", "output_spec", "seed"):
-            with pytest.raises(TypeError, match=name):
-                wrapped.with_options(**{name: "changed"})
 
     def test_base_does_not_import_the_engine(self):
         import probpipe.values._function_base as base

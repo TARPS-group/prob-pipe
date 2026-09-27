@@ -165,7 +165,8 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     non-empty ``_name`` raises ``TypeError``. Host classes therefore never
     need their own name check.
     """
-
+    _name: str
+    _provenance: Provenance | None
     __slots__ = ()
 
     def _init_tracked(

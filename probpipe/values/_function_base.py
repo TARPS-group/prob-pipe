@@ -20,6 +20,7 @@ from ..core.config import WorkflowKind
 from ..core.node import Node
 from ..core.tracked import Annotated, TrackedTerm
 from ._binding import (
+    WorkflowSignatureInfo,
     make_signature_info,
     make_signature_info_from_signature,
     resolve_workflow_values,
@@ -88,7 +89,7 @@ class FunctionSpec(TermSpec):
             output = output._with_spec(output.spec._substitute_dims(bindings))
         return FunctionSpec(inputs, output)
 
-    def _bind_dims_from_value(self, value: Any, bindings: dict[str, int], path: str) -> None:
+    def _bind_dims_from_value(self, value: Callable, bindings: dict[str, int], path: str) -> None:
         if not callable(value):
             raise ValueError(f"{path} does not conform to FunctionSpec: expected a callable")
         actual = getattr(value, "spec", None)
@@ -373,6 +374,13 @@ class Function(Node, TrackedTerm, Annotated):
     function label and callable metadata; output_name and component names are
     preserved. ``with_options`` returns a shallow copy with revised controls.
     """
+    _signature_info: WorkflowSignatureInfo
+    _bind: Mapping[str, Any]
+    _module: Any | None
+    _implementation: _FunctionImplementation
+    _spec: FunctionSpec
+    _output_name: str
+    _options: Mapping[str, Any]
 
     DEFAULT_N_BROADCAST_SAMPLES = 128
 
@@ -395,16 +403,21 @@ class Function(Node, TrackedTerm, Annotated):
     ) -> None:
         if not callable(fn):
             raise TypeError(f"fn must be callable, got {type(fn).__name__}")
-        if "seed" in kwargs:
-            raise TypeError(
-                "seed is not a Function construction option; use workflow_run(seed=...) "
-                "or bind={'seed': ...} for a wrapped-function seed"
-            )
-        removed = {"input_template", "output_template", "func"}.intersection(kwargs)
+        
+        # Check for removed options in kwargs and issue a warning if any are found.
+        removed = {"seed", "input_template", "output_template", "func"}.intersection(kwargs)
         if removed:
-            raise TypeError(
-                f"Removed Function options {sorted(removed)}; use fn, input_spec and output_spec"
+            warnings.warn(
+                f"Removed Function options {removed} detected; use fn, input_spec and output_spec instead. "
+                f"seed is not a Function construction option anymore; use workflow_run(seed=...) or bind={'seed': ...} for a wrapped-function seed. ",
+                FutureWarning,
+                stacklevel=2,
             )
+            fn = kwargs.pop("func", fn) if "func" in removed else fn
+            for key in removed - {"func"}:
+                kwargs.pop(key, None)
+            
+            
         self._initialize(
             _CallableFunctionImplementation(fn),
             make_signature_info(fn),
