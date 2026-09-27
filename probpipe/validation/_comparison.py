@@ -41,8 +41,8 @@ from typing import Literal, Protocol, runtime_checkable
 import jax
 import jax.numpy as jnp
 
-from ..core import _workflow_context
 from ..custom_types import Array, ArrayLike, PRNGKey
+from ..functions import _context as _workflow_context
 from ._workflow_rng import (
     _SLICED_WASSERSTEIN_PROVIDER_ABI,
     _resolve_validation_key,

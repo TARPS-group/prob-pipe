@@ -38,19 +38,14 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from ..values._function_base import FunctionSpec
 from ._array_backend import _is_numeric_dtype, _to_jax_array
 from ._batch import Batch, BatchSpec, _axis_groups_for, _ranks_of
 from ._function_batch import FunctionBatch
 from ._kinds import batch_class_for_spec
 from ._object_batch import _from_iterable, _frozen_object_column, _is_object_array
 from ._opaque_batch import OpaqueBatch
-from ._specs import (
-    FunctionSpec,
-    NumericArraySpec,
-    NumericRecordSpec,
-    RecordSpec,
-    TermSpec,
-)
+from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec, TermSpec
 from .named_tree import _PATH_SEP, _unflatten_paths
 from .provenance import Provenance
 from .record import Record

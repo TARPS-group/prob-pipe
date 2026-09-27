@@ -18,7 +18,7 @@ Supported types
 - ``Record`` — leaf paths + leaf values (leaf-keyed collection)
 - ``Distribution`` — class + name + parameters; ``EmpiricalDistribution``
   hashes samples + weights; ``Weights`` are hashed by content
-- ``Function`` — frozen signature and input/output templates, plus either
+- ``Function`` — frozen signature and input/output declarations, plus either
   plain-callable bytecode, referenced names, and captured/default values or a
   private implementation type
 - Closure-free Python functions — module + qualified name + bytecode +
@@ -157,7 +157,16 @@ def _update(
         state.is_weak = True
         return
 
-    if isinstance(obj, (_NP_ARRAY_TYPE, _JAX_ARRAY_TYPE)):
+    from ._specs import InputSpec, OutputSpec
+
+    if isinstance(obj, InputSpec):
+        h.update(b"input_spec:")
+        _update(h, dict(obj), depth + 1, max_array_bytes, state)
+    elif isinstance(obj, OutputSpec):
+        h.update(b"output_spec:")
+        _update(h, obj._component_name, depth + 1, max_array_bytes, state)
+        _update(h, obj.spec, depth + 1, max_array_bytes, state)
+    elif isinstance(obj, (_NP_ARRAY_TYPE, _JAX_ARRAY_TYPE)):
         _update_array(h, obj, max_array_bytes, state)
     elif _is_record_batch(obj):
         _update_record_batch(h, obj, depth, max_array_bytes, state)
@@ -361,13 +370,10 @@ def _update_value_spec(
 ) -> None:
     """Hash a built-in TermSpec by the declaration fields that define it."""
     from ..distributions._distribution import DistributionSpec
+    from ..values._function_base import FunctionSpec
     from ._batch import BatchSpec
     from ._opaque import OpaqueSpec
-    from ._specs import (
-        FunctionSpec,
-        NumericArraySpec,
-        RecordSpec,
-    )
+    from ._specs import NumericArraySpec, RecordSpec
 
     spec_type = type(spec)
     h.update(b"spec:")
@@ -396,7 +402,7 @@ def _update_value_spec(
         h.update(b":event=")
         _update(h, declaration.spec, depth + 1, max_array_bytes, state)
     elif isinstance(spec, FunctionSpec):
-        _update(h, spec.input_template, depth + 1, max_array_bytes, state)
+        _update(h, spec.input_spec, depth + 1, max_array_bytes, state)
         _update(h, spec.output_spec, depth + 1, max_array_bytes, state)
     elif isinstance(spec, BatchSpec):
         _update(h, spec.element_spec, depth + 1, max_array_bytes, state)
@@ -754,7 +760,7 @@ def _update_distribution(
 
 def _is_function(obj: Any) -> bool:
     try:
-        from .node import Function
+        from ..values import Function
 
         return isinstance(obj, Function)
     except ImportError:
@@ -827,7 +833,7 @@ def _update_function(
 ) -> None:
     """Hash a Function by callable content or stable implementation declaration.
 
-    Every Function includes its frozen signature and templates. Plain-callable
+    Every Function includes its frozen signature and declarations. Plain-callable
     Functions additionally use bytecode plus default and closure content.
     Other private implementations add only their implementation type,
     excluding implementation instance state and artifact identity.
@@ -835,14 +841,14 @@ def _update_function(
     if state is None:
         state = _FingerprintState()
     h.update(b"wf:")
-    from ._function_contract import _CallableFunctionImplementation
+    from ..values._function_base import _CallableFunctionImplementation
 
     h.update(b"signature=")
     _update_signature_declaration(h, function.signature, max_array_bytes, state)
-    h.update(b":input_template=")
-    _update(h, function.input_template, 1, max_array_bytes, state)
-    h.update(b":output_template=")
-    _update(h, function.output_template, 1, max_array_bytes, state)
+    h.update(b":input_spec=")
+    _update(h, function.input_spec, 1, max_array_bytes, state)
+    h.update(b":output_spec=")
+    _update(h, function.output_spec, 1, max_array_bytes, state)
 
     implementation = function._implementation
     if not isinstance(implementation, _CallableFunctionImplementation):

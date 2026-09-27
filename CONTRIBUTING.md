@@ -500,7 +500,7 @@ uv build packaging/probpipe   # probpipe (metapackage)
    the mixin's metaclass enforces a non-empty `name` at construction
    for every host. `Function` is an immutable, schema-aware computation term;
    its Python signature is captured independently from its optional
-   authoritative input and output templates. A distribution takes its name
+   authoritative InputSpec and OutputSpec declarations. A distribution takes its name
    as the required first argument (`Normal("x", 0.0, 1.0)`), as `Record`
    does; the classes the design retires, such as `ProductDistribution`, still
    take it as a keyword. Names are set at construction and preserved by every transform;
@@ -513,7 +513,8 @@ uv build packaging/probpipe   # probpipe (metapackage)
    name, or a domain term such as `"data"` / `"observed"`. A nested
    record view takes its field key as its name at construction.
 7. **Every return is wrapped at its own kind** — a `@function` return becomes
-   the tracked term of the kind it already is, named for the function.
+   the tracked term of the kind it already is, named by `output_name`.
+   This defaults to the initial function name and survives `with_name`.
    A numeric value becomes a `NumericArray`, a mapping a `Record`,
    a callable a `Function`, and anything else an `Opaque`; a sequence, or a
    sweep, aggregates at the rows' kind through `_make_stack`. The kind follows
@@ -536,15 +537,13 @@ uv build packaging/probpipe   # probpipe (metapackage)
    and provenance.
    Every tracked term an operation returns keeps its kind, `Function` included:
    a term is never re-wrapped and never buried inside another.
-   Authoritative nested output templates use a private recursive aggregate
+   Authoritative nested output declarations use a private recursive aggregate
    packer across sequential and JAX dispatch; the public
-   `RecordBatch.stack` contract remains unchanged. The field name for inferred
-   single-field output is always the function's own name. Single-field terms
-   expose shims, each only the ones its values admit. `Record` forwards
-   `__call__` to its one field, so a `Function` whose return is itself
-   callable — `sample(grf)`, which wraps the sampled random function in a
-   one-field record — is invoked as `sample(grf)(X)` rather than unwrapped
-   first. `NumericRecord` adds array conversion (`__array__`,
+   `RecordBatch.stack` contract remains unchanged. A whole-term
+   output component defaults to `output_name`; exposed record fields keep their
+   names. A returned callable becomes a Function, so `sample(grf)(X)` invokes
+   the sampled random function directly. Single-field Records retain their
+   existing forwarding and conversion conveniences. `NumericRecord` adds array conversion (`__array__`,
    `__jax_array__`, `.shape`, `.dtype`, `.ndim`) and scalar conversion
    (`__float__`, `__int__`, `__bool__`), so `jnp.array(log_prob(d, v))` and
    `float(mean(d))` stay terse. `NumericRecordBatch` has the array

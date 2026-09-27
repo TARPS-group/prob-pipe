@@ -148,7 +148,7 @@ class DistributionArray(Distribution):
     ``components``, ``batch_shape``, ``event_shape``, ``event_spec``).
     Vectorized
     ops (``sample``, ``mean``, ``variance``, ``log_prob``, …) are
-    delivered by the :class:`~probpipe.core.node.Function`
+    delivered by the :class:`~probpipe.values._function_base.Function`
     sweep layer, which treats the array as ``Array[Distribution]`` and
     dispatches cell-by-cell.
 
@@ -172,7 +172,7 @@ class DistributionArray(Distribution):
     capabilities. Vectorization is handled at a different layer:
 
     1. ``sample(da, ...)`` calls the :class:`~probpipe.sample`
-       :class:`~probpipe.core.node.Function`, whose dispatch
+       :class:`~probpipe.values._function_base.Function`, whose dispatch
        sees a ``DistributionArray`` argument where the op's annotation
        expects a scalar ``SupportsSampling``.
     2. WF dispatches cell-by-cell: each ``da[i]`` is sampled, results

@@ -19,9 +19,9 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-import probpipe.core._workflow_broker as broker_mod
+import probpipe.functions._broker as broker_mod
 from probpipe import Normal, WorkflowKind, sample, workflow_run
-from probpipe.core.node import Function
+from probpipe.values._function_base import Function
 
 prefect_testing = pytest.importorskip("prefect.testing.utilities")
 prefect_test_harness = prefect_testing.prefect_test_harness
@@ -75,7 +75,7 @@ def _draw_standard_normal():
 
 
 _THREADED_DRAW = Function(
-    func=_draw_standard_normal,
+    fn=_draw_standard_normal,
     dispatch="thread",
     max_workers=1,
     name="threaded_draw",
@@ -120,7 +120,8 @@ class TestPrefectRngConformance:
         workflows = (
             (
                 Function(
-                    func=add_one,
+                    name="add_one",
+                    fn=add_one,
                     workflow_kind=WorkflowKind.OFF,
                     dispatch="sequential",
                     n_broadcast_samples=6,
@@ -129,7 +130,8 @@ class TestPrefectRngConformance:
             ),
             (
                 Function(
-                    func=add_one,
+                    name="add_one",
+                    fn=add_one,
                     workflow_kind=WorkflowKind.OFF,
                     dispatch="jax",
                     n_broadcast_samples=6,
@@ -138,7 +140,8 @@ class TestPrefectRngConformance:
             ),
             (
                 Function(
-                    func=add_one,
+                    name="add_one",
+                    fn=add_one,
                     workflow_kind=WorkflowKind.OFF,
                     dispatch="thread",
                     max_workers=2,
@@ -148,7 +151,8 @@ class TestPrefectRngConformance:
             ),
             (
                 Function(
-                    func=add_one,
+                    name="add_one",
+                    fn=add_one,
                     workflow_kind=WorkflowKind.TASK,
                     dispatch="sequential",
                     n_broadcast_samples=6,
@@ -157,7 +161,8 @@ class TestPrefectRngConformance:
             ),
             (
                 Function(
-                    func=add_one,
+                    name="add_one",
+                    fn=add_one,
                     workflow_kind=WorkflowKind.TASK,
                     dispatch="jax",
                     n_broadcast_samples=6,
@@ -166,7 +171,8 @@ class TestPrefectRngConformance:
             ),
             (
                 Function(
-                    func=add_one,
+                    name="add_one",
+                    fn=add_one,
                     workflow_kind=WorkflowKind.TASK,
                     dispatch="thread",
                     max_workers=2,
@@ -176,7 +182,8 @@ class TestPrefectRngConformance:
             ),
             (
                 Function(
-                    func=add_one,
+                    name="add_one",
+                    fn=add_one,
                     workflow_kind=WorkflowKind.FLOW,
                     dispatch="sequential",
                     n_broadcast_samples=6,
@@ -185,7 +192,8 @@ class TestPrefectRngConformance:
             ),
             (
                 Function(
-                    func=add_one,
+                    name="add_one",
+                    fn=add_one,
                     workflow_kind=WorkflowKind.FLOW,
                     dispatch="jax",
                     n_broadcast_samples=6,
@@ -210,12 +218,14 @@ class TestPrefectRngConformance:
 
     def test_nested_seed_matches_local_and_real_prefect_for_any_outer_seed(self):
         local = Function(
-            func=_draw_under_nested_seed,
+            name="_draw_under_nested_seed",
+            fn=_draw_under_nested_seed,
             workflow_kind=WorkflowKind.OFF,
             dispatch="sequential",
         )
         remote = Function(
-            func=_draw_under_nested_seed,
+            name="_draw_under_nested_seed",
+            fn=_draw_under_nested_seed,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
         )
@@ -235,13 +245,13 @@ class TestPrefectRngConformance:
 
     def test_rootless_task_coordinates_nested_managed_thread(self):
         local = Function(
-            func=_call_threaded_draw,
+            fn=_call_threaded_draw,
             workflow_kind=WorkflowKind.OFF,
             dispatch="sequential",
             name="nested_thread_owner",
         )
         remote = Function(
-            func=_call_threaded_draw,
+            fn=_call_threaded_draw,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
             name="nested_thread_owner",
@@ -274,7 +284,8 @@ class TestPrefectRngConformance:
     def test_real_prefect_retry_reuses_key_and_commits_one_effect(self):
         _PREFECT_RETRY_KEY_WORDS.clear()
         workflow = Function(
-            func=_claim_key_and_fail_once,
+            name="_claim_key_and_fail_once",
+            fn=_claim_key_and_fail_once,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
         )
@@ -307,7 +318,8 @@ class TestPrefectTaskRowWise:
 
     def test_returns_empirical_distribution(self, normal_dist):
         wf = Function(
-            func=add_one,
+            name="add_one",
+            fn=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
             n_broadcast_samples=30,
@@ -319,7 +331,8 @@ class TestPrefectTaskRowWise:
 
     def test_output_values_correct(self, normal_dist):
         wf = Function(
-            func=add_one,
+            name="add_one",
+            fn=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
             n_broadcast_samples=200,
@@ -335,7 +348,8 @@ class TestPrefectTaskRowWise:
 
     def test_multiple_broadcast_args(self, normal_dist):
         wf = Function(
-            func=sum_xy,
+            name="sum_xy",
+            fn=sum_xy,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
             n_broadcast_samples=30,
@@ -357,7 +371,8 @@ class TestPrefectFlowRowWise:
 
     def test_returns_empirical_distribution(self, normal_dist):
         wf = Function(
-            func=double_it,
+            name="double_it",
+            fn=double_it,
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
             n_broadcast_samples=25,
@@ -369,7 +384,8 @@ class TestPrefectFlowRowWise:
 
     def test_output_values_correct(self, normal_dist):
         wf = Function(
-            func=double_it,
+            name="double_it",
+            fn=double_it,
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
             n_broadcast_samples=200,
@@ -394,7 +410,8 @@ class TestPrefectProvenance:
 
     def test_task_provenance(self, normal_dist):
         wf = Function(
-            func=add_one,
+            name="add_one",
+            fn=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
             n_broadcast_samples=20,
@@ -408,7 +425,8 @@ class TestPrefectProvenance:
 
     def test_flow_provenance(self, normal_dist):
         wf = Function(
-            func=add_one,
+            name="add_one",
+            fn=add_one,
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
             n_broadcast_samples=20,
@@ -420,7 +438,8 @@ class TestPrefectProvenance:
 
     def test_no_orchestration_provenance(self, normal_dist):
         wf = Function(
-            func=add_one,
+            name="add_one",
+            fn=add_one,
             workflow_kind=WorkflowKind.OFF,
             dispatch="sequential",
             n_broadcast_samples=20,
@@ -441,7 +460,8 @@ class TestPrefectNonBroadcast:
 
     def test_task_no_broadcast(self):
         wf = Function(
-            func=add_one,
+            name="add_one",
+            fn=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
         )
@@ -451,7 +471,8 @@ class TestPrefectNonBroadcast:
 
     def test_flow_no_broadcast(self):
         wf = Function(
-            func=double_it,
+            name="double_it",
+            fn=double_it,
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
         )
@@ -468,13 +489,14 @@ class TestPrefectImportGuard:
     """When Prefect is not installed, workflow_kind should warn and fall back to OFF."""
 
     def test_task_warns_without_prefect(self, normal_dist, monkeypatch):
-        import probpipe.core.node as node_mod
+        import probpipe.functions._function as node_mod
 
         monkeypatch.setattr(node_mod, "task", None)
         monkeypatch.setattr(node_mod, "flow", None)
 
         wf = Function(
-            func=add_one,
+            name="add_one",
+            fn=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
             n_broadcast_samples=10,
@@ -484,13 +506,14 @@ class TestPrefectImportGuard:
         assert hasattr(result, "samples")
 
     def test_flow_warns_without_prefect(self, normal_dist, monkeypatch):
-        import probpipe.core.node as node_mod
+        import probpipe.functions._function as node_mod
 
         monkeypatch.setattr(node_mod, "task", None)
         monkeypatch.setattr(node_mod, "flow", None)
 
         wf = Function(
-            func=add_one,
+            name="add_one",
+            fn=add_one,
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
             n_broadcast_samples=10,
@@ -500,13 +523,14 @@ class TestPrefectImportGuard:
         assert hasattr(result, "samples")
 
     def test_jax_warns_without_prefect(self, normal_dist, monkeypatch):
-        import probpipe.core.node as node_mod
+        import probpipe.functions._function as node_mod
 
         monkeypatch.setattr(node_mod, "task", None)
         monkeypatch.setattr(node_mod, "flow", None)
 
         wf = Function(
-            func=add_one,
+            name="add_one",
+            fn=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="jax",
             n_broadcast_samples=10,

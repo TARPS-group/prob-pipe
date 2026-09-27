@@ -50,7 +50,7 @@ from .._weights import Weights
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..distributions import _distribution as _base
 from ..distributions._distribution import Distribution
-from . import _workflow_broker
+from ..functions import _broker as _workflow_broker
 from ._numeric_record import NumericRecord
 from ._numeric_record_distribution import (
     BootstrapDistribution,

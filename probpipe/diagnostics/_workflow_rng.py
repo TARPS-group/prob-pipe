@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from ..core import _workflow_broker
 from ..custom_types import PRNGKey
+from ..functions import _broker as _workflow_broker
 
 _PPC_SAMPLING_ABI = "probpipe.diagnostics.ppc/v1"
 

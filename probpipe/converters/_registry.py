@@ -8,7 +8,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Literal
 
-from ..core import _workflow_broker, _workflow_descendants
+from ..functions import _broker as _workflow_broker
+from ..functions import _descendants as _workflow_descendants
 
 _ConversionExecutionMode = Literal[
     "exact",

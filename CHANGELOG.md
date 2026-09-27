@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **Function declarations and engine migration (#448 B1).** Construct with
+  `Function(name, fn, *, input_spec=None, output_spec=None, output_name=None, ...)`.
+  The name is required; decorators default it to the Python callable's name.
+  `FunctionSpec` now stores `InputSpec` and `OutputSpec`. The old Function
+  template parameters and properties are removed without aliases. Bare record
+  specs expose fields; other bare term specs declare one whole component under
+  `output_name`, which defaults to the initial function name and survives
+  `with_name`. Arrays remain arrays and single-field records remain records.
+  Type holes and symbolic output dimensions are completed per call. Existing
+  tracked returns are copied and relabeled by `__call__`; `apply` preserves them.
+  This includes operation wrappers: `sample(law)` uses the label `sample`,
+  independently of the law's component names and the result's batch levels.
+  `Function`/`FunctionSpec` live in `values/`, and workflow helpers move from
+  `core/_workflow_*` into `functions/`; old imports have no shims. Declaration
+  fingerprints and replay anchors change, so regenerate persisted artifacts.
+  `Module`, `AbstractModule`, and both method decorators are experimental.
+
 - `event_template` is removed from every distribution, so a law's event
   declaration is the one schema it records. Read the declaration instead:
   replace `law.event_template` with `law.event_spec.spec` for a law that draws
@@ -126,8 +143,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its separate wrapper; `NumericRecordSpec` replaces `NumericEventTemplate`.
   Replace `ValueSpec` with `TermSpec` in custom specs. Dimension binding returns
   a refined spec, `with_dim_sizes` permits partial substitution, and `with_dim_names`
-  renames symbols throughout nested declarations. Existing live function and
-  distribution template APIs retain their signatures for their later migration.
+  renames symbols throughout nested declarations. The live distribution template API retains its signature for its later migration.
   Moving and renaming schema classes changes their fingerprints and those of
   containing terms; affected persisted provenance fingerprints no longer match.
   A custom `NumericSpec` implements `_vector_size`; the public `vector_size`

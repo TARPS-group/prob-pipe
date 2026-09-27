@@ -11,8 +11,8 @@ import pytest
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
 from probpipe import GLMLikelihood, workflow_run
-from probpipe.core import _workflow_context
 from probpipe.diagnostics._ppc_spc import _ppc_op, add_ppc
+from probpipe.functions import _context as _workflow_context
 
 
 def _mean(values):
@@ -41,7 +41,7 @@ class TestPpcDiagnosticBroker:
     def test_duplicate_test_function_names_fail_before_randomness(self, posterior):
         with (
             patch("probpipe.diagnostics._ppc_spc._predictive_check_batched") as sample,
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=17),
             pytest.raises(ValueError, match=r"unique names.*'<lambda>'"),
         ):
@@ -85,7 +85,7 @@ class TestPpcDiagnosticBroker:
                 side_effect=fake_predictive_check,
             ),
             patch(
-                "probpipe.core._workflow_context._commit_stochastic_invocation",
+                "probpipe.functions._context._commit_stochastic_invocation",
                 wraps=_workflow_context._commit_stochastic_invocation,
             ) as commit,
             workflow_run(seed=17),
@@ -113,7 +113,7 @@ class TestPpcDiagnosticBroker:
                     return_value=np.zeros(n_replications),
                 ),
                 patch(
-                    "probpipe.core._workflow_context._commit_stochastic_invocation",
+                    "probpipe.functions._context._commit_stochastic_invocation",
                     wraps=_workflow_context._commit_stochastic_invocation,
                 ) as commit,
                 patch.object(
@@ -149,7 +149,7 @@ class TestPpcDiagnosticBroker:
                 "probpipe.diagnostics._ppc_spc._predictive_check_batched",
                 side_effect=fake_predictive_check,
             ),
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
         ):
             _ppc_op(
                 posterior,
@@ -167,7 +167,7 @@ class TestPpcDiagnosticBroker:
     def test_opaque_provider_fails_before_sampling_or_event(self, posterior):
         with (
             patch("probpipe.diagnostics._ppc_spc._predictive_check_batched") as sample,
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=17),
             pytest.raises(TypeError, match="explicit key"),
         ):
@@ -200,7 +200,7 @@ class TestPpcDiagnosticBroker:
     ):
         with (
             patch("probpipe.diagnostics._ppc_spc._predictive_check_batched") as sample,
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=17),
             pytest.raises((TypeError, ValueError)),
         ):

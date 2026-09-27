@@ -234,7 +234,7 @@ class Provenance:
         diagnostics:
             Exact JSON-native non-semantic execution observations.
         """
-        from . import _workflow_context
+        from ..functions import _context as _workflow_context
 
         mode = _workflow_context._active_provenance_mode()
         if mode is ProvenanceMode.OFF:

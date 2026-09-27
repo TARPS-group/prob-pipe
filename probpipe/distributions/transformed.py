@@ -8,7 +8,6 @@ import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.bijectors as tfb
 import tensorflow_probability.substrates.jax.distributions as tfd
 
-from ..core import _workflow_descendants
 from ..core._numeric_record_distribution import NumericRecordDistribution, _mc_expectation
 from ..core._specs import NumericArraySpec
 from ..core.constraints import (
@@ -20,6 +19,7 @@ from ..core.constraints import (
 from ..core.protocols import SupportsLogProb, SupportsMean, SupportsSampling, SupportsVariance
 from ..core.provenance import Provenance
 from ..custom_types import Array, ArrayLike, PRNGKey
+from ..functions import _descendants as _workflow_descendants
 from ._tfp_base import TFPDistribution
 
 __all__ = ["TransformedDistribution"]

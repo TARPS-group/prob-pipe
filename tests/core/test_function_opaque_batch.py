@@ -21,9 +21,11 @@ from probpipe import (
     BatchSpec,
     FunctionBatch,
     FunctionSpec,
+    InputSpec,
     NumericArraySpec,
     OpaqueBatch,
     OpaqueSpec,
+    OutputSpec,
     Record,
     RecordSpec,
     TermSpec,
@@ -291,7 +293,9 @@ class TestSpec:
         assert labels.element_spec is labels.spec.element_spec
 
     def test_an_element_spec_may_be_given(self):
-        declared = FunctionSpec(RecordSpec(x=()), RecordSpec(y=()))
+        declared = FunctionSpec(
+            InputSpec(RecordSpec(x=()).children), OutputSpec(result=RecordSpec(y=()))
+        )
         batch = FunctionBatch(
             "batch",
             [lambda x: x],
@@ -331,7 +335,7 @@ class TestSpec:
                 "batch",
                 three,
                 "variant",
-                element_spec=FunctionSpec(RecordSpec(x=())),
+                element_spec=FunctionSpec(InputSpec(RecordSpec(x=()).children)),
             )
         )
 

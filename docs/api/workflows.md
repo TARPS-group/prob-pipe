@@ -142,106 +142,114 @@ thread dispatch when tracing the body would itself be inappropriate.
 For artifact-driven reproduction and its compatibility limits, see
 [Identity & provenance](provenance.md).
 
-## Raw application and authoritative templates
+## Function declarations and result names
 
-Calling a `Function` through `__call__` enables ProbPipe lifting, sweeps,
-orchestration, result wrapping, and call provenance. Use `apply` when a caller
-needs exactly one raw evaluation under the same signature, binding, default,
-and schema checks:
+Construct a function with `Function(name, fn, *, input_spec=None,
+output_spec=None, output_name=None, ...)`. The name is required and comes first.
+The `@function` decorator defaults it to the Python callable's `__name__`.
+`input_spec` accepts an `InputSpec` or a mapping from parameter names to term
+specs. The captured Python signature remains the calling contract.
+
+A function has three independent names: its own label, its result's
+`output_name`, and the components in its output declaration. `output_name`
+defaults to the initial function name. `with_name` changes only the function
+label; results keep their output name, and provenance identifies the function
+actually called. Function labels do not participate in `FunctionSpec` matching.
+This naming rule also applies to operation wrappers: `sample(law)` has the
+label `sample`, while the law's component names and the draw levels are retained.
+Use `result.with_name("draws")` to label a result explicitly, or `apply` to
+preserve the raw implementation's name and identity.
 
 ```python
 import jax.numpy as jnp
 
-from probpipe import RecordSpec, function
+from probpipe import Function, InputSpec, NumericArraySpec, OutputSpec, function
 
 
 @function(
-    input_template=RecordSpec(x=("obs",), scale=()),
-    output_template=RecordSpec(y=("obs",)),
+    input_spec=InputSpec(x=NumericArraySpec(("obs",)), scale=NumericArraySpec(())),
+    output_spec=OutputSpec(value=NumericArraySpec(("obs",))),
+    output_name="standardized",
 )
 def standardize(x, scale=1.0):
     return x / scale
 
 
 values = jnp.array([1.0, 2.0])
-raw = standardize.apply(values, scale=2.0)  # underlying array value
-wrapped = standardize(values, scale=2.0)  # Record with field "y"
+raw = standardize.apply(values, scale=2.0)  # underlying array, unchanged
+wrapped = standardize(values, scale=2.0)  # NumericArray named "standardized"
+renamed = standardize.with_name("rescale")  # same declaration and output_name
+identity = Function("identity", lambda x: x)
 ```
 
-String dimensions such as `"obs"` are symbolic. They are bound separately for
-each call, shared between the input and output templates, and never written
-back into the declaration. Repeating a symbol requires equal sizes, including
-across nested fields. `RecordSpec.free_dims` lists unresolved symbols and
-`RecordSpec.is_concrete` reports whether none remain. A polymorphic numeric
-template has no `vector_size` until its symbols are bound.
+`output_spec` accepts an `OutputSpec` or a bare `TermSpec`:
 
-When supplied, templates are authoritative:
+- `OutputSpec(value=NumericArraySpec(()))` declares a whole array under the
+  component `value`; the array is not wrapped in a single-field record.
+- `OutputSpec(RecordSpec(x=(), y=()))` exposes the returned record's fields.
+- `OutputSpec(bundle=RecordSpec(x=(), y=()))` exposes the whole record as one
+  component. The returned term remains a record in either case.
+- `OutputSpec(value=None)` leaves a type hole filled from each return value.
+- A bare `RecordSpec` exposes its fields. Any other bare spec declares the
+  whole term under `output_name`. With no declaration, the return kind is inferred.
 
-- input-template top-level fields and fixed signature parameters must match by
-  name; variadic signatures can still be used when no input template is set;
-- every symbolic output dimension must be declared by the input template;
-- mappings must match the declared output structure, while a scalar or array
-  result can satisfy only a single-leaf output template;
-- existing `Record` results must conform to the same field tree and concrete
-  shapes. Dtypes use same-kind conformance, just like bare values;
-- an existing `Distribution` must declare components that form the template's
-  record, with its fields and shapes and with each dtype and support that the
-  template sets. A law that draws a whole term forms one field under its name,
-  and a dtype or support that the template leaves unset matches any;
-- every declared output support is checked against concrete scalar, array,
-  mapping, or Record data.
+`FunctionSpec` stores `InputSpec | None` and `OutputSpec | None`. The removed
+`input_template` and `output_template` constructor arguments and properties
+have no aliases. Use `DistributionSpec` for a returned distribution and
+`BatchSpec` for a returned batch, rather than its element schema alone.
 
-Authoritative mapping outputs are normalized to the declared `Record` pytree
-before dispatch aggregation. Flat and nested output structures therefore have
-the same value type, data, and concrete template under sequential, threaded,
-Prefect, and JAX execution. This recursive packing is private to the Function
-planner; it does not broaden the public `RecordBatch.stack` contract.
+Declarations are authoritative. Named input slots must match fixed signature
+parameters; variadic signatures remain supported when the input side is
+undeclared. Structures, kinds, shapes, same-kind dtypes, and declared output
+supports are checked. Symbolic dimensions are bound per call, shared across
+inputs and outputs, and never written back into the function declaration.
+Output-only dimensions and type holes are resolved from the returned value.
+An existing distribution retains its own matching event declaration.
 
-Variadic Functions participate fully when no authoritative input template is
-declared. Each `*args` element and `**kwargs` entry is classified, lifted,
-sampled, or swept independently. Informative variadic annotations apply to
-each expanded slot; `Any` supplies no pass-through guarantee, so generic
-`**kwargs: Any` APIs retain lifting and sweep behavior. The original Python
-call is reconstructed before execution. Provenance and `include_inputs` labels
-are stable, for example `*items[0]` and `**extras['scale']`. Tracked-term slots form
-deduplicated lineage parents; ordinary slots remain distinct in
-`Provenance.inputs` even when multiple parameters refer to the same object.
+Variadic Functions classify, lift, sample, or sweep each `*args` element and
+`**kwargs` entry independently. Their annotations apply to each expanded slot;
+`Any` supplies no pass-through guarantee. The original Python call is
+reconstructed before execution. Provenance labels retain the slot, such as
+`*items[0]` or `**extras['scale']`.
 
-`apply` deliberately performs no distribution lifting, batch sweep, result
-wrapping, orchestration, or call-provenance creation. It is therefore also the
-raw execution boundary used by inference integrations. If the implementation
-returns an existing `Record`, batch of records, or `Distribution`, `apply`
-preserves that object's identity, annotations, and provenance. `__call__`
-instead creates a shallow independent result item: value data and templates are
-shared by default, the annotations container is copied, prior provenance is
-cleared, and the current Function and tracked inputs become the new direct
-parents. With an authoritative output declaration, this public result copy
-carries the concrete declared template for `Record` and `RecordBatch` results
-even when the raw implementation result had a weaker inferred template.
-Distribution results instead retain their own event declaration, which
-Function never rewrites. Value data remains shared and
-`apply` leaves every raw object's template unchanged. This copy is still made
-when provenance tracking is disabled.
+## Raw application and lifted calls
 
-Output-support checks are data-dependent and cannot execute under JAX tracing.
-For broadcast and sweep calls, `dispatch="auto"` therefore detects a
-support-bearing output and falls back to row-wise execution. An explicit
-`dispatch="jax"` reports that output support validation requires eager
-execution, while a direct `jax.jit(function.apply)` preserves JAX's native
-tracer error. Neither path silently omits the support guarantee. Output
-templates without support constraints retain their existing JAX path.
+`apply` performs one raw evaluation with Python binding, defaults, construction
+bindings, and declaration checks. It preserves the returned object's identity,
+annotations, and provenance. It does not lift distributions, sweep batches,
+wrap results, orchestrate execution, or create call provenance.
 
-When a sweep returns distributions, every cell must match the concrete
-output template, and the resulting `DistributionArray` declares the term its
-cells draw in its `event_spec`. A broadcast marginal of a sweep that
-returns records declares the output template's record rather than one inferred
-from an arbitrary result cell.
+`__call__` adds those operations. An existing tracked return is shallow-copied,
+shares value data, receives `output_name`, and owns independent annotations and
+current-call provenance. This also applies when provenance is disabled and
+when the returned value is itself a Function. Arrays stay arrays; single-field
+records stay records. Declared nested mappings are packed consistently before
+sequential, threaded, or JAX aggregation. Sweeps use the result kind's batch
+family, including a declared kind for an empty sweep.
+
+Output-support checks require concrete data. Automatic dispatch falls back to
+row-wise execution for support-bearing declarations; explicit JAX dispatch
+reports the limitation. Direct `jax.jit(function.apply)` preserves JAX's tracer
+error. Support-free declarations retain the existing JAX paths.
+
+Broadcasts currently retain the existing marginal, joint, and distribution-array
+families while carrying the result label and output declaration. An empty
+distribution-valued sweep remains unavailable because `DistributionArray`
+requires at least one component. Replacement
+of those families and additional dispatch capabilities belong to later steps
+of the functions migration.
 
 ## Wrappers and decorators
 
 ::: probpipe.Function
 
+`Module`, `AbstractModule`, `workflow_method`, and `abstract_workflow_method`
+are experimental. Their shared-input and dependency behavior remains available,
+but their API may change. Using them emits no experimental runtime warning.
+
 ::: probpipe.Module
+
+::: probpipe.AbstractModule
 
 ::: probpipe.function
 

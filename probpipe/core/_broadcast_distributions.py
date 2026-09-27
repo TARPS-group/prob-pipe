@@ -40,7 +40,7 @@ from ._opaque_batch import OpaqueBatch
 from ._record_batch import RecordBatch, _batch_class_for, _MappedBatchColumns
 from ._record_spec import _reshaped_template
 from ._spec_base import _full_array_shape_or_none
-from ._specs import NumericArraySpec, NumericRecordSpec, OpaqueSpec, RecordSpec, TermSpec
+from ._specs import NumericArraySpec, NumericRecordSpec, OpaqueSpec, OutputSpec, RecordSpec, TermSpec
 from .protocols import (
     SupportsLogProb,
     SupportsMean,
@@ -485,13 +485,13 @@ def _make_marginal(
         )
 
     if output_template is not None and isinstance(output_samples, list):
-        from ._function_contract import _wrap_declared_function_output
+        from ..functions._result import _wrap_declared_function_output
 
         output_samples = [
             _wrap_declared_function_output(
                 output,
                 function_name=name or "marginal",
-                output_template=output_template,
+                output_spec=OutputSpec(output_template),
             )
             for output in output_samples
         ]
@@ -742,6 +742,7 @@ def _make_stack(
     name: str | None = None,
     field_name: str,
     output_template: RecordSpec | None = None,
+    output_spec: OutputSpec | None = None,
 ) -> Any:
     """Wrap inner Function outputs as a shape-``batch_shape``
     aggregate.
@@ -842,6 +843,38 @@ def _make_stack(
             inner_axis_groups=inner_outputs.axis_groups,
         )
 
+    if (
+        isinstance(inner_outputs, list)
+        and not inner_outputs
+        and n_total == 0
+        and output_spec is not None
+    ):
+        spec = output_spec.spec
+        if spec is None or not spec.is_concrete:
+            raise ValueError("An empty sweep requires a concrete output_spec")
+        if isinstance(spec, NumericArraySpec):
+            dtype = spec.dtype if spec.dtype is not None else jnp.zeros(()).dtype
+            return NumericArrayBatch(
+                result_name,
+                jnp.empty((*batch_shape, *spec.shape), dtype=dtype),
+                level_names,
+                element_spec=spec,
+                axes_per_level=_ranks_of(sweep_groups),
+            )
+        if not isinstance(spec, RecordSpec):
+            from ._kinds import batch_class_for_spec
+
+            batch_class = batch_class_for_spec(spec)
+            if batch_class is None:
+                raise ValueError(f"An empty sweep has no batch form for {spec!r}")
+            return batch_class(
+                result_name,
+                np.empty(batch_shape, dtype=object),
+                level_names,
+                element_spec=spec,
+                axes_per_level=_ranks_of(sweep_groups),
+            )
+
     # --- List-of-X path (Python-loop execution) -------------------------
     if isinstance(inner_outputs, list):
         # With no rows there is no output to read a type off, so the declared
@@ -866,13 +899,13 @@ def _make_stack(
             )
         outs: Any = inner_outputs
         if output_template is not None:
-            from ._function_contract import _wrap_declared_function_output
+            from ..functions._result import _wrap_declared_function_output
 
             outs = [
                 _wrap_declared_function_output(
                     output,
                     function_name=field_name,
-                    output_template=output_template,
+                    output_spec=OutputSpec(output_template),
                 )
                 for output in outs
             ]
@@ -1284,7 +1317,7 @@ class BroadcastDistribution(Distribution, SupportsSampling):
     """Joint distribution over broadcast inputs and function output.
 
     Stores the paired input–output samples from a
-    :class:`~probpipe.core.node.Function` broadcast.  Supports
+    :class:`~probpipe.values._function_base.Function` broadcast.  Supports
     joint sampling (resampling paired input–output tuples) and named
     component access.
 
@@ -1357,6 +1390,7 @@ class BroadcastDistribution(Distribution, SupportsSampling):
         self._output_samples = output_samples
         self._output_distributions = output_distributions
         self._output_template = output_template
+        self._output_spec = None
 
         # The row count, taken from the first broadcast arg.
         n = _row_count(input_samples[next(iter(broadcast_args))])
@@ -1453,11 +1487,16 @@ class BroadcastDistribution(Distribution, SupportsSampling):
         """
         marginal = transient_memo(self).get("marginal")
         if marginal is None:
+            template = self._output_template
+            declaration = self._output_spec
+            if declaration is not None and isinstance(declaration.spec, NumericArraySpec):
+                template = RecordSpec(dict(declaration.components))
             marginal = _make_marginal(
                 self._output_samples,
                 self._w,
                 output_distributions=self._output_distributions,
-                output_template=self._output_template,
+                output_template=template,
+                name=self.name,
             )
             if self.provenance is not None and isinstance(marginal, Distribution):
                 marginal.with_provenance(self.provenance)

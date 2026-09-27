@@ -5,9 +5,9 @@ from __future__ import annotations
 import operator
 from typing import Any
 
-from ..core import _workflow_broker
 from ..core.protocols import _WorkflowGenerativeProviderCertificate
 from ..custom_types import PRNGKey
+from ..functions import _broker as _workflow_broker
 
 _VALIDATION_SAMPLING_ABI = "probpipe.validation/v1"
 _SLICED_WASSERSTEIN_PROVIDER_ABI = "probpipe.validation.sliced_wasserstein/v1"

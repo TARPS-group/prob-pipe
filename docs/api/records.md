@@ -58,13 +58,14 @@ array shapes and dtypes. Binding from another spec uses only the information
 that declaration supplies. The same spec-binding rules apply directly and
 inside records, input slots, or batches.
 
-These shared declarations do not yet replace the legacy live `Function`
-input/output-template or distribution event-template constructor APIs.
+`Function` uses these declarations through `input_spec` and `output_spec`;
+see [Function declarations](workflows.md#function-declarations-and-result-names).
+The live distribution event-template constructor API awaits its migration.
 
 `DistributionSpec` carries a record draw schema. Concrete value validation
 requires an exact schema match; dimension binding can learn sizes from a
 distribution's schema or another distribution declaration. `FunctionSpec`
-optionally declares the input and output of a callable. Its validity check is
+stores optional `InputSpec` and `OutputSpec` declarations for a callable. Its validity check is
 callability alone, while binding reads available declarations without running
 the callable. An undeclared callable side leaves its dimensions symbolic.
 

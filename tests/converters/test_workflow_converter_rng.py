@@ -31,7 +31,7 @@ from probpipe import (
 from probpipe.converters import ConverterRegistry, _probpipe, _scipy, _tfp
 from probpipe.converters._probpipe import ProbPipeConverter
 from probpipe.converters._tfp import TFPConverter
-from probpipe.core import _workflow_context
+from probpipe.functions import _context as _workflow_context
 
 
 class _RecordingNormal(Normal):
@@ -110,7 +110,7 @@ class TestBuiltInConversionPlanning:
         with (
             patch.object(converter, "_workflow_plan_conversion", return_value=invalid_plan),
             patch.object(type(source), sample_method) as sample,
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=7),
         ):
             with pytest.raises(RuntimeError, match=message):
@@ -123,7 +123,7 @@ class TestBuiltInConversionPlanning:
         analytic_source = Gamma(concentration=9.0, rate=1.0, name="g")
 
         with (
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=7),
         ):
             assert converter_registry.convert(source, Normal) is source
@@ -138,7 +138,7 @@ class TestBuiltInConversionPlanning:
         def run(num_samples):
             with (
                 patch(
-                    "probpipe.core._workflow_context._commit_stochastic_invocation",
+                    "probpipe.functions._context._commit_stochastic_invocation",
                     wraps=_workflow_context._commit_stochastic_invocation,
                 ) as commit,
                 workflow_run(seed=7),
@@ -165,7 +165,7 @@ class TestBuiltInConversionPlanning:
     @pytest.mark.parametrize("num_samples", [True, 0, -1, 1.5])
     def test_invalid_sample_count_fails_before_event_commit(self, num_samples):
         with (
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=7),
             pytest.raises((TypeError, ValueError)),
         ):
@@ -216,7 +216,7 @@ class TestBuiltInConversionPlanning:
 
         with (
             patch(
-                "probpipe.core._workflow_context.derive_event_key_words_from_encoded",
+                "probpipe.functions._context.derive_event_key_words_from_encoded",
                 wraps=_workflow_context.derive_event_key_words_from_encoded,
             ) as derive,
             workflow_run(seed=7),
@@ -234,7 +234,7 @@ class TestBuiltInConversionPlanning:
     def test_from_distribution_uses_the_function_broker_once(self):
         with (
             patch(
-                "probpipe.core._workflow_context.derive_event_key_words_from_encoded",
+                "probpipe.functions._context.derive_event_key_words_from_encoded",
                 wraps=_workflow_context.derive_event_key_words_from_encoded,
             ) as derive,
             workflow_run(seed=7),
@@ -301,8 +301,8 @@ class TestBuiltInConversionPlanning:
         descendant = TransformedDistribution("descendant", root, tfb.Tanh())
 
         with (
-            patch("probpipe.core._workflow_context._os_urandom") as urandom,
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            patch("probpipe.functions._context._os_urandom") as urandom,
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(),
             pytest.raises(TypeError, match="does not support this bijector type"),
         ):
@@ -345,7 +345,7 @@ class TestBuiltInConversionPlanning:
 
         with (
             patch(
-                "probpipe.core._workflow_context._commit_stochastic_invocation",
+                "probpipe.functions._context._commit_stochastic_invocation",
                 wraps=_workflow_context._commit_stochastic_invocation,
             ) as commit,
             patch.object(
@@ -390,7 +390,7 @@ class TestBuiltInConversionPlanning:
         descendant = TransformedDistribution("descendant", root, tfb.Exp())
         explicit = key_factory()
 
-        with patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit:
+        with patch("probpipe.functions._context._commit_stochastic_invocation") as commit:
             converter_registry.convert(
                 descendant,
                 Normal,
@@ -436,8 +436,8 @@ class TestBuiltInConversionPlanning:
         descendant = TransformedDistribution("descendant", root, tfb.Exp())
 
         with (
-            patch("probpipe.core._workflow_context._os_urandom") as urandom,
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            patch("probpipe.functions._context._os_urandom") as urandom,
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             pytest.raises(ValueError, match="total_count is required"),
         ):
             converter_registry.convert(descendant, Binomial, num_samples=16)
@@ -472,7 +472,7 @@ class TestConverterCertification:
         registry = ConverterRegistry()
         registry.register(DeclaredConverter())
 
-        with patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit:
+        with patch("probpipe.functions._context._commit_stochastic_invocation") as commit:
             registry.convert(Source(), Normal)
 
         assert seen == [None]
@@ -502,7 +502,7 @@ class TestConverterCertification:
         registry.register(SamplingConverter())
 
         with (
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             pytest.raises(TypeError, match="explicit key"),
         ):
             registry.convert(Source(), Normal)

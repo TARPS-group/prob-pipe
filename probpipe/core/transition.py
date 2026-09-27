@@ -24,7 +24,8 @@ from collections.abc import Callable, Iterable
 from typing import Any
 
 from ..distributions._distribution import Distribution
-from .node import Function, function
+from ..functions import function
+from ..values import Function
 from .provenance import Provenance
 
 __all__ = [
@@ -168,7 +169,7 @@ def with_conversion(
         return from_distribution(result, target_type, **convert_kwargs)
 
     return Function(
-        func=_with_conversion_impl,
+        fn=_with_conversion_impl,
         name=f"with_conversion({inner_name}, {target_type.__name__})",
     )
 
@@ -263,6 +264,6 @@ def with_resampling(
         return out_dist
 
     return Function(
-        func=_with_resampling_impl,
+        fn=_with_resampling_impl,
         name=f"with_resampling({inner_name})",
     )

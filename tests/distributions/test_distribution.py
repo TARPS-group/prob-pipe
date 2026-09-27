@@ -73,9 +73,9 @@ from probpipe import (
 )
 from probpipe.core._opaque import OpaqueSpec
 from probpipe.core._specs import NumericArraySpec
-from probpipe.core._workflow_distribution_normalization import DISTRIBUTION_HINT_PROTOCOLS
 from probpipe.core.provenance import Provenance, provenance_ancestors
 from probpipe.distributions.kde import KDEDistribution
+from probpipe.functions._normalization import DISTRIBUTION_HINT_PROTOCOLS
 
 
 def _make_transformed():

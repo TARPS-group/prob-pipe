@@ -12,11 +12,7 @@ import pytest
 
 from probpipe import NumericRecord, Record, RecordSpec
 from probpipe.core._opaque import OpaqueSpec
-from probpipe.core._specs import (
-    NumericArraySpec,
-    NumericRecordSpec,
-    TermSpec,
-)
+from probpipe.core._specs import NumericArraySpec, NumericRecordSpec, TermSpec
 from probpipe.core.named_tree import NamedTree
 
 # ===========================================================================

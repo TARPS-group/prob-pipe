@@ -14,7 +14,7 @@ from probpipe import (
     with_conversion,
     with_resampling,
 )
-from probpipe.core.node import Function
+from probpipe.values._function_base import Function
 
 # ---------------------------------------------------------------------------
 # Fixtures and helpers

@@ -41,9 +41,10 @@ from typing import Any
 import numpy as np
 import xarray as xr
 
-from ..core import _workflow_broker, _workflow_context
 from ..custom_types import PRNGKey
 from ..distributions._distribution import Distribution
+from ..functions import _broker as _workflow_broker
+from ..functions import _context as _workflow_context
 from ..validation._predictive_check import (
     _predictive_check_batched,
     _predictive_check_loop,

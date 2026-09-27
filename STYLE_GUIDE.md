@@ -106,24 +106,27 @@ def _condition_on_nutpie_impl(model, data=None, *, ...):
     ...
 
 condition_on_nutpie = Function(
-    func=_condition_on_nutpie_impl, name="condition_on_nutpie"
+    "condition_on_nutpie", _condition_on_nutpie_impl
 )
 ```
 
 Treat a public `Function` as an immutable, first-class `TrackedTerm` / `Annotated`
 computation term. Its construction-time `inspect.Signature` is the Python
-calling contract; optional `input_template` and `output_template` declarations
+calling contract; optional `input_spec: InputSpec` and `output_spec: OutputSpec` declarations
 are authoritative schemas but never derive or replace that signature. Use
 `apply(*args, **kwargs)` for one raw evaluation with binding and schema checks.
 Use `__call__` for distribution lifting, array sweeps, orchestration, result
-wrapping, and Function-first provenance.
+wrapping, and Function-first provenance. Results use `output_name`, which
+defaults to the initial function name and survives `with_name`. This includes
+operation wrappers; a raw implementation's domain label survives `apply`,
+while a normal call labels its independent result.
 
 If an implementation returns an existing `Record`, `RecordBatch`, or
 `Distribution`, `apply` preserves its identity. `__call__` instead creates a
 shallow result copy that shares value data and templates, owns a separate
 annotations container, and receives only the current call's provenance. Do not
 restore identity-through behavior at the workflow boundary. Variadic Functions
-without an input template are supported: the planner treats every `*args`
+without an input declaration are supported: the planner treats every `*args`
 element and `**kwargs` entry as an independent slot while reconstructing the
 original `BoundArguments` before invoking user code.
 
@@ -406,7 +409,7 @@ example when helpful:
 
 Each public function (``sample``, ``mean``, ``log_prob``, ...) is a
 lightweight positional-arg wrapper around an internal
-:class:`~probpipe.core.node.Function`.
+:class:`~probpipe.values._function_base.Function`.
 
 Usage::
 
@@ -614,6 +617,12 @@ diagnostics/  (imports core/, inference/, validation/, custom_types)
 level. Every package that works with distributions may import it, and `core/`
 does so under the first exception below.
 
+`values/_function_base.py` owns `Function` and `FunctionSpec`; `functions/`
+owns binding-to-engine integration, planning, broadcasting, sweeping, RNG,
+execution, replay, and result wrapping. The base never imports the engine:
+`install_call_engine` installs it at package initialization. Pure Python binding
+helpers live in `values/_binding.py` so raw evaluation works without the engine.
+
 ### Rules
 
 1. **`core/`** must never import from `record/`, `linalg/`,
@@ -648,6 +657,11 @@ does so under the first exception below.
 >   from `..distributions._distribution`, never through the names
 >   `probpipe.distributions` re-exports, since that package's `__init__` is still
 >   running when the module loads.
+> - During #448 B1, unmigrated `core/` modules may import the moved
+>   `values/` and `functions/` implementations. The old workflow paths have no
+>   shims. `functions/__init__.py` resolves exports lazily to allow core and
+>   distribution bootstrap before installing the engine. This is a transition
+>   exception, not permission to add reverse dependencies to the Function base.
 > - `inference/` → `modeling/` (lazy imports for model-type dispatch in
 >   `_tfp_mcmc`, `_nutpie`, `_cmdstan_method`, `_pymc_method`)
 > - `inference/` → `distributions/` (lazy imports: prior-type dispatch on
@@ -656,7 +670,7 @@ does so under the first exception below.
 > - `distributions/` → `diagnostics.views` (lazy import inside
 >   `Distribution.diagnostics` to construct the read-only diagnostics accessor)
 >
-> Apart from the first, these use lazy (in-function) imports to avoid circular
+> Except for the documented migration edges, these use lazy (in-function) imports to avoid circular
 > imports at module load time. Do not add new reverse edges without discussion.
 
 ---

@@ -29,9 +29,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..core import _workflow_context
 from ..core.ops import condition_on
 from ..custom_types import Array, ArrayLike, PRNGKey
+from ..functions import _context as _workflow_context
 from ._predictive_check import _supports_key_arg
 from ._workflow_rng import (
     _require_certified_generative_provider,
