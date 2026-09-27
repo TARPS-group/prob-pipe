@@ -102,6 +102,9 @@ def execute_sweep(
             workflow_name=workflow_name,
             output_is_declared=output_spec is not None and output_spec.spec is not None,
         )
+        if output_spec is not None:
+            output_spec = _workflow_result._aggregate_output_spec(output_spec, per_row)
+            output_template = _workflow_result._output_record_spec(output_spec)
         aggregate = _make_stack(
             per_row,
             batch_shape=plan.sweep_batch_shape,
@@ -154,6 +157,8 @@ def execute_sweep(
             marginal = inner
         per_row_marginals.append(marginal)
 
+    if output_template is not None and per_row_marginals:
+        output_template = output_template.bind_dims_from_spec(per_row_marginals[0].event_template)
     stacked = _make_distribution_array(
         per_row_marginals,
         batch_shape=plan.sweep_batch_shape,

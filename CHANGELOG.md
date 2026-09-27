@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `core/_workflow_*` into `functions/`; old imports have no shims. Declaration
   fingerprints and replay anchors change, so regenerate persisted artifacts.
   `Module`, `AbstractModule`, and both method decorators are experimental.
+  Resolved output declarations survive sweeps and broadcasts, including type
+  holes, output-only dimensions, and returned Function contracts. Module methods
+  infer their returns normally and use the method name as their output label.
 
 - `event_template` is removed from every distribution, so a law's event
   declaration is the one schema it records. Read the declaration instead:

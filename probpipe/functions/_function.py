@@ -27,7 +27,6 @@ from ..core.config import ProvenanceMode, WorkflowKind, prefect_config
 from ..core.node import Node
 from ..core.provenance import Provenance
 from ..core.tracked import TrackedTerm
-from ..distributions._distribution import DistributionSpec
 from ..values._function_base import (
     Function,
     _bind_function_inputs,
@@ -49,7 +48,7 @@ from . import _replay as _workflow_replay
 from . import _result as _workflow_result
 from . import _sweep as _workflow_sweep
 from ._contract import _bind_planned_function_inputs
-from ._result import _wrap_declared_function_output
+from ._result import _output_record_spec, _wrap_declared_function_output
 
 logger = logging.getLogger(__name__)
 
@@ -287,12 +286,8 @@ def _call_with_options_in_context(
         else None
     )
     concrete_output_template = (
-        concrete_output_spec.spec
-        if concrete_output_spec is not None and isinstance(concrete_output_spec.spec, RecordSpec)
-        else None
+        _output_record_spec(concrete_output_spec) if concrete_output_spec is not None else None
     )
-    if concrete_output_spec is not None and isinstance(concrete_output_spec.spec, DistributionSpec):
-        concrete_output_template = concrete_output_spec.spec.event_spec
     provenance_parents: list[TrackedTerm] = [function]
     provenance_inputs: dict[str, Any] = {}
     seen_parent_ids = {id(function)}
@@ -477,7 +472,6 @@ def _call_with_options_in_context(
         broadcast_mode=_workflow_result.BROADCAST_WRAP,
         provenance=provenance,
         field_name=function.output_name,
-        output_spec=concrete_output_spec,
     )
 
 

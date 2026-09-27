@@ -12,7 +12,6 @@ try:
 except ImportError:
     Digraph = None
 
-from ..core._specs import OutputSpec
 from ..core.config import WorkflowKind
 from ..core.node import Node
 from ..values import Function
@@ -100,7 +99,7 @@ class Module(Node):
 
             function_instance = Function(
                 fn=func,
-                output_spec=OutputSpec(**{func.__name__: None}),
+                output_name=func.__name__,
                 workflow_kind=self._workflow_kind,
                 name=f"{self.__class__.__name__}.{func.__name__}",
                 module=self,

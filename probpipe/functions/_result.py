@@ -25,7 +25,7 @@ def _wrap_declared_function_output(
     """Wrap a validated result at its declared kind, preserving component exposure."""
     spec = output_spec.spec
     if isinstance(result, TrackedTerm):
-        return result
+        return _copy_result_term(result, output_spec=output_spec)
     if isinstance(spec, RecordSpec):
         return Record(function_name, result, event_template=spec)
     if isinstance(spec, NumericArraySpec):
@@ -44,6 +44,48 @@ def _wrap_declared_function_output(
             function_name, result, input_spec=spec.input_spec, output_spec=spec.output_spec
         )
     return _wrap_as_term(result, function_name)
+
+
+def _aggregate_output_spec(output_spec: OutputSpec, outputs: Any) -> OutputSpec:
+    """Complete a declaration from validated rows, retaining its component names.
+
+    Mapped outputs carry the row's spec as static metadata, independently of
+    the leading axis JAX added. Empty outputs leave the declaration unchanged.
+    Row-wise results share dimension bindings so incompatible rows are refused.
+    """
+    from ..core._batch import BatchSpec
+    from ..core._numeric_array_batch import _MappedBatchStore
+    from ..core._record_batch import _MappedBatchColumns
+    from ..core._spec_base import _unify_specs
+
+    spec = output_spec.spec
+    bindings: dict[str, int] = {}
+    rows = outputs if isinstance(outputs, list) else (outputs,)
+    for row in rows:
+        if isinstance(row, (_MappedBatchColumns, _MappedBatchStore)):
+            actual = (
+                BatchSpec(row.element_spec, row.axis_groups, row.level_names)
+                if row.axis_groups
+                else row.element_spec
+            )
+        else:
+            actual = RecordSpec.infer_from({"result": row}).children["result"]
+        if spec is None:
+            spec = actual
+        _unify_specs(spec, actual, bindings, "Function aggregate output")
+    return output_spec._with_spec(None if spec is None else spec._substitute_dims(bindings))
+
+
+def _output_record_spec(output_spec: OutputSpec) -> RecordSpec | None:
+    """Adapt the result declaration to the legacy aggregate's record template."""
+    from ..distributions._distribution import DistributionSpec
+
+    spec = output_spec.spec
+    if isinstance(spec, RecordSpec):
+        return spec
+    if isinstance(spec, DistributionSpec):
+        return spec.event_spec
+    return None
 
 
 def _wrap_as_term(
@@ -98,28 +140,19 @@ def _coerce_output(
     broadcast_mode: BroadcastMode,
     provenance: Provenance | None,
     field_name: str,
-    output_spec: OutputSpec | None = None,
 ) -> Any:
     """Return an independently labeled term with this call's provenance.
 
     ``field_name`` is the Function's output_name, separate from the function
-    label in provenance and the component interface in output_spec. A tracked
+    label in provenance and the declared output components. A tracked
     return is shallow-copied, sharing value data while owning its metadata.
     """
     raw_value = value
     if broadcast_mode == BROADCAST_WRAP:
-        if output_spec is not None:
-            from ..values._function_base import _validate_function_output
-
-            output_spec = _validate_function_output(
-                function_name=field_name, output_spec=output_spec, result=value, bindings={}
-            )
-        value = _wrap_as_term(value, field_name, output_spec)
+        value = _wrap_as_term(value, field_name)
     if isinstance(value, TrackedTerm):
         if value is raw_value or value.provenance is not None:
-            value = _copy_result_term(
-                value, output_spec=output_spec if broadcast_mode == BROADCAST_WRAP else None
-            )
+            value = _copy_result_term(value)
         object.__setattr__(value, "_name", field_name)
         from ..values import Function
 
@@ -147,6 +180,14 @@ def _copy_result_term(value: TrackedTerm, *, output_spec: OutputSpec | None = No
         from ..values import Function, FunctionSpec
 
         if isinstance(spec, FunctionSpec) and isinstance(clone, Function):
+            from ..values._function_base import _validate_function_declarations
+
+            _validate_function_declarations(
+                function_name=clone.name,
+                signature=clone.signature,
+                input_spec=spec.input_spec,
+                construction_bindings=clone._bind,
+            )
             object.__setattr__(clone, "_spec", spec)
         elif isinstance(spec, BatchSpec) and isinstance(clone, Batch):
             object.__setattr__(clone, "_spec", spec)

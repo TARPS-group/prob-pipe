@@ -826,6 +826,7 @@ _LIFTED_VIEW_CLASS_CACHE: dict[type, type] = {}
 
 def _nrdvfactory_sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()):
     from ._numeric_record import _reconstruct_from_vector
+
     base_sample = self._base._sample(key, sample_shape)
     flat = self._base.flatten_value(
         base_sample,
@@ -840,6 +841,7 @@ def _nrdvfactory_sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()):
 def _nrdvfactory_log_prob(self, x) -> Array:
     from ._numeric_record import NumericRecord
     from ._numeric_record_batch import NumericRecordBatch
+
     flat = x.to_vector() if isinstance(x, (NumericRecord, NumericRecordBatch)) else jnp.asarray(x)
     value = self._base.unflatten_value(flat, template=self._base.event_template)
     return self._base._log_prob(value)
@@ -847,15 +849,23 @@ def _nrdvfactory_log_prob(self, x) -> Array:
 
 def _nrdvfactory_mean(self):
     from ._numeric_record import _reconstruct_from_vector
+
     value = self._base._mean()
-    flat = self._base.flatten_value(value, event_shape=self._base.event_shape,)
+    flat = self._base.flatten_value(
+        value,
+        event_shape=self._base.event_shape,
+    )
     return _reconstruct_from_vector(self.name, self.event_template, flat)
 
 
 def _nrdvfactory_variance(self):
     from ._numeric_record import _reconstruct_from_vector
+
     value = self._base._variance()
-    flat = self._base.flatten_value(value, event_shape=self._base.event_shape,)
+    flat = self._base.flatten_value(
+        value,
+        event_shape=self._base.event_shape,
+    )
     return _reconstruct_from_vector(self.name, self.event_template, flat)
 
 
@@ -882,6 +892,7 @@ def _nrdvfactory_expectation(
     # in flat form (no aux-shape invariants) and run vmap over a
     # closure that unflattens to a Record inside the loop body.
     from ._numeric_record import _reconstruct_from_vector
+
     n = num_evaluations if num_evaluations is not None else _base.DEFAULT_NUM_EVALUATIONS
     if isinstance(n, bool) or not isinstance(n, int):
         raise TypeError(f"num_evaluations must be an integer; got {n!r}")
@@ -901,12 +912,19 @@ def _nrdvfactory_expectation(
             ),
         )
     base_samples = self._base._sample(sample_key, sample_shape=(n,))
-    flat_samples = self._base.flatten_value(base_samples, event_shape=self._base.event_shape,)
-    evals = jax.vmap(lambda flat: f(_reconstruct_from_vector(
-        self.name,
-        self.event_template,
-        flat,
-    )))(flat_samples)
+    flat_samples = self._base.flatten_value(
+        base_samples,
+        event_shape=self._base.event_shape,
+    )
+    evals = jax.vmap(
+        lambda flat: f(
+            _reconstruct_from_vector(
+                self.name,
+                self.event_template,
+                flat,
+            )
+        )
+    )(flat_samples)
 
     if return_dist if return_dist is not None else _base.RETURN_APPROX_DIST:
         return BootstrapDistribution(evals, name="E[f(X)]")

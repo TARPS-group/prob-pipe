@@ -190,7 +190,7 @@ def _validate_function_output(
         return None
     spec = output_spec.spec
     if spec is None:
-        spec = RecordSpec.infer_from({"result": result})["result"]
+        spec = RecordSpec.infer_from({"result": result}).children["result"]
     resolved = dict(bindings)
     path = f"Function {function_name!r} output"
     if output_spec._component_name is not None:

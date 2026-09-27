@@ -378,6 +378,8 @@ Commit the resulting `uv.lock` change alongside the `pyproject.toml` change.
 ```
 probpipe/
 ├── core/           # Base abstractions: protocols, ops, node, transition
+├── values/         # Function values, declarations, and pure argument binding
+├── functions/      # Workflow call engine and experimental Module containers
 ├── distributions/  # The Distribution base and the concrete distributions
 ├── record/         # Record-adjacent constructions: parameter-sweep Designs
 ├── modeling/       # Model wrappers (SimpleModel, StanModel, PyMCModel, likelihoods)

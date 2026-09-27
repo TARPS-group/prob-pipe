@@ -1110,6 +1110,8 @@ def _make_stack(
             shared = {
                 "axes_per_level": _ranks_of(sweep_groups),
             }
+            if output_spec is not None:
+                shared["element_spec"] = output_spec.spec
             # ``outs`` first: every row of none is vacuously callable, and no row
             # is a reason to claim the function kind over the fallback.
             if outs and all(callable(o) for o in outs):

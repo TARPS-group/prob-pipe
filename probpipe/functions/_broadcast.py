@@ -36,6 +36,7 @@ from . import _execution as _workflow_execution
 from . import _execution_contract as _workflow_execution_contract
 from . import _plan as _workflow_plan
 from . import _recipe as _workflow_recipe
+from ._result import _aggregate_output_spec, _output_record_spec
 
 MIN_BROADCAST_SAMPLES = 5
 
@@ -199,7 +200,9 @@ def execute_distribution_broadcast(
     )
     object.__setattr__(result, "_name", output_name or workflow_name)
     if output_spec is not None:
+        output_spec = _aggregate_output_spec(output_spec, result._output_samples)
         object.__setattr__(result, "_output_spec", output_spec)
+        object.__setattr__(result, "_output_template", _output_record_spec(output_spec))
     result.with_provenance(provenance)
 
     if include_inputs:

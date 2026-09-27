@@ -246,6 +246,8 @@ of the functions migration.
 `Module`, `AbstractModule`, `workflow_method`, and `abstract_workflow_method`
 are experimental. Their shared-input and dependency behavior remains available,
 but their API may change. Using them emits no experimental runtime warning.
+Module methods use `Class.method` as their function label and `method` as their
+output name, with the same undeclared return inference as an ordinary Function.
 
 ::: probpipe.Module
 
