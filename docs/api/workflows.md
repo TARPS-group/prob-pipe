@@ -193,9 +193,14 @@ identity = Function("identity", lambda x: x)
 - A bare `RecordSpec` exposes its fields. Any other bare spec declares the
   whole term under `output_name`. With no declaration, the return kind is inferred.
 
-`FunctionSpec` stores `InputSpec | None` and `OutputSpec | None`. The removed
-`input_template` and `output_template` constructor arguments and properties
-have no aliases. Use `DistributionSpec` for a returned distribution and
+`FunctionSpec` stores `InputSpec | None` and `OutputSpec | None`. Legacy
+constructor keywords emit `FutureWarning`: `input_template`, `output_template`,
+and `seed` are ignored; `func` overrides `fn`. Both `name` and `fn` remain
+required constructor arguments. The old template properties are unavailable.
+Use `input_spec` and `output_spec` for declarations, `workflow_run(seed=...)`
+for workflow randomness, and `bind={"seed": ...}` for a callable's seed parameter.
+`with_options(seed=...)` remains an error.
+Use `DistributionSpec` for a returned distribution and
 `BatchSpec` for a returned batch, rather than its element schema alone.
 
 Declarations are authoritative. Named input slots must match fixed signature

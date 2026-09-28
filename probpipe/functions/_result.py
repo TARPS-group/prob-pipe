@@ -113,6 +113,7 @@ def _wrap_as_term(
         case list() | tuple():
             if not value:
                 from ..core._opaque_batch import OpaqueBatch
+
                 return OpaqueBatch(result_name, [], field_name)
             return _make_stack(
                 list(value),
@@ -123,12 +124,15 @@ def _wrap_as_term(
             )
         case _ if _is_numeric_leaf(value):
             from ..core._numeric_array import NumericArray
+
             return NumericArray(result_name, value)
         case _ if callable(value):
             from ..values import Function
+
             return Function(result_name, value)
         case _:
             from ..core._opaque import Opaque
+
             return Opaque(result_name, value)
 
 

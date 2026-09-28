@@ -362,18 +362,23 @@ class Function(Node, TrackedTerm, Annotated):
     ------
     TypeError
         For an invalid name, callable, declaration type, workflow kind, or
-        worker-count type; seed and removed template constructor options are
-        rejected.
+        worker-count type.
     ValueError
         For mismatched input slots, invalid defaults or bindings, unknown
         dispatch, nonpositive worker counts, or invalid component names.
 
     Notes
     -----
+    Legacy constructor keywords emit ``FutureWarning``: ``func`` overrides
+    ``fn``; ``seed``, ``input_template``, and ``output_template`` are ignored.
+    Use ``workflow_run(seed=...)`` for workflow randomness or ``bind`` for a
+    wrapped callable's seed parameter. ``name`` and ``fn`` remain required.
+
     ``spec`` contains only input/output declarations. ``with_name`` changes the
     function label and callable metadata; output_name and component names are
     preserved. ``with_options`` returns a shallow copy with revised controls.
     """
+
     _signature_info: WorkflowSignatureInfo
     _bind: Mapping[str, Any]
     _module: Any | None
@@ -401,23 +406,21 @@ class Function(Node, TrackedTerm, Annotated):
         include_inputs: bool = False,
         **kwargs: Any,
     ) -> None:
-        if not callable(fn):
-            raise TypeError(f"fn must be callable, got {type(fn).__name__}")
-        
-        # Check for removed options in kwargs and issue a warning if any are found.
         removed = {"seed", "input_template", "output_template", "func"}.intersection(kwargs)
         if removed:
             warnings.warn(
-                f"Removed Function options {removed} detected; use fn, input_spec and output_spec instead. "
-                f"seed is not a Function construction option anymore; use workflow_run(seed=...) or bind={'seed': ...} for a wrapped-function seed. ",
+                f"Removed Function options {sorted(removed)} detected: func aliases fn; "
+                "input_template, output_template and seed are ignored. "
+                "Use fn, input_spec and output_spec instead; use workflow_run(seed=...) "
+                "or bind={'seed': ...} for a wrapped-function seed.",
                 FutureWarning,
                 stacklevel=2,
             )
             fn = kwargs.pop("func", fn) if "func" in removed else fn
             for key in removed - {"func"}:
                 kwargs.pop(key, None)
-            
-            
+        if not callable(fn):
+            raise TypeError(f"fn must be callable, got {type(fn).__name__}")
         self._initialize(
             _CallableFunctionImplementation(fn),
             make_signature_info(fn),

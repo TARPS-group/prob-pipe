@@ -13,7 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Function(name, fn, *, input_spec=None, output_spec=None, output_name=None, ...)`.
   The name is required; decorators default it to the Python callable's name.
   `FunctionSpec` now stores `InputSpec` and `OutputSpec`. The old Function
-  template parameters and properties are removed without aliases. Bare record
+  template properties are removed. Legacy constructor keywords emit
+  `FutureWarning`: template parameters and `seed` are ignored, while `func`
+  overrides `fn`; the required `name` and `fn` arguments remain. Bare record
   specs expose fields; other bare term specs declare one whole component under
   `output_name`, which defaults to the initial function name and survives
   `with_name`. Arrays remain arrays and single-field records remain records.

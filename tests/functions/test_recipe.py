@@ -49,8 +49,8 @@ from tests.functions._replay_fixtures import (
 
 _CALLABLE_ANCHOR_GOLDENS = {
     "cpython-3.12": "52d15d19467f4500f1bdc354798e5dbd99e07b9425077a71b7af71b210756895",
-    "cpython-3.13": "ac0c86ce0699e66fc9dfc3ef44df304e82723db635ce8aa372353f54f281a9e0",
-    "cpython-3.14": "e89162e2d1fa0e89a6bfc571d0eabf26882a00f9204306842eae4c4a4ad58f03",
+    "cpython-3.13": "d1a2b6bf380f4b96b19f3557b35ea91f88a811e2ea9a2c902e447f84e11768a8",
+    "cpython-3.14": "4acd2f2a0428a7c5422c41db52cb378446b589c8896876aa55d04cb57b221dda",
 }
 
 

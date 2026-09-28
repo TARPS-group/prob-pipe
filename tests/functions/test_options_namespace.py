@@ -53,32 +53,64 @@ def test_function_rng_seed_controls_are_removed():
 
     assert "seed" not in inspect.signature(Function).parameters
     assert "seed" not in inspect.signature(wf.with_options).parameters
-    with pytest.raises((TypeError, ValueError), match="seed"):
-        Function(name="identity", fn=identity, dispatch="sequential", seed=42)
-    with pytest.raises((TypeError, ValueError), match="seed"):
+    with pytest.warns(FutureWarning, match="seed.*ignored"):
+        deprecated = Function(name="identity", fn=identity, dispatch="sequential", seed=42)
+    assert float(deprecated(3)) == 3
+    with pytest.warns(FutureWarning, match="seed.*ignored"):
 
         @function(seed=42)
         def decorated_identity(x):
             return x
 
+    assert float(decorated_identity(3)) == 3
     with pytest.raises(TypeError, match="seed"):
         wf.with_options(seed=42)
 
 
-def test_function_construction_seed_is_rejected_when_user_parameter_can_bind_it():
+def test_function_construction_seed_warns_without_binding_user_parameter():
     def add_seed(x, seed):
         return x + seed
 
+    with pytest.warns(FutureWarning, match="seed.*ignored"):
+        wrapped = Function(name="add_seed", fn=add_seed, dispatch="sequential", seed=42)
     with pytest.raises(TypeError, match="seed"):
-        Function(name="add_seed", fn=add_seed, dispatch="sequential", seed=42)
+        wrapped(1)
+    assert float(wrapped(1, seed=2)) == 3
 
 
-def test_decorator_construction_seed_is_rejected_for_variadic_user_kwargs():
-    with pytest.raises(TypeError, match="seed"):
+def test_decorator_construction_seed_warns_without_binding_variadic_user_kwargs():
+    with pytest.warns(FutureWarning, match="seed.*ignored"):
 
         @function(seed=42)
         def collect_seed(x, **kwargs):
-            return x + kwargs["seed"]
+            return x + kwargs.get("seed", 0)
+
+    assert float(collect_seed(1)) == 1
+    assert float(collect_seed(1, seed=2)) == 3
+
+
+@pytest.mark.parametrize("option", ["input_template", "output_template"])
+def test_removed_templates_warn_without_installing_declarations(option):
+    with pytest.warns(FutureWarning, match=option):
+        wrapped = Function("identity", lambda x: x, **{option: object()})
+    assert wrapped.input_spec is None
+    assert wrapped.output_spec is None
+    assert float(wrapped(3)) == 3
+
+
+def test_legacy_func_alias_warns_and_uses_the_replacement_signature():
+    with pytest.warns(FutureWarning, match="func aliases fn"):
+        wrapped = Function("replace", lambda x: x, func=lambda y: y + 1)
+    assert tuple(wrapped.signature.parameters) == ("y",)
+    assert float(wrapped(y=2)) == 3
+
+
+def test_legacy_func_alias_validates_the_effective_callable():
+    with (
+        pytest.warns(FutureWarning, match="func aliases fn"),
+        pytest.raises(TypeError, match="fn must be callable"),
+    ):
+        Function("invalid", lambda: 1, func=3)
 
 
 def test_function_bind_can_still_supply_user_seed_parameter():
