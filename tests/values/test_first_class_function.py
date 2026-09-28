@@ -8,6 +8,7 @@ import sys
 import textwrap
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 import jax
@@ -403,7 +404,7 @@ class TestApplyContract:
 
     def test_a_shape_only_output_template_keeps_the_law_declaration(self):
         returned = Normal("y", 0, 1)
-        declared = RecordSpec(y=())
+        declared = OutputSpec(y=NumericArraySpec(()))
         wrapped = Function(
             name="function", fn=lambda: returned, output_spec=DistributionSpec(declared)
         )
@@ -444,7 +445,7 @@ class TestApplyContract:
         assert result is not returned
         assert result.event_spec.spec is intrinsic
 
-    def test_distribution_must_declare_the_metadata_its_template_sets(self):
+    def test_distribution_output_uses_spec_unification_for_metadata(self):
         class _Undtyped(Distribution):
             # Declares its array's shape and nothing else.
             def __init__(self):
@@ -453,24 +454,22 @@ class TestApplyContract:
         cases = [
             (
                 _Undtyped(),
-                RecordSpec(y=NumericArraySpec((), dtype="float32")),
+                OutputSpec(y=NumericArraySpec((), dtype="float32")),
             ),
             (
                 Gamma("y", 1, 1),
-                RecordSpec(y=NumericArraySpec((), support=real)),
+                OutputSpec(y=NumericArraySpec((), support=real)),
             ),
         ]
 
         for returned, declared in cases:
-            with pytest.raises(
-                ValueError,
-                match="does not conform",
-            ):
-                Function(
-                    name="function",
-                    fn=lambda returned=returned: returned,
-                    output_spec=DistributionSpec(declared),
-                ).apply()
+            wrapped = Function(
+                name="function",
+                fn=partial(lambda value: value, returned),
+                output_spec=DistributionSpec(declared),
+            )
+            assert wrapped.apply() is returned
+            assert wrapped().spec is returned.spec
 
     @pytest.mark.parametrize(
         ("support", "valid", "invalid"),
@@ -562,7 +561,7 @@ class TestApplyContract:
         bound, bindings = _bind_planned_function_inputs(
             function_name="f",
             input_spec=InputSpec(declared.children),
-            values={"v": StructuredNormal(0, 1, name="x")},
+            values={"v": StructuredNormal("x", 0, 1)},
             lifted_names={"v"},
         )
         assert bound == InputSpec(declared.children)
@@ -762,17 +761,17 @@ class TestApplyContract:
         wrapped = Function(
             name="function",
             fn=lambda x: matching,
-            output_spec=DistributionSpec(matching.event_template),
+            output_spec=matching.spec,
         )
 
         assert wrapped.apply(1) is matching
 
-        mismatching = Normal(0, 1, name="other")
-        with pytest.raises(ValueError, match="does not conform"):
+        mismatching = Normal("other", 0, 1)
+        with pytest.raises(ValueError, match=r"declares the component 'draw'.*'other'"):
             Function(
                 name="function",
                 fn=lambda x: mismatching,
-                output_spec=DistributionSpec(matching.event_template),
+                output_spec=matching.spec,
             ).apply(1)
 
     def test_a_returned_function_keeps_its_kind(self, full_provenance_mode):
@@ -1193,9 +1192,9 @@ class TestSymbolicCalls:
     def test_distribution_outputs_keep_their_declaration_through_broadcast(self):
         wrapped = Function(
             name="function",
-            fn=lambda x: Normal(x, 1, name="y"),
+            fn=lambda x: Normal("y", x, 1),
             input_spec=InputSpec(RecordSpec(x=()).children),
-            output_spec=DistributionSpec(RecordSpec(y=())),
+            output_spec=DistributionSpec(OutputSpec(y=NumericArraySpec(()))),
             dispatch="sequential",
             n_broadcast_samples=8,
         )
@@ -1215,13 +1214,12 @@ class TestSymbolicCalls:
             np.ones(8),
         )
 
-    def test_distribution_broadcast_rejects_mismatching_declared_metadata(self):
-        # A Normal declares its support as real, not the template's positive.
+    def test_distribution_broadcast_rejects_cross_kind_declared_dtype(self):
         wrapped = Function(
             name="function",
-            fn=lambda x: Normal(x, 1, name="y"),
+            fn=lambda x: Normal("y", x, 1),
             input_spec=InputSpec(RecordSpec(x=()).children),
-            output_spec=DistributionSpec(RecordSpec(y=NumericArraySpec((), support=real))),
+            output_spec=DistributionSpec(OutputSpec(y=NumericArraySpec((), dtype="int32"))),
             dispatch="sequential",
             n_broadcast_samples=8,
         )
@@ -1238,9 +1236,9 @@ class TestSymbolicCalls:
         )
         wrapped = Function(
             name="function",
-            fn=lambda row: Normal(row["value"], 1, name="y"),
+            fn=lambda row: Normal("y", row["value"], 1),
             input_spec=InputSpec(RecordSpec(row=RecordSpec(value=())).children),
-            output_spec=DistributionSpec(RecordSpec(y=())),
+            output_spec=DistributionSpec(OutputSpec(y=NumericArraySpec(()))),
             dispatch="sequential",
         )
 
@@ -1713,7 +1711,7 @@ class TestVariadicPlanning:
         wrapped = Function(
             name="function",
             fn=lambda *items: items[0] + items[1],
-            bind={"items": (Normal(0, 1, name="x"), 2.0)},
+            bind={"items": (Normal("x", 0, 1), 2.0)},
             dispatch="sequential",
             n_broadcast_samples=8,
         )

@@ -45,12 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `NumericRecord` or a `NumericRecordBatch` whatever its number of fields, so
     a one-field record no longer comes back as a bare array. `treedef` follows
     the same rule.
-  - A Function with an output template accepts a returned distribution when the
-    record its components form matches the template in fields and shapes, and
-    in each dtype and support that the template sets. Before, the law's
-    `event_template` had to equal the template, and a parametric family's
-    template carried no dtype or support, so a template that set either
-    rejected such a law.
+  - A Function declares a returned law with `DistributionSpec`; matching uses
+    event-declaration unification, including packaging, component names,
+    dimensions, and same-kind dtypes. Support metadata is not compared, and
+    the returned law retains its own declaration through calls and lifting.
   - The BayesFlow learners accept a prior whose declaration is numeric,
     whatever its class, and raise `TypeError` for any other before simulating.
 - `NumericRecord.from_vector` names its second parameter `spec` rather than

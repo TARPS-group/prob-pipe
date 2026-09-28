@@ -36,6 +36,7 @@ from probpipe import (
     Exponential,
     FlatNumericRecordDistribution,
     Function,
+    FunctionSpec,
     Gamma,
     GLMLikelihood,
     HalfCauchy,
@@ -86,7 +87,6 @@ from probpipe.core._empirical import (
     RecordBootstrapReplicateDistribution,
     RecordEmpiricalDistribution,
 )
-from probpipe.core._kind_specs import FunctionSpec
 from probpipe.core._numeric_record_distribution import (
     FlattenedDistributionView,
     NumericRecordDistributionView,

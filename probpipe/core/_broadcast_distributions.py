@@ -40,7 +40,14 @@ from ._opaque_batch import OpaqueBatch
 from ._record_batch import RecordBatch, _batch_class_for, _MappedBatchColumns
 from ._record_spec import _reshaped_template
 from ._spec_base import _full_array_shape_or_none
-from ._specs import NumericArraySpec, NumericRecordSpec, OpaqueSpec, OutputSpec, RecordSpec, TermSpec
+from ._specs import (
+    NumericArraySpec,
+    NumericRecordSpec,
+    OpaqueSpec,
+    OutputSpec,
+    RecordSpec,
+    TermSpec,
+)
 from .protocols import (
     SupportsLogProb,
     SupportsMean,
@@ -94,6 +101,9 @@ class _RecordMarginal(RecordEmpiricalDistribution):
             name or None,
             f"empirical({','.join(samples.fields)})" if isinstance(samples, Record) else "marginal",
         )
+        if output_template is not None and not isinstance(samples, Record):
+            (path,) = output_template.keys()
+            samples = Record(name, {path: samples})
         super().__init__(name, samples, weights=weights, log_weights=log_weights)
         # The declared output template, else the exact one the batch carried,
         # is what a draw is declared as.

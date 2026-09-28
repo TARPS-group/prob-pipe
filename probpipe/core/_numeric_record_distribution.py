@@ -835,7 +835,7 @@ def _nrdvfactory_sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()):
     # ``_reconstruct_from_vector`` selects single (NumericRecord, flat
     # is 1-D) vs batched (NumericRecordBatch, batch_shape ==
     # sample_shape) from the rank of ``flat``.
-    return _reconstruct_from_vector(self.name, self.event_template, flat)
+    return _reconstruct_from_vector(self.name, self.event_spec.spec, flat)
 
 
 def _nrdvfactory_log_prob(self, x) -> Array:
@@ -843,7 +843,7 @@ def _nrdvfactory_log_prob(self, x) -> Array:
     from ._numeric_record_batch import NumericRecordBatch
 
     flat = x.to_vector() if isinstance(x, (NumericRecord, NumericRecordBatch)) else jnp.asarray(x)
-    value = self._base.unflatten_value(flat, template=self._base.event_template)
+    value = self._base.unflatten_value(flat, template=self._base.event_spec.spec)
     return self._base._log_prob(value)
 
 
@@ -855,7 +855,7 @@ def _nrdvfactory_mean(self):
         value,
         event_shape=self._base.event_shape,
     )
-    return _reconstruct_from_vector(self.name, self.event_template, flat)
+    return _reconstruct_from_vector(self.name, self.event_spec.spec, flat)
 
 
 def _nrdvfactory_variance(self):
@@ -866,7 +866,7 @@ def _nrdvfactory_variance(self):
         value,
         event_shape=self._base.event_shape,
     )
-    return _reconstruct_from_vector(self.name, self.event_template, flat)
+    return _reconstruct_from_vector(self.name, self.event_spec.spec, flat)
 
 
 def _nrdvfactory_cov(self):
@@ -920,14 +920,14 @@ def _nrdvfactory_expectation(
         lambda flat: f(
             _reconstruct_from_vector(
                 self.name,
-                self.event_template,
+                self.event_spec.spec,
                 flat,
             )
         )
     )(flat_samples)
 
     if return_dist if return_dist is not None else _base.RETURN_APPROX_DIST:
-        return BootstrapDistribution(evals, name="E[f(X)]")
+        return BootstrapDistribution("expectation", evals)
 
     return jax.tree.map(lambda x: jnp.mean(x, axis=0), evals)
 

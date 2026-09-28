@@ -56,7 +56,7 @@ def _named(kind):
         ),
         "Opaque": lambda: Opaque("given", object()),
         "Function": lambda: Function(fn=lambda: 1, name="given"),
-        "Normal": lambda: Normal(0.0, 1.0, name="given"),
+        "Normal": lambda: Normal("given", 0.0, 1.0),
         "RecordBatch": lambda: RecordBatch(
             "given",
             COLUMNS,
@@ -220,7 +220,7 @@ class TestAnOperationNamesItsResult:
 
     def test_a_record_law_result_takes_the_output_name(self):
         """An already tracked draw is copied under the Function result label."""
-        joint = ProductDistribution(a=Normal(0.0, 1.0, name="a"), name="joint")
+        joint = ProductDistribution(a=Normal("a", 0.0, 1.0), name="joint")
 
         drawn = sample(joint, key=KEY)
 
@@ -229,7 +229,7 @@ class TestAnOperationNamesItsResult:
     @pytest.mark.parametrize("sample_shape", [(), (4,)], ids=["single", "batch"])
     def test_draws_take_the_sample_output_name(self, sample_shape):
         """Both a single draw and a batch cross the same result boundary."""
-        given = sample(Normal(0.0, 1.0, name="height"), sample_shape=sample_shape, key=KEY)
+        given = sample(Normal("height", 0.0, 1.0), sample_shape=sample_shape, key=KEY)
 
         assert given.name == sample.output_name
 

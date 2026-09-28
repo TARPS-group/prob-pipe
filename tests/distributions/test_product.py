@@ -404,7 +404,7 @@ class TestDistributionView:
         # Regression: the _map_components loop variable must not shadow the
         # threaded name, or mean/variance come back named after the last
         # component ("y") instead of the product distribution.
-        prod = ProductDistribution(x=Normal(0.0, 1.0, name="x"), y=Normal(0.0, 1.0, name="y"))
+        prod = ProductDistribution(x=Normal("x", 0.0, 1.0), y=Normal("y", 0.0, 1.0))
         assert mean.apply(prod).name == prod.name
         assert variance.apply(prod).name == prod.name
         assert mean(prod).name != "y"

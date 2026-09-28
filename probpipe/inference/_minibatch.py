@@ -40,7 +40,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..core._kind_specs import FunctionSpec
 from ..core._object_batch import _is_object_array
 from ..core._random_functions import RandomFunction
 from ..core._random_measures import RandomMeasure
@@ -56,6 +55,7 @@ from ..core.protocols import (
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..distributions._distribution import Distribution, DistributionSpec
+from ..values._function_base import FunctionSpec
 
 if TYPE_CHECKING:
     from ..core.protocols import ConditionallyIndependentLikelihood

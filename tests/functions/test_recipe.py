@@ -209,7 +209,7 @@ class TestWorkflowRecipeRecording:
     def test_deterministic_exact_and_caller_keyed_calls_have_no_recipe(self):
         deterministic = Function(name="_identity", fn=_identity)(value=3.0)
         exact_workflow = Function(name="_identity", fn=_identity, n_broadcast_samples=8)
-        exact = exact_workflow(value=EmpiricalDistribution(jnp.asarray([1.0, 2.0]), name="exact"))
+        exact = exact_workflow(value=EmpiricalDistribution("exact", jnp.asarray([1.0, 2.0])))
         caller_keyed = sample(
             Normal(loc=0.0, scale=1.0, name="x"),
             key=jax.random.key(4),

@@ -26,7 +26,7 @@ from ..core._distribution_array import DistributionArray, _make_distribution_arr
 from ..core._numeric_array import NumericArray
 from ..core._numeric_array_batch import NumericArrayBatch, _MappedBatchStore
 from ..core._record_batch import RecordBatch, _MappedBatchColumns
-from ..core._specs import OutputSpec, RecordSpec
+from ..core._specs import OutputSpec, RecordSpec, _components_record
 from ..core.config import WorkflowKind, prefect_config
 from ..core.provenance import Provenance
 from ..core.record import Record
@@ -115,7 +115,7 @@ def execute_sweep(
             name=output_name,
             field_name=output_name,
             output_spec=output_spec,
-            event_template=output_template,
+            output_template=output_template,
         )
         provenance = make_sweep_provenance(
             values=values,
@@ -158,12 +158,14 @@ def execute_sweep(
         per_row_marginals.append(marginal)
 
     if output_template is not None and per_row_marginals:
-        output_template = output_template.bind_dims_from_spec(per_row_marginals[0].event_template)
+        output_template = output_template.bind_dims_from_spec(
+            _components_record(per_row_marginals[0].event_spec)
+        )
     stacked = _make_distribution_array(
         per_row_marginals,
         batch_shape=plan.sweep_batch_shape,
         name=output_name,
-        event_template=output_template,
+        output_template=output_template,
     )
     provenance = make_sweep_provenance(
         values=values,

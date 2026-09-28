@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from probpipe import (
+    DistributionSpec,
     Function,
     FunctionSpec,
     InputSpec,
@@ -266,7 +267,7 @@ class TestLiftedNames:
             n_broadcast_samples=8,
         )
         with workflow_run(seed=1):
-            result = wrapped(Normal(0, 1, name="x"))
+            result = wrapped(Normal("x", 0, 1))
         assert result.name == "doubled"
         assert result.fields == ("value",)
         assert result.num_atoms == 8
@@ -278,6 +279,28 @@ class TestCompletedOutputDeclarations:
         return NumericRecordBatch(
             "inputs", {"x": jnp.arange(1.0, 4.0)}, "case", element_spec=RecordSpec(x=())
         )
+
+    @pytest.mark.parametrize("mode", ["plain", "sweep", "broadcast"])
+    def test_returned_laws_use_declaration_unification_across_paths(self, rows, mode):
+        stored = Normal("y", jnp.asarray(0.0, dtype="float32"), 1.0)
+        declaration = DistributionSpec(
+            OutputSpec(y=NumericArraySpec((), dtype="float64", support=positive))
+        )
+        factory = Function(
+            "factory",
+            lambda x: stored,
+            output_spec=declaration,
+            dispatch="sequential",
+            n_broadcast_samples=3,
+        )
+        operand = {"plain": rows[0], "sweep": rows, "broadcast": Normal("x", 0.0, 1.0)}[mode]
+        with workflow_run(seed=0):
+            result = factory(operand)
+        laws = (result,) if mode == "plain" else result.components
+        for law in laws:
+            assert law.spec is stored.spec
+            assert law.event_spec.components["y"].dtype == np.dtype("float32")
+            assert law.event_spec.components["y"].support != positive
 
     @pytest.mark.parametrize("dispatch", ["sequential", "thread"])
     def test_swept_returned_functions_enforce_the_declared_contract(self, rows, dispatch):
@@ -351,11 +374,11 @@ class TestCompletedOutputDeclarations:
             n_broadcast_samples=8,
         )
         with workflow_run(seed=4):
-            joint = wrapped.with_options(include_inputs=True)(Normal(0, 1, name="x"))
+            joint = wrapped.with_options(include_inputs=True)(Normal("x", 0, 1))
         result = joint.marginalize()
         assert result.name == "result"
         assert result.fields == ("component",)
-        assert result.event_template["component"].shape == (2,)
+        assert result.event_spec.spec["component"].shape == (2,)
         np.testing.assert_allclose(
             result.samples["component"][:, 1], result.samples["component"][:, 0] + 1, rtol=0, atol=0
         )
@@ -418,11 +441,11 @@ class TestCompletedOutputDeclarations:
             n_broadcast_samples=8,
         )
         with workflow_run(seed=4):
-            result = wrapped(rows, Normal(0, 1, name="x"))
-        assert result.event_template == RecordSpec(component=(2,))
+            result = wrapped(rows, Normal("x", 0, 1))
+        assert result.event_spec.spec.leaf_shapes == {"component": (2,)}
         assert result.batch_shape == (3,)
         for marginal in result:
-            assert marginal.event_template == result.event_template
+            assert marginal.event_spec.spec == result.event_spec.spec
             values = marginal.samples["component"]
             np.testing.assert_array_equal(values[:, 0], values[:, 1])
         assert declaration.free_dims == {"width"}

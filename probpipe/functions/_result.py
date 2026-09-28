@@ -77,14 +77,14 @@ def _aggregate_output_spec(output_spec: OutputSpec, outputs: Any) -> OutputSpec:
 
 
 def _output_record_spec(output_spec: OutputSpec) -> RecordSpec | None:
-    """Adapt the result declaration to the legacy aggregate's record template."""
-    from ..distributions._distribution import DistributionSpec
+    """Return a record-valued output's schema for the existing aggregate builders.
 
+    Returned laws retain their own event declarations. Their declarations are
+    matched by DistributionSpec, without projecting them onto a record template.
+    """
     spec = output_spec.spec
     if isinstance(spec, RecordSpec):
         return spec
-    if isinstance(spec, DistributionSpec):
-        return spec.event_spec
     return None
 
 

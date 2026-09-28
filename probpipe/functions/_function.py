@@ -583,7 +583,9 @@ def _jax_traceability_error(
                 for group in sampled_groups:
                     binding = stochastic_plan.runtime_bindings[group.index]
                     root = binding.root
-                    template = root.event_template
+                    from ..core._specs import _components_record
+
+                    template = _components_record(root.event_spec)
                     if not isinstance(template, NumericRecordSpec) or not template.is_concrete:
                         raise TypeError(
                             f"{type(root).__name__} does not declare a concrete numeric "

@@ -15,7 +15,7 @@ import jax.numpy as jnp
 
 from ..custom_types import Array, ArrayLike
 from ..distributions._distribution import Distribution
-from ._kind_specs import FunctionSpec
+from ..values._function_base import FunctionSpec
 from ._specs import OutputSpec
 
 # ---------------------------------------------------------------------------
