@@ -98,7 +98,7 @@ class TestExecutionContract:
 
     def test_exact_plan_is_not_jax_capable_but_is_rowwise_capable(self):
         plan = _plan(
-            {"x": EmpiricalDistribution(jnp.asarray([1.0, 2.0]), name="x")},
+            {"x": EmpiricalDistribution("x", jnp.asarray([1.0, 2.0]))},
             n_broadcast_samples=8,
         )
         jax_contract = _workflow_execution_contract.make_execution_contract(
@@ -141,12 +141,13 @@ class TestExecutionContract:
     def test_contract_is_bound_to_the_exact_plan_requirements(self):
         sampled_plan = _plan({"x": Normal(loc=0.0, scale=1.0, name="x")})
         exact_plan = _plan(
-            {"x": EmpiricalDistribution(jnp.asarray([1.0, 2.0]), name="x")},
+            {"x": EmpiricalDistribution("x", jnp.asarray([1.0, 2.0]))},
             n_broadcast_samples=8,
         )
         transformed_plan = _plan(
             {
                 "x": TransformedDistribution(
+                    "x",
                     Normal(loc=0.0, scale=1.0, name="base"),
                     tfb.Exp(),
                 )
@@ -180,6 +181,7 @@ class TestExecutionContract:
         plan = _plan(
             {
                 "x": TransformedDistribution(
+                    "x",
                     Normal(loc=0.0, scale=1.0, name="base"),
                     tfb.Exp(),
                 )
@@ -218,7 +220,9 @@ class TestExecutionContract:
         plan = _plan(
             {
                 "x": TransformedDistribution(
+                    "x",
                     TransformedDistribution(
+                        "inner",
                         Normal(loc=0.0, scale=1.0, name="base"),
                         tfb.Exp(),
                     ),
@@ -249,6 +253,7 @@ class TestExecutionContract:
         plan = _plan(
             {
                 "x": TransformedDistribution(
+                    "x",
                     Normal(loc=0.0, scale=1.0, name="base"),
                     tfb.Exp(),
                 )
@@ -277,6 +282,7 @@ class TestExecutionContract:
             plan = _plan(
                 {
                     "x": TransformedDistribution(
+                        "x",
                         Normal(loc=0.0, scale=1.0, name="base"),
                         tfb.Exp(),
                     )
@@ -294,6 +300,7 @@ class TestExecutionContract:
         plan = _plan(
             {
                 "x": TransformedDistribution(
+                    "x",
                     Normal(loc=0.0, scale=1.0, name="base"),
                     tfb.Exp(),
                 )
@@ -320,6 +327,7 @@ class TestExecutionContract:
         plan = _plan(
             {
                 "x": TransformedDistribution(
+                    "x",
                     Normal(loc=0.0, scale=1.0, name="base"),
                     tfb.Exp(),
                 )
@@ -351,6 +359,7 @@ class TestExecutionContract:
         plan = _plan(
             {
                 "x": TransformedDistribution(
+                    "x",
                     Normal(loc=0.0, scale=1.0, name="base"),
                     tfb.Exp(),
                 )
@@ -416,7 +425,7 @@ class TestExecutionContract:
     def test_execution_request_rejects_plan_drift_before_broker_or_user_code(self):
         sampled_plan = _plan({"x": Normal(loc=0.0, scale=1.0, name="x")})
         exact_plan = _plan(
-            {"x": EmpiricalDistribution(jnp.asarray([1.0, 2.0]), name="x")},
+            {"x": EmpiricalDistribution("x", jnp.asarray([1.0, 2.0]))},
             n_broadcast_samples=8,
         )
         contract = _workflow_execution_contract.make_execution_contract(

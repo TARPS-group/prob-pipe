@@ -133,7 +133,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
     weights : array-like, :class:`~probpipe.Weights`, or None
         Optional per-sample importance weights (across all chains).
     name : str or None
-        Distribution name for provenance.
+        Distribution name for provenance. Keyword-only; defaults to ``"posterior"``.
     event_template : RecordSpec or None
         If given, names the posterior's fields: the concatenated chain is
         split into per-field arrays (multi-field) so :meth:`draws`,
@@ -267,11 +267,8 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
                     shape = cast(NumericArraySpec, spec).shape
                     fields[field_name] = chunk.reshape(*flat.shape[:-1], *shape)
                 offset += size
-            super().__init__(
-                Record(name or "posterior", fields),
-                weights=weights,
-                name=name or "posterior",
-            )
+            label = name or "posterior"
+            super().__init__(label, Record(label, fields), weights=weights)
             self._event_template = event_template
         else:
             # Single-field path: ``name`` (default ``"posterior"``)
@@ -280,7 +277,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
             field_name = name or "posterior"
             if event_template is not None and len(event_template.fields) == 1:
                 field_name = event_template.fields[0]
-            super().__init__(flat, weights=weights, name=field_name)
+            super().__init__(field_name, flat, weights=weights)
             if event_template is not None:
                 self._event_template = event_template
 

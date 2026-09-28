@@ -42,8 +42,8 @@ def normal_external():
 @pytest.fixture
 def empirical_dist():
     return EmpiricalDistribution(
+        "x",
         jnp.asarray([[0.0], [1.0], [2.0]]),
-        name="x",
     )
 
 
@@ -292,7 +292,7 @@ def test_non_distribution_capability_protocol_does_not_disable_lifting():
     )
 
     with workflow_run(seed=12):
-        result = wrapped(Normal(0, 1, name="x"))
+        result = wrapped(Normal("x", 0, 1))
 
     assert result.num_atoms == 8
     assert len(seen) == 8

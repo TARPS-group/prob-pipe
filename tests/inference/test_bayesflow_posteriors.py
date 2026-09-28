@@ -205,7 +205,7 @@ def _nested_prior():
     per-leaf bijector *under* nesting; ``flatten`` order is ``[r, m, c]``."""
     return ProductDistribution(
         name="joint",
-        outer={"r": pp.Gamma(3.0, 1.0, name="r"), "m": Normal(loc=0.0, scale=1.0, name="m")},
+        outer={"r": pp.Gamma("r", 3.0, 1.0), "m": Normal(loc=0.0, scale=1.0, name="m")},
         c=Normal(loc=0.0, scale=1.0, name="c"),
     )
 
@@ -720,9 +720,7 @@ class TestBayesFlowMethods:
         """A constrained (positive) prior field is trained in unconstrained space and
         its draws are mapped back through the forward bijector, so they land in the
         support -- here all positive. The accompanying real-valued field is unaffected."""
-        prior = ProductDistribution(
-            pp.Gamma(3.0, 1.0, name="r"), Normal(loc=0.0, scale=1.0, name="m")
-        )
+        prior = ProductDistribution(pp.Gamma("r", 3.0, 1.0), Normal(loc=0.0, scale=1.0, name="m"))
         model = learn_amortized_posterior(
             prior,
             _PositiveLikelihood(),
@@ -770,9 +768,7 @@ class TestBayesFlowMethods:
         """A bounded-interval prior field (Beta, unit-interval support) rounds
         through the Sigmoid bijector: trained unconstrained, every posterior
         draw lands strictly inside (0, 1)."""
-        prior = ProductDistribution(
-            pp.Beta(2.0, 2.0, name="q"), Normal(loc=0.0, scale=1.0, name="m")
-        )
+        prior = ProductDistribution(pp.Beta("q", 2.0, 2.0), Normal(loc=0.0, scale=1.0, name="m"))
         model = learn_amortized_posterior(
             prior,
             _ConjugateGaussianLikelihood(),
@@ -822,7 +818,7 @@ class TestBayesFlowMethods:
         import bayesflow as bf
 
         model = learn_amortized_posterior(
-            pp.Dirichlet(jnp.ones(2), name="p"),
+            pp.Dirichlet("p", jnp.ones(2)),
             _ConjugateGaussianLikelihood(),
             method="npe",
             num_simulations=600,
@@ -957,9 +953,7 @@ class TestBayesFlowValidation:
     def test_rejects_discrete_prior(self):
         """A discrete prior field has no smooth bijector to R^d and is rejected up
         front with a clear error (here a Poisson count parameter)."""
-        bad_prior = ProductDistribution(
-            pp.Poisson(3.0, name="k"), Normal(loc=0.0, scale=1.0, name="m")
-        )
+        bad_prior = ProductDistribution(pp.Poisson("k", 3.0), Normal(loc=0.0, scale=1.0, name="m"))
         with pytest.raises(ValueError, match="discrete"):
             learn_amortized_posterior(bad_prior, _ToyLikelihood(), num_simulations=8, epochs=1)
 

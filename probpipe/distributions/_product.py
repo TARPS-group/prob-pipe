@@ -192,7 +192,8 @@ class ProductDistribution(
         Named distributions.  Each distribution's ``.name`` is used as
         the component key.
     name : str, optional
-        Distribution name for the joint.
+        Distribution name for the joint. Keyword-only; defaults to
+        ``product(a,b)`` over the component names.
     **components : NumericRecordDistribution or dict
         Named independent component distributions.  Values may be
         ``NumericRecordDistribution`` instances (leaves) or nested dicts
@@ -206,13 +207,13 @@ class ProductDistribution(
     ::
 
         # Positional — uses each distribution's name as the key:
-        ProductDistribution(Normal(0, 1, name="x"), Gamma(2, 1, name="y"))
+        ProductDistribution(Normal("x", 0, 1), Gamma("y", 2, 1))
 
         # Keyword — auto-renames if the key differs:
-        ProductDistribution(growth_rate=Normal(0, 1, name="x"))
+        ProductDistribution(growth_rate=Normal("x", 0, 1))
 
         # Mixed:
-        ProductDistribution(Normal(0, 1, name="x"), scale=Gamma(2, 1, name="y"))
+        ProductDistribution(Normal("x", 0, 1), scale=Gamma("y", 2, 1))
     """
 
     _sampling_cost = "low"

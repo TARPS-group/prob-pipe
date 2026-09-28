@@ -307,8 +307,8 @@ class Weights:
     representation::
 
         w = Weights(log_weights=log_w)
-        EmpiricalDistribution(samples, weights=w)       # OK
-        EmpiricalDistribution(samples, log_weights=w)   # also OK, same result
+        EmpiricalDistribution("x", samples, weights=w)       # OK
+        EmpiricalDistribution("x", samples, log_weights=w)   # also OK, same result
 
     **JAX compatibility** — ``Weights`` is registered as a JAX pytree
     whose single leaf is the **normalized** weight array, so it works

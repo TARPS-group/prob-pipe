@@ -302,7 +302,7 @@ class ScipyConverter(Converter):
                 )
             )
             emp_name = kwargs.get("name") or getattr(source, "name", None) or "samples"
-            emp = RecordEmpiricalDistribution(samples, name=emp_name)
+            emp = RecordEmpiricalDistribution(emp_name, samples)
             emp.with_provenance(Provenance.create("convert_from_scipy", parents=[]))
             if issubclass(target_type, RecordEmpiricalDistribution):
                 return emp

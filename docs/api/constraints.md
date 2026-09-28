@@ -64,7 +64,7 @@ over type registrations.
 
     `bijector_for` and the forward map used by
     `TransformedDistribution.support` are **not** strict inverses.
-    `TransformedDistribution(base, bijector_for(c)).support == c`
+    `TransformedDistribution(name, base, bijector_for(c)).support == c`
     holds only for `real`, `positive`, and `unit_interval`. For
     `non_negative` (Softplus → `positive`), `interval(low, high)`
     (parameterized Sigmoid → `unit_interval`), `simplex` and

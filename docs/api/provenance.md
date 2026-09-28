@@ -31,7 +31,7 @@ The identity attributes and methods are defined once, by two mixins in
 ```python
 from probpipe import Normal
 
-n = Normal(loc=0.0, scale=1.0, name="weight")
+n = Normal("weight", 0.0, 1.0)
 n.name  # "weight"
 m = n.with_name("prior_weight")
 m.provenance.operation  # "with_name"; the parent descriptor points at n
@@ -71,7 +71,7 @@ FULL modes:
 from probpipe import Normal, provenance_ancestors, ProvenanceMode, sample
 import probpipe
 
-prior = Normal(loc=0.0, scale=1.0, name="prior")
+prior = Normal("prior", 0.0, 1.0)
 posterior = wf(prior)
 
 ancestors = provenance_ancestors(posterior)
@@ -152,13 +152,13 @@ import json
 from probpipe import Normal, Provenance, replay_run, sample, workflow_run
 
 with workflow_run(seed=42):
-    original = sample(Normal(loc=0.0, scale=1.0, name="draw"))
+    original = sample(Normal("draw", 0.0, 1.0))
 
 payload = json.loads(json.dumps(original.provenance.to_dict()))
 restored = Provenance.from_dict(payload)
 
 with replay_run(restored):
-    repeated = sample(Normal(loc=0.0, scale=1.0, name="draw"))
+    repeated = sample(Normal("draw", 0.0, 1.0))
 ```
 
 The replay scope restores the recorded root and occurrence path, then checks
@@ -229,7 +229,7 @@ process-local identity. Both are populated automatically by
 `Provenance.create()` and visible in `to_dict()` output:
 
 ```python
-prior = Normal(loc=0.0, scale=1.0, name="prior")
+prior = Normal("prior", 0.0, 1.0)
 posterior = wf(prior)
 
 anc = provenance_ancestors(posterior)[0]

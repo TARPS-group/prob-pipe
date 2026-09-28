@@ -24,13 +24,13 @@ differs:
 
 - :class:`~probpipe.ProductDistribution` bundles **heterogeneous
   independent components** addressed by name — e.g.
-  ``ProductDistribution(theta=Normal(0, 1), sigma=Gamma(2, 1))``.
+  ``ProductDistribution(theta=Normal("theta", 0, 1), sigma=Gamma("sigma", 2, 1))``.
   ``sample`` returns a ``Record`` keyed by component name.
 
 - :class:`DistributionArray` bundles **positionally-indexed components**
   along a batch axis — e.g.
-  ``DistributionArray([Normal(loc=i, scale=1.0, name=f"n{i}") for i in
-  range(5)])``. ``sample(da)`` vectorizes over cells and returns a
+  ``DistributionArray([Normal(f"n{i}", i, 1.0) for i in range(5)])``.
+  ``sample(da)`` vectorizes over cells and returns a
   ``NumericRecordBatch`` at ``batch_shape=da.batch_shape``.
 
 Rule of thumb: if you'd write ``d["sigma"]`` to pull out a specific
@@ -86,7 +86,7 @@ class DistributionArray(Distribution):
         Leading batch shape. Defaults to ``(len(components),)`` for the
         1-D form; ``prod(batch_shape)`` must equal ``len(components)``.
     name : str, optional
-        Name for provenance / introspection. Defaults to
+        Name for provenance / introspection. Keyword-only; defaults to
         ``"distribution_array"``.
 
     Notes

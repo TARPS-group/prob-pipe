@@ -41,7 +41,7 @@ class SimpleGenerativeModel[P, D](ProbabilisticModel, SupportsSampling):
     likelihood : GenerativeLikelihood[P, D]
         Must have a ``generate_data(params, num_observations, *, key)`` method.
     name : str or None
-        Model name for provenance.
+        Model name for provenance. Keyword-only; defaults to ``"SimpleGenerativeModel"``.
     """
 
     _sampling_cost: str = "medium"

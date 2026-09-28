@@ -29,7 +29,7 @@ def _promote_floats(*xs: ArrayLike) -> tuple[jnp.dtype, list[Array]]:
     are first converted via ``jnp.asarray`` (preserving any explicit
     dtype the user provided), then promoted via ``jnp.result_type``.
     Integer-only inputs are promoted to JAX's default float dtype, so
-    e.g. ``Normal(loc=0, scale=1)`` works as expected.
+    e.g. ``Normal("x", 0, 1)`` works as expected.
     """
     arrs = [jnp.asarray(x) for x in xs]
     dtype = jnp.result_type(*[a.dtype for a in arrs])

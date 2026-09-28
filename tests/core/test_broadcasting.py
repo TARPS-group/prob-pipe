@@ -260,7 +260,7 @@ class TestBroadcastingEnumeration:
 
         samples = jnp.array([[1.0], [2.0], [3.0]])
         weights = jnp.array([0.2, 0.3, 0.5])
-        ed = EmpiricalDistribution(samples, weights, name="x")
+        ed = EmpiricalDistribution("x", samples, weights)
 
         w = Function(func=identity, n_broadcast_samples=100, dispatch="sequential")
         result = w(x=ed)
@@ -271,8 +271,8 @@ class TestBroadcastingEnumeration:
         def add_them(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
             return a + b
 
-        ed1 = EmpiricalDistribution(jnp.array([[1.0], [2.0]]), name="x")
-        ed2 = EmpiricalDistribution(jnp.array([[10.0], [20.0], [30.0]]), name="x")
+        ed1 = EmpiricalDistribution("x", jnp.array([[1.0], [2.0]]))
+        ed2 = EmpiricalDistribution("x", jnp.array([[10.0], [20.0], [30.0]]))
 
         w = Function(func=add_them, n_broadcast_samples=100, dispatch="sequential")
         result = w(a=ed1, b=ed2)
@@ -284,12 +284,12 @@ class TestBroadcastingEnumeration:
         def sum_three(a: jnp.ndarray, b: jnp.ndarray, c: jnp.ndarray) -> jnp.ndarray:
             return a + b + c
 
-        ed_small = EmpiricalDistribution(jnp.array([[1.0], [2.0]]), name="x")  # n=2
+        ed_small = EmpiricalDistribution("x", jnp.array([[1.0], [2.0]]))  # n=2
         ed_medium = EmpiricalDistribution(
-            jnp.arange(5).reshape(-1, 1).astype(jnp.float32), name="x"
+            "x", jnp.arange(5).reshape(-1, 1).astype(jnp.float32)
         )  # n=5
         ed_large = EmpiricalDistribution(
-            jnp.arange(20).reshape(-1, 1).astype(jnp.float32), name="x"
+            "x", jnp.arange(20).reshape(-1, 1).astype(jnp.float32)
         )  # n=20
 
         w = Function(func=sum_three, n_broadcast_samples=50, dispatch="sequential")
@@ -302,7 +302,7 @@ class TestBroadcastingEnumeration:
         def add_them(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
             return a + b
 
-        ed = EmpiricalDistribution(jnp.array([[1.0], [2.0], [3.0]]), name="x")
+        ed = EmpiricalDistribution("x", jnp.array([[1.0], [2.0], [3.0]]))
         g = Normal(loc=0.0, scale=1.0, name="b")
 
         w = Function(func=add_them, n_broadcast_samples=30, dispatch="sequential")
@@ -318,7 +318,7 @@ class TestBroadcastingEnumeration:
             return x
 
         samples = jnp.array([[1.0], [2.0], [3.0]])
-        ed = EmpiricalDistribution(samples, name="x")
+        ed = EmpiricalDistribution("x", samples)
 
         w = Function(func=identity, n_broadcast_samples=100, dispatch="sequential")
         result = w.with_options(include_inputs=True)(x=ed)
@@ -673,8 +673,8 @@ class TestDispatchConsistency:
         def add_them(a, b):
             return a + b
 
-        ed1 = EmpiricalDistribution(jnp.array([[1.0], [2.0]]), name="x")
-        ed2 = EmpiricalDistribution(jnp.array([[10.0], [20.0], [30.0]]), name="x")
+        ed1 = EmpiricalDistribution("x", jnp.array([[1.0], [2.0]]))
+        ed2 = EmpiricalDistribution("x", jnp.array([[10.0], [20.0], [30.0]]))
 
         results = {m: self._run(m, add_them, a=ed1, b=ed2) for m in self.ROWWISE_DISPATCH_MODES}
         # Same size (2 x 3 = 6) in every mode - regression guard.
@@ -705,11 +705,9 @@ class TestDispatchConsistency:
         def add_them(a, b):
             return a + b
 
-        ed1 = EmpiricalDistribution(
-            jnp.array([[1.0], [2.0]]), weights=jnp.array([0.8, 0.2]), name="x"
-        )
+        ed1 = EmpiricalDistribution("x", jnp.array([[1.0], [2.0]]), weights=jnp.array([0.8, 0.2]))
         ed2 = EmpiricalDistribution(
-            jnp.array([[10.0], [20.0]]), weights=jnp.array([0.25, 0.75]), name="x"
+            "x", jnp.array([[10.0], [20.0]]), weights=jnp.array([0.25, 0.75])
         )
         expected_weights = sorted(
             [
@@ -736,7 +734,7 @@ class TestDispatchConsistency:
         def add_them(a, b):
             return a + b
 
-        ed = EmpiricalDistribution(jnp.array([[1.0], [2.0], [3.0]]), name="x")
+        ed = EmpiricalDistribution("x", jnp.array([[1.0], [2.0], [3.0]]))
         g = Normal(loc=0.0, scale=1.0, name="b")
 
         samples = []
@@ -759,7 +757,7 @@ class TestDispatchConsistency:
         def identity(x):
             return x
 
-        big = EmpiricalDistribution(jnp.arange(200).reshape(-1, 1).astype(jnp.float32), name="x")
+        big = EmpiricalDistribution("x", jnp.arange(200).reshape(-1, 1).astype(jnp.float32))
         for mode in self.SAMPLE_DISPATCH_MODES:
             with workflow_run(seed=0):
                 r = self._run(mode, identity, x=big, n_broadcast_samples=20)
@@ -787,7 +785,7 @@ class TestDispatchConsistency:
         def identity(x):
             return x
 
-        empirical = EmpiricalDistribution(jnp.array([[1.0], [2.0]]), name="x")
+        empirical = EmpiricalDistribution("x", jnp.array([[1.0], [2.0]]))
 
         with pytest.raises(ValueError, match="does not support exact empirical"):
             self._run("jax", identity, x=empirical, n_broadcast_samples=20)

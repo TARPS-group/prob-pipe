@@ -213,12 +213,12 @@ class TestIntegration:
 
     def test_transformed_distribution_inherits_support_positive(self):
         base = Normal(loc=0.0, scale=1.0, name="x")
-        td = TransformedDistribution(base, bijector_for(positive))
+        td = TransformedDistribution("td", base, bijector_for(positive))
         assert td.support == positive
 
     def test_transformed_distribution_inherits_support_unit_interval(self):
         base = Normal(loc=0.0, scale=1.0, name="x")
-        td = TransformedDistribution(base, bijector_for(unit_interval))
+        td = TransformedDistribution("td", base, bijector_for(unit_interval))
         assert td.support == unit_interval
 
     def test_round_trip_drifts_for_parameterized_interval(self):
@@ -226,7 +226,7 @@ class TestIntegration:
         # ``Sigmoid``; the forward map only knows the bijector class name
         # ``Sigmoid`` → ``unit_interval`` and cannot recover the bounds.
         base = Normal(loc=0.0, scale=1.0, name="x")
-        td = TransformedDistribution(base, bijector_for(interval(2.0, 5.0)))
+        td = TransformedDistribution("td", base, bijector_for(interval(2.0, 5.0)))
         assert td.support == unit_interval
 
     def test_round_trip_drifts_for_chain_bijectors(self):
@@ -235,7 +235,7 @@ class TestIntegration:
         # whose outermost bijectors (Shift, CholeskyOuterProduct) aren't
         # in the forward map; ``support`` falls through to ``real``.
         base = Normal(loc=0.0, scale=1.0, name="x")
-        td_gt = TransformedDistribution(base, bijector_for(greater_than(3.0)))
+        td_gt = TransformedDistribution("td_gt", base, bijector_for(greater_than(3.0)))
         assert td_gt.support == real
 
 

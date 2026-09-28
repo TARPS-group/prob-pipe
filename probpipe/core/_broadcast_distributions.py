@@ -61,9 +61,9 @@ class _RecordMarginal(RecordEmpiricalDistribution):
 
     Wraps the broadcast outputs as a Record-valued empirical
     distribution with per-field weighted resampling and moments. Bare
-    array outputs auto-wrap as a single-field Record keyed by ``name``
-    (defaulting to ``"marginal"`` since the WF-output context doesn't
-    carry a more meaningful name).
+    array outputs auto-wrap as a single-field Record keyed by ``name``.
+    The name defaults to ``empirical(a,b)`` over the fields of record
+    outputs and to ``"marginal"`` for bare array outputs.
     """
 
     def __init__(
@@ -86,11 +86,12 @@ class _RecordMarginal(RecordEmpiricalDistribution):
             samples = Record(samples.name, samples._raw_columns())
         else:
             template = None
-        # Default field name for bare-array outputs (the WF marginal
-        # context doesn't carry a more meaningful name).
-        if not isinstance(samples, Record) and not name:
-            name = "marginal"
-        super().__init__(samples, weights=weights, log_weights=log_weights, name=name)
+        # The WF marginal context carries no more meaningful name.
+        name = auto_name(
+            name or None,
+            f"empirical({','.join(samples.fields)})" if isinstance(samples, Record) else "marginal",
+        )
+        super().__init__(name, samples, weights=weights, log_weights=log_weights)
         if event_template is not None:
             self._event_template = event_template
         elif template is not None:
@@ -1323,7 +1324,7 @@ class BroadcastDistribution(Distribution, SupportsSampling):
     broadcast_args : list of str
         Ordered names of the broadcast arguments.
     name : str or None
-        Distribution name for provenance.
+        Distribution name for provenance. Keyword-only; defaults to ``"broadcast"``.
     """
 
     #: The memo is not state: a copy recomputes rather than inheriting one. It
@@ -1397,7 +1398,7 @@ class BroadcastDistribution(Distribution, SupportsSampling):
             return self.marginalize()
         if key in self._input_samples:
             arr = self._input_samples[key]
-            return EmpiricalDistribution(arr, weights=self._w, name=key)
+            return EmpiricalDistribution(key, arr, weights=self._w)
         raise KeyError(f"Unknown component {key!r}; available: {self.fields}")
 
     # -- joint sampling -----------------------------------------------------

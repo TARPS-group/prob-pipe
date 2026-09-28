@@ -177,7 +177,7 @@ def test_x64_empirical_distribution_preserves_dtype():
         """
         from probpipe import EmpiricalDistribution
         samples = jnp.array([[1.0], [2.0], [3.0]])  # float64 under x64
-        d = EmpiricalDistribution(samples, name="x")
+        d = EmpiricalDistribution("x", samples)
         assert d.flat_samples.dtype == jnp.float64, d.flat_samples.dtype
         assert d.dtype == jnp.float64
         print('OK')
@@ -196,7 +196,7 @@ def test_x64_transformed_distribution_preserves_dtype():
         import jax
 
         base = Normal(loc=0.0, scale=1.0, name='base')
-        td = TransformedDistribution(base, tfb.Exp())
+        td = TransformedDistribution('td', base, tfb.Exp())
         assert td.dtype == jnp.float64, td.dtype
         assert ops.log_prob(td, 1.0).dtype == jnp.float64
         assert ops.sample(td, key=jax.random.key(0)).dtype == jnp.float64
@@ -298,7 +298,7 @@ def test_x64_kde_distribution():
         import jax
 
         samples = jnp.linspace(-2.0, 2.0, 50)
-        kde = KDEDistribution(samples, name='kde')
+        kde = KDEDistribution('kde', samples)
         assert kde.dtype == jnp.float64
         assert ops.sample(kde, key=jax.random.key(0)).dtype == jnp.float64
         assert ops.log_prob(kde, 0.5).dtype == jnp.float64
@@ -322,7 +322,7 @@ def test_x64_gaussian_random_function():
                                             X[..., 0],
                                             X[..., 0] ** 2], axis=-1)
         grf = LinearBasisFunction(
-            feature_map, weights, input_shape=(1,), output_shape=(),
+            'grf', feature_map, weights, input_shape=(1,), output_shape=(),
         )
         X = jnp.linspace(-1.0, 1.0, 5)[:, None]
         d = grf(X)
@@ -387,7 +387,7 @@ def test_x64_bootstrap_distribution():
         import jax
 
         evals = jnp.linspace(0.0, 1.0, 10)
-        b = BootstrapDistribution(evals, name='b')
+        b = BootstrapDistribution('b', evals)
         assert b.dtype == jnp.float64
         assert ops.mean(b).dtype == jnp.float64
         assert ops.sample(b, key=jax.random.key(0)).dtype == jnp.float64

@@ -31,15 +31,15 @@ from probpipe.distributions.joint import ProductDistribution
 @pytest.fixture
 def single_field_dist():
     """Single-field ``ProductDistribution`` — exercises the array-like shim."""
-    return ProductDistribution(x=Normal(0.0, 1.0, name="x"))
+    return ProductDistribution(x=Normal("x", 0.0, 1.0))
 
 
 @pytest.fixture
 def multi_field_dist():
     """Two-field ``ProductDistribution`` — exercises the multi-field guard."""
     return ProductDistribution(
-        x=Normal(0.0, 1.0, name="x"),
-        y=Normal(0.0, 1.0, name="y"),
+        x=Normal("x", 0.0, 1.0),
+        y=Normal("y", 0.0, 1.0),
     )
 
 
@@ -126,7 +126,7 @@ class TestEventShapesUniformDict:
         as a single-field Record keyed by ``name=``; the template,
         fields, and event shapes reflect that single field."""
         samples = np.random.randn(100, 3)
-        dist = EmpiricalDistribution(samples, name="x")
+        dist = EmpiricalDistribution("x", samples)
         assert dist.event_template is not None
         assert dist.fields == ("x",)
         assert dist.event_shapes == {"x": (3,)}

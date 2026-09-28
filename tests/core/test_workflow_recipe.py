@@ -209,7 +209,7 @@ class TestWorkflowRecipeRecording:
     def test_deterministic_exact_and_caller_keyed_calls_have_no_recipe(self):
         deterministic = Function(func=_identity)(value=3.0)
         exact_workflow = Function(func=_identity, n_broadcast_samples=8)
-        exact = exact_workflow(value=EmpiricalDistribution(jnp.asarray([1.0, 2.0]), name="exact"))
+        exact = exact_workflow(value=EmpiricalDistribution("exact", jnp.asarray([1.0, 2.0])))
         caller_keyed = sample(
             Normal(loc=0.0, scale=1.0, name="x"),
             key=jax.random.key(4),
@@ -230,6 +230,7 @@ class TestWorkflowRecipeRecording:
 
     def test_direct_transformed_sample_records_its_closed_descendant_plan(self):
         transformed = TransformedDistribution(
+            "transformed",
             Normal(loc=0.0, scale=1.0, name="root"),
             tfb.Exp(),
         )
@@ -253,7 +254,7 @@ class TestWorkflowRecipeRecording:
         workflow = Function(func=_difference, n_broadcast_samples=5)
         with workflow_run(seed=9):
             result = workflow(
-                left=EmpiricalDistribution(jnp.asarray([1.0, 2.0]), name="left"),
+                left=EmpiricalDistribution("left", jnp.asarray([1.0, 2.0])),
                 right=Normal(loc=0.0, scale=1.0, name="right"),
             )
 
@@ -266,7 +267,7 @@ class TestWorkflowRecipeRecording:
 
     def test_alias_and_supported_descendant_share_one_recipe_source(self):
         root = Normal(loc=0.0, scale=1.0, name="root")
-        descendant = TransformedDistribution(root, tfb.Exp())
+        descendant = TransformedDistribution("descendant", root, tfb.Exp())
         workflow = Function(func=_difference, n_broadcast_samples=6)
 
         with workflow_run(seed=3):

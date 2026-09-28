@@ -40,6 +40,8 @@ class MultivariateNormal(TFPDistribution, FlatNumericRecordDistribution):
 
     Parameters
     ----------
+    name : str
+        Distribution name.
     loc : array-like, shape ``(d,)``
         Mean vector.
     scale_tril : array-like, shape ``(d, d)``, optional
@@ -47,17 +49,15 @@ class MultivariateNormal(TFPDistribution, FlatNumericRecordDistribution):
         *scale_tril* or *cov* must be provided.
     cov : array-like, shape ``(d, d)``, optional
         Covariance matrix (Cholesky-decomposed internally).
-    name : str
-        Distribution name.
     """
 
     def __init__(
         self,
+        name: str,
         loc: ArrayLike,
         scale_tril: ArrayLike | None = None,
         *,
         cov: ArrayLike | None = None,
-        name: str,
     ):
         if scale_tril is not None and cov is not None:
             raise ValueError("Provide exactly one of scale_tril or cov, not both.")
@@ -119,18 +119,13 @@ class Dirichlet(TFPDistribution, FlatNumericRecordDistribution):
 
     Parameters
     ----------
-    concentration : array-like, shape ``(k,)``
-        Positive concentration (alpha) parameters.
     name : str
         Distribution name.
+    concentration : array-like, shape ``(k,)``
+        Positive concentration (alpha) parameters.
     """
 
-    def __init__(
-        self,
-        concentration: ArrayLike,
-        *,
-        name: str,
-    ):
+    def __init__(self, name: str, concentration: ArrayLike):
         concentration = _as_float_array(concentration)
         if concentration.ndim == 0:
             raise ValueError("concentration must be at least 1-D.")
@@ -169,23 +164,22 @@ class Multinomial(TFPDistribution, FlatNumericRecordDistribution):
 
     Parameters
     ----------
+    name : str
+        Distribution name.
     total_count : int or array-like
         Number of trials.
     probs : array-like, shape ``(k,)``, optional
         Event probabilities (need not be normalised).
     logits : array-like, shape ``(k,)``, optional
         Log-odds of each event.
-    name : str
-        Distribution name.
     """
 
     def __init__(
         self,
+        name: str,
         total_count: int | ArrayLike,
         probs: ArrayLike | None = None,
         logits: ArrayLike | None = None,
-        *,
-        name: str,
     ):
         if (probs is None) == (logits is None):
             raise ValueError("Exactly one of probs or logits must be provided.")
@@ -238,23 +232,23 @@ class Wishart(TFPDistribution):
 
     Parameters
     ----------
+    name : str
+        Distribution name.
     df : float or array-like
         Degrees of freedom (must be >= dimension).
     scale_tril : array-like, shape ``(d, d)``, optional
         Lower-triangular Cholesky factor of the scale matrix.
     scale : array-like, shape ``(d, d)``, optional
         Full scale matrix (Cholesky-decomposed internally).
-    name : str
-        Distribution name.
     """
 
     def __init__(
         self,
+        name: str,
         df: float | ArrayLike,
         scale_tril: ArrayLike | None = None,
         *,
         scale: ArrayLike | None = None,
-        name: str,
     ):
         if scale_tril is not None and scale is not None:
             raise ValueError("Provide exactly one of scale_tril or scale, not both.")
@@ -309,21 +303,15 @@ class VonMisesFisher(TFPDistribution, FlatNumericRecordDistribution):
 
     Parameters
     ----------
+    name : str
+        Distribution name.
     mean_direction : array-like, shape ``(d,)``
         Unit vector giving the mean direction.
     concentration : float or array-like
         Scalar concentration parameter (kappa >= 0).
-    name : str
-        Distribution name.
     """
 
-    def __init__(
-        self,
-        mean_direction: ArrayLike,
-        concentration: float | ArrayLike,
-        *,
-        name: str,
-    ):
+    def __init__(self, name: str, mean_direction: ArrayLike, concentration: float | ArrayLike):
         _, (mean_direction, concentration) = _promote_floats(mean_direction, concentration)
 
         self._mean_direction = mean_direction

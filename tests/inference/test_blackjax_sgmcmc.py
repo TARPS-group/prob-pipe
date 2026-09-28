@@ -104,6 +104,7 @@ class TestGradEstimatorCorrectness:
         model = logistic_problem["model"]
         data = logistic_problem["data"]
         measure = MinibatchedDistribution(
+            "measure",
             model.prior,
             model.likelihood,
             data,
