@@ -198,6 +198,8 @@ class TestOutputSpecCompletion:
         record = RecordSpec(beta=NumericArraySpec(()))
         with pytest.raises(ValueError, match="more than once"):
             OutputSpec(p=record).with_path_names({"p": "q"}, p="r")
+        with pytest.raises(ValueError, match="more than once"):
+            OutputSpec(p=record).with_path_names({"p/beta": "b"}, **{"p/beta": "c"})
         with pytest.raises(ValueError, match="at least one rename"):
             OutputSpec(p=record).with_path_names()
 
