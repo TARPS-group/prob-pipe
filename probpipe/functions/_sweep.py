@@ -101,6 +101,7 @@ def execute_sweep(
             workflow_kind=workflow_kind,
             workflow_name=workflow_name,
             output_is_declared=output_spec is not None and output_spec.spec is not None,
+            output_name=output_name,
         )
         if output_spec is not None:
             output_spec = _workflow_result._aggregate_output_spec(output_spec, per_row)
@@ -234,8 +235,9 @@ def execute_sweep_rows(
     resolve_dispatch: Callable[..., str],
     require_jax_traceable: Callable[[dict[str, Any], list[_workflow_call.WorkflowInputRef]], None],
     workflow_kind: WorkflowKind = WorkflowKind.OFF,
-    workflow_name: str = "workflow",
+    workflow_name: str,
     output_is_declared: bool = False,
+    output_name: str,
 ) -> Any:
     """Execute pure sweep rows through JAX vmap or row-wise execution."""
     # Zero rows run nothing, so there is no body for a dispatch to trace and no
@@ -286,6 +288,7 @@ def execute_sweep_rows(
             workflow_kind=workflow_kind,
             workflow_name=workflow_name,
             output_is_declared=output_is_declared,
+            output_name=output_name,
         )
 
     per_row_values = [
@@ -371,15 +374,16 @@ def execute_sweep_rows_jax(
     array_args: list[_workflow_call.WorkflowInputRef],
     n_total: int,
     workflow_kind: WorkflowKind = WorkflowKind.OFF,
-    workflow_name: str = "workflow",
+    workflow_name: str,
     output_is_declared: bool = False,
+    output_name: str,
 ) -> Any:
     """Execute the limited single-batch sweep through ``jax.vmap``."""
     single_call = mapped_row_body(
         func=func,
         values=values,
         array_args=array_args,
-        field_name=workflow_name,
+        field_name=output_name,
         output_is_declared=output_is_declared,
     )
 

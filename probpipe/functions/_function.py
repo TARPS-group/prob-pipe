@@ -546,8 +546,8 @@ def _jax_traceability_error(
                     func=func,
                     values=dummy_kw,
                     array_args=refs,
-                    field_name=function._name,
-                    output_is_declared=function.output_spec is not None,
+                    field_name=function.output_name,
+                    output_is_declared=(function.output_spec is not None and function.output_spec.spec is not None),
                 )
 
                 probe_leaves = []
