@@ -45,13 +45,19 @@ Two bootstrap forms share one convention: the **source** may be any distribution
 - A `BootstrapReplicateDistribution` is the `replicate_size`-fold iid product of the source law: a draw is one **replicate**, `replicate_size` draws from the source in the event's batch form.
 - A `BootstrapDistribution` is the corresponding random measure: a draw is the empirical measure of one replicate, an `EmpiricalDistribution`. The bootstrap distribution of a statistic is `evaluate(stat, ...)` over whichever form the statistic reads, a replicate dataset or a replicate measure. Replicate batches preserve the source event's term kind, and empirical measures built from replicates carry the source's complete event declaration. Their outer event declaration, for the batch-valued replicate or the measure-valued draw, is derived from the source and the replicate size and is distinct from the source's event interface; its component defaults to the law's `name`, and an `event_spec` declaration names another.
 
-A `KDEDistribution` smooths the atoms with a **smoothing kernel**: a mean-zero density `K` recentered at each atom and scaled by the bandwidth, so its law is the weighted mixture `Σᵢ wᵢ h⁻ᵈ K((x − xᵢ)/h)`. `SmoothingKernel` carries a uniform construction contract: `build_kernels(centers, scales)` returns the bank of placed copies, one per atom, whatever the concrete kernel, so the KDE holds the kernel class and never reads kernel-specific parameters. `bandwidth` accepts a value, the name of a selection rule such as `"scott"` or `"silverman"`, or `None` for the default rule, and is resolved before the copies are built. The bank supplies indexed sampling and per-copy log-densities with the scale Jacobian included. On the KDE, `_sample` draws an atom by weight and then a draw from that copy, exact for the KDE law, and `_log_prob` is the weighted log-sum-exp of the per-copy densities, also exact. The mean is the weighted atom mean, and the variance adds `h²` times the kernel's variance to the atoms' weighted sample variance. Numeric events only. Event completion follows `EmpiricalDistribution`: record atoms expose their fields, array atoms form a whole-term event whose component `event_spec` names or else defaults to the law's `name`, and every placed kernel carries the completed declaration.
+A `KDEDistribution` smooths the atoms with a **smoothing kernel**: a mean-zero density `K` recentered at each atom and scaled by the bandwidth, so its law is the weighted mixture `Σᵢ wᵢ h⁻ᵈ K((x − xᵢ)/h)`. `SmoothingKernel` carries a uniform construction contract: `build_kernels(centers, scales)` returns the bank of placed copies, one per atom, whatever the concrete kernel, so the KDE holds the kernel class and never reads kernel-specific parameters. `bandwidth` accepts a value, the name of a selection rule such as `"scott"` or `"silverman"`, or `None` for the default rule, which is Scott's, and is resolved before the copies are built. Scott's rule is `hⱼ = n_eff^(-1/(d+4)) σⱼ` and Silverman's is `hⱼ = (4/(d+2))^(1/(d+4)) n_eff^(-1/(d+4)) σⱼ`, with `σⱼ` the weighted standard deviation of coordinate `j` and `n_eff = (Σwᵢ)²/Σwᵢ²` Kish's effective sample size, so the rules stay sensible under importance weights. The bank supplies indexed sampling and per-copy log-densities with the scale Jacobian included. On the KDE, `_sample` draws an atom by weight and then a draw from that copy, exact for the KDE law, and `_log_prob` is the weighted log-sum-exp of the per-copy densities, also exact. The mean is the weighted atom mean, and the variance adds `h²` times the kernel's variance to the atoms' weighted sample variance. Numeric events only. Event completion follows `EmpiricalDistribution`: record atoms expose their fields, array atoms form a whole-term event whose component `event_spec` names or else defaults to the law's `name`, and every placed kernel carries the completed declaration.
 
 ```python
 class EmpiricalDistribution(Distribution):
     def __init__(self, name: str, atoms: Batch | Array, weights: Array | None = None, *,
                  event_spec: OutputSpec | None = None) -> None: ...
     # atoms are given in the event's batch form; weights default to uniform
+    @property
+    def atoms(self) -> Batch | Array: ...    # the stored atoms, in the event's batch form
+    @property
+    def weights(self) -> Array: ...          # normalized, one per atom, row-major over the batch axes
+    @property
+    def num_atoms(self) -> int: ...
 
 class BootstrapReplicateDistribution(Distribution):
     def __init__(self, name: str, source: SupportsSampling, replicate_size: int | None = None, *,
@@ -112,6 +118,8 @@ A mixture supports an operation exactly when its components do, the same interse
 
 Each evaluation rule returns a family from this catalog. A closed-form rule returns a parametric result, the linear-Gaussian case being a member of the Gaussian algebra. The generic linear rule returns a `LinearPushforwardDistribution`, which represents `A @ d` lazily when no family-specific rule applies. The change-of-variables rule returns a `BijectorTransformedDistribution`. The sampling fallback returns an `EmpiricalDistribution` over the pushed draws.
 
+`BijectorTransformedDistribution` is the catalog's one transformed family. A backend bijector enters as a `Function` that claims `SupportsInverse` and `SupportsLogDetJacobian` (III.3). The law claims a moment only where the bijector gives it in closed form, as an affine map does, and the moment operations estimate the others by their Monte Carlo fallback (VI.5).
+
 ```python
 class LinearPushforwardDistribution(Distribution):
     def __init__(self, name: str, base: Distribution, op: LinOp) -> None: ...
@@ -139,14 +147,13 @@ Typing evaluation results as catalog families keeps the operation closed and its
 
 ### Contract
 
-A `RandomFunction` is a distribution declaring a `FunctionSpec` as its event: a draw is a callable, `mean` returns the mean function, and `variance` returns the pointwise variance function when the family provides it. Calling it at a point returns a distribution over outputs, the law of `f(x)` for `f` drawn from the random function. A `RandomMeasure` is a distribution whose event is a `DistributionSpec` leaf: a draw is a `Distribution`, `mean` returns the marginalized law, and no event-typed variance is claimed in general. A draw's log-density is itself random, so `_random_log_prob()` returns the law of `x ↦ log D(x)`, a `RandomFunction`. A `BootstrapDistribution` is a member.
+A `RandomFunction` is a distribution declaring a `FunctionSpec` as its event: a draw is a callable, `mean` returns the mean function, and `variance` returns the pointwise variance function when the family provides it. Calling it at a point returns a distribution over outputs, the law of `f(x)` for `f` drawn from the random function. A `RandomMeasure` is a distribution whose event is a `DistributionSpec` leaf: a draw is a `Distribution`, `mean` returns the marginalized law, and no event-typed variance is claimed in general. A draw's log-density is itself random: a random measure that can compute it claims `SupportsRandomLogProb` (III.8), whose `_random_log_prob()` returns the law of `x ↦ log D(x)`, a `RandomFunction`. A `BootstrapDistribution` is a member.
 
 ```python
 class RandomFunction(Distribution):
     def __call__(self, x: Any) -> Distribution: ...     # the distribution over outputs at x
 
-class RandomMeasure(Distribution):
-    def _random_log_prob(self) -> RandomFunction: ...   # the law of x ↦ log D(x) for D ~ M
+class RandomMeasure(Distribution): ...   # a law whose draws are laws; SupportsRandomLogProb where computable
 ```
 
 ### Rationale

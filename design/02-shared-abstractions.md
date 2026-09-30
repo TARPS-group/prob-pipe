@@ -98,7 +98,7 @@ The keyword form takes exactly one entry, and the positional form exactly one `R
 
 **Packaging.** The declaration stores either one named whole term or an exposed record schema. `spec`, `components`, and `exposes_record` are derived views of it, and extracting a component from a produced value, or reconstructing the value from its components, reads it.
 
-**Completion.** A producer knows the type of the term it returns and completes its declaration with `with_spec`, so the stored declaration has the produced type under the declared names and packaging. A producer given no declaration uses `OutputSpec.default` with the default component its kind defines (II.5, III.3, III.7).
+**Completion.** A producer knows the type of the term it returns and completes its declaration with `with_spec`, which stores the unification of the declared type and the produced one under the declared names and packaging. The declared dtype and support are kept, dimensions are bound from the produced term, and the produced value is checked against the stored type. A declared type that does not unify with the produced one raises. A producer given no declaration uses `OutputSpec.default` with the default component its kind defines (II.5, III.3, III.7).
 
 **Names.** Component names are the only names a declaration carries, and matching reads only them: a distribution named `regression_model` may declare `OutputSpec(beta=beta_spec)` or `OutputSpec(RecordSpec(beta=beta_spec))`, and either exports `beta`. `OutputSpec(posterior=DistributionSpec(...))` exports the single component `posterior`, whose value is a law with its own event components. The object's label is renamed separately, by `with_name` (II.4).
 

@@ -192,7 +192,7 @@ spec types of `core/`. `DistributionSpec` is defined beside `Distribution` in
 | `distributions/_tfp_base.py` | `families/_backend.py` (VII.1) |
 | `distributions/continuous.py`, `distributions/discrete.py`, `distributions/multivariate.py` | `families/_continuous.py`, `families/_discrete.py`, `families/_multivariate.py` (VII.1) |
 | `distributions/kde.py` | `families/_resampling.py` (VII.2) |
-| `distributions/transformed.py` | `families/_transformed.py` (VII.4) |
+| `distributions/transformed.py` | `families/_transformed.py` (VII.4): `TransformedDistribution` becomes `BijectorTransformedDistribution`, and a backend bijector enters as a `Function` |
 | `distributions/_bijector_dispatch.py` | `functions/_reparameterization.py` (V.12) |
 | `linalg/linear_operator.py`, `linalg/operations.py`, `linalg/utils.py` | `linalg/_linop.py`, `linalg/_structured.py`, `linalg/_composites.py`; the free-function queries become `LinOp` methods (III.4) |
 | `inference/_approximate_distribution.py`, `inference/_minibatch.py` | `inference/`, in place: `ApproximateDistribution` becomes an `EmpiricalDistribution` carrying provenance and annotations (VII.7), and `MinibatchedDistribution` is a `RandomMeasure` member (VII.5) |

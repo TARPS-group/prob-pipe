@@ -77,9 +77,6 @@ _PENDING = {
     "KDEDistribution": (
         "the KDE takes atoms, bandwidth, weights, and a SmoothingKernel class, in that order"
     ),
-    "RandomMeasure": (
-        "VII.5 places _random_log_prob on the base, which III.8 makes an optional capability"
-    ),
     "GaussianRandomFunction": (
         "predict_covariance and __call__ take the stacked inputs only, without the joint flags"
     ),
