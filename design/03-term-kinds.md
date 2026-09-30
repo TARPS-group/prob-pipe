@@ -508,7 +508,7 @@ Here `Key` is a PRNG key and `ArrayLike` an array-or-scalar input. `_expectation
 - `SupportsSampling`: draws, which determine the law;
 - a moment, quantile, or expectation capability: an integral against the law.
 
-A law that claims `SupportsUnnormalizedLogProb` and none of these is **unnormalized**, since it determines its law only up to a positive constant. A kernel's laws are normalized when the kernel claims the conditional twin of one of these (III.9). The classification reads protocol membership alone, so a route decides it without evaluating a body (VI.0), and `condition_on` uses it to return a normalized law (VI.6).
+A law that claims none of these is **unnormalized**, since no capability it claims fixes its normalizing constant. A kernel's laws are normalized when the kernel claims the conditional twin of one of these (III.9). The classification reads protocol membership alone, so a route decides it without evaluating a body (VI.0), and `condition_on` uses it to return a normalized law (VI.6).
 
 **View derivation.** A `FieldView` derives each capability from its parent's, so what a view supports is read off the parent. For a parent `d` and a view `v = d[p]`, with π the extraction of field `p` from an event:
 
