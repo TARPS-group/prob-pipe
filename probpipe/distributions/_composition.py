@@ -16,12 +16,14 @@ from __future__ import annotations
 
 from ._conditional import ConditionalDistribution
 from ._distribution import Distribution, _install_composition
-from ._factored import FactoredConditionalDistribution, FactoredDistribution, _factor_graph
+from ._factored import (
+    _LABEL_SEP,
+    FactoredConditionalDistribution,
+    FactoredDistribution,
+    _factor_graph,
+)
 
 __all__: list[str] = []
-
-#: The separator the joint's label places between the operands' labels.
-_LABEL_SEP = "·"
 
 
 def _compose(

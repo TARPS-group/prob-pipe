@@ -10,18 +10,25 @@ Provides:
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+import math
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, Self, runtime_checkable
 
-from ..core._dispatch import Feasibility
+import jax
+import jax.numpy as jnp
+from jax.scipy.linalg import block_diag
+
+from ..core._dispatch import Feasibility, ResolutionError
 from ..core._record_spec import RecordSpec
-from ..core._spec_base import TermSpec, _unify_specs
+from ..core._spec_base import NumericArraySpec, TermSpec, _unify_specs
 from ..core._specs import InputSpec, OutputSpec
 from ..core.provenance import Provenance
+from ..linalg import DenseLinOp, to_dense
 from ._capabilities import (
     _CONDITIONAL_TWINS,
     SupportsCovariance,
+    SupportsExpectation,
     SupportsLogProb,
     SupportsMarginals,
     SupportsMean,
@@ -31,6 +38,7 @@ from ._capabilities import (
     SupportsVariance,
     _capability_guard,
     _capability_subclass,
+    _claimed,
     _conjunction,
 )
 from ._conditional import (
@@ -48,6 +56,7 @@ from ._distribution import (
 
 if TYPE_CHECKING:
     from ..core.record import Record
+    from ..custom_types import Array, ArrayLike, PRNGKey
 
 __all__ = [
     "FactoredConditionalDistribution",
@@ -60,6 +69,9 @@ __all__ = [
 ]
 
 _PATH_SEP = "/"
+
+#: The separator a joint's label places between the labels it joins.
+_LABEL_SEP = "·"
 
 type Factor = Distribution | ConditionalDistribution
 
@@ -279,27 +291,388 @@ def _factor_graph(
 
 
 # ---------------------------------------------------------------------------
-# The derived capabilities
+# The raw forms of a joint
+# ---------------------------------------------------------------------------
+#
+# A factor contributes its components to a joint's value by its own packaging:
+# a whole term's component is the factor's value itself, and an exposed record's
+# components are the value's immediate children. Scoring reverses the
+# extraction, so every factor receives a value of the kind it declares.
+
+
+def _children(value: Any) -> Mapping[str, Any]:
+    """The immediate children of *value*, the raw form of a record, keyed by name.
+
+    A raw record is a mapping of its fields, and a ``Record`` is read through
+    its one-level view.
+
+    Raises
+    ------
+    TypeError
+        If *value* is neither a mapping nor a ``Record``.
+    """
+    if isinstance(value, Mapping):
+        return value
+    children = getattr(value, "children", None)
+    if isinstance(children, Mapping):
+        return children
+    raise TypeError(f"a record value is a mapping of its fields, got {type(value).__name__}")
+
+
+def _components_of(declaration: OutputSpec, value: Any) -> dict[str, Any]:
+    """Each component *declaration* declares, extracted from *value*.
+
+    *value* is a draw of the declared event, or an event-typed result such as a
+    mean, and the leading axes of a batch stay on each component.
+    """
+    if not declaration.exposes_record:
+        (component,) = declaration.components
+        return {component: value}
+    children = _children(value)
+    return {component: children[component] for component in declaration.components}
+
+
+def _event_of(declaration: OutputSpec, components: Mapping[str, Any]) -> Any:
+    """The value *declaration* declares, reconstructed from a joint's *components*.
+
+    It inverts :func:`_components_of`: a whole term is its component's value,
+    and an exposed record is the mapping of its components.
+    """
+    if not declaration.exposes_record:
+        (component,) = declaration.components
+        return components[component]
+    return {component: components[component] for component in declaration.components}
+
+
+def _given_values(joint: Any, given: Record | Mapping[str, Any]) -> dict[str, Any]:
+    """The value of each given slot of the conditional *joint* in *given*, by slot name.
+
+    Raises
+    ------
+    KeyError
+        If *given* names a slot the joint does not have, or omits one it has,
+        since a fused conditional path binds every given slot.
+    """
+    top = given.children if hasattr(given, "children") else given
+    values = dict(top.items())
+    unknown = set(values) - set(joint.given_spec)
+    if unknown:
+        raise KeyError(f"{sorted(unknown)} are not given slots of {joint.name!r}")
+    missing = [slot for slot in joint.given_spec if slot not in values]
+    if missing:
+        raise KeyError(f"the given of {joint.name!r} omits the given slots {missing}")
+    return values
+
+
+def _leading_axes(value: Any, spec: TermSpec) -> tuple[int, ...] | None:
+    """The axes of *value* before the ones *spec* declares, read at its first array leaf.
+
+    Returns ``None`` when *spec* declares no array leaf to read them at.
+    """
+    if isinstance(spec, NumericArraySpec):
+        shape = tuple(jnp.shape(value))
+        return shape[: max(len(shape) - len(spec.shape), 0)]
+    if isinstance(spec, RecordSpec):
+        children = _children(value)
+        for name, child in spec.children.items():
+            axes = _leading_axes(children[name], child)
+            if axes is not None:
+                return axes
+    return None
+
+
+def _flatten_draws(tree: Any, batch_shape: tuple[int, ...]) -> Any:
+    """*tree* with the leading *batch_shape* axes of each leaf merged into one axis."""
+    rank, count = len(batch_shape), math.prod(batch_shape)
+    return jax.tree.map(lambda leaf: jnp.reshape(leaf, (count, *jnp.shape(leaf)[rank:])), tree)
+
+
+def _unflatten_draws(tree: Any, batch_shape: tuple[int, ...]) -> Any:
+    """*tree* with the leading axis of each leaf split into *batch_shape*."""
+    return jax.tree.map(lambda leaf: jnp.reshape(leaf, (*batch_shape, *jnp.shape(leaf)[1:])), tree)
+
+
+# ---------------------------------------------------------------------------
+# Sampling and scoring
 # ---------------------------------------------------------------------------
 
 
-def _all_claim(factors: Sequence[Factor], protocol: type) -> bool:
-    """Whether every factor claims *protocol*, a conditional factor through its twin."""
-    twin = _CONDITIONAL_TWINS[protocol]
-    return all(
-        isinstance(factor, twin if isinstance(factor, ConditionalDistribution) else protocol)
-        for factor in factors
+def _ancestral_sample(
+    graph: _FactorGraph, fixed: Mapping[str, Any], key: PRNGKey, sample_shape: tuple[int, ...]
+) -> dict[str, Any]:
+    """The draw of the joint of *graph*, each unmet given set by *fixed*.
+
+    Conditional-first order makes right to left an ancestral order, so every
+    component a factor conditions on is drawn before the factor draws.
+    """
+    keys = jax.random.split(key, len(graph.factors))
+    drawn: dict[str, Any] = {}
+    for index in reversed(range(len(graph.factors))):
+        factor = graph.factors[index]
+        if isinstance(factor, ConditionalDistribution):
+            draw = _conditional_draw(factor, drawn, fixed, keys[index], sample_shape)
+        else:
+            draw = factor._sample(keys[index], sample_shape)
+        drawn.update(_components_of(factor.event_spec, draw))
+    return {component: drawn[component] for component in graph.event_spec.components}
+
+
+def _conditional_draw(
+    factor: ConditionalDistribution,
+    drawn: Mapping[str, Any],
+    fixed: Mapping[str, Any],
+    key: PRNGKey,
+    sample_shape: tuple[int, ...],
+) -> Any:
+    """A draw of *factor* at the components in *drawn* it names and its unmet givens in *fixed*."""
+    inner = {slot: drawn[slot] for slot in factor.given_spec if slot in drawn}
+
+    def given(values: Mapping[str, Any]) -> dict[str, Any]:
+        return {slot: values[slot] if slot in values else fixed[slot] for slot in factor.given_spec}
+
+    if not inner or not sample_shape:
+        return factor._conditional_sample(given(inner), key, sample_shape)
+    draws = jax.vmap(lambda values, subkey: factor._conditional_sample(given(values), subkey, ()))(
+        _flatten_draws(inner, sample_shape), jax.random.split(key, math.prod(sample_shape))
     )
+    return _unflatten_draws(draws, sample_shape)
 
 
-def _stub(name: str) -> Callable[..., Any]:
-    def method(self: Any, *args: Any, **kwargs: Any) -> Any:
-        raise NotImplementedError(name)
+def _score(graph: _FactorGraph, fixed: Mapping[str, Any], value: Any, method: str) -> Array:
+    """The sum of each factor's density *method* at its part of *value*, unmet givens in *fixed*."""
+    components = _children(value)
+    total: Any = None
+    for factor in graph.factors:
+        event = _event_of(factor.event_spec, components)
+        if isinstance(factor, ConditionalDistribution):
+            score = _conditional_score(
+                factor, f"_conditional{method}", graph, components, fixed, event
+            )
+        else:
+            score = getattr(factor, method)(event)
+        total = score if total is None else total + score
+    return total
 
-    method.__name__ = name.rsplit(".", 1)[-1]
-    method.__qualname__ = name
-    method._is_stub = True
-    return method
+
+def _conditional_score(
+    factor: ConditionalDistribution,
+    method: str,
+    graph: _FactorGraph,
+    components: Mapping[str, Any],
+    fixed: Mapping[str, Any],
+    event: Any,
+) -> Array:
+    """*factor*'s density *method* at *event*, at the given the joint's components supply."""
+    inner = {slot: components[slot] for slot in factor.given_spec if slot in graph.producers}
+
+    def given(values: Mapping[str, Any]) -> dict[str, Any]:
+        return {slot: values[slot] if slot in values else fixed[slot] for slot in factor.given_spec}
+
+    density = getattr(factor, method)
+    batch = next(
+        (
+            axes
+            for slot, value in inner.items()
+            if (axes := _leading_axes(value, factor.given_spec[slot])) is not None
+        ),
+        (),
+    )
+    if not batch:
+        return density(given(inner), event)
+    scores = jax.vmap(lambda values, one: density(given(values), one))(
+        *_flatten_draws((inner, event), batch)
+    )
+    return _unflatten_draws(scores, batch)
+
+
+# ---------------------------------------------------------------------------
+# The moments of an edge-free joint
+# ---------------------------------------------------------------------------
+
+
+def _factor_results(
+    graph: _FactorGraph, fixed: Mapping[str, Any], method: str, *arguments: Any
+) -> Iterator[tuple[Factor, Any]]:
+    """Each factor with the result of its *method*, a conditional factor's at its givens in *fixed*.
+
+    An edge-free joint calls this, so every given of a conditional factor is unmet.
+    """
+    for factor in graph.factors:
+        if isinstance(factor, ConditionalDistribution):
+            given = {slot: fixed[slot] for slot in factor.given_spec}
+            yield factor, getattr(factor, f"_conditional{method}")(given, *arguments)
+        else:
+            yield factor, getattr(factor, method)(*arguments)
+
+
+def _componentwise(
+    graph: _FactorGraph, fixed: Mapping[str, Any], method: str, *arguments: Any
+) -> dict[str, Any]:
+    """Each factor's event-typed *method* result, assembled per component in canonical order."""
+    assembled: dict[str, Any] = {}
+    for factor, result in _factor_results(graph, fixed, method, *arguments):
+        assembled.update(_components_of(factor.event_spec, result))
+    return {component: assembled[component] for component in graph.event_spec.components}
+
+
+def _block_diagonal(graph: _FactorGraph, fixed: Mapping[str, Any]) -> DenseLinOp:
+    """The factors' covariances as the diagonal blocks of one operator, in factor order.
+
+    Each factor's components are contiguous in canonical factor order and keep
+    the factor's own order, so factor order is the order of the joint's
+    flattened coordinates.
+    """
+    blocks = [to_dense(cov) for _, cov in _factor_results(graph, fixed, "_cov")]
+    return DenseLinOp(block_diag(*blocks))
+
+
+# ---------------------------------------------------------------------------
+# Marginals
+# ---------------------------------------------------------------------------
+
+
+def _requests(graph: _FactorGraph, paths: tuple[str, ...]) -> dict[int, tuple[str, ...]]:
+    """The requested paths within each factor that produces one, keyed by index in factor order."""
+    requested: dict[int, list[str]] = {}
+    for path in paths:
+        requested.setdefault(graph.producers[path.split(_PATH_SEP, 1)[0]], []).append(path)
+    return {index: tuple(requested[index]) for index in sorted(requested)}
+
+
+def _kept_whole(factor: Factor, requested: tuple[str, ...]) -> bool:
+    """Whether a marginal keeps *factor* whole: every component of it is requested."""
+    return set(requested) == set(factor.event_spec.components)
+
+
+def _factor_request(requested: tuple[str, ...]) -> str | tuple[str, ...]:
+    """The path argument of a factor's marginal: one path, or the selection of several."""
+    return requested[0] if len(requested) == 1 else requested
+
+
+def _sole_field_projection(method: str) -> Callable[..., Any]:
+    """The capability of a :class:`_SoleField` that takes the one field of the law's *method*."""
+
+    def projected(self: _SoleField, *arguments: Any) -> Any:
+        return _children(getattr(self._law, method)(*arguments))[self._component]
+
+    projected.__name__ = method
+    projected.__qualname__ = f"_SoleField.{method}"
+    projected.__doc__ = f"The one field of the record law's ``{method}``."
+    return projected
+
+
+def _sole_field_density(method: str) -> Callable[..., Any]:
+    """The density *method* of a :class:`_SoleField`, the law's at the record of the value."""
+
+    def density(self: _SoleField, value: Any) -> Array:
+        return getattr(self._law, method)({self._component: value})
+
+    density.__name__ = method
+    density.__qualname__ = f"_SoleField.{method}"
+    density.__doc__ = f"The record law's ``{method}`` at the record whose one field is *value*."
+    return density
+
+
+def _sole_field_guard(method: str) -> Callable[..., Feasibility]:
+    """The guard of a :class:`_SoleField`'s *method*, which is the law's guard of *method*."""
+
+    def guard(self: _SoleField, *arguments: Any) -> Feasibility:
+        return _capability_guard(self._law, method, *arguments)
+
+    guard.__name__ = f"{method}_guard"
+    guard.__qualname__ = f"_SoleField.{method}_guard"
+    guard.__doc__ = f"The record law's guard of ``{method}``."
+    return guard
+
+
+def _sole_field_cov(self: _SoleField) -> Any:
+    """The record law's covariance, since the field and the record flatten alike."""
+    return self._law._cov()
+
+
+def _sole_field_expectation(self: _SoleField, f: Callable[[Any], Array]) -> Array:
+    """The record law's expectation of *f* at the one field of each draw."""
+    return self._law._expectation(lambda record: f(_children(record)[self._component]))
+
+
+def _sole_field_marginal(self: _SoleField, path: str | tuple[str, ...]) -> Distribution:
+    """This law at its component, and the record law's marginal at any other path.
+
+    The field and the record have the same event paths.
+    """
+    return self if path == self._component else self._law._marginal(path)
+
+
+def _sole_field_marginal_guard(self: _SoleField, path: str | tuple[str, ...]) -> Feasibility:
+    """Exact at the component, and the record law's guard at any other path."""
+    if path == self._component:
+        return Feasibility(True)
+    return _capability_guard(self._law, "_marginal", path)
+
+
+#: Each capability a :class:`_SoleField` takes from its record law, with its methods.
+_SOLE_FIELD_CAPABILITIES: dict[type, Mapping[str, Callable[..., Any]]] = {
+    SupportsSampling: {
+        "_sample": _sole_field_projection("_sample"),
+        "_sample_guard": _sole_field_guard("_sample"),
+    },
+    SupportsLogProb: {
+        "_log_prob": _sole_field_density("_log_prob"),
+        "_log_prob_guard": _sole_field_guard("_log_prob"),
+    },
+    SupportsUnnormalizedLogProb: {
+        "_unnormalized_log_prob": _sole_field_density("_unnormalized_log_prob"),
+        "_unnormalized_log_prob_guard": _sole_field_guard("_unnormalized_log_prob"),
+    },
+    SupportsMean: {
+        "_mean": _sole_field_projection("_mean"),
+        "_mean_guard": _sole_field_guard("_mean"),
+    },
+    SupportsVariance: {
+        "_variance": _sole_field_projection("_variance"),
+        "_variance_guard": _sole_field_guard("_variance"),
+    },
+    SupportsCovariance: {"_cov": _sole_field_cov, "_cov_guard": _sole_field_guard("_cov")},
+    SupportsQuantile: {
+        "_quantile": _sole_field_projection("_quantile"),
+        "_quantile_guard": _sole_field_guard("_quantile"),
+    },
+    SupportsExpectation: {
+        "_expectation": _sole_field_expectation,
+        "_expectation_guard": _sole_field_guard("_expectation"),
+    },
+    SupportsMarginals: {
+        "_marginal": _sole_field_marginal,
+        "_marginal_guard": _sole_field_marginal_guard,
+    },
+}
+
+
+class _SoleField(Distribution):
+    """The law of the one field of a one-field record law, declared as a whole term.
+
+    The field determines the record, so the two are one law in two packagings,
+    and each capability is the record law's through that correspondence. A
+    joint's marginal returns it for a projection onto the one component of a
+    factor that exposes a record of it, since a projection is a whole term.
+
+    Parameters
+    ----------
+    law : Distribution
+        A law whose event exposes a record of one field.
+    """
+
+    _capability_table = _SOLE_FIELD_CAPABILITIES
+
+    def __new__(cls, law: Distribution) -> _SoleField:
+        protocols = _claimed(law, _SOLE_FIELD_CAPABILITIES)
+        return object.__new__(_capability_subclass(_SoleField, protocols))
+
+    def __init__(self, law: Distribution) -> None:
+        ((component, spec),) = law.event_spec.components.items()
+        super().__init__(law.name, OutputSpec(**{component: spec}))
+        object.__setattr__(self, "_law", law)
+        object.__setattr__(self, "_component", component)
 
 
 def _marginal_guard(self: Any, path: str | tuple[str, ...]) -> Feasibility:
@@ -334,20 +707,295 @@ def _marginal_guard(self: Any, path: str | tuple[str, ...]) -> Feasibility:
                 f"the marginal reduces {name!r}, which {graph.factors[consumer].name!r} "
                 f"conditions on",
             )
-    for index in sorted(targets):
+    for index, requested in _requests(graph, paths).items():
         factor = graph.factors[index]
-        components = set(factor.event_spec.components)
-        requested = tuple(p for p in paths if p.split(_PATH_SEP, 1)[0] in components)
-        if set(requested) == components:
+        if _kept_whole(factor, requested):
             continue
         if not isinstance(factor, SupportsMarginals):
             return Feasibility(False, f"the factor {factor.name!r} has no marginals")
-        report = _capability_guard(
-            factor, "_marginal", requested[0] if len(requested) == 1 else requested
-        )
+        report = _capability_guard(factor, "_marginal", _factor_request(requested))
         if report.feasible is not True:
             return report
     return Feasibility(True)
+
+
+# ---------------------------------------------------------------------------
+# The derived capabilities
+# ---------------------------------------------------------------------------
+#
+# Each function below is installed under the method name it realizes, in the
+# capability subclass of a joint that claims it.
+
+
+def _joint_sample(self: Any, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> dict[str, Any]:
+    """Draw from the joint by ancestral sampling over its factors.
+
+    The factors draw from right to left, and factor ``i`` draws with the
+    ``i``-th key of a split of *key* into one key per factor, so one key
+    reproduces the draw. A conditional factor conditions on the components the
+    factors to its right drew. Under a non-empty *sample_shape* such a factor
+    is mapped over the draws, each with its own key from a split of the
+    factor's key, so it receives one given value per call.
+
+    Parameters
+    ----------
+    key : PRNGKey
+        The key of the draw.
+    sample_shape : tuple of int, optional
+        Batch axes prepended to every component; ``()`` draws once.
+
+    Returns
+    -------
+    dict
+        Each component's raw value, keyed by component in canonical factor order.
+    """
+    return _ancestral_sample(self._graph, {}, key, tuple(sample_shape))
+
+
+def _joint_log_prob(self: Any, value: Any) -> Array:
+    """The normalized log-density of the joint: the sum of its factors' log-densities.
+
+    Each factor scores its own event, reconstructed from the components of
+    *value* by the factor's packaging, and a conditional factor is scored at the
+    given the components it names supply. A batch of values keeps its leading
+    axes, and a conditional factor is mapped over the batch, so it receives one
+    given value per call.
+
+    Parameters
+    ----------
+    value : Mapping[str, Any] or Record
+        A value of the joint's event, or a batch of them, keyed by component.
+
+    Returns
+    -------
+    Array
+        The log-density, shaped as the batch axes.
+    """
+    return _score(self._graph, {}, value, "_log_prob")
+
+
+def _joint_unnormalized_log_prob(self: Any, value: Any) -> Array:
+    """The log-density of the joint up to an additive constant.
+
+    It is the sum of the factors' unnormalized log-densities, each factor scored
+    as for the normalized log-density.
+
+    Parameters
+    ----------
+    value : Mapping[str, Any] or Record
+        A value of the joint's event, or a batch of them, keyed by component.
+
+    Returns
+    -------
+    Array
+        The unnormalized log-density, shaped as the batch axes.
+    """
+    return _score(self._graph, {}, value, "_unnormalized_log_prob")
+
+
+def _joint_mean(self: Any) -> dict[str, Any]:
+    """The mean of an edge-free joint, each component's from the factor that produces it.
+
+    Returns
+    -------
+    dict
+        Each component's mean, keyed by component in canonical factor order.
+    """
+    return _componentwise(self._graph, {}, "_mean")
+
+
+def _joint_variance(self: Any) -> dict[str, Any]:
+    """The variance of an edge-free joint, each component's from the factor that produces it.
+
+    Returns
+    -------
+    dict
+        Each component's variance, keyed by component in canonical factor order.
+    """
+    return _componentwise(self._graph, {}, "_variance")
+
+
+def _joint_cov(self: Any) -> DenseLinOp:
+    """The covariance of an edge-free joint over its flattened draw.
+
+    The factors are independent, so the covariance is block diagonal, with each
+    factor's covariance as a block in factor order, the order of the joint's
+    flattened coordinates.
+
+    Returns
+    -------
+    DenseLinOp
+        The ``(d, d)`` covariance, where ``d`` is the size of the flattened draw.
+    """
+    return _block_diagonal(self._graph, {})
+
+
+def _joint_quantile(self: Any, q: ArrayLike) -> dict[str, Any]:
+    """The quantiles of an edge-free joint at the levels *q*, assembled per component.
+
+    A whole-term factor's quantiles are its component's, and an exposed record's
+    are the children of the factor's result.
+
+    Returns
+    -------
+    dict
+        Each component's quantiles, keyed by component in canonical factor order.
+    """
+    return _componentwise(self._graph, {}, "_quantile", q)
+
+
+def _joint_conditional_sample(
+    self: Any,
+    given: Record | Mapping[str, Any],
+    key: PRNGKey,
+    sample_shape: tuple[int, ...] = (),
+) -> dict[str, Any]:
+    """Draw from the joint at *given* by ancestral sampling over its factors.
+
+    Each unmet given takes its value from *given*, and the factors draw as for
+    the unconditional joint's ``_sample``, keys included.
+
+    Returns
+    -------
+    dict
+        Each component's raw value, keyed by component in canonical factor order.
+
+    Raises
+    ------
+    KeyError
+        If *given* names a slot the joint does not have, or omits one it has.
+    """
+    return _ancestral_sample(self._graph, _given_values(self, given), key, tuple(sample_shape))
+
+
+def _joint_conditional_log_prob(self: Any, given: Record | Mapping[str, Any], value: Any) -> Array:
+    """The normalized log-density of the joint at *given*: the sum of its factors'.
+
+    Each unmet given takes its value from *given*, and the factors are scored as
+    the unconditional joint's are.
+
+    Raises
+    ------
+    KeyError
+        If *given* names a slot the joint does not have, or omits one it has.
+    """
+    return _score(self._graph, _given_values(self, given), value, "_log_prob")
+
+
+def _joint_conditional_unnormalized_log_prob(
+    self: Any, given: Record | Mapping[str, Any], value: Any
+) -> Array:
+    """The log-density of the joint at *given*, up to an additive constant.
+
+    Raises
+    ------
+    KeyError
+        If *given* names a slot the joint does not have, or omits one it has.
+    """
+    return _score(self._graph, _given_values(self, given), value, "_unnormalized_log_prob")
+
+
+def _joint_conditional_mean(self: Any, given: Record | Mapping[str, Any]) -> dict[str, Any]:
+    """The mean of an edge-free joint at *given*, each component's from its factor.
+
+    Raises
+    ------
+    KeyError
+        If *given* names a slot the joint does not have, or omits one it has.
+    """
+    return _componentwise(self._graph, _given_values(self, given), "_mean")
+
+
+def _joint_conditional_variance(self: Any, given: Record | Mapping[str, Any]) -> dict[str, Any]:
+    """The variance of an edge-free joint at *given*, each component's from its factor.
+
+    Raises
+    ------
+    KeyError
+        If *given* names a slot the joint does not have, or omits one it has.
+    """
+    return _componentwise(self._graph, _given_values(self, given), "_variance")
+
+
+def _joint_conditional_cov(self: Any, given: Record | Mapping[str, Any]) -> DenseLinOp:
+    """The block-diagonal covariance of an edge-free joint at *given*.
+
+    Raises
+    ------
+    KeyError
+        If *given* names a slot the joint does not have, or omits one it has.
+    """
+    return _block_diagonal(self._graph, _given_values(self, given))
+
+
+def _joint_conditional_quantile(
+    self: Any, given: Record | Mapping[str, Any], q: ArrayLike
+) -> dict[str, Any]:
+    """The quantiles of an edge-free joint at *given* and the levels *q*, per component.
+
+    Raises
+    ------
+    KeyError
+        If *given* names a slot the joint does not have, or omits one it has.
+    """
+    return _componentwise(self._graph, _given_values(self, given), "_quantile", q)
+
+
+def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
+    """The exact marginal of the joint at *path*, detached from the joint.
+
+    A factor whose every component is requested is kept as it is, and a factor
+    requested in part is reduced to its own marginal at its requested paths. A
+    projection onto one path returns the one factor it keeps or reduces, as a
+    whole term: a kept factor that exposes a record of that one component is
+    returned as the law of its field. A selection of several paths returns an
+    exposed record: the one factor itself when it exposes a record, and
+    otherwise the joint of the kept factors in factor order, labeled by their
+    labels joined with ``·``.
+
+    Parameters
+    ----------
+    path : str or tuple of str
+        An event path of the joint, or a selection of several.
+
+    Returns
+    -------
+    Distribution
+        The marginal, which shares the joint's factors.
+
+    Raises
+    ------
+    ResolutionError
+        If the marginal guard does not accept *path*, so no exact marginal is
+        available there.
+    """
+    report = _marginal_guard(self, path)
+    if report.feasible is not True:
+        reason = report.description or "; ".join(report.pending)
+        raise ResolutionError(f"{self.name!r} has no exact marginal at {path!r}: {reason}")
+    graph: _FactorGraph = self._graph
+    projection = isinstance(path, str)
+    kept: list[Distribution] = []
+    for index, requested in _requests(graph, (path,) if projection else tuple(path)).items():
+        factor = graph.factors[index]
+        if not _kept_whole(factor, requested):
+            kept.append(factor._marginal(_factor_request(requested)))
+        elif projection and factor.event_spec.exposes_record:
+            kept.append(_SoleField(factor))
+        else:
+            kept.append(factor)
+    if len(kept) == 1 and (projection or kept[0].event_spec.exposes_record):
+        return kept[0]
+    return FactoredDistribution(_LABEL_SEP.join(factor.name for factor in kept), kept)
+
+
+def _all_claim(factors: Sequence[Factor], protocol: type) -> bool:
+    """Whether every factor claims *protocol*, a conditional factor through its twin."""
+    twin = _CONDITIONAL_TWINS[protocol]
+    return all(
+        isinstance(factor, twin if isinstance(factor, ConditionalDistribution) else protocol)
+        for factor in factors
+    )
 
 
 #: The method each unconditional capability of a joint names.
@@ -359,6 +1007,25 @@ _JOINT_METHODS: dict[type, str] = {
     SupportsVariance: "_variance",
     SupportsCovariance: "_cov",
     SupportsQuantile: "_quantile",
+}
+
+#: The function that realizes each method a joint may claim, keyed by method name.
+_JOINT_IMPLEMENTATIONS: dict[str, Callable[..., Any]] = {
+    "_sample": _joint_sample,
+    "_log_prob": _joint_log_prob,
+    "_unnormalized_log_prob": _joint_unnormalized_log_prob,
+    "_mean": _joint_mean,
+    "_variance": _joint_variance,
+    "_cov": _joint_cov,
+    "_quantile": _joint_quantile,
+    "_conditional_sample": _joint_conditional_sample,
+    "_conditional_log_prob": _joint_conditional_log_prob,
+    "_conditional_unnormalized_log_prob": _joint_conditional_unnormalized_log_prob,
+    "_conditional_mean": _joint_conditional_mean,
+    "_conditional_variance": _joint_conditional_variance,
+    "_conditional_cov": _joint_conditional_cov,
+    "_conditional_quantile": _joint_conditional_quantile,
+    "_marginal": _joint_marginal,
 }
 
 
@@ -397,12 +1064,12 @@ def _joint_table(owner: str, *, conditional: bool) -> dict[type, Mapping[str, Ca
         if conditional:
             joint_protocol, joint_method = _CONDITIONAL_TWINS[protocol], f"_conditional{method}"
         table[joint_protocol] = {
-            joint_method: _stub(f"{owner}.{joint_method}"),
+            joint_method: _JOINT_IMPLEMENTATIONS[joint_method],
             f"{joint_method}_guard": _factors_guard(owner, joint_method, method),
         }
     if not conditional:
         table[SupportsMarginals] = {
-            "_marginal": _stub(f"{owner}._marginal"),
+            "_marginal": _JOINT_IMPLEMENTATIONS["_marginal"],
             "_marginal_guard": _marginal_guard,
         }
     return table
@@ -492,6 +1159,12 @@ class FactoredDistribution(Distribution, SupportsFactors):
     none. The marginal is resolved per path, and its guard reports whether the
     marginal at a path is exact.
 
+    A draw is a mapping from each component to its raw value, in canonical
+    factor order, and so is each event-typed moment. Sampling is ancestral: the
+    factors draw from right to left, each conditional factor at the components
+    it names. Scoring sums the factors' densities, each at its own event
+    reconstructed from the components.
+
     Parameters
     ----------
     name : str
@@ -580,6 +1253,11 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
     :class:`FactoredDistribution`. Conditioning on every given yields a
     ``FactoredDistribution``, and conditioning on some curries to a smaller
     ``FactoredConditionalDistribution``.
+
+    Each conditional capability is its unconditional counterpart's on
+    :class:`FactoredDistribution`, with every unmet given set by the ``given``
+    of the call, and each factor is called through its own capability at that
+    value.
 
     Parameters
     ----------

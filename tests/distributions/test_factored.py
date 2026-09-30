@@ -22,11 +22,14 @@ import pytest
 from jax.scipy.stats import norm
 
 from probpipe import (
+    MultivariateNormal,
     Normal,
     NumericArraySpec,
     OpaqueSpec,
     OutputSpec,
+    Record,
     RecordSpec,
+    ResolutionError,
     SupportsCovariance,
     SupportsExpectation,
     SupportsLogProb,
@@ -289,6 +292,37 @@ class DecliningPointLaw(PointLaw):
     def _sample_guard(self) -> bool:
         """Draws only from a finite point."""
         return False
+
+
+class PairMomentLaw(Law, SupportsMean, SupportsVariance):
+    """A law over the record ``{a, b}`` with mean ``{a: 1, b: 2}`` and variance ``{a: 3, b: 4}``."""
+
+    def _mean(self):
+        return {"a": jnp.asarray(1.0), "b": jnp.asarray(2.0)}
+
+    def _variance(self):
+        return {"a": jnp.asarray(3.0), "b": jnp.asarray(4.0)}
+
+
+class ShiftedQuantileLaw(Law, SupportsQuantile):
+    """A law whose quantile at each level ``q`` is ``q`` plus its shift."""
+
+    def __init__(self, name: str, event_spec: OutputSpec, shift: float) -> None:
+        super().__init__(name, event_spec)
+        self.shift = shift
+
+    def _quantile(self, q):
+        return jnp.asarray(q) + self.shift
+
+
+class OneFieldNormal(Law, SupportsSampling, SupportsLogProb):
+    """A normal law of scale two over the one-field record ``{beta}``."""
+
+    def _sample(self, key, sample_shape=()):
+        return {"beta": 2.0 * jax.random.normal(key, sample_shape)}
+
+    def _log_prob(self, value):
+        return norm.logpdf(value["beta"], 0.0, 2.0)
 
 
 class UndecidedSamplingKernel(SamplingKernel):
@@ -576,31 +610,61 @@ class TestMomentCapabilities:
         joint = _law("a", "a", law=MomentLaw) * _law("b", "b", law=MomentLaw)
         assert not isinstance(joint, SupportsExpectation)
 
-    @pytest.mark.pending(reason="an edge-free joint assembles its factors' means")
     def test_an_edge_free_mean_is_the_record_of_the_factor_means(self):
         mean = (Normal("a", 0.0, 1.0) * Normal("b", 1.0, 2.0))._mean()
         assert list(mean.keys()) == ["a", "b"]
         assert jnp.allclose(mean["a"], 0.0)
         assert jnp.allclose(mean["b"], 1.0)
 
-    @pytest.mark.pending(reason="an edge-free joint assembles its factors' variances")
     def test_an_edge_free_variance_is_the_record_of_the_factor_variances(self):
         variance = (Normal("a", 0.0, 1.0) * Normal("b", 1.0, 2.0))._variance()
         assert list(variance.keys()) == ["a", "b"]
         assert jnp.allclose(variance["a"], 1.0)
         assert jnp.allclose(variance["b"], 4.0)
 
-    @pytest.mark.pending(reason="an edge-free joint's covariance is block diagonal")
     def test_an_edge_free_covariance_is_block_diagonal_over_the_flat_event(self):
         cov = (Normal("a", 0.0, 1.0) * Normal("b", 1.0, 2.0))._cov()
         assert jnp.allclose(cov.to_dense(), jnp.diag(jnp.array([1.0, 4.0])))
 
-    @pytest.mark.pending(reason="a joint samples each factor given the draws it conditions on")
     def test_the_exponential_location_mean_is_not_a_composition_of_factor_means(self):
         draws = _exponential_location_model()._sample(jax.random.PRNGKey(0), (20_000,))
         mean = float(jnp.mean(jnp.asarray(draws["y"])))
         # exp(E[x]) = 1, while E[y] = e^{1/2}; sd(y) is about 2.4, a standard error of 0.017.
         assert abs(mean - float(jnp.exp(0.5))) < 0.1
+
+    def test_each_factor_covariance_is_a_block_in_factor_order(self):
+        cov = jnp.array([[2.0, 0.5], [0.5, 1.0]])
+        vector = MultivariateNormal("m", loc=jnp.zeros(2), cov=cov)
+        joint_cov = (Normal("s", 0.0, 3.0) * vector)._cov()
+        assert isinstance(joint_cov, DenseLinOp)
+        expected = jnp.zeros((3, 3)).at[0, 0].set(9.0).at[1:, 1:].set(cov)
+        assert jnp.allclose(joint_cov.to_dense(), expected)
+
+    def test_a_record_factor_contributes_each_of_its_components(self):
+        joint = PairMomentLaw("pair", OutputSpec(RecordSpec(a=SCALAR, b=SCALAR))) * Normal(
+            "c", 5.0, 1.0
+        )
+        mean, variance = joint._mean(), joint._variance()
+        assert list(mean) == list(variance) == ["a", "b", "c"]
+        assert [float(mean[c]) for c in mean] == [1.0, 2.0, 5.0]
+        assert [float(variance[c]) for c in variance] == [3.0, 4.0, 1.0]
+
+    def test_an_edge_free_quantile_is_assembled_per_component(self):
+        first = ShiftedQuantileLaw("first", OutputSpec(a=SCALAR), 1.0)
+        second = ShiftedQuantileLaw("second", OutputSpec(b=SCALAR), 10.0)
+        levels = jnp.array([0.25, 0.5])
+        quantiles = (first * second)._quantile(levels)
+        assert list(quantiles) == ["a", "b"]
+        assert jnp.allclose(quantiles["a"], levels + 1.0)
+        assert jnp.allclose(quantiles["b"], levels + 10.0)
+
+    def test_an_edge_free_conditional_joint_has_its_moments_at_its_given(self):
+        joint = MomentKernel("k", {"x": SCALAR}, OutputSpec(a=SCALAR)) * Normal("b", 1.0, 2.0)
+        mean = joint._conditional_mean({"x": 0.5})
+        variance = joint._conditional_variance({"x": 0.5})
+        assert list(mean) == list(variance) == ["a", "b"]
+        assert [float(mean[c]) for c in mean] == [0.5, 1.0]
+        assert [float(variance[c]) for c in variance] == [1.0, 4.0]
 
 
 # -- Marginals ----------------------------------------------------------------------
@@ -732,14 +796,12 @@ class TestFactorGuards:
 class TestMarginalValues:
     """The exact marginal is the sub-joint of the target's ancestor closure, reduced."""
 
-    @pytest.mark.pending(reason="a joint returns the marginal of a root factor")
     def test_the_marginal_of_a_root_factor_is_that_factor_law(self):
         prior = _prior(scale=2.0)
         marginal = (_likelihood() * prior)._marginal("beta")
         assert marginal.event_spec == prior.event_spec
         assert jnp.allclose(marginal._log_prob(0.7), prior._log_prob(0.7))
 
-    @pytest.mark.pending(reason="a joint returns the sub-joint of an ancestrally closed group")
     def test_the_marginal_of_an_ancestrally_closed_group_is_the_sub_joint(self):
         lik, prior = _likelihood(), _prior()
         marginal = (lik * prior * _law("other", "c"))._marginal(("y", "beta"))
@@ -747,19 +809,45 @@ class TestMarginalValues:
         assert marginal.factors == (lik, prior)
         assert list(marginal.event_spec.components) == ["y", "beta"]
 
-    @pytest.mark.pending(reason="a joint returns the marginal of an edge-free group")
     def test_the_marginal_of_an_edge_free_group_is_an_exposed_record_of_it(self):
         joint = _law("u", "a") * _law("v", "b") * _law("w", "c")
         marginal = joint._marginal(("a", "c"))
         assert marginal.event_spec.exposes_record
         assert list(marginal.event_spec.components) == ["a", "c"]
 
-    @pytest.mark.pending(reason="a joint delegates a marginal inside one factor to that factor")
     def test_the_marginal_inside_one_factor_is_that_factor_marginal(self):
         pair = _pair(law=MarginalLaw, exact=("a",))
         marginal = (pair * _law("other", "c"))._marginal("a")
         assert pair.marginalized == ["a"]
         assert marginal.event_spec == OutputSpec(a=SCALAR)
+
+    def test_the_marginal_of_a_group_is_labeled_by_its_factors(self):
+        joint = _law("u", "a") * _law("v", "b") * _law("w", "c")
+        assert joint._marginal(("a", "c")).name == "u·w"
+
+    def test_a_selection_of_one_whole_term_is_an_exposed_record(self):
+        prior = _prior()
+        marginal = (_likelihood() * prior)._marginal(("beta",))
+        assert marginal.event_spec == OutputSpec(RecordSpec(beta=prior.event_spec.spec))
+        assert marginal.factors == (prior,)
+
+    def test_a_selection_of_a_record_factor_components_is_that_factor(self):
+        pair = _pair()
+        assert (pair * _law("other", "c"))._marginal(("a", "b")) is pair
+
+    def test_a_projection_onto_a_one_field_record_is_the_law_of_its_field(self):
+        record = OneFieldNormal("record", OutputSpec(RecordSpec(beta=SCALAR)))
+        joint = _likelihood() * record
+        assert joint._marginal_guard("beta").feasible is True
+        marginal = joint._marginal("beta")
+        assert marginal.event_spec == OutputSpec(beta=SCALAR)
+        assert jnp.allclose(marginal._log_prob(0.7), norm.logpdf(0.7, 0.0, 2.0))
+        draws = marginal._sample(jax.random.PRNGKey(0), (3,))
+        assert jnp.allclose(draws, record._sample(jax.random.PRNGKey(0), (3,))["beta"])
+
+    def test_a_marginal_the_guard_declines_raises(self):
+        with pytest.raises(ResolutionError, match=_mentions("'y'", "'prior'")):
+            (_likelihood() * _prior())._marginal("y")
 
 
 # -- Conditioning a conditional joint -----------------------------------------------
@@ -1007,14 +1095,12 @@ class TestRoundTrips:
 class TestJointSampling:
     """A draw extracts each factor's components from its one draw, in canonical factor order."""
 
-    @pytest.mark.pending(reason="a joint samples through its factors")
     def test_a_draw_holds_every_component_in_canonical_order(self):
         joint = _likelihood(SamplingKernel) * _prior() * Normal("c", 0.0, 1.0)
         draw = joint._sample(jax.random.PRNGKey(0))
         assert joint.event_spec.spec.is_valid(draw)
         assert list(draw.keys()) == ["y", "beta", "c"]
 
-    @pytest.mark.pending(reason="a joint samples through its factors")
     def test_a_draw_extracts_components_by_each_factor_packaging(self):
         fields = OutputSpec(RecordSpec(a=SCALAR, b=SCALAR))
         exposed = PointLaw("exposed", fields, {"a": jnp.asarray(1.0), "b": jnp.asarray(2.0)})
@@ -1025,7 +1111,6 @@ class TestJointSampling:
         assert (float(draw["a"]), float(draw["b"])) == (1.0, 2.0)
         assert (float(draw["params"]["u"]), float(draw["params"]["v"])) == (3.0, 4.0)
 
-    @pytest.mark.pending(reason="a joint samples through its factors")
     def test_every_consumer_reads_the_draw_its_producer_reports(self):
         first = SamplingKernel("first", {"beta": SCALAR}, OutputSpec(y1=SCALAR), scale=1e-6)
         second = SamplingKernel("second", {"beta": SCALAR}, OutputSpec(y2=SCALAR), scale=1e-6)
@@ -1033,12 +1118,10 @@ class TestJointSampling:
         assert jnp.allclose(draw["y1"], draw["beta"], atol=1e-4)
         assert jnp.allclose(draw["y2"], draw["beta"], atol=1e-4)
 
-    @pytest.mark.pending(reason="a joint samples through its factors")
     def test_a_sample_shape_prepends_batch_axes_to_every_component(self):
         draws = (_likelihood(SamplingKernel) * _prior())._sample(jax.random.PRNGKey(2), (4,))
         assert jnp.shape(draws["y"]) == jnp.shape(draws["beta"]) == (4,)
 
-    @pytest.mark.pending(reason="a conditional joint samples through its factors")
     def test_a_conditional_joint_samples_under_its_given(self):
         lik = SamplingKernel(
             "lik", {"beta": SCALAR, "sigma": SCALAR}, OutputSpec(y=SCALAR), scale=1e-6
@@ -1047,18 +1130,46 @@ class TestJointSampling:
         assert list(draw.keys()) == ["y", "beta"]
         assert jnp.allclose(draw["y"], draw["beta"] + 10.0, atol=1e-4)
 
+    def test_one_key_reproduces_the_draw(self):
+        joint = _likelihood(SamplingKernel) * _prior() * Normal("c", 0.0, 1.0)
+        first, again = joint._sample(jax.random.PRNGKey(4)), joint._sample(jax.random.PRNGKey(4))
+        other = joint._sample(jax.random.PRNGKey(5))
+        assert all(jnp.array_equal(first[c], again[c]) for c in first)
+        assert not any(jnp.array_equal(first[c], other[c]) for c in first)
+
+    def test_each_factor_draws_with_its_own_key_of_one_split(self):
+        lik, prior = _likelihood(SamplingKernel), _prior()
+        key = jax.random.PRNGKey(6)
+        draw = (lik * prior)._sample(key)
+        lik_key, prior_key = jax.random.split(key, 2)
+        assert jnp.array_equal(draw["beta"], prior._sample(prior_key))
+        assert jnp.allclose(draw["y"], lik._conditional_sample({"beta": draw["beta"]}, lik_key))
+
+    def test_under_a_sample_shape_each_draw_conditions_on_its_own_producer_draw(self):
+        lik = SamplingKernel("lik", {"beta": SCALAR}, OutputSpec(y=SCALAR), scale=1e-6)
+        draws = (lik * _prior())._sample(jax.random.PRNGKey(7), (3, 2))
+        assert jnp.shape(draws["y"]) == jnp.shape(draws["beta"]) == (3, 2)
+        assert jnp.allclose(draws["y"], draws["beta"], atol=1e-4)
+        assert len(set(jnp.ravel(draws["beta"]).tolist())) == 6
+
+    def test_a_conditional_joint_samples_under_its_given_with_a_sample_shape(self):
+        lik = SamplingKernel(
+            "lik", {"beta": SCALAR, "sigma": SCALAR}, OutputSpec(y=SCALAR), scale=1e-6
+        )
+        draws = (lik * _prior())._conditional_sample({"sigma": 10.0}, jax.random.PRNGKey(8), (5,))
+        assert jnp.shape(draws["y"]) == jnp.shape(draws["beta"]) == (5,)
+        assert jnp.allclose(draws["y"], draws["beta"] + 10.0, atol=1e-4)
+
 
 class TestJointDensity:
     """Scoring reconstructs each factor's event and sums the factors' log-densities."""
 
-    @pytest.mark.pending(reason="a joint scores a value through its factors")
     def test_the_log_density_is_the_sum_of_the_factor_log_densities(self):
         lik, prior = _likelihood(ScoringKernel), _prior(scale=2.0)
         y, beta = jnp.asarray(0.3), jnp.asarray(-0.2)
         expected = lik._conditional_log_prob({"beta": beta}, y) + prior._log_prob(beta)
         assert jnp.allclose((lik * prior)._log_prob({"y": y, "beta": beta}), expected)
 
-    @pytest.mark.pending(reason="a joint scores a value through its factors")
     def test_the_unnormalized_density_differs_from_the_factor_sum_by_a_constant(self):
         lik, prior = _likelihood(UnnormalizedKernel), _prior()
         joint = lik * prior
@@ -1072,7 +1183,6 @@ class TestJointDensity:
         difference = joint._unnormalized_log_prob(first) - joint._unnormalized_log_prob(second)
         assert jnp.allclose(difference, factor_sum(first) - factor_sum(second))
 
-    @pytest.mark.pending(reason="a joint scores a value through its factors")
     def test_each_factor_scores_a_value_of_its_own_declared_kind(self):
         exposed = RecordingLaw("exposed", OutputSpec(RecordSpec(beta=SCALAR)))
         whole = RecordingLaw("whole", OutputSpec(gamma=SCALAR))
@@ -1087,7 +1197,6 @@ class TestJointDensity:
         assert whole.event_spec.spec.is_valid(gamma_value)
         assert not exposed.event_spec.spec.is_valid(gamma_value)
 
-    @pytest.mark.pending(reason="a conditional joint scores a value through its factors")
     def test_a_conditional_joint_scores_under_its_given(self):
         lik = ScoringKernel("lik", {"beta": SCALAR, "sigma": SCALAR}, OutputSpec(y=SCALAR))
         prior = _prior()
@@ -1096,3 +1205,78 @@ class TestJointDensity:
         expected = lik._conditional_log_prob(kernel_given, y) + prior._log_prob(beta)
         value = {"y": y, "beta": beta}
         assert jnp.allclose((lik * prior)._conditional_log_prob({"sigma": 1.5}, value), expected)
+
+    def test_the_log_density_agrees_with_a_hand_computed_sum(self):
+        joint = _likelihood(ScoringKernel, scale=0.5) * _prior(scale=2.0)
+        # log N(y; beta, 0.5^2) + log N(beta; 0, 2^2), written out.
+        y, beta = 0.3, -0.2
+        expected = (
+            -0.5 * ((y - beta) / 0.5) ** 2
+            - jnp.log(0.5)
+            - 0.5 * (beta / 2.0) ** 2
+            - jnp.log(2.0)
+            - jnp.log(2.0 * jnp.pi)
+        )
+        value = {"y": jnp.asarray(y), "beta": jnp.asarray(beta)}
+        assert jnp.allclose(joint._log_prob(value), expected)
+
+    def test_a_batch_of_values_is_scored_value_by_value(self):
+        joint = _likelihood(ScoringKernel) * _prior(scale=2.0)
+        values = {"y": jnp.array([0.3, -1.0, 2.0]), "beta": jnp.array([-0.2, 0.5, 1.0])}
+        scores = joint._log_prob(values)
+        assert jnp.shape(scores) == (3,)
+        for index in range(3):
+            one = {name: column[index] for name, column in values.items()}
+            assert jnp.allclose(scores[index], joint._log_prob(one))
+
+    def test_a_conditional_joint_scores_a_batch_under_its_given(self):
+        lik = ScoringKernel("lik", {"beta": SCALAR, "sigma": SCALAR}, OutputSpec(y=SCALAR))
+        joint = lik * _prior()
+        values = {"y": jnp.array([0.3, 1.2]), "beta": jnp.array([-0.2, 0.4])}
+        scores = joint._conditional_log_prob({"sigma": 1.5}, values)
+        assert jnp.shape(scores) == (2,)
+        for index in range(2):
+            one = {name: column[index] for name, column in values.items()}
+            assert jnp.allclose(scores[index], joint._conditional_log_prob({"sigma": 1.5}, one))
+
+    def test_an_edge_free_density_is_the_sum_of_the_factor_densities(self):
+        first, second = Normal("a", 0.0, 1.0), Normal("b", 1.0, 2.0)
+        value = {"a": jnp.asarray(0.3), "b": jnp.asarray(-0.4)}
+        expected = first._log_prob(value["a"]) + second._log_prob(value["b"])
+        assert jnp.allclose((first * second)._log_prob(value), expected)
+
+
+class TestFusedGiven:
+    """A conditional joint's capabilities take a value for every given slot, and only those."""
+
+    @pytest.mark.parametrize(
+        "call",
+        [
+            pytest.param(
+                lambda joint, given: joint._conditional_sample(given, jax.random.PRNGKey(0)),
+                id="sample",
+            ),
+            pytest.param(
+                lambda joint, given: joint._conditional_log_prob(given, {"y": 0.0, "beta": 0.0}),
+                id="log-prob",
+            ),
+        ],
+    )
+    @pytest.mark.parametrize(
+        ("given", "slot"),
+        [
+            pytest.param({}, "sigma", id="missing"),
+            pytest.param({"sigma": 1.0, "tau": 1.0}, "tau", id="unknown"),
+        ],
+    )
+    def test_a_given_that_omits_or_adds_a_slot_raises(self, call, given, slot):
+        lik = FullKernel("lik", {"beta": SCALAR, "sigma": SCALAR}, OutputSpec(y=SCALAR))
+        with pytest.raises(KeyError, match=_mentions(f"'{slot}'", "'lik·prior'")):
+            call(lik * _prior(), given)
+
+    def test_a_record_given_binds_by_its_fields(self):
+        lik = FullKernel("lik", {"beta": SCALAR, "sigma": SCALAR}, OutputSpec(y=SCALAR))
+        joint = lik * _prior()
+        value = {"y": jnp.asarray(0.3), "beta": jnp.asarray(-0.2)}
+        from_record = joint._conditional_log_prob(Record("given", sigma=1.5), value)
+        assert jnp.allclose(from_record, joint._conditional_log_prob({"sigma": 1.5}, value))

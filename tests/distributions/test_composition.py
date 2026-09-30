@@ -512,7 +512,6 @@ class TestLabels:
         assert list(ba.event_spec.components) == ["b", "a"]
         assert (ab.factors, ba.factors) == ((a, b), (b, a))
 
-    @pytest.mark.pending(reason="a joint scores a value through its factors")
     def test_exchanging_independent_operands_keeps_the_law(self):
         a, b = Normal("a", 0.0, 1.0), Normal("b", 1.0, 2.0)
         value = {"a": jnp.asarray(0.3), "b": jnp.asarray(-0.4)}
