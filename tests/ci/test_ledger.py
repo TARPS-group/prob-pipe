@@ -52,6 +52,35 @@ class TestStaleDocs:
         assert (path, location) == ("docs/guide.ipynb", "cell 1")
         assert detail.startswith("passes return_dist=, which is removed")
 
+    def test_a_function_keyword_that_is_no_control_is_listed(self, root):
+        _notebook(
+            root / "docs" / "guide.ipynb",
+            "add = Function('add', lambda x, y: x + y, dispatch='sequential', y=2.0)",
+            "@pp.function(n_broadcast_samples=8, scale=2.0)\ndef scaled(x, scale):\n    return x",
+        )
+        (root / "example_scripts" / "demo.py").write_text(
+            "wrapped = function(lambda x: x, name='identity', seed=0)\n"
+        )
+        detail = "which is neither a construction parameter nor a control"
+        assert [
+            (path, location, text.split(",")[0]) for path, location, text in _details(root)
+        ] == [
+            ("docs/guide.ipynb", "cell 0", "passes y= to Function"),
+            ("docs/guide.ipynb", "cell 1", "passes scale= to function"),
+            ("example_scripts/demo.py", "script", "passes seed= to function"),
+        ]
+        assert all(detail in text for _path, _location, text in _details(root))
+
+    def test_construction_parameters_controls_and_bindings_are_not_listed(self, root):
+        _notebook(
+            root / "docs" / "guide.ipynb",
+            "add = Function(name='add', fn=lambda x, y: x + y, bind={'y': 2.0}, raw=True)",
+            "@function(name='f', output_name='value', dispatch='jax', workflow_kind=None)\n"
+            "def f(x):\n    return x",
+            "g = Function('g', lambda **kw: 0, **controls)",
+        )
+        assert _details(root) == []
+
     def test_current_imports_and_magics_are_not_listed(self, root):
         _notebook(root / "docs" / "guide.ipynb", "%matplotlib inline\nfrom probpipe import Normal")
         (root / "example_scripts" / "demo.py").write_text("import probpipe\n")

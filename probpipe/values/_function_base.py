@@ -20,7 +20,7 @@ from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from functools import partial
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal, Protocol, Self, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, Self, cast, runtime_checkable
 
 import jax.numpy as jnp
 
@@ -43,8 +43,6 @@ if TYPE_CHECKING:
     from ..core._numeric import Numeric
     from ..core.named_tree import NamedTree
     from ..custom_types import Array
-
-_FunctionDispatch = Literal["auto", "jax", "sequential", "thread"]
 
 
 @dataclass(frozen=True, init=False)
@@ -366,6 +364,42 @@ def _validate_function_declarations(
         spec._bind_dims_from_value(value, effective, f"Function {function_name!r} {source}/{name}")
 
 
+#: The engine's controls, each with its default. A default sample count of None
+#: stands for the constructing class's ``DEFAULT_N_BROADCAST_SAMPLES``.
+_CONTROL_DEFAULTS: Mapping[str, Any] = MappingProxyType(
+    {
+        "workflow_kind": WorkflowKind.DEFAULT,
+        "n_broadcast_samples": None,
+        "dispatch": "auto",
+        "max_workers": None,
+        "include_inputs": False,
+        "method": None,
+        "exact_only": False,
+        "conversions": MappingProxyType({}),
+        "raw": False,
+    }
+)
+
+#: Removed construction keywords, which warn: ``func`` aliases ``fn``, and the rest are ignored.
+_REMOVED_KEYWORDS = frozenset({"seed", "input_template", "output_template", "func"})
+
+
+def _refuse_unknown_controls(controls: Mapping[str, Any]) -> None:
+    """Refuse every keyword that is neither an engine control nor a removed keyword.
+
+    Raises
+    ------
+    TypeError
+        Naming each unknown keyword.
+    """
+    unknown = controls.keys() - _CONTROL_DEFAULTS.keys() - _REMOVED_KEYWORDS
+    if unknown:
+        raise TypeError(
+            f"Unknown Function controls: {sorted(unknown)}; an argument of the wrapped "
+            f"function binds at construction through bind="
+        )
+
+
 class Function(Node, TrackedTerm, Annotated):
     """An immutable callable with a frozen signature and optional declarations.
 
@@ -395,37 +429,40 @@ class Function(Node, TrackedTerm, Annotated):
         The differentiability claim: exactly the numeric input values gradients
         propagate through. None makes no claim.
     bind : Mapping or None
-        Construction-time argument defaults, overridden by call arguments.
+        Construction-time values of the wrapped callable's arguments, overridden
+        by call arguments, and the only way to bind an argument at construction.
+        An entry keyed by a name the signature lacks goes to its variadic keyword
+        parameter.
     module : object or None
         Experimental shared-input container consulted for missing arguments.
-    workflow_kind : WorkflowKind
-        Orchestration selection; DEFAULT inherits the workflow configuration.
-    n_broadcast_samples : int or None
-        Positive sampling-lift count, defaulting to 128.
-    dispatch : {"auto", "jax", "sequential", "thread"}
-        Evaluation dispatch selection interpreted by the engine.
-    max_workers : int or None
-        Positive thread-worker count, or the executor default.
-    include_inputs : bool
-        Whether the sampling lift retains inputs alongside outputs.
-    method : str or None
-        The name of the route that realizes a call. None selects automatically.
-    exact_only : bool
-        Whether route selection excludes approximate routes.
-    conversions : Mapping or None
-        Per-parameter conversion settings, keyed by parameter name. Each value
-        is a mapping of the converter's settings.
-    raw : bool
-        Whether a call returns its result detached from the workflow.
-    **kwargs : Any
-        Additional construction bindings. Use bind for a domain argument named
-        seed; workflow randomness is configured by workflow_run.
+    **controls : Any
+        The engine's controls, which ``with_options`` revises:
+
+        - ``workflow_kind`` (WorkflowKind): orchestration selection; DEFAULT,
+          the default, inherits the workflow configuration.
+        - ``n_broadcast_samples`` (int or None): positive sampling-lift count,
+          defaulting to 128.
+        - ``dispatch`` ({"auto", "jax", "sequential", "thread"}): evaluation
+          dispatch interpreted by the engine, "auto" by default.
+        - ``max_workers`` (int or None): positive thread-worker count, or the
+          executor default.
+        - ``include_inputs`` (bool): whether the sampling lift retains inputs
+          alongside outputs, False by default.
+        - ``method`` (str or None): the name of the route that realizes a
+          call; None, the default, selects automatically.
+        - ``exact_only`` (bool): whether route selection excludes approximate
+          routes, False by default.
+        - ``conversions`` (Mapping or None): per-parameter conversion settings,
+          keyed by parameter name, each a mapping of the converter's settings.
+        - ``raw`` (bool): whether a call returns its result detached from the
+          workflow, False by default.
 
     Raises
     ------
     TypeError
         For an invalid name, callable, declaration type, workflow kind, or
-        worker-count type, or a control of the wrong type.
+        worker-count type, a control of the wrong type, or a keyword that is
+        no control, which the message names.
     ValueError
         For mismatched input slots, invalid defaults or bindings, unknown
         dispatch, nonpositive worker or sample counts, conversions for a
@@ -440,6 +477,8 @@ class Function(Node, TrackedTerm, Annotated):
     ``fn``; ``seed``, ``input_template``, and ``output_template`` are ignored.
     Use ``workflow_run(seed=...)`` for workflow randomness or ``bind`` for a
     wrapped callable's seed parameter. ``name`` and ``fn`` remain required.
+    Only the engine's controls are admitted, since a registered method declares
+    no controls of its own.
 
     ``spec`` contains only input/output declarations. ``with_name`` changes the
     function label and callable metadata; output_name and component names are
@@ -465,20 +504,12 @@ class Function(Node, TrackedTerm, Annotated):
         output_spec: OutputSpec | TermSpec | None = None,
         output_name: str | None = None,
         differentiable: NumericSpec | None = None,
-        workflow_kind: WorkflowKind = WorkflowKind.DEFAULT,
         bind: Mapping[str, Any] | None = None,
         module: Any | None = None,
-        n_broadcast_samples: int | None = None,
-        dispatch: _FunctionDispatch = "auto",
-        max_workers: int | None = None,
-        include_inputs: bool = False,
-        method: str | None = None,
-        exact_only: bool = False,
-        conversions: Mapping[str, Mapping[str, Any]] | None = None,
-        raw: bool = False,
-        **kwargs: Any,
+        **controls: Any,
     ) -> None:
-        removed = {"seed", "input_template", "output_template", "func"}.intersection(kwargs)
+        _refuse_unknown_controls(controls)
+        removed = _REMOVED_KEYWORDS.intersection(controls)
         if removed:
             warnings.warn(
                 f"Removed Function options {sorted(removed)} detected: func aliases fn; "
@@ -488,9 +519,9 @@ class Function(Node, TrackedTerm, Annotated):
                 FutureWarning,
                 stacklevel=2,
             )
-            fn = kwargs.pop("func", fn) if "func" in removed else fn
+            fn = controls.pop("func", fn) if "func" in removed else fn
             for key in removed - {"func"}:
-                kwargs.pop(key, None)
+                controls.pop(key, None)
         if not callable(fn):
             raise TypeError(f"fn must be callable, got {type(fn).__name__}")
         self._initialize(
@@ -502,17 +533,9 @@ class Function(Node, TrackedTerm, Annotated):
             output_name=output_name,
             differentiable=differentiable,
             metadata_source=fn,
-            bind=dict(bind or {}) | kwargs,
+            bind=bind,
             module=module,
-            workflow_kind=workflow_kind,
-            n_broadcast_samples=n_broadcast_samples,
-            dispatch=dispatch,
-            max_workers=max_workers,
-            include_inputs=include_inputs,
-            method=method,
-            exact_only=exact_only,
-            conversions=conversions,
-            raw=raw,
+            **controls,
         )
 
     def _initialize(
@@ -528,16 +551,11 @@ class Function(Node, TrackedTerm, Annotated):
         metadata_source: Any = None,
         bind: Mapping[str, Any] | None = None,
         module: Any = None,
-        workflow_kind: WorkflowKind = WorkflowKind.DEFAULT,
-        n_broadcast_samples: int | None = None,
-        dispatch: str = "auto",
-        max_workers: int | None = None,
-        include_inputs: bool = False,
-        method: str | None = None,
-        exact_only: bool = False,
-        conversions: Mapping[str, Mapping[str, Any]] | None = None,
-        raw: bool = False,
+        **controls: Any,
     ) -> None:
+        unknown = controls.keys() - _CONTROL_DEFAULTS.keys()
+        if unknown:
+            raise TypeError(f"Unknown Function controls: {sorted(unknown)}")
         if differentiable is not None:
             raise NotImplementedError("Function.__init__: the differentiability claim")
         if not isinstance(name, str) or not name:
@@ -558,19 +576,11 @@ class Function(Node, TrackedTerm, Annotated):
             input_spec=input_spec,
             construction_bindings=construction_bindings,
         )
-        options = dict(
-            workflow_kind=workflow_kind,
-            n_broadcast_samples=self.DEFAULT_N_BROADCAST_SAMPLES
-            if n_broadcast_samples is None
-            else n_broadcast_samples,
-            dispatch=dispatch,
-            max_workers=max_workers,
-            include_inputs=include_inputs,
-            method=method,
-            exact_only=exact_only,
-            conversions=MappingProxyType({}) if conversions is None else conversions,
-            raw=raw,
-        )
+        options = dict(_CONTROL_DEFAULTS) | controls
+        if options["n_broadcast_samples"] is None:
+            options["n_broadcast_samples"] = self.DEFAULT_N_BROADCAST_SAMPLES
+        if options["conversions"] is None:
+            options["conversions"] = MappingProxyType({})
         options = _validate_options(options, signature_info.signature)
         set_attribute = partial(object.__setattr__, self)
         self._init_tracked(name)

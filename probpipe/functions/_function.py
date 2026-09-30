@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 import math
 import warnings
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from functools import partial
 from typing import Any, overload
@@ -42,7 +42,8 @@ except ImportError:
 from ..core._batch import Batch
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._record_batch import RecordBatch
-from ..core._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
+from ..core._spec_base import NumericSpec, TermSpec
+from ..core._specs import InputSpec, NumericArraySpec, NumericRecordSpec, OutputSpec, RecordSpec
 from ..core.config import ProvenanceMode, WorkflowKind, prefect_config
 from ..core.node import Node
 from ..core.provenance import Provenance
@@ -51,6 +52,7 @@ from ..values._function_base import (
     Function,
     _bind_function_inputs,
     _FunctionInvocationContext,
+    _refuse_unknown_controls,
     _validate_function_output,
     install_call_engine,
 )
@@ -103,7 +105,15 @@ def function(
 def function(
     _func: Callable[..., Any] | None = None,
     /,
-    **kwargs: Any,
+    *,
+    name: str | None = None,
+    input_spec: InputSpec | Mapping[str, TermSpec] | None = None,
+    output_spec: OutputSpec | TermSpec | None = None,
+    output_name: str | None = None,
+    differentiable: NumericSpec | None = None,
+    bind: Mapping[str, Any] | None = None,
+    module: Any | None = None,
+    **controls: Any,
 ) -> Function | Callable[[Callable[..., Any]], Function]:
     """Decorator to create a :class:`Function` from a plain function.
 
@@ -128,21 +138,38 @@ def function(
     _func : Callable or None
         Function being decorated for bare ``@function`` usage.
         Users should not pass this argument by keyword.
-    **kwargs : Any
-        Construction-time ``Function`` controls and declarations such as
-        ``dispatch``, ``n_broadcast_samples``, ``include_inputs``,
-        ``workflow_kind``, ``input_spec``, ``output_spec``, and ``output_name``.
+    name : str or None
+        The function label, defaulting to the decorated callable's ``__name__``.
+    input_spec, output_spec, output_name, differentiable, bind, module
+        The declarations and construction bindings :class:`Function` takes.
+    **controls : Any
+        The engine's controls, which :class:`Function` lists.
 
     Returns
     -------
     Function or Callable
         Wrapped Function for bare usage, or a decorator when called
         with parentheses.
+
+    Raises
+    ------
+    TypeError
+        If a keyword is no control, before any callable is wrapped.
     """
+    _refuse_unknown_controls(controls)
 
     def decorator(func: Callable[..., Any]) -> Function:
-        options = dict(kwargs)
-        return Function(options.pop("name", func.__name__), func, **options)
+        return Function(
+            func.__name__ if name is None else name,
+            func,
+            input_spec=input_spec,
+            output_spec=output_spec,
+            output_name=output_name,
+            differentiable=differentiable,
+            bind=bind,
+            module=module,
+            **controls,
+        )
 
     if _func is not None:
         return decorator(_func)

@@ -51,7 +51,7 @@ def test_function_rng_seed_controls_are_removed():
 
     wf = Function(name="identity", fn=identity, dispatch="sequential")
 
-    assert "seed" not in inspect.signature(Function).parameters
+    assert "seed" not in inspect.signature(Function.__init__).parameters
     assert "seed" not in inspect.signature(wf.with_options).parameters
     with pytest.warns(FutureWarning, match="seed.*ignored"):
         deprecated = Function(name="identity", fn=identity, dispatch="sequential", seed=42)
