@@ -63,10 +63,8 @@ def test_the_moments_combine_componentwise():
     means = jnp.stack([c._mean() for c in components])
     mean = weights @ means
     second = sum(
-        w * (jnp.asarray(c._cov()) + jnp.outer(m, m))
+        w * (c._cov().to_dense() + jnp.outer(m, m))
         for w, c, m in zip(weights, components, means, strict=True)
     )
     np.testing.assert_allclose(mixture._mean(), mean, rtol=1e-6)
-    np.testing.assert_allclose(
-        jnp.asarray(mixture._cov().to_dense()), second - jnp.outer(mean, mean), rtol=1e-6
-    )
+    np.testing.assert_allclose(mixture._cov().to_dense(), second - jnp.outer(mean, mean), rtol=1e-6)

@@ -41,7 +41,7 @@ class TestTheGaussianProcess:
         law = process(X)
         assert isinstance(law, MultivariateNormal)
         np.testing.assert_allclose(law._mean(), jnp.zeros(3), atol=1e-6)
-        np.testing.assert_allclose(jnp.asarray(law._cov()), _rbf(X, X), rtol=1e-5)
+        np.testing.assert_allclose(law._cov().to_dense(), _rbf(X, X), rtol=1e-5)
 
     @pytest.mark.pending(reason="a Gaussian process evaluates to a Normal at one point")
     def test_evaluation_at_one_point_is_a_normal(self):

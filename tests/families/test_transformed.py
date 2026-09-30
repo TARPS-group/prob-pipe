@@ -12,6 +12,21 @@ from probpipe.families import BijectorTransformedDistribution, LinearPushforward
 from probpipe.linalg import DenseLinOp, LinOp
 
 
+class _Exp(Function):
+    """The exponential map as a bijector that claims its inverse and its log-Jacobian."""
+
+    def __init__(self) -> None:
+        super().__init__("exp", jnp.exp)
+
+    def _inverse(self, y):
+        """The preimage ``log(y)`` of *y*."""
+        return jnp.log(y)
+
+    def _log_det_jacobian(self, x):
+        """``log |d exp(x) / dx|``, which is *x*."""
+        return x
+
+
 @pytest.fixture
 def base():
     return MultivariateNormal("x", jnp.array([1.0, -1.0]), cov=jnp.array([[2.0, 0.5], [0.5, 1.0]]))
@@ -37,7 +52,7 @@ class TestTheLinearPushforward:
         covariance = pushed._cov()
         assert isinstance(covariance, LinOp)
         np.testing.assert_allclose(
-            covariance.to_dense(), A @ jnp.asarray(base._cov()) @ A.T, rtol=1e-5
+            covariance.to_dense(), A @ base._cov().to_dense() @ A.T, rtol=1e-5
         )
 
     @pytest.mark.pending(reason="the pushforward samples by pushing base draws through op")
@@ -50,18 +65,21 @@ class TestTheLinearPushforward:
 
 
 class TestTheBijectorTransform:
-    @staticmethod
-    def _exp():
-        return Function("exp", jnp.exp)
-
     @pytest.mark.pending(reason="the transform checks the bijector's claims at construction")
     def test_a_map_without_an_inverse_raises(self):
         with pytest.raises(ResolutionError):
-            BijectorTransformedDistribution("y", Normal("x", 0.0, 1.0), self._exp())
+            BijectorTransformedDistribution("y", Normal("x", 0.0, 1.0), Function("exp", jnp.exp))
+
+    def test_the_change_of_variables_bijector_claims_its_inverse_and_log_jacobian(self):
+        bijector = _Exp()
+        x = jnp.array([-1.0, 0.5, 2.0])
+        np.testing.assert_allclose(bijector._inverse(bijector.apply(x)), x, rtol=1e-6)
+        derivative = jax.vmap(jax.grad(bijector.apply))(x)
+        np.testing.assert_allclose(bijector._log_det_jacobian(x), jnp.log(derivative), rtol=1e-6)
 
     @pytest.mark.pending(reason="the transform's density is the change of variables")
     def test_the_log_density_is_the_change_of_variables(self):
-        transformed = BijectorTransformedDistribution("y", Normal("x", 0.0, 1.0), self._exp())
+        transformed = BijectorTransformedDistribution("y", Normal("x", 0.0, 1.0), _Exp())
         y = jnp.asarray(2.0)
         expected = Normal("x", 0.0, 1.0)._log_prob(jnp.log(y)) - jnp.log(y)
         np.testing.assert_allclose(transformed._log_prob(y), expected, rtol=1e-6)

@@ -562,4 +562,4 @@ class TestTheLinearGaussianKernel:
         s = jnp.array([1.0, 1.0])
         law = kernel._condition_on({slot: s})
         np.testing.assert_allclose(law._mean(), A.to_dense() @ s + b, rtol=1e-6)
-        np.testing.assert_allclose(jnp.asarray(law._cov()), 2.0 * jnp.eye(3), rtol=1e-6)
+        np.testing.assert_allclose(law._cov().to_dense(), 2.0 * jnp.eye(3), rtol=1e-6)
