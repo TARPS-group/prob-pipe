@@ -90,7 +90,12 @@ from probpipe.core._numeric_record_distribution import (
 from probpipe.core._random_measures import RandomMeasure
 from probpipe.core._record_distribution import _RecordDistributionView
 from probpipe.core._specs import RecordSpec
-from probpipe.distributions import FactoredDistribution, FactoredNumericDistribution, FieldView
+from probpipe.distributions import (
+    FactoredDistribution,
+    FactoredNumericDistribution,
+    FieldView,
+    _empirical,
+)
 from probpipe.distributions._capabilities import SupportsSampling
 from probpipe.distributions._joint_empirical import NumericJointEmpirical
 from probpipe.distributions._product import TFPProductDistribution
@@ -284,6 +289,9 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
         ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)), "a"
     ),
     FactoredDistribution: lambda: Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0),
+    _empirical.EmpiricalDistribution: lambda: _empirical.EmpiricalDistribution(
+        "e", jnp.zeros((5, 2))
+    ),
 }
 
 # Bases a concrete class specializes, constructed only through one.
