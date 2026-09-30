@@ -100,7 +100,9 @@ class _TrackedTermMeta(_ProtocolMeta):
             instance = cls.__new__(cls)
         else:
             instance = cls.__new__(cls, *args, **kwargs)
-        if isinstance(instance, cls):
+        # A class check, as ``type.__call__`` makes: a marker class's own check
+        # reads a declaration that ``__init__`` has not stored yet.
+        if type.__instancecheck__(cls, instance):
             with constructing(instance):
                 returned = instance.__init__(*args, **kwargs)
             if returned is not None:

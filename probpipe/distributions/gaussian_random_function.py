@@ -22,6 +22,8 @@ import jax.numpy as jnp
 from ..core._random_functions import ArrayRandomFunction
 from ..core.protocols import SupportsSampling
 from ..custom_types import Array, ArrayLike, PRNGKey
+from ._conditional import ConditionalDistribution
+from ._distribution import Distribution
 
 # Delay import to avoid circular import at module level; these are
 # imported from the *same* package, so we import lazily inside methods
@@ -154,6 +156,8 @@ class GaussianRandomFunction(ArrayRandomFunction):
         return _ShiftedGRF(self, jnp.asarray(other))
 
     def __mul__(self, other):
+        if isinstance(other, (Distribution, ConditionalDistribution)):
+            return Distribution.__mul__(self, other)
         return _ScaledGRF(self, jnp.asarray(other))
 
     def __rmul__(self, other):

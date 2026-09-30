@@ -43,12 +43,20 @@ def _compose(
 ) -> FactoredDistribution | FactoredConditionalDistribution:
     """The joint ``left * right``, the most specific factored kind of the flat factor graph.
 
+    Returns
+    -------
+    FactoredDistribution or FactoredConditionalDistribution
+        The joint, or ``NotImplemented`` when *right* is neither distribution
+        kind.
+
     Raises
     ------
     ValueError
         If a component is produced twice, the right operand consumes a
         component the left produces, or a matched spec does not unify.
     """
+    if not isinstance(right, (Distribution, ConditionalDistribution)):
+        return NotImplemented
     factors = (*_flat_factors(left), *_flat_factors(right))
     label = f"{left.name}{_LABEL_SEP}{right.name}"
     if _factor_graph(factors).unmet is None:

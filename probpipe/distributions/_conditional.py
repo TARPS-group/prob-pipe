@@ -400,6 +400,8 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
             If a new name is empty or contains ``/`` where a slot is meant, a
             node is renamed twice, no renames are given, or the renamed sides
             share a name.
+        NotImplementedError
+            Always, until renaming reaches the subclass's primitive.
         """
         raise NotImplementedError("ConditionalDistribution.with_path_names")
 

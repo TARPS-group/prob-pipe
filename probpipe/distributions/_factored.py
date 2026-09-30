@@ -18,6 +18,7 @@ from ..core._dispatch import Feasibility
 from ..core._record_spec import RecordSpec
 from ..core._spec_base import TermSpec, _unify_specs
 from ..core._specs import InputSpec, OutputSpec
+from ..core.provenance import Provenance
 from ._capabilities import (
     _CONDITIONAL_TWINS,
     SupportsCovariance,
@@ -33,10 +34,16 @@ from ._capabilities import (
 )
 from ._conditional import (
     ConditionalDistribution,
+    ConditionalDistributionSpec,
     _event_is_numeric,
     _given_side_is_numeric,
 )
-from ._distribution import _DECLARATION_MARKERS, Distribution, _declares_numeric_event
+from ._distribution import (
+    _DECLARATION_MARKERS,
+    Distribution,
+    DistributionSpec,
+    _declares_numeric_event,
+)
 
 if TYPE_CHECKING:
     from ..core.record import Record
@@ -239,35 +246,49 @@ def _stub(name: str) -> Callable[..., Any]:
 def _marginal_guard(self: Any, path: str | tuple[str, ...]) -> Feasibility:
     """Whether the marginal at *path* is exact, by the factor graph.
 
-    Exact when the target is ancestrally closed, so the sub-joint of whole
-    factors is the marginal, or when the target's ancestor closure is a single
-    factor whose own marginal is exact at the path within it.
+    The target's ancestor closure must add no factor, since integrating out a
+    field that a kept factor conditions on has no closed form here. Within the
+    target, a factor requested whole is kept whole, and a factor requested in
+    part delegates to its own marginal guard, provided no other requested factor
+    conditions on what that reduction integrates out.
     """
     graph: _FactorGraph = self._graph
     paths = (path,) if isinstance(path, str) else tuple(path)
+    if not paths:
+        return Feasibility(False, "no path was requested")
     heads = {p.split(_PATH_SEP, 1)[0] for p in paths}
     unknown = heads - set(graph.producers)
     if unknown:
-        return Feasibility(False, f"no component {sorted(unknown)} in the joint")
+        return Feasibility(False, f"the joint has no component {sorted(unknown)}")
     targets = {graph.producers[head] for head in heads}
-    closure = graph.ancestors(targets)
-    wanted = set(paths)
-    whole = {
-        component for component, index in graph.producers.items() if index in closure
-    } == wanted
-    if whole:
-        return Feasibility(True)
-    if len(closure) == 1:
-        (index,) = closure
+    ancestors = graph.ancestors(targets) - targets
+    if ancestors:
+        names = sorted(graph.factors[index].name for index in ancestors)
+        return Feasibility(
+            False, f"the marginal integrates out {names}, which the requested fields condition on"
+        )
+    whole = {p for p in paths if _PATH_SEP not in p}
+    for consumer, producer, name in graph.edges:
+        if consumer in targets and producer in targets and name not in whole:
+            return Feasibility(
+                False,
+                f"the marginal reduces {name!r}, which {graph.factors[consumer].name!r} "
+                f"conditions on",
+            )
+    for index in sorted(targets):
         factor = graph.factors[index]
-        if isinstance(factor, SupportsMarginals):
-            return _capability_guard(factor, "_marginal", path)
-        return Feasibility(False, f"the factor {factor.name!r} has no marginals")
-    return Feasibility(
-        False,
-        "the marginal integrates out ancestor fields of more than one factor, which has no "
-        "closed form here",
-    )
+        components = set(factor.event_spec.components)
+        requested = tuple(p for p in paths if p.split(_PATH_SEP, 1)[0] in components)
+        if set(requested) == components:
+            continue
+        if not isinstance(factor, SupportsMarginals):
+            return Feasibility(False, f"the factor {factor.name!r} has no marginals")
+        report = _capability_guard(
+            factor, "_marginal", requested[0] if len(requested) == 1 else requested
+        )
+        if report.feasible is not True:
+            return report
+    return Feasibility(True)
 
 
 #: The method each unconditional capability of a joint names.
@@ -328,6 +349,28 @@ def _joint_protocols(graph: _FactorGraph, *, conditional: bool) -> set[type]:
     return claimed | {SupportsMarginals}
 
 
+def _rebuilt(joint: Any, method: str, mapping: Mapping[str, Any], *, free: Any = None) -> Any:
+    """*joint* rebuilt from its factors with *method* applied, recording the transform.
+
+    Raises
+    ------
+    ValueError
+        If *free* is given and *mapping* names a dimension outside it.
+    """
+    if free is not None:
+        unbound = set(mapping) - set(free)
+        if unbound:
+            raise ValueError(
+                f"{type(joint).__name__} {joint.name!r} has no free dimensions "
+                f"{sorted(unbound)} to bind"
+            )
+    base = vars(type(joint)).get("_capability_base", type(joint))
+    rebuilt = base(joint.name, _each_factor(joint.factors, method, mapping))
+    return rebuilt.with_provenance(
+        Provenance.create(method, parents=[joint], metadata=dict(mapping))
+    )
+
+
 def _each_factor(
     factors: Sequence[Factor], method: str, mapping: Mapping[str, Any]
 ) -> list[Factor]:
@@ -382,7 +425,8 @@ class FactoredDistribution(Distribution, SupportsFactors):
 
     def __new__(cls, name: str, factors: Sequence[Factor]) -> FactoredDistribution:
         protocols = _joint_protocols(_factor_graph(factors), conditional=False)
-        return object.__new__(_capability_subclass(FactoredDistribution, protocols))
+        base = vars(cls).get("_capability_base", cls)
+        return object.__new__(_capability_subclass(base, protocols))
 
     def __init__(self, name: str, factors: Sequence[Factor]) -> None:
         graph = _factor_graph(factors)
@@ -402,22 +446,37 @@ class FactoredDistribution(Distribution, SupportsFactors):
     def with_dim_sizes(self, **sizes: int) -> Self:
         """Bind named symbolic dimensions in every factor that declares them.
 
+        Parameters
+        ----------
+        **sizes : int
+            Sizes for free dimensions of the joint.
+
+        Returns
+        -------
+        Self
+            The joint of the bound factors, under the same name.
+
         Raises
         ------
         ValueError
             If a name is not a free dimension of the joint.
         """
-        unbound = set(sizes) - self.event_spec.spec.free_dims
-        if unbound:
-            raise ValueError(
-                f"{type(self).__name__} {self.name!r} has no free dimensions "
-                f"{sorted(unbound)} to bind"
-            )
-        return FactoredDistribution(self.name, _each_factor(self.factors, "with_dim_sizes", sizes))
+        return _rebuilt(self, "with_dim_sizes", sizes, free=self.event_spec.spec.free_dims)
 
     def with_dim_names(self, **names: str) -> Self:
-        """Rename symbolic dimensions in every factor, simultaneously."""
-        return FactoredDistribution(self.name, _each_factor(self.factors, "with_dim_names", names))
+        """Rename symbolic dimensions in every factor, simultaneously.
+
+        Parameters
+        ----------
+        **names : str
+            New names keyed by old; names that are not free are ignored.
+
+        Returns
+        -------
+        Self
+            The joint of the renamed factors, under the same name.
+        """
+        return _rebuilt(self, "with_dim_names", names)
 
 
 class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
@@ -450,7 +509,8 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
 
     def __new__(cls, name: str, factors: Sequence[Factor]) -> FactoredConditionalDistribution:
         protocols = _joint_protocols(_factor_graph(factors), conditional=True)
-        return object.__new__(_capability_subclass(FactoredConditionalDistribution, protocols))
+        base = vars(cls).get("_capability_base", cls)
+        return object.__new__(_capability_subclass(base, protocols))
 
     def __init__(self, name: str, factors: Sequence[Factor]) -> None:
         graph = _factor_graph(factors)
@@ -466,6 +526,41 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
         """The factors, in conditional-first order."""
         return self._graph.factors
 
+    def with_dim_sizes(self, **sizes: int) -> Self:
+        """Bind named symbolic dimensions in every factor that declares them.
+
+        Parameters
+        ----------
+        **sizes : int
+            Sizes for free dimensions of either side.
+
+        Returns
+        -------
+        Self
+            The joint of the bound factors, under the same name.
+
+        Raises
+        ------
+        ValueError
+            If a name is not a free dimension of the joint.
+        """
+        return _rebuilt(self, "with_dim_sizes", sizes, free=self.spec.free_dims)
+
+    def with_dim_names(self, **names: str) -> Self:
+        """Rename symbolic dimensions in every factor, simultaneously.
+
+        Parameters
+        ----------
+        **names : str
+            New names keyed by old; names that are not free are ignored.
+
+        Returns
+        -------
+        Self
+            The joint of the renamed factors, under the same name.
+        """
+        return _rebuilt(self, "with_dim_names", names)
+
     def _condition_on(
         self, given: Record | Mapping[str, Any], /, **kwargs: Any
     ) -> Distribution | ConditionalDistribution:
@@ -480,8 +575,12 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
         ------
         KeyError
             If a bound name is not a given slot of the joint.
+        ValueError
+            If a factor's primitive returns a law or kernel whose declarations do
+            not match the factor's.
         """
-        values = {**dict(given.items()), **kwargs}
+        top = given.children if hasattr(given, "children") else given
+        values = {**dict(top.items()), **kwargs}
         unknown = set(values) - set(self.given_spec)
         if unknown:
             raise KeyError(f"{sorted(unknown)} are not given slots of {self.name!r}")
@@ -490,11 +589,36 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
             if isinstance(factor, ConditionalDistribution):
                 bound = {slot: value for slot, value in values.items() if slot in factor.given_spec}
                 if bound:
-                    factor = factor._condition_on(bound)
+                    factor = _bound_factor(factor, bound)
             factors.append(factor)
         if set(values) == set(self.given_spec):
             return FactoredDistribution(self.name, factors)
         return FactoredConditionalDistribution(self.name, factors)
+
+
+def _bound_factor(factor: ConditionalDistribution, bound: Mapping[str, Any]) -> Factor:
+    """*factor* conditioned on *bound*, checked to keep the factor's declarations.
+
+    Raises
+    ------
+    ValueError
+        If the primitive returns a law or kernel whose event declaration, or whose
+        remaining given slots, differ from the factor's.
+    """
+    result = factor._condition_on(bound)
+    remaining = {slot: spec for slot, spec in factor.given_spec.items() if slot not in bound}
+    expected = (
+        ConditionalDistributionSpec(remaining, factor.event_spec)
+        if remaining
+        else DistributionSpec(factor.event_spec)
+    )
+    if not expected.is_valid(result):
+        raise ValueError(
+            f"{factor.name!r} conditioned on {sorted(bound)} returned "
+            f"{type(result).__name__} {getattr(result, 'name', '')!r}, whose declarations do not "
+            f"match the factor's"
+        )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -503,19 +627,24 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
 
 
 class FactoredNumericDistribution(FactoredDistribution):
-    """The marker of an unconditional joint whose event is numeric."""
+    """The marker of an unconditional joint whose event is numeric.
+
+    Membership is read from the declaration, as for ``NumericDistribution``, and
+    a class that inherits the marker claims it for every instance, which
+    construction checks.
+    """
 
     _membership_follows_declaration = True
 
 
 class FactoredConditionalNumericDistribution(FactoredConditionalDistribution):
-    """The marker of a conditional joint whose event is numeric."""
+    """The marker of a conditional joint whose event is numeric, read from its declaration."""
 
     _membership_follows_declaration = True
 
 
 class FactoredNumericConditionalDistribution(FactoredConditionalDistribution):
-    """The marker of a conditional joint whose given slots are numeric."""
+    """The marker of a conditional joint whose given slots are numeric, by its declaration."""
 
     _membership_follows_declaration = True
 

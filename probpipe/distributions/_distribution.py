@@ -168,15 +168,12 @@ def _install_composition(engine: Callable[[Any, Any], Any]) -> None:
 
 
 def _compose_operands(left: Any, right: Any) -> Any:
-    """*left* ``*`` *right* through the installed engine, or ``NotImplemented``.
+    """*left* ``*`` *right* through the installed engine.
 
-    An operand that is neither distribution kind returns ``NotImplemented``, so
-    Python tries the reflected operation and a scalar operand can scale.
+    The engine returns ``NotImplemented`` for an operand that is neither
+    distribution kind, so Python tries the reflected operation and a scalar
+    operand can scale.
     """
-    from ._conditional import ConditionalDistribution
-
-    if not isinstance(right, (Distribution, ConditionalDistribution)):
-        return NotImplemented
     if _composition_engine is None:
         raise RuntimeError("the composition engine is not installed; import probpipe")
     return _composition_engine(left, right)
@@ -189,9 +186,10 @@ class _DistributionMeta(_TrackedTermMeta):
     tracked-term metaclass checks its name: a class that bypasses
     ``Distribution.__init__`` calls ``_init_declaration`` itself.
 
-    ``isinstance(d, NumericDistribution)`` holds if and only if ``d`` declares a
-    numeric event, whatever its class, and every other class check is the ordinary
-    one. A class whose every instance is numeric may claim the marker by
+    Membership in a marker registered in ``_DECLARATION_MARKERS`` is read from an
+    instance's declaration whatever its class, so ``isinstance(d,
+    NumericDistribution)`` holds if and only if ``d`` declares a numeric event,
+    and every other class check is the ordinary one. A class may claim a marker by
     inheriting it, and construction checks the claim.
     """
 
