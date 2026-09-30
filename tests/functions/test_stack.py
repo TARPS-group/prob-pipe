@@ -12,11 +12,18 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import Function, NumericArray, function, workflow_run
+from probpipe import (
+    Function,
+    NumericArray,
+    NumericArrayBatch,
+    NumericArraySpec,
+    function,
+    workflow_run,
+)
 from probpipe.functions import _function
 from probpipe.values import _function_base
 
-from ._design_helpers import atom_leaves, standard_normal
+from ._design_helpers import atom_leaves, error_of, standard_normal
 
 
 class TestTheFunction:
@@ -77,6 +84,28 @@ class TestTheEngine:
         with pytest.raises(TypeError):
             record(1.0, 2.0)
         assert calls == []
+
+    @pytest.mark.parametrize(
+        "controls", [{"exact_only": True}, {"method": "elementwise_sweep"}], ids=lambda c: str(c)
+    )
+    def test_a_lift_failure_ends_the_call_before_the_route_is_selected(self, controls):
+        @function(dispatch="sequential")
+        def add(x, y):
+            return x + y
+
+        def misaligned():
+            scalar = NumericArraySpec(())
+            return (
+                NumericArrayBatch("x", jnp.arange(2.0), "row", element_spec=scalar),
+                NumericArrayBatch("y", jnp.arange(3.0), "row", element_spec=scalar),
+            )
+
+        unrestricted = error_of(lambda: add(*misaligned()))
+        restricted = error_of(lambda: add.with_options(**controls)(*misaligned()))
+
+        assert unrestricted is not None
+        assert type(restricted) is type(unrestricted)
+        assert str(restricted) == str(unrestricted)
 
 
 class TestCheck:

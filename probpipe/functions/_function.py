@@ -267,7 +267,6 @@ def _call_with_options_in_context(
         signature_info=function._signature_info,
     )
     _call.admit_arguments(function._signature_info, values)
-    _resolve_route(function)
     broadcast_plan = _plan.build_broadcast_plan(
         values=values,
         signature_info=function._signature_info,
@@ -314,6 +313,7 @@ def _call_with_options_in_context(
     concrete_output_template = (
         _output_record_spec(concrete_output_spec) if concrete_output_spec is not None else None
     )
+    _resolve_route(function)
     provenance_parents: list[TrackedTerm] = [function]
     provenance_inputs: dict[str, Any] = {}
     seen_parent_ids = {id(function)}
@@ -692,7 +692,12 @@ def _require_jax_traceable(
     func: Callable[..., Any],
     stochastic_plan: _plan.StochasticPlan | None,
 ) -> None:
-    """Raise a clear error if explicit JAX dispatch cannot trace."""
+    """Raise a clear error if explicit JAX dispatch cannot trace.
+
+    A result that violates its declaration while the probe traces raises its
+    :class:`~._result.ResultSchemaError` or :class:`~._result.ResultKindError`
+    unchanged, as the other dispatch modes raise it at return.
+    """
     output = function.output_spec.spec if function.output_spec is not None else None
     if _has_output_support(output):
         raise ValueError(
@@ -704,6 +709,8 @@ def _require_jax_traceable(
     )
     if trace_error is None:
         return
+    if isinstance(trace_error, (_result.ResultSchemaError, _result.ResultKindError)):
+        raise trace_error
     if isinstance(trace_error, _UnvectorizableBatchSignal):
         raise TypeError(
             f"dispatch='jax' cannot vectorize over {', '.join(trace_error.kinds)}: the "

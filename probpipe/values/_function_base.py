@@ -203,7 +203,17 @@ def _bind_function_inputs(
 def _validate_function_output(
     *, function_name: str, output_spec: OutputSpec | None, result: Any, bindings: Mapping[str, int]
 ) -> OutputSpec | None:
-    """Validate one returned term without wrapping it or changing its declaration."""
+    """Validate one returned term without wrapping it or changing its declaration.
+
+    Each declared array's dtype admits a returned dtype of the same kind (bool,
+    integer, floating, or complex) at any width, and its support must hold.
+
+    Raises
+    ------
+    ValueError
+        If the result's structure, dimensions, dtype, or support does not
+        conform to the declaration.
+    """
     if output_spec is None:
         return None
     spec = output_spec.spec
@@ -219,7 +229,7 @@ def _validate_function_output(
         _validate_declared_support(spec, actual_spec, path)
     spec._bind_dims_from_value(result, resolved, path)
     concrete = spec._substitute_dims(resolved)
-    _validate_output_support(concrete, result, path)
+    _validate_output_values(concrete, result, path)
     return output_spec._with_spec(concrete)
 
 
@@ -243,7 +253,8 @@ def _validate_declared_support(expected: TermSpec, actual: TermSpec, path: str) 
             )
 
 
-def _validate_output_support(spec: TermSpec, value: Any, path: str) -> None:
+def _validate_output_values(spec: TermSpec, value: Any, path: str) -> None:
+    """Check *value* against the dtype and support each declared array of *spec* states."""
     from ..core._batch import BatchSpec
 
     if isinstance(spec, BatchSpec):
@@ -259,10 +270,41 @@ def _validate_output_support(spec: TermSpec, value: Any, path: str) -> None:
     elif isinstance(spec, RecordSpec):
         children = getattr(value, "children", value)
         for name, child in spec.children.items():
-            _validate_output_support(child, children[name], f"{path}/{name}")
-    elif isinstance(spec, NumericArraySpec) and spec.support is not None:
-        if not bool(jnp.all(spec.support.check(value))):
+            _validate_output_values(child, children[name], f"{path}/{name}")
+    elif isinstance(spec, NumericArraySpec):
+        _validate_output_dtype(spec, value, path)
+        if spec.support is not None and not bool(jnp.all(spec.support.check(value))):
             raise ValueError(f"{path} does not conform to declared support {spec.support!r}")
+
+
+#: The kinds of numeric dtype; a returned dtype conforms to a declared one of its kind.
+_DTYPE_KINDS = (jnp.bool_, jnp.integer, jnp.floating, jnp.complexfloating)
+
+
+def _dtype_kind(dtype: Any) -> Any:
+    return next((kind for kind in _DTYPE_KINDS if jnp.issubdtype(dtype, kind)), None)
+
+
+def _validate_output_dtype(spec: NumericArraySpec, value: Any, path: str) -> None:
+    """Refuse a returned value whose dtype is of another kind than *spec* declares.
+
+    A within-kind width difference conforms, as a ``float32`` value for a
+    ``float64`` declaration does, and a cast across kinds, such as an integer
+    value for a floating declaration, does not.
+    """
+    if spec.dtype is None:
+        return
+    import numpy as np
+
+    from ..core._array_backend import _numpy_dtype_of
+
+    dtype = _numpy_dtype_of(value)
+    if (
+        dtype is None
+        or not np.can_cast(dtype, spec.dtype, casting="same_kind")
+        or _dtype_kind(dtype) is not _dtype_kind(spec.dtype)
+    ):
+        raise ValueError(f"{path} dtype {dtype} does not conform to {spec.dtype}")
 
 
 def _validate_output_column(
@@ -270,20 +312,12 @@ def _validate_output_column(
 ) -> None:
     if not isinstance(spec, NumericArraySpec):
         return
-    import numpy as np
-
-    from ..core._array_backend import _numpy_dtype_of
     from ..core._spec_base import _full_array_shape_or_none
 
     shape = _full_array_shape_or_none(value)
     if shape != (*batch_shape, *spec.shape):
         raise ValueError(f"{path} has shape {shape}, expected {(*batch_shape, *spec.shape)}")
-    dtype = _numpy_dtype_of(value)
-    if spec.dtype is not None and (
-        dtype is None or not np.can_cast(dtype, spec.dtype, casting="same_kind")
-    ):
-        raise ValueError(f"{path} dtype {dtype} does not conform to {spec.dtype}")
-    _validate_output_support(spec, value, path)
+    _validate_output_values(spec, value, path)
 
 
 def _validate_function_declarations(
