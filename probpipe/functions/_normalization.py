@@ -18,7 +18,8 @@ classification step over already-normalized values.
 
 from __future__ import annotations
 
-from typing import Any
+from types import UnionType
+from typing import Any, Union, get_args, get_origin
 
 from ..converters import converter_registry
 from ..core._distribution_array import DistributionArray
@@ -29,6 +30,7 @@ from ..distributions._capabilities import (
     SupportsExactConditioning,
     SupportsExpectation,
     SupportsLogProb,
+    SupportsMarginals,
     SupportsMean,
     SupportsQuantile,
     SupportsRandomLogProb,
@@ -53,11 +55,18 @@ DISTRIBUTION_HINT_PROTOCOLS: tuple[type, ...] = (
     SupportsRandomUnnormalizedLogProb,
     SupportsExactConditioning,
     SupportsApproximateConditioning,
+    SupportsMarginals,
 )
 
 
 def is_distribution_hint(expected: Any) -> bool:
-    """Return whether a type hint asks for a distribution object."""
+    """Return whether a type hint asks for a distribution object.
+
+    A union asks for one when any of its arms does, so an optional
+    distribution annotation consumes the distribution as the plain one does.
+    """
+    if get_origin(expected) in (Union, UnionType):
+        return any(is_distribution_hint(arm) for arm in get_args(expected))
     origin = getattr(expected, "__origin__", None)
     expected_type = origin if isinstance(origin, type) else expected
     try:
