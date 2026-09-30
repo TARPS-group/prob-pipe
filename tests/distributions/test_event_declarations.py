@@ -55,6 +55,7 @@ from probpipe import (
     NumericRecordDistribution,
     NumericRecordSpec,
     NumericSpec,
+    OutputSpec,
     Pareto,
     Poisson,
     ProductDistribution,
@@ -100,6 +101,15 @@ from probpipe.distributions.gaussian_random_function import (
     _ScaledGRF,
     _ShiftedGRF,
 )
+from probpipe.families import (
+    BijectorTransformedDistribution,
+    FactoredMultivariateGaussian,
+    GaussianFamily,
+    GaussianProcess,
+    LinearPushforwardDistribution,
+    MixtureDistribution,
+)
+from probpipe.families._conditional import _IndependentObservations
 from probpipe.inference._approximate_distribution import (
     ApproximateDistribution,
     make_posterior,
@@ -110,6 +120,7 @@ from probpipe.inference._minibatch import (
     _MinibatchLogProbAtPoint,
     _RandomMinibatchLogProb,
 )
+from probpipe.linalg import DenseLinOp
 from probpipe.modeling import PyMCModel, StanModel
 from probpipe.modeling._likelihood import GenerativeLikelihood
 from probpipe.modeling._stan import _UnconstrainedStanView
@@ -184,6 +195,18 @@ def _stan_model() -> StanModel:
 
 def _conditional(z):
     return Normal("x", z, 1.0)
+
+
+def _zero_mean(X):
+    return jnp.zeros(X.shape[0])
+
+
+def _squared_exponential(X, Y):
+    return jnp.exp(-0.5 * (X[:, None, 0] - Y[None, :, 0]) ** 2)
+
+
+def _exp(x):
+    return jnp.exp(x)
 
 
 # One construction per concrete class, keyed by the class it represents.
@@ -284,6 +307,37 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
         ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)), "a"
     ),
     FactoredDistribution: lambda: Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0),
+    _IndependentObservations: lambda: GaussianFamily().build("y", jnp.zeros(3), 1.0),
+    MixtureDistribution: lambda: MixtureDistribution(
+        "m",
+        [
+            Normal("a", 0.0, 1.0, event_spec=OutputSpec(x=None)),
+            Normal("b", 1.0, 1.0, event_spec=OutputSpec(x=None)),
+        ],
+        jnp.array([0.5, 0.5]),
+    ),
+    LinearPushforwardDistribution: lambda: LinearPushforwardDistribution(
+        "y", MultivariateNormal("x", jnp.zeros(2), cov=jnp.eye(2)), DenseLinOp(jnp.eye(2))
+    ),
+    BijectorTransformedDistribution: lambda: BijectorTransformedDistribution(
+        "y", Normal("x", 0.0, 1.0), probpipe.Function("exp", _exp)
+    ),
+    FactoredMultivariateGaussian: lambda: FactoredMultivariateGaussian(
+        "g", [MultivariateNormal("x", jnp.zeros(2), cov=jnp.eye(2))]
+    ),
+    GaussianProcess: lambda: GaussianProcess("f", _zero_mean, _squared_exponential),
+}
+
+# The catalog's families whose implementation has not merged construct by raising.
+_STUB_CONSTRUCTIONS = {
+    cls: pytest.mark.pending(reason=f"{cls.__name__} constructs")
+    for cls in (
+        MixtureDistribution,
+        LinearPushforwardDistribution,
+        BijectorTransformedDistribution,
+        FactoredMultivariateGaussian,
+        GaussianProcess,
+    )
 }
 
 # Bases a concrete class specializes, constructed only through one.
@@ -301,7 +355,7 @@ _BASES = frozenset(
 
 def _rows(failures: dict[type, pytest.MarkDecorator] | None = None) -> list:
     """One case per construction, marked where the check fails for a known reason."""
-    failures = failures or {}
+    failures = {**_STUB_CONSTRUCTIONS, **(failures or {})}
     return [
         pytest.param(cls, make, id=cls.__name__, marks=failures.get(cls, ()))
         for cls, make in _CONSTRUCTIONS.items()
@@ -384,6 +438,7 @@ _PICKLE_FAILURES = {
     _ShiftedGRF: _TFP_BACKEND,
     _ScaledGRF: _TFP_BACKEND,
     _IndependentSumGRF: _TFP_BACKEND,
+    _IndependentObservations: _TFP_BACKEND,
     TransformedDistribution: _RUNTIME_CLASS,
     SequentialJointDistribution: _RUNTIME_CLASS,
     _MixtureMarginal: _RUNTIME_CLASS,
