@@ -1,0 +1,84 @@
+"""Contract tests of marginal and factor: the detached parts of structured and factored laws."""
+
+from __future__ import annotations
+
+import pytest
+
+from probpipe import RecordSpec
+from probpipe.core._dispatch import ResolutionError
+from probpipe.core._specs import OutputSpec
+from probpipe.distributions._conditional import ConditionalDistribution
+from probpipe.distributions._distribution import Distribution, DistributionSpec
+from probpipe.operations._marginal import factor, marginal
+from probpipe.operations._operation import ApplicabilityError
+
+from ._laws import REAL, Gaussian, Kernel, Marginalizing, Pair
+
+
+class _Nested(Distribution):
+    """A law with two groups that each hold a field named ``a``."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name, RecordSpec(x=RecordSpec(a=REAL), y=RecordSpec(a=REAL)))
+
+
+class TestMarginal:
+    def test_the_capability_returns_the_detached_marginal_at_the_path(self):
+        law = Marginalizing("law")
+        result = marginal(law, "a")
+        assert isinstance(result, Distribution)
+        assert result is not law and result.loc == 5.0
+        assert law.paths == ["a"]
+        assert marginal.check(law, "a").route == "exact"
+
+    def test_the_declaration_is_the_node_under_the_path_s_final_segment(self):
+        assert marginal.check(Marginalizing("law"), "a").result == OutputSpec(
+            marginal=DistributionSpec(OutputSpec(a=REAL))
+        )
+
+    def test_several_paths_declare_an_exposed_record_of_the_nodes(self):
+        result = marginal.check(Marginalizing("law"), ("a", "b")).result
+        assert result == OutputSpec(
+            marginal=DistributionSpec(OutputSpec(RecordSpec(a=REAL, b=REAL)))
+        )
+
+    def test_two_paths_ending_in_the_same_segment_raise(self):
+        with pytest.raises(ApplicabilityError, match="same segment"):
+            marginal.check(_Nested("n"), ("x/a", "y/a"))
+
+    def test_a_path_the_law_lacks_raises_applicability_error(self):
+        with pytest.raises(ApplicabilityError, match="not an event path"):
+            marginal(Marginalizing("law"), "c")
+
+    def test_a_declining_guard_and_no_sampling_raise_resolution_error(self):
+        with pytest.raises(ResolutionError, match="The marginal is exact at the field a"):
+            marginal(Marginalizing("law"), "b")
+
+    @pytest.mark.pending(reason="an empirical marginal declares the node's event")
+    def test_the_fallback_projects_draws_onto_the_field(self):
+        assert marginal(Pair("p"), "a").event_spec == OutputSpec(a=REAL)
+
+    def test_a_factored_joint_marginalizes_onto_its_prior(self):
+        joint = Kernel("y", ("beta",)) * Gaussian("beta")
+        assert marginal(joint, "beta").event_spec == Gaussian("beta").event_spec
+
+
+class TestFactor:
+    def test_factor_returns_the_factor_producing_the_component(self):
+        joint = Kernel("y", ("beta",)) * Gaussian("beta", 2.0)
+        prior = factor(joint, "beta")
+        assert isinstance(prior, Gaussian) and prior.loc == 2.0
+        assert isinstance(factor(joint, "y"), ConditionalDistribution)
+
+    def test_a_conditional_joint_exposes_its_factors_too(self):
+        joint = Kernel("y", ("beta",)) * Kernel("beta", ("alpha",))
+        assert isinstance(factor(joint, "beta"), ConditionalDistribution)
+
+    def test_a_name_that_is_not_a_component_raises_applicability_error(self):
+        joint = Kernel("y", ("beta",)) * Gaussian("beta")
+        with pytest.raises(ApplicabilityError, match="output component"):
+            factor(joint, "gamma")
+
+    def test_a_law_without_factors_raises_resolution_error(self):
+        with pytest.raises(ResolutionError, match="does not claim SupportsFactors"):
+            factor(Gaussian("g"), "g")

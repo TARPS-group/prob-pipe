@@ -1,0 +1,145 @@
+"""Contract tests of the density operations: log-densities, densities, and random log-densities."""
+
+from __future__ import annotations
+
+import inspect
+
+import jax
+import jax.numpy as jnp
+import numpy as np
+import pytest
+
+from probpipe import NumericArray, NumericArrayBatch, NumericArraySpec, Record
+from probpipe.core._dispatch import ResolutionError
+from probpipe.core.constraints import non_negative
+from probpipe.distributions._distribution import Distribution
+from probpipe.operations import RouteSource
+from probpipe.operations._density import (
+    log_prob,
+    prob,
+    random_log_prob,
+    random_unnormalized_log_prob,
+    unnormalized_log_prob,
+    unnormalized_prob,
+)
+from probpipe.operations._operation import ApplicabilityError
+
+from ._laws import Bare, Coin, Gaussian, OneField, Polymorphic, RandomDensity, Unnormalized
+
+
+class TestLogProb:
+    def test_log_prob_returns_the_normalized_log_density(self):
+        score = log_prob(Gaussian("g", 1.0, 2.0), 0.5)
+        assert isinstance(score, NumericArray)
+        assert score.name == "log_prob"
+        np.testing.assert_allclose(
+            float(jnp.asarray(score)), jax.scipy.stats.norm.logpdf(0.5, 1.0, 2.0), rtol=1e-6
+        )
+
+    def test_log_prob_requires_the_normalized_capability(self):
+        with pytest.raises(ResolutionError, match="does not claim SupportsLogProb"):
+            log_prob(Unnormalized("u"), 0.0)
+
+    def test_unnormalized_log_prob_needs_only_the_unnormalized_capability(self):
+        score = unnormalized_log_prob(Unnormalized("u"), 0.0)
+        np.testing.assert_allclose(
+            float(jnp.asarray(score)), jax.scipy.stats.norm.logpdf(0.0) + np.log(2.0), rtol=1e-6
+        )
+
+    def test_a_normalized_density_is_also_an_unnormalized_one(self):
+        law = Gaussian("g")
+        assert float(jnp.asarray(unnormalized_log_prob(law, 0.3))) == pytest.approx(
+            float(jnp.asarray(log_prob(law, 0.3)))
+        )
+
+    def test_a_law_with_no_density_raises_resolution_error(self):
+        with pytest.raises(ResolutionError):
+            log_prob(Bare("b"), 0.0)
+
+    def test_a_discrete_value_scores_at_its_atom(self):
+        assert float(jnp.asarray(log_prob(Coin("c", 0.25), 1))) == pytest.approx(np.log(0.25))
+
+
+class TestTheScoredValue:
+    def test_a_value_of_another_shape_raises_applicability_error(self):
+        with pytest.raises(ApplicabilityError, match="does not conform"):
+            log_prob(Gaussian("g"), jnp.zeros(3))
+
+    def test_a_one_field_record_event_takes_a_record(self):
+        score = log_prob(OneField("o"), Record("v", {"x": jnp.float32(0.0)}))
+        assert float(jnp.asarray(score)) == pytest.approx(float(jax.scipy.stats.norm.logpdf(0.0)))
+
+    def test_a_one_field_record_event_refuses_a_bare_array(self):
+        with pytest.raises(ApplicabilityError, match="does not conform"):
+            log_prob(OneField("o"), jnp.float32(0.0))
+
+    def test_a_scored_value_binds_the_symbolic_dimensions_for_that_call_only(self):
+        law = Polymorphic("poly")
+        three = log_prob(law, jnp.zeros(3))
+        five = log_prob(law, jnp.zeros(5))
+        np.testing.assert_allclose(float(jnp.asarray(three)), 3 * jax.scipy.stats.norm.logpdf(0.0))
+        np.testing.assert_allclose(float(jnp.asarray(five)), 5 * jax.scipy.stats.norm.logpdf(0.0))
+        assert law.event_spec.spec.shape == ("n",)
+
+    def test_a_batch_of_values_is_scored_at_its_levels(self):
+        values = NumericArrayBatch(
+            "values",
+            jnp.linspace(-1.0, 1.0, 6).reshape(2, 3),
+            ("rows", "cols"),
+            element_spec=NumericArraySpec(()),
+            axes_per_level=(1, 1),
+        )
+        scores = log_prob(Gaussian("g"), values)
+        assert isinstance(scores, NumericArrayBatch)
+        assert scores.level_names == ("rows", "cols")
+        assert scores.batch_shape == (2, 3)
+        np.testing.assert_allclose(
+            np.asarray(scores.values),
+            jax.scipy.stats.norm.logpdf(np.linspace(-1.0, 1.0, 6).reshape(2, 3)),
+            rtol=1e-6,
+        )
+
+
+class TestDerivedDensities:
+    def test_prob_is_derived_from_log_prob(self):
+        assert prob.is_derived
+        assert prob.identity == "jnp.exp(log_prob.with_options(raw=True)(d, value))"
+        (route,) = prob.routes
+        assert (route.name, route.source) == ("identity", RouteSource.FALLBACK)
+
+    def test_prob_is_the_exponential_of_log_prob(self):
+        law = Gaussian("g", 0.0, 1.5)
+        density = prob(law, 0.7)
+        assert density.name == "prob"
+        assert density.spec.support is non_negative
+        assert float(jnp.asarray(density)) == pytest.approx(
+            float(np.exp(jax.scipy.stats.norm.logpdf(0.7, 0.0, 1.5))), rel=1e-6
+        )
+
+    def test_unnormalized_prob_is_the_exponential_of_unnormalized_log_prob(self):
+        assert unnormalized_prob.is_derived
+        assert float(jnp.asarray(unnormalized_prob(Unnormalized("u"), 0.0))) == pytest.approx(
+            2.0 * float(np.exp(jax.scipy.stats.norm.logpdf(0.0))), rel=1e-6
+        )
+
+    def test_prob_of_a_law_without_a_normalized_density_raises_resolution_error(self):
+        with pytest.raises(ResolutionError):
+            prob(Unnormalized("u"), 0.0)
+
+
+class TestRandomLogDensities:
+    def test_random_log_prob_returns_the_random_function_as_a_law(self):
+        law = random_log_prob(RandomDensity("m"))
+        assert isinstance(law, Distribution)
+        assert law.loc == -1.0
+
+    def test_random_unnormalized_log_prob_returns_its_own_random_function(self):
+        assert random_unnormalized_log_prob(RandomDensity("m")).loc == -2.0
+
+    def test_neither_takes_a_value(self):
+        assert list(inspect.signature(random_log_prob).parameters) == ["M"]
+        assert list(inspect.signature(random_unnormalized_log_prob).parameters) == ["M"]
+
+    def test_a_law_without_a_random_density_raises_resolution_error(self):
+        with pytest.raises(ResolutionError, match="SupportsRandomLogProb"):
+            random_log_prob(Gaussian("g"))
