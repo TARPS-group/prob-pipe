@@ -34,6 +34,7 @@ from probpipe.distributions import (
     FullyNumericConditionalDistribution,
 )
 from probpipe.distributions._capabilities import (
+    SupportsConditionalCovariance,
     SupportsConditionalLogProb,
     SupportsConditionalMean,
     SupportsConditionalSampling,
@@ -68,6 +69,16 @@ def beta():
 
 def _dispersion(family: GLMFamily):
     return 0.5 if family.has_dispersion else None
+
+
+class _UnitScaleGaussian(GLMFamily):
+    """A family of unit-scale normal observations that defines only the members VII.8 declares."""
+
+    canonical_link = GaussianFamily.canonical_link
+    has_dispersion = False
+
+    def build(self, name, mean, dispersion=None, *, event_spec=None):
+        return MultivariateNormal(name, mean, cov=jnp.eye(mean.shape[0]), event_spec=event_spec)
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +186,12 @@ class TestTheResponseFamilies:
         with pytest.raises(TypeError, match="requires a dispersion"):
             GaussianFamily().build("y", jnp.array([0.0, 1.0]))
 
+    def test_an_integer_dispersion_takes_the_floating_dtype_of_the_mean(self):
+        mean = jnp.zeros(3)
+        law = GaussianFamily().build("y", mean, 2)
+        np.testing.assert_allclose(law._variance(), jnp.full(3, 4.0), rtol=1e-6)
+        assert law._log_prob(mean).dtype == mean.dtype
+
     @pytest.mark.parametrize("family", [BernoulliFamily, PoissonFamily])
     def test_a_dispersion_for_a_family_without_one_raises(self, family):
         with pytest.raises(TypeError, match="takes no dispersion"):
@@ -236,12 +253,50 @@ class TestTheDeclarations:
             SupportsConditionalLogProb,
             SupportsConditionalMean,
             SupportsConditionalVariance,
+            SupportsConditionalCovariance,
         ):
             assert isinstance(likelihood, protocol), protocol.__name__
 
     def test_a_response_named_like_a_given_slot_raises(self):
         with pytest.raises(ValueError, match="given slot"):
             glm_likelihood("beta", PoissonFamily())
+
+    def test_a_declared_response_type_binds_the_observations_on_both_sides(self):
+        likelihood = glm_likelihood(
+            "y", PoissonFamily(), event_spec=OutputSpec(counts=NumericArraySpec((5,)))
+        )
+        assert likelihood.event_spec.spec.shape == (5,)
+        assert likelihood.given_spec["X"].shape == (5, "features")
+
+    def test_a_declared_response_type_that_agrees_with_X_is_kept(self, X, beta):
+        likelihood = glm_likelihood(
+            "y", PoissonFamily(), X=X, event_spec=OutputSpec(counts=NumericArraySpec((4,)))
+        )
+        assert likelihood.event_spec.spec.shape == (4,)
+        law = likelihood._condition_on({"beta": beta})
+        assert list(law.event_spec.components) == ["counts"]
+
+    def test_a_renamed_kernel_keeps_its_response_component(self, X):
+        likelihood = glm_likelihood("y", PoissonFamily(), X=X).with_name("L")
+        assert likelihood.name == "L"
+        assert list(likelihood.event_spec.components) == ["y"]
+
+
+class TestACustomFamily:
+    """VII.8: a family needs only its canonical link, has_dispersion, and build."""
+
+    def test_the_likelihood_assembles_from_the_declared_members(self, X):
+        likelihood = glm_likelihood("y", _UnitScaleGaussian(), X=X)
+        assert list(likelihood.given_spec) == ["beta"]
+        assert list(likelihood.event_spec.components) == ["y"]
+        assert likelihood.event_spec.spec.shape == (4,)
+
+    def test_the_law_is_the_familys_law_at_the_mean(self, X, beta):
+        law = glm_likelihood("y", _UnitScaleGaussian(), X=X)._condition_on({"beta": beta})
+        y = jnp.array([0.0, 1.0, 0.5, 2.0])
+        expected = MultivariateNormal("y", X @ beta, cov=jnp.eye(4))
+        np.testing.assert_allclose(law._mean(), X @ beta, rtol=1e-6)
+        np.testing.assert_allclose(law._log_prob(y), expected._log_prob(y), rtol=1e-6)
 
 
 class TestTheConstructionErrors:
@@ -268,6 +323,12 @@ class TestTheConstructionErrors:
     def test_an_event_spec_that_is_not_an_output_spec_raises(self):
         with pytest.raises(TypeError, match="OutputSpec"):
             glm_likelihood("y", PoissonFamily(), event_spec=NumericArraySpec(("obs",)))
+
+    def test_a_declared_response_type_that_disagrees_with_X_raises(self, X):
+        with pytest.raises(ValueError, match="X"):
+            glm_likelihood(
+                "y", PoissonFamily(), X=X, event_spec=OutputSpec(counts=NumericArraySpec((5,)))
+            )
 
 
 class TestTheLaw:
@@ -301,6 +362,15 @@ class TestTheLaw:
         law = likelihood._condition_on({"beta": beta})
         assert list(law.event_spec.components) == ["counts"]
         assert law.event_spec.spec.shape == (4,)
+
+    def test_the_law_of_a_renamed_kernel_keeps_the_response_component(self, X, beta):
+        law = glm_likelihood("y", PoissonFamily(), X=X).with_name("L")._condition_on({"beta": beta})
+        assert law.name == "L"
+        assert list(law.event_spec.components) == ["y"]
+
+    def test_a_fixed_integer_dispersion_builds_the_law(self, X, beta):
+        law = glm_likelihood("y", GaussianFamily(), X=X, dispersion=2)._condition_on({"beta": beta})
+        np.testing.assert_allclose(law._variance(), jnp.full(4, 4.0), rtol=1e-6)
 
     def test_binding_every_slot_with_keywords(self, X, beta):
         likelihood = glm_likelihood("y", GaussianFamily())
@@ -337,6 +407,46 @@ class TestTheLaw:
             glm_likelihood("y", PoissonFamily(), X=X)._condition_on({"beta": jnp.ones(3)})
 
 
+class TestTheCanonicalLink:
+    """Under the canonical link the law is built from the linear predictor, not from the mean."""
+
+    @pytest.fixture
+    def predictor(self):
+        return jnp.array([17.0, -17.0])
+
+    def _logistic(self, predictor):
+        return glm_likelihood("y", BernoulliFamily(), X=predictor[:, None])
+
+    def test_the_logistic_log_density_is_exact_where_the_probability_rounds_to_one(self, predictor):
+        law = self._logistic(predictor)._condition_on({"beta": jnp.array([1.0])})
+        y = jnp.array([0.0, 1.0])
+        # log p(y) = y η − softplus(η), which is −17 for each observation here.
+        expected = y @ predictor - jnp.sum(jax.nn.softplus(predictor))
+        np.testing.assert_allclose(law._log_prob(y), expected, rtol=1e-6)
+
+    def test_the_logistic_gradient_is_finite(self, predictor):
+        likelihood = self._logistic(predictor)
+        y = jnp.array([0.0, 1.0])
+        gradient = jax.grad(lambda b: likelihood._conditional_log_prob({"beta": b}, y))(
+            jnp.array([1.0])
+        )
+        # d/dβ log p(y) = xᵀ (y − sigmoid(η)) for the one feature x = η.
+        expected = predictor @ (y - jax.nn.sigmoid(predictor))
+        assert bool(jnp.all(jnp.isfinite(gradient)))
+        np.testing.assert_allclose(gradient, [expected], rtol=1e-5)
+
+    def test_the_poisson_log_density_is_exact_where_the_rate_underflows(self):
+        likelihood = glm_likelihood("y", PoissonFamily(), X=jnp.array([[-110.0]]))
+        y = jnp.array([1.0])
+        law = likelihood._condition_on({"beta": jnp.array([1.0])})
+        # log p(1) = η − exp(η) − log 1!, which is −110 to float precision.
+        np.testing.assert_allclose(law._log_prob(y), -110.0, rtol=1e-6)
+        gradient = jax.grad(lambda b: likelihood._conditional_log_prob({"beta": b}, y))(
+            jnp.array([1.0])
+        )
+        np.testing.assert_allclose(gradient, [-110.0], rtol=1e-5)
+
+
 class TestTheConditionalCapabilities:
     """Each capability agrees with the same capability of the conditioned law."""
 
@@ -361,6 +471,13 @@ class TestTheConditionalCapabilities:
         np.testing.assert_allclose(likelihood._conditional_mean(given), law._mean(), rtol=1e-6)
         np.testing.assert_allclose(
             likelihood._conditional_variance(given), law._variance(), rtol=1e-6
+        )
+
+    def test_covariance(self, likelihood, given):
+        covariance = likelihood._conditional_cov(given)
+        assert isinstance(covariance, LinOp)
+        np.testing.assert_allclose(
+            covariance.to_dense(), likelihood._condition_on(given)._cov().to_dense(), rtol=1e-6
         )
 
     def test_sample(self, likelihood, given):

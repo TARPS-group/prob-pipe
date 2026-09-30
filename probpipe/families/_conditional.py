@@ -27,12 +27,14 @@ import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ..core._dispatch import ResolutionError
+from ..core._spec_base import _unify_specs
 from ..core._specs import InputSpec, NumericArraySpec, OutputSpec
 from ..core.constraints import Constraint, boolean, non_negative_integer, positive, real
 
 # The links wrap callables whose annotations a Function resolves at construction.
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..distributions._capabilities import (
+    SupportsConditionalCovariance,
     SupportsConditionalLogProb,
     SupportsConditionalMean,
     SupportsConditionalSampling,
@@ -196,20 +198,20 @@ class _IndependentObservations(TFPDistribution):
         return DiagonalLinOp(self._tfp_dist.variance())
 
 
-def _mean_vector(mean: ArrayLike, owner: str) -> Array:
-    """*mean* as a floating vector with one entry per observation.
+def _observation_vector(values: ArrayLike, owner: str, quantity: str) -> Array:
+    """*values* as a floating vector with one *quantity* per observation.
 
     Raises
     ------
     ValueError
-        If *mean* is not one-dimensional.
+        If *values* is not one-dimensional.
     """
-    array = jnp.asarray(mean)
+    array = jnp.asarray(values)
     if not jnp.issubdtype(array.dtype, jnp.floating):
         array = array.astype(jnp.result_type(float))
     if array.ndim != 1:
         raise ValueError(
-            f"{owner}.build takes one mean per observation, a vector, got shape {array.shape}"
+            f"{owner} takes one {quantity} per observation, a vector, got shape {array.shape}"
         )
     return array
 
@@ -221,7 +223,10 @@ class GLMFamily(ABC):
     one per entry of ``mean``. ``canonical_link`` is the family's canonical link
     ``g``, which maps the mean invertibly to the linear predictor, and
     ``has_dispersion`` declares whether :meth:`build` takes a dispersion, such
-    as a Gaussian scale.
+    as a Gaussian scale. A family needs only these three members. It may also
+    set ``_support`` to the support of one observation, which the likelihood
+    declares for its response, and it may override :meth:`_build_canonical` to
+    build the law from the linear predictor of the canonical link.
 
     Raises
     ------
@@ -231,7 +236,7 @@ class GLMFamily(ABC):
 
     canonical_link: Function
     has_dispersion: bool
-    _support: ClassVar[Constraint]
+    _support: ClassVar[Constraint | None] = None
 
     def __init__(self) -> None:
         _require_invertible(self.canonical_link, type(self).__name__)
@@ -276,8 +281,29 @@ class GLMFamily(ABC):
             response vector does not conform to.
         """
 
-    def _dispersion(self, dispersion: ArrayLike | None) -> Array | None:
-        """The dispersion checked against ``has_dispersion``.
+    def _build_canonical(
+        self,
+        name: str,
+        predictor: Array,
+        dispersion: ArrayLike | None = None,
+        *,
+        event_spec: OutputSpec | None = None,
+    ) -> Distribution:
+        """The law of :meth:`build` at the means ``g⁻¹(predictor)``, for the canonical link ``g``.
+
+        The likelihood builds its law here under the canonical link, where the
+        linear predictor is the natural parameter. A family whose backend takes
+        the natural parameter overrides this to build the law from *predictor*
+        directly, which keeps the log-density and its gradient finite where the
+        mean rounds to a boundary of its range. Parameters and errors are those
+        of :meth:`build`, except that *predictor* takes the place of the mean,
+        with one entry per observation.
+        """
+        mean = self.canonical_link._inverse(predictor)
+        return self.build(name, mean, dispersion, event_spec=event_spec)
+
+    def _dispersion(self, dispersion: ArrayLike | None, mean: Array) -> Array | None:
+        """The dispersion checked against ``has_dispersion``, in the floating dtype of *mean*.
 
         Raises
         ------
@@ -288,7 +314,7 @@ class GLMFamily(ABC):
             raise TypeError(f"{type(self).__name__}.build requires a dispersion")
         if not self.has_dispersion and dispersion is not None:
             raise TypeError(f"{type(self).__name__}.build takes no dispersion")
-        return None if dispersion is None else jnp.asarray(dispersion)
+        return None if dispersion is None else jnp.asarray(dispersion, dtype=mean.dtype)
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}()"
@@ -318,8 +344,8 @@ class GaussianFamily(GLMFamily):
 
         Parameters and errors are those of :meth:`GLMFamily.build`.
         """
-        scale = self._dispersion(dispersion)
-        mean = _mean_vector(mean, type(self).__name__)
+        mean = _observation_vector(mean, f"{type(self).__name__}.build", "mean")
+        scale = self._dispersion(dispersion, mean)
         return _IndependentObservations(
             name, tfd.Normal(loc=mean, scale=scale), real, event_spec=event_spec
         )
@@ -349,10 +375,27 @@ class BernoulliFamily(GLMFamily):
 
         Parameters and errors are those of :meth:`GLMFamily.build`.
         """
-        self._dispersion(dispersion)
-        mean = _mean_vector(mean, type(self).__name__)
+        mean = _observation_vector(mean, f"{type(self).__name__}.build", "mean")
+        self._dispersion(dispersion, mean)
         return _IndependentObservations(
             name, tfd.Bernoulli(probs=mean), boolean, event_spec=event_spec
+        )
+
+    def _build_canonical(
+        self,
+        name: str,
+        predictor: Array,
+        dispersion: ArrayLike | None = None,
+        *,
+        event_spec: OutputSpec | None = None,
+    ) -> Distribution:
+        """Independent Bernoulli observations with the log-odds *predictor*."""
+        logits = _observation_vector(
+            predictor, f"{type(self).__name__}._build_canonical", "linear predictor"
+        )
+        self._dispersion(dispersion, logits)
+        return _IndependentObservations(
+            name, tfd.Bernoulli(logits=logits), boolean, event_spec=event_spec
         )
 
 
@@ -380,10 +423,27 @@ class PoissonFamily(GLMFamily):
 
         Parameters and errors are those of :meth:`GLMFamily.build`.
         """
-        self._dispersion(dispersion)
-        mean = _mean_vector(mean, type(self).__name__)
+        mean = _observation_vector(mean, f"{type(self).__name__}.build", "mean")
+        self._dispersion(dispersion, mean)
         return _IndependentObservations(
             name, tfd.Poisson(rate=mean), non_negative_integer, event_spec=event_spec
+        )
+
+    def _build_canonical(
+        self,
+        name: str,
+        predictor: Array,
+        dispersion: ArrayLike | None = None,
+        *,
+        event_spec: OutputSpec | None = None,
+    ) -> Distribution:
+        """Independent Poisson observations with the log-rates *predictor*."""
+        log_rate = _observation_vector(
+            predictor, f"{type(self).__name__}._build_canonical", "linear predictor"
+        )
+        self._dispersion(dispersion, log_rate)
+        return _IndependentObservations(
+            name, tfd.Poisson(log_rate=log_rate), non_negative_integer, event_spec=event_spec
         )
 
 
@@ -392,19 +452,43 @@ class PoissonFamily(GLMFamily):
 # ---------------------------------------------------------------------------
 
 
+def _declared_sizes(event_spec: OutputSpec, response: NumericArraySpec) -> dict[str, int]:
+    """The sizes the declared array type of *event_spec* fixes for the dimensions of *response*.
+
+    ``OutputSpec.with_spec`` checks a declared type against the response and
+    then replaces it, so the sizes it fixes are read here first. A type hole
+    fixes no size, and a declared type of another kind is left to
+    ``with_spec``, which refuses it.
+
+    Raises
+    ------
+    ValueError
+        If the declared array type does not conform to *response*.
+    """
+    sizes: dict[str, int] = {}
+    if isinstance(event_spec.spec, NumericArraySpec):
+        (component,) = event_spec.components
+        _unify_specs(event_spec.spec, response, sizes, f"Declared component {component!r}")
+    return sizes
+
+
 class _GLMLikelihood(
     ConditionalDistribution,
     SupportsConditionalSampling,
     SupportsConditionalLogProb,
     SupportsConditionalMean,
     SupportsConditionalVariance,
+    SupportsConditionalCovariance,
 ):
     """The kernel of a GLM, which :func:`glm_likelihood` constructs.
 
     A slot with a fixed value is not a given slot, and its value binds the
     dimensions it declares. Binding some given slots curries to the kernel of
     the others. Each conditional capability is the matching capability of the
-    law :meth:`_condition_on` returns for a value of every given slot.
+    law :meth:`_condition_on` returns for a value of every given slot. The law
+    carries the kernel's event declaration, whose component is completed once,
+    at construction. Under the family's canonical link the family builds the
+    law from the linear predictor, and under another link from the mean.
     """
 
     def __init__(
@@ -433,14 +517,16 @@ class _GLMLikelihood(
         if family.has_dispersion:
             slots["dispersion"] = NumericArraySpec((), support=positive)
         response = NumericArraySpec(("obs",), support=family._support)
-        declaration = (
-            OutputSpec.default(response, component=name)
-            if event_spec is None
-            else event_spec.with_spec(response)
-        )
+        if event_spec is None:
+            declaration = OutputSpec.default(response, component=name)
+        else:
+            # The declared type's sizes bind on both sides before X is fixed against them.
+            sizes = _declared_sizes(event_spec, response)
+            slots = {slot: spec._substitute_dims(sizes) for slot, spec in slots.items()}
+            declaration = event_spec.with_spec(response._substitute_dims(sizes))
         object.__setattr__(self, "_family", family)
         object.__setattr__(self, "_link", link)
-        object.__setattr__(self, "_declared_event", event_spec)
+        object.__setattr__(self, "_canonical", link is family.canonical_link)
         object.__setattr__(self, "_fixed", {})
         super().__init__(name, InputSpec(slots), declaration)
         fixed: dict[str, Array] = {}
@@ -554,9 +640,14 @@ class _GLMLikelihood(
         """
         self.given_spec.bind_dims_from_value(dict(values))
         every = {**self._fixed, **values}
-        mean = self._link._inverse(every["X"] @ every["beta"])
+        predictor = every["X"] @ every["beta"]
+        dispersion = every.get("dispersion")
+        if self._canonical:
+            return self._family._build_canonical(
+                self.name, predictor, dispersion, event_spec=self.event_spec
+            )
         return self._family.build(
-            self.name, mean, every.get("dispersion"), event_spec=self._declared_event
+            self.name, self._link._inverse(predictor), dispersion, event_spec=self.event_spec
         )
 
     # -- the conditional capabilities ------------------------------------------
@@ -581,6 +672,10 @@ class _GLMLikelihood(
     def _conditional_variance(self, given: Record | Mapping[str, Any]) -> Array:
         """The per-observation variance at a value of every given slot."""
         return self._law(self._complete_values(given))._variance()
+
+    def _conditional_cov(self, given: Record | Mapping[str, Any]) -> LinOp:
+        """The covariance of the response vector at a value of every given slot."""
+        return self._law(self._complete_values(given))._cov()
 
     def __repr__(self) -> str:
         return (
@@ -632,7 +727,7 @@ def glm_likelihood(
     -------
     ConditionalDistribution
         The GLM kernel, which claims conditional sampling, log-density, mean,
-        and variance.
+        variance, and covariance.
 
     Raises
     ------
@@ -644,7 +739,8 @@ def glm_likelihood(
         If *link* is not invertible.
     ValueError
         If *X* is not a matrix, *event_spec* declares a type the response vector
-        does not conform to, or the event's component is also a given slot's name.
+        does not conform to or a number of observations that *X* contradicts, or
+        the event's component is also a given slot's name.
     """
     return _GLMLikelihood(
         name,
