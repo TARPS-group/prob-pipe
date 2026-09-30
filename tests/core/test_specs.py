@@ -313,22 +313,33 @@ class TestDimensionBinding:
         with pytest.raises(TypeError, match="bind_dims_from_spec expects a TermSpec"):
             RecordSpec(x=(3,)).bind_dims_from_spec(actual)
 
-    @pytest.mark.parametrize("actual_name", ["n", "m"])
     @pytest.mark.parametrize("kind", ["array", "batch"])
-    def test_binding_requires_concrete_actual_dimensions(self, actual_name, kind):
+    def test_a_name_both_sides_declare_is_one_free_dimension(self, kind):
         if kind == "array":
-            declared = NumericArraySpec(("n",))
-            actual = NumericArraySpec((actual_name,))
-            message = "concrete dimensions are required"
+            declared, actual = NumericArraySpec(("n",)), NumericArraySpec(("n",))
         else:
             declared = BatchSpec(OpaqueSpec(), [("n",)], ["draw"])
-            actual = BatchSpec(OpaqueSpec(), [(actual_name,)], ["draw"])
-            message = "non-concrete dimension"
+            actual = BatchSpec(OpaqueSpec(), [("n",)], ["draw"])
+        assert declared.bind_dims_from_spec(actual).free_dims == {"n"}
 
-        with pytest.raises(ValueError, match=message):
+    @pytest.mark.parametrize("kind", ["array", "batch"])
+    def test_two_different_names_at_one_axis_raise(self, kind):
+        if kind == "array":
+            declared, actual = NumericArraySpec(("n",)), NumericArraySpec(("m",))
+        else:
+            declared = BatchSpec(OpaqueSpec(), [("n",)], ["draw"])
+            actual = BatchSpec(OpaqueSpec(), [("m",)], ["draw"])
+        with pytest.raises(ValueError, match="meets the symbolic dimensions 'n' and 'm'"):
             declared.bind_dims_from_spec(actual)
-        assert declared.free_dims == {"n"}
-        assert actual.free_dims == {actual_name}
+
+    def test_a_symbol_on_the_other_side_binds_to_this_side_size(self):
+        declared = RecordSpec(a=(3,), b=("m",))
+        actual = RecordSpec(a=("m",), b=("m",))
+        assert declared.bind_dims_from_spec(actual) == RecordSpec(a=(3,), b=(3,))
+
+    def test_a_symbol_bound_on_one_side_constrains_the_other(self):
+        with pytest.raises(ValueError, match="already bound to 3"):
+            RecordSpec(a=(3,), b=(4,)).bind_dims_from_spec(RecordSpec(a=("m",), b=("m",)))
 
     @pytest.mark.parametrize(
         ("expected", "actual_spec", "actual_value", "value_error"),

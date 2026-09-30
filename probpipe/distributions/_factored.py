@@ -98,6 +98,10 @@ class _FactorGraph:
         The givens no factor produces, or ``None`` when every given is met.
     event_spec : OutputSpec
         The exposed record of every factor's components, in factor order.
+    scope : Mapping[str, int]
+        The joint's dimension scope: each dimension name bound while the factors
+        were unified, so a later composition binds the same name to the same
+        size, whatever the grouping.
     """
 
     factors: tuple[Factor, ...]
@@ -105,6 +109,7 @@ class _FactorGraph:
     edges: tuple[tuple[int, int, str], ...]
     unmet: InputSpec | None
     event_spec: OutputSpec
+    scope: Mapping[str, int]
 
     def parents(self, index: int) -> set[int]:
         """The indices of the factors that factor *index* conditions on."""
@@ -132,14 +137,67 @@ def _free_dims(factor: Factor) -> frozenset[str]:
     return factor.event_spec.spec.free_dims
 
 
-def _factor_graph(factors: Sequence[Factor]) -> _FactorGraph:
+def _flattened(
+    factors: Sequence[Factor], scope: Mapping[str, int] | None
+) -> tuple[tuple[Factor, ...], dict[str, int]]:
+    """*factors* with each factored factor replaced by its own, and the merged scope.
+
+    Raises
+    ------
+    ValueError
+        If two scopes bind one dimension name to different sizes.
+    """
+    bindings = dict(scope or {})
+    flat: list[Factor] = []
+    for factor in factors:
+        graph = getattr(factor, "_graph", None)
+        if isinstance(factor, SupportsFactors) and isinstance(graph, _FactorGraph):
+            flat.extend(graph.factors)
+            for name, size in graph.scope.items():
+                if bindings.setdefault(name, size) != size:
+                    raise ValueError(
+                        f"the dimension {name!r} is bound to {bindings[name]} and to {size}; "
+                        f"rename one apart with with_dim_names"
+                    )
+        else:
+            flat.append(factor)
+    return tuple(flat), bindings
+
+
+def _unify_either_way(
+    first: TermSpec, second: TermSpec, bindings: dict[str, int], path: str
+) -> None:
+    """Unify two specs that meet as equals, whichever direction admits the other.
+
+    Raises
+    ------
+    ValueError
+        If neither direction unifies, with the error of the first.
+    """
+    trial = dict(bindings)
+    try:
+        _unify_specs(first, second, trial, path)
+    except ValueError as forward:
+        trial = dict(bindings)
+        try:
+            _unify_specs(second, first, trial, path)
+        except ValueError:
+            raise forward from None
+    bindings.update(trial)
+
+
+def _factor_graph(
+    factors: Sequence[Factor], scope: Mapping[str, int] | None = None
+) -> _FactorGraph:
     """Validate the ordered *factors* by the composition rules and derive their graph.
 
-    The order is conditional-first: a factor may condition on a component that
-    a factor to its right produces, and never on one a factor to its left
-    produces. Every component is produced once. A matched component's spec must
-    unify with the consuming slot's, and same-named unmet givens unify into one
-    slot, all in one dimension scope whose bindings are applied to the factors.
+    A factored factor enters as its own factors, with its scope. The order is
+    conditional-first: a factor may condition on a component that a factor to
+    its right produces, and never on one a factor to its left produces. Every
+    component is produced once. A matched component's spec must unify with the
+    consuming slot's, and same-named unmet givens unify into one slot, all in one
+    dimension scope, starting from *scope*, whose bindings are applied to the
+    factors and recorded with the graph.
 
     Raises
     ------
@@ -147,10 +205,10 @@ def _factor_graph(factors: Sequence[Factor]) -> _FactorGraph:
         If a factor is neither distribution kind.
     ValueError
         If there are no factors, a component is produced twice, a factor
-        consumes a component a factor to its left produces, or matched specs do
-        not unify.
+        consumes a component a factor to its left produces, matched specs do
+        not unify, or two scopes bind one dimension to different sizes.
     """
-    factors = tuple(factors)
+    factors, bindings = _flattened(tuple(factors), scope)
     if not factors:
         raise ValueError("a factored distribution has at least one factor")
     producers: dict[str, int] = {}
@@ -170,7 +228,6 @@ def _factor_graph(factors: Sequence[Factor]) -> _FactorGraph:
                 )
             producers[component] = index
             component_specs[component] = spec
-    bindings: dict[str, int] = {}
     edges: list[tuple[int, int, str]] = []
     unmet: dict[str, TermSpec] = {}
     for index, factor in enumerate(factors):
@@ -181,7 +238,7 @@ def _factor_graph(factors: Sequence[Factor]) -> _FactorGraph:
             producer = producers.get(slot)
             if producer is None:
                 if slot in unmet:
-                    _unify_specs(unmet[slot], slot_spec, bindings, f"the given {slot!r}")
+                    _unify_either_way(unmet[slot], slot_spec, bindings, f"the given {slot!r}")
                 else:
                     unmet[slot] = slot_spec
                 continue
@@ -216,6 +273,7 @@ def _factor_graph(factors: Sequence[Factor]) -> _FactorGraph:
         edges=tuple(edges),
         unmet=InputSpec(unmet) if unmet else None,
         event_spec=event_spec,
+        scope=bindings,
     )
 
 
@@ -365,7 +423,10 @@ def _rebuilt(joint: Any, method: str, mapping: Mapping[str, Any], *, free: Any =
                 f"{sorted(unbound)} to bind"
             )
     base = vars(type(joint)).get("_capability_base", type(joint))
-    rebuilt = base(joint.name, _each_factor(joint.factors, method, mapping))
+    scope = dict(joint._graph.scope)
+    if method == "with_dim_sizes":
+        scope.update(mapping)
+    rebuilt = base(joint.name, _each_factor(joint.factors, method, mapping), _scope=scope)
     return rebuilt.with_provenance(
         Provenance.create(method, parents=[joint], metadata=dict(mapping))
     )
@@ -423,13 +484,17 @@ class FactoredDistribution(Distribution, SupportsFactors):
 
     _capability_table = _joint_table("FactoredDistribution", conditional=False)
 
-    def __new__(cls, name: str, factors: Sequence[Factor]) -> FactoredDistribution:
-        protocols = _joint_protocols(_factor_graph(factors), conditional=False)
+    def __new__(
+        cls, name: str, factors: Sequence[Factor], *, _scope: Mapping[str, int] | None = None
+    ) -> FactoredDistribution:
+        protocols = _joint_protocols(_factor_graph(factors, _scope), conditional=False)
         base = vars(cls).get("_capability_base", cls)
         return object.__new__(_capability_subclass(base, protocols))
 
-    def __init__(self, name: str, factors: Sequence[Factor]) -> None:
-        graph = _factor_graph(factors)
+    def __init__(
+        self, name: str, factors: Sequence[Factor], *, _scope: Mapping[str, int] | None = None
+    ) -> None:
+        graph = _factor_graph(factors, _scope)
         if graph.unmet is not None:
             raise ValueError(
                 f"the factors of {name!r} leave the givens {sorted(graph.unmet)} unmet, so "
@@ -507,13 +572,17 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
 
     _capability_table = _joint_table("FactoredConditionalDistribution", conditional=True)
 
-    def __new__(cls, name: str, factors: Sequence[Factor]) -> FactoredConditionalDistribution:
-        protocols = _joint_protocols(_factor_graph(factors), conditional=True)
+    def __new__(
+        cls, name: str, factors: Sequence[Factor], *, _scope: Mapping[str, int] | None = None
+    ) -> FactoredConditionalDistribution:
+        protocols = _joint_protocols(_factor_graph(factors, _scope), conditional=True)
         base = vars(cls).get("_capability_base", cls)
         return object.__new__(_capability_subclass(base, protocols))
 
-    def __init__(self, name: str, factors: Sequence[Factor]) -> None:
-        graph = _factor_graph(factors)
+    def __init__(
+        self, name: str, factors: Sequence[Factor], *, _scope: Mapping[str, int] | None = None
+    ) -> None:
+        graph = _factor_graph(factors, _scope)
         if graph.unmet is None:
             raise ValueError(
                 f"the factors of {name!r} meet every given, so the joint is a FactoredDistribution"

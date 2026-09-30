@@ -16,6 +16,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from probpipe import (
@@ -243,6 +244,11 @@ class TestUnmetRule:
 class TestSameNamedGivens:
     """Same-named unmet givens are one slot, and binding it binds each factor that names it."""
 
+    def test_same_named_givens_unify_whichever_dtype_is_listed_first(self):
+        wide = _kernel("k1", {"x": NumericArraySpec((), np.float32)}, "a")
+        narrow = _kernel("k2", {"x": NumericArraySpec((), np.int32)}, "b")
+        assert list((wide * narrow).given_spec) == list((narrow * wide).given_spec) == ["x"]
+
     def test_same_named_unmet_givens_are_one_slot(self):
         joint = _kernel("k1", {"x": SCALAR}, "a") * _kernel("k2", {"x": SCALAR}, "b")
         assert dict(joint.given_spec) == {"x": SCALAR}
@@ -268,19 +274,11 @@ class TestSameNamedGivens:
         assert isinstance(bound, FactoredDistribution)
         assert [float(factor.loc) for factor in bound.factors] == [0.5, 0.5]
 
-    @pytest.mark.pending(
-        reason="unification at composition keeps a dimension both slots declare free",
-        raises=ValueError,
-    )
     def test_same_named_polymorphic_givens_share_one_free_dimension(self):
         joint = _kernel("k1", {"x": SYMBOLIC}, "a") * _kernel("k2", {"x": SYMBOLIC}, "b")
         assert joint.given_spec["x"] == SYMBOLIC
         assert joint.spec.free_dims == {"n"}
 
-    @pytest.mark.pending(
-        reason="unification at composition binds a later polymorphic given to an earlier one",
-        raises=ValueError,
-    )
     def test_the_unified_slot_does_not_depend_on_the_operand_order(self):
         polymorphic = _kernel("k1", {"x": SYMBOLIC}, "a", SYMBOLIC)
         concrete = _kernel("k2", {"x": VECTOR}, "b")
@@ -329,10 +327,6 @@ class TestOneDimensionScope:
         assert joint.event_spec.components["a"].shape == (3,)
         assert joint.event_spec.components["b"].shape == (4,)
 
-    @pytest.mark.pending(
-        reason="unification at composition keeps a dimension a slot and its producer share free",
-        raises=ValueError,
-    )
     def test_a_slot_and_its_producer_sharing_a_dimension_keep_it_free(self):
         joint = _kernel("lik", {"beta": SYMBOLIC}, "y", SYMBOLIC) * _law("prior", "beta", SYMBOLIC)
         assert joint.event_spec.spec.free_dims == {"n"}
@@ -364,10 +358,6 @@ class TestMatchedSpecs:
         assert joint.event_spec.components["y"] == VECTOR
         assert joint.factors[0].given_spec["beta"] == VECTOR
 
-    @pytest.mark.pending(
-        reason="unification at composition binds a polymorphic producer to the slot it meets",
-        raises=ValueError,
-    )
     def test_a_polymorphic_producer_binds_to_the_slot_it_meets(self):
         joint = _kernel("lik", {"beta": VECTOR}, "y") * _law("prior", "beta", SYMBOLIC)
         assert joint.event_spec.components["beta"] == VECTOR
@@ -379,6 +369,11 @@ class TestMatchedSpecs:
 
 class TestFlattening:
     """Every operand enters as its flattened factors, so a chain is one flat joint."""
+
+    def test_direct_construction_flattens_a_factored_factor(self):
+        a, b, c = (_law(name, name) for name in "abc")
+        joint = FactoredDistribution("j", [a * b, c])
+        assert [factor.name for factor in joint.factors] == ["a", "b", "c"]
 
     def test_a_chain_of_three_operands_is_one_joint_of_three_factors(self):
         lik, prior, other = _likelihood(), _prior(), _law("other", "c")
@@ -428,6 +423,15 @@ def _bound_dimension():
     )
 
 
+def _scope_carried():
+    """A kernel over ``n`` bound by its producer, and a later law over the same ``n``."""
+    return (
+        _kernel("k", {"x": SYMBOLIC}, "a", SYMBOLIC),
+        _law("p", "x", VECTOR),
+        _law("l", "b", SYMBOLIC),
+    )
+
+
 def _consumer_after_producer():
     return _prior(), _law("other", "c"), _likelihood()
 
@@ -443,6 +447,11 @@ def _consumer_of_the_middle():
 class TestAssociativity:
     """Under ``G_B ∩ F_A = ∅`` the two groupings agree on validity and build one joint."""
 
+    def test_a_joint_carries_its_bound_dimensions_into_a_later_composition(self):
+        a, b, c = _scope_carried()
+        joint = (a * b) * c
+        assert joint.event_spec.components["b"] == VECTOR
+
     @pytest.mark.parametrize(
         "operands",
         [
@@ -450,6 +459,7 @@ class TestAssociativity:
             pytest.param(_shared_given, id="shared-given"),
             pytest.param(_open_givens, id="open-givens"),
             pytest.param(_bound_dimension, id="bound-dimension"),
+            pytest.param(_scope_carried, id="scope-carried"),
         ],
     )
     def test_both_groupings_build_one_joint(self, operands):

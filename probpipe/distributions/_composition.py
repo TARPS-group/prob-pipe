@@ -16,26 +16,12 @@ from __future__ import annotations
 
 from ._conditional import ConditionalDistribution
 from ._distribution import Distribution, _install_composition
-from ._factored import (
-    FactoredConditionalDistribution,
-    FactoredDistribution,
-    SupportsFactors,
-    _factor_graph,
-)
+from ._factored import FactoredConditionalDistribution, FactoredDistribution, _factor_graph
 
 __all__: list[str] = []
 
 #: The separator the joint's label places between the operands' labels.
 _LABEL_SEP = "·"
-
-
-def _flat_factors(
-    operand: Distribution | ConditionalDistribution,
-) -> tuple[Distribution | ConditionalDistribution, ...]:
-    """*operand*'s factors if it is factored, and *operand* alone otherwise."""
-    if isinstance(operand, SupportsFactors):
-        return tuple(operand.factors)
-    return (operand,)
 
 
 def _compose(
@@ -57,11 +43,13 @@ def _compose(
     """
     if not isinstance(right, (Distribution, ConditionalDistribution)):
         return NotImplemented
-    factors = (*_flat_factors(left), *_flat_factors(right))
+    # Each operand enters with its factors and its dimension scope; the factor
+    # graph flattens a factored operand and carries its scope.
+    operands = (left, right)
     label = f"{left.name}{_LABEL_SEP}{right.name}"
-    if _factor_graph(factors).unmet is None:
-        return FactoredDistribution(label, factors)
-    return FactoredConditionalDistribution(label, factors)
+    if _factor_graph(operands).unmet is None:
+        return FactoredDistribution(label, operands)
+    return FactoredConditionalDistribution(label, operands)
 
 
 _install_composition(_compose)

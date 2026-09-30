@@ -125,8 +125,9 @@ class TermSpec(ABC):
         Parameters
         ----------
         other : TermSpec
-            An authoritative spec. Dimensions used as sizes must be concrete;
-            dimension names on the two sides are not unified as aliases.
+            The spec to unify with, in one scope: a symbolic dimension on either
+            side binds to the size the other side gives at its axis, and a name
+            both sides declare is one dimension, which may stay free.
 
         Returns
         -------
@@ -138,7 +139,8 @@ class TermSpec(ABC):
         TypeError
             If the argument is not a spec.
         ValueError
-            If kinds, structure, or repeated sizes disagree.
+            If kinds, structure, or repeated sizes disagree, or two different
+            symbolic dimensions meet at one axis, which ``with_dim_names`` resolves.
         """
         if not isinstance(other, TermSpec):
             raise TypeError("bind_dims_from_spec expects a TermSpec")
@@ -342,13 +344,9 @@ class NumericArraySpec(NumericSpec):
                 raise ValueError(f"{path} does not conform to its field spec ({self!r})")
 
     def _bind_dims_from_spec(self, actual: TermSpec, bindings: dict[str, int], path: str) -> bool:
-        """Bind the symbolic entries of :attr:`shape` from *actual*'s own shape."""
+        """Unify the entries of :attr:`shape` with *actual*'s, symbols on both sides."""
         if not isinstance(actual, NumericArraySpec):
             return False
-        if any(isinstance(entry, str) for entry in actual.shape):
-            raise ValueError(
-                f"{path} has a polymorphic actual template; concrete dimensions are required"
-            )
         _unify_array_shape(self.shape, actual.shape, bindings, path)
         if self.dtype is not None and actual.dtype is not None:
             if not np.can_cast(actual.dtype, self.dtype, casting="same_kind"):
@@ -448,31 +446,72 @@ def _unify_array_shape(
     actual: tuple[int | str, ...],
     bindings: dict[str, int],
     path: str,
-) -> tuple[int, ...]:
-    """Validate fixed dimensions and bind symbols against a concrete shape."""
+) -> tuple[int | str, ...]:
+    """Unify two shapes axis by axis in the caller's shared scope *bindings*.
+
+    A symbolic dimension on either side binds to the size the other side gives
+    at its axis, and a symbol already bound in *bindings* stands for its size.
+    The same symbol on both sides is one dimension and may stay free, while two
+    different symbols at one axis are different quantities until renamed to agree.
+
+    Returns
+    -------
+    tuple of int or str
+        The unified shape, with the dimensions still unbound left symbolic.
+
+    Raises
+    ------
+    ValueError
+        If the ranks differ, two sizes disagree, or two different unbound
+        symbols meet at one axis.
+    """
     if len(declared) != len(actual):
         raise ValueError(
             f"{path} has rank {len(actual)}, expected rank {len(declared)} from shape {declared!r}"
         )
-    concrete: list[int] = []
+    unified: list[int | str] = []
     for declared_dimension, actual_dimension in zip(declared, actual, strict=True):
-        if not isinstance(actual_dimension, int):
-            raise ValueError(f"{path} has non-concrete dimension {actual_dimension!r}")
-        if isinstance(declared_dimension, int):
-            if declared_dimension != actual_dimension:
+        declared_size = (
+            bindings.get(declared_dimension, declared_dimension)
+            if isinstance(declared_dimension, str)
+            else declared_dimension
+        )
+        actual_size = (
+            bindings.get(actual_dimension, actual_dimension)
+            if isinstance(actual_dimension, str)
+            else actual_dimension
+        )
+        if isinstance(declared_size, int) and isinstance(actual_size, int):
+            if declared_size != actual_size:
+                if isinstance(declared_dimension, str):
+                    raise ValueError(
+                        f"{path} binds symbolic dimension {declared_dimension!r} to "
+                        f"{actual_size}, but it is already bound to {declared_size}"
+                    )
+                if isinstance(actual_dimension, str):
+                    raise ValueError(
+                        f"{path} binds symbolic dimension {actual_dimension!r} to "
+                        f"{declared_size}, but it is already bound to {actual_size}"
+                    )
                 raise ValueError(
-                    f"{path} has dimension {actual_dimension}, expected "
-                    f"{declared_dimension} from shape {declared!r}"
+                    f"{path} has dimension {actual_size}, expected "
+                    f"{declared_size} from shape {declared!r}"
                 )
+            unified.append(declared_size)
+        elif isinstance(declared_size, str) and isinstance(actual_size, int):
+            bindings[declared_size] = actual_size
+            unified.append(actual_size)
+        elif isinstance(declared_size, int) and isinstance(actual_size, str):
+            bindings[actual_size] = declared_size
+            unified.append(declared_size)
+        elif declared_size == actual_size:
+            unified.append(declared_size)
         else:
-            previous = bindings.setdefault(declared_dimension, actual_dimension)
-            if previous != actual_dimension:
-                raise ValueError(
-                    f"{path} binds symbolic dimension {declared_dimension!r} to "
-                    f"{actual_dimension}, but it is already bound to {previous}"
-                )
-        concrete.append(actual_dimension)
-    return tuple(concrete)
+            raise ValueError(
+                f"{path} meets the symbolic dimensions {declared_size!r} and {actual_size!r} "
+                f"at one axis; rename them to agree with with_dim_names"
+            )
+    return tuple(unified)
 
 
 @dataclass(frozen=True)
