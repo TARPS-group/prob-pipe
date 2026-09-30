@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from ..core._record_spec import RecordSpec
 from ..core._spec_base import NumericSpec, TermSpec
 from ..core._specs import OutputSpec
+from ..core.provenance import Provenance
 from ._capabilities import (
     SupportsApproximateConditioning,
     SupportsCovariance,
@@ -110,7 +111,10 @@ def _view_log_prob(self: FieldView, value: Any) -> Array:
 
 
 def _view_log_prob_guard(self: FieldView) -> Feasibility:
-    """Feasible where the parent's marginal at the path is exact and scores."""
+    """The parent's marginal guard at the view's path.
+
+    Whether that marginal scores is decided when the marginal is built.
+    """
     return _capability_guard(self._parent, "_marginal", self._path)
 
 
@@ -120,10 +124,13 @@ def _view_marginal(self: FieldView, path: str | tuple[str, ...]) -> Distribution
 
 
 def _view_marginal_guard(self: FieldView, path: str | tuple[str, ...]) -> Feasibility:
-    """The parent's guard at the joined path."""
+    """The parent's guard at *path* within the view, a path that starts with its component."""
     if not isinstance(path, str):
         raise NotImplementedError("FieldView._marginal_guard: a selection of several paths")
-    return _capability_guard(self._parent, "_marginal", f"{self._path}{_PATH_SEP}{path}")
+    parent_path = self._parent_path(path)
+    if parent_path is None:
+        return Feasibility(False, f"{path!r} is not an event path of the view")
+    return _capability_guard(self._parent, "_marginal", parent_path)
 
 
 def _view_condition_on(self: FieldView, given: Any, /, **kwargs: Any) -> Distribution:
@@ -231,6 +238,9 @@ class FieldView(Distribution):
         object.__setattr__(self, "_parent", parent)
         object.__setattr__(self, "_path", path)
         self._init_declaration(OutputSpec(**{path.split(_PATH_SEP)[-1]: node}))
+        self.with_provenance(
+            Provenance.create("__getitem__", parents=[parent], metadata={"path": path})
+        )
 
     @property
     def parent(self) -> Distribution:
@@ -242,26 +252,38 @@ class FieldView(Distribution):
         """The event path of the parent that this view reads."""
         return self._path
 
+    def _parent_path(self, path: str) -> str | None:
+        """The parent's path for *path*, a path of this view, or None if it is not one.
+
+        The view's paths start with its component, which stands for the node at
+        :attr:`path` in the parent.
+        """
+        head, _, rest = path.partition(_PATH_SEP)
+        if head != _whole_term_component(self.event_spec) or not all(path.split(_PATH_SEP)):
+            return None
+        return f"{self._path}{_PATH_SEP}{rest}" if rest else self._path
+
     def __getitem__(self, key: str | tuple[str, ...]) -> Distribution:
         """This view under its component, or the parent's view at a path within it.
 
-        A path within the node this view covers joins the view's own path, so
-        ``d["a"]["b/c"]`` is ``d["a/b/c"]``.
+        A path of the view starts with its component, so ``d["a"]["a/b/c"]`` is
+        ``d["a/b/c"]``.
 
         Raises
         ------
         KeyError
-            If the joined path is not an event path of the parent.
+            If *key* is not an event path of the view.
+        NotImplementedError
+            If *key* is a tuple, a selection of several paths.
         """
         if not isinstance(key, str):
             raise NotImplementedError("FieldView.__getitem__: a selection of several paths")
-        component = self._path.split(_PATH_SEP)[-1]
-        if key == component:
-            return self
-        head, _, rest = key.partition(_PATH_SEP)
-        if head != component or not rest:
+        parent_path = self._parent_path(key)
+        if parent_path is None:
             raise KeyError(key)
-        return FieldView(self._parent, f"{self._path}{_PATH_SEP}{rest}")
+        if parent_path == self._path:
+            return self
+        return FieldView(self._parent, parent_path)
 
     def __repr__(self) -> str:
         return f"FieldView(parent={self._parent.name!r}, path={self._path!r})"

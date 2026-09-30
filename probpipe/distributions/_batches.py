@@ -39,7 +39,11 @@ def _first_element_spec(store: np.ndarray, kind: type, owner: str) -> object:
         )
     first = store.flat[0]
     if not isinstance(first, kind):
-        raise TypeError(f"{owner} holds {kind.__name__} elements, got {type(first).__name__}")
+        position = (0,) * store.ndim
+        raise TypeError(
+            f"{owner} holds {kind.__name__} elements, got {type(first).__name__} at position "
+            f"{position}"
+        )
     return first.spec
 
 
@@ -209,5 +213,9 @@ class ConditionalDistributionBatch(_ObjectBatch[ConditionalDistribution]):
         return self.element_spec.event_spec
 
 
-register_kind(DistributionSpec, batch_class=DistributionBatch)
-register_kind(ConditionalDistributionSpec, batch_class=ConditionalDistributionBatch)
+register_kind(DistributionSpec, term_class=Distribution, batch_class=DistributionBatch)
+register_kind(
+    ConditionalDistributionSpec,
+    term_class=ConditionalDistribution,
+    batch_class=ConditionalDistributionBatch,
+)
