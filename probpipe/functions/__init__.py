@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from ..values import Function as Function
     from ..values import FunctionSpec as FunctionSpec
+    from ._call import ApplicabilityError as ApplicabilityError
     from ._context import workflow_run as workflow_run
     from ._function import function as function
     from ._module import (
@@ -27,6 +28,8 @@ if TYPE_CHECKING:
         workflow_method as workflow_method,
     )
     from ._replay import replay_run as replay_run
+    from ._result import ResultKindError as ResultKindError
+    from ._result import ResultSchemaError as ResultSchemaError
 
 _EXPORTS = {
     "Function": "probpipe.values",
@@ -38,6 +41,9 @@ _EXPORTS = {
     "AbstractModule": "probpipe.functions._module",
     "workflow_method": "probpipe.functions._module",
     "abstract_workflow_method": "probpipe.functions._module",
+    "ApplicabilityError": "probpipe.functions._call",
+    "ResultKindError": "probpipe.functions._result",
+    "ResultSchemaError": "probpipe.functions._result",
 }
 __all__ = list(_EXPORTS)
 

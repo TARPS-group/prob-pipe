@@ -185,6 +185,7 @@ from probpipe.functions import (
     function,
     workflow_method,
 )
+from probpipe.functions._call import ApplicabilityError
 from probpipe.functions._context import workflow_run
 from probpipe.functions._errors import (
     ReplayCompatibilityError,
@@ -192,6 +193,7 @@ from probpipe.functions._errors import (
     UnmanagedConcurrentWorkflowEntryError,
 )
 from probpipe.functions._replay import replay_run
+from probpipe.functions._result import ResultKindError, ResultSchemaError
 from probpipe.inference import (
     ApproximateDistribution,
     BayesFlowLikelihood,
@@ -218,11 +220,20 @@ from probpipe.modeling import (
 )
 from probpipe.record import Design, FullFactorialDesign
 from probpipe.validation import predictive_check
-from probpipe.values import Function, FunctionSpec
+from probpipe.values import (
+    Function,
+    FunctionSpec,
+    SupportsDifferentiation,
+    SupportsInverse,
+    SupportsLogDetJacobian,
+    is_differentiable,
+    is_invertible,
+)
 
 __all__ = [
     "AbstractModule",
     "Annotated",
+    "ApplicabilityError",
     "ApproximateDistribution",
     "ArrayBackend",
     "ArrayRandomFunction",
@@ -316,6 +327,8 @@ __all__ = [
     "ReplayCompatibilityError",
     "ReplayUnsupportedCallableError",
     "ResolutionError",
+    "ResultKindError",
+    "ResultSchemaError",
     "SequentialJointDistribution",
     "SimpleGenerativeModel",
     "SimpleModel",
@@ -323,8 +336,11 @@ __all__ = [
     "SupportsApproximateConditioning",
     "SupportsArrayBackend",
     "SupportsCovariance",
+    "SupportsDifferentiation",
     "SupportsExactConditioning",
     "SupportsExpectation",
+    "SupportsInverse",
+    "SupportsLogDetJacobian",
     "SupportsLogProb",
     "SupportsMean",
     "SupportsQuantile",
@@ -356,6 +372,8 @@ __all__ = [
     "inference_method_registry",
     "integer_interval",
     "interval",
+    "is_differentiable",
+    "is_invertible",
     "iterate",
     "learn_amortized_likelihood",
     "learn_amortized_posterior",

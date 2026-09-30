@@ -1,4 +1,23 @@
-"""Function decorator and the installed workflow call engine."""
+"""Function decorator and the installed workflow call engine.
+
+The engine runs the call stack of design Part V on every call of a Function:
+
+1. configure: the controls a Function carries, resolved by ``with_options``;
+2. bind: the arguments bind to the signature (:mod:`._call`);
+3. normalize: distribution arguments are converted where their parameter names
+   another class (:mod:`._normalization`) and each argument is admitted
+   (:func:`._call.admit_arguments`);
+4. classify the lift: the lifted arguments are found and grouped
+   (:func:`._plan.build_broadcast_plan`, :func:`._plan.build_stochastic_plan`);
+5. plan: the input declarations unify and the output declaration binds the
+   shared dimensions (:func:`._contract._bind_planned_function_inputs`);
+6. resolve: a plain call runs its body and a lifted call runs its floor, which
+   is the sampling lift or the elementwise sweep (:mod:`._rules`);
+7. execute: the points run under the dispatch mode with structural keys
+   (:mod:`._broadcast`, :mod:`._sweep`, :mod:`._execution`);
+8. return: the result is validated, wrapped, labeled, and given provenance, or
+   detached under ``raw=True`` (:mod:`._result`).
+"""
 
 from __future__ import annotations
 
@@ -6,7 +25,7 @@ import logging
 import math
 import warnings
 from collections.abc import Callable, Generator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from functools import partial
 from typing import Any, overload
 
@@ -49,6 +68,7 @@ from . import (
     _recipe,
     _replay,
     _result,
+    _rules,  # noqa: F401 - importing it registers the evaluation-rule floors
     _sweep,
 )
 from ._contract import _bind_planned_function_inputs
@@ -240,10 +260,14 @@ def _call_with_options_in_context(
         options=options,
     )
 
+    if function.options["conversions"]:
+        raise NotImplementedError("Function.__call__: the conversions control")
     values = _normalization.normalize_distribution_values(
         values=call.values,
         signature_info=function._signature_info,
     )
+    _call.admit_arguments(function._signature_info, values)
+    _resolve_route(function)
     broadcast_plan = _plan.build_broadcast_plan(
         values=values,
         signature_info=function._signature_info,
@@ -310,12 +334,15 @@ def _call_with_options_in_context(
         )
         context = _FunctionInvocationContext(point_bindings)
         result = function._invoke_resolved(point_values, context=context)
-        point_output_spec = _validate_function_output(
-            function_name=function._name,
-            output_spec=function.output_spec,
-            result=result,
-            bindings=context.dimension_bindings,
-        )
+        try:
+            point_output_spec = _validate_function_output(
+                function_name=function._name,
+                output_spec=function.output_spec,
+                result=result,
+                bindings=context.dimension_bindings,
+            )
+        except ValueError as error:
+            raise _result.ResultSchemaError(str(error)) from error
         if point_output_spec is not None:
             result = _wrap_declared_function_output(
                 result,
@@ -732,8 +759,22 @@ def _resolve_dispatch(
         return "sequential"
 
 
-def _call_engine(function: Function, *args: Any, **kwargs: Any) -> Any:
-    return _call_with_options(function, args, kwargs, _call.WorkflowCallOptions())
+def _resolve_route(function: Function) -> None:
+    """Select the route that realizes the call (step 6).
+
+    A plain call has its body as its one route, and a lifted call takes its
+    floor, which is the sampling lift or the elementwise sweep, and the engine
+    runs it directly. The routes registered in :data:`._rules.evaluation_rule_registry`
+    above the floors, and selection by the ``method`` and ``exact_only``
+    controls, are not consulted yet.
+
+    Raises
+    ------
+    NotImplementedError
+        If the ``method`` or ``exact_only`` control is set.
+    """
+    if function.options["method"] is not None or function.options["exact_only"]:
+        raise NotImplementedError("Function.__call__: route selection by method and exact_only")
 
 
 @contextmanager
@@ -748,4 +789,20 @@ def _apply_scope() -> Generator[None, None, None]:
         yield
 
 
-install_call_engine(_call_engine, apply_scope=_apply_scope)
+class _CallEngine:
+    """The call stack of design Part V, installed as the call path of every Function."""
+
+    def __call__(self, function: Function, *args: Any, **kwargs: Any) -> Any:
+        result = _call_with_options(function, args, kwargs, _call.WorkflowCallOptions())
+        return _result._detach(result) if function.options["raw"] else result
+
+    @staticmethod
+    def apply_scope() -> AbstractContextManager[None]:
+        """The scope plain evaluation runs in: workflow admission and RNG ownership."""
+        return _apply_scope()
+
+
+#: The installed engine. It provides no probe yet, so Function.check stays unimplemented.
+_call_engine = _CallEngine()
+
+install_call_engine(_call_engine)

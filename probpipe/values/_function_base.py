@@ -1,4 +1,15 @@
-"""Function values, their declarations, and the installable call-engine boundary."""
+"""Function values, their declarations, and the installable call-engine boundary.
+
+Provides:
+  - :class:`FunctionSpec`, the function kind's term spec;
+  - :class:`Function`, the base of the function kind, with its declared sides,
+    identity, controls, plain evaluation, and the call path;
+  - :func:`install_call_engine`, which installs the engine of design Part V on
+    the call path;
+  - the function capabilities :class:`SupportsInverse`,
+    :class:`SupportsLogDetJacobian`, and :class:`SupportsDifferentiation`, with
+    :func:`is_invertible` and :func:`is_differentiable`.
+"""
 
 from __future__ import annotations
 
@@ -9,12 +20,13 @@ from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from functools import partial
 from types import MappingProxyType
-from typing import Any, Literal, Protocol, Self, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, Self, cast, runtime_checkable
 
 import jax.numpy as jnp
 
+from ..core._dispatch import Feasibility
 from ..core._record_spec import RecordSpec
-from ..core._spec_base import NumericArraySpec, TermSpec, _unify_specs
+from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import InputSpec, OutputSpec
 from ..core.config import WorkflowKind
 from ..core.node import Node
@@ -26,6 +38,11 @@ from ._binding import (
     resolve_workflow_values,
     values_to_bound_arguments,
 )
+
+if TYPE_CHECKING:
+    from ..core._numeric import Numeric
+    from ..core.named_tree import NamedTree
+    from ..custom_types import Array
 
 _FunctionDispatch = Literal["auto", "jax", "sequential", "thread"]
 
@@ -340,6 +357,9 @@ class Function(Node, TrackedTerm, Annotated):
         Result label. Defaults to the initial name and survives with_name.
         Whole-term components default to this name, which must then be a Python
         identifier; an explicit OutputSpec can supply a different component.
+    differentiable : NumericSpec or None
+        The differentiability claim: exactly the numeric input values gradients
+        propagate through. None makes no claim.
     bind : Mapping or None
         Construction-time argument defaults, overridden by call arguments.
     module : object or None
@@ -347,13 +367,22 @@ class Function(Node, TrackedTerm, Annotated):
     workflow_kind : WorkflowKind
         Orchestration selection; DEFAULT inherits the workflow configuration.
     n_broadcast_samples : int or None
-        Sampling-lift count, defaulting to 128.
+        Positive sampling-lift count, defaulting to 128.
     dispatch : {"auto", "jax", "sequential", "thread"}
         Evaluation dispatch selection interpreted by the engine.
     max_workers : int or None
         Positive thread-worker count, or the executor default.
     include_inputs : bool
         Whether the sampling lift retains inputs alongside outputs.
+    method : str or None
+        The name of the route that realizes a call. None selects automatically.
+    exact_only : bool
+        Whether route selection excludes approximate routes.
+    conversions : Mapping or None
+        Per-parameter conversion settings, keyed by parameter name. Each value
+        is a mapping of the converter's settings.
+    raw : bool
+        Whether a call returns its result detached from the workflow.
     **kwargs : Any
         Additional construction bindings. Use bind for a domain argument named
         seed; workflow randomness is configured by workflow_run.
@@ -362,10 +391,14 @@ class Function(Node, TrackedTerm, Annotated):
     ------
     TypeError
         For an invalid name, callable, declaration type, workflow kind, or
-        worker-count type.
+        worker-count type, or a control of the wrong type.
     ValueError
         For mismatched input slots, invalid defaults or bindings, unknown
-        dispatch, nonpositive worker counts, or invalid component names.
+        dispatch, nonpositive worker or sample counts, conversions for a
+        parameter the signature lacks, or invalid component names.
+    NotImplementedError
+        If a differentiability claim is given, which Function does not carry
+        yet.
 
     Notes
     -----
@@ -397,6 +430,7 @@ class Function(Node, TrackedTerm, Annotated):
         input_spec: InputSpec | Mapping[str, TermSpec] | None = None,
         output_spec: OutputSpec | TermSpec | None = None,
         output_name: str | None = None,
+        differentiable: NumericSpec | None = None,
         workflow_kind: WorkflowKind = WorkflowKind.DEFAULT,
         bind: Mapping[str, Any] | None = None,
         module: Any | None = None,
@@ -404,6 +438,10 @@ class Function(Node, TrackedTerm, Annotated):
         dispatch: _FunctionDispatch = "auto",
         max_workers: int | None = None,
         include_inputs: bool = False,
+        method: str | None = None,
+        exact_only: bool = False,
+        conversions: Mapping[str, Mapping[str, Any]] | None = None,
+        raw: bool = False,
         **kwargs: Any,
     ) -> None:
         removed = {"seed", "input_template", "output_template", "func"}.intersection(kwargs)
@@ -428,6 +466,7 @@ class Function(Node, TrackedTerm, Annotated):
             input_spec=input_spec,
             output_spec=output_spec,
             output_name=output_name,
+            differentiable=differentiable,
             metadata_source=fn,
             bind=dict(bind or {}) | kwargs,
             module=module,
@@ -436,6 +475,10 @@ class Function(Node, TrackedTerm, Annotated):
             dispatch=dispatch,
             max_workers=max_workers,
             include_inputs=include_inputs,
+            method=method,
+            exact_only=exact_only,
+            conversions=conversions,
+            raw=raw,
         )
 
     def _initialize(
@@ -447,6 +490,7 @@ class Function(Node, TrackedTerm, Annotated):
         input_spec: InputSpec | Mapping[str, TermSpec] | None = None,
         output_spec: OutputSpec | TermSpec | None = None,
         output_name: str | None = None,
+        differentiable: NumericSpec | None = None,
         metadata_source: Any = None,
         bind: Mapping[str, Any] | None = None,
         module: Any = None,
@@ -455,7 +499,13 @@ class Function(Node, TrackedTerm, Annotated):
         dispatch: str = "auto",
         max_workers: int | None = None,
         include_inputs: bool = False,
+        method: str | None = None,
+        exact_only: bool = False,
+        conversions: Mapping[str, Mapping[str, Any]] | None = None,
+        raw: bool = False,
     ) -> None:
+        if differentiable is not None:
+            raise NotImplementedError("Function.__init__: the differentiability claim")
         if not isinstance(name, str) or not name:
             raise TypeError("Function requires a non-empty name")
         if output_name is None:
@@ -482,8 +532,12 @@ class Function(Node, TrackedTerm, Annotated):
             dispatch=dispatch,
             max_workers=max_workers,
             include_inputs=include_inputs,
+            method=method,
+            exact_only=exact_only,
+            conversions=MappingProxyType({}) if conversions is None else conversions,
+            raw=raw,
         )
-        _validate_options(options)
+        options = _validate_options(options, signature_info.signature)
         set_attribute = partial(object.__setattr__, self)
         self._init_tracked(name)
         set_attribute("_annotations", {})
@@ -563,10 +617,41 @@ class Function(Node, TrackedTerm, Annotated):
         if unknown:
             raise TypeError(f"Unknown Function controls: {sorted(unknown)}")
         options = dict(self.options) | {k: v for k, v in controls.items() if v is not None}
-        _validate_options(options)
+        options = _validate_options(options, self.signature)
         clone = self._shallow_copy()
         object.__setattr__(clone, "_options", MappingProxyType(options))
         return clone
+
+    def check(self, *args: Any, **kwargs: Any) -> Any:
+        """Probe a call through the first six steps of the stack, without executing it.
+
+        The probe runs the steps a call with the same arguments would run, from
+        resolving the controls to selecting the route, and a view from
+        :meth:`with_options` probes under the controls of its call. It executes
+        nothing and causes no random event: the body and every conversion stay
+        unexecuted.
+
+        Parameters
+        ----------
+        *args, **kwargs : Any
+            The call's arguments, bound to the signature as the call binds them.
+
+        Returns
+        -------
+        Any
+            The call's report: for each candidate route whether it is feasible,
+            infeasible with a reason, or unresolved with the declarations it
+            still needs; the selected route when selection can be decided; and
+            the checks deferred to return.
+
+        Raises
+        ------
+        TypeError
+            If an argument does not bind to the signature.
+        NotImplementedError
+            Until the installed engine provides the probe.
+        """
+        return _check_engine(self, *args, **kwargs)
 
     def with_name(self, name: str) -> Self:
         """Rename the function label, preserving output_name and its declaration."""
@@ -621,7 +706,16 @@ class Function(Node, TrackedTerm, Annotated):
         return _call_engine(self, *args, **kwargs)
 
 
-def _validate_options(options: Mapping[str, Any]) -> None:
+def _validate_options(options: Mapping[str, Any], signature: inspect.Signature) -> dict[str, Any]:
+    """The controls with their values validated, and conversions frozen.
+
+    Raises
+    ------
+    TypeError
+        If a control has the wrong type.
+    ValueError
+        If a control's value is inadmissible, such as a nonpositive count.
+    """
     dispatch = options["dispatch"]
     if dispatch not in ("auto", "jax", "sequential", "thread"):
         raise ValueError(f"dispatch must be one of auto, jax, sequential, thread; got {dispatch!r}")
@@ -638,33 +732,181 @@ def _validate_options(options: Mapping[str, Any]) -> None:
             )
     if not isinstance(options["workflow_kind"], WorkflowKind):
         raise TypeError("workflow_kind must be a WorkflowKind enum member")
+    count = options["n_broadcast_samples"]
+    if isinstance(count, bool) or not isinstance(count, int):
+        raise TypeError(f"n_broadcast_samples must be an integer; got {count!r}")
+    if count <= 0:
+        raise ValueError(f"n_broadcast_samples must be a positive integer; got {count!r}")
+    for flag in ("include_inputs", "exact_only", "raw"):
+        if not isinstance(options[flag], bool):
+            raise TypeError(f"{flag} must be a bool; got {options[flag]!r}")
+    method = options["method"]
+    if method is not None and (not isinstance(method, str) or not method):
+        raise TypeError(f"method must be a non-empty string or None; got {method!r}")
+    conversions = options["conversions"]
+    if not isinstance(conversions, Mapping) or not all(
+        isinstance(settings, Mapping) for settings in conversions.values()
+    ):
+        raise TypeError("conversions must map parameter names to mappings of converter settings")
+    unknown = set(conversions).difference(signature.parameters)
+    if unknown:
+        raise ValueError(f"conversions name parameters the signature lacks: {sorted(unknown)}")
+    return dict(options) | {
+        "conversions": MappingProxyType(
+            {name: MappingProxyType(dict(settings)) for name, settings in conversions.items()}
+        )
+    }
 
 
 def _plain_call(function: Function, *args: Any, **kwargs: Any) -> Any:
     return function.apply(*args, **kwargs)
 
 
+def _plain_check(function: Function, *args: Any, **kwargs: Any) -> Any:
+    raise NotImplementedError("Function.check")
+
+
 _call_engine: Callable[..., Any] = _plain_call
+_check_engine: Callable[..., Any] = _plain_check
 _apply_scope: Callable[[], AbstractContextManager[Any]] = nullcontext
 
 
-def install_call_engine(
-    engine: Callable[..., Any],
-    *,
-    apply_scope: Callable[[], AbstractContextManager[Any]] = nullcontext,
-) -> None:
-    """Install the process's Function call engine once at package initialization.
+def install_call_engine(engine: Callable[..., Any]) -> None:
+    """Install the engine of the Function call path, once, at package initialization.
 
-    The callable receives the Function followed by its call arguments. Before
-    installation, calling a Function performs plain apply. Reinstalling the
-    same engine is harmless; replacing it raises RuntimeError. A non-callable
-    engine raises TypeError. The optional apply_scope preserves workflow RNG
-    admission around raw evaluation without coupling this module to the engine.
+    Until installation a call evaluates plainly, as :meth:`Function.apply`
+    does. The engine reads the controls a Function carries and agrees with
+    plain evaluation on concrete values.
+
+    Parameters
+    ----------
+    engine : callable
+        Called as ``engine(function, *args, **kwargs)`` for every call of a
+        Function. It may also provide ``check(function, *args, **kwargs)``,
+        which serves :meth:`Function.check`, and ``apply_scope()``, which
+        returns the context manager :meth:`Function.apply` enters around plain
+        evaluation.
+
+    Raises
+    ------
+    TypeError
+        If *engine* is not callable.
+    RuntimeError
+        If a different engine is already installed. Installing the same engine
+        again changes nothing.
     """
-    global _call_engine, _apply_scope
+    global _call_engine, _check_engine, _apply_scope
     if not callable(engine):
         raise TypeError("The Function call engine must be callable")
     if _call_engine is not _plain_call and _call_engine is not engine:
         raise RuntimeError("The Function call engine is already installed")
     _call_engine = engine
-    _apply_scope = apply_scope
+    _check_engine = getattr(engine, "check", _plain_check)
+    _apply_scope = getattr(engine, "apply_scope", nullcontext)
+
+
+# ---------------------------------------------------------------------------
+# Function capabilities
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class SupportsInverse(Protocol):
+    """An invertible map, whose forward is the claiming Function's ``apply``.
+
+    A class whose instances are invertible only in some configurations also
+    defines the guard ``_inverse_guard()``, and :func:`is_invertible` reads the
+    claim together with it. The guard returns one of:
+
+    - a bool: whether the inverse is available;
+    - None: the answer is unresolved;
+    - a :class:`~probpipe.core._dispatch.Feasibility`: the full report.
+    """
+
+    def _inverse(self, y: Numeric) -> Numeric:
+        """The point the forward map sends to *y*."""
+        ...
+
+
+@runtime_checkable
+class SupportsLogDetJacobian(Protocol):
+    """A map with a tractable log-determinant of its Jacobian."""
+
+    def _log_det_jacobian(self, x: Numeric) -> Array:
+        """The log of the absolute Jacobian determinant of the forward map at *x*."""
+        ...
+
+
+def _guard_admits(report: bool | Feasibility | None) -> bool:
+    """Whether a guard's report establishes feasibility."""
+    if isinstance(report, Feasibility):
+        return report.feasible is True
+    return report is True
+
+
+def is_invertible(f: Any) -> bool:
+    """Whether *f* claims :class:`SupportsInverse` and its guard admits the claim.
+
+    Parameters
+    ----------
+    f : Any
+        The object to test, usually a :class:`Function`.
+
+    Returns
+    -------
+    bool
+        True when *f* claims the capability and either defines no
+        ``_inverse_guard`` or its guard reports the inverse feasible. False when
+        *f* does not claim the capability, or its guard reports the inverse
+        infeasible or unresolved.
+    """
+    if not isinstance(f, SupportsInverse):
+        return False
+    guard = getattr(f, "_inverse_guard", None)
+    return True if guard is None else _guard_admits(guard())
+
+
+@runtime_checkable
+class SupportsDifferentiation(Protocol):
+    """An object that declares which of its values gradients propagate through.
+
+    The claim is fixed at construction. For a map the template is a sub-schema
+    of its numeric input slots, and for a distribution a sub-schema of its
+    numeric event schema.
+    """
+
+    @property
+    def differentiable_template(self) -> NumericSpec:
+        """Exactly the values gradients propagate through."""
+        ...
+
+
+def is_differentiable(x: Any, values: NamedTree | None = None) -> bool:
+    """Whether gradients propagate through the named values of *x*.
+
+    Parameters
+    ----------
+    x : Any
+        A map or a distribution.
+    values : NamedTree or None
+        The values to test, by their paths. None tests every numeric value of
+        *x*: its numeric input slots for a map, its numeric event values for a
+        distribution.
+
+    Returns
+    -------
+    bool
+        True when every value named in *values* lies in the differentiable
+        template of *x*, or with no *values* when the template covers every
+        numeric value of *x*. False when *x* does not declare
+        :class:`SupportsDifferentiation`.
+
+    Raises
+    ------
+    NotImplementedError
+        For an object that declares the capability, until the template
+        comparison is implemented.
+    """
+    if not isinstance(x, SupportsDifferentiation):
+        return False
+    raise NotImplementedError("values.is_differentiable")
