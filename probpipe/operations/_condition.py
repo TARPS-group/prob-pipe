@@ -28,6 +28,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from ..core._dispatch import Feasibility
 from ..core._record_spec import RecordSpec
 from ..core._spec_base import TermSpec
 from ..core._specs import InputSpec, OutputSpec
@@ -139,7 +140,10 @@ def _can_slice(call: BoundCall, result: OutputSpec | None) -> Any:
     d, keys = call.operands["d"], _given_keys(call.operands["given"])
     if not isinstance(d, SupportsFactors) or isinstance(d, ConditionalDistribution) or not keys:
         return False
-    raise NotImplementedError("condition_on.slice")
+    return Feasibility(
+        False,
+        "route 'slice' declined: assembling a conditional from the factors is not implemented",
+    )
 
 
 def _slice(call: BoundCall, result: OutputSpec | None) -> Any:

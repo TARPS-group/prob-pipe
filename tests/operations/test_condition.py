@@ -15,6 +15,7 @@ from probpipe.distributions._conditional import (
     ConditionalDistributionSpec,
 )
 from probpipe.distributions._distribution import Distribution, DistributionSpec
+from probpipe.distributions._factored import FactoredDistribution
 from probpipe.operations._condition import (
     InferenceMethod,
     condition_on,
@@ -92,6 +93,17 @@ def suite_methods(monkeypatch):
     return exact, approximate
 
 
+@pytest.fixture
+def factored_method(monkeypatch):
+    """The bayes route, delegating for one test to an approximate method for factored joints."""
+    method = _SuiteMethod("operations_suite_factored", False, (FactoredDistribution,), 4.0)
+    registry: UnaryDispatchRegistry = UnaryDispatchRegistry()
+    registry.register(method)
+    (route,) = [route for route in condition_on.routes if route.name == "bayes"]
+    monkeypatch.setattr(route, "registry", registry)
+    return method
+
+
 class _StructuredKernel(ConditionalDistribution):
     """A kernel conditioning on one record-valued slot ``theta``."""
 
@@ -132,6 +144,21 @@ class TestCurry:
     @pytest.mark.pending(reason="the exact bindings combine with conditioning on produced fields")
     def test_given_slots_bind_together_with_produced_fields(self):
         assert isinstance(condition_on(Kernel(), {"mu": 1.0, "y": 0.0}), Distribution)
+
+
+class TestSlice:
+    def test_the_slice_route_declines_a_factored_law_with_a_reason(self):
+        joint = Kernel("y", ("mu",)) * Gaussian("mu")
+        declined = dict(condition_on.check(joint, {"y": 0.3}).routes)["slice"]
+        assert declined.feasible is False
+        assert "factors" in declined.description
+
+    def test_fixing_a_produced_field_of_a_factored_joint_reaches_bayes_rule(self, factored_method):
+        joint = Kernel("y", ("mu",)) * Gaussian("mu")
+        report = condition_on.check(joint, {"y": 0.3})
+        assert (report.route, report.method) == ("bayes", "operations_suite_factored")
+        assert condition_on(joint, {"y": 0.3}).loc == 4.0
+        assert factored_method.options == [{}]
 
 
 class TestConditioningCapabilities:
@@ -211,7 +238,10 @@ class TestTheOperation:
         ):
             condition_on(jnp.zeros(2), {"x": 1.0})
 
-    @pytest.mark.pending(reason="an exact slice assembles the conditional from normalized factors")
+    @pytest.mark.pending(
+        reason="an exact slice assembles the conditional from normalized factors",
+        raises=ResolutionError,
+    )
     def test_fixing_an_upstream_field_leaves_the_existing_kernel(self):
         joint = Kernel("y", ("beta",)) * Gaussian("beta")
         conditional = condition_on(joint, {"beta": 0.5})
