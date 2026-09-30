@@ -104,7 +104,8 @@ def pending_tests() -> list[str]:
             "-m",
             "pytest",
             "--collect-only",
-            "-q",
+            # Two -q cancel the repository's -v and leave one node id per line.
+            "-qq",
             "-m",
             "pending",
             "-p",
