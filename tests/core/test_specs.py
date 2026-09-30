@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import pickle
 from dataclasses import FrozenInstanceError
+from types import SimpleNamespace
 
 import jax
 import jax.numpy as jnp
@@ -27,6 +28,7 @@ from probpipe import (
     TermSpec,
     positive,
 )
+from probpipe.core._specs import _components_record
 
 
 @pytest.fixture
@@ -109,6 +111,16 @@ class TestOutputSpec:
             assert renamed.spec == RecordSpec(x=(3,))
         hole = OutputSpec(beta=None)
         assert hole.with_dim_sizes(n=3).with_dim_names(n="m") == hole
+
+    def test_the_components_record_of_each_form(self):
+        assert _components_record(OutputSpec(theta=NumericArraySpec(()))) == RecordSpec(theta=())
+        assert _components_record(OutputSpec(RecordSpec(a=()))) == RecordSpec(a=())
+
+    def test_an_exposed_term_that_is_no_record_is_refused(self):
+        # The constructor refuses one, so only a malformed declaration holds it.
+        malformed = SimpleNamespace(_component_name=None, spec=NumericArraySpec(()))
+        with pytest.raises(TypeError, match="an exposed declaration holds a RecordSpec"):
+            _components_record(malformed)
 
 
 class TestDeclarationConstruction:

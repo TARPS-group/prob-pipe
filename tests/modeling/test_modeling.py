@@ -221,7 +221,7 @@ class TestIncrementalConditioner:
                 [chain],
                 parents=(model.prior,),
                 algorithm="test",
-                event_template=model.prior.event_template,
+                event_spec=model.prior.event_spec,
             )
 
         class _Flat:
@@ -240,7 +240,7 @@ class TestIncrementalConditioner:
 
         Previously batches 2+ collapsed to a single unnamed ``posterior``
         field of shape ``(d,)`` because the samples→KDE conversion at the
-        start of each subsequent step dropped the ``event_template``.
+        start of each subsequent step dropped the posterior's named record.
         """
         import tensorflow_probability.substrates.jax.glm as tfp_glm
 

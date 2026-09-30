@@ -186,7 +186,7 @@ class NumericRecordBatch(RecordBatch):
     def from_vector(
         cls,
         name: str,
-        template: NumericRecordSpec,
+        spec: NumericRecordSpec,
         vec: Array,
         *,
         level_names: str | Iterable[str],
@@ -198,7 +198,7 @@ class NumericRecordBatch(RecordBatch):
         ----------
         name : str
             The reconstructed batch's name (user-given).
-        template : NumericRecordSpec
+        spec : NumericRecordSpec
             The flat layout: field names, event shapes, and canonical order.
             Every leaf must be a NumericArraySpec.
         vec : Array
@@ -224,10 +224,10 @@ class NumericRecordBatch(RecordBatch):
         Raises
         ------
         TypeError
-            If the template contains a non-array leaf, or *vec* has no batch
+            If the spec contains a non-array leaf, or *vec* has no batch
             axis — reconstruct a single value with ``NumericRecord.from_vector``.
         ValueError
-            If the trailing axis is not ``template.vector_size``, or if the level
+            If the trailing axis is not ``spec.vector_size``, or if the level
             names do not account for *vec*'s leading axes.
 
         Examples
@@ -236,11 +236,11 @@ class NumericRecordBatch(RecordBatch):
 
         >>> import jax.numpy as jnp
         >>> from probpipe import RecordSpec
-        >>> template = RecordSpec(x=(2,))
+        >>> spec = RecordSpec(x=(2,))
         >>> batch = NumericRecordBatch("post", {"x": jnp.zeros((4, 5, 2))},
-        ...                            ("chain", "draw"), element_spec=template)
+        ...                            ("chain", "draw"), element_spec=spec)
         >>> rebuilt = NumericRecordBatch.from_vector(
-        ...     "post", template, batch.to_vector(), level_names=("chain", "draw"))
+        ...     "post", spec, batch.to_vector(), level_names=("chain", "draw"))
         >>> rebuilt.batch_shape
         (4, 5)
         """
@@ -251,15 +251,15 @@ class NumericRecordBatch(RecordBatch):
                 f"(*batch_shape, vector_size); got shape {tuple(vec.shape)}. Reconstruct a "
                 f"single value with NumericRecord.from_vector"
             )
-        if vec.shape[-1] != template.vector_size:
+        if vec.shape[-1] != spec.vector_size:
             raise ValueError(
                 f"{cls.__name__}.from_vector: the trailing axis is {vec.shape[-1]}, expected "
-                f"{template.vector_size} for this template"
+                f"{spec.vector_size} for this spec"
             )
         batch_shape = tuple(vec.shape[:-1])
         columns: dict[str, Any] = {}
         offset = 0
-        for key, declared in template._walk_leaves():
+        for key, declared in spec._walk_leaves():
             if not isinstance(declared, NumericArraySpec):
                 raise TypeError(
                     f"{cls.__name__}.from_vector: field {key!r} has a {type(declared).__name__}; "
@@ -270,7 +270,7 @@ class NumericRecordBatch(RecordBatch):
             block = jnp.reshape(vec[..., offset : offset + size], (*batch_shape, *event_shape))
             # Concatenating promoted the fields to one dtype, so a field that
             # declares its own is cast back to it — otherwise the reconstruction
-            # contradicts the very template it was rebuilt from.
+            # contradicts the very spec it was rebuilt from.
             if declared.dtype is not None:
                 block = block.astype(declared.dtype)
             columns[key] = block
@@ -282,7 +282,7 @@ class NumericRecordBatch(RecordBatch):
             name,
             columns,
             names,
-            element_spec=template,
+            element_spec=spec,
             axes_per_level=axes_per_level,
         )
 

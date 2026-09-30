@@ -58,6 +58,8 @@ from ._specs import (
     OutputSpec,
     RecordSpec,
     TermSpec,
+    _check_output_template,
+    _components_record,
 )
 from .constraints import _known_equal
 from .protocols import SupportsArrayBackend
@@ -171,8 +173,8 @@ class DistributionArray(Distribution):
     """Ordered collection of independent scalar distributions
     addressed by a (multi-d) ``batch_shape``.
 
-    Exposes only the container surface (indexing, iteration,
-    ``components``, ``batch_shape``, ``event_shape``, ``event_template``).
+    Exposes only the container interface (indexing, iteration,
+    ``components``, ``batch_shape``, ``event_shape``, ``event_spec``).
     Vectorized
     ops (``sample``, ``mean``, ``variance``, ``log_prob``, …) are
     delivered by the :class:`~probpipe.core.node.Function`
@@ -283,7 +285,6 @@ class DistributionArray(Distribution):
         # leaves it ``None`` and uses ``_components`` as the
         # storage-of-truth.
         self._backend = None
-        self._event_template: RecordSpec | None = None
         name = auto_name(name, "distribution_array")
         super().__init__(name, _cell_declaration(components, name))
         # A DistributionArray holding MC-marginal components inherits
@@ -463,7 +464,6 @@ class DistributionArray(Distribution):
         set_attribute("_memo", {})
         set_attribute("_batch_shape", tuple(backend.batch_shape))
         set_attribute("_backend", backend)
-        set_attribute("_event_template", None)
         name = auto_name(name, "distribution_array")
         # Cells are named after the array, so one cell's term is declared
         # under the array's own name.
@@ -518,27 +518,6 @@ class DistributionArray(Distribution):
         1-D form is ``(n,)``.
         """
         return tuple(self._batch_shape)
-
-    @property
-    def event_template(self) -> RecordSpec | None:
-        """Authoritative template shared by the component distributions.
-
-        Function-produced arrays store the declared template explicitly.
-        Other arrays expose a template only when all materialized components
-        carry the same non-``None`` template.
-        """
-        if self._event_template is not None:
-            return self._event_template
-        if self._backend is not None:
-            return None
-        templates = [getattr(component, "event_template", None) for component in self.components]
-        if (
-            templates
-            and templates[0] is not None
-            and all(template == templates[0] for template in templates[1:])
-        ):
-            return templates[0]
-        return None
 
     @property
     def size(self) -> int:
@@ -638,7 +617,6 @@ class DistributionArray(Distribution):
             new_components,
             batch_shape=sliced.shape,
             name=self._name,
-            event_template=self._event_template,
         )
 
     def __iter__(self):
@@ -776,7 +754,7 @@ def _make_distribution_array(
     *,
     batch_shape: tuple[int, ...] | None = None,
     name: str | None = None,
-    event_template: RecordSpec | None = None,
+    output_template: RecordSpec | None = None,
 ) -> DistributionArray:
     """Factory: build a ``DistributionArray``.
 
@@ -798,18 +776,16 @@ def _make_distribution_array(
         ``len(components)``.
     name : str, optional
         Name for provenance.
-    event_template : RecordSpec, optional
+    output_template : RecordSpec, optional
         Authoritative template for a Function-produced aggregate. Every
-        component must expose the same template.
+        component's declaration must match it, as a Function's output does.
     """
     array = DistributionArray(components, batch_shape=batch_shape, name=name)
-    if event_template is not None:
+    if output_template is not None:
         for index, component in enumerate(array.components):
-            actual = getattr(component, "event_template", None)
-            if actual != event_template:
-                raise ValueError(
-                    f"DistributionArray component {index} event_template {actual!r} "
-                    f"does not match declared template {event_template!r}"
-                )
-        object.__setattr__(array, "_event_template", event_template)
+            _check_output_template(
+                _components_record(component.event_spec),
+                output_template,
+                f"DistributionArray component {index}",
+            )
     return array

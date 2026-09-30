@@ -56,6 +56,7 @@ from probpipe.core._empirical import (
     RecordEmpiricalDistribution,
 )
 from probpipe.core._function_batch import FunctionBatch
+from probpipe.core._numeric import Numeric
 from probpipe.core._numeric_array import NumericArray
 from probpipe.core._numeric_array_batch import NumericArrayBatch
 from probpipe.core._numeric_record import NumericRecord
@@ -281,6 +282,7 @@ __all__ = [
     "NamedTree",
     "NegativeBinomial",
     "Normal",
+    "Numeric",
     "NumericArray",
     "NumericArrayBatch",
     "NumericArraySpec",

@@ -385,6 +385,17 @@ _PICKLE_FAILURES = {
 }
 
 
+# The interim ``event_shape`` overrides: an empirical law over an array still
+# draws a one-field record, and the Stan and PyMC models count flat parameters.
+_EVENT_SHAPE_OVERRIDES = {
+    "RecordEmpiricalDistribution",
+    "RecordBootstrapReplicateDistribution",
+    "PyMCModel",
+    "StanModel",
+    "_UnconstrainedStanView",
+}
+
+
 # -- Tests --------------------------------------------------------------------
 
 
@@ -397,6 +408,25 @@ class TestCoverage:
     def test_each_construction_builds_its_class(self, cls, make):
         # A class made at runtime counts as the class it specializes.
         assert next(c for c in type(make()).__mro__ if c in _CONSTRUCTIONS) is cls
+
+    def test_the_declaration_is_the_one_schema_source(self):
+        _library_classes()  # imports every module, so every class is loaded
+        classes: set[type] = set()
+        pending = [Distribution]
+        while pending:
+            for cls in pending.pop().__subclasses__():
+                if cls not in classes:
+                    classes.add(cls)
+                    pending.append(cls)
+        for cls in classes:
+            if not cls.__module__.startswith("probpipe."):
+                continue
+            defined = vars(cls)
+            assert "event_template" not in defined, cls
+            if cls is not NumericDistribution:
+                assert not {"dtypes", "supports", "dtype", "support"} & defined.keys(), cls
+            if cls.__name__ not in _EVENT_SHAPE_OVERRIDES:
+                assert "event_shape" not in defined, cls
 
 
 class TestDeclaration:

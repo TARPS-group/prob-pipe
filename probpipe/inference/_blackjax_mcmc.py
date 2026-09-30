@@ -15,9 +15,8 @@ Both methods consume any :class:`~probpipe.core.protocols.SupportsUnnormalizedLo
 target whose log-density is JAX-traceable. They run on the flat-vector
 form of the target produced by
 :func:`~probpipe.inference._inference_utils.build_target_log_prob_flat`,
-then lift the resulting chain back through the prior's
-``event_template`` so the posterior preserves the structured
-parameterisation.
+then lift the resulting chain back through the prior's declaration,
+so the posterior names its fields by the prior's components.
 
 The per-draw diagnostics (``acceptance_rate``, ``is_divergent``,
 ``energy``, ``num_integration_steps``) are read off the BlackJAX
@@ -329,7 +328,7 @@ class _BlackJAXMCMCMethod(InferenceMethod):
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
         random_seed: int = kwargs.get("random_seed", 0)
-        target_flat, flat_init, event_template = build_target_log_prob_flat(
+        target_flat, flat_init, event_spec = build_target_log_prob_flat(
             dist,
             observed,
             init=kwargs.get("init"),
@@ -359,7 +358,7 @@ class _BlackJAXMCMCMethod(InferenceMethod):
             parents=(prior,),
             algorithm=self._method_name,
             annotations=annotations,
-            event_template=event_template,
+            event_spec=event_spec,
             num_results=num_results,
             num_warmup=num_warmup,
             num_chains=num_chains,

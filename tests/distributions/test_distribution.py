@@ -209,13 +209,13 @@ class TestWithNameRecordSpec:
         n2 = n.with_name("growth_rate")
         assert n2.name == "growth_rate"
         assert n2.event_spec is n.event_spec
-        assert n2.event_template.fields == ("x",)
+        assert tuple(n2.event_spec.components) == ("x",)
 
     def test_template_shape_preserved(self):
         mvn = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="a")
-        assert mvn.event_template["a"] == NumericArraySpec((3,))
         b = mvn.with_name("b")
-        assert b.event_template["a"] == NumericArraySpec((3,))
+        assert tuple(b.event_spec.components) == ("a",)
+        assert b.event_spec.spec.shape == mvn.event_spec.spec.shape == (3,)
 
 
 class TestNoBatchShape:
@@ -405,14 +405,12 @@ class TestWithNameTemplateRoundtrip:
         clone = original.with_name("y")
         assert clone.name == "y"
         assert tuple(clone.event_spec.components) == ("x",)
-        assert clone.event_template.fields == ("x",)
         assert original.name == "x"
-        assert original.event_template.fields == ("x",)
+        assert tuple(original.event_spec.components) == ("x",)
 
     def test_with_name_preserves_multi_field_template(self):
-        """Multi-field joints have explicit templates whose field
-        names are independent of the distribution's name — renaming
-        must not touch the template."""
+        """A multi-field joint's components are independent of the
+        distribution's name, so renaming leaves them."""
         import jax.numpy as jnp
 
         from probpipe import JointGaussian
@@ -423,16 +421,14 @@ class TestWithNameTemplateRoundtrip:
             x=1,
             y=1,
         )
-        original_fields = jg.event_template.fields
+        original_fields = tuple(jg.event_spec.components)
         clone = jg.with_name("renamed_jg")
-        assert clone.event_template.fields == original_fields
+        assert tuple(clone.event_spec.components) == original_fields == ("x", "y")
 
-    def test_with_name_preserves_non_numeric_event_template(self):
-        """``JointEmpirical`` (non-NRD ``RecordDistribution``) builds its
-        template from the stored samples, not from the distribution's
-        name — renaming must leave the template intact (otherwise the
-        metaclass invariant would be violated, since the non-numeric
-        base has no auto-rebuild path)."""
+    def test_with_name_preserves_a_non_numeric_declaration(self):
+        """``JointEmpirical`` (a non-numeric ``RecordDistribution``) declares
+        its stored samples' record, not the distribution's name, so
+        renaming leaves the declaration intact."""
         import numpy as np
 
         from probpipe import JointEmpirical
@@ -441,10 +437,9 @@ class TestWithNameTemplateRoundtrip:
             labels=np.array(["a", "b", "c"], dtype=object),
             ids=np.array([0, 1, 2]),
         )
-        original_fields = je.event_template.fields
+        original_fields = tuple(je.event_spec.components)
         clone = je.with_name("renamed_je")
-        assert clone.event_template is not None
-        assert clone.event_template.fields == original_fields
+        assert tuple(clone.event_spec.components) == original_fields == ("labels", "ids")
 
 
 class TestDistributionSpecIsValid:
@@ -1015,7 +1010,6 @@ class TestJointDeclarations:
         product = ProductDistribution(inner=inner)
         leaf = NumericArraySpec((), jnp.asarray(0.0).dtype, real)
         assert product.event_spec == OutputSpec(RecordSpec(inner=RecordSpec(a=leaf, b=leaf)))
-        assert product.event_template == RecordSpec(inner=RecordSpec(a=(), b=()))
         assert sample(product, key=jax.random.PRNGKey(0))["inner/a"].shape == ()
 
     def test_a_renamed_component_is_keyed_by_the_joint(self):
@@ -1079,7 +1073,7 @@ class TestEmpiricalDeclarations:
         posterior = ApproximateDistribution(
             [jnp.ones((10, 4))],
             name="post",
-            event_template=RecordSpec(a=RecordSpec(b=(2,), c=()), d=()),
+            event_spec=RecordSpec(a=RecordSpec(b=(2,), c=()), d=()),
         )
         replicate = BootstrapReplicateDistribution("rep", posterior)
         spec = replicate.event_spec.spec
@@ -1393,7 +1387,7 @@ class TestModelDeclarations:
             [jnp.zeros((10, 2))],
             parents=(prior,),
             algorithm="test",
-            event_template=RecordSpec(a=(), b=()),
+            event_spec=RecordSpec(a=(), b=()),
         )
         dtype = jnp.asarray(0.0).dtype
         assert post.event_spec == OutputSpec(
