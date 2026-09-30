@@ -7,6 +7,7 @@ from __future__ import annotations
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from .._dtype import _as_float_array, _promote_floats
+from ..core._specs import OutputSpec
 from ..core.constraints import (
     Constraint,
     greater_than,
@@ -53,12 +54,27 @@ class Normal(TFPDistribution):
         Mean of the distribution.
     scale : array-like
         Standard deviation (> 0).
+    event_spec : OutputSpec, optional
+        The declaration of one draw, which names its component. The family
+        fills a pending type, as in ``OutputSpec(theta=None)``. By default the
+        component is ``name``.
+
+    Raises
+    ------
+    TypeError
+        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
+        record.
+    ValueError
+        If the parameters imply a nonempty batch shape, or *event_spec*
+        declares a type that one draw does not conform to.
     """
 
-    def __init__(self, name: str, loc: ArrayLike, scale: ArrayLike):
+    def __init__(
+        self, name: str, loc: ArrayLike, scale: ArrayLike, *, event_spec: OutputSpec | None = None
+    ):
         _, (self._loc, self._scale) = _promote_floats(loc, scale)
         self._tfp_dist = tfd.Normal(loc=self._loc, scale=self._scale)
-        super().__init__(name=name)
+        super().__init__(name=name, event_spec=event_spec)
 
     @property
     def loc(self) -> Array:
@@ -88,12 +104,27 @@ class Beta(TFPDistribution):
         First concentration parameter (> 0).
     beta : array-like
         Second concentration parameter (> 0).
+    event_spec : OutputSpec, optional
+        The declaration of one draw, which names its component. The family
+        fills a pending type, as in ``OutputSpec(theta=None)``. By default the
+        component is ``name``.
+
+    Raises
+    ------
+    TypeError
+        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
+        record.
+    ValueError
+        If the parameters imply a nonempty batch shape, or *event_spec*
+        declares a type that one draw does not conform to.
     """
 
-    def __init__(self, name: str, alpha: ArrayLike, beta: ArrayLike):
+    def __init__(
+        self, name: str, alpha: ArrayLike, beta: ArrayLike, *, event_spec: OutputSpec | None = None
+    ):
         _, (self._alpha, self._beta) = _promote_floats(alpha, beta)
         self._tfp_dist = tfd.Beta(concentration1=self._alpha, concentration0=self._beta)
-        super().__init__(name=name)
+        super().__init__(name=name, event_spec=event_spec)
 
     @property
     def alpha(self) -> Array:
@@ -123,12 +154,32 @@ class Gamma(TFPDistribution):
         Shape parameter (> 0).
     rate : array-like
         Rate (inverse scale) parameter (> 0).
+    event_spec : OutputSpec, optional
+        The declaration of one draw, which names its component. The family
+        fills a pending type, as in ``OutputSpec(theta=None)``. By default the
+        component is ``name``.
+
+    Raises
+    ------
+    TypeError
+        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
+        record.
+    ValueError
+        If the parameters imply a nonempty batch shape, or *event_spec*
+        declares a type that one draw does not conform to.
     """
 
-    def __init__(self, name: str, concentration: ArrayLike, rate: ArrayLike):
+    def __init__(
+        self,
+        name: str,
+        concentration: ArrayLike,
+        rate: ArrayLike,
+        *,
+        event_spec: OutputSpec | None = None,
+    ):
         _, (self._concentration, self._rate) = _promote_floats(concentration, rate)
         self._tfp_dist = tfd.Gamma(concentration=self._concentration, rate=self._rate)
-        super().__init__(name=name)
+        super().__init__(name=name, event_spec=event_spec)
 
     @property
     def concentration(self) -> Array:
@@ -158,12 +209,32 @@ class InverseGamma(TFPDistribution):
         Shape parameter (> 0).
     scale : array-like
         Scale parameter (> 0).
+    event_spec : OutputSpec, optional
+        The declaration of one draw, which names its component. The family
+        fills a pending type, as in ``OutputSpec(theta=None)``. By default the
+        component is ``name``.
+
+    Raises
+    ------
+    TypeError
+        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
+        record.
+    ValueError
+        If the parameters imply a nonempty batch shape, or *event_spec*
+        declares a type that one draw does not conform to.
     """
 
-    def __init__(self, name: str, concentration: ArrayLike, scale: ArrayLike):
+    def __init__(
+        self,
+        name: str,
+        concentration: ArrayLike,
+        scale: ArrayLike,
+        *,
+        event_spec: OutputSpec | None = None,
+    ):
         _, (self._concentration, self._scale) = _promote_floats(concentration, scale)
         self._tfp_dist = tfd.InverseGamma(concentration=self._concentration, scale=self._scale)
-        super().__init__(name=name)
+        super().__init__(name=name, event_spec=event_spec)
 
     @property
     def concentration(self) -> Array:
@@ -191,12 +262,25 @@ class Exponential(TFPDistribution):
         Distribution name.
     rate : array-like
         Rate parameter (> 0).
+    event_spec : OutputSpec, optional
+        The declaration of one draw, which names its component. The family
+        fills a pending type, as in ``OutputSpec(theta=None)``. By default the
+        component is ``name``.
+
+    Raises
+    ------
+    TypeError
+        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
+        record.
+    ValueError
+        If the parameters imply a nonempty batch shape, or *event_spec*
+        declares a type that one draw does not conform to.
     """
 
-    def __init__(self, name: str, rate: ArrayLike):
+    def __init__(self, name: str, rate: ArrayLike, *, event_spec: OutputSpec | None = None):
         self._rate = _as_float_array(rate)
         self._tfp_dist = tfd.Exponential(rate=self._rate)
-        super().__init__(name=name)
+        super().__init__(name=name, event_spec=event_spec)
 
     @property
     def rate(self) -> Array:
@@ -222,12 +306,27 @@ class LogNormal(TFPDistribution):
         Mean of the underlying normal distribution.
     scale : array-like
         Standard deviation of the underlying normal distribution (> 0).
+    event_spec : OutputSpec, optional
+        The declaration of one draw, which names its component. The family
+        fills a pending type, as in ``OutputSpec(theta=None)``. By default the
+        component is ``name``.
+
+    Raises
+    ------
+    TypeError
+        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
+        record.
+    ValueError
+        If the parameters imply a nonempty batch shape, or *event_spec*
+        declares a type that one draw does not conform to.
     """
 
-    def __init__(self, name: str, loc: ArrayLike, scale: ArrayLike):
+    def __init__(
+        self, name: str, loc: ArrayLike, scale: ArrayLike, *, event_spec: OutputSpec | None = None
+    ):
         _, (self._loc, self._scale) = _promote_floats(loc, scale)
         self._tfp_dist = tfd.LogNormal(loc=self._loc, scale=self._scale)
-        super().__init__(name=name)
+        super().__init__(name=name, event_spec=event_spec)
 
     @property
     def loc(self) -> Array:
@@ -259,12 +358,33 @@ class StudentT(TFPDistribution):
         Location parameter.
     scale : array-like
         Scale parameter (> 0).
+    event_spec : OutputSpec, optional
+        The declaration of one draw, which names its component. The family
+        fills a pending type, as in ``OutputSpec(theta=None)``. By default the
+        component is ``name``.
+
+    Raises
+    ------
+    TypeError
+        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
+        record.
+    ValueError
+        If the parameters imply a nonempty batch shape, or *event_spec*
+        declares a type that one draw does not conform to.
     """
 
-    def __init__(self, name: str, df: ArrayLike, loc: ArrayLike, scale: ArrayLike):
+    def __init__(
+        self,
+        name: str,
+        df: ArrayLike,
+        loc: ArrayLike,
+        scale: ArrayLike,
+        *,
+        event_spec: OutputSpec | None = None,
+    ):
         _, (self._df, self._loc, self._scale) = _promote_floats(df, loc, scale)
         self._tfp_dist = tfd.StudentT(df=self._df, loc=self._loc, scale=self._scale)
-        super().__init__(name=name)
+        super().__init__(name=name, event_spec=event_spec)
 
     @property
     def df(self) -> Array:
@@ -298,12 +418,27 @@ class Uniform(TFPDistribution):
         Lower bound.
     high : array-like
         Upper bound (> low).
+    event_spec : OutputSpec, optional
+        The declaration of one draw, which names its component. The family
+        fills a pending type, as in ``OutputSpec(theta=None)``. By default the
+        component is ``name``.
+
+    Raises
+    ------
+    TypeError
+        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
+        record.
+    ValueError
+        If the parameters imply a nonempty batch shape, or *event_spec*
+        declares a type that one draw does not conform to.
     """
 
-    def __init__(self, name: str, low: ArrayLike, high: ArrayLike):
+    def __init__(
+        self, name: str, low: ArrayLike, high: ArrayLike, *, event_spec: OutputSpec | None = None
+    ):
         _, (self._low, self._high) = _promote_floats(low, high)
         self._tfp_dist = tfd.Uniform(low=self._low, high=self._high)
-        super().__init__(name=name)
+        super().__init__(name=name, event_spec=event_spec)
 
     @property
     def low(self) -> Array:
@@ -333,12 +468,27 @@ class Cauchy(TFPDistribution):
         Location parameter.
     scale : array-like
         Scale parameter (> 0).
+    event_spec : OutputSpec, optional
+        The declaration of one draw, which names its component. The family
+        fills a pending type, as in ``OutputSpec(theta=None)``. By default the
+        component is ``name``.
+
+    Raises
+    ------
+    TypeError
+        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
+        record.
+    ValueError
+        If the parameters imply a nonempty batch shape, or *event_spec*
+        declares a type that one draw does not conform to.
     """
 
-    def __init__(self, name: str, loc: ArrayLike, scale: ArrayLike):
+    def __init__(
+        self, name: str, loc: ArrayLike, scale: ArrayLike, *, event_spec: OutputSpec | None = None
+    ):
         _, (self._loc, self._scale) = _promote_floats(loc, scale)
         self._tfp_dist = tfd.Cauchy(loc=self._loc, scale=self._scale)
-        super().__init__(name=name)
+        super().__init__(name=name, event_spec=event_spec)
 
     @property
     def loc(self) -> Array:
@@ -368,12 +518,27 @@ class Laplace(TFPDistribution):
         Location parameter.
     scale : array-like
         Scale parameter (> 0).
+    event_spec : OutputSpec, optional
+        The declaration of one draw, which names its component. The family
+        fills a pending type, as in ``OutputSpec(theta=None)``. By default the
+        component is ``name``.
+
+    Raises
+    ------
+    TypeError
+        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
+        record.
+    ValueError
+        If the parameters imply a nonempty batch shape, or *event_spec*
+        declares a type that one draw does not conform to.
     """
 
-    def __init__(self, name: str, loc: ArrayLike, scale: ArrayLike):
+    def __init__(
+        self, name: str, loc: ArrayLike, scale: ArrayLike, *, event_spec: OutputSpec | None = None
+    ):
         _, (self._loc, self._scale) = _promote_floats(loc, scale)
         self._tfp_dist = tfd.Laplace(loc=self._loc, scale=self._scale)
-        super().__init__(name=name)
+        super().__init__(name=name, event_spec=event_spec)
 
     @property
     def loc(self) -> Array:
@@ -401,12 +566,25 @@ class HalfNormal(TFPDistribution):
         Distribution name.
     scale : array-like
         Scale parameter (> 0).
+    event_spec : OutputSpec, optional
+        The declaration of one draw, which names its component. The family
+        fills a pending type, as in ``OutputSpec(theta=None)``. By default the
+        component is ``name``.
+
+    Raises
+    ------
+    TypeError
+        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
+        record.
+    ValueError
+        If the parameters imply a nonempty batch shape, or *event_spec*
+        declares a type that one draw does not conform to.
     """
 
-    def __init__(self, name: str, scale: ArrayLike):
+    def __init__(self, name: str, scale: ArrayLike, *, event_spec: OutputSpec | None = None):
         self._scale = _as_float_array(scale)
         self._tfp_dist = tfd.HalfNormal(scale=self._scale)
-        super().__init__(name=name)
+        super().__init__(name=name, event_spec=event_spec)
 
     @property
     def scale(self) -> Array:
@@ -432,12 +610,27 @@ class HalfCauchy(TFPDistribution):
         Location parameter.
     scale : array-like
         Scale parameter (> 0).
+    event_spec : OutputSpec, optional
+        The declaration of one draw, which names its component. The family
+        fills a pending type, as in ``OutputSpec(theta=None)``. By default the
+        component is ``name``.
+
+    Raises
+    ------
+    TypeError
+        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
+        record.
+    ValueError
+        If the parameters imply a nonempty batch shape, or *event_spec*
+        declares a type that one draw does not conform to.
     """
 
-    def __init__(self, name: str, loc: ArrayLike, scale: ArrayLike):
+    def __init__(
+        self, name: str, loc: ArrayLike, scale: ArrayLike, *, event_spec: OutputSpec | None = None
+    ):
         _, (self._loc, self._scale) = _promote_floats(loc, scale)
         self._tfp_dist = tfd.HalfCauchy(loc=self._loc, scale=self._scale)
-        super().__init__(name=name)
+        super().__init__(name=name, event_spec=event_spec)
 
     @property
     def loc(self) -> Array:
@@ -467,12 +660,32 @@ class Pareto(TFPDistribution):
         Tail index (shape parameter, > 0).
     scale : array-like
         Minimum value (scale parameter, > 0).
+    event_spec : OutputSpec, optional
+        The declaration of one draw, which names its component. The family
+        fills a pending type, as in ``OutputSpec(theta=None)``. By default the
+        component is ``name``.
+
+    Raises
+    ------
+    TypeError
+        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
+        record.
+    ValueError
+        If the parameters imply a nonempty batch shape, or *event_spec*
+        declares a type that one draw does not conform to.
     """
 
-    def __init__(self, name: str, concentration: ArrayLike, scale: ArrayLike):
+    def __init__(
+        self,
+        name: str,
+        concentration: ArrayLike,
+        scale: ArrayLike,
+        *,
+        event_spec: OutputSpec | None = None,
+    ):
         _, (self._concentration, self._scale) = _promote_floats(concentration, scale)
         self._tfp_dist = tfd.Pareto(concentration=self._concentration, scale=self._scale)
-        super().__init__(name=name)
+        super().__init__(name=name, event_spec=event_spec)
 
     @property
     def concentration(self) -> Array:
@@ -506,16 +719,36 @@ class TruncatedNormal(TFPDistribution):
         Lower truncation bound.
     high : array-like
         Upper truncation bound (> low).
+    event_spec : OutputSpec, optional
+        The declaration of one draw, which names its component. The family
+        fills a pending type, as in ``OutputSpec(theta=None)``. By default the
+        component is ``name``.
+
+    Raises
+    ------
+    TypeError
+        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
+        record.
+    ValueError
+        If the parameters imply a nonempty batch shape, or *event_spec*
+        declares a type that one draw does not conform to.
     """
 
     def __init__(
-        self, name: str, loc: ArrayLike, scale: ArrayLike, low: ArrayLike, high: ArrayLike
+        self,
+        name: str,
+        loc: ArrayLike,
+        scale: ArrayLike,
+        low: ArrayLike,
+        high: ArrayLike,
+        *,
+        event_spec: OutputSpec | None = None,
     ):
         _, (self._loc, self._scale, self._low, self._high) = _promote_floats(loc, scale, low, high)
         self._tfp_dist = tfd.TruncatedNormal(
             loc=self._loc, scale=self._scale, low=self._low, high=self._high
         )
-        super().__init__(name=name)
+        super().__init__(name=name, event_spec=event_spec)
 
     @property
     def loc(self) -> Array:

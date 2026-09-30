@@ -490,9 +490,8 @@ class RecordBatch(Batch[Record]):
 
         The element counterpart of :meth:`~probpipe.core._batch.Batch.with_level_names`,
         which renames the *levels*: the two namespaces are independent, and
-        renaming one never touches the other. Paths resolve as they do on a
-        record — a full path, or a bare name where it is unambiguous — and no
-        stored value moves.
+        renaming one leaves the other unchanged. Each key is the exact path of
+        a node of the elements, as on a record, and no stored value moves.
 
         Returns
         -------
@@ -502,11 +501,10 @@ class RecordBatch(Batch[Record]):
         Raises
         ------
         KeyError
-            If a name to rename is not a field of the elements.
+            If a key is not the path of a node of the elements.
         ValueError
-            If a bare name is ambiguous, a new name is empty or contains ``/``,
-            two renames target the same field, or a rename collides with a
-            sibling.
+            If a new name is empty or contains ``/``, two renames target the
+            same node, or a rename collides with a sibling.
         """
         renamed = self.event_template.with_path_names(mapping, **kwargs)
         # ``with_path_names`` leaves field order untouched, so the old and new

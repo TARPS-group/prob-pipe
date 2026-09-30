@@ -644,8 +644,10 @@ class TestStructuralTransforms:
         assert renamed.level_names == batch.level_names
         assert renamed.batch_shape == batch.batch_shape
 
-    def test_with_path_names_takes_a_bare_name(self):
+    def test_with_path_names_takes_a_top_level_name(self):
         assert "mass" in nested_batch().with_path_names(m="mass").event_template
+        with pytest.raises(KeyError):
+            nested_batch().with_path_names(a="alpha")
 
     def test_the_two_name_spaces_are_independent(self):
         # Renaming a field never touches a level, or the reverse.

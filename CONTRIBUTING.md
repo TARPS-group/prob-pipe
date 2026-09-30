@@ -220,19 +220,27 @@ than no comment.
 ### Linting & pre-commit
 
 Linting uses [ruff](https://docs.astral.sh/ruff/) (configured in
-`pyproject.toml`). Install the pre-commit hooks once:
+`pyproject.toml`). Install pre-commit as a uv tool, then install the hooks, once:
 
 ```bash
-uvx pre-commit install      # or: pre-commit install
+uv tool install pre-commit
+pre-commit install
 ```
 
-Thereafter `ruff` (lint + format) plus a few file-hygiene hooks run on your staged
-files at commit time. The hooks see only the files you're changing, so a commit is
-checked without re-linting the whole tree. To run manually:
+The hook script calls the Python interpreter that ran `pre-commit install`. With
+`uvx pre-commit install`, that interpreter is kept in the uv cache, so once
+`uv cache clean` deletes it, every commit fails with "`pre-commit` not found"
+unless another `pre-commit` is on your `PATH`. A `pre-commit` already installed by
+Homebrew or pipx works too.
+
+Once the hooks are installed, `ruff` (lint + format) plus a few file-hygiene hooks
+run on your staged files at commit time. The hooks see only the files you're
+changing, so a commit is checked without re-linting the whole tree. To run
+manually:
 
 ```bash
-uv run ruff check .              # lint the whole tree (uses the uv.lock-pinned ruff)
-uvx pre-commit run --all-files   # run every hook over everything
+uv run ruff check .          # lint the whole tree (uses the uv.lock-pinned ruff)
+pre-commit run --all-files   # run every hook over everything
 ```
 
 `ruff check .` and `ruff format --check .` are clean tree-wide. A full
@@ -580,7 +588,7 @@ uv build packaging/probpipe   # probpipe (metapackage)
 |-------------|-------------|
 | `NamedTree` | Shared name-keyed tree substrate (`probpipe.core.named_tree`): immutable ordered tree with `/`-path navigation, the leaf-keyed mapping interface, structural edits (`merge` / `without` / `replace` / `with_path_names`), and nested-dict export (`to_nested_dict`) that the constructor reads back. `RecordSpec` and `Record` are its two families; each declares its leaf type (`TermSpec` vs arbitrary values), and mappings are never leaves. |
 | `TrackedTerm` / `Annotated` | Identity and metadata mixins (`probpipe.core.tracked`): `TrackedTerm` carries `name` and write-once `provenance` (`with_name` / `with_provenance`); `Annotated` carries the free-form `annotations` mapping. `Function`, `Distribution`, and `Record` mix in both; the batch types are tracked terms through their bases. |
-| `Distribution` | Base class of every distribution, with no type parameter. It stores one event declaration: `spec` is a `DistributionSpec` whose `event_spec` is the `OutputSpec` of one draw. A subclass passes `event_spec` to `Distribution.__init__`, and construction raises `TypeError` for a class that leaves its event undeclared. `event_shape` is defined for a law that draws a single array, so `hasattr(law, "event_shape")` is `False` for one that draws a record. It also carries the `TrackedTerm` / `Annotated` identity attributes. |
+| `Distribution` | Base class of every distribution, with no type parameter. It stores one event declaration: `spec` is a `DistributionSpec` whose `event_spec` is the `OutputSpec` of one draw. A subclass passes `event_spec` to `Distribution.__init__`, which completes a bare term spec to `OutputSpec.default(spec, component=name)`, and construction raises `TypeError` for a class that leaves its event undeclared. `event_shape` is defined for a law that draws a single array, so `hasattr(law, "event_shape")` is `False` for one that draws a record. It also carries the `TrackedTerm` / `Annotated` identity attributes. |
 | `NumericDistribution` | The marker of a law whose declaration is numeric: `isinstance(d, NumericDistribution)` holds when `d.event_spec.spec` is a `NumericSpec`, whatever the class of `d`. It holds the views `dtypes` and `supports`, keyed by array-leaf path, and `dtype` and `support`, which hold the value every leaf shares or `None`; a law whose declaration is not numeric has none of them. A class whose every instance is numeric, such as `NumericRecordDistribution`, inherits the marker, and construction checks the claim. |
 | `Record` | Named, immutable, JAX-pytree container for structured non-random values; constructed name-first (`Record(name, ...)`); leaves stored verbatim (no coercion). All-numeric construction auto-promotes to `NumericRecord`; an explicit non-numeric `event_template=` pins a plain `Record`. `Record.from_field_values(name, template, values)` is the general (de)composition inverse of `list(record.values())`; `select()` for Function splatting |
 | `NumericRecord` (subclass of `Record`) | Post-construction invariant: every leaf is numeric, **stored in native form** (jax / numpy arrays, xarray, pandas, registered backends — nothing coerced; a bare Python scalar normalises to a 0-d `jax.Array`). Conversion to `jax.Array` happens lazily at the compute boundary (pytree flatten, `to_vector`, the scalar shim) through a set-once per-leaf cache. Implements `Numeric`: `to_vector` / `vector_size` and the classmethod inverse `NumericRecord.from_vector(name, spec, vec)` (the numeric 1-D serialization). `to_numeric()` is the identity on it; `Record.to_numeric()` validates (never converts), and native containers are read back directly from the fields. |

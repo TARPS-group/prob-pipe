@@ -157,56 +157,53 @@ class InputSpec(Mapping[str, TermSpec]):
 
 @dataclass(frozen=True, init=False)
 class OutputSpec:
-    """A whole returned term or the immediate components of a returned record.
+    """One returned term and its packaging: a whole term, or an exposed record.
 
     Parameters
     ----------
     *args : RecordSpec
-        The positional form exposes the record's immediate fields, even when
-        there is only one field or no fields. Nested records remain components.
-    **components : TermSpec or None
-        One keyword names the whole returned term. Its spec may be None, a type
-        hole for a later declaration. Two or more keywords expose a record;
-        every component must then have a spec. No keyword is reserved.
+        The positional form exposes the record's immediate fields as the
+        components.
+    **term : TermSpec or None
+        One keyword names the whole returned term. Its spec may be None, which
+        marks a type hole that a producer fills with :meth:`with_spec`.
 
     Raises
     ------
     TypeError
         If the positional form is not exactly one RecordSpec, forms are mixed,
-        or a component lacks a spec outside the single-keyword hole form.
+        more than one keyword is given, or a record field lacks a spec.
     ValueError
         If no declaration is given, or a component name is empty or contains ``/``.
 
     Notes
     -----
-    Only the underlying declaration is stored. ``spec`` and ``components`` are
-    derived views. A single named array stays an array; no single-field record
-    is inserted. To fill a hole, construct a new single-keyword declaration
-    with the same component name and the now-known term spec.
+    Only the underlying declaration is stored, and ``spec``, ``components``, and
+    ``exposes_record`` are derived views of it. The form alone decides the
+    packaging.
     """
 
     _component_name: str | None
     _term_spec: TermSpec | None
 
-    def __init__(self, *args: RecordSpec, **components: TermSpec | None) -> None:
+    def __init__(self, *args: RecordSpec, **term: TermSpec | None) -> None:
         if args:
-            if len(args) != 1 or not isinstance(args[0], RecordSpec) or components:
-                raise TypeError(
-                    "OutputSpec expects one positional RecordSpec or keyword components"
-                )
+            if len(args) != 1 or not isinstance(args[0], RecordSpec) or term:
+                raise TypeError("OutputSpec expects one positional RecordSpec or one keyword")
             spec = args[0]
             for name, child in spec.children.items():
                 _check_component(name, child)
             name = None
-        elif len(components) == 1:
-            name, spec = next(iter(components.items()))
+        elif len(term) == 1:
+            name, spec = next(iter(term.items()))
             _check_component(name, spec, allow_hole=True)
-        elif components:
-            for name, child in components.items():
-                _check_component(name, child)
-            name, spec = None, RecordSpec(components)
+        elif term:
+            raise TypeError(
+                f"OutputSpec takes one keyword, which names the whole term, but got "
+                f"{sorted(term)}; declare an exposed record as OutputSpec(RecordSpec(...))"
+            )
         else:
-            raise ValueError("OutputSpec requires at least one keyword or an explicit RecordSpec")
+            raise ValueError("OutputSpec requires one keyword or an explicit RecordSpec")
         object.__setattr__(self, "_component_name", name)
         object.__setattr__(self, "_term_spec", spec)
 
@@ -221,6 +218,97 @@ class OutputSpec:
         if self._component_name is not None:
             return MappingProxyType({self._component_name: self._term_spec})
         return cast(RecordSpec, self._term_spec).children
+
+    @property
+    def exposes_record(self) -> bool:
+        """Whether the components are the fields of an exposed record."""
+        return self._component_name is None
+
+    @classmethod
+    def default(cls, spec: TermSpec, *, component: str) -> OutputSpec:
+        """The declaration a producer uses when it is given none.
+
+        It is ``OutputSpec(spec)`` if *spec* is a ``RecordSpec``, whose fields
+        become the components, and ``OutputSpec(**{component: spec})``
+        otherwise, so *component* is the producer's default component.
+
+        Raises
+        ------
+        ValueError
+            If *spec* is not a record and *component* is not a valid component
+            name.
+        """
+        if isinstance(spec, RecordSpec):
+            return cls(spec)
+        return cls(**{component: spec})
+
+    def with_spec(self, spec: TermSpec) -> OutputSpec:
+        """This declaration with its type set to *spec*.
+
+        A pending hole is filled with *spec*. A declared spec must unify with
+        *spec*, which then replaces it, so the result carries what the producer
+        returns.
+
+        Raises
+        ------
+        TypeError
+            If this declaration exposes a record and *spec* is not a ``RecordSpec``.
+        ValueError
+            If a declared spec does not unify with *spec*.
+        """
+        if self.exposes_record and not isinstance(spec, RecordSpec):
+            raise TypeError(
+                f"an exposed record declaration needs a RecordSpec, got {type(spec).__name__}"
+            )
+        if self._term_spec is not None:
+            label = "the exposed record" if self.exposes_record else repr(self._component_name)
+            _unify_specs(self._term_spec, spec, {}, f"Declared component {label}")
+        return self._with_spec(spec)
+
+    def with_path_names(
+        self, mapping: Mapping[str, str] | None = None, /, **kwargs: str
+    ) -> OutputSpec:
+        """Rename nodes of the declaration by their paths, ``old -> new``.
+
+        A path starts with a component: an exposed record's paths are the paths
+        of its record, and a whole term's are its component followed by the
+        paths within its term. Each key is the exact path of a node, as for
+        :meth:`~probpipe.core.named_tree.NamedTree.with_path_names`, and the
+        result keeps the packaging, so a whole term's component is renamed in
+        place.
+
+        Raises
+        ------
+        KeyError
+            If a key is not a path of the declaration.
+        ValueError
+            If a new name is empty or contains ``/``, two keys rename the same
+            node, no renames are given, or a rename collides with a sibling.
+        """
+        spec = self._term_spec
+        if self._component_name is None:
+            return OutputSpec(cast(RecordSpec, spec).with_path_names(mapping, **kwargs))
+        name: str | None = None
+        fields: dict[str, str] = {}
+        for source in (mapping or {}), kwargs:
+            for old, new in source.items():
+                head, *rest = RecordSpec._split_path((old,))
+                if head != self._component_name or (rest and not isinstance(spec, RecordSpec)):
+                    raise KeyError(old)
+                if rest:
+                    path = _PATH_SEP.join(rest)
+                    if path in fields:
+                        raise ValueError(f"node {old!r} is renamed more than once")
+                    fields[path] = new
+                elif name is not None:
+                    raise ValueError(f"node {old!r} is renamed more than once")
+                else:
+                    name = new
+        if name is None and not fields:
+            raise ValueError("with_path_names() requires at least one rename")
+        if fields:
+            spec = cast(RecordSpec, spec).with_path_names(fields)
+        return OutputSpec(**{self._component_name if name is None else name: spec})
 
     def _with_spec(self, spec: TermSpec | None) -> OutputSpec:
         if self._component_name is not None:
@@ -253,11 +341,11 @@ def _components_record(declaration: OutputSpec) -> RecordSpec:
     TypeError
         If *declaration* exposes a spec that is not a ``RecordSpec``.
     """
-    if declaration._component_name is None:
+    if declaration.exposes_record:
         if not isinstance(declaration.spec, RecordSpec):
             raise TypeError(f"an exposed declaration holds a RecordSpec, got {declaration.spec!r}")
         return declaration.spec
-    return RecordSpec(**{declaration._component_name: declaration.spec})
+    return RecordSpec(dict(declaration.components))
 
 
 def _check_output_template(record: RecordSpec, template: RecordSpec, path: str) -> None:

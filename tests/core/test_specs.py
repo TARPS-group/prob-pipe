@@ -59,10 +59,12 @@ class TestOutputSpec:
         assert dict(exposed.components) == dict(whole.components)
         assert exposed != whole
 
-        multiple = OutputSpec(beta=beta, sigma=sigma)
-        assert multiple == OutputSpec(RecordSpec(beta=beta, sigma=sigma))
-        assert list(multiple.components) == ["beta", "sigma"]
-        assert multiple.spec == RecordSpec(beta=beta, sigma=sigma)
+        # Two keywords would make packaging depend on how many names there are.
+        with pytest.raises(TypeError, match="takes one keyword"):
+            OutputSpec(beta=beta, sigma=sigma)
+        exposed_two = OutputSpec(RecordSpec(beta=beta, sigma=sigma))
+        assert list(exposed_two.components) == ["beta", "sigma"]
+        assert exposed_two.exposes_record and not whole.exposes_record
 
         parameters = RecordSpec(beta=beta, sigma=sigma)
         wrapped = OutputSpec(parameters=parameters)
@@ -118,9 +120,98 @@ class TestOutputSpec:
 
     def test_an_exposed_term_that_is_no_record_is_refused(self):
         # The constructor refuses one, so only a malformed declaration holds it.
-        malformed = SimpleNamespace(_component_name=None, spec=NumericArraySpec(()))
+        malformed = SimpleNamespace(exposes_record=True, spec=NumericArraySpec(()))
         with pytest.raises(TypeError, match="an exposed declaration holds a RecordSpec"):
             _components_record(malformed)
+
+
+class TestOutputSpecCompletion:
+    def test_default_exposes_a_record_and_names_any_other_term(self):
+        record = RecordSpec(beta=NumericArraySpec(()))
+        assert OutputSpec.default(record, component="posterior") == OutputSpec(record)
+        array = NumericArraySpec((3,))
+        assert OutputSpec.default(array, component="beta") == OutputSpec(beta=array)
+
+    def test_with_spec_fills_a_hole_under_the_declared_name(self):
+        array = NumericArraySpec((3,), jnp.float32)
+        assert OutputSpec(beta=None).with_spec(array) == OutputSpec(beta=array)
+
+    def test_with_spec_keeps_the_produced_spec_when_the_declared_one_unifies(self):
+        # The declaration sets only the shape; the producer's dtype stands.
+        produced = NumericArraySpec((3,), jnp.float32)
+        assert OutputSpec(beta=NumericArraySpec((3,))).with_spec(produced) == OutputSpec(
+            beta=produced
+        )
+
+    def test_with_spec_rejects_a_spec_that_does_not_unify(self):
+        with pytest.raises(ValueError, match="has dimension 3, expected 2"):
+            OutputSpec(beta=NumericArraySpec((2,))).with_spec(NumericArraySpec((3,)))
+
+    def test_with_spec_keeps_an_exposed_record_exposed(self):
+        produced = RecordSpec(a=NumericArraySpec(()), b=NumericArraySpec((2,)))
+        declared = OutputSpec(RecordSpec(a=NumericArraySpec(()), b=NumericArraySpec((2,))))
+        assert declared.with_spec(produced) == OutputSpec(produced)
+        with pytest.raises(TypeError, match="needs a RecordSpec"):
+            declared.with_spec(NumericArraySpec(()))
+
+    def test_a_whole_term_is_renamed_by_its_component(self):
+        array = NumericArraySpec(())
+        assert OutputSpec(prior=array).with_path_names(prior="beta") == OutputSpec(beta=array)
+        assert OutputSpec(prior=None).with_path_names(prior="beta") == OutputSpec(beta=None)
+        with pytest.raises(KeyError):
+            OutputSpec(prior=array).with_path_names(sigma="s")
+        with pytest.raises(KeyError):
+            OutputSpec(prior=array).with_path_names({"prior/x": "y"})
+        # The component is renamed in place, so a path target raises.
+        with pytest.raises(ValueError, match="contain no '/'"):
+            OutputSpec(prior=array).with_path_names(prior="group/beta")
+
+    def test_a_whole_record_renames_its_fields_through_its_component(self):
+        record = RecordSpec(beta=NumericArraySpec(()), sigma=NumericArraySpec(()))
+        renamed = OutputSpec(parameters=record).with_path_names(
+            {"parameters": "theta", "parameters/beta": "b"}
+        )
+        assert renamed == OutputSpec(theta=record.with_path_names(beta="b"))
+        with pytest.raises(KeyError):
+            OutputSpec(parameters=record).with_path_names(beta="b")
+
+    def test_both_packagings_of_one_interface_take_the_same_paths(self):
+        inner = RecordSpec(beta=NumericArraySpec(()))
+        renames = {"parameters": "theta", "parameters/beta": "b"}
+        renamed_inner = RecordSpec(b=NumericArraySpec(()))
+        assert OutputSpec(parameters=inner).with_path_names(renames) == OutputSpec(
+            theta=renamed_inner
+        )
+        assert OutputSpec(RecordSpec(parameters=inner)).with_path_names(renames) == OutputSpec(
+            RecordSpec(theta=renamed_inner)
+        )
+
+    def test_a_component_and_a_field_of_one_name_have_distinct_paths(self):
+        record = RecordSpec(beta=NumericArraySpec(()), sigma=NumericArraySpec(()))
+        declaration = OutputSpec(beta=record)
+        assert declaration.with_path_names(beta="b") == OutputSpec(b=record)
+        assert declaration.with_path_names({"beta/beta": "b"}) == OutputSpec(
+            beta=record.with_path_names(beta="b")
+        )
+
+    def test_a_whole_term_refuses_a_repeated_or_an_empty_rename(self):
+        record = RecordSpec(beta=NumericArraySpec(()))
+        with pytest.raises(ValueError, match="more than once"):
+            OutputSpec(p=record).with_path_names({"p": "q"}, p="r")
+        with pytest.raises(ValueError, match="more than once"):
+            OutputSpec(p=record).with_path_names({"p/beta": "b"}, **{"p/beta": "c"})
+        with pytest.raises(ValueError, match="at least one rename"):
+            OutputSpec(p=record).with_path_names()
+
+    def test_an_exposed_record_renames_its_fields(self):
+        record = RecordSpec(beta=NumericArraySpec(()), sigma=NumericArraySpec(()))
+        renamed = OutputSpec(record).with_path_names(beta="b")
+        assert renamed == OutputSpec(record.with_path_names(beta="b"))
+        assert renamed.exposes_record
+        nested = OutputSpec(RecordSpec(g=RecordSpec(mu=NumericArraySpec(()))))
+        assert tuple(nested.with_path_names({"g/mu": "m"}).components) == ("g",)
+        with pytest.raises(KeyError):
+            nested.with_path_names(mu="m")
 
 
 class TestDeclarationConstruction:

@@ -31,6 +31,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   holes, output-only dimensions, and returned Function contracts. Module methods
   infer their returns normally and use the method name as their output label.
 
+- `OutputSpec` takes one keyword or one positional `RecordSpec`, so its form
+  alone decides the packaging. The form with several keywords, which exposed a
+  record of them, raises `TypeError`: replace `OutputSpec(a=a_spec, b=b_spec)`
+  with `OutputSpec(RecordSpec(a=a_spec, b=b_spec))`.
+- `with_path_names` addresses a node by its exact path on `Record`,
+  `RecordSpec`, `RecordBatch`, and every `NamedTree`, so a single name addresses
+  a top-level node and a nested node takes its full path. A bare name no longer
+  resolves to a nested node: for a nested field `g/mu`, replace
+  `r.with_path_names(mu="loc")` with `r.with_path_names({"g/mu": "loc"})`. A
+  top-level node whose name recurs deeper, which no key could address, is
+  renamed by its name.
 - `event_template` is removed from every distribution, so a law's event
   declaration is the one schema it records. Read the declaration instead:
   replace `law.event_template` with `law.event_spec.spec` for a law that draws
@@ -39,9 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shapes.
   - `KDEDistribution`, `ApproximateDistribution`, and `make_posterior` take
     `event_spec=` in place of `event_template=`. Each accepts an `OutputSpec` or
-    a bare `RecordSpec`, which exposes its fields. `KDEDistribution` reads the
-    structure of a record with several fields, and raises `ValueError` for any
-    other declaration that does not state the shape of one draw.
+    a bare `RecordSpec`, which exposes its fields. `KDEDistribution` completes
+    the declaration with the term it draws: a record gives the draws its
+    structure, and any other declaration is completed with the flat array one
+    draw is, so a whole term keeps its component and a type that does not unify
+    raises `ValueError`.
   - `unflatten_value(flat, template=...)` takes a law's declared term. An array
     spec reshapes the trailing axis, and a record spec rebuilds a
     `NumericRecord` or a `NumericRecordBatch` whatever its number of fields, so
@@ -64,14 +77,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     calls `_init_declaration`, and a `TFPDistribution` subclass that sets
     `_tfp_dist` after `TFPDistribution.__init__` passes its own `event_spec`.
   - A bare `RecordSpec` exposes its fields, even when it has one, and any other
-    term spec is a whole-term event whose component is the law's name. A law
-    that draws one array, such as a parametric family, therefore declares a
-    whole term. A component name follows the rule for a record's field names,
-    so it is non-empty and has no `/`, and an `InputSpec` slot name must still
-    be a Python identifier. A name with a `/` therefore raises `ValueError` for
-    every law that declares a whole term under its name, which is new for laws
-    such as an `EmpiricalDistribution` of opaque atoms, a
-    `SimpleGenerativeModel`, or a `MinibatchedDistribution`.
+    term spec is a whole-term event whose component defaults to the law's
+    name. A law that draws one array, such as a parametric family, therefore
+    declares a whole term. A component name follows the rule for a record's
+    field names, so it is non-empty and has no `/`, and an `InputSpec` slot
+    name must still be a Python identifier. A name with a `/` therefore raises
+    `ValueError` for every law whose whole-term component defaults to its
+    name, which is new for laws such as an `EmpiricalDistribution` of opaque
+    atoms, a `SimpleGenerativeModel`, or a `MinibatchedDistribution`.
   - `with_name` no longer moves the event component, so a renamed family keeps
     its event component, and indexing it by that component still returns it.
   - `event_shape` is defined only for a law that draws a single array. It raises
@@ -492,6 +505,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Completing an `OutputSpec`.** A producer completes a declaration with the
+  spec of the term it returns.
+  - `with_spec(spec)` returns the declaration with its type set to `spec`. It
+    fills a pending type, raises `ValueError` for a declared spec that does not
+    unify with `spec`, and raises `TypeError` when an exposed record is given a
+    spec other than a `RecordSpec`.
+  - `OutputSpec.default(spec, component=c)` is the declaration a producer uses
+    when it is given none: `OutputSpec(spec)` if `spec` is a `RecordSpec`,
+    whose fields become the components, and `OutputSpec(**{c: spec})`
+    otherwise.
+  - `exposes_record` reports whether the components are a record's fields.
+  - `with_path_names` renames nodes by the declaration's paths, which start
+    with a component, so the field `beta` of a whole record under the component
+    `parameters` is `parameters/beta`, as it is when the record is exposed. A
+    key that is not a path raises `KeyError`, and a whole term's component is
+    renamed in place.
+- **`event_spec` on the parametric families.** Each TFP family takes a
+  keyword-only `OutputSpec` as `event_spec`, which names the component of one
+  draw, usually with its type pending. `Normal("prior", 0.0, 1.0,
+  event_spec=OutputSpec(beta=None))` is labeled `prior` and exports `beta`. The
+  family fills the pending type with its array, a declared type must unify with
+  that array, and a declaration that exposes a record raises `TypeError`. A
+  `DistributionArray` of such laws keeps the component they share when their
+  declarations differ otherwise.
 - **`Numeric`, the flat-vector interface of the numeric kinds.** `NumericArray`
   and `NumericRecord` inherit the abstract base `probpipe.Numeric`, which
   declares `vector_size`, `to_vector`, and `from_vector` and supplies coordinate
@@ -559,6 +596,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pandas` backends select through `.iloc`.
 
 ### Changed
+
+- **Contributors install pre-commit as a uv tool.** The hooks are installed
+  with `uv tool install pre-commit` and then `pre-commit install`, replacing
+  `uvx pre-commit install`: its hook called an interpreter in the uv cache, so
+  every commit failed once `uv cache clean` deleted it. See
+  [CONTRIBUTING.md](CONTRIBUTING.md#linting--pre-commit).
 
 ### Removed (breaking)
 
