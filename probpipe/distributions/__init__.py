@@ -1,10 +1,43 @@
 from ..core._random_functions import ArrayRandomFunction, RandomFunction
+from . import _composition
+from ._batches import ConditionalDistributionBatch, DistributionBatch
 from ._bijector_dispatch import (
     bijector_for,
     register_bijector,
 )
+from ._capabilities import (
+    SupportsConditionalCovariance,
+    SupportsConditionalExpectation,
+    SupportsConditionalLogProb,
+    SupportsConditionalMarginals,
+    SupportsConditionalMean,
+    SupportsConditionalQuantile,
+    SupportsConditionalRandomLogProb,
+    SupportsConditionalRandomUnnormalizedLogProb,
+    SupportsConditionalSampling,
+    SupportsConditionalUnnormalizedLogProb,
+    SupportsConditionalVariance,
+    SupportsMarginals,
+)
+from ._conditional import (
+    ConditionalDistribution,
+    ConditionalDistributionSpec,
+    ConditionalNumericDistribution,
+    FullyNumericConditionalDistribution,
+    NumericConditionalDistribution,
+)
 from ._distribution import Distribution, DistributionSpec, NumericDistribution
+from ._factored import (
+    FactoredConditionalDistribution,
+    FactoredConditionalNumericDistribution,
+    FactoredDistribution,
+    FactoredFullyNumericConditionalDistribution,
+    FactoredNumericConditionalDistribution,
+    FactoredNumericDistribution,
+    SupportsFactors,
+)
 from ._tfp_base import TFPDistribution
+from ._views import FieldView
 from .continuous import (
     Beta,
     Cauchy,
@@ -57,10 +90,23 @@ __all__ = [
     "Binomial",
     "Categorical",
     "Cauchy",
+    "ConditionalDistribution",
+    "ConditionalDistributionBatch",
+    "ConditionalDistributionSpec",
+    "ConditionalNumericDistribution",
     "Dirichlet",
     "Distribution",
+    "DistributionBatch",
     "DistributionSpec",
     "Exponential",
+    "FactoredConditionalDistribution",
+    "FactoredConditionalNumericDistribution",
+    "FactoredDistribution",
+    "FactoredFullyNumericConditionalDistribution",
+    "FactoredNumericConditionalDistribution",
+    "FactoredNumericDistribution",
+    "FieldView",
+    "FullyNumericConditionalDistribution",
     "Gamma",
     "GaussianRandomFunction",
     "HalfCauchy",
@@ -79,6 +125,7 @@ __all__ = [
     "NegativeBinomial",
     # Univariate continuous
     "Normal",
+    "NumericConditionalDistribution",
     "NumericDistribution",
     "NumericJointEmpirical",
     "Pareto",
@@ -89,6 +136,19 @@ __all__ = [
     "RandomFunction",
     "SequentialJointDistribution",
     "StudentT",
+    "SupportsConditionalCovariance",
+    "SupportsConditionalExpectation",
+    "SupportsConditionalLogProb",
+    "SupportsConditionalMarginals",
+    "SupportsConditionalMean",
+    "SupportsConditionalQuantile",
+    "SupportsConditionalRandomLogProb",
+    "SupportsConditionalRandomUnnormalizedLogProb",
+    "SupportsConditionalSampling",
+    "SupportsConditionalUnnormalizedLogProb",
+    "SupportsConditionalVariance",
+    "SupportsFactors",
+    "SupportsMarginals",
     # TFP base
     "TFPDistribution",
     # Transformed

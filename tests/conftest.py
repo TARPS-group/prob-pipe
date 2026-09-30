@@ -7,6 +7,28 @@ import probpipe
 from probpipe import EmpiricalDistribution, ProvenanceMode
 
 
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "pending(reason, raises=NotImplementedError): a documented contract whose "
+        "implementation has not merged. The test xfails strictly, and only on *raises*, "
+        "so it fails once the implementation passes it or when it fails for another reason.",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    for item in items:
+        for marker in item.iter_markers("pending"):
+            reason = marker.kwargs.get("reason") or (marker.args[0] if marker.args else "")
+            item.add_marker(
+                pytest.mark.xfail(
+                    raises=marker.kwargs.get("raises", NotImplementedError),
+                    strict=True,
+                    reason=f"pending: {reason}",
+                )
+            )
+
+
 @pytest.fixture(autouse=True)
 def _reset_provenance_config():
     """Always restore provenance_config to defaults after each test.

@@ -532,13 +532,20 @@ _RETIRING = {
 }
 _PUBLIC_CLASSES = _public_distribution_classes()
 
+# Laws that indexing constructs from a parent, so no caller names them.
+_CONSTRUCTED_BY_INDEXING = {"FieldView"}
+
 
 class TestNameFirstSignature:
     """Every constructor the design keeps takes ``name`` first, required."""
 
     @pytest.mark.parametrize(
         "cls",
-        [cls for cls in _PUBLIC_CLASSES if cls.__name__ not in _RETIRING],
+        [
+            cls
+            for cls in _PUBLIC_CLASSES
+            if cls.__name__ not in _RETIRING | _CONSTRUCTED_BY_INDEXING
+        ],
         ids=lambda cls: cls.__name__,
     )
     def test_name_is_the_required_first_parameter(self, cls):

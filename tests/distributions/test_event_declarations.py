@@ -91,6 +91,7 @@ from probpipe.core._random_measures import RandomMeasure
 from probpipe.core._record_distribution import _RecordDistributionView
 from probpipe.core._specs import RecordSpec
 from probpipe.core.protocols import SupportsSampling
+from probpipe.distributions import FactoredDistribution, FactoredNumericDistribution, FieldView
 from probpipe.distributions._joint_empirical import NumericJointEmpirical
 from probpipe.distributions._product import TFPProductDistribution
 from probpipe.distributions.gaussian_random_function import (
@@ -279,12 +280,17 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     PyMCModel: _pymc_model,
     StanModel: _stan_model,
     _UnconstrainedStanView: lambda: _stan_model().as_unconstrained_distribution(),
+    FieldView: lambda: FieldView(
+        ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)), "a"
+    ),
+    FactoredDistribution: lambda: Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0),
 }
 
 # Bases a concrete class specializes, constructed only through one.
 _BASES = frozenset(
     {
         NumericDistribution,
+        FactoredNumericDistribution,
         TFPDistribution,
         RecordDistribution,
         NumericRecordDistribution,
@@ -344,6 +350,8 @@ _DRAW_FAILURES = {
     SimpleGenerativeModel: pytest.mark.xfail(
         raises=ValueError, strict=True, reason="sample stacks a tuple draw as rows"
     ),
+    FieldView: pytest.mark.pending(reason="a view samples by co-sampling its parent"),
+    FactoredDistribution: pytest.mark.pending(reason="a joint samples through its factors"),
 }
 
 # Laws that do not pickle, by the exception each raises.

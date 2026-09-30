@@ -396,18 +396,24 @@ class TestColumnBatchForms:
     def test_a_field_with_no_batch_form_is_refused_at_construction(self):
         """A batch admits the element kinds it can present, and no more.
 
-        Reading a field gives the batch of its element kind, and a distribution
-        has none — so admitting the field and refusing the read would make a
-        batch nobody can take a field from. The refusal moves to where the field
+        Reading a field gives the batch of its element kind, and a kind that
+        registers none has none — so admitting the field and refusing the read
+        would make a batch nobody can take a field from. The refusal moves to where the field
         is declared."""
-        from probpipe import DistributionSpec, Normal
+        from dataclasses import dataclass
 
-        law = Normal("n", 0.0, 1.0)
-        spec = RecordSpec({"d": DistributionSpec(law.event_spec), "x": ()})
-        with pytest.raises(TypeError, match="DistributionSpec, which has no batch form"):
+        from probpipe import TermSpec
+
+        @dataclass(frozen=True)
+        class UnbatchedSpec(TermSpec):
+            def is_valid(self, value):
+                return True
+
+        spec = RecordSpec({"d": UnbatchedSpec(), "x": ()})
+        with pytest.raises(TypeError, match="UnbatchedSpec, which has no batch form"):
             RecordBatch(
                 "batch",
-                {"d": _object_column([law, law]), "x": jnp.zeros(2)},
+                {"d": _object_column(["a", "b"]), "x": jnp.zeros(2)},
                 "row",
                 element_spec=spec,
             )

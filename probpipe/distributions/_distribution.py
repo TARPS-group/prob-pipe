@@ -10,7 +10,7 @@ Provides:
 from __future__ import annotations
 
 from abc import ABC
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Self
 
@@ -18,6 +18,8 @@ if TYPE_CHECKING:
     from ..core._distribution_array import DistributionArray
     from ..core.constraints import Constraint
     from ..diagnostics.views import DiagnosticsView
+    from ._conditional import ConditionalDistribution
+    from ._factored import FactoredConditionalDistribution, FactoredDistribution
 
 from ..core._record_spec import RecordSpec
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
@@ -133,6 +135,53 @@ def _array_leaves(declaration: OutputSpec) -> dict[str, NumericArraySpec]:
     return leaves
 
 
+#: Each marker whose membership is read from an instance's declaration, with the
+#: predicate that decides it and what an instance of a class inheriting the marker
+#: must declare. ``NumericDistribution`` registers below, and the markers of the
+#: conditional and factored kinds register in their own modules.
+_DECLARATION_MARKERS: dict[type, tuple[Callable[[Any], bool], str]] = {}
+
+
+def _check_marker_claims(instance: Any) -> None:
+    """Raise ``TypeError`` if *instance*'s class inherits a marker its declaration fails."""
+    claimant = type(instance)
+    for marker, (holds, requirement) in _DECLARATION_MARKERS.items():
+        if issubclass(claimant, marker) and not holds(instance):
+            raise TypeError(
+                f"{claimant.__name__} inherits {marker.__name__}, so its instances must "
+                f"declare {requirement}"
+            )
+
+
+#: The engine behind ``*``, installed by the composition module at import.
+_composition_engine: Callable[[Any, Any], Any] | None = None
+
+
+def _install_composition(engine: Callable[[Any, Any], Any]) -> None:
+    """Install the engine that ``*`` delegates to on both distribution kinds.
+
+    Called once, by the composition module at import, so this module never
+    imports the module that imports it.
+    """
+    global _composition_engine
+    _composition_engine = engine
+
+
+def _compose_operands(left: Any, right: Any) -> Any:
+    """*left* ``*`` *right* through the installed engine, or ``NotImplemented``.
+
+    An operand that is neither distribution kind returns ``NotImplemented``, so
+    Python tries the reflected operation and a scalar operand can scale.
+    """
+    from ._conditional import ConditionalDistribution
+
+    if not isinstance(right, (Distribution, ConditionalDistribution)):
+        return NotImplemented
+    if _composition_engine is None:
+        raise RuntimeError("the composition engine is not installed; import probpipe")
+    return _composition_engine(left, right)
+
+
 class _DistributionMeta(_TrackedTermMeta):
     """The metaclass of every distribution.
 
@@ -147,8 +196,9 @@ class _DistributionMeta(_TrackedTermMeta):
     """
 
     def __instancecheck__(cls, instance: Any) -> bool:
-        if cls is NumericDistribution:
-            return _declares_numeric_event(instance)
+        marker = _DECLARATION_MARKERS.get(cls)
+        if marker is not None:
+            return marker[0](instance)
         return super().__instancecheck__(instance)
 
     def __call__(cls, *args: Any, **kwargs: Any) -> Any:
@@ -161,11 +211,7 @@ class _DistributionMeta(_TrackedTermMeta):
                 f"{claimant.__name__}.__init__ left the event undeclared; pass event_spec to "
                 f"Distribution.__init__, or call _init_declaration when bypassing it"
             )
-        if issubclass(claimant, NumericDistribution) and not _declares_numeric_event(instance):
-            raise TypeError(
-                f"{claimant.__name__} inherits NumericDistribution, so its instances must "
-                f"declare a numeric event"
-            )
+        _check_marker_claims(instance)
         return instance
 
 
@@ -389,6 +435,52 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
             self.event_spec.with_dim_names(**names), "with_dim_names", names
         )
 
+    def with_path_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Self:
+        """Rename or move nodes of the event declaration by their paths, ``old -> new``.
+
+        The result is this law with :meth:`OutputSpec.with_path_names` applied to
+        its declaration. A path starts with a component, and the packaging is
+        kept, so a whole term's component is renamed in place with the term's
+        fields under it. The law is unchanged: a draw of the result is a draw of
+        this law carrying the new names.
+
+        Parameters
+        ----------
+        mapping : Mapping[str, str], optional
+            New names keyed by the exact paths of the nodes they rename.
+        **kwargs : str
+            Further renames, keyed by paths that are identifiers.
+
+        Returns
+        -------
+        Self
+            A copy of the same class and name holding the renamed declaration;
+            the original is unchanged.
+
+        Raises
+        ------
+        KeyError
+            If a key is not a path of the declaration.
+        ValueError
+            If a new name is empty or contains ``/``, a node is renamed twice, no
+            renames are given, or a rename collides with a sibling.
+        NotImplementedError
+            If a rename reaches a field of a record-valued draw, whose values
+            must carry the new names.
+        """
+        renamed = self.event_spec.with_path_names(mapping, **kwargs)
+        component = _whole_term_component(self.event_spec)
+        fields_kept = (
+            component is not None
+            and _whole_term_component(renamed) is not None
+            and renamed.spec == self.event_spec.spec
+        )
+        if not fields_kept:
+            raise NotImplementedError(
+                f"{type(self).__name__}.with_path_names: renaming the fields of a record draw"
+            )
+        return self._with_declaration(renamed, "with_path_names", {**dict(mapping or {}), **kwargs})
+
     def _with_declaration(
         self, event_spec: OutputSpec, operation: str, arguments: Mapping[str, Any]
     ) -> Self:
@@ -429,6 +521,33 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         from ..core._record_distribution import _RecordDistributionView
 
         return _RecordDistributionView(self, key)
+
+    # -- composition ------------------------------------------------------------
+
+    def __mul__(
+        self, other: Distribution | ConditionalDistribution
+    ) -> FactoredDistribution | FactoredConditionalDistribution:
+        """The joint of this law and *other*, composed conditional-first.
+
+        The left operand may condition on what the right produces, so ``lik *
+        prior`` reads as ``p(y | β) · p(β)``. The result is a
+        ``FactoredDistribution`` when no given is left unmet and a
+        ``FactoredConditionalDistribution`` otherwise, flattened over the
+        operands' factors and labeled by their labels joined with ``·``.
+
+        Returns
+        -------
+        FactoredDistribution or FactoredConditionalDistribution
+            The joint, or ``NotImplemented`` when *other* is neither
+            distribution kind, so that a scalar operand can scale instead.
+
+        Raises
+        ------
+        ValueError
+            If a component is produced twice, the right operand consumes a
+            component the left produces, or matched specs do not unify.
+        """
+        return _compose_operands(self, other)
 
     # -- keyword-form value construction ------------------------------------
 
@@ -693,6 +812,9 @@ class NumericDistribution(Distribution):
         if supports and all(_known_equal(supports[0], s) for s in supports[1:]):
             return supports[0]
         return None
+
+
+_DECLARATION_MARKERS[NumericDistribution] = (_declares_numeric_event, "a numeric event")
 
 
 # The views a numeric law has whatever its class, which ``Distribution.__getattr__``
