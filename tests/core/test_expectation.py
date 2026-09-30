@@ -465,3 +465,12 @@ class TestExpectationMethods:
     def test_monte_carlo_refuses_a_non_integer_sample_count(self):
         with pytest.raises(TypeError, match="integer"):
             expectation(Normal("n", 0.0, 1.0), lambda x: x, num_evaluations=2.5)
+
+
+def test_the_method_registry_is_exported_beside_the_other_registries():
+    import probpipe
+    import probpipe.operations
+
+    assert probpipe.expectation_method_registry is probpipe.operations.expectation_method_registry
+    assert "expectation_method_registry" in probpipe.__all__
+    assert "ExpectationMethod" in probpipe.operations.__all__

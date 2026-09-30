@@ -367,6 +367,7 @@ __all__ = [
     "condition_on_nutpie",
     "converter_registry",
     "elliptical_slice",
+    "expectation_method_registry",
     "function",
     "greater_than",
     "inference_method_registry",
@@ -419,4 +420,4 @@ from probpipe.core.ops import (
     unnormalized_prob,
     variance,
 )
-from probpipe.operations import expectation
+from probpipe.operations import expectation, expectation_method_registry
