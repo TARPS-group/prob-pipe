@@ -103,7 +103,7 @@ class TestSimpleModel:
 
     def test_event_shape_is_undefined_for_a_record_draw(self, model):
         """A SimpleModel draws a record, and event_shape is defined only for one array."""
-        with pytest.raises(TypeError, match="does not draw a single array"):
+        with pytest.raises(AttributeError, match="does not draw a single array"):
             _ = model.event_shape
 
     def test_no_sample(self, model):

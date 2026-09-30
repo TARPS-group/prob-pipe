@@ -481,6 +481,32 @@ class TestCanonicalConvenience:
         ):
             target._check_support_compatible(source)
 
+    def test_check_support_compatible_pairs_a_flattened_group_with_its_leaves(self):
+        """A source field that holds a flattened group, as a posterior holds a
+        nested component, is checked against each target leaf under its path.
+        """
+        from probpipe import Gamma, MultivariateNormal, ProductDistribution
+
+        def nested(leaf):
+            return ProductDistribution(
+                params=ProductDistribution(a=leaf("a"), b=leaf("b")), s=Normal("s", 0.0, 1.0)
+            )
+
+        def flat(name):
+            return ProductDistribution(
+                **{name: MultivariateNormal(name, jnp.zeros(2), cov=jnp.eye(2))},
+                s=Normal("s", 0.0, 1.0),
+            )
+
+        nested(lambda n: Normal(n, 0.0, 1.0))._check_support_compatible(flat("params"))
+        with pytest.raises(
+            ValueError,
+            match=r"field 'params' \(support=real\).*field 'params/a' \(support=positive\)",
+        ):
+            nested(lambda n: Gamma(n, 2.0, 1.0))._check_support_compatible(flat("params"))
+        with pytest.raises(ValueError, match="field-count mismatch"):
+            nested(lambda n: Normal(n, 0.0, 1.0))._check_support_compatible(flat("x"))
+
     def test_check_support_compatible_skips_non_nrd_source(self, scalar_normal):
         """Sources without per-field ``supports`` (non-NRD endpoints
         like an opaque ``EmpiricalDistribution`` with object-dtype
@@ -494,45 +520,6 @@ class TestCanonicalConvenience:
             # Plain object — accessing ``.supports`` raises ``AttributeError``.
 
         scalar_normal._check_support_compatible(_NoSupportsSource())  # no raise
-
-    def test_check_support_compatible_skips_when_supports_not_implemented(
-        self,
-        scalar_normal,
-    ):
-        """A source whose ``supports`` property raises
-        ``NotImplementedError`` is treated the same as the
-        ``AttributeError`` branch — the check returns silently.
-        Exercises the ``except NotImplementedError`` clause inside
-        ``_check_support_compatible`` (companion to the
-        ``AttributeError`` branch covered above).
-        """
-        from probpipe.core._numeric_record_distribution import (
-            NumericRecordDistribution,
-        )
-        from probpipe.core._specs import RecordSpec
-
-        class _UnimplSupportsSource(NumericRecordDistribution):
-            """Multi-field NRD whose ``supports`` is not implemented."""
-
-            def __init__(self, name):
-                super().__init__(name, RecordSpec(a=(), b=()))
-
-            @property
-            def supports(self):
-                raise NotImplementedError("supports")
-
-            def _sample(self, key, sample_shape=()):  # pragma: no cover
-                from probpipe import NumericRecord
-
-                return NumericRecord(
-                    "nr",
-                    a=jnp.zeros(sample_shape),
-                    b=jnp.zeros(sample_shape),
-                )
-
-        scalar_normal._check_support_compatible(
-            _UnimplSupportsSource(name="unimpl"),
-        )  # no raise
 
     def test_treedef_leaf_for_single_leaf(self, scalar_normal):
         """Single-leaf: ``treedef`` is the leaf treedef (one-leaf pytree)."""

@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import pickle
 from dataclasses import FrozenInstanceError
+from types import SimpleNamespace
 
 import jax
 import jax.numpy as jnp
@@ -27,6 +28,7 @@ from probpipe import (
     TermSpec,
     positive,
 )
+from probpipe.core._specs import _components_record
 
 
 @pytest.fixture
@@ -110,6 +112,16 @@ class TestOutputSpec:
         hole = OutputSpec(beta=None)
         assert hole.with_dim_sizes(n=3).with_dim_names(n="m") == hole
 
+    def test_the_components_record_of_each_form(self):
+        assert _components_record(OutputSpec(theta=NumericArraySpec(()))) == RecordSpec(theta=())
+        assert _components_record(OutputSpec(RecordSpec(a=()))) == RecordSpec(a=())
+
+    def test_an_exposed_term_that_is_no_record_is_refused(self):
+        # The constructor refuses one, so only a malformed declaration holds it.
+        malformed = SimpleNamespace(_component_name=None, spec=NumericArraySpec(()))
+        with pytest.raises(TypeError, match="an exposed declaration holds a RecordSpec"):
+            _components_record(malformed)
+
 
 class TestDeclarationConstruction:
     @pytest.mark.parametrize(
@@ -138,15 +150,22 @@ class TestDeclarationConstruction:
         assert InputSpec(**{name: spec})[name] is spec
 
     @pytest.mark.parametrize("name", ["a/b", "", "two words", "1x", "class"])
-    def test_component_names_are_python_identifiers(self, name):
+    def test_input_slot_names_are_python_identifiers(self, name):
+        with pytest.raises(ValueError, match="input slot names must be Python identifiers"):
+            InputSpec({name: NumericArraySpec(())})
+
+    @pytest.mark.parametrize("name", ["two words", "1x", "class", "post-1", "*args[0]"])
+    def test_a_component_name_follows_the_field_rule(self, name):
+        # A component that binds a Python parameter must be an identifier, which
+        # binding checks; the declaration accepts any field name.
         spec = NumericArraySpec(())
-        with pytest.raises(ValueError):
-            InputSpec({name: spec})
-        with pytest.raises(ValueError):
-            OutputSpec(**{name: spec})
-        if name not in ("", "a/b"):
-            with pytest.raises(ValueError):
-                OutputSpec(RecordSpec({name: spec}))
+        assert list(OutputSpec(**{name: spec}).components) == [name]
+        assert list(OutputSpec(RecordSpec({name: spec})).components) == [name]
+
+    @pytest.mark.parametrize("name", ["a/b", ""])
+    def test_a_component_name_is_non_empty_without_a_slash(self, name):
+        with pytest.raises(ValueError, match="component names must be non-empty"):
+            OutputSpec(**{name: NumericArraySpec(())})
 
     @pytest.mark.parametrize("value", [None, (), {}, 1, "spec"])
     def test_input_slots_require_specs(self, value):
@@ -608,7 +627,19 @@ class TestNestedValueBinding:
                 id="float-against-int",
             ),
             pytest.param(
+                NumericArraySpec((3,), dtype="float32"),
+                NumericArraySpec((3,), dtype="int32"),
+                True,
+                id="same-kind-int-to-float",
+            ),
+            pytest.param(
                 NumericArraySpec((3,), support=positive), NumericArraySpec((3,)), True, id="support"
+            ),
+            pytest.param(
+                NumericArraySpec((3,)),
+                NumericArraySpec((3,), support=positive),
+                True,
+                id="support-on-the-law",
             ),
             pytest.param(NumericArraySpec((3,)), NumericArraySpec((4,)), False, id="size"),
         ],
@@ -636,9 +667,21 @@ class TestNestedValueBinding:
             with pytest.raises(ValueError):
                 Record("value", law=law, event_template=schema)
 
-    def test_field_order_does_not_change_a_match(self, declared_law):
+    def test_field_order_does_not_change_a_match(self, wrap_binding, declared_law):
         law = declared_law(RecordSpec(y=(), x=(3,)))
-        assert DistributionSpec(RecordSpec(x=(3,), y=())).is_valid(law)
+        spec = DistributionSpec(RecordSpec(x=(3,), y=()))
+        schema = RecordSpec(law=spec)
+        assert spec.is_valid(law)
+        declared, value = wrap_binding(spec, law)
+        assert declared.bind_dims_from_value(value) == declared
+        assert schema.is_valid(Record("value", law=law, event_template=schema))
+
+    def test_fields_sharing_a_dimension_bind_it_once(self, declared_law):
+        spec = DistributionSpec(RecordSpec(x=("n",), y=("n",)))
+        agreeing = declared_law(RecordSpec(x=(3,), y=(3,)))
+        assert spec.bind_dims_from_value(agreeing) == DistributionSpec(RecordSpec(x=(3,), y=(3,)))
+        with pytest.raises(ValueError, match="already bound"):
+            spec.bind_dims_from_value(declared_law(RecordSpec(x=(3,), y=(4,))))
 
     def test_concretized_distribution_binds_like_a_fixed_one(self, wrap_binding, declared_law):
         symbolic = DistributionSpec(RecordSpec(x=NumericArraySpec(("n",), dtype="float64")))

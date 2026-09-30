@@ -269,7 +269,10 @@ class _UnconstrainedStanView(Distribution, SupportsLogProb):
 
     @property
     def event_shape(self) -> tuple[int, ...]:
-        """The length of the flat unconstrained parameter vector, as for the model."""
+        """The length of the flat unconstrained parameter vector, as for the model.
+
+        An interim implementation detail, as the model's is.
+        """
         return self._model.event_shape
 
     @cached_property

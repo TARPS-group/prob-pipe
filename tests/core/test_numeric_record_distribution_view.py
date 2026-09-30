@@ -80,13 +80,13 @@ class TestConstruction:
         single = NumericRecordSpec(theta=(4,))
         rec = mvn4.as_record_distribution(template=single)
         assert rec.event_shapes == {"theta": (4,)}
-        with pytest.raises(TypeError, match="does not draw a single array"):
+        with pytest.raises(AttributeError, match="does not draw a single array"):
             _ = rec.event_shape
 
     def test_event_shape_multi_field_raises(self, mvn4, split_template):
         """Multi-field template: event_shape raises; event_shapes is per field."""
         rec = mvn4.as_record_distribution(template=split_template)
-        with pytest.raises(TypeError, match="does not draw a single array"):
+        with pytest.raises(AttributeError, match="does not draw a single array"):
             _ = rec.event_shape
 
     def test_base_distribution_accessor(self, mvn4, split_template):

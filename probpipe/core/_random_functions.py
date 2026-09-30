@@ -16,7 +16,7 @@ import jax.numpy as jnp
 from ..custom_types import Array, ArrayLike
 from ..distributions._distribution import Distribution
 from ..values._function_base import FunctionSpec
-from ._specs import OutputSpec
+from ._specs import OutputSpec, TermSpec
 
 # ---------------------------------------------------------------------------
 # RandomFunction
@@ -44,12 +44,13 @@ class RandomFunction(Distribution):
     ----------
     name : str
         Distribution name.
-    event_spec : OutputSpec, optional
-        The declaration of one draw. By default a draw is a callable whose
+    event_spec : OutputSpec or TermSpec, optional
+        The declaration of one draw, a bare term spec completing as for
+        :class:`~probpipe.Distribution`. By default a draw is a callable whose
         input and output are left unspecified, a whole term under *name*.
     """
 
-    def __init__(self, name: str, event_spec: OutputSpec | None = None):
+    def __init__(self, name: str, event_spec: OutputSpec | TermSpec | None = None):
         super().__init__(name, FunctionSpec() if event_spec is None else event_spec)
 
     # -- Fundamental interface ----------------------------------------------
@@ -117,7 +118,7 @@ class ArrayRandomFunction(RandomFunction):
     output_shape : tuple of int
         Shape of a single output, e.g. ``(2,)`` for two outputs, ``()``
         for a scalar output.
-    event_spec : OutputSpec, optional
+    event_spec : OutputSpec or TermSpec, optional
         The declaration of one draw, as for :class:`RandomFunction`.
     """
 
@@ -131,7 +132,7 @@ class ArrayRandomFunction(RandomFunction):
         input_shape: tuple[int, ...],
         output_shape: tuple[int, ...] = (),
         *,
-        event_spec: OutputSpec | None = None,
+        event_spec: OutputSpec | TermSpec | None = None,
     ) -> None:
         super().__init__(name, event_spec)
         self._input_shape = tuple(input_shape)

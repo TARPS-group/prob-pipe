@@ -349,17 +349,11 @@ class TestFlattenedDistributionViewDynamicProtocols:
             FlattenedDistributionView,
             NumericRecordDistribution,
         )
+        from probpipe.core._specs import NumericArraySpec
 
         class _SampleOnlyBase(NumericRecordDistribution, SupportsSampling):
             def __init__(self):
-                from probpipe import NumericArraySpec
-
-                self._name = "sample_only"
-                self._init_declaration(NumericArraySpec((), "float32"))
-
-            @property
-            def event_shape(self):
-                return ()
+                super().__init__("sample_only", NumericArraySpec((), "float32"))
 
             def _sample(self, key, sample_shape=()):
                 return jax.random.normal(key, sample_shape)
@@ -378,17 +372,11 @@ class TestFlattenedDistributionViewDynamicProtocols:
             FlattenedDistributionView,
             NumericRecordDistribution,
         )
+        from probpipe.core._specs import NumericArraySpec
 
         class _LogProbOnlyBase(NumericRecordDistribution, SupportsLogProb):
             def __init__(self):
-                from probpipe import NumericArraySpec
-
-                self._name = "lpo_base"
-                self._init_declaration(NumericArraySpec((), "float32"))
-
-            @property
-            def event_shape(self):
-                return ()
+                super().__init__("lpo_base", NumericArraySpec((), "float32"))
 
             def _log_prob(self, x):
                 return jnp.asarray(0.0)
@@ -553,6 +541,8 @@ class TestTransformedDistributionDynamicProtocols:
         import tensorflow_probability.substrates.jax.bijectors as tfb
 
         from probpipe import NumericRecordDistribution
+        from probpipe.core._specs import NumericArraySpec
+        from probpipe.core.constraints import real
         from probpipe.core.protocols import SupportsLogProb
 
         class _LogProbOnly(NumericRecordDistribution, SupportsLogProb):
@@ -560,21 +550,7 @@ class TestTransformedDistributionDynamicProtocols:
             _preferred_orchestration = None
 
             def __init__(self):
-                from probpipe import NumericArraySpec
-                from probpipe.core.constraints import real
-
-                self._name = "lpo"
-                self._init_declaration(NumericArraySpec((), "float32", real))
-
-            @property
-            def event_shape(self):
-                return ()
-
-            @property
-            def support(self):
-                from probpipe.core.constraints import real
-
-                return real
+                super().__init__("lpo", NumericArraySpec((), "float32", real))
 
             def _log_prob(self, x):
                 return jnp.asarray(0.0)

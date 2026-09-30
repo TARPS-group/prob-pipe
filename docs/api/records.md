@@ -60,11 +60,11 @@ inside records, input slots, or batches.
 
 `Function` uses these declarations through `input_spec` and `output_spec`;
 see [Function declarations](workflows.md#function-declarations-and-result-names).
-The live distribution event-template constructor API awaits its migration.
+`Record` constructors retain their `event_template=` argument.
 
-`DistributionSpec` carries a record draw schema. Concrete value validation
-requires an exact schema match; dimension binding can learn sizes from a
-distribution's schema or another distribution declaration. `FunctionSpec`
+`DistributionSpec` carries the `OutputSpec` of a law's draw and matches a
+`Distribution` whose own declaration unifies with it. Dimension binding learns
+sizes from a law's declaration or from another `DistributionSpec`. `FunctionSpec`
 stores optional `InputSpec` and `OutputSpec` declarations for a callable. Its validity check is
 callability alone, while binding reads available declarations without running
 the callable. An undeclared callable side leaves its dimensions symbolic.

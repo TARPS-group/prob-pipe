@@ -76,9 +76,9 @@ if it were user-guide reference text.
      enforces them lands. *Example:* `to_vector` / `from_vector` are **value**
      operations — a template describes structure and does not depend on the value
      type, so it carries neither. `to_vector` is `NumericRecord.to_vector` /
-     `NumericRecordBatch.to_vector`; `from_vector(name, template, vec)` is the
+     `NumericRecordBatch.to_vector`; `from_vector(name, spec, vec)` is the
      classmethod pair `NumericRecord.from_vector` (single) /
-     `NumericRecordBatch.from_vector` (batched), each taking the template as an
+     `NumericRecordBatch.from_vector` (batched), each taking the spec as an
      argument. These are the
      **numeric** 1-D (de)serialization — they ravel and concatenate numeric leaves (require
      `is_numeric`). The **general** (de)composition keeps each leaf whole (any type): export with

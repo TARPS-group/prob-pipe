@@ -67,6 +67,7 @@ from probpipe import (
     positive,
     positive_definite,
     real,
+    sample,
     simplex,
     sphere,
     unit_interval,
@@ -676,14 +677,46 @@ class TestEventDeclaration:
         renamed = law.with_name("y")
         assert renamed.name == "y"
         assert renamed.event_spec == law.event_spec
+        # A label need not be a component name at all.
+        assert list(law.with_name("a-b").event_spec.components) == ["x"]
+
+    @pytest.mark.parametrize("name", ["my-param", "class", "post-1", "product(a,b)"])
+    def test_a_whole_term_component_is_any_field_name(self, name):
+        assert list(_DeclaredLaw(name, NumericArraySpec(())).event_spec.components) == [name]
+
+    def test_a_label_with_a_slash_cannot_name_a_whole_term(self):
+        with pytest.raises(ValueError, match="component names must be non-empty"):
+            _DeclaredLaw("a/b", NumericArraySpec(()))
 
 
 class TestComponentAccess:
-    def test_a_whole_term_is_itself_under_its_component(self):
-        law = _DeclaredLaw("x", NumericArraySpec(()))
+    @pytest.mark.parametrize(
+        "make",
+        [
+            pytest.param(lambda: _DeclaredLaw("x", NumericArraySpec(())), id="declared"),
+            pytest.param(lambda: Normal("x", 0.0, 1.0), id="family"),
+        ],
+    )
+    def test_a_whole_term_is_itself_under_its_component(self, make):
+        law = make()
         assert law["x"] is law
+        assert law[("x",)] is law
         with pytest.raises(KeyError):
             law["y"]
+
+    def test_the_component_addresses_a_renamed_law(self):
+        renamed = _DeclaredLaw("x", NumericArraySpec(())).with_name("y")
+        assert renamed["x"] is renamed
+        with pytest.raises(KeyError):
+            renamed["y"]
+
+    def test_a_joint_field_is_a_view_declaring_the_field(self):
+        product = ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0))
+        assert product["a"].event_spec.spec == product.event_spec.spec["a"]
+
+    def test_indexing_does_not_make_a_law_iterable(self):
+        with pytest.raises(TypeError):
+            iter(_DeclaredLaw("x", NumericArraySpec(())))
 
 
 class TestNumericMembership:
@@ -701,14 +734,33 @@ class TestNumericMembership:
         with pytest.raises(TypeError, match="must declare a numeric event"):
             _Claims("x", OpaqueSpec())
 
+    def test_the_claim_checked_is_the_constructed_class(self):
+        # A factory __new__ may construct a subclass that claims the marker.
+        class _Factory(Distribution):
+            def __new__(cls, *args, **kwargs):
+                return object.__new__(_Claiming if cls is _Factory else cls)
+
+            def __init__(self, name, event_spec):
+                super().__init__(name, event_spec)
+
+        class _Claiming(_Factory, NumericDistribution):
+            pass
+
+        assert type(_Factory("x", NumericArraySpec(()))) is _Claiming
+        with pytest.raises(TypeError, match="_Claiming inherits NumericDistribution"):
+            _Factory("x", OpaqueSpec())
+
 
 class TestSchemaViews:
     def test_event_shape_is_the_declared_array_shape(self):
         assert _DeclaredLaw("x", NumericArraySpec((3, 2))).event_shape == (3, 2)
 
     def test_event_shape_is_undefined_for_a_record_draw(self):
-        with pytest.raises(TypeError, match="does not draw a single array"):
-            _ = _DeclaredLaw("law", RecordSpec(x=())).event_shape
+        law = _DeclaredLaw("law", RecordSpec(x=()))
+        with pytest.raises(AttributeError, match="does not draw a single array"):
+            _ = law.event_shape
+        assert not hasattr(law, "event_shape")
+        assert getattr(law, "event_shape", None) is None
 
     def test_event_shape_needs_bound_dimensions(self):
         with pytest.raises(ValueError, match="unbound dimensions"):
@@ -742,6 +794,26 @@ class TestSchemaViews:
         assert law.dtype == np.dtype("float32")
         assert law.support == positive
 
+    def test_support_under_jit_reads_no_traced_value(self):
+        from probpipe import interval
+
+        seen = []
+
+        def build(bound):
+            law = _DeclaredLaw(
+                "law",
+                RecordSpec(
+                    a=NumericArraySpec((), support=interval(0.0, bound)),
+                    b=NumericArraySpec((), support=interval(0.0, bound)),
+                ),
+            )
+            # Two traced intervals cannot be shown equal, so no support is shared.
+            seen.append(law.support)
+            return jnp.asarray(0.0)
+
+        jax.jit(build)(2.0)
+        assert seen == [None]
+
     def test_one_array_leaf_gives_its_dtype_and_support(self):
         from probpipe import positive
 
@@ -771,8 +843,8 @@ class TestSchemaViews:
             _ = _Raising("x", NumericArraySpec(())).broken
 
 
-# One construction per TFP family, with the event shape, dtype, and support each
-# reported before it stored its declaration. A dtype of None is the default float.
+# One construction per TFP family, with the event shape, dtype, and support it
+# declares. A dtype of None is the default float.
 _FAMILY_SCHEMAS = [
     pytest.param(lambda: Normal("x", loc=0.0, scale=1.0), (), None, real, id="Normal"),
     pytest.param(lambda: Beta("x", alpha=2.0, beta=3.0), (), None, unit_interval, id="Beta"),
@@ -896,6 +968,24 @@ class TestFamilyDeclarations:
 class TestJointDeclarations:
     """A joint declares an exposed record of its components' declared terms."""
 
+    def test_a_conditional_component_keeps_only_a_support_every_draw_shares(self):
+        from probpipe import Exponential, positive, real
+
+        # x's bound is z, so a prototype's interval(0, z) holds for one draw of z only.
+        # u takes no parents, so its interval holds for every draw.
+        joint = SequentialJointDistribution(
+            z=Exponential("z", 1.0),
+            w=Normal("w", 0.0, 1.0),
+            x=lambda z: Uniform("x", 0.0, z),
+            y=lambda z: Normal("y", z, 1.0),
+            u=lambda: Uniform("u", 0.0, 1.0),
+            name="j",
+        )
+        unit = interval(0.0, 1.0)
+        assert joint.supports == {"z": positive, "w": real, "x": None, "y": real, "u": unit}
+        conditioned = condition_on(joint, w=0.0)
+        assert conditioned.supports == {"z": positive, "x": None, "y": real, "u": unit}
+
     def test_a_product_keeps_each_component_dtype_and_support(self):
         product = ProductDistribution(
             a=Normal("a", 0.0, 1.0), b={"c": Gamma("c", 2.0, 1.0)}, name="p"
@@ -910,7 +1000,7 @@ class TestJointDeclarations:
         assert product.dtypes == {"a": dtype, "b/c": dtype}
         assert product.supports == {"a": real, "b/c": positive}
         assert product.fields == ("a", "b")
-        with pytest.raises(TypeError, match="does not draw a single array"):
+        with pytest.raises(AttributeError, match="does not draw a single array"):
             _ = product.event_shape
 
     def test_a_nested_product_declares_the_inner_record(self):
@@ -964,6 +1054,34 @@ class TestJointDeclarations:
 
 class TestEmpiricalDeclarations:
     """An empirical or bootstrap law declares what one draw is, read off its atoms."""
+
+    def test_a_replicate_of_a_record_valued_law_declares_a_batch_of_records(self):
+        from probpipe.core._batch import BatchSpec
+
+        source = ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0), name="p")
+        replicate = BootstrapReplicateDistribution("rep", source, replicate_size=3)
+        spec = replicate.event_spec.spec
+        assert isinstance(spec, BatchSpec)
+        assert spec.batch_shape == (3,)
+        assert tuple(spec.element_spec.fields) == ("a", "b")
+        assert spec.is_valid(sample(replicate, key=jax.random.PRNGKey(0)))
+
+    def test_a_replicate_of_a_nested_posterior_follows_its_stored_chunks(self):
+        from probpipe.inference._approximate_distribution import ApproximateDistribution
+
+        # The posterior stores one flat chunk per top-level field of its template.
+        posterior = ApproximateDistribution(
+            [jnp.ones((10, 4))],
+            name="post",
+            event_spec=RecordSpec(a=RecordSpec(b=(2,), c=()), d=()),
+        )
+        replicate = BootstrapReplicateDistribution("rep", posterior)
+        spec = replicate.event_spec.spec
+        assert {field: leaf.shape for field, leaf in spec.children.items()} == {
+            "a": (10, 3),
+            "d": (10,),
+        }
+        assert spec.is_valid(sample(replicate, key=jax.random.PRNGKey(0)))
 
     def test_opaque_atoms_are_a_whole_term(self):
         law = EmpiricalDistribution("law", ["a", "b"])
@@ -1083,6 +1201,64 @@ class TestDerivedDeclarations:
 class TestViewAndWrapperDeclarations:
     """Views declare the term they select, and collections of laws their cells'."""
 
+    def test_an_array_of_traced_supports_is_built_under_jit(self):
+        seen = []
+
+        def build(bound):
+            cells = [Uniform("u", 0.0, bound), Uniform("u", 0.0, bound + 1.0)]
+            seen.append(DistributionArray(cells, name="arr").event_spec.spec.support)
+            return jnp.asarray(0.0)
+
+        jax.jit(build)(2.0)
+        assert seen == [None]
+
+    def test_the_array_repr_reads_the_declaration(self):
+        cells = [
+            ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0), name="p"),
+            ProductDistribution(a=Normal("a", 1.0, 1.0), b=Normal("b", 0.0, 1.0), name="q"),
+        ]
+        assert "event_shapes={'a': (), 'b': ()}" in repr(DistributionArray(cells, name="arr"))
+        normals = DistributionArray([Normal("n", 0.0, 1.0), Normal("n", 1.0, 1.0)], name="arr")
+        assert "event_shape=()" in repr(normals)
+
+    def test_an_empty_mixture_marginal_constructs(self):
+        from probpipe.core._broadcast_distributions import _make_mixture_marginal
+
+        marginal = _make_mixture_marginal([])
+        assert isinstance(marginal.event_spec.spec, OpaqueSpec)
+
+    def test_a_record_view_keeps_only_a_support_every_piece_satisfies(self):
+        from probpipe import real
+
+        template = NumericRecordSpec(a=(2,), b=())
+        dirichlet = Dirichlet("d", jnp.ones(3)).as_record_distribution(template=template)
+        normal = MultivariateNormal("m", jnp.zeros(3), cov=jnp.eye(3)).as_record_distribution(
+            template=template
+        )
+        # simplex holds for the whole vector, and for no piece of it.
+        assert dirichlet.supports == {"a": None, "b": None}
+        assert normal.supports == {"a": real, "b": real}
+
+    def test_a_variadic_input_label_names_its_marginal(self):
+        from probpipe import function
+
+        @function
+        def double(*args):
+            return args[0] * 2.0
+
+        out = double.with_options(include_inputs=True)(Normal("a", 0.0, 1.0))
+        assert list(out.event_spec.components) == ["*args[0]", "_output"]
+        assert list(out["*args[0]"].event_spec.components) == ["*args[0]"]
+
+    def test_a_nested_view_joins_a_path_into_its_group(self):
+        product = ProductDistribution(a={"b": {"c": Normal("c", 0.0, 1.0)}}, name="p")
+        expected = product["a/b/c"].event_spec
+        assert product["a"]["b/c"].event_spec == expected
+        assert product["a"][("b", "c")].event_spec == expected
+        assert product["a"]["a"] is not None
+        with pytest.raises(KeyError):
+            product["a"]["missing"]
+
     def test_a_field_view_is_a_whole_term_under_its_last_segment(self):
         product = ProductDistribution(
             a=Normal("a", 0.0, 1.0), b={"c": Gamma("c", 2.0, 1.0)}, name="p"
@@ -1160,6 +1336,22 @@ class TestViewAndWrapperDeclarations:
 class TestModelDeclarations:
     """Models and posteriors declare what their templates or stored draws are."""
 
+    def test_a_simple_model_keeps_its_prior_dtypes_and_supports(self):
+        from probpipe import SimpleModel, positive, real
+
+        class _Likelihood:
+            def log_likelihood(self, params, data):
+                return 0.0
+
+        whole = SimpleModel(Gamma("sigma", 2.0, 1.0), _Likelihood(), name="m")
+        joint = SimpleModel(
+            ProductDistribution(a=Normal("a", 0.0, 1.0), s=Gamma("s", 2.0, 1.0), name="p"),
+            _Likelihood(),
+            name="m",
+        )
+        assert whole.supports == {"sigma": positive}
+        assert joint.supports == {"a": real, "s": positive}
+
     def test_a_simple_model_declares_its_parameters_and_data(self):
         from probpipe import SimpleModel
 
@@ -1220,6 +1412,49 @@ class TestDimensionTransforms:
     def test_with_dim_names_renames_simultaneously(self):
         law = _DeclaredLaw("x", NumericArraySpec(("n", "m")))
         assert law.with_dim_names(n="m", m="n").event_spec.spec.shape == ("m", "n")
+
+    def test_with_dim_names_ignores_a_name_that_is_not_free(self):
+        law = _DeclaredLaw("x", NumericArraySpec(("n",)))
+        assert law.with_dim_names(k="j").event_spec == law.event_spec
+
+    @pytest.mark.parametrize(
+        ("transform", "arguments"),
+        [("with_dim_sizes", {"n": 3}), ("with_dim_names", {"n": "m"})],
+    )
+    def test_a_transform_records_its_provenance(self, transform, arguments):
+        law = _DeclaredLaw("x", NumericArraySpec(("n",)))
+        result = getattr(law, transform)(**arguments)
+        assert result.provenance.operation == transform
+        assert result.provenance.metadata == arguments
+
+    def test_with_dim_sizes_refuses_a_bad_size(self):
+        law = _DeclaredLaw("x", NumericArraySpec(("n",)))
+        with pytest.raises(ValueError, match="must be non-negative"):
+            law.with_dim_sizes(n=-1)
+        with pytest.raises(TypeError, match="must be an integer"):
+            law.with_dim_sizes(n=2.5)
+
+    def test_a_library_law_transforms_its_declaration(self):
+        law = Normal("x", 0.0, 1.0)
+        with pytest.raises(ValueError, match="no free dimensions"):
+            law.with_dim_sizes(n=3)
+        renamed = law.with_dim_names(n="m")
+        assert type(renamed) is Normal
+        assert renamed.event_spec == law.event_spec
+
+
+class TestDistributionSpecMatching:
+    def test_a_packaging_mismatch_is_named(self):
+        spec = DistributionSpec(RecordSpec(x=()))
+        with pytest.raises(ValueError, match="declares an exposed record, but the law declares"):
+            spec.bind_dims_from_value(_DeclaredLaw("x", NumericArraySpec(())))
+
+    def test_a_whole_term_under_another_component_is_named(self):
+        spec = DistributionSpec(OutputSpec(y=NumericArraySpec(())))
+        with pytest.raises(
+            ValueError, match="declares the component 'y', but the law declares 'x'"
+        ):
+            spec.bind_dims_from_value(_DeclaredLaw("x", NumericArraySpec(())))
 
 
 class TestDistributionSpecFingerprint:

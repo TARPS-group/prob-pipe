@@ -62,6 +62,10 @@ from ._record_distribution import (
 )
 from ._specs import NumericArraySpec, OutputSpec
 from .constraints import (
+    Constraint,
+    _PositiveDefinite,
+    _Simplex,
+    _Sphere,
     _supports_compatible,
     real,
 )
@@ -185,11 +189,35 @@ def _raw_event_shape(law: Distribution) -> tuple[int, ...]:
 # ---------------------------------------------------------------------------
 
 
+def _pairs_by_path(
+    source: dict[str, Any], target: dict[str, Any]
+) -> list[tuple[tuple[str, Any], tuple[str, Any]]] | None:
+    """Pair each target leaf with the source leaf whose path holds it, or ``None``.
+
+    A source leaf holds the target leaf of its own path and the target leaves
+    under it, as a posterior's flat chunk holds a nested component's leaves. The
+    pairing exists when the source leaves, in order, hold consecutive runs of
+    the target leaves that together cover them all.
+    """
+    targets = list(target.items())
+    pairs: list[tuple[tuple[str, Any], tuple[str, Any]]] = []
+    i = 0
+    for source_item in source.items():
+        path = source_item[0]
+        start = i
+        while i < len(targets) and (targets[i][0] == path or targets[i][0].startswith(path + "/")):
+            pairs.append((source_item, targets[i]))
+            i += 1
+        if i == start:
+            return None
+    return pairs if i == len(targets) else None
+
+
 class NumericRecordDistribution(RecordDistribution, NumericDistribution):
     """Distribution over numeric arrays with Record support.
 
-    Extends :class:`RecordDistribution` with numeric-specific metadata
-    (per-field shape, dtype, and support). The class is the most
+    Extends :class:`RecordDistribution` to laws whose event declaration is
+    numeric, each array leaf declaring its shape, dtype, and support. The class is the most
     general numeric random variable in ProbPipe: one draw is a pytree
     of ``jax.Array`` leaves named via a :class:`RecordSpec`.
     Single-leaf distributions (``Normal``, ``Beta``,
@@ -251,8 +279,10 @@ class NumericRecordDistribution(RecordDistribution, NumericDistribution):
         approximation. For a single-field target (the common case),
         every source field's support is compared against the lone
         target support. For a multi-field target, supports pair up
-        field-by-field in insertion order; field-count mismatches raise
-        ``ValueError`` rather than silently truncating via ``zip``.
+        field-by-field in insertion order, or else a source field pairs
+        with each target leaf under its path. Any other field-count
+        mismatch raises ``ValueError`` rather than silently truncating
+        via ``zip``.
 
         Sources that don't expose per-field supports (non-NRD endpoints
         like ``EmpiricalDistribution`` with object-dtype data) are
@@ -261,7 +291,7 @@ class NumericRecordDistribution(RecordDistribution, NumericDistribution):
         try:
             target_per_field = self.supports
             source_per_field = source.supports
-        except (NotImplementedError, AttributeError):
+        except AttributeError:
             return
 
         multi_leaf_source = len(source_per_field) > 1
@@ -280,10 +310,15 @@ class NumericRecordDistribution(RecordDistribution, NumericDistribution):
                 )
             return
 
-        # Multi-field target — field counts must match to pair
-        # positionally; ``zip`` would silently truncate, hiding bugs
-        # where the converter produced a target with the wrong arity.
-        if len(source_per_field) != len(target_per_field):
+        # Multi-field target. Equal field counts pair positionally. Otherwise
+        # a source leaf that holds a flattened group, as a posterior holds a
+        # nested component, pairs with each target leaf under its path, and any
+        # other mismatch raises, since ``zip`` would silently truncate.
+        if len(source_per_field) == len(target_per_field):
+            pairs = list(zip(source_per_field.items(), target_per_field.items()))
+        else:
+            pairs = _pairs_by_path(source_per_field, target_per_field)
+        if pairs is None:
             raise ValueError(
                 f"Cannot convert {type(source).__name__} "
                 f"({len(source_per_field)} fields: "
@@ -292,10 +327,7 @@ class NumericRecordDistribution(RecordDistribution, NumericDistribution):
                 f"{tuple(target_per_field)}): field-count mismatch. "
                 f"Pass check_support=False to override."
             )
-        for (s_name, s_sup), (t_name, t_sup) in zip(
-            source_per_field.items(),
-            target_per_field.items(),
-        ):
+        for (s_name, s_sup), (t_name, t_sup) in pairs:
             if _supports_compatible(s_sup, t_sup):
                 continue
             raise ValueError(
@@ -449,14 +481,11 @@ class NumericRecordDistribution(RecordDistribution, NumericDistribution):
         parts: list[str] = [type(self).__name__]
         if self.name:
             parts.append(f"name={self.name!r}")
-        # Multi-field NRDs (joints) can't summarise the event with a
-        # single ``event_shape`` — ``_single_field_name`` raises
-        # ``TypeError`` there, and the base default raises
-        # ``NotImplementedError`` for subclasses that haven't overridden
-        # ``event_shape``. Either way, fall back to the per-field dict.
+        # A law that draws no single array, or whose shape keeps unbound
+        # dimensions, has no event_shape, so the per-leaf shapes stand in.
         try:
             parts.append(f"event_shape={self.event_shape}")
-        except (TypeError, NotImplementedError):
+        except (AttributeError, ValueError):
             parts.append(f"event_shapes={self.event_shapes}")
         return f"{parts[0]}({', '.join(parts[1:])})"
 
@@ -986,13 +1015,26 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
     return cls
 
 
+def _piecewise_support(support: Constraint | None) -> Constraint | None:
+    """*support* when every piece of a draw satisfies it too, else None.
+
+    A joint constraint such as ``simplex`` holds for the whole vector only, and a
+    bound that varies by element does not carry over to a piece of another shape.
+    """
+    if support is None or isinstance(support, (_Simplex, _Sphere, _PositiveDefinite)):
+        return None
+    if any(jnp.ndim(value) > 0 for value in vars(support).values()):
+        return None
+    return support
+
+
 class NumericRecordDistributionView(NumericRecordDistribution):
     """View that lifts a flat distribution to a Record-keyed structure.
 
     Inverse of :class:`FlattenedDistributionView`. ``self._base`` is a
     :class:`FlatNumericRecordDistribution` (single-field, ``event_shape
     == (N,)``); the view declares the user-supplied
-    :class:`NumericRecordSpec`, not the source's.
+    :class:`NumericRecordSpec`.
 
     Sampling, log-prob, and moments delegate to ``self._base`` and
     reshape via the template's flatten / unflatten machinery.
@@ -1034,8 +1076,10 @@ class NumericRecordDistributionView(NumericRecordDistribution):
             # Fall back to the base's name.
             self._init_tracked(base.name)
         # A draw is the user-supplied record, every leaf taking the source's
-        # dtype and support.
-        self._init_declaration(_record_with_leaves(template, base.dtype, base.support))
+        # dtype, and the source's support where it holds piecewise.
+        self._init_declaration(
+            _record_with_leaves(template, base.dtype, _piecewise_support(base.support))
+        )
 
     # ---- structural ---------------------------------------------------------
 

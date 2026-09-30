@@ -117,6 +117,12 @@ def _field_bijectors(prior: Distribution, keys: tuple[str, ...]) -> dict[str, tf
     bijectors: dict[str, tfb.Bijector] = {}
     for k in keys:
         constraint = supports[k]
+        if constraint is None:
+            raise ValueError(
+                f"learn_amortized_posterior cannot handle prior parameter {k!r}: its "
+                "support is not declared, so no bijector to R^d can be chosen. Give the "
+                "prior a declared support, for example by building it from a family."
+            )
         try:
             bijectors[k] = bijector_for(constraint)
         except NotImplementedError as e:
@@ -340,8 +346,8 @@ def learn_amortized_posterior(
         If ``method`` is not one of ``"npe"`` / ``"fmpe"`` / ``"cmpe"``,
         ``sim_backend`` is not ``"jax"`` / ``"sequential"``, any of
         ``num_simulations`` / ``batch_size`` / ``epochs`` / ``num_results`` is
-        less than one, or a prior field's support admits no smooth bijector to
-        ``R^d`` (e.g. a discrete prior).
+        less than one, or a prior field's support is not declared or admits no
+        smooth bijector to ``R^d`` (e.g. a discrete prior).
     TypeError
         If a count parameter is not an integer, ``simulator`` lacks
         ``generate_data``, or ``prior`` is not a numeric distribution.

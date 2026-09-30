@@ -955,3 +955,12 @@ class TestBayesFlowValidation:
         bad_prior = ProductDistribution(pp.Poisson("k", 3.0), Normal(loc=0.0, scale=1.0, name="m"))
         with pytest.raises(ValueError, match="discrete"):
             learn_amortized_posterior(bad_prior, _ToyLikelihood(), num_simulations=8, epochs=1)
+
+    def test_rejects_a_prior_parameter_whose_support_is_not_declared(self):
+        """A support that depends on another parameter is not declared, so no
+        bijector to R^d can be chosen for it."""
+        prior = pp.SequentialJointDistribution(
+            z=pp.Exponential("z", 1.0), x=lambda z: pp.Uniform("x", 0.0, z)
+        )
+        with pytest.raises(ValueError, match="'x': its support is not declared"):
+            learn_amortized_posterior(prior, _ToyLikelihood(), num_simulations=8, epochs=1)

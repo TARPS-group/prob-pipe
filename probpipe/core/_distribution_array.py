@@ -44,6 +44,7 @@ from functools import partial
 from math import prod
 from typing import TYPE_CHECKING, cast
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -53,12 +54,14 @@ from ._immutable import transient_memo
 from ._specs import (
     NumericArraySpec,
     NumericRecordSpec,
+    OpaqueSpec,
     OutputSpec,
     RecordSpec,
     TermSpec,
+    _check_output_template,
     _components_record,
-    _matches_output_template,
 )
+from .constraints import _known_equal
 from .protocols import SupportsArrayBackend
 from .tracked import auto_name
 
@@ -94,7 +97,7 @@ def _shared_term(specs: list[TermSpec]) -> TermSpec:
     implementation detail.
     """
     first = specs[0]
-    if all(spec == first for spec in specs[1:]):
+    if all(_same_term(spec, first) for spec in specs[1:]):
         return first
     if all(isinstance(spec, NumericArraySpec) for spec in specs):
         head = cast(NumericArraySpec, first)
@@ -102,7 +105,9 @@ def _shared_term(specs: list[TermSpec]) -> TermSpec:
         return NumericArraySpec(
             head.shape,
             head.dtype if all(spec.dtype == head.dtype for spec in arrays) else None,
-            head.support if all(spec.support == head.support for spec in arrays) else None,
+            head.support
+            if all(_known_equal(spec.support, head.support) for spec in arrays)
+            else None,
         )
     if isinstance(first, RecordSpec) and all(
         isinstance(spec, RecordSpec) and spec.fields == first.fields for spec in specs
@@ -117,17 +122,41 @@ def _shared_term(specs: list[TermSpec]) -> TermSpec:
     return first
 
 
+def _same_term(a: TermSpec, b: TermSpec) -> bool:
+    """Whether two cells' terms are known to be equal, without reading a traced value.
+
+    Supports whose comparison needs a traced parameter, as for cells built under
+    ``jit``, count as different, so the array keeps no support rather than fail.
+    """
+    if isinstance(a, NumericArraySpec) and isinstance(b, NumericArraySpec):
+        return a.shape == b.shape and a.dtype == b.dtype and _known_equal(a.support, b.support)
+    if isinstance(a, RecordSpec) and isinstance(b, RecordSpec):
+        return a.fields == b.fields and all(
+            _same_term(a.children[field], b.children[field]) for field in a.fields
+        )
+    try:
+        return bool(a == b)
+    except jax.errors.ConcretizationTypeError:
+        return False
+
+
 def _cell_declaration(cells: tuple[Distribution, ...], name: str) -> OutputSpec:
     """The declaration of one draw of a cell, which a collection of laws declares.
 
     An interim implementation detail of the classes the design retires. The first
     cell's declaration stands when every cell shares it. Otherwise the array
     declares the term every cell draws, with the metadata the cells share, and
-    whole-term cells declare it under *name*.
+    whole-term cells declare it under *name*. No cells at all leave the draw
+    opaque.
     """
     declarations = [cell.event_spec for cell in cells]
+    if not declarations:
+        return OutputSpec(**{name: OpaqueSpec()})
     first = declarations[0]
-    if all(d == first for d in declarations[1:]):
+    if all(
+        d._component_name == first._component_name and _same_term(d.spec, first.spec)
+        for d in declarations[1:]
+    ):
         return first
     spec = _shared_term([d.spec for d in declarations])
     if first._component_name is None:
@@ -652,10 +681,15 @@ class DistributionArray(Distribution):
 
     def __repr__(self) -> str:
         backed = " backend=True" if self._backend is not None else ""
-        return (
-            f"DistributionArray(batch_shape={self._batch_shape}, "
-            f"event_shape={self.event_shape}{backed})"
-        )
+        # The declaration gives one cell's draw, which need not be a single array.
+        spec = self.event_spec.spec
+        if isinstance(spec, NumericArraySpec):
+            event = f"event_shape={spec.shape}"
+        elif isinstance(spec, NumericRecordSpec):
+            event = f"event_shapes={dict(spec.leaf_shapes)}"
+        else:
+            event = f"event={type(spec).__name__}"
+        return f"DistributionArray(batch_shape={self._batch_shape}, {event}{backed})"
 
 
 # ---------------------------------------------------------------------------
@@ -749,10 +783,9 @@ def _make_distribution_array(
     array = DistributionArray(components, batch_shape=batch_shape, name=name)
     if output_template is not None:
         for index, component in enumerate(array.components):
-            if not _matches_output_template(component.event_spec, output_template):
-                raise ValueError(
-                    f"DistributionArray component {index} declares "
-                    f"{_components_record(component.event_spec)!r}, which "
-                    f"does not match declared template {output_template!r}"
-                )
+            _check_output_template(
+                _components_record(component.event_spec),
+                output_template,
+                f"DistributionArray component {index}",
+            )
     return array

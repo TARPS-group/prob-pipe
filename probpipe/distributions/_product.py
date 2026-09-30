@@ -177,7 +177,8 @@ class ProductDistribution(
     :class:`RecordDistribution` surface. See
     :func:`_product_class_for_components` for the dispatch. Either way,
     one draw is declared as an exposed record of the components' declared
-    terms, so ``dtypes`` and ``supports`` read each leaf's by path.
+    terms. A numeric product's ``dtypes`` and ``supports`` read each leaf's
+    by path, and a mixed one has neither.
 
     All leaf components are sampled independently. ``_sample()``
     returns :class:`NumericRecord` when all leaves are numeric, and

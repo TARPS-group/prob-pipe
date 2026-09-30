@@ -242,7 +242,7 @@ def get_init_state(
 
     try:
         shape = prior.event_shape
-    except (AttributeError, TypeError, ValueError):
+    except (AttributeError, ValueError):
         # A prior that draws no single concrete array has no box to draw from.
         shape = None
     if shape is not None:
@@ -279,14 +279,18 @@ def get_prior(dist: Distribution) -> Distribution:
 
 
 def extract_event_spec(dist: Distribution) -> OutputSpec | None:
-    """Return the declaration of *dist*'s prior, or ``None`` for a target that is not a law.
+    """Return the declaration of *dist*'s prior, or ``None`` for a prior with no flat view.
 
     A ``SimpleModel``'s prior is read through :func:`get_prior`; any other
-    target is its own prior. ``getattr`` tolerates a bare ``SupportsLogProb``
-    target that declares no event.
+    target is its own prior. A prior without ``as_flat_distribution``, such as a
+    bare ``SupportsLogProb`` target over a flat array, gives ``None``.
+    :func:`build_target_log_prob_flat` uses the same condition, so every method
+    names and shapes the posterior of such a target alike.
     """
     prior = get_prior(dist)
-    return getattr(prior, "event_spec", None)
+    if getattr(prior, "as_flat_distribution", None) is None:
+        return None
+    return prior.event_spec
 
 
 # ---------------------------------------------------------------------------

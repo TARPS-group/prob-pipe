@@ -106,6 +106,8 @@ class TFPDistribution(
     ----------
     name : str
         Distribution name.
+    event_spec : OutputSpec or TermSpec, optional
+        The declaration of one draw; see ``__init__``.
 
     Rejects batched parameters
     --------------------------
@@ -122,10 +124,10 @@ class TFPDistribution(
     *before* calling ``super().__init__`` (the standard pattern used
     by ``Normal``, ``Beta``, ``Gamma``, …) are validated. Subclasses
     that set ``_tfp_dist`` *after* ``super().__init__`` (e.g.
-    :class:`~probpipe.distributions.kde.KDEDistribution`) are skipped
-    via the ``hasattr`` guard — those classes are responsible for
-    their own shape invariants and don't go through TFP's batched
-    parameter convention.
+    :class:`~probpipe.distributions.kde.KDEDistribution`) pass their own
+    ``event_spec`` and skip the check, since those classes keep their own
+    shape invariants and don't go through TFP's batched parameter
+    convention.
 
     Internal infrastructure that legitimately needs the batched form
     (the ``_TFPArrayBackend`` fused storage, converters, sequential
@@ -153,11 +155,24 @@ class TFPDistribution(
         event_spec : OutputSpec or TermSpec, optional
             The declaration of one draw, for a subclass that builds its own;
             by default it is the TFP event's array.
+
+        Raises
+        ------
+        TypeError
+            If ``event_spec`` is omitted and ``_tfp_dist`` is not yet set.
+        ValueError
+            If the TFP backend has a non-empty ``batch_shape`` outside
+            :func:`_allow_batched_tfp_init`.
         """
         # KDE-style subclasses set ``_tfp_dist`` *after* this call, so
         # they supply their own declaration and shape invariants.
         tfp_dist = getattr(self, "_tfp_dist", None)
-        if event_spec is None and tfp_dist is not None:
+        if event_spec is None:
+            if tfp_dist is None:
+                raise TypeError(
+                    f"{type(self).__name__} sets _tfp_dist after TFPDistribution.__init__, "
+                    f"so it must pass its own event_spec"
+                )
             event_spec = NumericArraySpec(
                 tuple(tfp_dist.event_shape), tfp_dist.dtype, self._event_support()
             )

@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 import probpipe.diagnostics._mcmc as mcmc
+from probpipe import Record
 from probpipe.diagnostics._datatree_store import _mcmc_has_field
 from probpipe.diagnostics._mcmc import (
     _check_arviz,
@@ -39,7 +40,7 @@ class _VectorPosterior:
         self._annotations = None
 
     def draws(self, *, chain):
-        return {"beta": self._data[chain]}
+        return Record("draws", beta=self._data[chain])
 
 
 class _ScalarVectorPosterior:
@@ -55,7 +56,7 @@ class _ScalarVectorPosterior:
         self._annotations = None
 
     def draws(self, *, chain):
-        return {name: values[chain] for name, values in self._data.items()}
+        return Record("draws", {name: values[chain] for name, values in self._data.items()})
 
 
 class _NonMixingPosterior:
@@ -74,7 +75,7 @@ class _NonMixingPosterior:
         self._annotations = None
 
     def draws(self, *, chain):
-        return {"theta": self._data[chain]}
+        return Record("draws", theta=self._data[chain])
 
 
 def _arviz_stats_module():

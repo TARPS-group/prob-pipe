@@ -77,7 +77,9 @@ class TestConstruction:
         )
 
         assert array.event_spec == components[0].event_spec
-        with pytest.raises(ValueError, match="does not match declared template"):
+        with pytest.raises(
+            ValueError, match=r"component 0 fields \['y'\] do not match template fields \['z'\]"
+        ):
             _make_distribution_array(
                 components,
                 name="invalid",

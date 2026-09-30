@@ -967,18 +967,26 @@ class BootstrapReplicateDistribution(
         self._approximate = True
 
     def _replicate_event_spec(self) -> TermSpec:
-        """One replicate: ``replicate_size`` stacked draws of an array-valued source.
+        """One replicate: ``replicate_size`` draws of the source.
 
-        A replicate of anything else is opaque: the object data of a sequence
-        source, and the draws of a sampler that implements ``SupportsSampling``
-        without being a :class:`~probpipe.Distribution`, which declares no event.
+        An array-valued source's draws are stacked into one array. A record-valued
+        source's come back as a batch of records on the level that ``sample``
+        mints, whose element is the record the source declares. A replicate of
+        anything else is opaque: the object data of a sequence source, and the
+        draws of a sampler that implements ``SupportsSampling`` without being a
+        :class:`~probpipe.Distribution`, which declares no event.
         """
         if not isinstance(self._source_dist, Distribution):
             return OpaqueSpec()
         spec = self._source_dist.event_spec.spec
-        if not isinstance(spec, NumericArraySpec):
-            return OpaqueSpec()
-        return NumericArraySpec((self._replicate_size, *spec.shape), spec.dtype, spec.support)
+        if isinstance(spec, NumericArraySpec):
+            return NumericArraySpec((self._replicate_size, *spec.shape), spec.dtype, spec.support)
+        if isinstance(spec, RecordSpec):
+            from ._batch import BatchSpec
+            from ._broadcast_distributions import SAMPLE_LEVEL
+
+            return BatchSpec(spec, ((self._replicate_size,),), (SAMPLE_LEVEL,))
+        return OpaqueSpec()
 
     # -- properties ---------------------------------------------------------
 
@@ -1213,6 +1221,10 @@ class RecordBootstrapReplicateDistribution(
         # `.data` property returns the Record (matches old behaviour).
         self._source_kind = "data"
         self._source_dist = None
+        # An empirical source's declaration gives the replicate's leaves.
+        self._source_declaration = (
+            source.event_spec.spec if isinstance(source, Distribution) else None
+        )
         self._data = self._record_data
         # A replicate is ``replicate_size`` atoms, so its template is the atom's
         # with a rows axis in front. Taken from the source's declaration rather
@@ -1245,7 +1257,23 @@ class RecordBootstrapReplicateDistribution(
         )
 
     def _replicate_event_spec(self) -> RecordSpec:
-        """One replicate: the stacked record a draw is, each leaf ``(replicate_size, *event)``."""
+        """One replicate: the stacked record a draw is, each leaf ``(replicate_size, *event)``.
+
+        An empirical source's declaration gives each leaf, so its dtype and support
+        carry over, and the leaves follow the data it stores: a posterior over a
+        nested prior stores one flat chunk per top-level field. A raw record or
+        array source's stored data gives the leaves otherwise.
+        """
+        declared = self._source_declaration
+        if isinstance(declared, RecordSpec):
+            size = self._replicate_size
+            return declared.map(
+                lambda leaf: (
+                    NumericArraySpec((size, *leaf.shape), leaf.dtype, leaf.support)
+                    if isinstance(leaf, NumericArraySpec)
+                    else leaf
+                )
+            )
         return _atom_declaration(self._replicate_record, self._record_data)
 
     # -- shape ---------------------------------------------------------------

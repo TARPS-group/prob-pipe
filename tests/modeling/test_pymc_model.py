@@ -308,12 +308,18 @@ class TestRecordSpec:
             with pm.Model() as m:
                 pm.Normal("intercept", 0, 1)
                 pm.Normal("slope", 0, 1, shape=3)
+                # A size read from data is unknown when the model is built.
+                pm.Normal("z", 0, 1, shape=(pm.Data("n", np.int64(2)),))
                 pm.Normal("y", 0, 1, observed=y)
             return m
 
         model = PyMCModel("model", model_fn)
         assert model.event_spec == OutputSpec(
-            RecordSpec(intercept=NumericArraySpec(()), slope=NumericArraySpec((3,)))
+            RecordSpec(
+                intercept=NumericArraySpec(()),
+                slope=NumericArraySpec((3,)),
+                z=NumericArraySpec(("z_0",)),
+            )
         )
 
     def test_observed_rvs_excluded(self):
@@ -650,8 +656,8 @@ class TestRecordSpec:
                 pm.Normal("y", 0, 1, observed=y)
             return m
 
-        # The declaration holds a symbolic dimension, which data binds, and
-        # the flat parameter count refuses to guess it.
+        # The declaration holds a symbolic dimension, and the flat parameter
+        # count refuses to guess its size.
         model = PyMCModel("model", model_fn)
         assert model.event_spec.spec["z"].shape == ("z_0",)
         with pytest.raises(ValueError, match="non-concrete shape"):

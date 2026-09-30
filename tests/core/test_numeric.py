@@ -28,6 +28,13 @@ class TestTheNumericKinds:
         assert not issubclass(NumericArrayBatch, Numeric)
         assert not issubclass(NumericRecordBatch, Numeric)
 
+    def test_a_batch_names_its_layout_spec_as_a_value_does(self):
+        spec = NumericRecord("r", a=jnp.arange(2.0)).spec
+        batch = NumericRecordBatch.from_vector(
+            "b", spec=spec, vec=jnp.zeros((3, 2)), level_names="draw"
+        )
+        assert batch.batch_shape == (3,)
+
     @pytest.mark.parametrize("value", _values(), ids=["array", "record"])
     def test_from_vector_inverts_to_vector(self, value):
         vector = value.to_vector()

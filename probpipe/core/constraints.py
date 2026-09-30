@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
 
 from ..custom_types import Array, ArrayLike
@@ -43,6 +44,23 @@ class Constraint:
 
     def __hash__(self) -> int:
         return hash((type(self), tuple(sorted(self.__dict__.items()))))
+
+
+def _known_equal(a: Constraint | None, b: Constraint | None) -> bool:
+    """Whether two supports are known to be equal without reading a traced value.
+
+    Supports whose comparison needs a traced parameter's value, as under ``jit``,
+    count as different unless they are the same object. ``None``, an unset
+    support, equals only ``None``.
+    """
+    if a is b:
+        return True
+    if a is None or b is None:
+        return False
+    try:
+        return bool(a == b)
+    except jax.errors.ConcretizationTypeError:
+        return False
 
 
 # ---------------------------------------------------------------------------

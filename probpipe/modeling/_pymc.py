@@ -89,8 +89,7 @@ class PyMCModel(ProbabilisticModel):
             rv.name for rv in self._unconditioned_model.free_RVs if rv.name not in observed_set
         )
         # The parameters are the declared record, one field per free RV. A size
-        # the no-data build leaves unknown is a symbolic dimension, which the
-        # data binds.
+        # the no-data build leaves unknown is a symbolic dimension.
         self._init_declaration(
             RecordSpec(
                 {

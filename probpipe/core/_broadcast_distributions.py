@@ -11,7 +11,6 @@ Provides:
 
 from __future__ import annotations
 
-import keyword
 from dataclasses import replace
 from math import prod
 from typing import Any
@@ -48,6 +47,7 @@ from ._specs import (
     RecordSpec,
     TermSpec,
 )
+from .named_tree import _PATH_SEP
 from .protocols import (
     SupportsLogProb,
     SupportsMean,
@@ -1410,11 +1410,12 @@ class BroadcastDistribution(Distribution, SupportsSampling):
         self._broadcast_args = list(broadcast_args)
         name = auto_name(name, "broadcast")
         # A draw pairs one row of every argument with its output, a record keyed
-        # by the argument labels. A label need not be a component name, as a
-        # variadic argument's is not, and then the draw is declared opaque, an
-        # interim implementation detail of a class the design retires.
+        # by the argument labels, which name its fields as a variadic argument's
+        # label ``*args[0]`` does. A label with a ``/``, which no field name has,
+        # leaves the draw opaque, an interim implementation detail of a class the
+        # design retires.
         labels = (*self._broadcast_args, "_output")
-        if all(label.isidentifier() and not keyword.iskeyword(label) for label in labels):
+        if all(label and _PATH_SEP not in label for label in labels):
             fields = {arg: _row_spec(input_samples[arg]) for arg in self._broadcast_args}
             fields["_output"] = (
                 output_template if output_template is not None else _row_spec(output_samples)

@@ -34,6 +34,7 @@ from probpipe import (
     NumericRecord,
     NumericRecordBatch,
     OutputSpec,
+    ProductDistribution,
     Provenance,
     ProvenanceMode,
     Record,
@@ -457,6 +458,10 @@ class TestApplyContract:
                 OutputSpec(y=NumericArraySpec((), dtype="float32")),
             ),
             (
+                Normal("y", 0, 1),
+                OutputSpec(y=NumericArraySpec((), dtype="float64")),
+            ),
+            (
                 Gamma("y", 1, 1),
                 OutputSpec(y=NumericArraySpec((), support=real)),
             ),
@@ -470,6 +475,27 @@ class TestApplyContract:
             )
             assert wrapped.apply() is returned
             assert wrapped().spec is returned.spec
+
+        with pytest.raises(ValueError, match=r"dtype .* does not conform to int32"):
+            Function(
+                "law",
+                lambda: Normal("y", 0, 1),
+                output_spec=DistributionSpec(OutputSpec(y=NumericArraySpec((), dtype="int32"))),
+            ).apply()
+
+    def test_returned_law_with_nested_components_matches_distribution_spec(self):
+        law = ProductDistribution(
+            params=ProductDistribution(a=Normal("a", 0, 1), b=Normal("b", 0, 1)),
+            s=Normal("s", 0, 1),
+        )
+        nested = RecordSpec(params=RecordSpec(a=(), b=()), s=())
+        assert Function("law", lambda: law, output_spec=DistributionSpec(nested)).apply() is law
+        with pytest.raises(ValueError, match="does not conform"):
+            Function(
+                "law",
+                lambda: law,
+                output_spec=DistributionSpec(RecordSpec(params=(2,), s=())),
+            ).apply()
 
     @pytest.mark.parametrize(
         ("support", "valid", "invalid"),

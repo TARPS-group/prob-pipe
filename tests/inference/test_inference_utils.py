@@ -17,6 +17,7 @@ from probpipe import (
     OpaqueSpec,
     ProductDistribution,
     SimpleModel,
+    condition_on,
 )
 from probpipe.core.protocols import SupportsSampling
 from probpipe.distributions._distribution import Distribution
@@ -25,6 +26,7 @@ from probpipe.inference._inference_utils import (
     build_likelihood_flat,
     build_target_log_prob,
     build_target_log_prob_flat,
+    extract_event_spec,
     get_init_state,
     get_prior,
     is_jax_traceable,
@@ -130,6 +132,42 @@ class TestBuildTargetLogProbFlat:
             float(target_flat(jnp.asarray([1.0, -1.0]))),
             -1.0,
         )
+
+
+class _FlatTarget(Distribution):
+    """A law over a flat array that has no flat-vector view of its own."""
+
+    def __init__(self):
+        super().__init__("target", NumericArraySpec((2,)))
+
+    def _log_prob(self, value):
+        return -0.5 * jnp.sum(jnp.asarray(value) ** 2)
+
+    def _unnormalized_log_prob(self, value):
+        return self._log_prob(value)
+
+
+class TestExtractEventSpec:
+    def test_a_prior_with_a_flat_view_gives_its_declaration(self, small_model):
+        assert extract_event_spec(small_model) == small_model.prior.event_spec
+
+    def test_a_target_with_no_flat_view_gives_none(self):
+        assert extract_event_spec(_FlatTarget()) is None
+
+    @pytest.mark.parametrize("method", ["blackjax_nuts", "blackjax_rwmh", "tfp_nuts"])
+    def test_the_methods_agree_on_a_bare_target(self, method):
+        """Each names the posterior and draws it as build_target_log_prob_flat does."""
+        posterior = condition_on(
+            _FlatTarget(),
+            None,
+            method=method,
+            num_results=20,
+            num_warmup=20,
+            num_chains=1,
+            random_seed=0,
+        )
+        assert posterior.fields == ("posterior",)
+        assert isinstance(posterior.draws(), jax.Array)
 
 
 class TestGetPrior:

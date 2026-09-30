@@ -26,6 +26,7 @@ from probpipe import (
 )
 from probpipe.core._random_functions import RandomFunction
 from probpipe.core._random_measures import RandomMeasure
+from probpipe.core._specs import OpaqueSpec, OutputSpec
 from probpipe.core.protocols import (
     SupportsRandomUnnormalizedLogProb,
     SupportsUnnormalizedLogProb,
@@ -91,6 +92,25 @@ class TestConstruction:
 
         with pytest.raises(TypeError, match="SupportsLogProb"):
             MinibatchedDistribution("measure", _BarePrior(), likelihood, data_record, batch_size=32)
+
+    def test_the_parameters_of_a_prior_that_is_no_distribution_are_opaque(
+        self, likelihood, data_record
+    ):
+        """The measure and its draws declare them under one component."""
+
+        class _LogDensity:
+            def _log_prob(self, value):
+                return jnp.asarray(0.0)
+
+            def _unnormalized_log_prob(self, value):
+                return jnp.asarray(0.0)
+
+        m = MinibatchedDistribution(
+            "measure", _LogDensity(), likelihood, data_record, batch_size=40
+        )
+        draw = m._draw_one(jax.random.PRNGKey(0))
+        assert m.event_spec.spec.event_spec == draw.event_spec
+        assert draw.event_spec == OutputSpec(parameters=OpaqueSpec())
 
     def test_construction_rejects_non_cil_likelihood(self, prior, data_record):
         """A bare ``Likelihood`` (no ``per_datum_log_likelihood``) is rejected."""

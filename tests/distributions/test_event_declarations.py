@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import functools
 import importlib
 import inspect
 import pathlib
@@ -31,12 +32,9 @@ from probpipe import (
     Dirichlet,
     Distribution,
     DistributionArray,
-    DistributionSpec,
     EmpiricalDistribution,
     Exponential,
     FlatNumericRecordDistribution,
-    Function,
-    FunctionSpec,
     Gamma,
     GLMLikelihood,
     HalfCauchy,
@@ -53,12 +51,10 @@ from probpipe import (
     MultivariateNormal,
     NegativeBinomial,
     Normal,
-    NumericArray,
     NumericDistribution,
     NumericRecordDistribution,
     NumericRecordSpec,
     NumericSpec,
-    Opaque,
     Pareto,
     Poisson,
     ProductDistribution,
@@ -93,7 +89,7 @@ from probpipe.core._numeric_record_distribution import (
 )
 from probpipe.core._random_measures import RandomMeasure
 from probpipe.core._record_distribution import _RecordDistributionView
-from probpipe.core._specs import NumericArraySpec, OpaqueSpec, RecordSpec
+from probpipe.core._specs import RecordSpec
 from probpipe.core.protocols import SupportsSampling
 from probpipe.distributions._joint_empirical import NumericJointEmpirical
 from probpipe.distributions._product import TFPProductDistribution
@@ -120,16 +116,21 @@ from probpipe.modeling._stan import _UnconstrainedStanView
 # -- Constructions ------------------------------------------------------------
 
 
+# The callables a construction passes are module-level, so they pickle.
+def _features(X, output_shape=()):
+    phi = jnp.concatenate([X, X**2], -1)
+    return jnp.stack([phi] * output_shape[0], -2) if output_shape else phi
+
+
 def _basis_function(name: str = "f", output_shape: tuple[int, ...] = ()) -> LinearBasisFunction:
     width = 2 * max(1, int(np.prod(output_shape)))
     weights = MultivariateNormal("w", loc=jnp.zeros(width), cov=jnp.eye(width))
-
-    def features(X):
-        phi = jnp.concatenate([X, X**2], -1)
-        return jnp.stack([phi] * output_shape[0], -2) if output_shape else phi
-
     return LinearBasisFunction(
-        name, feature_map=features, weights=weights, input_shape=(1,), output_shape=output_shape
+        name,
+        feature_map=functools.partial(_features, output_shape=output_shape),
+        weights=weights,
+        input_shape=(1,),
+        output_shape=output_shape,
     )
 
 
@@ -158,17 +159,19 @@ class _Simulator(GenerativeLikelihood):
         return jnp.zeros((n_samples, 1))
 
 
+def _pymc_model_fn(y=None):
+    import pymc as pm
+
+    with pm.Model() as model:
+        pm.Normal("mu", 0, 1)
+        pm.Normal("slope", 0, 1, shape=2)
+        pm.Normal("y", 0, 1, observed=y)
+    return model
+
+
 def _pymc_model() -> PyMCModel:
-    pm = pytest.importorskip("pymc")
-
-    def model_fn(y=None):
-        with pm.Model() as model:
-            pm.Normal("mu", 0, 1)
-            pm.Normal("slope", 0, 1, shape=2)
-            pm.Normal("y", 0, 1, observed=y)
-        return model
-
-    return PyMCModel("model", model_fn)
+    pytest.importorskip("pymc")
+    return PyMCModel("model", _pymc_model_fn)
 
 
 def _stan_model() -> StanModel:
@@ -178,8 +181,8 @@ def _stan_model() -> StanModel:
     return StanModel("model", str(stan_file))
 
 
-def _product() -> ProductDistribution:
-    return ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0))
+def _conditional(z):
+    return Normal("x", z, 1.0)
 
 
 # One construction per concrete class, keyed by the class it represents.
@@ -226,7 +229,7 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
         a=Normal("a", 0.0, 1.0), b=Gamma("b", 2.0, 1.0)
     ),
     SequentialJointDistribution: lambda: SequentialJointDistribution(
-        z=Normal("z", 0.0, 1.0), x=lambda z: Normal("x", z, 1.0)
+        z=Normal("z", 0.0, 1.0), x=_conditional
     ),
     JointGaussian: lambda: JointGaussian(mean=jnp.zeros(3), cov=jnp.eye(3), x=1, y=2),
     JointEmpirical: lambda: JointEmpirical(
@@ -244,11 +247,15 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
         [Normal("y", 0.0, 1.0), Normal("y", 1.0, 1.0)]
     ),
     _ListMarginal: lambda: _ListMarginal(["a", "b"]),
-    FlattenedDistributionView: lambda: _product().as_flat_distribution(),
+    FlattenedDistributionView: lambda: ProductDistribution(
+        a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)
+    ).as_flat_distribution(),
     NumericRecordDistributionView: lambda: MultivariateNormal(
         "theta", jnp.zeros(3), cov=jnp.eye(3)
     ).as_record_distribution(template=NumericRecordSpec(a=(), b=(2,))),
-    _RecordDistributionView: lambda: _product()["a"],
+    _RecordDistributionView: lambda: ProductDistribution(
+        a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)
+    )["a"],
     RandomMeasure: lambda: RandomMeasure("m"),
     MinibatchedDistribution: _measure,
     _FixedMinibatchDistribution: lambda: _measure()._draw_one(jax.random.PRNGKey(0)),
@@ -285,17 +292,33 @@ _BASES = frozenset(
     }
 )
 
-_ROWS = [pytest.param(make, id=cls.__name__) for cls, make in _CONSTRUCTIONS.items()]
+
+def _rows(failures: dict[type, pytest.MarkDecorator] | None = None) -> list:
+    """One case per construction, marked where the check fails for a known reason."""
+    failures = failures or {}
+    return [
+        pytest.param(cls, make, id=cls.__name__, marks=failures.get(cls, ()))
+        for cls, make in _CONSTRUCTIONS.items()
+    ]
+
+
+def _reachable(cls: type) -> bool:
+    """Whether ``cls`` is found in its module under its qualified name."""
+    target = sys.modules[cls.__module__]
+    for part in cls.__qualname__.split("."):
+        target = getattr(target, part, None)
+    return target is cls
 
 
 def _library_classes() -> set[type]:
-    """Every concrete distribution class the library defines at module level."""
+    """Every concrete distribution class the library defines by name."""
     for module in pkgutil.walk_packages(probpipe.__path__, "probpipe."):
         try:
             importlib.import_module(module.name)
-        except ImportError:
+        except ImportError as exc:
             # A module whose optional backend is absent defines nothing to check.
-            continue
+            if (exc.name or "").partition(".")[0] == "probpipe":
+                raise
     found: set[type] = set()
     pending = [Distribution]
     while pending:
@@ -309,40 +332,57 @@ def _library_classes() -> set[type]:
         for cls in found
         if cls.__module__.startswith("probpipe.")
         # A class a factory creates at runtime is not reachable by its name.
-        and getattr(sys.modules[cls.__module__], cls.__qualname__, None) is cls
+        and _reachable(cls)
         and not inspect.isabstract(cls)
         and cls not in _BASES
     }
 
 
-# -- Tests --------------------------------------------------------------------
+# ``sample`` stacks a tuple draw as rows instead of wrapping it as one opaque
+# value.
+_DRAW_FAILURES = {
+    SimpleGenerativeModel: pytest.mark.xfail(
+        raises=ValueError, strict=True, reason="sample stacks a tuple draw as rows"
+    ),
+}
 
-
-def test_every_concrete_class_has_a_construction():
-    missing = {cls.__qualname__ for cls in _library_classes() - _CONSTRUCTIONS.keys()}
-    assert not missing, f"no construction declares an event for {sorted(missing)}"
-
-
-@pytest.mark.parametrize("make", _ROWS)
-def test_every_law_holds_a_complete_declaration(make):
-    law = make()
-    assert isinstance(law.spec, DistributionSpec)
-    assert law.event_spec is law.spec.event_spec
-    assert all(spec is not None for spec in law.event_spec.components.values())
-
-
-@pytest.mark.parametrize("make", _ROWS)
-def test_numeric_membership_follows_the_declaration(make):
-    law = make()
-    assert isinstance(law, NumericDistribution) is isinstance(law.event_spec.spec, NumericSpec)
-
-
-@pytest.mark.parametrize("make", _ROWS)
-def test_a_law_has_the_numeric_views_when_it_is_numeric(make):
-    law = make()
-    numeric = isinstance(law, NumericDistribution)
-    for view in ("dtypes", "supports", "dtype", "support"):
-        assert hasattr(law, view) is numeric
+# Laws that do not pickle, by the exception each raises.
+_TFP_BACKEND = pytest.mark.xfail(
+    raises=pytest.RaisesExc(TypeError, match="missing a required argument"),
+    strict=True,
+    reason="a TFP backend built from another law does not unpickle",
+)
+_RUNTIME_CLASS = pytest.mark.xfail(
+    raises=pickle.PicklingError,
+    strict=True,
+    reason="a class made at runtime does not pickle (#417)",
+)
+_BACKEND_MODEL = pytest.mark.xfail(
+    raises=AttributeError, strict=True, reason="the backend's model object does not pickle"
+)
+_PICKLE_FAILURES = {
+    PyMCModel: _BACKEND_MODEL,
+    StanModel: _BACKEND_MODEL,
+    _UnconstrainedStanView: _BACKEND_MODEL,
+    MultivariateNormal: _TFP_BACKEND,
+    KDEDistribution: _TFP_BACKEND,
+    JointGaussian: _TFP_BACKEND,
+    MinibatchedDistribution: _TFP_BACKEND,
+    _FixedMinibatchDistribution: _TFP_BACKEND,
+    _RandomMinibatchLogProb: _TFP_BACKEND,
+    _MinibatchLogProbAtPoint: _TFP_BACKEND,
+    LinearBasisFunction: _TFP_BACKEND,
+    _LinearMapGRF: _TFP_BACKEND,
+    _ShiftedGRF: _TFP_BACKEND,
+    _ScaledGRF: _TFP_BACKEND,
+    _IndependentSumGRF: _TFP_BACKEND,
+    TransformedDistribution: _RUNTIME_CLASS,
+    SequentialJointDistribution: _RUNTIME_CLASS,
+    _MixtureMarginal: _RUNTIME_CLASS,
+    FlattenedDistributionView: _RUNTIME_CLASS,
+    NumericRecordDistributionView: _RUNTIME_CLASS,
+    _RecordDistributionView: _RUNTIME_CLASS,
+}
 
 
 # The interim ``event_shape`` overrides: an empirical law over an array still
@@ -356,88 +396,85 @@ _EVENT_SHAPE_OVERRIDES = {
 }
 
 
-def test_the_declaration_is_the_one_schema_source():
-    _library_classes()  # imports every module, so every class is loaded
-    classes: set[type] = set()
-    pending = [Distribution]
-    while pending:
-        for cls in pending.pop().__subclasses__():
-            if cls not in classes:
-                classes.add(cls)
-                pending.append(cls)
-    for cls in classes:
-        if not cls.__module__.startswith("probpipe."):
-            continue
-        defined = vars(cls)
-        assert "event_template" not in defined, cls
-        if cls is not NumericDistribution:
-            assert not {"dtypes", "supports", "dtype", "support"} & defined.keys(), cls
-        if cls.__name__ not in _EVENT_SHAPE_OVERRIDES:
-            assert "event_shape" not in defined, cls
+# -- Tests --------------------------------------------------------------------
 
 
-# The term kind a draw is, by the kind of spec that declares it.
-_DRAWN_KINDS = {
-    NumericArraySpec: NumericArray,
-    RecordSpec: Record,
-    OpaqueSpec: Opaque,
-    FunctionSpec: Function,
-    DistributionSpec: Distribution,
-}
+class TestCoverage:
+    def test_every_concrete_class_has_a_construction(self):
+        missing = {cls.__qualname__ for cls in _library_classes() - _CONSTRUCTIONS.keys()}
+        assert not missing, f"no construction declares an event for {sorted(missing)}"
+
+    @pytest.mark.parametrize(("cls", "make"), _rows())
+    def test_each_construction_builds_its_class(self, cls, make):
+        # A class made at runtime counts as the class it specializes.
+        assert next(c for c in type(make()).__mro__ if c in _CONSTRUCTIONS) is cls
+
+    def test_the_declaration_is_the_one_schema_source(self):
+        _library_classes()  # imports every module, so every class is loaded
+        classes: set[type] = set()
+        pending = [Distribution]
+        while pending:
+            for cls in pending.pop().__subclasses__():
+                if cls not in classes:
+                    classes.add(cls)
+                    pending.append(cls)
+        for cls in classes:
+            if not cls.__module__.startswith("probpipe."):
+                continue
+            defined = vars(cls)
+            assert "event_template" not in defined, cls
+            if cls is not NumericDistribution:
+                assert not {"dtypes", "supports", "dtype", "support"} & defined.keys(), cls
+            if cls.__name__ not in _EVENT_SHAPE_OVERRIDES:
+                assert "event_shape" not in defined, cls
 
 
-# ``sample`` stacks a tuple draw as rows instead of wrapping it as one opaque
-# value, a behavior that predates the declaration.
-_DRAW_ROWS = [
-    pytest.param(
-        make,
-        id=cls.__name__,
-        marks=pytest.mark.xfail(strict=True, reason="sample stacks a tuple draw as rows"),
-    )
-    if cls is SimpleGenerativeModel
-    else pytest.param(make, id=cls.__name__)
-    for cls, make in _CONSTRUCTIONS.items()
-]
+class TestDeclaration:
+    @pytest.mark.parametrize(("cls", "make"), _rows())
+    def test_a_rename_keeps_the_declaration(self, cls, make):
+        law = make()
+        renamed = law.with_name("renamed")
+        assert renamed.name == "renamed"
+        assert renamed.event_spec == law.event_spec
 
+    @pytest.mark.parametrize(("cls", "make"), _rows())
+    def test_numeric_membership_follows_the_declaration(self, cls, make):
+        law = make()
+        assert isinstance(law, NumericDistribution) is isinstance(law.event_spec.spec, NumericSpec)
 
-@pytest.mark.parametrize("make", _DRAW_ROWS)
-def test_the_declaration_agrees_with_the_draw(make):
-    law = make()
-    if not isinstance(law, SupportsSampling):
-        pytest.skip("the law does not sample")
-    declared = next(
-        kind for spec, kind in _DRAWN_KINDS.items() if isinstance(law.event_spec.spec, spec)
-    )
-    assert isinstance(sample(law, key=jax.random.PRNGKey(0)), declared)
+    @pytest.mark.parametrize(("cls", "make"), _rows())
+    def test_a_law_has_the_numeric_views_when_it_is_numeric(self, cls, make):
+        law = make()
+        numeric = isinstance(law, NumericDistribution)
+        for view in ("dtypes", "supports", "dtype", "support"):
+            assert hasattr(law, view) is numeric
 
-
-class TestComponentAccess:
-    def test_a_family_is_itself_under_its_component(self):
-        law = Normal("x", 0.0, 1.0)
-        assert law["x"] is law
-        with pytest.raises(KeyError):
-            law["y"]
-
-    def test_a_joint_field_is_a_view_declaring_the_field(self):
-        product = _product()
-        assert product["a"].event_spec.spec == product.event_spec.spec["a"]
+    @pytest.mark.parametrize(("cls", "make"), _rows(_DRAW_FAILURES))
+    def test_the_declaration_admits_the_draw(self, cls, make):
+        law = make()
+        if not isinstance(law, SupportsSampling):
+            pytest.skip("the law does not sample")
+        assert law.event_spec.spec.is_valid(sample(law, key=jax.random.PRNGKey(0)))
 
 
 class TestRoundTrips:
-    @pytest.mark.parametrize(
-        "make",
-        [
-            pytest.param(_CONSTRUCTIONS[Normal], id="family"),
-            pytest.param(_product, id="joint"),
-            pytest.param(_CONSTRUCTIONS[RecordEmpiricalDistribution], id="empirical"),
-        ],
-    )
-    def test_pickle_and_copy_preserve_the_declaration(self, make):
-        law = make()
-        assert pickle.loads(pickle.dumps(law)).spec == law.spec
-        assert copy.copy(law).spec == law.spec
+    """A round trip of a renamed law keeps its name and its declaration."""
 
-    def test_a_product_pytree_round_trip_rebuilds_its_declaration(self):
-        law = _product()
+    @pytest.mark.parametrize(("cls", "make"), _rows(_PICKLE_FAILURES))
+    def test_pickle(self, cls, make):
+        law = make().with_name("renamed")
+        restored = pickle.loads(pickle.dumps(law))
+        assert (restored.name, restored.spec) == (law.name, law.spec)
+
+    @pytest.mark.parametrize(("cls", "make"), _rows())
+    def test_copy(self, cls, make):
+        law = make().with_name("renamed")
+        restored = copy.copy(law)
+        assert (restored.name, restored.spec) == (law.name, law.spec)
+
+    @pytest.mark.parametrize(("cls", "make"), _rows())
+    def test_pytree(self, cls, make):
+        law = make().with_name("renamed")
         leaves, treedef = jax.tree_util.tree_flatten(law)
-        assert jax.tree_util.tree_unflatten(treedef, leaves).spec == law.spec
+        restored = jax.tree_util.tree_unflatten(treedef, leaves)
+        assert (restored.name, restored.spec) == (law.name, law.spec)

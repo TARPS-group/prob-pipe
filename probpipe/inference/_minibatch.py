@@ -298,7 +298,7 @@ class MinibatchedDistribution(
         self._rescale_factor = float(self._n / batch_size)
         # A draw is a law over the prior's parameters, declared as the prior
         # declares them.
-        self._draw_event_spec = _parameter_declaration(prior, name)
+        self._draw_event_spec = _parameter_declaration(prior, "parameters")
 
         super().__init__(name, DistributionSpec(self._draw_event_spec))
 

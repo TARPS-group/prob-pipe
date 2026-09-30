@@ -226,6 +226,10 @@ class TestToNamedPosteriorDataset:
         assert "alpha" in ds.data_vars
         assert ds["alpha"].shape == (2, 50)
 
+    def test_a_posterior_with_no_chains_is_refused(self):
+        with pytest.raises(ValueError, match="no chains"):
+            to_named_posterior_dataset(self._posterior(["mu"], n_chains=0))
+
     def test_vector_param_preserves_event_dim(self):
         post = self._posterior(["beta"], n_chains=2, n_draws=50, shapes={"beta": (3,)})
         ds = to_named_posterior_dataset(post)

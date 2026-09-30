@@ -21,6 +21,8 @@ from ._spec_base import (
     _require_hashable,
     _unify_specs,
 )
+from .constraints import _supports_compatible
+from .named_tree import _PATH_SEP
 
 __all__ = [
     "InputSpec",
@@ -34,9 +36,23 @@ __all__ = [
 ]
 
 
-def _check_component(name: str, spec: TermSpec | None, *, allow_hole: bool = False) -> None:
+def _check_slot(name: str, spec: TermSpec) -> None:
+    # An input slot is a Python parameter, so its name is an identifier.
     if not isinstance(name, str) or not name.isidentifier() or keyword.iskeyword(name):
-        raise ValueError(f"component names must be Python identifiers, got {name!r}")
+        raise ValueError(f"input slot names must be Python identifiers, got {name!r}")
+    _check_term(name, spec, allow_hole=False)
+
+
+def _check_component(name: str, spec: TermSpec | None, *, allow_hole: bool = False) -> None:
+    # A component follows the rule for a record's field names.
+    if not isinstance(name, str) or not name or _PATH_SEP in name:
+        raise ValueError(
+            f"component names must be non-empty and contain no {_PATH_SEP!r}, got {name!r}"
+        )
+    _check_term(name, spec, allow_hole=allow_hole)
+
+
+def _check_term(name: str, spec: TermSpec | None, *, allow_hole: bool) -> None:
     if not isinstance(spec, TermSpec) and not (allow_hole and spec is None):
         raise TypeError(f"component {name!r} must have a TermSpec, got {type(spec).__name__}")
     _require_hashable(spec, context=f"Component {name!r} spec")
@@ -76,7 +92,7 @@ class InputSpec(Mapping[str, TermSpec]):
         else:
             slots = components
         for name, spec in slots.items():
-            _check_component(name, spec)
+            _check_slot(name, spec)
         object.__setattr__(self, "_slots", dict(slots))
 
     def __getitem__(self, key: str) -> TermSpec:
@@ -159,7 +175,7 @@ class OutputSpec:
         If the positional form is not exactly one RecordSpec, forms are mixed,
         or a component lacks a spec outside the single-keyword hole form.
     ValueError
-        If no declaration is given or a component name is not an identifier.
+        If no declaration is given, or a component name is empty or contains ``/``.
 
     Notes
     -----
@@ -231,43 +247,37 @@ def _components_record(declaration: OutputSpec) -> RecordSpec:
     An exposed record is that record, and a whole term is a one-field record
     under its component, which is how a model or a posterior names the
     parameters of one draw.
+
+    Raises
+    ------
+    TypeError
+        If *declaration* exposes a spec that is not a ``RecordSpec``.
     """
     if declaration._component_name is None:
-        return cast(RecordSpec, declaration.spec)
+        if not isinstance(declaration.spec, RecordSpec):
+            raise TypeError(f"an exposed declaration holds a RecordSpec, got {declaration.spec!r}")
+        return declaration.spec
     return RecordSpec(**{declaration._component_name: declaration.spec})
 
 
-def _metadata_the_template_sets(actual: RecordSpec, template: RecordSpec) -> RecordSpec:
-    """*actual* keeping the dtype and support of a leaf only where *template* sets them.
+def _check_output_template(record: RecordSpec, template: RecordSpec, path: str) -> None:
+    """Raise ``ValueError`` unless *record* conforms to a Function's output *template*.
 
-    A law declares its full metadata, whereas an output template may state only
-    shapes. An equality test after this projection therefore requires each dtype
-    and support that the template sets, and accepts any that it leaves unset. A
-    field the template lacks, or the reverse, is kept, so the test still fails on
-    it.
+    The fields and shapes must conform, a dtype the template sets admits a
+    same-kind cast, and a support the template sets must hold the record's.
+    Metadata the template leaves unset matches any, so a law's full declaration
+    meets a template that states only shapes.
     """
-    children: dict[str, TermSpec] = {}
-    for field, spec in actual.children.items():
-        declared = template.children.get(field)
-        if isinstance(spec, RecordSpec) and isinstance(declared, RecordSpec):
-            children[field] = _metadata_the_template_sets(spec, declared)
-        elif isinstance(spec, NumericArraySpec) and isinstance(declared, NumericArraySpec):
-            children[field] = NumericArraySpec(
-                spec.shape,
-                spec.dtype if declared.dtype is not None else None,
-                spec.support if declared.support is not None else None,
+    _unify_specs(template, record, {}, path)
+    for leaf, declared in template.items():
+        actual = record[leaf]
+        if (
+            isinstance(declared, NumericArraySpec)
+            and isinstance(actual, NumericArraySpec)
+            and declared.support is not None
+            and actual.support is not None
+            and not _supports_compatible(actual.support, declared.support)
+        ):
+            raise ValueError(
+                f"{path}/{leaf} support {actual.support!r} does not conform to {declared.support!r}"
             )
-        else:
-            children[field] = spec
-    return RecordSpec(children)
-
-
-def _matches_output_template(declaration: OutputSpec, template: RecordSpec) -> bool:
-    """Whether a law declaring *declaration* matches a Function's output *template*.
-
-    The record the law's components form must equal *template* in its fields and
-    shapes, and in each dtype and support the template sets; metadata the
-    template leaves unset matches any. An interim implementation detail, until a
-    Function declares an output spec.
-    """
-    return _metadata_the_template_sets(_components_record(declaration), template) == template

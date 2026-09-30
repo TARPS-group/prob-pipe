@@ -20,6 +20,7 @@ import jax.numpy as jnp
 from ..custom_types import Array, PRNGKey
 from ..distributions._distribution import Distribution
 from ._specs import NumericArraySpec, OutputSpec, RecordSpec, TermSpec, _components_record
+from .constraints import Constraint
 from .named_tree import _PATH_SEP
 from .protocols import (
     SupportsCovariance,
@@ -180,9 +181,10 @@ class _RecordDistributionView(Distribution):
     Parameters
     ----------
     parent : Distribution
-        A distribution whose declaration has the field.
-    key : str
-        Field name among the parent's declared components.
+        The law whose field the view reads.
+    key : str or tuple of str
+        The field's path in the parent's draw, as a slash path or a tuple of
+        segments.
     """
 
     _sampling_cost = "low"
@@ -190,15 +192,19 @@ class _RecordDistributionView(Distribution):
 
     def __new__(
         cls,
-        parent: RecordDistribution,
+        parent: Distribution,
         key: str | tuple[str, ...],
     ) -> _RecordDistributionView:
         actual_cls = _view_class_for_parent(parent)
         return object.__new__(actual_cls)
 
-    def __init__(self, parent: RecordDistribution, key: str | tuple[str, ...]) -> None:
-        # The record the parent's declared components form.
-        template = _components_record(parent.event_spec)
+    def __init__(self, parent: Distribution, key: str | tuple[str, ...]) -> None:
+        # The record the parent's declared components form. A posterior's
+        # target record keeps the nesting its stored chunks flatten, an interim
+        # reader until the posterior declares the nesting itself.
+        template = getattr(parent, "_target_record", None)
+        if template is None:
+            template = _components_record(parent.event_spec)
         # A string key is a slash path, as a tuple key is.
         key_path = tuple(key.split(_PATH_SEP)) if isinstance(key, str) else tuple(key)
         if not key_path:
@@ -207,7 +213,7 @@ class _RecordDistributionView(Distribution):
             template_field = template.at_path(key_path)
         except KeyError as exc:
             raise KeyError(
-                f"No field path {key_path!r} in the declaration "
+                f"{parent.name!r} has no field path {key_path!r} "
                 f"(available: {tuple(template.keys())})"
             ) from exc
         # Bypass Distribution.__init__ validation; the view's name is
@@ -217,9 +223,28 @@ class _RecordDistributionView(Distribution):
         self._key = key_path[-1]
         self._key_path = key_path
         self._template_field = template_field
-        # The parent's declared term at the path, a whole term under the
-        # path's last segment (III.7).
+        # The term at the path, a whole term under the path's last segment.
         self._init_declaration(OutputSpec(**{self._key: template_field}))
+
+    def __getitem__(self, key: str | tuple[str, ...]) -> Distribution:
+        """This view under its component, or the parent's view at a path within it.
+
+        A path into the group this view covers, as a slash path or a tuple, joins
+        the view's own path, so ``d["a"]["b/c"]`` is ``d["a/b/c"]``.
+
+        Raises
+        ------
+        KeyError
+            If the joined path is not a field of the parent.
+        TypeError
+            If *key* is neither a string nor a tuple of strings.
+        """
+        if not isinstance(key, (str, tuple)):
+            raise TypeError(f"key must be str or a tuple of str, got {type(key).__name__}")
+        path = tuple(key.split(_PATH_SEP)) if isinstance(key, str) else tuple(key)
+        if path == (self._key,):
+            return self
+        return self._parent[(*self._key_path, *path)]
 
     # -- Parent identity ---------------------------------------------------
 
@@ -242,19 +267,6 @@ class _RecordDistributionView(Distribution):
     def field(self) -> str:
         """Name of the viewed field (the final segment of its parent path)."""
         return self._key
-
-    def __getitem__(self, key: str) -> _RecordDistributionView:
-        """Return a view of one child below a structured record field."""
-        if not isinstance(key, str):
-            raise TypeError(f"key must be str, got {type(key).__name__}")
-        if not isinstance(self._template_field, RecordSpec):
-            raise KeyError(f"{self._key_path!r} is a field, not a nested record")
-        if key not in self._template_field.children:
-            raise KeyError(
-                f"No field {key!r} below {self._key_path!r} "
-                f"(available: {tuple(self._template_field.children)})"
-            )
-        return _RecordDistributionView(self._parent, (*self._key_path, key))
 
     # -- Single-field array-like shims -------------------------------------
 
@@ -330,7 +342,7 @@ class _RecordDistributionView(Distribution):
 # ---------------------------------------------------------------------------
 
 
-def _record_with_leaves(template: RecordSpec, dtype: Any, support: Any) -> RecordSpec:
+def _record_with_leaves(template: RecordSpec, dtype: Any, support: Constraint | None) -> RecordSpec:
     """*template* with every array leaf declaring *dtype* and *support*."""
 
     def leaf(spec: TermSpec) -> TermSpec:

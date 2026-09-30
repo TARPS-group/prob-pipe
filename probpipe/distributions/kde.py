@@ -22,15 +22,22 @@ from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._numeric_record_distribution import NumericRecordDistribution
 from ..core._record_distribution import _record_with_leaves
 from ..core._specs import NumericArraySpec, NumericRecordSpec, OutputSpec, RecordSpec
-from ..core.constraints import real
+from ..core.constraints import Constraint, real
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike
 from ._tfp_base import TFPDistribution
 
 if TYPE_CHECKING:
-    from ..core._specs import RecordSpec
+    from ..core._spec_base import TermSpec
 
 __all__ = ["KDEDistribution"]
+
+
+def _declared_array_shape(spec: TermSpec) -> tuple[int | str, ...] | None:
+    """The shape *spec* states for one array draw, reading a one-field record's field."""
+    if isinstance(spec, RecordSpec) and len(spec.fields) == 1:
+        (spec,) = spec.children.values()
+    return spec.shape if isinstance(spec, NumericArraySpec) else None
 
 
 class KDEDistribution(TFPDistribution):
@@ -59,15 +66,24 @@ class KDEDistribution(TFPDistribution):
         kernel), shape ``(d,)`` or scalar.  If ``None``, Silverman's
         rule is used: ``n^{-1/(d+4)} * std_j`` for each dimension *j*.
     event_spec : OutputSpec, RecordSpec, or None
-        The record one draw is. When ``None`` (the default), or a record with
-        one field, one draw is declared as an array under ``name``. A record
-        with several fields defines how the flat ``(n, d)`` sample matrix
-        maps back to a structured ``NumericRecord`` / ``NumericRecordBatch``,
-        and one draw is declared as that record, each array leaf declaring the
-        samples' dtype and the real line as its support. The named fields
-        therefore persist when, for example, an MCMC posterior passes through
-        KDE as the new prior in :class:`~probpipe.modeling.IncrementalConditioner`.
-        The record's ``vector_size`` must equal ``samples.shape[1]``.
+        The record one draw is. When ``None`` (the default), one draw is
+        declared as an array under ``name``. A record with several fields
+        defines how the flat ``(n, d)`` sample matrix maps back to a
+        structured ``NumericRecord`` / ``NumericRecordBatch``, and one draw is
+        declared as that record, each array leaf declaring the samples' dtype
+        and the real line as its support. The named fields therefore persist
+        when, for example, an MCMC posterior passes through KDE as the new
+        prior in :class:`~probpipe.modeling.IncrementalConditioner`. Only such
+        a record's structure is read. Any other declaration, a record with one
+        field included, must state the shape of the array one draw is, which is
+        then declared under ``name``.
+
+    Raises
+    ------
+    ValueError
+        If *event_spec* is a record with several fields whose ``vector_size``
+        is not ``samples.shape[1]``, or any other declaration whose shape is
+        not that of one draw.
     """
 
     def __init__(
@@ -113,6 +129,12 @@ class KDEDistribution(TFPDistribution):
         else:
             # A one-column KDE mixes scalar kernels, so it draws scalars.
             declaration = NumericArraySpec((d,) if d > 1 else (), samples.dtype, real)
+            if record is not None and _declared_array_shape(record) != declaration.shape:
+                raise ValueError(
+                    f"KDEDistribution {name!r} draws arrays of shape {declaration.shape}, "
+                    f"which event_spec {event_spec!r} does not declare; only a record with "
+                    f"several fields gives the draws a structure"
+                )
 
         super().__init__(name, declaration)
 
@@ -157,6 +179,10 @@ class KDEDistribution(TFPDistribution):
         """Number of kernel centres (atoms) backing the KDE."""
         return self._samples.shape[0]
 
+    def _event_support(self) -> Constraint:
+        """The support of one draw: a Gaussian kernel density is positive everywhere."""
+        return real
+
     # -- sampling & density ---------------------------------------------------
     #
     # A KDE that declares a record unflattens its draws into ``NumericRecord``
@@ -189,8 +215,9 @@ class KDEDistribution(TFPDistribution):
         """Build a KDE from a :class:`RecordEmpiricalDistribution` source.
 
         Reuses the source's stored samples, weights, and declared record, so
-        the resulting KDE keeps the source's named fields. Works for any
-        subclass, such as :class:`~probpipe.inference.ApproximateDistribution`.
+        the resulting KDE keeps the source's named fields, and a posterior's
+        nested ones. Works for any subclass, such as
+        :class:`~probpipe.inference.ApproximateDistribution`.
 
         Parameters
         ----------
@@ -207,7 +234,11 @@ class KDEDistribution(TFPDistribution):
                 f"(or subclass); got {type(source).__name__}"
             )
         name = name or source.name
-        tpl = source.event_spec.spec
+        # A posterior's target record keeps the nesting its stored chunks
+        # flatten, an interim reader until the posterior declares the nesting.
+        tpl = getattr(source, "_target_record", None)
+        if tpl is None:
+            tpl = source.event_spec.spec
         if len(tpl.fields) == 1:
             field = tpl.fields[0]
             arr = source.samples[field]
@@ -221,7 +252,10 @@ class KDEDistribution(TFPDistribution):
         )
 
     def __repr__(self) -> str:
-        return (
-            f"KDEDistribution(num_atoms={self.num_atoms}, "
-            f"event_shape={tuple(self._tfp_dist.event_shape)})"
-        )
+        # The declaration, not the flat TFP backend, gives the shape of one draw.
+        spec = self.event_spec.spec
+        if isinstance(spec, NumericArraySpec):
+            shape = f"event_shape={spec.shape}"
+        else:
+            shape = f"event_shapes={dict(spec.leaf_shapes)}"
+        return f"KDEDistribution(num_atoms={self.num_atoms}, {shape})"

@@ -74,6 +74,24 @@ class TestRecordSpecConstructor:
         )
         assert kde.event_spec == OutputSpec(post=NumericArraySpec((2,), "float32", real))
 
+    def test_a_whole_term_of_the_drawn_shape_is_declared_under_the_name(self, flat_samples):
+        kde = KDEDistribution(
+            "post", flat_samples, event_spec=OutputSpec(theta=NumericArraySpec((2,)))
+        )
+        assert kde.event_spec == OutputSpec(post=NumericArraySpec((2,), "float32", real))
+
+    @pytest.mark.parametrize(
+        "event_spec",
+        [
+            pytest.param(OutputSpec(theta=NumericArraySpec((1, 2))), id="whole-term"),
+            pytest.param(RecordSpec(theta=(3,)), id="one-field-record"),
+        ],
+    )
+    def test_a_declaration_of_another_shape_is_refused(self, flat_samples, event_spec):
+        # Only a record with several fields gives the draws a structure.
+        with pytest.raises(ValueError, match=r"draws arrays of shape \(2,\)"):
+            KDEDistribution("post", flat_samples, event_spec=event_spec)
+
     def test_without_a_record_one_draw_is_an_array_under_the_name(self, flat_samples):
         kde = KDEDistribution("kde", flat_samples)
         assert tuple(kde.event_spec.components) == ("kde",)
@@ -86,6 +104,11 @@ class TestDeclaration:
         kde = KDEDistribution("post", flat_samples)
         assert kde.event_spec == OutputSpec(post=NumericArraySpec((2,), "float32", real))
         assert kde.event_shape == (2,)
+
+    def test_the_family_support_is_the_real_line(self, flat_samples):
+        from probpipe import real
+
+        assert KDEDistribution("k", flat_samples)._event_support() is real
 
     def test_one_column_draws_scalars(self):
         kde = KDEDistribution("k", jnp.arange(5.0)[:, None])
@@ -100,9 +123,9 @@ class TestDeclaration:
             )
         )
         assert kde.supports == {"intercept": real, "slope": real}
-        with pytest.raises(TypeError, match="does not draw a single array"):
+        with pytest.raises(AttributeError, match="does not draw a single array"):
             _ = kde.event_shape
-        assert "event_shape=(2,)" in repr(kde)
+        assert "event_shapes={'intercept': (), 'slope': ()}" in repr(kde)
 
 
 # ---------------------------------------------------------------------------

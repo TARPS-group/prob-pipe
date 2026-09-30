@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 from ..core._record_spec import RecordSpec
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import OutputSpec
+from ..core.constraints import _known_equal
 from ..core.provenance import Provenance
 from ..core.tracked import Annotated, TrackedTerm, _TrackedTermMeta
 
@@ -57,7 +58,7 @@ def set_return_approx_dist(value: bool) -> None:
 
 
 def _complete_event_spec(event_spec: Any, name: str) -> OutputSpec:
-    """Complete *event_spec* into the output declaration of one draw (II.2, III.7).
+    """Complete *event_spec* into the output declaration of one draw.
 
     Parameters
     ----------
@@ -105,7 +106,7 @@ def _whole_term_component(declaration: OutputSpec) -> str | None:
 
 
 def _declares_numeric_event(value: Any) -> bool:
-    """Whether *value* is a law whose declared event is numeric (II.3).
+    """Whether *value* is a law whose declared event is numeric.
 
     A law still under construction declares nothing yet, so it is not numeric.
     """
@@ -151,14 +152,17 @@ class _DistributionMeta(_TrackedTermMeta):
 
     def __call__(cls, *args: Any, **kwargs: Any) -> Any:
         instance = super().__call__(*args, **kwargs)
+        # A factory __new__ may construct a subclass, whose declaration and claim
+        # are the ones to check.
+        claimant = type(instance)
         if not isinstance(getattr(instance, "_spec", None), DistributionSpec):
             raise TypeError(
-                f"{cls.__name__}.__init__ left the event undeclared; pass event_spec to "
+                f"{claimant.__name__}.__init__ left the event undeclared; pass event_spec to "
                 f"Distribution.__init__, or call _init_declaration when bypassing it"
             )
-        if issubclass(cls, NumericDistribution) and not _declares_numeric_event(instance):
+        if issubclass(claimant, NumericDistribution) and not _declares_numeric_event(instance):
             raise TypeError(
-                f"{cls.__name__} inherits NumericDistribution, so its instances must "
+                f"{claimant.__name__} inherits NumericDistribution, so its instances must "
                 f"declare a numeric event"
             )
         return instance
@@ -188,8 +192,8 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     :class:`~probpipe.core.protocols.SupportsSampling` protocol.
 
     **The event declaration.** A law stores one ``DistributionSpec``, its
-    :attr:`spec`, whose :attr:`event_spec` is the output declaration of one draw
-    (II.2). A bare ``RecordSpec`` exposes its fields; any other term spec is a
+    :attr:`spec`, whose :attr:`event_spec` is the output declaration of one
+    draw. A bare ``RecordSpec`` exposes its fields; any other term spec is a
     whole-term event whose component is the law's ``name``, captured once, so
     ``with_name`` never moves it. :attr:`event_shape` reads the declaration, and
     a law whose declaration is numeric also has the views of
@@ -276,23 +280,26 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
 
     @property
     def event_spec(self) -> OutputSpec:
-        """The output declaration of one draw (II.2), a view on :attr:`spec`."""
+        """The output declaration of one draw, read from :attr:`spec`."""
         return self.spec.event_spec
 
     @property
     def event_shape(self) -> tuple[int, ...]:
         """The shape of one draw, defined only when a draw is a single array.
 
+        For any other law the attribute is absent, so ``hasattr(law,
+        "event_shape")`` is ``False``.
+
         Raises
         ------
-        TypeError
+        AttributeError
             If a draw is not a single array, a one-field record included.
         ValueError
             If the declared shape has unbound dimensions.
         """
         spec = self.event_spec.spec
         if not isinstance(spec, NumericArraySpec):
-            raise TypeError(
+            raise AttributeError(
                 f"{type(self).__name__} {self.name!r} does not draw a single array; "
                 f"event_shape is defined only for one"
             )
@@ -332,7 +339,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     # -- dimension transforms -------------------------------------------------
 
     def with_dim_sizes(self, **sizes: int) -> Self:
-        """Bind named symbolic dimensions of the declaration (II.1).
+        """Bind named symbolic dimensions of the declaration.
 
         Parameters
         ----------
@@ -364,7 +371,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         )
 
     def with_dim_names(self, **names: str) -> Self:
-        """Rename symbolic dimensions of the declaration, simultaneously (II.1).
+        """Rename symbolic dimensions of the declaration, simultaneously.
 
         Parameters
         ----------
@@ -395,11 +402,17 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
 
     # -- components -----------------------------------------------------------
 
-    def __getitem__(self, key: str | tuple[str, ...]) -> Distribution:
-        """The law of the component or field at *key* (III.7).
+    # Indexing addresses components, so the legacy sequence protocol must not make
+    # a law iterable through it.
+    __iter__ = None
 
-        A whole-term law is itself under its component, so ``d[name]`` returns
-        ``d``. For an exposed record, the result is today's field view, an interim
+    def __getitem__(self, key: str | tuple[str, ...]) -> Distribution:
+        """The law of the component or field at *key*.
+
+        A whole-term law is itself under its component, given as a string or a
+        one-element tuple, so ``d[name]`` returns ``d``. The component is fixed at
+        construction, so after ``with_name`` the law is still addressed by it. For
+        an exposed record, the result is today's field view, an interim
         implementation detail.
 
         Raises
@@ -409,7 +422,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         """
         component = _whole_term_component(self.event_spec)
         if component is not None:
-            if key == component:
+            if key == component or key == (component,):
                 return self
             raise KeyError(key)
         from ..core._record_distribution import _RecordDistributionView
@@ -630,7 +643,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
 
 
 class NumericDistribution(Distribution):
-    """The marker of a law whose event declaration is numeric (II.3), with its views.
+    """The marker of a law whose event declaration is numeric, with its views.
 
     ``isinstance(d, NumericDistribution)`` holds if and only if
     ``d.event_spec.spec`` is a :class:`~probpipe.core._spec_base.NumericSpec`,
@@ -642,7 +655,15 @@ class NumericDistribution(Distribution):
     inherits the marker has them directly, and any other numeric law resolves
     them through the marker. A law whose declaration is not numeric has none of
     them. Like ``event_shape``, they read the declaration and are never stored.
+
+    The marker is not a dispatch type. Registering a method for it raises
+    ``TypeError``, since selection by class would miss a numeric law whose class
+    does not inherit it.
     """
+
+    # Read by dispatch registration, which refuses a class whose membership follows
+    # an instance's declaration.
+    _membership_follows_declaration = True
 
     @property
     def dtypes(self) -> dict[str, Any]:
@@ -662,9 +683,15 @@ class NumericDistribution(Distribution):
 
     @property
     def support(self) -> Constraint | None:
-        """The support every array leaf shares, or None when they differ or there are none."""
-        supports = set(self.supports.values())
-        return supports.pop() if len(supports) == 1 else None
+        """The support every array leaf shares, or None when they differ or there are none.
+
+        ``supports`` tells leaves that differ from leaves that are unset. Supports
+        whose comparison needs a traced value, as under ``jit``, count as different.
+        """
+        supports = list(self.supports.values())
+        if supports and all(_known_equal(supports[0], s) for s in supports[1:]):
+            return supports[0]
+        return None
 
 
 # The views a numeric law has whatever its class, which ``Distribution.__getattr__``
@@ -713,7 +740,7 @@ class DistributionSpec(TermSpec):
     Parameters
     ----------
     event_spec : OutputSpec or RecordSpec
-        The declaration of one draw (II.2). A bare ``RecordSpec`` completes to the
+        The declaration of one draw. A bare ``RecordSpec`` completes to the
         exposed form.
 
     Raises

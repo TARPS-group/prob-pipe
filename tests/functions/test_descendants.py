@@ -294,7 +294,7 @@ def test_golden_shift_descriptor_and_digest_are_hard_coded():
         name="base",
     )
     descendant = TransformedDistribution(
-        "also_ignored",
+        "also-ignored",
         base,
         tfb.Shift(jnp.asarray([1.0, -2.0], dtype=jnp.float32), name="ignored-name"),
     )

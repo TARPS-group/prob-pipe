@@ -104,7 +104,8 @@ class SimpleModel[P, D](ProbabilisticModel, SupportsLogProb):
             record: RecordSpec = RecordSpec(merged)
         else:
             record = prior_tpl
-        # The model is a law over its parameters and data, the merged record.
+        # The model is a law over its parameters and data, the merged record,
+        # which keeps each parameter's dtype and support.
         self._init_declaration(OutputSpec(record))
 
     # -- Distribution interface ---------------------------------------------

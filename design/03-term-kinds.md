@@ -388,10 +388,11 @@ class Distribution(TrackedTerm):
     # keys and path-valued targets resolve as for NamedTree.with_path_names (II.6),
     # and the law is unchanged
     def with_dim_sizes(self, **sizes: int) -> Self: ...
-    # bind named symbolic dimensions (II.1); a conflict with an existing binding raises
+    # bind named symbolic dimensions (II.1); a name that is not a free dimension raises
     def with_dim_names(self, **names: str) -> Self: ...   # rename symbolic dimensions before composing (IV.2)
     def __getitem__(self, key: str | tuple[str, ...]) -> Distribution: ...
-    # the field view at a leaf or group path; raises on a term-drawing law, which has no fields
+    # a whole-term law itself under its component, or the field view at a record's leaf or
+    # group path; any other key raises
 ```
 
 **Numeric distributions.** A `NumericDistribution` is a `Distribution` whose `event_spec.spec` is a `NumericSpec` (II.3), so its draws implement `Numeric` and the flat-vector interface applies; a scalar `Normal`'s `NumericArraySpec` event qualifies as a record event does. Membership is read from the declaration, so `isinstance(d, NumericDistribution)` holds if and only if the declaration of `d` is numeric, whatever its class. A class whose every instance is numeric may inherit the marker, and construction checks that claim. Every numeric law has the marker's views, which, like `event_shape`, read the declaration and are never stored or overridden:

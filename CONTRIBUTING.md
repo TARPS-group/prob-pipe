@@ -580,14 +580,14 @@ uv build packaging/probpipe   # probpipe (metapackage)
 |-------------|-------------|
 | `NamedTree` | Shared name-keyed tree substrate (`probpipe.core.named_tree`): immutable ordered tree with `/`-path navigation, the leaf-keyed mapping interface, structural edits (`merge` / `without` / `replace` / `with_path_names`), and nested-dict export (`to_nested_dict`) that the constructor reads back. `RecordSpec` and `Record` are its two families; each declares its leaf type (`TermSpec` vs arbitrary values), and mappings are never leaves. |
 | `TrackedTerm` / `Annotated` | Identity and metadata mixins (`probpipe.core.tracked`): `TrackedTerm` carries `name` and write-once `provenance` (`with_name` / `with_provenance`); `Annotated` carries the free-form `annotations` mapping. `Function`, `Distribution`, and `Record` mix in both; the batch types are tracked terms through their bases. |
-| `Distribution` | Base class of every distribution, with no type parameter. It stores one event declaration: `spec` is a `DistributionSpec` whose `event_spec` is the `OutputSpec` of one draw. A subclass passes `event_spec` to `Distribution.__init__`, and construction raises `TypeError` for a class that leaves its event undeclared. `event_shape` is defined for a law that draws a single array. It also carries the `TrackedTerm` / `Annotated` identity attributes. |
-| `NumericDistribution` | The marker of a law whose declaration is numeric: `isinstance(d, NumericDistribution)` holds when `d.event_spec.spec` is a `NumericSpec`, whatever the class of `d`. It holds the views `dtypes` and `supports`, keyed by array-leaf path, and `dtype` and `support`, the values every leaf shares or `None`; a law whose declaration is not numeric has none of them. A class whose every instance is numeric, such as `NumericRecordDistribution`, inherits the marker, and construction checks the claim. |
+| `Distribution` | Base class of every distribution, with no type parameter. It stores one event declaration: `spec` is a `DistributionSpec` whose `event_spec` is the `OutputSpec` of one draw. A subclass passes `event_spec` to `Distribution.__init__`, and construction raises `TypeError` for a class that leaves its event undeclared. `event_shape` is defined for a law that draws a single array, so `hasattr(law, "event_shape")` is `False` for one that draws a record. It also carries the `TrackedTerm` / `Annotated` identity attributes. |
+| `NumericDistribution` | The marker of a law whose declaration is numeric: `isinstance(d, NumericDistribution)` holds when `d.event_spec.spec` is a `NumericSpec`, whatever the class of `d`. It holds the views `dtypes` and `supports`, keyed by array-leaf path, and `dtype` and `support`, which hold the value every leaf shares or `None`; a law whose declaration is not numeric has none of them. A class whose every instance is numeric, such as `NumericRecordDistribution`, inherits the marker, and construction checks the claim. |
 | `Record` | Named, immutable, JAX-pytree container for structured non-random values; constructed name-first (`Record(name, ...)`); leaves stored verbatim (no coercion). All-numeric construction auto-promotes to `NumericRecord`; an explicit non-numeric `event_template=` pins a plain `Record`. `Record.from_field_values(name, template, values)` is the general (de)composition inverse of `list(record.values())`; `select()` for Function splatting |
 | `NumericRecord` (subclass of `Record`) | Post-construction invariant: every leaf is numeric, **stored in native form** (jax / numpy arrays, xarray, pandas, registered backends — nothing coerced; a bare Python scalar normalises to a 0-d `jax.Array`). Conversion to `jax.Array` happens lazily at the compute boundary (pytree flatten, `to_vector`, the scalar shim) through a set-once per-leaf cache. Implements `Numeric`: `to_vector` / `vector_size` and the classmethod inverse `NumericRecord.from_vector(name, spec, vec)` (the numeric 1-D serialization). `to_numeric()` is the identity on it; `Record.to_numeric()` validates (never converts), and native containers are read back directly from the fields. |
 | `Numeric` | The abstract flat-vector interface (`probpipe.core._numeric`) that `NumericArray` and `NumericRecord` implement: `vector_size`, `to_vector`, and the classmethod `from_vector(name, spec, vec)`. Its coordinate protocols present `to_vector()` to NumPy and JAX; `NumericArray` presents its array instead, and `NumericRecord` its sole field, an interim implementation detail. The batch forms are not `Numeric`. |
 | `RecordBatch` | Batch of `Record` elements over named levels (`level_names` / `axes_per_level`), stored one column per leaf path; positional index → element or sub-batch view, field index → the column in its batch form. A batched draw from a joint law is one of these. Deliberately **not** a `Record`: fields are read from `event_template`, not `fields` / `items()`. |
-| `NumericRecordBatch` (subclass of `RecordBatch`) | All-numeric batch; adds `to_vector` / `from_vector(name, template, vec, *, level_names)` and the single-field array shims. Reduce a column directly (`jnp.mean(batch["x"], axis=0)`) — the batch has no `mean` / `var` of its own. |
-| `RecordSpec` | Structural skeleton (field names, per-field shapes or `None`); the value classmethods `NumericRecord.from_vector(name, template, vec)` / `NumericRecordBatch.from_vector(...)` rebuild a numeric value from its 1-D vector given a template, without an example instance |
+| `NumericRecordBatch` (subclass of `RecordBatch`) | All-numeric batch; adds `to_vector` / `from_vector(name, spec, vec, *, level_names)` and the single-field array shims. Reduce a column directly (`jnp.mean(batch["x"], axis=0)`) — the batch has no `mean` / `var` of its own. |
+| `RecordSpec` | Structural skeleton (field names, per-field shapes or `None`); the value classmethods `NumericRecord.from_vector(name, spec, vec)` / `NumericRecordBatch.from_vector(...)` rebuild a numeric value from its 1-D vector given its spec, without an example instance |
 | `RecordDistribution` | Record-based distribution base; `fields`, `__getitem__` → `_RecordDistributionView`, `select()` / `select_all()` for correlated broadcasting. A `Distribution` represents one random variable; use `DistributionArray` for collections. |
 | `_RecordDistributionView` | Lightweight component reference; dynamic protocol support matching parent capabilities |
 | `NumericRecordDistribution` | Numeric-array distribution base, which inherits the `NumericDistribution` marker and adds per-field `event_shapes` and the flat-vector interface; base for all TFP-backed distributions |
@@ -782,9 +782,9 @@ keys the auto-wrapped Record's field.
 `SupportsSampling` source (e.g. `Normal("x", 0, 1)`); each
 replicate is `replicate_size` i.i.d. draws from `source._sample`.
 `replicate_size` is mandatory in this case (no canonical observation
-count). A replicate stacks the array its source declares, and a
-replicate of a sampler that is not a `Distribution`, which declares no
-event, is opaque.
+count). A replicate stacks the array its source declares, or batches
+the records a record-valued source draws. A replicate of a sampler that
+is not a `Distribution`, which declares no event, is opaque.
 
 ### Framework abstraction hierarchy
 
@@ -810,9 +810,10 @@ Three rules govern how the framework's universal types relate.
      (`RecordEmpiricalDistribution`,
      `RecordBootstrapReplicateDistribution`, `RecordDistribution`).
 
-   No third "numeric-array" variant. Records *are* array-based — a
-   single numeric array becomes a single-field Record at the
-   constructor boundary.
+   No third "numeric-array" variant. A law that draws a single numeric
+   array, such as a parametric family, declares a whole-term array. An
+   empirical law over a numeric array wraps it as a single-field Record at
+   the constructor boundary for now.
 
    `NumericRecordDistribution` additionally has the
    `FlatNumericRecordDistribution` *refinement* — not a third
@@ -829,7 +830,8 @@ Three rules govern how the framework's universal types relate.
    `NumericDistribution` is not an implementation either. It is the
    marker of a numeric declaration, read from each law's `event_spec`,
    so one class may hold numeric and non-numeric instances, as
-   `EmpiricalDistribution` does.
+   `EmpiricalDistribution` does. Registration refuses a method whose
+   supported types list it, since dispatch selects by class.
 
 3. **Iteration is a Record-family convention.** `Record` and
    `NumericRecord` iterate field names dict-style. A `RecordBatch` is a collection, not a named tree:

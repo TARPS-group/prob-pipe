@@ -191,7 +191,8 @@ class TestInheritance:
         assert hasattr(rm, "inner_support")
         assert hasattr(rm, "inner_event_shape")
         assert not hasattr(rm, "support")
-        with pytest.raises(TypeError, match="does not draw a single array"):
+        assert not hasattr(rm, "event_shape")
+        with pytest.raises(AttributeError, match="does not draw a single array"):
             _ = rm.event_shape
 
 

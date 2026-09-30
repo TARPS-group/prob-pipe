@@ -19,7 +19,6 @@ except ImportError:
     task = flow = None
 
 from . import _broker, _context, _execution_contract
-from ._plan import StochasticPlan
 from ._managed import (
     ManagedAttemptState,
     ManagedClaimReport,
@@ -34,6 +33,7 @@ from ._managed import (
     point_unit_segment,
     sweep_unit_segment,
 )
+from ._plan import StochasticPlan
 
 __all__ = (
     "lifted_evaluation_unit_segment",

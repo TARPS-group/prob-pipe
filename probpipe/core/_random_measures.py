@@ -120,8 +120,7 @@ class RandomMeasure(Distribution):
         Distribution name.
     event_spec : OutputSpec or TermSpec, optional
         The declaration of one draw, a ``DistributionSpec``. By default a draw
-        is a law whose event is opaque, a whole term under *name*; that default
-        is provisional.
+        is a law whose event is opaque, a whole term under *name*.
     """
 
     def __init__(self, name: str, event_spec: OutputSpec | TermSpec | None = None):
