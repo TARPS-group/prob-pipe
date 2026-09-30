@@ -27,11 +27,11 @@ from probpipe import (
     workflow_run,
 )
 from probpipe.core.protocols import SupportsLogProb
-from probpipe.functions._call import make_signature_info_from_signature
 from probpipe.functions._normalization import (
     DISTRIBUTION_HINT_PROTOCOLS,
     normalize_distribution_values,
 )
+from probpipe.values._binding import make_signature_info_from_signature
 from probpipe.values._function_base import Function
 
 

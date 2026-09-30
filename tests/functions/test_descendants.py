@@ -24,15 +24,16 @@ from probpipe import (
     TransformedDistribution,
     workflow_run,
 )
-from probpipe.functions import _call, _descendants
+from probpipe.functions import _descendants
 from probpipe.functions._plan import build_broadcast_plan, build_stochastic_plan
+from probpipe.values import _binding
 
 
 def _stochastic_plan(values, n_broadcast_samples=16):
     signature = inspect.Signature(
         [inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in values]
     )
-    signature_info = _call.make_signature_info_from_signature(signature)
+    signature_info = _binding.make_signature_info_from_signature(signature)
     broadcast_plan = build_broadcast_plan(values=values, signature_info=signature_info)
     return build_stochastic_plan(values, broadcast_plan, n_broadcast_samples)
 

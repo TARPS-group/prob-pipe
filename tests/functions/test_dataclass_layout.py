@@ -23,6 +23,7 @@ from probpipe.functions import (
     _replay,
     _rng,
 )
+from probpipe.values import _binding
 
 _WORKFLOW_MODULES = (
     _broker,
@@ -41,7 +42,7 @@ _WORKFLOW_MODULES = (
 
 @pytest.fixture(
     params=[
-        _call.WorkflowInputRef("x"),
+        _binding.WorkflowInputRef("x"),
         _callable.CallableAnchor(False, "local_function", None, None),
         _execution_contract.make_execution_contract(
             evaluator="rowwise", transport="local_inline", stochastic_plan=None

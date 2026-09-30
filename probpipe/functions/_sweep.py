@@ -15,6 +15,8 @@ from typing import Any
 import jax
 import numpy as np
 
+from ..values import _binding
+
 try:
     from prefect import flow, task
 except ImportError:
@@ -32,7 +34,7 @@ from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
 from ..distributions._distribution import Distribution
-from . import _broker, _call, _context, _execution, _execution_contract, _plan, _recipe, _result
+from . import _broker, _context, _execution, _execution_contract, _plan, _recipe, _result
 
 
 def execute_sweep(
@@ -47,7 +49,7 @@ def execute_sweep(
     ],
     requested_dispatch: str,
     resolve_dispatch: Callable[..., str],
-    require_jax_traceable: Callable[[dict[str, Any], list[_call.WorkflowInputRef]], None],
+    require_jax_traceable: Callable[[dict[str, Any], list[_binding.WorkflowInputRef]], None],
     distribution_broadcast: Callable[
         [
             dict[str, Any],
@@ -201,16 +203,16 @@ def slice_sweep_values(
         position: Any = idx
         if len(group.batch_shape) > 1:
             position = tuple(int(i) for i in np.unravel_index(idx, group.batch_shape))
-        replacements: dict[_call.WorkflowInputRef, Any] = {}
+        replacements: dict[_binding.WorkflowInputRef, Any] = {}
         for ref in group.arg_refs:
-            source = _call.input_ref_value(values, ref)
+            source = _binding.input_ref_value(values, ref)
             if isinstance(source, DistributionArray):
                 replacements[ref] = source._flat_component(idx)
             elif isinstance(source, Batch):
                 replacements[ref] = source[position]
             else:
                 replacements[ref] = source[idx]
-        out = _call.replace_input_refs(out, replacements)
+        out = _binding.replace_input_refs(out, replacements)
     return out
 
 
@@ -218,7 +220,7 @@ def execute_sweep_rows(
     *,
     func: Callable[..., Any],
     values: dict[str, Any],
-    array_args: list[_call.WorkflowInputRef],
+    array_args: list[_binding.WorkflowInputRef],
     plan: _plan.BroadcastPlan,
     make_execution_config: Callable[
         [],
@@ -226,7 +228,7 @@ def execute_sweep_rows(
     ],
     requested_dispatch: str,
     resolve_dispatch: Callable[..., str],
-    require_jax_traceable: Callable[[dict[str, Any], list[_call.WorkflowInputRef]], None],
+    require_jax_traceable: Callable[[dict[str, Any], list[_binding.WorkflowInputRef]], None],
     workflow_kind: WorkflowKind = WorkflowKind.OFF,
     workflow_name: str,
     output_is_declared: bool = False,
@@ -241,7 +243,7 @@ def execute_sweep_rows(
         return []
 
     has_dist_array = any(
-        isinstance(_call.input_ref_value(values, ref), DistributionArray) for ref in array_args
+        isinstance(_binding.input_ref_value(values, ref), DistributionArray) for ref in array_args
     )
     jax_structure_supported = not (
         has_dist_array or len(plan.array_groups) > 1 or len(array_args) > 1
@@ -317,7 +319,7 @@ def mapped_row_body(
     *,
     func: Callable[..., Any],
     values: dict[str, Any],
-    array_args: Sequence[_call.WorkflowInputRef],
+    array_args: Sequence[_binding.WorkflowInputRef],
     field_name: str,
     output_is_declared: bool = False,
 ) -> Callable[[Any], Any]:
@@ -343,7 +345,7 @@ def mapped_row_body(
         replacements = {
             ref: Record(ref.label, leaves) for ref, leaves in zip(array_args, array_slice_leaves)
         }
-        out = func(**_call.replace_input_refs(values, replacements))
+        out = func(**_binding.replace_input_refs(values, replacements))
         if not output_is_declared:
             out = _row_at_its_kind(out, field_name)
             if isinstance(out, Record):
@@ -363,7 +365,7 @@ def execute_sweep_rows_jax(
     *,
     func: Callable[..., Any],
     values: dict[str, Any],
-    array_args: list[_call.WorkflowInputRef],
+    array_args: list[_binding.WorkflowInputRef],
     n_total: int,
     workflow_kind: WorkflowKind = WorkflowKind.OFF,
     workflow_name: str,
@@ -381,7 +383,7 @@ def execute_sweep_rows_jax(
 
     vmap_input = []
     for ref in array_args:
-        array_value = _call.input_ref_value(values, ref)
+        array_value = _binding.input_ref_value(values, ref)
         n_batch = len(array_value.batch_shape)
         vmap_input.append(
             {
@@ -414,8 +416,8 @@ def execute_sweep_rows_jax(
 def make_sweep_provenance(
     *,
     values: Mapping[str, Any],
-    array_args: list[_call.WorkflowInputRef],
-    dist_args: list[_call.WorkflowInputRef],
+    array_args: list[_binding.WorkflowInputRef],
+    dist_args: list[_binding.WorkflowInputRef],
     workflow_name: str,
     batch_shape: tuple[int, ...],
     k: int,
@@ -431,11 +433,11 @@ def make_sweep_provenance(
     """
     regime = "nested" if dist_args else "stack"
     if parents is None:
-        array_candidates = [_call.input_ref_value(values, ref) for ref in array_args]
+        array_candidates = [_binding.input_ref_value(values, ref) for ref in array_args]
         dist_candidates = [
-            _call.input_ref_value(values, ref)
+            _binding.input_ref_value(values, ref)
             for ref in dist_args
-            if isinstance(_call.input_ref_value(values, ref), Distribution)
+            if isinstance(_binding.input_ref_value(values, ref), Distribution)
         ]
         parents = array_candidates + dist_candidates
     controls, diagnostics = _recipe.provenance_recipe_fields(stochastic_plan)

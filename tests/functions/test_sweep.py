@@ -28,8 +28,9 @@ from probpipe import (
 )
 from probpipe.core._record_batch import _MappedBatchColumns
 from probpipe.core.constraints import positive
-from probpipe.functions import _call, _execution, _sweep
+from probpipe.functions import _execution, _sweep
 from probpipe.functions._plan import build_broadcast_plan, build_stochastic_plan
+from probpipe.values import _binding
 
 
 def _numeric_record_batch(
@@ -41,15 +42,15 @@ def _numeric_record_batch(
     )
 
 
-def _ref(name: str) -> _call.WorkflowInputRef:
-    return _call.WorkflowInputRef(name)
+def _ref(name: str) -> _binding.WorkflowInputRef:
+    return _binding.WorkflowInputRef(name)
 
 
 def _plan(values):
     signature = inspect.Signature(
         [inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in values]
     )
-    signature_info = _call.make_signature_info_from_signature(signature)
+    signature_info = _binding.make_signature_info_from_signature(signature)
     return build_broadcast_plan(values=values, signature_info=signature_info)
 
 

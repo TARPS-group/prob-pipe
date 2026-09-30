@@ -29,9 +29,9 @@ from ..core.provenance import Provenance
 from ..core.tracked import TrackedTerm
 from ..custom_types import Array, PRNGKey
 from ..distributions._distribution import Distribution
+from ..values._binding import WorkflowInputRef, input_ref_value, replace_input_refs
 from . import _execution, _plan, _recipe
 from ._broker import _record_active_execution_contract
-from ._call import WorkflowInputRef, input_ref_value, replace_input_refs
 from ._context import _workflow_jax_runtime_guard
 from ._execution_contract import (
     make_execution_contract,

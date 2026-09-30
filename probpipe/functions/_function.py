@@ -13,6 +13,8 @@ from typing import Any, overload
 import jax
 import jax.numpy as jnp
 
+from ..values import _binding
+
 try:
     from prefect import flow, task
 except ImportError:
@@ -291,8 +293,8 @@ def _call_with_options_in_context(
     provenance_parents: list[TrackedTerm] = [function]
     provenance_inputs: dict[str, Any] = {}
     seen_parent_ids = {id(function)}
-    for ref in _call.iter_input_refs(function._signature_info, values):
-        value = _call.input_ref_value(values, ref)
+    for ref in _binding.iter_input_refs(function._signature_info, values):
+        value = _binding.input_ref_value(values, ref)
         if isinstance(value, TrackedTerm) and id(value) not in seen_parent_ids:
             seen_parent_ids.add(id(value))
             provenance_parents.append(value)
@@ -326,7 +328,7 @@ def _call_with_options_in_context(
 
     def resolve_dispatch(
         dispatch_values: dict[str, Any],
-        broadcast_args: list[_call.WorkflowInputRef],
+        broadcast_args: list[_binding.WorkflowInputRef],
         *,
         jax_supported: bool = True,
     ) -> str:
@@ -353,7 +355,7 @@ def _call_with_options_in_context(
 
     def require_jax_traceable(
         dispatch_values: dict[str, Any],
-        broadcast_args: list[_call.WorkflowInputRef],
+        broadcast_args: list[_binding.WorkflowInputRef],
     ) -> None:
         _require_jax_traceable(
             function,
@@ -478,7 +480,7 @@ def _call_with_options_in_context(
 def _jax_traceability_error(
     function: Function,
     values: dict[str, Any],
-    broadcast_args: list[_call.WorkflowInputRef],
+    broadcast_args: list[_binding.WorkflowInputRef],
     *,
     func: Callable[..., Any],
     stochastic_plan: _plan.StochasticPlan | None,
@@ -498,18 +500,18 @@ def _jax_traceability_error(
     try:
         dummy_kw = dict(values)
         broadcast_refs = set(broadcast_args)
-        batched_sources: dict[_call.WorkflowInputRef, Any] = {}
+        batched_sources: dict[_binding.WorkflowInputRef, Any] = {}
         unvectorized_batches: dict[Any, Any] = {}
-        drawn_refs: list[_call.WorkflowInputRef] = []
-        for ref in _call.iter_input_refs(function._signature_info, values):
-            v = _call.input_ref_value(values, ref)
+        drawn_refs: list[_binding.WorkflowInputRef] = []
+        for ref in _binding.iter_input_refs(function._signature_info, values):
+            v = _binding.input_ref_value(values, ref)
             if ref in broadcast_refs:
                 # Batched-record input: take row 0 so the dummy call
                 # sees what an inner sweep iteration will actually
                 # receive.
                 if isinstance(v, RecordBatch):
                     batched_sources[ref] = v
-                    dummy_kw = _call.replace_input_ref(dummy_kw, ref, v[0])
+                    dummy_kw = _binding.replace_input_ref(dummy_kw, ref, v[0])
                 elif isinstance(v, Batch):
                     # A batch that is not a batch of records is still a swept
                     # source, not a draw. The probe's synthesis below builds a
@@ -532,7 +534,7 @@ def _jax_traceability_error(
                     replacement = jnp.asarray(v)
                 else:
                     replacement = v
-                dummy_kw = _call.replace_input_ref(dummy_kw, ref, replacement)
+                dummy_kw = _binding.replace_input_ref(dummy_kw, ref, replacement)
         with _context._workflow_probe():
             if unvectorized_batches:
                 raise _UnvectorizableBatchSignal(
@@ -658,7 +660,7 @@ def _has_output_support(spec: Any) -> bool:
 def _require_jax_traceable(
     function: Function,
     values: dict[str, Any],
-    broadcast_args: list[_call.WorkflowInputRef],
+    broadcast_args: list[_binding.WorkflowInputRef],
     *,
     func: Callable[..., Any],
     stochastic_plan: _plan.StochasticPlan | None,
@@ -697,7 +699,7 @@ def _require_jax_traceable(
 def _resolve_dispatch(
     function: Function,
     values: dict[str, Any],
-    broadcast_args: list[_call.WorkflowInputRef],
+    broadcast_args: list[_binding.WorkflowInputRef],
     *,
     jax_supported: bool = True,
     func: Callable[..., Any],

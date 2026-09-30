@@ -15,6 +15,7 @@ import pytest
 from probpipe import BroadcastDistribution, Normal, workflow_run
 from probpipe.core.node import Node
 from probpipe.functions import Module, _call, workflow_method
+from probpipe.values import _binding
 from probpipe.values._function_base import Function
 
 
@@ -77,7 +78,7 @@ def _resolve_call(
     default_include_inputs=False,
     **call_inputs,
 ):
-    info = _call.make_signature_info(func)
+    info = _binding.make_signature_info(func)
     return _call.resolve_workflow_call(
         info,
         args,
@@ -96,20 +97,20 @@ class TestWorkflowCallHelpers:
         def collect(head, *items, **extras):
             return head, items, extras
 
-        info = _call.make_signature_info(collect)
+        info = _binding.make_signature_info(collect)
         values = {
             "head": 1,
             "items": (2, 3),
             "extras": {"tail": 4},
         }
 
-        refs = _call.iter_input_refs(info, values)
+        refs = _binding.iter_input_refs(info, values)
 
         assert refs == (
-            _call.WorkflowInputRef("head"),
-            _call.WorkflowInputRef("items", subscript=0),
-            _call.WorkflowInputRef("items", subscript=1),
-            _call.WorkflowInputRef("extras", subscript="tail"),
+            _binding.WorkflowInputRef("head"),
+            _binding.WorkflowInputRef("items", subscript=0),
+            _binding.WorkflowInputRef("items", subscript=1),
+            _binding.WorkflowInputRef("extras", subscript="tail"),
         )
         assert tuple(ref.label for ref in refs) == (
             "head",
@@ -117,7 +118,7 @@ class TestWorkflowCallHelpers:
             "*items[1]",
             "**extras['tail']",
         )
-        assert tuple(_call.input_ref_value(values, ref) for ref in refs) == (
+        assert tuple(_binding.input_ref_value(values, ref) for ref in refs) == (
             1,
             2,
             3,
@@ -128,20 +129,20 @@ class TestWorkflowCallHelpers:
         def collect(head: Any, *items: Any, **extras: Any):
             return head, items, extras
 
-        info = _call.make_signature_info(collect)
+        info = _binding.make_signature_info(collect)
 
-        assert _call.input_ref_hint(info, _call.WorkflowInputRef("head")) is Any
+        assert _binding.input_ref_hint(info, _binding.WorkflowInputRef("head")) is Any
         assert (
-            _call.input_ref_hint(
+            _binding.input_ref_hint(
                 info,
-                _call.WorkflowInputRef("items", subscript=0),
+                _binding.WorkflowInputRef("items", subscript=0),
             )
             is None
         )
         assert (
-            _call.input_ref_hint(
+            _binding.input_ref_hint(
                 info,
-                _call.WorkflowInputRef("extras", subscript="tail"),
+                _binding.WorkflowInputRef("extras", subscript="tail"),
             )
             is None
         )
@@ -152,12 +153,12 @@ class TestWorkflowCallHelpers:
             "items": (2, 3),
             "extras": {"tail": 4},
         }
-        head = _call.WorkflowInputRef("head")
-        first_item = _call.WorkflowInputRef("items", subscript=0)
-        tail = _call.WorkflowInputRef("extras", subscript="tail")
+        head = _binding.WorkflowInputRef("head")
+        first_item = _binding.WorkflowInputRef("items", subscript=0)
+        tail = _binding.WorkflowInputRef("extras", subscript="tail")
 
-        singly_replaced = _call.replace_input_ref(values, first_item, 20)
-        jointly_replaced = _call.replace_input_refs(
+        singly_replaced = _binding.replace_input_ref(values, first_item, 20)
+        jointly_replaced = _binding.replace_input_refs(
             values,
             {
                 head: 10,

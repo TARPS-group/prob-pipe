@@ -38,7 +38,7 @@ from ..core.protocols import (
     SupportsVariance,
 )
 from ..distributions._distribution import Distribution
-from . import _call
+from ..values import _binding
 
 DISTRIBUTION_HINT_PROTOCOLS: tuple[type, ...] = (
     SupportsExpectation,
@@ -75,7 +75,7 @@ def is_distribution_hint(expected: Any) -> bool:
 def normalize_distribution_values(
     *,
     values: dict[str, Any],
-    signature_info: _call.WorkflowSignatureInfo,
+    signature_info: _binding.WorkflowSignatureInfo,
 ) -> dict[str, Any]:
     """Normalize distribution-valued inputs before broadcast planning.
 
@@ -87,9 +87,9 @@ def normalize_distribution_values(
     """
     out = dict(values)
 
-    for ref in _call.iter_input_refs(signature_info, values):
-        value = _call.input_ref_value(out, ref)
-        expected = _call.input_ref_hint(signature_info, ref)
+    for ref in _binding.iter_input_refs(signature_info, values):
+        value = _binding.input_ref_value(out, ref)
+        expected = _binding.input_ref_hint(signature_info, ref)
 
         if isinstance(value, DistributionArray):
             if (
@@ -97,19 +97,19 @@ def normalize_distribution_values(
                 and not _is_distribution_array_hint(expected)
                 and expected is not Any
             ):
-                out = _call.replace_input_ref(out, ref, value._flat_component(0))
+                out = _binding.replace_input_ref(out, ref, value._flat_component(0))
             continue
 
         if expected is not None:
             value = _convert_hinted_distribution(value, expected)
-            out = _call.replace_input_ref(out, ref, value)
+            out = _binding.replace_input_ref(out, ref, value)
 
         if (
             not is_distribution_hint(expected)
             and converter_registry.is_distribution_type(value)
             and not isinstance(value, Distribution)
         ):
-            out = _call.replace_input_ref(
+            out = _binding.replace_input_ref(
                 out,
                 ref,
                 converter_registry.convert(value, NumericRecordDistribution),

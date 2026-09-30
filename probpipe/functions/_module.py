@@ -7,6 +7,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any
 
+from ..values import _binding
+
 try:
     from graphviz import Digraph
 except ImportError:
@@ -15,7 +17,6 @@ except ImportError:
 from ..core.config import WorkflowKind
 from ..core.node import Node
 from ..values import Function
-from . import _call
 
 
 def workflow_method(func: Callable):
@@ -181,7 +182,7 @@ class Module(Node):
             # Infer dependencies from workflow signature
             # (Functions don't store child_nodes; they resolve dependencies at runtime)
             for param_name in attr._signature_info.param_names:
-                is_dependency = _call.is_dependency_param(
+                is_dependency = _binding.is_dependency_param(
                     attr._signature_info,
                     param_name,
                     dependency_type=Node,

@@ -21,7 +21,6 @@ from probpipe import (
     ProductDistribution,
 )
 from probpipe.core.protocols import SupportsSampling
-from probpipe.functions import _call
 from probpipe.functions._normalization import (
     normalize_distribution_values,
 )
@@ -35,6 +34,7 @@ from probpipe.functions._plan import (
     build_broadcast_plan,
     build_stochastic_plan,
 )
+from probpipe.values import _binding
 
 
 def _numeric_record_batch(
@@ -46,15 +46,15 @@ def _numeric_record_batch(
     )
 
 
-def _ref(name: str) -> _call.WorkflowInputRef:
-    return _call.WorkflowInputRef(name)
+def _ref(name: str) -> _binding.WorkflowInputRef:
+    return _binding.WorkflowInputRef(name)
 
 
 def _plan(values, hints=None):
     signature = inspect.Signature(
         [inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in values]
     )
-    signature_info = _call.make_signature_info_from_signature(
+    signature_info = _binding.make_signature_info_from_signature(
         signature,
         hints=hints,
     )
@@ -245,7 +245,7 @@ class TestPlanPurity:
         signature = inspect.Signature(
             [inspect.Parameter("x", inspect.Parameter.POSITIONAL_OR_KEYWORD)]
         )
-        signature_info = _call.make_signature_info_from_signature(signature)
+        signature_info = _binding.make_signature_info_from_signature(signature)
         raw_plan = build_broadcast_plan(
             values=values,
             signature_info=signature_info,
