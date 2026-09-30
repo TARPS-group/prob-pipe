@@ -30,6 +30,7 @@ from ..core._numeric_record import NumericRecord
 from ..core._numeric_record_batch import NumericRecordBatch
 
 if TYPE_CHECKING:
+    from ..core._specs import NumericRecordSpec
     from ..custom_types import Array, ArrayLike, PRNGKey
 
 __all__ = ["EpanechnikovKernel", "GaussianKernel", "SmoothingKernel"]
@@ -61,16 +62,64 @@ def _flat_centers(centers: ArrayLike | NumericRecordBatch) -> Array:
     return array
 
 
-def _flat_scales(scales: ArrayLike | NumericRecord, centers: Array) -> Array:
-    """The scales broadcast to the centers' shape ``(n, *event)``.
+def _record_scales(scales: NumericRecord, fields: NumericRecordSpec | None) -> Array:
+    """A record of scales as one scale per coordinate, in the order of the centers' fields.
+
+    Each field of *scales* is matched to the centers' field at the same leaf
+    path and broadcast over that field's coordinates.
 
     Raises
     ------
     ValueError
-        If the scales do not broadcast against the centers, or a concrete scale
-        is not positive.
+        If the centers are not records, the leaf paths of *scales* are not
+        those of the centers, or a field's scale does not broadcast over that
+        field's coordinates.
     """
-    array = jnp.asarray(scales.to_vector() if isinstance(scales, NumericRecord) else scales)
+    if fields is None:
+        raise ValueError(
+            "a record of scales matches the fields of record centers, but the centers are an "
+            "array; pass the scales as an array"
+        )
+    expected, given = list(fields), list(scales)
+    if set(given) != set(expected):
+        raise ValueError(
+            f"the scales' fields {given} are not the centers' fields {expected}: "
+            f"missing {sorted(set(expected) - set(given))}, "
+            f"unexpected {sorted(set(given) - set(expected))}"
+        )
+    shapes = fields.leaf_shapes
+    blocks = []
+    for path in expected:
+        scale = jnp.asarray(scales[path])
+        try:
+            block = jnp.broadcast_to(scale, shapes[path])
+        except ValueError:
+            raise ValueError(
+                f"the scale of field {path!r}, of shape {scale.shape}, does not broadcast over "
+                f"the field's shape {shapes[path]}"
+            ) from None
+        blocks.append(jnp.reshape(block, -1))
+    return jnp.concatenate(blocks)
+
+
+def _flat_scales(
+    scales: ArrayLike | NumericRecord, centers: Array, fields: NumericRecordSpec | None
+) -> Array:
+    """The scales broadcast to the centers' shape ``(n, *event)``.
+
+    *fields* is the element spec of record centers, and ``None`` for array
+    centers. A record of scales is matched to it by :func:`_record_scales`.
+
+    Raises
+    ------
+    ValueError
+        If a record of scales does not match the centers' fields, the scales do
+        not broadcast against the centers, or a concrete scale is not positive.
+    """
+    if isinstance(scales, NumericRecord):
+        array = _record_scales(scales, fields)
+    else:
+        array = jnp.asarray(scales)
     try:
         array = jnp.broadcast_to(array, centers.shape).astype(centers.dtype)
     except ValueError:
@@ -104,7 +153,9 @@ class SmoothingKernel(ABC):
     scales : ArrayLike or NumericRecord
         The scales, broadcast against the centers: one scale, one per
         coordinate, or one per center and coordinate. A numeric record of
-        scales is flattened to its coordinates.
+        scales requires record centers with the same fields, matched by leaf
+        path. Each field's scale broadcasts over that field's coordinates, and
+        the scales are flattened in the centers' field order.
 
     Attributes
     ----------
@@ -115,8 +166,9 @@ class SmoothingKernel(ABC):
     Raises
     ------
     ValueError
-        If the centers have no atom axis, or the scales do not broadcast against
-        the centers or are not positive.
+        If the centers have no atom axis, a record of scales does not have the
+        centers' fields, or the scales do not broadcast against the centers or
+        are not positive.
     """
 
     variance: ClassVar[float]
@@ -124,8 +176,9 @@ class SmoothingKernel(ABC):
     def __init__(
         self, centers: ArrayLike | NumericRecordBatch, scales: ArrayLike | NumericRecord
     ) -> None:
+        fields = centers.event_template if isinstance(centers, NumericRecordBatch) else None
         self._centers = _flat_centers(centers)
-        self._scales = _flat_scales(scales, self._centers)
+        self._scales = _flat_scales(scales, self._centers, fields)
 
     @classmethod
     @abstractmethod
@@ -142,8 +195,9 @@ class SmoothingKernel(ABC):
         Raises
         ------
         ValueError
-            If the centers have no atom axis, or the scales do not broadcast
-            against the centers or are not positive.
+            If the centers have no atom axis, a record of scales does not have
+            the centers' fields, or the scales do not broadcast against the
+            centers or are not positive.
         """
 
     @abstractmethod

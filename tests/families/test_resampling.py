@@ -36,6 +36,16 @@ def centers():
     return jnp.array([[0.0, 1.0], [2.0, -1.0], [4.0, 0.5]])
 
 
+@pytest.fixture
+def record_centers(centers):
+    return NumericRecordBatch(
+        "atoms",
+        {"a": centers[:, 0], "b": centers[:, 1]},
+        "atom",
+        element_spec=NumericRecordSpec(a=(), b=()),
+    )
+
+
 # ---------------------------------------------------------------------------
 # The smoothing kernels
 # ---------------------------------------------------------------------------
@@ -62,20 +72,84 @@ class TestTheUniformConstructor:
         np.testing.assert_allclose(scalar, per_copy, rtol=1e-6)
 
     @pytest.mark.parametrize("kernel", _KERNELS)
-    def test_record_centers_and_scales_flatten_to_their_coordinates(self, kernel, centers):
-        batch = NumericRecordBatch(
-            "atoms",
-            {"a": centers[:, 0], "b": centers[:, 1]},
-            "atom",
-            element_spec=NumericRecordSpec(a=(), b=()),
-        )
+    def test_record_centers_and_scales_flatten_to_their_coordinates(
+        self, kernel, centers, record_centers
+    ):
         scales = NumericRecord("h", {"a": 0.5, "b": 1.5})
-        from_records = kernel.build_kernels(batch, scales)
+        from_records = kernel.build_kernels(record_centers, scales)
         from_arrays = kernel.build_kernels(centers, jnp.array([0.5, 1.5]))
         x = jnp.array([1.0, 0.0])
         np.testing.assert_allclose(
             from_records._log_density(x), from_arrays._log_density(x), rtol=1e-6
         )
+
+    @pytest.mark.parametrize("kernel", _KERNELS)
+    def test_record_scales_match_the_centers_fields_by_path(self, kernel, centers, record_centers):
+        # The point is inside the first copy only when the scales are matched by field.
+        scales = NumericRecord("h", {"b": 0.8, "a": 2.5})
+        from_records = kernel.build_kernels(record_centers, scales)
+        from_arrays = kernel.build_kernels(centers, jnp.array([2.5, 0.8]))
+        x = jnp.array([1.0, 0.5])
+        assert np.isfinite(from_arrays._log_density(x)[0])
+        np.testing.assert_allclose(
+            from_records._log_density(x), from_arrays._log_density(x), rtol=1e-6
+        )
+
+    @pytest.mark.parametrize("kernel", _KERNELS)
+    def test_nested_record_scales_match_the_centers_leaf_paths(self, kernel):
+        points = jnp.array([[0.0, 1.0, -1.0, 2.0], [2.0, 0.5, 0.0, -1.0]])
+        batch = NumericRecordBatch(
+            "atoms",
+            {"x/p": points[:, 0], "x/q": points[:, 1:3], "y": points[:, 3]},
+            "atom",
+            element_spec=NumericRecordSpec(x=NumericRecordSpec(p=(), q=(2,)), y=()),
+        )
+        scales = NumericRecord("h", {"y": 3.0, "x": {"q": jnp.array([2.0, 1.5]), "p": 1.2}})
+        from_records = kernel.build_kernels(batch, scales)
+        from_arrays = kernel.build_kernels(points, jnp.array([1.2, 2.0, 1.5, 3.0]))
+        x = jnp.array([0.5, 0.0, -0.5, 1.0])
+        np.testing.assert_allclose(
+            from_records._log_density(x), from_arrays._log_density(x), rtol=1e-6
+        )
+
+    @pytest.mark.parametrize("kernel", _KERNELS)
+    def test_a_fields_scale_broadcasts_over_the_fields_coordinates(self, kernel):
+        points = jnp.array([[0.0, 1.0, -1.0], [2.0, 0.5, 0.0]])
+        batch = NumericRecordBatch(
+            "atoms",
+            {"a": points[:, 0], "b": points[:, 1:]},
+            "atom",
+            element_spec=NumericRecordSpec(a=(), b=(2,)),
+        )
+        from_records = kernel.build_kernels(batch, NumericRecord("h", {"b": 2.0, "a": 0.5}))
+        from_arrays = kernel.build_kernels(points, jnp.array([0.5, 2.0, 2.0]))
+        x = jnp.array([0.2, 1.5, -0.5])
+        np.testing.assert_allclose(
+            from_records._log_density(x), from_arrays._log_density(x), rtol=1e-6
+        )
+
+    @pytest.mark.parametrize("kernel", _KERNELS)
+    @pytest.mark.parametrize(
+        "fields",
+        [{"a": 0.5, "c": 1.5}, {"a": 0.5}, {"a": 0.5, "b": 1.5, "c": 1.0}],
+        ids=["another-field", "a-missing-field", "an-extra-field"],
+    )
+    def test_record_scales_over_other_fields_raise(self, kernel, record_centers, fields):
+        with pytest.raises(ValueError, match="fields"):
+            kernel.build_kernels(record_centers, NumericRecord("h", fields))
+
+    @pytest.mark.parametrize("kernel", _KERNELS)
+    def test_a_fields_scale_that_does_not_broadcast_over_the_field_raises(
+        self, kernel, record_centers
+    ):
+        scales = NumericRecord("h", {"a": 0.5, "b": jnp.array([1.0, 2.0])})
+        with pytest.raises(ValueError, match="'b'"):
+            kernel.build_kernels(record_centers, scales)
+
+    @pytest.mark.parametrize("kernel", _KERNELS)
+    def test_record_scales_for_array_centers_raise(self, kernel, centers):
+        with pytest.raises(ValueError, match="record"):
+            kernel.build_kernels(centers, NumericRecord("h", {"a": 0.5, "b": 1.5}))
 
     @pytest.mark.parametrize("kernel", _KERNELS)
     def test_scales_that_do_not_broadcast_raise(self, kernel, centers):
