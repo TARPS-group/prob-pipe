@@ -223,9 +223,9 @@ class TestNutpieStanIntegration:
         x = rng.normal(size=N)
         y = 0.5 + 1.5 * x + rng.normal(size=N)
         model = StanModel(
+            "linreg",
             str(stan_file),
             data={"N": N, "x": x.tolist(), "y": y.tolist()},
-            name="linreg",
         )
 
         result = condition_on_nutpie.apply(
@@ -276,7 +276,7 @@ class TestNutpieIntegration:
         """Nutpie recovers the analytical posterior mean for a simple Gaussian."""
         np.random.seed(0)
         y_obs = np.array([1.2, 0.8, 1.1, 0.9, 1.0], dtype=float)
-        model = PyMCModel(_gaussian_pymc_fn, name="gaussian")
+        model = PyMCModel("gaussian", _gaussian_pymc_fn)
         result = condition_on_nutpie.apply(
             model,
             data={"y": y_obs},
@@ -297,10 +297,10 @@ class TestNutpieIntegration:
         post_mean = 5.0 * y_bar / (1.0 / 100.0 + 5.0)
         post_sd = np.sqrt(1.0 / (1.0 / 100.0 + 5.0))
         # PyMCModel now provides an event_template (one field per PyMC RV),
-        # so draws() returns a NumericRecordArray keyed by RV name. The
+        # so draws() returns a NumericRecordBatch keyed by RV name. The
         # only parameter is `mu`, with event_shape ().
         draws = result.draws()
-        assert draws.fields == ("mu",)
+        assert draws.event_template.fields == ("mu",)
         mu_draws = jnp.asarray(draws["mu"])
         assert mu_draws.shape == (1000,)  # 2 chains × 500 draws, flattened
         # With 1000 draws total, MC SE for mean ~ post_sd / sqrt(1000) ~ 0.014
@@ -308,7 +308,7 @@ class TestNutpieIntegration:
         np.testing.assert_allclose(float(jnp.std(mu_draws)), post_sd, atol=0.05)
 
     def test_annotations_trace_attached(self):
-        model = PyMCModel(_gaussian_pymc_fn, name="gaussian")
+        model = PyMCModel("gaussian", _gaussian_pymc_fn)
         y_obs = np.array([0.0, 1.0], dtype=float)
         result = condition_on_nutpie.apply(
             model,
@@ -341,7 +341,7 @@ class TestNutpieIntegration:
                 pm.Normal("y", mu=zeta + alpha + mu, sigma=1000.0, observed=y)
             return m
 
-        model = PyMCModel(model_fn, name="ordering")
+        model = PyMCModel("ordering", model_fn)
         result = condition_on_nutpie.apply(
             model,
             data={"y": np.zeros(4, dtype=float)},
@@ -351,7 +351,7 @@ class TestNutpieIntegration:
             random_seed=0,
         )
         draws = result.draws()
-        assert draws.fields == ("zeta", "alpha", "mu")
+        assert draws.event_template.fields == ("zeta", "alpha", "mu")
         for field, prior_mean in [("zeta", 100.0), ("alpha", 0.0), ("mu", -100.0)]:
             got = float(jnp.mean(jnp.asarray(draws[field])))
             np.testing.assert_allclose(got, prior_mean, atol=10.0)
@@ -374,7 +374,7 @@ class TestNutpieIntegration:
                 pm.Normal("y", mu=mu + X_rv, sigma=1000.0, observed=y)
             return m
 
-        model = PyMCModel(model_fn, name="partial")
+        model = PyMCModel("partial", model_fn)
         result = condition_on_nutpie.apply(
             model,
             data={"y": np.zeros(5, dtype=float)},
@@ -384,6 +384,6 @@ class TestNutpieIntegration:
             random_seed=0,
         )
         draws = result.draws()
-        assert set(draws.fields) == {"mu", "X"}
+        assert set(draws.event_template.fields) == {"mu", "X"}
         np.testing.assert_allclose(float(jnp.mean(jnp.asarray(draws["mu"]))), 100.0, atol=10.0)
         np.testing.assert_allclose(float(jnp.mean(jnp.asarray(draws["X"]))), -100.0, atol=10.0)

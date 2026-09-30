@@ -11,19 +11,16 @@ from typing import Any, Protocol, cast
 import jax.numpy as jnp
 import numpy as np
 
+from ..distributions._distribution import Distribution
 from ._array_backend import _numpy_dtype_of
-from ._distribution_base import Distribution
-from ._record_array import RecordArray
-from .constraints import _supports_compatible
-from .event_template import (
-    ArraySpec,
-    EventTemplate,
-    ValueSpec,
-    _concretize_event_template,
-    _full_array_shape_or_none,
-    _unify_event_template_with_value,
-    _unify_event_templates,
+from ._record_batch import RecordBatch
+from ._record_spec import (
+    _concretize_record_spec,
+    _unify_record_spec_with_value,
 )
+from ._spec_base import _full_array_shape_or_none, _unify_specs
+from ._specs import NumericArraySpec, RecordSpec, TermSpec
+from .constraints import _supports_compatible
 from .record import Record
 
 
@@ -73,8 +70,8 @@ def _validate_function_templates(
     *,
     function_name: str,
     signature: inspect.Signature,
-    input_template: EventTemplate | None,
-    output_template: EventTemplate | None,
+    input_template: RecordSpec | None,
+    output_template: RecordSpec | None,
     construction_bindings: Mapping[str, Any],
 ) -> None:
     """Validate signature/template relationships without specializing schemas."""
@@ -82,9 +79,9 @@ def _validate_function_templates(
         ("input_template", input_template),
         ("output_template", output_template),
     ):
-        if template is not None and not isinstance(template, EventTemplate):
+        if template is not None and not isinstance(template, RecordSpec):
             raise TypeError(
-                f"Function {function_name!r} {label} must be an EventTemplate or None, "
+                f"Function {function_name!r} {label} must be a RecordSpec or None, "
                 f"got {type(template).__name__}"
             )
 
@@ -180,37 +177,31 @@ def _validate_function_templates(
 def _validate_declared_input_value(
     *,
     function_name: str,
-    input_template: EventTemplate,
+    input_template: RecordSpec,
     parameter_name: str,
     value: Any,
     source: str,
     bindings: Mapping[str, int] | None = None,
 ) -> dict[str, int]:
     child = input_template.children[parameter_name]
-    single_parameter_template = EventTemplate({parameter_name: child})
-    try:
-        _, resolved = _unify_event_template_with_value(
-            single_parameter_template,
-            {parameter_name: value},
-            bindings,
-            context=f"Function {function_name!r} {source}",
-        )
-    except ValueError as error:
-        raise ValueError(str(error)) from None
+    resolved = dict(bindings or {})
+    child._bind_dims_from_value(
+        value, resolved, f"Function {function_name!r} {source}/{parameter_name}"
+    )
     return resolved
 
 
 def _bind_function_inputs(
     *,
     function_name: str,
-    input_template: EventTemplate | None,
+    input_template: RecordSpec | None,
     values: Mapping[str, Any],
     bindings: Mapping[str, int] | None = None,
-) -> tuple[EventTemplate | None, dict[str, int]]:
+) -> tuple[RecordSpec | None, dict[str, int]]:
     """Bind one call's raw inputs to its declaration template."""
     if input_template is None:
         return None, {}
-    return _unify_event_template_with_value(
+    return _unify_record_spec_with_value(
         input_template,
         values,
         bindings,
@@ -218,66 +209,98 @@ def _bind_function_inputs(
     )
 
 
+def _lifted_element_spec(
+    value: Any, *, expected: TermSpec, function_name: str, name: str
+) -> TermSpec:
+    """What one element of a lifted operand satisfies.
+
+    A :class:`~probpipe.core._batch.Batch` states this uniformly in
+    ``element_spec``, at every kind: a batch of records answers with a
+    ``RecordSpec``, one of arrays with a ``NumericArraySpec``, one of callables
+    with a ``FunctionSpec``. Reading the record-only ``event_template`` view
+    instead let only a batch of records be swept by a declared function, and made
+    a batch of records satisfy a declaration that named a bare array.
+
+    Temporary legacy-template adapter: live distributions still carry
+    event templates. The current sampling lift passes a sole immediate field as
+    a bare value when the callable declares a leaf, and as a record for a record declaration.
+    Resolve that legacy packaging here, before strict spec unification. Batch
+    element specs already name their actual kinds and need no adaptation.
+    Remove this unwrapping once live distributions carry OutputSpec declarations.
+    """
+    from ._batch import Batch
+
+    if isinstance(value, Batch):
+        return value.element_spec
+    template = getattr(value, "event_template", None)
+    if isinstance(template, RecordSpec):
+        if not isinstance(expected, RecordSpec) and len(template.children) == 1:
+            return next(iter(template.children.values()))
+        return template
+    raise ValueError(
+        f"Function {function_name!r} input {name!r} states no element specification for "
+        f"lifting: a {type(value).__name__} reports neither an element_spec nor an "
+        f"event_template"
+    )
+
+
 def _bind_planned_function_inputs(
     *,
     function_name: str,
-    input_template: EventTemplate | None,
+    input_template: RecordSpec | None,
     values: Mapping[str, Any],
     lifted_names: set[str],
-) -> tuple[EventTemplate | None, dict[str, int]]:
+) -> tuple[RecordSpec | None, dict[str, int]]:
     """Bind pre-lifting values using event schemas for lifted inputs."""
     if input_template is None:
         return None, {}
-    schema_values = dict(values)
-    for name in lifted_names:
-        value = values[name]
-        try:
-            lifted_template = value.event_template
-        except (AttributeError, TypeError) as error:
-            raise ValueError(
-                f"Function {function_name!r} input {name!r} does not expose an "
-                "authoritative event_template for lifting"
-            ) from error
-        if not isinstance(lifted_template, EventTemplate):
-            raise ValueError(
-                f"Function {function_name!r} input {name!r} does not expose an "
-                "authoritative event_template for lifting"
+    context = f"Function {function_name!r} input"
+    if input_template.children.keys() != values.keys():
+        raise ValueError(
+            f"{context} fields {sorted(values)} do not match template fields "
+            f"{sorted(input_template.children)}"
+        )
+    bindings: dict[str, int] = {}
+    for name, expected in input_template.children.items():
+        path = f"{context}/{name}"
+        if name in lifted_names:
+            actual = _lifted_element_spec(
+                values[name], expected=expected, function_name=function_name, name=name
             )
-        schema_values[name] = lifted_template
-    return _unify_event_template_with_value(
-        input_template,
-        schema_values,
-        context=f"Function {function_name!r} input",
-    )
+            _unify_specs(expected, actual, bindings, path)
+        else:
+            expected._bind_dims_from_value(values[name], bindings, path)
+    return input_template._substitute_dims(bindings), bindings
 
 
 def _validate_function_output(
     *,
     function_name: str,
-    output_template: EventTemplate | None,
+    output_template: RecordSpec | None,
     result: Any,
     bindings: Mapping[str, int],
-) -> EventTemplate | None:
+) -> RecordSpec | None:
     """Validate one native result and return the call's concrete output schema."""
     if output_template is None:
         return None
-    concrete = _concretize_event_template(
+    concrete = _concretize_record_spec(
         output_template,
         bindings,
         context=f"Function {function_name!r} output_template",
     )
 
-    # Record and Distribution are schema-carrying result containers. Other
+    # A record, a batch of records, and a distribution are the schema-carrying
+    # result containers. Other
     # tracked terms remain leaf values under the default event-result contract
-    # and are validated by their ValueSpec (for example, FunctionSpec).
-    if isinstance(result, (Record, Distribution)):
+    # and are validated by their TermSpec (for example, FunctionSpec).
+    if isinstance(result, (Record, RecordBatch, Distribution)):
         try:
             actual_template = cast(Any, result).event_template
         except (AttributeError, TypeError) as error:
             raise ValueError(
                 f"Function {function_name!r} output does not expose an authoritative event_template"
             ) from error
-        if not isinstance(actual_template, EventTemplate):
+        if not isinstance(actual_template, RecordSpec):
             raise ValueError(
                 f"Function {function_name!r} output does not expose an authoritative event_template"
             )
@@ -289,28 +312,25 @@ def _validate_function_output(
                 )
             return concrete
 
-        _unify_event_templates(
+        _unify_specs(
             concrete,
             actual_template,
-            context=f"Function {function_name!r} output",
+            {},
+            f"Function {function_name!r} output",
         )
         _validate_function_output_template_supports(
             function_name=function_name,
             declared_template=concrete,
             actual_template=actual_template,
         )
-        if isinstance(result, RecordArray):
-            _validate_function_record_array_output_values(
+        if isinstance(result, RecordBatch):
+            _validate_batched_function_output_values(
                 function_name=function_name,
                 template=concrete,
                 value=result,
             )
         else:
-            _unify_event_template_with_value(
-                concrete,
-                result,
-                context=f"Function {function_name!r} output",
-            )
+            concrete._bind_dims_from_value(result, {}, f"Function {function_name!r} output")
         _validate_function_output_supports(
             function_name=function_name,
             template=concrete,
@@ -327,7 +347,6 @@ def _validate_function_output(
             )
         only_path = next(iter(concrete.keys()))
         only_spec = concrete[only_path]
-        assert isinstance(only_spec, ValueSpec)
         if not only_spec.is_valid(result):
             raise ValueError(
                 f"Function {function_name!r} output at {only_path!r} does not conform "
@@ -340,11 +359,7 @@ def _validate_function_output(
         )
         return concrete
 
-    _unify_event_template_with_value(
-        concrete,
-        validation_value,
-        context=f"Function {function_name!r} output",
-    )
+    concrete._bind_dims_from_value(validation_value, {}, f"Function {function_name!r} output")
     _validate_function_output_supports(
         function_name=function_name,
         template=concrete,
@@ -353,17 +368,17 @@ def _validate_function_output(
     return concrete
 
 
-def _validate_function_record_array_output_values(
+def _validate_batched_function_output_values(
     *,
     function_name: str,
-    template: EventTemplate,
-    value: RecordArray,
+    template: RecordSpec,
+    value: RecordBatch,
 ) -> None:
     """Validate batched numeric leaves against their per-element specs."""
     batch_shape = value.batch_shape
     batch_rank = len(batch_shape)
     for path, spec in template.items():
-        if not isinstance(spec, ArraySpec):
+        if not isinstance(spec, NumericArraySpec):
             continue
         leaf = value[path]
         actual_shape = _full_array_shape_or_none(leaf)
@@ -397,15 +412,15 @@ def _validate_function_record_array_output_values(
 def _validate_function_output_template_supports(
     *,
     function_name: str,
-    declared_template: EventTemplate,
-    actual_template: EventTemplate,
+    declared_template: RecordSpec,
+    actual_template: RecordSpec,
 ) -> None:
     """Validate authoritative output-support subset relationships."""
     for path, declared_spec in declared_template.items():
         actual_spec = actual_template[path]
         if (
-            isinstance(declared_spec, ArraySpec)
-            and isinstance(actual_spec, ArraySpec)
+            isinstance(declared_spec, NumericArraySpec)
+            and isinstance(actual_spec, NumericArraySpec)
             and declared_spec.support is not None
             and actual_spec.support is not None
             and not _supports_compatible(actual_spec.support, declared_spec.support)
@@ -419,17 +434,31 @@ def _validate_function_output_template_supports(
 def _validate_function_output_supports(
     *,
     function_name: str,
-    template: EventTemplate,
+    template: RecordSpec,
     value: Any,
 ) -> None:
-    """Validate declared ArraySpec supports at an eager execution boundary."""
+    """Validate declared NumericArraySpec supports at an eager execution boundary."""
+    if isinstance(value, RecordBatch):
+        # A batch is a collection, not a named tree: its columns are keyed by leaf
+        # path and each carries the batch axes in front of its event shape, which a
+        # support check reads elementwise. Walking it as a tree would find no
+        # children and take the single-leaf path, which asks a multi-field batch to
+        # convert to one array.
+        for path, spec in template.items():
+            _validate_function_output_leaf_support(
+                function_name=function_name,
+                path=path,
+                spec=spec,
+                value=value._raw_column(path),
+            )
+        return
+
     children = getattr(value, "children", None)
     if not isinstance(children, Mapping):
         children = value if isinstance(value, Mapping) else None
     if children is None:
         only_path = next(iter(template.keys()))
         only_spec = template[only_path]
-        assert isinstance(only_spec, ValueSpec)
         _validate_function_output_leaf_support(
             function_name=function_name,
             path=only_path,
@@ -438,11 +467,11 @@ def _validate_function_output_supports(
         )
         return
 
-    def _walk(expected: EventTemplate, actual: Mapping[str, Any], prefix: str) -> None:
+    def _walk(expected: RecordSpec, actual: Mapping[str, Any], prefix: str) -> None:
         for name, spec in expected.children.items():
             path = f"{prefix}/{name}" if prefix else name
             child = actual[name]
-            if isinstance(spec, EventTemplate):
+            if isinstance(spec, RecordSpec):
                 nested = getattr(child, "children", None)
                 if not isinstance(nested, Mapping):
                     nested = child
@@ -462,11 +491,11 @@ def _validate_function_output_leaf_support(
     *,
     function_name: str,
     path: str,
-    spec: ValueSpec,
+    spec: TermSpec,
     value: Any,
 ) -> None:
-    """Validate one declared ArraySpec support at an eager execution boundary."""
-    if not isinstance(spec, ArraySpec) or spec.support is None:
+    """Validate one declared NumericArraySpec support at an eager execution boundary."""
+    if not isinstance(spec, NumericArraySpec) or spec.support is None:
         return
     support = spec.support
     membership = jnp.all(support.check(value))
@@ -481,15 +510,15 @@ def _wrap_declared_function_output(
     result: Any,
     *,
     function_name: str,
-    output_template: EventTemplate,
+    output_template: RecordSpec,
 ) -> Record | Distribution:
-    """Wrap a validated event result under its authoritative template.
+    """Wrap a validated result under its declared template.
 
-    Schema-carrying Record and Distribution results retain their structure.
-    Other tracked terms are event leaves until #369 supplies an explicit
-    term-result plan.
+    A result that already carries a schema — a record, a batch of records, a
+    distribution — keeps its structure; anything else is given the declared one
+    and the caller's *function_name*.
     """
-    if isinstance(result, (Record, Distribution)):
+    if isinstance(result, (Record, RecordBatch, Distribution)):
         return result
     if isinstance(result, Mapping):
         fields = result
@@ -500,5 +529,4 @@ def _wrap_declared_function_output(
         function_name,
         fields,
         event_template=output_template,
-        name_is_auto=True,
     )

@@ -7,7 +7,7 @@ correlation between components.
 Two concrete classes:
 
 * :class:`JointEmpirical` — generic base. Accepts numeric or object
-  samples; claims only ``SupportsSampling`` and ``SupportsConditioning``.
+  samples; claims only ``SupportsSampling``.
 * :class:`NumericJointEmpirical` — all fields numeric. Additionally
   claims ``SupportsMean`` and ``SupportsVariance``.
 
@@ -26,35 +26,26 @@ from math import prod
 from types import MappingProxyType
 from typing import Any
 
+from .._array_utils import _is_numeric_array
 from .._dtype import _as_float_array
-from .._utils import _is_numeric_array
 from .._weights import Weights
+from ..core._empirical import RecordEmpiricalDistribution
+from ..core._numeric_record_distribution import NumericRecordDistribution, _mc_expectation
 from ..core._record_distribution import RecordDistribution, _build_event_template
-from ..core.distribution import (
-    NumericRecordDistribution,
-    RecordEmpiricalDistribution,
-    _mc_expectation,
-)
-from ..core.event_template import EventTemplate
+from ..core._specs import RecordSpec
 from ..core.protocols import (
-    SupportsConditioning,
     SupportsMean,
     SupportsSampling,
     SupportsVariance,
 )
-from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike, PRNGKey
-from ._joint_utils import (
-    KeyPath,
-    _parse_condition_args,
-)
 
 __all__ = ["JointEmpirical", "NumericJointEmpirical"]
 
 
-class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning):
+class JointEmpirical(RecordDistribution, SupportsSampling):
     """
     Joint distribution from weighted joint samples.
 
@@ -71,6 +62,12 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
     When used in broadcasting enumeration, the joint is treated as a single
     unit with ``n`` samples (no cartesian decomposition).
 
+    Conditioning is not offered. Dropping a field from the stored atoms is
+    marginalization, a different operation: it ignores the value conditioned
+    on, so every value would give the same result. Build the marginal
+    directly instead, by constructing a ``JointEmpirical`` from the fields to
+    keep with the same ``weights``.
+
     Parameters
     ----------
     weights : array-like, :class:`~probpipe.Weights`, or None
@@ -82,7 +79,8 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
         :class:`~probpipe.Weights` object is also accepted. Mutually
         exclusive with *weights*.
     name : str, optional
-        Distribution name.
+        Distribution name. Keyword-only; defaults to ``joint_empirical(a,b)``
+        over the component names.
     **samples : array-like
         Named component sample arrays. Each must have the same number of
         rows (first dimension = ``n``).
@@ -140,15 +138,15 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
 
         self._joint_samples = stored
         self._num_atoms = n
-        name, name_is_auto = auto_name(name, "joint_empirical(" + ",".join(samples.keys()) + ")")
-        super().__init__(name=name, name_is_auto=name_is_auto)
+        name = auto_name(name, "joint_empirical(" + ",".join(samples.keys()) + ")")
+        super().__init__(name=name)
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         self._components = self._build_component_dists()
         if self._components is not None:
             self._event_template = _build_event_template(self._components)
         else:
             # Generic (non-numeric) path: derive a structural
-            # ``EventTemplate`` directly from the stored samples. Each
+            # ``RecordSpec`` directly from the stored samples. Each
             # field's per-row shape becomes its spec; object-dtype leaves
             # report ``None``. This keeps the
             # ``RecordDistribution`` metaclass invariant
@@ -160,7 +158,7 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
                     specs[cname] = tuple(arr.shape[1:])
                 else:
                     specs[cname] = None
-            self._event_template = EventTemplate(specs)
+            self._event_template = RecordSpec(specs)
 
     # Hook for NumericJointEmpirical to override; base class returns None
     # because generic joint samples can't be expressed as per-component
@@ -208,12 +206,31 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
     def _sample_joint_rows(self, key: PRNGKey, sample_shape: tuple[int, ...]):
         """Resample rows jointly, preserving per-row correlation.
 
-        The generic base returns a ``Record`` regardless of
-        ``sample_shape`` (with batched fields for non-empty shapes).
-        Subclasses override to return a typed batched container (e.g.
-        ``NumericRecordArray``) when the leaves are numeric.
+        A batched draw is a batch over one ``draw`` level, a single draw a
+        ``Record``. The class follows the leaves — a numeric template gives a
+        :class:`NumericRecordBatch` and anything else the permissive
+        :class:`RecordBatch` — so an object-valued law draws a batch on the same
+        terms as a numeric one.
         """
-        return Record(self.name, self._resample_rows(key, sample_shape), name_is_auto=True)
+        from ..core._numeric_record_batch import NumericRecordBatch
+        from ..core._record_batch import RecordBatch
+        from ..core._specs import NumericRecordSpec
+
+        rows = self._resample_rows(key, sample_shape)
+        if not sample_shape:
+            return Record(self.name, rows)
+        cls = (
+            NumericRecordBatch
+            if isinstance(self.event_template, NumericRecordSpec)
+            else RecordBatch
+        )
+        return cls(
+            self.name,
+            rows,
+            "sample",
+            element_spec=self.event_template,
+            axes_per_level=(len(sample_shape),),
+        )
 
     def _resample_rows(
         self,
@@ -239,57 +256,6 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
                     result[cname] = drawn
             else:
                 result[cname] = drawn[0] if drawn.shape and drawn.shape[0] == 1 else drawn
-        return result
-
-    # -- Conditioning -------------------------------------------------------
-
-    def _condition_on(self, observed=None, /, **kwargs):
-        observed_leaves = _parse_condition_args(self, observed, kwargs)
-        return self._condition_on_impl(observed_leaves)
-
-    def _condition_on_impl(self, observed_leaves: dict[KeyPath, ArrayLike]) -> JointEmpirical:
-        """Remove conditioned components and return a new JointEmpirical.
-
-        Since ``JointEmpirical`` stores raw sample arrays keyed by name,
-        conditioning simply drops those components from the joint sample
-        matrix (preserving row-wise correlation among the remaining
-        components).
-
-        .. note::
-
-            ``JointEmpirical`` only supports **flat dicts** (no nesting).
-            All key paths must be length-1 (top-level component names).
-        """
-        for path in observed_leaves:
-            if len(path) != 1:
-                raise TypeError(
-                    f"JointEmpirical only supports flat (non-nested) "
-                    f"components.  Cannot condition on nested key path "
-                    f"{path!r}."
-                )
-        observed_names = {path[0] for path in observed_leaves}
-
-        remaining_samples = {
-            cname: arr for cname, arr in self._joint_samples.items() if cname not in observed_names
-        }
-        if not remaining_samples:
-            raise ValueError(
-                "Cannot condition on all component distributions --- "
-                "at least one must remain unconditioned."
-            )
-
-        result = type(self)(
-            **remaining_samples,
-            weights=self._w,
-            name=self._name,
-        )
-        result.with_provenance(
-            Provenance.create(
-                "condition_on",
-                parents=[self],
-                metadata={"conditioned": list(observed_names)},
-            )
-        )
         return result
 
 
@@ -359,23 +325,9 @@ class NumericJointEmpirical(
 
     def _build_component_dists(self) -> dict[str, NumericRecordDistribution]:
         return {
-            cname: RecordEmpiricalDistribution(arr, weights=self._w, name=cname)
+            cname: RecordEmpiricalDistribution(cname, arr, weights=self._w)
             for cname, arr in self._joint_samples.items()
         }
-
-    # -- Sampling: return NumericRecordArray for batched draws --------------
-
-    def _sample_joint_rows(self, key: PRNGKey, sample_shape: tuple[int, ...]):
-        from ..core._record_array import NumericRecordArray
-
-        result = self._resample_rows(key, sample_shape)
-        if sample_shape:
-            return NumericRecordArray(
-                result,
-                batch_shape=sample_shape,
-                template=self.event_template,
-            )
-        return Record(self.name, result, name_is_auto=True)
 
     # -- event_shapes (used by the record template) ------------------------
 
@@ -391,7 +343,6 @@ class NumericJointEmpirical(
         return Record(
             self.name,
             {cname: self._w.mean(arr) for cname, arr in self._joint_samples.items()},
-            name_is_auto=True,
         )
 
     def _variance(self) -> Record:
@@ -399,7 +350,6 @@ class NumericJointEmpirical(
         return Record(
             self.name,
             {cname: self._w.variance(arr) for cname, arr in self._joint_samples.items()},
-            name_is_auto=True,
         )
 
     def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):

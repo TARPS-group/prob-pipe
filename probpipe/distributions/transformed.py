@@ -8,19 +8,16 @@ import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.bijectors as tfb
 import tensorflow_probability.substrates.jax.distributions as tfd
 
+from ..core import _workflow_descendants
+from ..core._numeric_record_distribution import NumericRecordDistribution, _mc_expectation
 from ..core.constraints import (
     Constraint,
     positive,
     real,
     unit_interval,
 )
-from ..core.distribution import (
-    NumericRecordDistribution,
-    _mc_expectation,
-)
 from ..core.protocols import SupportsLogProb, SupportsMean, SupportsSampling, SupportsVariance
 from ..core.provenance import Provenance
-from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ._tfp_base import TFPDistribution
 
@@ -133,6 +130,7 @@ def _transformed_class_for_base(base: NumericRecordDistribution) -> type:
         (TransformedDistribution, *extra_bases),
         extra_methods,
     )
+    _workflow_descendants._register_transformed_distribution_type(cls)
     _TRANSFORMED_CLASS_CACHE[key] = cls
     return cls
 
@@ -153,41 +151,28 @@ class TransformedDistribution(NumericRecordDistribution):
 
     Parameters
     ----------
+    name : str
+        Distribution name for provenance.
     base : Distribution
         The untransformed base distribution.
     bijector : tfb.Bijector
         A TFP bijector (e.g. ``tfb.Exp()``, ``tfb.Sigmoid()``).
-    name : str, optional
-        Distribution name for provenance.
     """
 
-    def __new__(
-        cls,
-        base: NumericRecordDistribution,
-        bijector: tfb.Bijector,
-        *,
-        name: str | None = None,
-    ):
+    def __new__(cls, name: str, base: NumericRecordDistribution, bijector: tfb.Bijector):
         actual_cls = _transformed_class_for_base(base)
         return object.__new__(actual_cls)
 
-    def __init__(
-        self,
-        base: NumericRecordDistribution,
-        bijector: tfb.Bijector,
-        *,
-        name: str | None = None,
-    ):
+    def __init__(self, name: str, base: NumericRecordDistribution, bijector: tfb.Bijector):
         self._base = base
         self._bijector = bijector
-        name, name_is_auto = auto_name(name, f"transformed({base.name})")
-        super().__init__(name=name, name_is_auto=name_is_auto)
+        super().__init__(name=name)
 
         if isinstance(base, TFPDistribution):
             self._tfp_transformed = tfd.TransformedDistribution(
                 distribution=base._tfp_dist,
                 bijector=bijector,
-                name=name or "TransformedDistribution",
+                name=name,
             )
         else:
             self._tfp_transformed = None
@@ -283,3 +268,6 @@ class TransformedDistribution(NumericRecordDistribution):
             parts[0] += f", name={self.name!r}"
         parts[0] += f", event_shape={self.event_shape})"
         return parts[0]
+
+
+_workflow_descendants._register_transformed_distribution_type(TransformedDistribution)

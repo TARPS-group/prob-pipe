@@ -12,10 +12,10 @@ from ._likelihood import GenerativeLikelihood
 __all__ = ["SimpleGenerativeModel"]
 
 
-class SimpleGenerativeModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsSampling):
+class SimpleGenerativeModel[P, D](ProbabilisticModel, SupportsSampling):
     """Generative probabilistic model as a joint over (parameters, data).
 
-    A ``SimpleGenerativeModel[P, D]`` pairs a prior that supports
+    A ``SimpleGenerativeModel`` pairs a prior that supports
     sampling with a :class:`GenerativeLikelihood` that can generate
     synthetic data given parameters.  Unlike :class:`SimpleModel`, this
     does **not** require a log-density — making it suitable for
@@ -31,17 +31,17 @@ class SimpleGenerativeModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsSampl
 
     **Conditioning:** Use ``condition_on(model, data)`` — the inference
     method registry auto-selects an appropriate SBI or ABC method.
-    ``SimpleGenerativeModel`` does not implement ``SupportsConditioning``
+    ``SimpleGenerativeModel`` claims no conditioning capability
     directly.
 
     Parameters
     ----------
-    prior : SupportsSampling[P]
+    prior : SupportsSampling
         Prior distribution over model parameters.  Must support sampling.
     likelihood : GenerativeLikelihood[P, D]
         Must have a ``generate_data(params, num_observations, *, key)`` method.
     name : str or None
-        Model name for provenance.
+        Model name for provenance. Keyword-only; defaults to ``"SimpleGenerativeModel"``.
     """
 
     _sampling_cost: str = "medium"
@@ -74,12 +74,12 @@ class SimpleGenerativeModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsSampl
 
     def __init__(
         self,
-        prior: SupportsSampling[P],
+        prior: SupportsSampling,
         likelihood: GenerativeLikelihood[P, D],
         *,
         name: str | None = None,
     ):
-        # Type-annotated as ``SupportsSampling[P]`` so static type
+        # Type-annotated as ``SupportsSampling`` so static type
         # checkers catch a wrong-type prior at the call site. The
         # isinstance check remains as a backstop for callers who
         # bypass the type system.
@@ -97,13 +97,13 @@ class SimpleGenerativeModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsSampl
         self._likelihood = likelihood
         # Default to the class name when the caller does not supply one;
         # the default is an auto-derived name.
-        name, name_is_auto = auto_name(name or None, "SimpleGenerativeModel")
-        self._init_tracked(name, name_is_auto=name_is_auto)
+        name = auto_name(name or None, "SimpleGenerativeModel")
+        self._init_tracked(name)
 
     # -- Distribution interface ---------------------------------------------
 
     @property
-    def prior(self) -> SupportsSampling[P]:
+    def prior(self) -> SupportsSampling:
         """The prior distribution over parameters."""
         return self._prior
 

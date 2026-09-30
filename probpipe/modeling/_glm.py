@@ -2,30 +2,35 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import jax
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
-from ..core.event_template import EventTemplate
+from ..core._specs import RecordSpec
+from ..core.protocols import _WorkflowGenerativeProviderCertificate
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike, PRNGKey
 
 __all__ = ["GLMLikelihood"]
 
+_GLM_GENERATIVE_PROVIDER_ABI = "probpipe.modeling.GLMLikelihood.generate_data/v1"
+
 
 def _coerce_array(x: ArrayLike | Record) -> jnp.ndarray:
-    """Extract a JAX array from a Record, RecordArray, or raw array-like.
+    """Extract a JAX array from a Record, RecordBatch, or raw array-like.
 
-    Single-field Record/RecordArray: extract the field.
+    A single-field record, or batch of them: extract the field.
     Multi-field: stack fields into a vector (preserving leading batch dims).
     """
-    from ..core._record_array import RecordArray
+    from ..core._record_batch import RecordBatch
 
     if isinstance(x, jnp.ndarray):
         return x
-    if isinstance(x, (Record, RecordArray)):
-        # Leaf keys via the template (RecordArray's own keys() is top-level and
-        # its [] is leaf-only), so a nested value coerces instead of raising.
+    if isinstance(x, (Record, RecordBatch)):
+        # Leaf keys via the template (a record's own keys() is top-level and its
+        # [] is leaf-only), so a nested value coerces instead of raising.
         keys = list(x.event_template.keys())
         if len(keys) == 1:
             return jnp.asarray(x[keys[0]])
@@ -50,7 +55,7 @@ class GLMLikelihood:
     form::
 
         Xy = Record("Xy", X=X_covariates, y=y_observed)
-        bootstrap = BootstrapReplicateDistribution(EmpiricalDistribution(Xy))
+        bootstrap = BootstrapReplicateDistribution("bootstrap", EmpiricalDistribution("Xy", Xy))
         bagged = condition_on.with_options(n_broadcast_samples=16)(
             model, bootstrap,
         )
@@ -76,6 +81,8 @@ class GLMLikelihood:
     seed : int
         Random seed for data generation.
     """
+
+    _workflow_generative_provider_certificate: ClassVar[_WorkflowGenerativeProviderCertificate]
 
     def __init__(
         self,
@@ -103,9 +110,9 @@ class GLMLikelihood:
         return X @ beta
 
     @property
-    def data_template(self) -> EventTemplate:
+    def data_template(self) -> RecordSpec:
         """Named structure of GLM data: ``X`` (design matrix) and ``y`` (response)."""
-        return EventTemplate(X=(0, 0), y=(0,))
+        return RecordSpec(X=(0, 0), y=(0,))
 
     def _extract_X_y(self, data):
         """Extract design matrix and response from data.
@@ -237,3 +244,20 @@ class GLMLikelihood:
             eta = beta @ Xn.T
         dist = self.family.as_distribution(eta)
         return dist.sample(seed=key)
+
+
+def _preflight_workflow_generation(provider: GLMLikelihood, operation: str) -> None:
+    """Validate GLM state before workflow-owned stochastic commit."""
+    if provider._x is None:
+        raise ValueError(
+            f"{operation} requires GLMLikelihood to have a stored design matrix "
+            "before requesting workflow-owned randomness"
+        )
+
+
+GLMLikelihood._workflow_generative_provider_certificate = _WorkflowGenerativeProviderCertificate(
+    provider_type=GLMLikelihood,
+    generate_data=GLMLikelihood.generate_data,
+    provider_abi=_GLM_GENERATIVE_PROVIDER_ABI,
+    preflight=_preflight_workflow_generation,
+)

@@ -1,5 +1,7 @@
 """Tests for standalone operations in probpipe.core.ops."""
 
+from typing import Any, ClassVar
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -8,13 +10,26 @@ import scipy.stats
 
 from probpipe import (
     BootstrapDistribution,
+    EmpiricalDistribution,
     MultivariateNormal,
     Normal,
+    NumericArray,
+    NumericArrayBatch,
+    NumericArraySpec,
+    NumericRecordDistribution,
+    Opaque,
+    OpaqueBatch,
     ProductDistribution,
     RecordEmpiricalDistribution,
+    ResolutionError,
     SequentialJointDistribution,
+    SupportsApproximateConditioning,
+    SupportsExactConditioning,
+    SupportsExpectation,
+    SupportsSampling,
 )
 from probpipe.core import ops
+from probpipe.core._numeric_record_distribution import _mc_expectation
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -34,12 +49,47 @@ def mvn():
 @pytest.fixture
 def empirical():
     samples = jax.random.normal(jax.random.PRNGKey(0), (200, 2))
-    return RecordEmpiricalDistribution(samples, name="x")
+    return RecordEmpiricalDistribution("x", samples)
 
 
 @pytest.fixture
 def joint():
-    return ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
+    return ProductDistribution(x=Normal("x", 0, 1), y=Normal("y", 1, 2))
+
+
+@pytest.fixture
+def no_moments():
+    """A distribution that samples and takes expectations but implements no moment protocol."""
+
+    class NoMomentsDist(NumericRecordDistribution, SupportsSampling, SupportsExpectation):
+        _sampling_cost = "low"
+        _preferred_orchestration = None
+
+        @property
+        def event_shape(self):
+            return ()
+
+        def _sample(self, key, sample_shape=()):
+            return jax.random.normal(key, sample_shape)
+
+        def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
+            return _mc_expectation(
+                self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist
+            )
+
+    return NoMomentsDist(name="test")
+
+
+@pytest.fixture
+def no_protocols():
+    """A distribution that implements no operation protocol."""
+
+    class NoProtocolsDist(NumericRecordDistribution):
+        @property
+        def event_shape(self):
+            return ()
+
+    return NoProtocolsDist(name="test")
 
 
 # ---------------------------------------------------------------------------
@@ -55,6 +105,66 @@ class TestSample:
     def test_sample_with_shape(self, normal):
         s = ops.sample(normal, key=jax.random.PRNGKey(0), sample_shape=(50,))
         assert s.shape == (50,)
+        assert s.name == normal.name
+
+    @pytest.mark.parametrize("sample_shape", [(), (3,), (2, 3)])
+    @pytest.mark.parametrize(
+        "sampler_name",
+        [None, "custom"],
+        ids=["unnamed", "named"],
+    )
+    @pytest.mark.parametrize("explicit_key", [False, True], ids=["automatic-key", "explicit-key"])
+    def test_sample_accepts_structural_samplers(self, sample_shape, sampler_name, explicit_key):
+        class Sampler:
+            _sampling_cost = "low"
+            _preferred_orchestration = None
+
+            def _sample(self, key: jax.Array, sample_shape: tuple[int, ...] = ()) -> jax.Array:
+                return jnp.ones(sample_shape, dtype=jnp.float32)
+
+        sampler = Sampler()
+        if sampler_name is not None:
+            sampler.name = sampler_name
+        assert isinstance(sampler, SupportsSampling)
+
+        result = ops.sample(
+            sampler,
+            key=jax.random.PRNGKey(0) if explicit_key else None,
+            sample_shape=sample_shape,
+        )
+
+        np.testing.assert_array_equal(np.asarray(result), np.ones(sample_shape, dtype=np.float32))
+        assert result.name == (sampler_name or "sample")
+        assert result.provenance is not None
+        if sample_shape:
+            assert isinstance(result, NumericArrayBatch)
+            assert result.batch_shape == sample_shape
+            assert result.level_names == ("sample",)
+            assert result.axis_groups == (sample_shape,)
+            assert result.element_spec == NumericArraySpec((), dtype=np.float32)
+            assert result.with_level_names(sample="draw").name == result.name
+        else:
+            assert isinstance(result, NumericArray)
+            assert result.spec == NumericArraySpec((), dtype=np.float32)
+
+    def test_sample_keeps_an_already_tracked_draws_name(self):
+        drawn = NumericArray("held", jnp.asarray(2.0))
+
+        class Sampler:
+            name = "sampler"
+            _sampling_cost = "low"
+            _preferred_orchestration = None
+
+            def _sample(self, key, sample_shape=()):
+                return drawn
+
+        result = ops.sample(Sampler(), key=jax.random.PRNGKey(0))
+
+        assert result.name == drawn.name == "held"
+        assert result is not drawn
+        assert result.provenance is not None
+        assert drawn.provenance is None
+        np.testing.assert_array_equal(np.asarray(result), 2.0)
 
     def test_sample_mvn(self, mvn):
         s = ops.sample(mvn, key=jax.random.PRNGKey(0), sample_shape=(10,))
@@ -63,6 +173,47 @@ class TestSample:
     def test_sample_empirical(self, empirical):
         s = ops.sample(empirical, key=jax.random.PRNGKey(0), sample_shape=(5,))
         assert s.shape == (5, 2)
+
+    @pytest.mark.parametrize("sample_shape", [(), (3,), (2, 3), (0,)])
+    @pytest.mark.parametrize(
+        "event", [("a", "b"), (("a", "b"), ("c", "d")), ()], ids=["pair", "matrix", "empty"]
+    )
+    def test_sample_preserves_complete_opaque_events(self, sample_shape, event):
+        law = EmpiricalDistribution("objects", [event])
+
+        result = ops.sample(law, key=jax.random.PRNGKey(0), sample_shape=sample_shape)
+
+        expected = np.asarray(event, dtype=object)
+        if not sample_shape:
+            assert isinstance(result, Opaque)
+            np.testing.assert_array_equal(result.value, expected)
+        else:
+            assert isinstance(result, OpaqueBatch)
+            assert result.batch_shape == sample_shape
+            assert result.level_names == ("sample",)
+            assert result.axis_groups == (sample_shape,)
+            assert result.name == "objects"
+            for index in np.ndindex(sample_shape):
+                np.testing.assert_array_equal(result[index], expected)
+
+    @pytest.mark.parametrize("explicit_key", [False, True], ids=["automatic-key", "explicit-key"])
+    def test_sample_keeps_object_values_with_mismatched_sample_axes(self, explicit_key):
+        drawn = np.asarray(["a", "b", "c", "d", "e"], dtype=object)
+
+        class Sampler:
+            _sampling_cost = "low"
+            _preferred_orchestration = None
+
+            def _sample(self, key, sample_shape=()):
+                return drawn
+
+        result = ops.sample(
+            Sampler(), key=jax.random.PRNGKey(0) if explicit_key else None, sample_shape=(3,)
+        )
+
+        assert isinstance(result, Opaque)
+        assert result.value is drawn
+        np.testing.assert_array_equal(result.value, ["a", "b", "c", "d", "e"])
 
     def test_sample_shape_scalar_int_matches_1tuple(self, normal, mvn, empirical):
         """Scalar ``sample_shape=N`` is sugar for ``(N,)``.
@@ -117,6 +268,15 @@ class TestProb:
         expected = scipy.stats.norm.pdf(float(x), loc=2.0, scale=0.5)
         np.testing.assert_allclose(float(p), expected, rtol=1e-5)
 
+    def test_raises_without_supports_log_prob(self, no_protocols):
+        """prob op raises TypeError for distributions without SupportsLogProb.
+
+        The distribution must not sample either: the call converts a distribution
+        that samples into a KDEDistribution, which supports log_prob.
+        """
+        with pytest.raises(TypeError, match="does not support prob"):
+            ops.prob(no_protocols, jnp.float32(0.0))
+
 
 # ---------------------------------------------------------------------------
 # unnormalized_log_prob
@@ -157,32 +317,13 @@ class TestMean:
 
     def test_exact_mean_bootstrap(self):
         evals = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        bd = BootstrapDistribution(evals)
+        bd = BootstrapDistribution("bd", evals)
         np.testing.assert_allclose(float(ops.mean(bd)), 3.0)
 
-    def test_raises_without_supports_mean(self):
+    def test_raises_without_supports_mean(self, no_moments):
         """mean op raises TypeError for distributions without SupportsMean."""
-        from probpipe.core.distribution import NumericRecordDistribution, _mc_expectation
-        from probpipe.core.protocols import SupportsExpectation, SupportsSampling
-
-        class NoMeanDist(NumericRecordDistribution, SupportsSampling, SupportsExpectation):
-            _sampling_cost = "low"
-            _preferred_orchestration = None
-
-            @property
-            def event_shape(self):
-                return ()
-
-            def _sample(self, key, sample_shape=()):
-                return jax.random.normal(key, sample_shape)
-
-            def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
-                return _mc_expectation(
-                    self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist
-                )
-
         with pytest.raises(TypeError, match="does not support mean"):
-            ops.mean(NoMeanDist(name="test"))
+            ops.mean(no_moments)
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +340,11 @@ class TestVariance:
         v = ops.variance(empirical)
         assert v.shape == (2,)
 
+    def test_raises_without_supports_variance(self, no_moments):
+        """variance op raises TypeError for distributions without SupportsVariance."""
+        with pytest.raises(TypeError, match="does not support variance"):
+            ops.variance(no_moments)
+
 
 # ---------------------------------------------------------------------------
 # cov
@@ -210,6 +356,11 @@ class TestCov:
         c = jnp.asarray(ops.cov(empirical))
         assert c.shape == (2, 2)
         np.testing.assert_allclose(c, c.T, atol=1e-5)
+
+    def test_raises_without_supports_covariance(self, no_moments):
+        """cov op raises TypeError for distributions without SupportsCovariance."""
+        with pytest.raises(TypeError, match="does not support covariance"):
+            ops.cov(no_moments)
 
 
 # ---------------------------------------------------------------------------
@@ -238,6 +389,11 @@ class TestExpectation:
         )
         assert isinstance(result, BootstrapDistribution)
 
+    def test_raises_without_supports_expectation(self, no_protocols):
+        """expectation op raises TypeError for distributions without SupportsExpectation."""
+        with pytest.raises(TypeError, match="does not support expectation"):
+            ops.expectation(no_protocols, lambda x: x)
+
 
 # ---------------------------------------------------------------------------
 # condition_on
@@ -251,22 +407,162 @@ class TestConditionOn:
 
     def test_condition_case_mismatched_kwarg_raises(self, joint):
         """A case-mismatched data kwarg (`X` when the field is `x`) raises
-        loudly via condition_on rather than being silently ignored (#228)."""
+        loudly via condition_on rather than being silently ignored."""
         with pytest.raises(TypeError, match="did you mean x"):
             ops.condition_on(joint, X=jnp.array(2.0))
 
     def test_condition_sequential(self):
         sjd = SequentialJointDistribution(
-            x=Normal(0, 1, name="x"),
+            x=Normal("x", 0, 1),
             y=lambda x: Normal(loc=x, scale=1.0, name="y"),
         )
         conditioned = ops.condition_on(sjd, x=jnp.array(3.0))
         assert conditioned.fields == ("y",)
 
-    def test_condition_type_error(self):
-        """Objects with no protocols raise TypeError."""
-        with pytest.raises(TypeError):
+    def test_condition_on_an_object_with_no_protocols_raises_resolution_error(self):
+        """No registered method dispatches on it, so resolution fails rather than typing."""
+        with pytest.raises(ResolutionError):
             ops.condition_on("not_a_distribution", jnp.array(1.0))
+
+    def test_exact_only_keeps_the_exact_capability_route(self, joint):
+        """The control is consumed by the operation, so it never reaches ``_condition_on``."""
+        conditioned = ops.condition_on(joint, x=jnp.array(2.0), exact_only=True)
+        assert conditioned.fields == ("y",)
+
+    def test_controls_do_not_reach_the_capability_route(self):
+        """``_condition_on`` sees the data and inference kwargs, and no controls."""
+
+        class Recorder(SupportsExactConditioning):
+            seen: ClassVar[dict[str, Any]] = {}
+
+            def _condition_on(self, observed, /, **kwargs):
+                Recorder.seen = dict(kwargs)
+                return Normal("posterior", 0, 1)
+
+        ops.condition_on(Recorder(), 1.0, exact_only=True, num_results=5)
+        assert Recorder.seen == {"num_results": 5}
+
+    def test_an_exact_registered_method_outranks_the_approximate_capability(self, monkeypatch):
+        """Exactness is compared across route sources, not only within the registry."""
+        from probpipe.core._dispatch import Feasibility, UnaryDispatchMethod, UnaryDispatchRegistry
+
+        class Amortized(SupportsApproximateConditioning):
+            calls: ClassVar[int] = 0
+
+            def _condition_on(self, observed, /, **kwargs):
+                Amortized.calls += 1
+                return Normal("amortized", 0, 1)
+
+        class ExactMethod(UnaryDispatchMethod):
+            ran = False
+
+            @property
+            def name(self):
+                return "exact_for_amortized"
+
+            @property
+            def exact(self):
+                return True
+
+            @property
+            def priority(self):
+                return 1
+
+            def supported_types(self):
+                return (Amortized,)
+
+            def check(self, *args, **kwargs):
+                return Feasibility(feasible=True)
+
+            def execute(self, *args, **kwargs):
+                ExactMethod.ran = True
+                return Normal("exact", 0, 1)
+
+        registry = UnaryDispatchRegistry()
+        registry.register(ExactMethod())
+        monkeypatch.setattr("probpipe.inference.inference_method_registry", registry)
+
+        ops.condition_on(Amortized(), 1.0)
+        assert ExactMethod.ran
+        assert Amortized.calls == 0
+
+    def test_the_approximate_capability_runs_when_no_exact_method_applies(self, monkeypatch):
+        """With only approximate methods registered, the built-in path still wins."""
+        from probpipe.core._dispatch import UnaryDispatchRegistry
+
+        class Amortized(SupportsApproximateConditioning):
+            calls: ClassVar[int] = 0
+
+            def _condition_on(self, observed, /, **kwargs):
+                Amortized.calls += 1
+                return Normal("amortized", 0, 1)
+
+        monkeypatch.setattr("probpipe.inference.inference_method_registry", UnaryDispatchRegistry())
+        ops.condition_on(Amortized(), 1.0)
+        assert Amortized.calls == 1
+
+    def test_an_unresolved_exact_candidate_falls_back_to_the_approximate_capability(
+        self, monkeypatch
+    ):
+        """An exact method that cannot yet decide does not hold the call back."""
+        from probpipe.core._dispatch import Feasibility, UnaryDispatchMethod, UnaryDispatchRegistry
+
+        class Amortized(SupportsApproximateConditioning):
+            calls: ClassVar[int] = 0
+
+            def _condition_on(self, observed, /, **kwargs):
+                Amortized.calls += 1
+                return Normal("amortized", 0, 1)
+
+        class UnresolvedExact(UnaryDispatchMethod):
+            ran = False
+
+            @property
+            def name(self):
+                return "unresolved_exact"
+
+            @property
+            def exact(self):
+                return True
+
+            @property
+            def priority(self):
+                return 1
+
+            def supported_types(self):
+                return (Amortized,)
+
+            def check(self, *args, **kwargs):
+                return Feasibility(feasible=None, pending=("event spec of the model",))
+
+            def execute(self, *args, **kwargs):
+                UnresolvedExact.ran = True
+                return Normal("exact", 0, 1)
+
+        registry = UnaryDispatchRegistry()
+        registry.register(UnresolvedExact())
+        monkeypatch.setattr("probpipe.inference.inference_method_registry", registry)
+
+        ops.condition_on(Amortized(), 1.0)
+        assert Amortized.calls == 1
+        assert not UnresolvedExact.ran
+
+    def test_exact_only_skips_the_approximate_capability_route(self):
+        """An amortized conditioner is not an exact answer, so the call falls to the registry."""
+
+        class Amortized(SupportsApproximateConditioning):
+            calls: ClassVar[int] = 0
+
+            def _condition_on(self, observed, /, **kwargs):
+                Amortized.calls += 1
+                return Normal("posterior", 0, 1)
+
+        amortized = Amortized()
+        ops.condition_on(amortized, 1.0)
+        assert Amortized.calls == 1
+        with pytest.raises(ResolutionError):
+            ops.condition_on(amortized, 1.0, exact_only=True)
+        assert Amortized.calls == 1
 
 
 # ---------------------------------------------------------------------------
@@ -345,7 +641,7 @@ class TestSplitDataKwargs:
     def test_empty_kwargs(self):
         from probpipe.core.ops import _split_data_kwargs
 
-        dist = ProductDistribution(x=Normal(0.0, 1.0, name="x"))
+        dist = ProductDistribution(x=Normal("x", 0.0, 1.0))
         data, inference = _split_data_kwargs(dist, {})
         assert data == {}
         assert inference == {}
@@ -353,7 +649,7 @@ class TestSplitDataKwargs:
     def test_all_data_kwargs(self):
         from probpipe.core.ops import _split_data_kwargs
 
-        dist = ProductDistribution(x=Normal(0.0, 1.0, name="x"), y=Normal(0.0, 1.0, name="y"))
+        dist = ProductDistribution(x=Normal("x", 0.0, 1.0), y=Normal("y", 0.0, 1.0))
         data, inference = _split_data_kwargs(
             dist,
             {"x": jnp.array(1.0), "y": jnp.array(2.0)},
@@ -364,7 +660,7 @@ class TestSplitDataKwargs:
     def test_all_inference_kwargs(self):
         from probpipe.core.ops import _split_data_kwargs
 
-        dist = ProductDistribution(x=Normal(0.0, 1.0, name="x"))
+        dist = ProductDistribution(x=Normal("x", 0.0, 1.0))
         data, inference = _split_data_kwargs(
             dist,
             {"num_results": 100, "random_seed": 42},
@@ -375,7 +671,7 @@ class TestSplitDataKwargs:
     def test_mixed_kwargs(self):
         from probpipe.core.ops import _split_data_kwargs
 
-        dist = ProductDistribution(x=Normal(0.0, 1.0, name="x"), y=Normal(0.0, 1.0, name="y"))
+        dist = ProductDistribution(x=Normal("x", 0.0, 1.0), y=Normal("y", 0.0, 1.0))
         data, inference = _split_data_kwargs(
             dist,
             {"x": jnp.array(1.0), "num_results": 100},
@@ -387,7 +683,7 @@ class TestSplitDataKwargs:
         """Distribution without fields → all kwargs are inference."""
         from probpipe.core.ops import _split_data_kwargs
 
-        dist = Normal(0.0, 1.0, name="x")
+        dist = Normal("x", 0.0, 1.0)
         data, inference = _split_data_kwargs(
             dist,
             {"num_results": 100},
@@ -398,10 +694,10 @@ class TestSplitDataKwargs:
     def test_case_mismatched_field_raises(self):
         """A kwarg matching a field only up to case is a mistyped data field —
         raise with the correct casing rather than silently routing it to
-        inference params (issue #228)."""
+        inference params."""
         from probpipe.core.ops import _split_data_kwargs
 
-        dist = ProductDistribution(X=Normal(0.0, 1.0, name="X"), y=Normal(0.0, 1.0, name="y"))
+        dist = ProductDistribution(X=Normal("X", 0.0, 1.0), y=Normal("y", 0.0, 1.0))
         with pytest.raises(TypeError, match="did you mean X"):
             _split_data_kwargs(dist, {"x": jnp.array(1.0)})
 
@@ -410,7 +706,7 @@ class TestSplitDataKwargs:
         genuine inference parameter — no false positive."""
         from probpipe.core.ops import _split_data_kwargs
 
-        dist = ProductDistribution(X=Normal(0.0, 1.0, name="X"), y=Normal(0.0, 1.0, name="y"))
+        dist = ProductDistribution(X=Normal("X", 0.0, 1.0), y=Normal("y", 0.0, 1.0))
         data, inference = _split_data_kwargs(
             dist,
             {"X": jnp.array(1.0), "num_results": 100},

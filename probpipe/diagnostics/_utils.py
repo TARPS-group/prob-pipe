@@ -24,10 +24,21 @@ import json
 import numpy as np
 
 
+def _is_structured(value: Any) -> bool:
+    """Whether *value* enumerates named fields, so one export variable fits each.
+
+    A record or a batch of them carries an ``event_template``, which is the
+    nested-aware enumeration :func:`_leaf_keys` reads. A test double may expose
+    only the top-level ``.fields``; either is enough to key the export by field
+    rather than treating the value as one opaque array.
+    """
+    return hasattr(value, "event_template") or hasattr(value, "fields")
+
+
 def _leaf_keys(value: Any) -> list[str]:
     """Leaf keys of a draws/samples container, one export variable per leaf.
 
-    A real ``Record`` / ``RecordArray`` (or a posterior wrapping one) exposes
+    A real ``Record`` / ``RecordBatch`` (or a posterior wrapping one) exposes
     the ``/``-path of every leaf via its ``event_template`` — the nested-aware
     enumeration, and the single duck-typing rule the diagnostics exporters
     share. Objects without a template (e.g. test doubles) fall back to the

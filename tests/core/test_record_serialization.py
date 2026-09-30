@@ -1,8 +1,10 @@
-"""Pickle / cloudpickle round-trip tests for the Record family.
+"""Round-trip tests for the terms that reconstruct through their own ``__reduce__``.
 
-These tests ensure that Record, EventTemplate, NumericRecord, RecordArray,
-and NumericRecordArray can survive pickle serialization, which is required for
-Ray task distribution (Ray uses cloudpickle to ship arguments to workers).
+These tests ensure that Record, RecordSpec, NumericRecord, RecordBatch,
+NumericRecordBatch, and ProductDistribution can survive pickle serialization,
+which is required for Ray task distribution (Ray uses cloudpickle to ship
+arguments to workers), and that a copy or an unpickle preserves everything the
+term was carrying.
 
 The core issue was that Record.__setattr__ raises "Record is immutable", so
 pickle's default restore mechanism (create empty instance + __setattr__) failed.
@@ -10,22 +12,25 @@ The fix adds __reduce__ to each class, delegating reconstruction to the normal
 constructor.
 """
 
+import copy
 import pickle
 
 import jax.numpy as jnp
 import pytest
 
 from probpipe import (
+    Normal,
     NumericRecord,
-    NumericRecordArray,
-    RecordArray,
+    NumericRecordBatch,
+    ProductDistribution,
+    RecordBatch,
 )
 from probpipe.core._empirical import BootstrapReplicateDistribution, EmpiricalDistribution
-from probpipe.core.event_template import (
-    ArraySpec,
-    EventTemplate,
-    NumericEventTemplate,
-    OpaqueSpec,
+from probpipe.core._opaque import OpaqueSpec
+from probpipe.core._specs import (
+    NumericArraySpec,
+    NumericRecordSpec,
+    RecordSpec,
 )
 from probpipe.core.record import Record
 
@@ -58,10 +63,10 @@ def test_record_pickle_roundtrip():
 
 
 def test_record_pickle_auto_name():
-    r = Record("r", {"a": jnp.array(1.0), "b": jnp.array(2.0)}, name_is_auto=True)
+    r = Record("r", {"a": jnp.array(1.0), "b": jnp.array(2.0)})
     r2 = roundtrip(r)
     assert r2.name == r.name
-    assert r2.name_is_auto is True
+    pass
     assert r2.fields == ("a", "b")
 
 
@@ -93,24 +98,24 @@ def test_record_no_provenance_roundtrip():
 
 
 # ---------------------------------------------------------------------------
-# EventTemplate
+# RecordSpec
 # ---------------------------------------------------------------------------
 
 
 def test_event_template_pickle_roundtrip():
-    t = EventTemplate(label=None, x=())
+    t = RecordSpec(label=None, x=())
     t2 = roundtrip(t)
-    assert type(t2) is EventTemplate
+    assert type(t2) is RecordSpec
     assert t2.fields == ("label", "x")
     assert t2["label"] == OpaqueSpec()
-    assert t2["x"] == ArraySpec(())
+    assert t2["x"] == NumericArraySpec(())
 
 
 def test_numeric_event_template_pickle_roundtrip():
-    t = EventTemplate(x=(), y=(3,))
-    assert type(t) is NumericEventTemplate
+    t = RecordSpec(x=(), y=(3,))
+    assert type(t) is NumericRecordSpec
     t2 = roundtrip(t)
-    assert type(t2) is NumericEventTemplate
+    assert type(t2) is NumericRecordSpec
     assert t2.fields == ("x", "y")
     assert t2.vector_size == 4  # () + (3,)
 
@@ -143,61 +148,69 @@ def test_numeric_record_cloudpickle_roundtrip():
 
 
 # ---------------------------------------------------------------------------
-# RecordArray
+# RecordBatch
 # ---------------------------------------------------------------------------
 
 
-def test_record_array_pickle_roundtrip():
-    template = EventTemplate(x=(), y=(3,))
-    ra = RecordArray(
+def test_record_batch_pickle_roundtrip():
+    template = RecordSpec(x=(), y=(3,))
+    ra = RecordBatch(
+        "batch",
         {"x": jnp.array([1.0, 2.0]), "y": jnp.ones((2, 3))},
-        batch_shape=(2,),
-        template=template,
+        level_names="draw",
+        axes_per_level=(1,),
+        element_spec=template,
     )
     ra2 = roundtrip(ra)
     assert ra2.batch_shape == (2,)
-    assert ra2.fields == ("x", "y")
+    assert ra2.event_template.fields == ("x", "y")
     assert list(ra2["x"]) == pytest.approx([1.0, 2.0])
 
 
-def test_record_array_template_preserved():
-    template = EventTemplate(x=(), y=(3,))
-    ra = RecordArray(
+def test_record_batch_template_preserved():
+    template = RecordSpec(x=(), y=(3,))
+    ra = RecordBatch(
+        "batch",
         {"x": jnp.array([1.0]), "y": jnp.ones((1, 3))},
-        batch_shape=(1,),
-        template=template,
+        level_names="draw",
+        axes_per_level=(1,),
+        element_spec=template,
     )
     ra2 = roundtrip(ra)
-    assert ra2.template == template
+    assert ra2.event_template == template
 
 
 # ---------------------------------------------------------------------------
-# NumericRecordArray
+# NumericRecordBatch
 # ---------------------------------------------------------------------------
 
 
-def test_numeric_record_array_pickle_roundtrip():
-    template = EventTemplate(x=(), y=(2,))
-    nra = NumericRecordArray(
+def test_numeric_record_batch_pickle_roundtrip():
+    template = RecordSpec(x=(), y=(2,))
+    nrb = NumericRecordBatch(
+        "batch",
         {"x": jnp.array([1.0, 2.0, 3.0]), "y": jnp.ones((3, 2))},
-        batch_shape=(3,),
-        template=template,
+        level_names="draw",
+        axes_per_level=(1,),
+        element_spec=template,
     )
-    nra2 = roundtrip(nra)
-    assert type(nra2) is NumericRecordArray
+    nra2 = roundtrip(nrb)
+    assert type(nra2) is NumericRecordBatch
     assert nra2.batch_shape == (3,)
     assert list(nra2["x"]) == pytest.approx([1.0, 2.0, 3.0])
 
 
-def test_numeric_record_array_cloudpickle_roundtrip():
-    template = EventTemplate(x=())
-    nra = NumericRecordArray(
+def test_numeric_record_batch_cloudpickle_roundtrip():
+    template = RecordSpec(x=())
+    nrb = NumericRecordBatch(
+        "batch",
         {"x": jnp.array([1.0, 2.0])},
-        batch_shape=(2,),
-        template=template,
+        level_names="draw",
+        axes_per_level=(1,),
+        element_spec=template,
     )
-    nra2 = cloudpickle_roundtrip(nra)
-    assert type(nra2) is NumericRecordArray
+    nra2 = cloudpickle_roundtrip(nrb)
+    assert type(nra2) is NumericRecordBatch
     assert nra2.batch_shape == (2,)
 
 
@@ -207,14 +220,14 @@ def test_numeric_record_array_cloudpickle_roundtrip():
 
 
 def test_empirical_distribution_pickle():
-    dist = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0, 4.0]), name="x")
+    dist = EmpiricalDistribution("x", jnp.array([1.0, 2.0, 3.0, 4.0]))
     dist2 = roundtrip(dist)
     assert dist2.num_atoms == 4
 
 
 def test_bootstrap_replicate_pickle():
-    base = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), name="x")
-    brd = BootstrapReplicateDistribution(base, name="x")
+    base = EmpiricalDistribution("x", jnp.array([1.0, 2.0, 3.0]))
+    brd = BootstrapReplicateDistribution("x", base)
     brd2 = roundtrip(brd)
     # Verify it round-tripped as the right type and is callable
     assert type(brd2).__name__ == "RecordBootstrapReplicateDistribution"
@@ -315,7 +328,9 @@ class TestPicklePreservesTemplate:
     def test_plain_record_template_survives(self):
         from probpipe.core.constraints import positive
 
-        tpl = EventTemplate(x=ArraySpec(shape=(3,), support=positive), tag=OpaqueSpec(meta="units"))
+        tpl = RecordSpec(
+            x=NumericArraySpec(shape=(3,), support=positive), tag=OpaqueSpec(meta="units")
+        )
         r = Record("r", {"x": jnp.ones(3), "tag": "meters"}, event_template=tpl)
         assert not isinstance(r, NumericRecord)  # opaque leaf keeps it a plain Record
         back = roundtrip(r)
@@ -325,7 +340,7 @@ class TestPicklePreservesTemplate:
     def test_numeric_record_template_survives(self):
         from probpipe.core.constraints import positive
 
-        tpl = EventTemplate(x=ArraySpec(shape=(3,), support=positive))
+        tpl = RecordSpec(x=NumericArraySpec(shape=(3,), support=positive))
         nr = NumericRecord("nr", {"x": jnp.ones(3)}, event_template=tpl)
         back = roundtrip(nr)
         assert back.event_template == nr.event_template
@@ -334,7 +349,7 @@ class TestPicklePreservesTemplate:
     def test_cloudpickle_preserves_template(self):
         from probpipe.core.constraints import positive
 
-        tpl = EventTemplate(x=ArraySpec(shape=(3,), support=positive))
+        tpl = RecordSpec(x=NumericArraySpec(shape=(3,), support=positive))
         nr = NumericRecord("nr", {"x": jnp.ones(3)}, event_template=tpl)
         assert cloudpickle_roundtrip(nr).event_template == nr.event_template
 
@@ -343,7 +358,7 @@ class TestPicklePreservesTemplate:
         from probpipe.core.constraints import positive
 
         da = xr.DataArray([1.0, 2.0, 3.0], dims=["t"], coords={"t": [10, 20, 30]})
-        tpl = EventTemplate(x=ArraySpec(shape=(3,), support=positive))
+        tpl = RecordSpec(x=NumericArraySpec(shape=(3,), support=positive))
         nr = NumericRecord("nr", {"x": da}, event_template=tpl)
         back = roundtrip(nr)
         assert back.event_template == nr.event_template  # explicit template survived
@@ -356,3 +371,78 @@ class TestPicklePreservesTemplate:
         back = roundtrip(nr)
         assert [float(v) for v in back["x"]] == [1.0, 2.0]
         assert float(back["y"]) == pytest.approx(3.0)
+
+
+# ---------------------------------------------------------------------------
+# Pickle preserves annotations
+# ---------------------------------------------------------------------------
+
+
+class TestRoundTripPreservesAnnotations:
+    """Annotations survive every reconstruction path.
+
+    They are written *after* construction — the documented exception to
+    immutability — so no constructor argument carries them, and ``__reduce__``
+    governs ``copy`` as well as ``pickle``.
+    """
+
+    @pytest.fixture(
+        params=[
+            # An opaque leaf keeps this one a plain ``Record`` rather than
+            # promoting it, so both classes in the family are covered.
+            pytest.param(lambda: Record("r", {"x": jnp.ones(3), "tag": "meters"}), id="record"),
+            pytest.param(lambda: NumericRecord("nr", {"x": jnp.ones(3)}), id="numeric-record"),
+            pytest.param(
+                lambda: ProductDistribution(value=Normal("value", 0.0, 1.0), name="joint"),
+                id="product-distribution",
+            ),
+        ]
+    )
+    def term(self, request):
+        term = request.param()
+        # The store is written through ``object.__setattr__``, as the library's
+        # own writers do: an immutability guard refuses plain assignment.
+        object.__setattr__(term, "_annotations", {"diagnostics": {"n_eff": 42}})
+        return term
+
+    def test_pickle_preserves_annotations(self, term):
+        assert roundtrip(term).annotations == {"diagnostics": {"n_eff": 42}}
+
+    def test_cloudpickle_preserves_annotations(self, term):
+        assert cloudpickle_roundtrip(term).annotations == {"diagnostics": {"n_eff": 42}}
+
+    def test_copy_preserves_annotations(self, term):
+        assert copy.copy(term).annotations == {"diagnostics": {"n_eff": 42}}
+        assert copy.deepcopy(term).annotations == {"diagnostics": {"n_eff": 42}}
+
+    def test_copy_decouples_the_container(self, term):
+        # Writers add entries in place, so a shared container would let a write
+        # on the copy show through on the original.
+        clone = copy.copy(term)
+        clone.annotations["added"] = 1
+        assert "added" not in term.annotations
+
+    def test_unannotated_term_stays_unannotated(self):
+        assert roundtrip(Record("r", {"x": jnp.ones(3)})).annotations is None
+        assert roundtrip(ProductDistribution(v=Normal("v", 0.0, 1.0))).annotations is None
+
+    def test_the_reconstruction_has_the_same_type(self, term):
+        # A term whose class is chosen from its constructor arguments — a record
+        # promoting to ``NumericRecord``, a product distribution picking up the
+        # mixins its components support — lands on a different class if the
+        # reconstruction lets one of its own keywords be read as data. The state
+        # can look complete while the interface is not.
+        assert type(roundtrip(term)) is type(term)
+        assert type(copy.copy(term)) is type(term)
+
+    def test_no_state_is_lost(self, term):
+        # The general form of the bug: compare every attribute the object
+        # reports, so a field added later cannot go missing silently. The
+        # conversion cache is the one documented exclusion — a memo, rebuilt on
+        # demand.
+        def assigned(obj):
+            state = object.__getstate__(obj)
+            instance_dict, slots = state if isinstance(state, tuple) else (state, {})
+            return (set(instance_dict or {}) | set(slots or {})) - {"_jax_cache"}
+
+        assert assigned(term) - assigned(roundtrip(term)) == set()

@@ -1,15 +1,10 @@
-"""TFPDistribution base class for distributions backed by TFP instances.
-
-Factored out of ``core/distribution.py`` because no ``core/`` module
-imports ``TFPDistribution`` – it is only used by the concrete
-distribution modules in ``distributions/``.
-"""
+"""TFPDistribution base class for distributions backed by TFP instances."""
 
 from __future__ import annotations
 
 import contextlib
 import contextvars
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from typing import Any
 
 import jax
@@ -18,12 +13,8 @@ import numpy as np
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from .._array_utils import _slice_leading_axes
-from ..core._distribution_base import Distribution
+from ..core._numeric_record_distribution import NumericRecordDistribution, _mc_expectation
 from ..core.constraints import Constraint
-from ..core.distribution import (
-    NumericRecordDistribution,
-    _mc_expectation,
-)
 from ..core.protocols import (
     SupportsCovariance,
     SupportsLogProb,
@@ -32,6 +23,7 @@ from ..core.protocols import (
     SupportsVariance,
 )
 from ..custom_types import Array, ArrayLike, PRNGKey
+from ._distribution import Distribution
 
 # ---------------------------------------------------------------------------
 # Internal bypass for the batched-parameters rejection
@@ -62,7 +54,7 @@ state."""
 
 
 @contextlib.contextmanager
-def _allow_batched_tfp_init() -> Iterator[None]:
+def _allow_batched_tfp_init() -> Generator[None, None, None]:
     """Context manager: allow TFP-backed constructors to accept
     parameters whose implied ``batch_shape`` is non-empty.
 
@@ -102,6 +94,11 @@ class TFPDistribution(
     ``_unnormalized_log_prob``, ``_unnormalized_prob`` defaults),
     :class:`SupportsMean`, and :class:`SupportsVariance`.
 
+    Parameters
+    ----------
+    name : str
+        Distribution name.
+
     Rejects batched parameters
     --------------------------
     Per the framework hierarchy "one random variable per
@@ -132,7 +129,7 @@ class TFPDistribution(
     _sampling_cost: str = "low"
     _preferred_orchestration: str | None = None
 
-    def __init__(self, *, name: str, name_is_auto: bool = False) -> None:
+    def __init__(self, name: str) -> None:
         """Final-stage initializer for TFP-backed distributions.
 
         Concrete subclasses (``Normal``, ``Beta``, …) set
@@ -141,7 +138,7 @@ class TFPDistribution(
         the TFP backend is fully constructed and we can validate its
         ``batch_shape``.
         """
-        super().__init__(name=name, name_is_auto=name_is_auto)
+        super().__init__(name=name)
         if _BATCHED_INIT_BYPASS.get():
             return
         # KDE-style subclasses set ``_tfp_dist`` *after* this call;
@@ -426,7 +423,6 @@ class _TFPArrayBackend:
             name=f"{self._name}_{flat}",
         )
         # The per-cell suffix is derived by the backend, not user-typed.
-        object.__setattr__(cell, "_name_is_auto", True)
         return cell
 
     def _normalize_index(self, index: int | tuple[int, ...]) -> tuple[tuple[int, ...], int]:

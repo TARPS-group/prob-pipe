@@ -30,7 +30,7 @@ bijectors (see :data:`_BIJECTOR_SUPPORT_MAP` in
 The forward direction (bijector → support) in ``_BIJECTOR_SUPPORT_MAP``
 and the inverse direction (support → bijector) implemented here are
 **not** strict inverses of each other.  In particular,
-``TransformedDistribution(base, bijector_for(c)).support == c`` holds
+``TransformedDistribution(name, base, bijector_for(c)).support == c`` holds
 only for ``real``, ``positive``, and ``unit_interval`` (the cases where
 the canonical bijector is unparameterized and is in the forward map).
 For ``non_negative`` (Softplus → ``positive``), ``interval(low, high)``
@@ -49,7 +49,7 @@ from typing import ClassVar
 
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
-from ..core._registry_catalog import EntrySummary, registry_catalog
+from ..core._catalog import EntrySummary, registry_catalog
 from ..core.constraints import (
     Constraint,
     _Boolean,
@@ -244,12 +244,12 @@ class _BijectorRegistryFacade:
     MRO-fallback (no priority semantics), and there is no
     ``check()``/``execute()`` cycle (just a factory call).  This facade
     satisfies
-    :class:`~probpipe.core._registry_catalog.SupportsRegistryCataloging`
+    :class:`~probpipe.core._catalog.SupportsRegistryCataloging`
     by walking the module-level
     :data:`_CONSTRAINT_BIJECTOR_REGISTRY` dict; dispatch behaviour is
     unchanged.
 
-    ``priority`` on each :class:`~probpipe.core._registry_catalog.EntrySummary`
+    ``priority`` on each :class:`~probpipe.core._catalog.EntrySummary`
     is ``None`` because the underlying registry has no priority concept.
     """
 

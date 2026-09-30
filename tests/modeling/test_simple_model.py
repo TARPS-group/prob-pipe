@@ -15,9 +15,10 @@ import pytest
 
 from probpipe import (
     ApproximateDistribution,
-    EventTemplate,
     MultivariateNormal,
     Record,
+    RecordSpec,
+    ResolutionError,
     SimpleModel,
     SupportsLogProb,
     SupportsSampling,
@@ -64,7 +65,7 @@ class TestSimpleModel:
         """SimpleModel rejects priors that don't support SupportsLogProb."""
         from probpipe import EmpiricalDistribution
 
-        emp = EmpiricalDistribution(jnp.ones((10, 2)), name="x")
+        emp = EmpiricalDistribution("x", jnp.ones((10, 2)))
         lik = GaussianLikelihood()
         with pytest.raises(TypeError, match="SupportsLogProb"):
             SimpleModel(emp, lik)
@@ -79,7 +80,7 @@ class TestSimpleModel:
         ``RecordDistribution`` can't be expressed statically, so the
         runtime guard is the only backstop.
         """
-        from probpipe.core.distribution import Distribution
+        from probpipe import Distribution
         from probpipe.core.protocols import SupportsLogProb
 
         class _LogProbOnly(Distribution, SupportsLogProb):
@@ -211,9 +212,7 @@ class TestSimpleModelConditioningPaths:
         assert isinstance(result, ApproximateDistribution)
 
     def test_condition_on_bad_method(self, model, data):
-        with pytest.raises(KeyError):
-            from probpipe import condition_on
-
+        with pytest.raises(ResolutionError, match="nonexistent_method"):
             condition_on(model, data, method="nonexistent_method")
 
     def test_condition_on_explicit_init(self, model, data):
@@ -294,7 +293,7 @@ class TestSimpleModelWithValues:
     @pytest.fixture
     def prior_with_template(self):
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params")
-        prior._event_template = EventTemplate(a=(), b=())
+        prior._event_template = RecordSpec(a=(), b=())
         return prior
 
     @pytest.fixture
@@ -357,7 +356,7 @@ class TestSimpleModelWithValues:
     def test_field_overlap_raises(self):
         """SimpleModel rejects overlapping prior and data field names."""
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params")
-        prior._event_template = EventTemplate(X=(), y=())
+        prior._event_template = RecordSpec(X=(), y=())
 
         class _OverlapLikelihood:
             def log_likelihood(self, params, data):
@@ -365,7 +364,7 @@ class TestSimpleModelWithValues:
 
             @property
             def data_template(self):
-                return EventTemplate(X=(0, 0), y=(0,))
+                return RecordSpec(X=(0, 0), y=(0,))
 
         with pytest.raises(ValueError, match="overlap"):
             SimpleModel(prior, _OverlapLikelihood())

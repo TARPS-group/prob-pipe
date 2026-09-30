@@ -88,7 +88,7 @@ class TestIntervalCoverage:
     def test_accepts_distribution_input(self):
         # A distribution exposing flat_samples scores identically to its raw draws.
         draws = jax.random.normal(jax.random.PRNGKey(4), (2000, 2))
-        emp = EmpiricalDistribution(draws, name="z")
+        emp = EmpiricalDistribution("z", draws)
         from_dist = interval_coverage(emp, jnp.array([0.3, -0.4]), levels=(0.9,))
         from_array = interval_coverage(draws, jnp.array([0.3, -0.4]), levels=(0.9,))
         assert bool(jnp.all(from_dist[0.9] == from_array[0.9]))
@@ -182,7 +182,7 @@ class TestFlattening:
     def test_component_names_expand_per_field(self):
         # A length-k field becomes field[0..k-1]; a scalar field keeps its name —
         # in posterior field order, matching flat_samples columns.
-        emp = EmpiricalDistribution(Record("r", a=jnp.zeros((10, 2)), b=jnp.zeros((10,))), name="m")
+        emp = EmpiricalDistribution("m", Record("r", a=jnp.zeros((10, 2)), b=jnp.zeros((10,))))
         assert _component_names(emp) == ("a[0]", "a[1]", "b")
 
 

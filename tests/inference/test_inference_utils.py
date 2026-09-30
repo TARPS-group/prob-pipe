@@ -16,8 +16,8 @@ from probpipe import (
     ProductDistribution,
     SimpleModel,
 )
-from probpipe.core._distribution_base import Distribution
 from probpipe.core.protocols import SupportsSampling
+from probpipe.distributions._distribution import Distribution
 from probpipe.inference._inference_utils import (
     as_prng_key,
     build_likelihood_flat,
@@ -491,7 +491,7 @@ class _StubTrace:
 class TestPosteriorVarOrder:
     """``posterior_var_order`` returns a trace's posterior variables in the
     backend's natural order filtered to *keep*, and fails loudly when a
-    kept name is missing (PR #236 / #233)."""
+    kept name is missing."""
 
     def test_preserves_trace_order_not_keep_order(self):
         trace = _StubTrace(["slope", "intercept", "lp__"])

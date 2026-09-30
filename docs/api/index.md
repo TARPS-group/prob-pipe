@@ -31,7 +31,7 @@ for known-name lookups.
   multivariate, composite and joint, empirical and bootstrap, random
   functions.
 - **[Records and data](records.md)** — `Record`, `NumericRecord`, the
-  `RecordArray` family, `Weights`, parameter-sweep `Design`s, and the
+  `RecordBatch` family, `Weights`, parameter-sweep `Design`s, and the
   array-backend registry.
 - **[Modeling and inference](inference.md)** — model and likelihood
   classes, the inference-method registry and built-ins, iterative

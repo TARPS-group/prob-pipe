@@ -70,7 +70,7 @@ class _DiracRandomMeasure(
     SupportsRandomLogProb,
     SupportsRandomUnnormalizedLogProb,
 ):
-    """Finite-support random measure: weighted Dirac on inner ``Distribution[Array]``s.
+    """Finite-support random measure: weighted Dirac on inner array-valued distributions.
 
     A draw is one of the inner components, picked by weight.  This is
     the simplest possible random measure — useful as a test fixture
@@ -235,13 +235,13 @@ class TestSampling:
 
 
 # ---------------------------------------------------------------------------
-# Mean (returns a Distribution[T] for a RandomMeasure[T])
+# Mean (returns a Distribution for a RandomMeasure)
 # ---------------------------------------------------------------------------
 
 
 class TestMean:
     def test_returns_distribution(self):
-        """``mean(rm)`` for a RandomMeasure returns a ``Distribution[T]``,
+        """``mean(rm)`` for a RandomMeasure returns a ``Distribution``,
         i.e. the marginalised ``D̄(A) = ∫ D(A) dM(D)``."""
         comps = [Normal(loc=float(i), scale=1.0, name=f"n{i}") for i in range(3)]
         rm = _DiracRandomMeasure(comps)
@@ -251,7 +251,7 @@ class TestMean:
     def test_outer_mean_matches_weighted_inner_mean(self):
         """``mean(mean(rm))`` is the weighted mean of the component means.
 
-        Outer ``mean(rm)`` is the marginalised ``Distribution[T]``; inner
+        Outer ``mean(rm)`` is the marginalised ``Distribution``; inner
         ``mean(_)`` collapses that to its array-valued mean.
         """
         locs = [0.0, 2.0, 5.0]

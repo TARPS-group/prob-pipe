@@ -7,7 +7,7 @@ from typing import Any
 import arviz_base as azb
 import jax.numpy as jnp
 
-from ..core._registry import MethodInfo
+from ..core._dispatch import Feasibility
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
 
@@ -26,7 +26,17 @@ def _import_cmdstanpy():
 
 
 class CmdStanNutsMethod(InferenceMethod):
-    """CmdStanPy-backed NUTS for Stan models."""
+    """CmdStanPy-backed NUTS, registered as ``cmdstan_nuts`` at priority 82.
+
+    Applies to a ``StanModel``; cmdstanpy is imported at execution.
+
+    Notes
+    -----
+    An optimised backend: Stan-compiled NUTS through the cmdstanpy subprocess
+    interface. Below ``nutpie_nuts`` (88) and ``blackjax_nuts`` (85) because
+    of the subprocess overhead, and tied with ``pymc_nuts`` (82), which
+    applies to a disjoint model class.
+    """
 
     def __init__(self) -> None:
         from ..modeling._stan import StanModel
@@ -42,17 +52,12 @@ class CmdStanNutsMethod(InferenceMethod):
 
     @property
     def priority(self) -> int:
-        # Tier 81-90 (optimised backend; Stan-compiled NUTS via the
-        # cmdstanpy subprocess interface). Below nutpie_nuts (85) due
-        # to subprocess overhead.
         return 82
 
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
+    def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:
         if not isinstance(dist, self._model_type):
-            return MethodInfo(
-                feasible=False, method_name=self.name, description="Requires StanModel"
-            )
-        return MethodInfo(feasible=True, method_name=self.name)
+            return Feasibility(feasible=False, description="Requires StanModel")
+        return Feasibility(feasible=True)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
         cmdstanpy = _import_cmdstanpy()

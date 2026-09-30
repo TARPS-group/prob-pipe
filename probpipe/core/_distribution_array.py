@@ -8,7 +8,7 @@ Vectorized ops are delivered by the :class:`~probpipe.Function`
 sweep layer — when a ``DistributionArray`` is passed to an op like
 ``sample`` / ``mean`` / ``log_prob`` whose signature expects a scalar
 ``Distribution``, the WF dispatches cell-by-cell and stacks the results
-into a ``NumericRecordArray`` / ``RecordArray`` (or nested
+into a ``NumericRecordBatch`` / ``RecordBatch`` (or nested
 ``DistributionArray`` when the op returns a distribution per cell).
 The class itself only carries the container surface.
 
@@ -24,14 +24,14 @@ differs:
 
 - :class:`~probpipe.ProductDistribution` bundles **heterogeneous
   independent components** addressed by name — e.g.
-  ``ProductDistribution(theta=Normal(0, 1), sigma=Gamma(2, 1))``.
+  ``ProductDistribution(theta=Normal("theta", 0, 1), sigma=Gamma("sigma", 2, 1))``.
   ``sample`` returns a ``Record`` keyed by component name.
 
 - :class:`DistributionArray` bundles **positionally-indexed components**
   along a batch axis — e.g.
-  ``DistributionArray([Normal(loc=i, scale=1.0, name=f"n{i}") for i in
-  range(5)])``. ``sample(da)`` vectorizes over cells and returns a
-  ``NumericRecordArray`` at ``batch_shape=da.batch_shape``.
+  ``DistributionArray([Normal(f"n{i}", i, 1.0) for i in range(5)])``.
+  ``sample(da)`` vectorizes over cells and returns a
+  ``NumericRecordBatch`` at ``batch_shape=da.batch_shape``.
 
 Rule of thumb: if you'd write ``d["sigma"]`` to pull out a specific
 **named** quantity → ``ProductDistribution``. If you'd write ``d[i]``
@@ -40,6 +40,7 @@ to pull out the i-th element of a **batch** → ``DistributionArray``.
 
 from __future__ import annotations
 
+from functools import partial
 from math import prod
 from typing import TYPE_CHECKING
 
@@ -47,8 +48,9 @@ import jax.numpy as jnp
 import numpy as np
 
 from .._array_utils import _slice_leading_axes
-from ._distribution_base import Distribution
-from .event_template import EventTemplate
+from ..distributions._distribution import Distribution
+from ._immutable import transient_memo
+from ._specs import RecordSpec
 from .protocols import SupportsArrayBackend
 from .tracked import auto_name
 
@@ -63,7 +65,7 @@ __all__ = ["DistributionArray"]
 # ---------------------------------------------------------------------------
 
 
-class DistributionArray[T](Distribution[T]):
+class DistributionArray(Distribution):
     """Ordered collection of independent scalar distributions
     addressed by a (multi-d) ``batch_shape``.
 
@@ -84,7 +86,7 @@ class DistributionArray[T](Distribution[T]):
         Leading batch shape. Defaults to ``(len(components),)`` for the
         1-D form; ``prod(batch_shape)`` must equal ``len(components)``.
     name : str, optional
-        Name for provenance / introspection. Defaults to
+        Name for provenance / introspection. Keyword-only; defaults to
         ``"distribution_array"``.
 
     Notes
@@ -100,8 +102,8 @@ class DistributionArray[T](Distribution[T]):
        expects a scalar ``SupportsSampling``.
     2. WF dispatches cell-by-cell: each ``da[i]`` is sampled, results
        are stacked along ``batch_shape`` and returned as a
-       :class:`~probpipe.NumericRecordArray` (or
-       :class:`~probpipe.RecordArray` for non-numeric components).
+       :class:`~probpipe.NumericRecordBatch` (or
+       :class:`~probpipe.RecordBatch` for non-numeric components).
        For ops whose inner return is itself a ``Distribution`` (e.g.
        posterior-predictive sweeps), the result is a nested
        ``DistributionArray``.
@@ -123,8 +125,15 @@ class DistributionArray[T](Distribution[T]):
       than rejecting at construction.
     """
 
-    # Storage slots. ``_components`` is ``None`` for backend-delegated
-    # arrays until :attr:`components` materialises the eager tuple
+    #: The memo is not state: a copy recomputes rather than inheriting one. It
+    #: matters for more than size here, since a memoised value can carry the
+    #: provenance of the term that computed it.
+    _transient_state = ("_memo",)
+
+    # Storage slots. ``_components`` holds the literal tuple an eagerly built
+    # array was given, and stays ``None`` for a backend-delegated one — which is
+    # what marks it as backend-delegated. :attr:`components` materialises that
+    # array's cells on first read into the memo rather than into this slot
     # lazily; the literal-array constructor sets it directly.
     # ``_backend`` is ``None`` for the literal path and set by
     # :meth:`_from_backend`.
@@ -172,9 +181,9 @@ class DistributionArray[T](Distribution[T]):
         # leaves it ``None`` and uses ``_components`` as the
         # storage-of-truth.
         self._backend = None
-        self._event_template: EventTemplate | None = None
-        name, name_is_auto = auto_name(name, "distribution_array")
-        super().__init__(name=name, name_is_auto=name_is_auto)
+        self._event_template: RecordSpec | None = None
+        name = auto_name(name, "distribution_array")
+        super().__init__(name=name)
         # A DistributionArray holding MC-marginal components inherits
         # their approximation status; if any component is approximate
         # (a _MixtureMarginal or RecordEmpiricalDistribution), so is
@@ -305,8 +314,6 @@ class DistributionArray[T](Distribution[T]):
             multi_t = tuple(int(x) for x in multi)
             cell_params = {k: _slice_leading_axes(v, multi_t) for k, v in batched_params.items()}
             cell = dist_cls(name=f"{name}_{flat}", **cell_params)
-            # The per-cell suffix is derived by this factory, not user-typed.
-            object.__setattr__(cell, "_name_is_auto", True)
             components.append(cell)
         return cls(components, batch_shape=batch_shape, name=name)
 
@@ -349,18 +356,20 @@ class DistributionArray[T](Distribution[T]):
         # eager component list. Initialise fields the same way
         # __init__ would, but without per-component validation (the
         # backend already vouched for shape consistency).
-        instance._components = None
-        instance._batch_shape = tuple(backend.batch_shape)
-        instance._backend = backend
-        instance._event_template = None
-        name, name_is_auto = auto_name(name, "distribution_array")
-        Distribution.__init__(instance, name=name, name_is_auto=name_is_auto)
+        set_attribute = partial(object.__setattr__, instance)
+        set_attribute("_components", None)
+        set_attribute("_memo", {})
+        set_attribute("_batch_shape", tuple(backend.batch_shape))
+        set_attribute("_backend", backend)
+        set_attribute("_event_template", None)
+        name = auto_name(name, "distribution_array")
+        Distribution.__init__(instance, name=name)
         # Approximation status flows from the backend. TFP-backed
         # arrays are exact; a future Record-backend (over a
         # ``RecordEmpiricalDistribution``) will report
         # ``is_approximate=True`` on its own samples and the array
         # picks that up here.
-        instance._approximate = bool(getattr(backend, "is_approximate", False))
+        set_attribute("_approximate", bool(getattr(backend, "is_approximate", False)))
         return instance
 
     # -- structure -----------------------------------------------------------
@@ -377,12 +386,22 @@ class DistributionArray[T](Distribution[T]):
         accesses return the same cached tuple but indexing via
         :meth:`__getitem__` / :meth:`_flat_component` always returns a
         fresh scalar.
+
+        Raises
+        ------
+        RuntimeError
+            If neither stored components nor a backend is available.
         """
-        if self._components is None:
-            assert self._backend is not None  # invariant
+        if self._components is not None:
+            return self._components
+        if self._backend is None:
+            raise RuntimeError("DistributionArray has neither stored components nor a backend")
+        cells = transient_memo(self).get("components")
+        if cells is None:
             n = prod(self._batch_shape)
-            self._components = tuple(self._backend.cell(i) for i in range(n))
-        return self._components
+            cells = tuple(self._backend.cell(i) for i in range(n))
+            transient_memo(self)["components"] = cells
+        return cells
 
     @property
     def batch_shape(self) -> tuple[int, ...]:
@@ -404,7 +423,7 @@ class DistributionArray[T](Distribution[T]):
         return getattr(self._components[0], "event_shape", ())
 
     @property
-    def event_template(self) -> EventTemplate | None:
+    def event_template(self) -> RecordSpec | None:
         """Authoritative template shared by the component distributions.
 
         Function-produced arrays store the declared template explicitly.
@@ -536,7 +555,6 @@ class DistributionArray[T](Distribution[T]):
             new_components,
             batch_shape=sliced.shape,
             name=self._name,
-            name_is_auto=self._name_is_auto,
             event_template=self._event_template,
         )
 
@@ -557,9 +575,9 @@ class DistributionArray[T](Distribution[T]):
           the single cell — those work uniformly across every
           ``batch_shape`` including ``()``.
 
-        For flat row-major access over every cell (the pre-#178
-        behaviour), use :attr:`components` or
-        ``range(self.size)`` with :meth:`_flat_component`.
+        For flat row-major access over every cell, use
+        :attr:`components` or ``range(self.size)`` with
+        :meth:`_flat_component`.
         """
         bshape = self._batch_shape
         if not bshape:
@@ -670,8 +688,7 @@ def _make_distribution_array(
     *,
     batch_shape: tuple[int, ...] | None = None,
     name: str | None = None,
-    name_is_auto: bool | None = None,
-    event_template: EventTemplate | None = None,
+    event_template: RecordSpec | None = None,
 ) -> DistributionArray:
     """Factory: build a ``DistributionArray``.
 
@@ -693,11 +710,7 @@ def _make_distribution_array(
         ``len(components)``.
     name : str, optional
         Name for provenance.
-    name_is_auto : bool, optional
-        Overrides the flag on the result — pass the parent's flag when the
-        result inherits a possibly-auto name (e.g. a slice). ``None`` keeps
-        the constructor's own resolution (auto iff *name* was omitted).
-    event_template : EventTemplate, optional
+    event_template : RecordSpec, optional
         Authoritative template for a Function-produced aggregate. Every
         component must expose the same template.
     """
@@ -710,7 +723,5 @@ def _make_distribution_array(
                     f"DistributionArray component {index} event_template {actual!r} "
                     f"does not match declared template {event_template!r}"
                 )
-        array._event_template = event_template
-    if name_is_auto is not None:
-        object.__setattr__(array, "_name_is_auto", bool(name_is_auto))
+        object.__setattr__(array, "_event_template", event_template)
     return array

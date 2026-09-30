@@ -29,10 +29,15 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .._utils import _auto_key
+from ..core import _workflow_context
 from ..core.ops import condition_on
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ._predictive_check import _supports_key_arg
+from ._workflow_rng import (
+    _require_certified_generative_provider,
+    _resolve_validation_key,
+    _validate_positive_int,
+)
 
 __all__ = ["SBCResult", "interval_coverage", "simulation_based_calibration"]
 
@@ -206,18 +211,38 @@ def simulation_based_calibration(
     -------
     SBCResult
     """
-    if num_simulations < 1:
-        raise ValueError(f"num_simulations must be >= 1, got {num_simulations}")
+    _workflow_context._assert_workflow_admission()
+    num_simulations = _validate_positive_int("num_simulations", num_simulations)
+    num_posterior_draws = _validate_positive_int(
+        "num_posterior_draws",
+        num_posterior_draws,
+    )
+    num_observations = _validate_positive_int("num_observations", num_observations)
     if "random_seed" in infer_kwargs:
         raise ValueError(
             "simulation_based_calibration manages the per-fit random_seed; "
             "do not pass random_seed in infer_kwargs"
         )
-    if key is None:
-        key = _auto_key()
     prior = model.prior
-    generate = model.likelihood.generate_data
-    gen_takes_key = _supports_key_arg(model.likelihood)
+    likelihood = model.likelihood
+    if not callable(getattr(prior, "_sample", None)):
+        raise TypeError(f"{type(prior).__name__} does not support SBC prior sampling")
+    generate = likelihood.generate_data
+    if not callable(generate):
+        raise TypeError("model.likelihood.generate_data must be callable")
+    gen_takes_key = _supports_key_arg(likelihood)
+    if key is None:
+        provider_abi = _require_certified_generative_provider(
+            likelihood,
+            "simulation_based_calibration",
+        )
+        key = _resolve_validation_key(
+            None,
+            operation_kind="simulation-based-calibration",
+            execution_mode="sampled",
+            sample_shape=(num_simulations,),
+            provider_abi=provider_abi,
+        )
 
     rank_rows: list[np.ndarray] = []
     fields: tuple[str, ...] | None = None

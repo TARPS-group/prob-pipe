@@ -38,6 +38,9 @@ Levels selected whole are left out, and the levels that appear are listed in the
 batch's own order, so a derived name is a function of what the view selects: two
 routes to one selection read alike, and two selections never do.
 
+A view receives its name when selected. Renaming its levels preserves that
+name; the new level names apply when naming subsequent selections.
+
 **Storage is the concrete class's business, and only storage.** This module
 owns the level algebra: the shape invariants, the naming rules, index
 normalization for :meth:`Batch.at_levels`, and the identity a view derives. A
@@ -68,13 +71,9 @@ from dataclasses import dataclass, replace
 from math import prod
 from typing import Any, Self, cast
 
-from .event_template import (
-    TermSpec,
-    ValueSpec,
-    _check_kind_of,
-    _unify_array_shape,
-    _unify_specs,
-)
+from ._record_spec import _check_kind_of
+from ._spec_base import _unify_array_shape, _unify_specs
+from ._specs import TermSpec
 from .provenance import Provenance
 from .tracked import TrackedTerm
 
@@ -101,9 +100,9 @@ class BatchSpec(TermSpec):
 
     Parameters
     ----------
-    element_spec : ValueSpec
-        What every element of the batch satisfies. A raw-value spec is admitted
-        as readily as a term spec.
+    element_spec : TermSpec
+        What every element of the batch satisfies, including numeric-array
+        and opaque kinds.
     axis_groups : iterable of iterable of int
         The axis *sizes* each level holds, in order, outermost level first. Every
         level holds at least one axis, and there is at least one axis in all.
@@ -122,7 +121,7 @@ class BatchSpec(TermSpec):
     Raises
     ------
     TypeError
-        If ``element_spec`` is not a :class:`ValueSpec`, an axis size is not an
+        If ``element_spec`` is not a :class:`TermSpec`, an axis size is not an
         integer, or a level name is not a string.
     ValueError
         If there are no batch axes, a level holds no axes, an axis size is
@@ -136,7 +135,7 @@ class BatchSpec(TermSpec):
     batch of opaque values carry a term spec of its own.
 
     An axis size may be a **symbolic dimension name** instead of an integer, as
-    an ``ArraySpec`` shape entry may, so that a declaration can fix the number of
+    a ``NumericArraySpec`` shape entry may, so that a declaration can fix the number of
     levels while deferring how many elements each holds — "returns a batch of
     ``S`` draws" before ``S`` is known. The names share one scope with the
     element's schema, so a batch of ``("n",)`` over arrays of shape ``("n",)`` is
@@ -151,13 +150,13 @@ class BatchSpec(TermSpec):
     :meth:`Batch.with_level_names` raises on a collision for the same reason.
     """
 
-    element_spec: ValueSpec
+    element_spec: TermSpec
     axis_groups: tuple[tuple[int | str, ...], ...]
     level_names: tuple[str, ...]
 
     def __init__(
         self,
-        element_spec: ValueSpec,
+        element_spec: TermSpec,
         axis_groups: Iterable[Iterable[int | str]],
         level_names: Iterable[str],
     ) -> None:
@@ -166,9 +165,9 @@ class BatchSpec(TermSpec):
         The fields are the *stored* types; the iterables accepted here are
         normalized to tuples before assignment, so a stored spec is hashable.
         """
-        if not isinstance(element_spec, ValueSpec):
+        if not isinstance(element_spec, TermSpec):
             raise TypeError(
-                f"BatchSpec.element_spec must be a ValueSpec, got {type(element_spec).__name__}"
+                f"BatchSpec.element_spec must be a TermSpec, got {type(element_spec).__name__}"
             )
         if isinstance(level_names, str):
             raise TypeError(
@@ -239,7 +238,7 @@ class BatchSpec(TermSpec):
         ValueError
             If the multiplicity is polymorphic. A count is a number, and a
             declaration that defers a size has none until it is bound — the same
-            reason a polymorphic ``NumericEventTemplate`` has no flat layout.
+            reason a polymorphic ``NumericRecordSpec`` has no flat layout.
         """
         if self.free_axis_dims:
             dimensions = ", ".join(sorted(self.free_axis_dims))
@@ -269,10 +268,10 @@ class BatchSpec(TermSpec):
         """
         return frozenset(size for size in self.batch_shape if isinstance(size, str))
 
-    def with_bound_dims(self, bindings: Mapping[str, int]) -> BatchSpec:
+    def _substitute_dims(self, bindings: Mapping[str, int | str]) -> BatchSpec:
         """This spec with both its element schema and its axis sizes substituted."""
         return BatchSpec(
-            self.element_spec.with_bound_dims(bindings),
+            self.element_spec._substitute_dims(bindings),
             tuple(
                 tuple(bindings.get(size, size) if isinstance(size, str) else size for size in group)
                 for group in self.axis_groups
@@ -280,7 +279,7 @@ class BatchSpec(TermSpec):
             self.level_names,
         )
 
-    def bind_dims_from_value(self, value: Any, bindings: dict[str, int], path: str) -> None:
+    def _bind_dims_from_value(self, value: Any, bindings: dict[str, int], path: str) -> None:
         """Bind the declared multiplicity and element schema from a live *value*.
 
         A live :class:`Batch` carries a concrete spec of its own, so it binds
@@ -293,9 +292,9 @@ class BatchSpec(TermSpec):
                 f"{type(value).__name__} exposes no schema to bind it against"
             )
         _check_kind_of(actual, value, self, path)
-        self.bind_dims_from_spec(actual, bindings, path)
+        self._bind_dims_from_spec(actual, bindings, path)
 
-    def bind_dims_from_spec(self, actual: ValueSpec, bindings: dict[str, int], path: str) -> bool:
+    def _bind_dims_from_spec(self, actual: TermSpec, bindings: dict[str, int], path: str) -> bool:
         """Bind the declared axis sizes and element schema against *actual*'s own.
 
         The multiplicity binds like an array shape: a symbolic axis size takes the
@@ -360,7 +359,7 @@ class Batch[E](TrackedTerm, ABC):
     spec : BatchSpec
         This batch's own specification, at the family kind. The single stored
         source of its type: everything below is a view on it.
-    element_spec : ValueSpec
+    element_spec : TermSpec
         The specification every element satisfies.
     batch_shape : tuple of int
         The batch axes, the flat concatenation of :attr:`axis_groups`. Always
@@ -379,13 +378,13 @@ class Batch[E](TrackedTerm, ABC):
     ``shape`` / ``size`` because a bare name would ambiguously cover both the
     batch axes and the content of one element.
 
-    A batch is immutable: assignment and deletion raise, and ``pickle`` / ``copy``
-    restore the slots around that guard.
+    A batch is immutable, by :class:`~probpipe.core._immutable.Immutable`:
+    assignment and deletion raise, and ``pickle`` / ``copy`` restore its state
+    around that guard.
     """
 
     __slots__ = (
         "_name",
-        "_name_is_auto",
         "_provenance",
         "_root_name",
         "_root_selection",
@@ -409,47 +408,6 @@ class Batch[E](TrackedTerm, ABC):
     # branch for it. :meth:`with_name` re-roots a view: a user-given name replaces
     # the derivation and discards the selection accumulated before it.
 
-    def __setattr__(self, name: str, value: Any) -> None:
-        raise AttributeError(f"{type(self).__name__} is immutable")
-
-    def __delattr__(self, name: str) -> None:
-        raise AttributeError(f"{type(self).__name__} is immutable")
-
-    def __getstate__(self) -> Any:
-        """This batch's whole state, for ``pickle`` and ``copy``.
-
-        Delegates to :meth:`object.__getstate__`, which reports every assigned
-        slot declared anywhere in the class hierarchy — a subclass's storage
-        included, without it having to say so — together with an instance
-        dictionary if the subclass has one.
-
-        Notes
-        -----
-        Only :meth:`__setstate__` needs overriding here; ``__getstate__`` is
-        defined alongside it so that the pair reads as one, and so that walking
-        the hierarchy by hand is not reintroduced. That walk is easy to get
-        subtly wrong: ``__slots__`` may be a bare string naming one slot, which
-        iterates into characters rather than into that name, and a subclass that
-        declares no ``__slots__`` keeps its attributes in a dictionary that no
-        walk over ``__slots__`` would find. Either would drop state silently,
-        since a missing attribute is indistinguishable from an unassigned slot.
-        """
-        return object.__getstate__(self)
-
-    def __setstate__(self, state: Any) -> None:
-        """Restore *state* through ``object.__setattr__``.
-
-        ``pickle`` and ``copy`` restore state by assignment, which the
-        immutability guard refuses, so the write has to go around it exactly as
-        construction does. Both halves of the state are restored: the instance
-        dictionary, where a subclass has one, and the slots.
-        """
-        instance_dict, slots = state if isinstance(state, tuple) else (state, None)
-        for attribute, value in (instance_dict or {}).items():
-            object.__setattr__(self, attribute, value)
-        for slot, value in (slots or {}).items():
-            object.__setattr__(self, slot, value)
-
     # -- construction -------------------------------------------------------
 
     def _init_batch(
@@ -457,7 +415,6 @@ class Batch[E](TrackedTerm, ABC):
         spec: BatchSpec,
         *,
         name: str,
-        name_is_auto: bool = False,
         provenance: Provenance | None = None,
     ) -> None:
         """Store the batch's *spec* and identity (constructor helper).
@@ -494,7 +451,7 @@ class Batch[E](TrackedTerm, ABC):
         object.__setattr__(self, "_root_name", name)
         object.__setattr__(self, "_root_spec", spec)
         object.__setattr__(self, "_root_selection", _whole_of(spec))
-        self._init_tracked(name, name_is_auto=name_is_auto, provenance=provenance)
+        self._init_tracked(name, provenance=provenance)
 
     # -- the specification --------------------------------------------------
 
@@ -504,9 +461,22 @@ class Batch[E](TrackedTerm, ABC):
         return self._spec
 
     @property
-    def element_spec(self) -> ValueSpec:
+    def element_spec(self) -> TermSpec:
         """The specification every element satisfies — a view on :attr:`spec`."""
         return self._spec.element_spec
+
+    @property
+    def _view_type(self) -> type:
+        """The class a view over this batch's own storage takes.
+
+        This class, ordinarily: a view is the same kind of batch over the same
+        elements, which is what lets a batch be its own view type. A subclass
+        holding state beyond the batch's — a :class:`~probpipe.record.Design` and
+        its marginals — overrides this with the class that state belongs to,
+        since a view carries none of it and would otherwise claim to answer for
+        it.
+        """
+        return type(self)
 
     # -- shape and levels ---------------------------------------------------
 
@@ -549,7 +519,7 @@ class Batch[E](TrackedTerm, ABC):
         -------
         Self
             A shallow copy over the same axes and elements, specified over the new
-            level names, with its own derived name re-read under them.
+            level names, preserving its own name.
 
         Raises
         ------
@@ -558,8 +528,8 @@ class Batch[E](TrackedTerm, ABC):
         ValueError
             If a level is renamed twice with different names, or a new name is
             empty, not an identifier, collides with a level that is being kept, is
-            the target of two renames, or — renaming a view — belongs to a level
-            the view derives its name from but no longer carries.
+            the target of two renames, or belongs to a dropped root level still
+            used to name subsequent selections from a view.
         TypeError
             If a new name is not a string.
 
@@ -602,7 +572,7 @@ class Batch[E](TrackedTerm, ABC):
     def with_name(self, name: str) -> Self:
         """Rename the batch, which becomes the root its view names derive from.
 
-        A user-given name overrides derivation, so the copy selects all of
+        The new name starts a new view root, so the copy selects all of
         itself: its own name is *name*, and a view of it reads
         ``name[level=...]`` rather than carrying any selection the original had
         accumulated. This is the way to rename a level a view derives its name
@@ -611,8 +581,7 @@ class Batch[E](TrackedTerm, ABC):
         Parameters
         ----------
         name : str
-            The new name, taken as user-given: the copy's ``name_is_auto`` is
-            ``False``, so no later transform re-derives it.
+            The new name, preserved by later transforms.
 
         Returns
         -------
@@ -810,7 +779,7 @@ class Batch[E](TrackedTerm, ABC):
 
         *name* is the identity this class derived for the element view, and the
         same split governs it as governs provenance below. A batch that
-        *materializes* an element gives it that name, marked auto-derived. A batch
+        *materializes* an element gives it that name. A batch
         that *stores* its elements hands back the stored object under the name it
         already carries: renaming it would mean returning a copy, and an object
         placed in a batch by name already means something. An element that is a
@@ -837,7 +806,7 @@ class Batch[E](TrackedTerm, ABC):
 
         *spec* is the view's own specification: the same ``element_spec`` over
         the surviving levels, with every integer-indexed axis already removed.
-        *name* is the derived identity, taken marked auto-derived. A subclass
+        *name* is the derived identity. A subclass
         stores both as given rather than recomputing either; the names a further
         view derives from are re-pointed at this view's own root afterwards.
 
@@ -924,7 +893,12 @@ class Batch[E](TrackedTerm, ABC):
 
         selection = self._compose_selection(normalized)
         label = _render_index(self._root_spec, selection)
-        name = f"{self._root_name}[{label}]" if label else self._root_name
+        if selection == self._root_selection:
+            name = self.name
+        elif label:
+            name = f"{self._root_name}[{label}]"
+        else:
+            name = self._root_name
 
         dropped = tuple(i for i in normalized if isinstance(i, int))
         if len(dropped) == len(shape):
@@ -938,11 +912,6 @@ class Batch[E](TrackedTerm, ABC):
         object.__setattr__(view, "_root_name", self._root_name)
         object.__setattr__(view, "_root_spec", self._root_spec)
         object.__setattr__(view, "_root_selection", selection)
-        if not label:
-            # Selecting the whole batch derives nothing, so the view keeps the
-            # name it came with: a user-given name stays user-given and is not
-            # re-derived by a later transform.
-            object.__setattr__(view, "_name_is_auto", self._name_is_auto)
         return self._inherit_provenance(view)
 
     def _compose_selection(self, normalized: list[int | range]) -> tuple[int | range, ...]:
@@ -1012,9 +981,8 @@ class Batch[E](TrackedTerm, ABC):
         here: it runs no ``__init__`` and survives this class's immutability
         guard, so nothing is assumed about a subclass's constructor.
 
-        The names the copy's own name derives from are renamed with it, and its
-        name is re-derived, so a renamed view and any view taken from it read the
-        level the same way. The copy carries no provenance of its own beyond the
+        The root's level names are updated for subsequent indexing, while the
+        copy keeps its current name. The copy carries no provenance beyond the
         rename: the record of how the batch it was renamed from arose belongs to
         that batch.
 
@@ -1027,19 +995,14 @@ class Batch[E](TrackedTerm, ABC):
         if len(set(root_names)) != len(root_names):
             taken = sorted({name for name in root_names if root_names.count(name) > 1})
             raise ValueError(
-                f"level name {taken[0]!r} is already used by a level this view derives its "
-                f"name from but no longer carries; renaming onto it would make the derived "
-                f"name ambiguous. Rename it on the batch this view came from, or give the "
-                f"level another name"
+                f"level name {taken[0]!r} is already used by a dropped level in this view's "
+                f"root selection; reusing it would make names of subsequent selections "
+                f"ambiguous. Rename the level on the original batch, or give it another name"
             )
 
         renamed = self._shallow_copy()
         object.__setattr__(renamed, "_spec", replace(self._spec, level_names=level_names))
         object.__setattr__(renamed, "_root_spec", replace(self._root_spec, level_names=root_names))
-        label = _render_index(renamed._root_spec, self._root_selection)
-        object.__setattr__(
-            renamed, "_name", f"{self._root_name}[{label}]" if label else self._root_name
-        )
         object.__setattr__(renamed, "_provenance", None)
         renamed.with_provenance(Provenance.create("with_level_names", parents=[self]))
         return renamed
@@ -1048,14 +1011,14 @@ class Batch[E](TrackedTerm, ABC):
 def _axis_size(size: Any) -> int | str:
     """An axis size as an ``int``, or a symbolic dimension name as a ``str``.
 
-    The two spellings ``ArraySpec.shape`` accepts, for the same reason: a
+    The two spellings ``NumericArraySpec.shape`` accepts, for the same reason: a
     declaration may defer a size while fixing the rank. A name must be a
     non-empty identifier, as a level name must be.
     """
     if isinstance(size, str):
         if not size.isidentifier():
             raise ValueError(
-                f"a symbolic axis size must be an identifier, so that with_dims can "
+                f"a symbolic axis size must be an identifier, so that with_dim_sizes can "
                 f"bind it by keyword; got {size!r}"
             )
         return size
@@ -1066,6 +1029,92 @@ def _axis_size(size: Any) -> int | str:
             f"axis sizes are integers or symbolic dimension names, "
             f"got {type(size).__name__}: {size!r}"
         ) from None
+
+
+def _axis_groups_for(
+    shape: tuple[int, ...],
+    names: tuple[str, ...],
+    axes_per_level: Iterable[int] | None,
+    *,
+    kind: str,
+) -> tuple[tuple[int, ...], ...]:
+    """The axis groups for *shape*, from how many axes each level holds.
+
+    *axes_per_level* gives one count per level, outermost first, and they must
+    account for every axis the elements are stored in. The sizes are then read off
+    *shape* rather than restated: the elements are present, so the shape is
+    already known, and the only thing a caller can tell this function is where the
+    boundaries between levels fall. ``None`` puts one axis on each level.
+
+    A :class:`BatchSpec` states the sizes instead, and is right to — a
+    *declaration* may leave them symbolic, fixing the number of levels before the
+    counts are known. A live batch holds elements at positions, so it cannot.
+    """
+    if axes_per_level is None:
+        if len(names) != len(shape):
+            axes = "axis" if len(shape) == 1 else "axes"
+            raise ValueError(
+                f"{kind} places one axis per level unless axes_per_level says otherwise, so "
+                f"{len(shape)} {axes} need {len(shape)} level names; "
+                f"got {len(names)}: {list(names)}"
+            )
+        return tuple((size,) for size in shape)
+
+    counts = tuple(_axis_count(count) for count in axes_per_level)
+    if len(counts) != len(names):
+        raise ValueError(
+            f"axes_per_level gives one count per level: {len(counts)} counts {counts} "
+            f"against {len(names)} level names {list(names)}"
+        )
+    if sum(counts) != len(shape):
+        axes = "axis" if len(shape) == 1 else "axes"
+        raise ValueError(
+            f"axes_per_level must account for every batch axis: {counts} covers "
+            f"{sum(counts)}, but {kind} was given elements of shape {shape} — "
+            f"{len(shape)} {axes}"
+        )
+    groups, at = [], 0
+    for count in counts:
+        groups.append(shape[at : at + count])
+        at += count
+    return tuple(groups)
+
+
+def _axis_count(count: Any) -> int:
+    """One entry of *axes_per_level*: how many axes a level holds.
+
+    Read through ``operator.index``, as :func:`_axis_size` reads a size, so a
+    ``numpy`` or other integer-like count is accepted — a caller who computed one
+    from an array's rank should not have to convert it back. A ``bool`` is refused
+    first: it satisfies ``operator.index`` as 0 or 1, and a level count is not a
+    thing anyone means to write as ``True``.
+
+    A level holds at least one axis, so zero is refused here rather than left to
+    produce a level that indexes nothing.
+    """
+    if isinstance(count, bool):
+        raise TypeError(
+            f"axes_per_level entries are integer axis counts, and a bool is not one; got {count!r}"
+        )
+    try:
+        count = operator.index(count)
+    except TypeError:
+        raise TypeError(
+            f"axes_per_level entries are integer axis counts; got {type(count).__name__}: {count!r}"
+        ) from None
+    if count < 1:
+        raise ValueError(f"every level holds at least one axis; got axes_per_level entry {count}")
+    return count
+
+
+def _ranks_of(groups: Iterable[Iterable[Any]]) -> tuple[int, ...]:
+    """*groups* as the axis counts a constructor takes.
+
+    The bridge for the operations that already hold grouped sizes — an
+    aggregation composing a sweep's levels with a row's — and need to state the
+    same partition to a constructor, which reads the sizes from the elements.
+    """
+    return tuple(len(tuple(group)) for group in groups)
 
 
 def _normalize_indexer(

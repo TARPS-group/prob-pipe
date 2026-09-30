@@ -73,15 +73,15 @@ class TestHierarchy:
 
 
 # ---------------------------------------------------------------------------
-# Distribution[T] base class methods
+# Distribution base class methods
 # ---------------------------------------------------------------------------
 
 
 class TestDistributionBase:
-    """Tests for methods defined on Distribution[T] itself."""
+    """Tests for methods defined on Distribution itself."""
 
     def test_log_prob_raises_by_default(self):
-        """Distribution[T] without SupportsLogProb raises TypeError."""
+        """Distribution without SupportsLogProb raises TypeError."""
 
         class StubDist(Distribution):
             pass
@@ -113,8 +113,8 @@ class TestDistributionBase:
         assert "x" in r
 
     def test_from_distribution_on_base_class(self, scalar_normal):
-        """from_distribution is accessible on Distribution[T] base."""
-        # Normal inherits from_distribution from Distribution[T]
+        """from_distribution is accessible on Distribution base."""
+        # Normal inherits from_distribution from Distribution
         result = from_distribution(scalar_normal, Normal, num_samples=100)
         assert isinstance(result, Normal)
 
@@ -306,7 +306,7 @@ class TestSupports:
 
 
 # ---------------------------------------------------------------------------
-# Canonical / convenience accessor pairs on NumericRecordDistribution (PR-D)
+# Canonical / convenience accessor pairs on NumericRecordDistribution
 # ---------------------------------------------------------------------------
 
 
@@ -327,7 +327,7 @@ class TestCanonicalConvenience:
         today triggers (every shipped class is single-leaf via the
         auto-template helper)."""
         from probpipe import NumericRecord
-        from probpipe.core.event_template import EventTemplate
+        from probpipe.core._specs import RecordSpec
 
         class TwoField(NumericRecordDistribution):
             # Multi-leaf subclasses bypass the single-field auto-template
@@ -339,7 +339,7 @@ class TestCanonicalConvenience:
 
             @property
             def event_template(self):
-                return EventTemplate(a=(), b=(2,))
+                return RecordSpec(a=(), b=(2,))
 
             @property
             def dtypes(self):
@@ -353,7 +353,7 @@ class TestCanonicalConvenience:
 
             def _sample(self, key, sample_shape=()):
                 # Multi-leaf templates return a ``NumericRecord``
-                # (or ``NumericRecordArray`` for a non-empty sample shape).
+                # (or ``NumericRecordBatch`` for a non-empty sample shape).
                 # This stub returns zero placeholders sized from the
                 # template's per-field event shapes.
                 return NumericRecord(
@@ -419,14 +419,14 @@ class TestCanonicalConvenience:
         from probpipe.core._numeric_record_distribution import (
             NumericRecordDistribution,
         )
-        from probpipe.core.event_template import EventTemplate
+        from probpipe.core._specs import RecordSpec
 
         class ThreeField(NumericRecordDistribution):
             """Multi-field target with three fields (source has two)."""
 
             @property
             def event_template(self):
-                return EventTemplate(a=(), b=(), c=())
+                return RecordSpec(a=(), b=(), c=())
 
             @property
             def dtypes(self):
@@ -464,12 +464,12 @@ class TestCanonicalConvenience:
         from probpipe.core._numeric_record_distribution import (
             NumericRecordDistribution,
         )
-        from probpipe.core.event_template import EventTemplate
+        from probpipe.core._specs import RecordSpec
 
         class TwoFieldSource(NumericRecordDistribution):
             @property
             def event_template(self):
-                return EventTemplate(s1=(), s2=())
+                return RecordSpec(s1=(), s2=())
 
             @property
             def dtypes(self):
@@ -489,7 +489,7 @@ class TestCanonicalConvenience:
         class TwoFieldTarget(NumericRecordDistribution):
             @property
             def event_template(self):
-                return EventTemplate(t1=(), t2=())
+                return RecordSpec(t1=(), t2=())
 
             @property
             def dtypes(self):
@@ -544,14 +544,14 @@ class TestCanonicalConvenience:
         from probpipe.core._numeric_record_distribution import (
             NumericRecordDistribution,
         )
-        from probpipe.core.event_template import EventTemplate
+        from probpipe.core._specs import RecordSpec
 
         class _UnimplSupportsSource(NumericRecordDistribution):
             """Multi-field NRD that explicitly doesn't declare supports."""
 
             @property
             def event_template(self):
-                return EventTemplate(a=(), b=())
+                return RecordSpec(a=(), b=())
 
             @property
             def dtypes(self):
@@ -587,7 +587,7 @@ class TestCanonicalConvenience:
         from probpipe.core.record import Record
 
         expected = jax.tree.structure(
-            Record("two_field", {"a": jnp.zeros(()), "b": jnp.zeros((2,))}, name_is_auto=True)
+            Record("two_field", {"a": jnp.zeros(()), "b": jnp.zeros((2,))})
         )
         assert multi_leaf_dist.treedef == expected
 
@@ -618,12 +618,12 @@ class TestCanonicalConvenience:
 
 
 # ---------------------------------------------------------------------------
-# Bernoulli / Categorical no longer report float32 (PR-D commit B fix)
+# Bernoulli / Categorical no longer report float32
 # ---------------------------------------------------------------------------
 
 
 class TestIntegerDtypeReporting:
-    """Pre-PR-D, the base ``dtypes`` silently returned
+    """Regression: the base ``dtypes`` silently returned
     ``{name: default_float_dtype()}`` for every field, so every
     integer-valued distribution reported a float dtype. With
     ``dtypes`` canonical (subclasses must override), TFP's int
@@ -666,7 +666,7 @@ class TestIntegerDtypeReporting:
 class TestFlattenedDistributionViewEmpirical:
     def test_empirical_flatten_roundtrip(self, key):
         samples = jax.random.normal(key, shape=(100, 5))
-        emp = RecordEmpiricalDistribution(samples, name="x")
+        emp = RecordEmpiricalDistribution("x", samples)
 
         flat_dist = emp.as_flat_distribution()
         assert flat_dist.event_shape == (5,)

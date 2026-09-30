@@ -112,7 +112,7 @@ def _simple_condition_fn(model, data):
     key = jax.random.PRNGKey(0)
     noise = jax.random.normal(key, shape=(50, data_mean.shape[0]))
     samples = data_mean[None, :] + noise * 0.1
-    return EmpiricalDistribution(samples, name="x")
+    return EmpiricalDistribution("x", samples)
 
 
 class TestIncrementalConditioner:
@@ -205,7 +205,7 @@ class TestIncrementalConditioner:
 
     def test_multi_batch_preserves_named_record_fields(self):
         """Multi-batch IncrementalConditioner over a named ProductDistribution
-        prior preserves field names on every batch (issue #267).
+        prior preserves field names on every batch.
 
         Previously batches 2+ collapsed to a single unnamed ``posterior``
         field of shape ``(d,)`` because the samples→KDE conversion at the
@@ -225,8 +225,8 @@ class TestIncrementalConditioner:
         y = rng.poisson(np.exp(0.3 + 0.5 * X)).astype("float32")
 
         prior = ProductDistribution(
-            Normal(0.0, np.sqrt(5.0), name="intercept"),
-            Normal(0.0, np.sqrt(5.0), name="slope"),
+            Normal("intercept", 0.0, np.sqrt(5.0)),
+            Normal("slope", 0.0, np.sqrt(5.0)),
         )
         cond = IncrementalConditioner(prior, GLMLikelihood(tfp_glm.NegativeBinomial()))
         for s, e in [(0, 40), (40, 80), (80, 120)]:

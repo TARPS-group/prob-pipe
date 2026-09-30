@@ -159,6 +159,8 @@ def _update(
 
     if isinstance(obj, (_NP_ARRAY_TYPE, _JAX_ARRAY_TYPE)):
         _update_array(h, obj, max_array_bytes, state)
+    elif _is_record_batch(obj):
+        _update_record_batch(h, obj, depth, max_array_bytes, state)
     elif _is_record(obj):
         _update_record(h, obj, depth, max_array_bytes, state)
     elif _is_distribution(obj):
@@ -313,18 +315,18 @@ def _numeric_container_to_numpy(obj: Any) -> _np.ndarray | None:
 
 def _is_event_template(obj: Any) -> bool:
     try:
-        from .event_template import EventTemplate
+        from ._specs import RecordSpec
 
-        return isinstance(obj, EventTemplate)
+        return isinstance(obj, RecordSpec)
     except ImportError:
         return False
 
 
 def _is_value_spec(obj: Any) -> bool:
     try:
-        from .event_template import ValueSpec
+        from ._specs import TermSpec
 
-        return isinstance(obj, ValueSpec)
+        return isinstance(obj, TermSpec)
     except ImportError:
         return False
 
@@ -336,7 +338,7 @@ def _update_event_template(
     max_array_bytes: int | None,
     state: _FingerprintState,
 ) -> None:
-    """Hash an EventTemplate by its ordered tree and spec declarations."""
+    """Hash a RecordSpec by its ordered tree and spec declarations."""
     h.update(b"template:")
     template_type = type(template)
     h.update(template_type.__module__.encode())
@@ -357,13 +359,13 @@ def _update_value_spec(
     max_array_bytes: int | None,
     state: _FingerprintState,
 ) -> None:
-    """Hash a built-in ValueSpec by the declaration fields that define it."""
+    """Hash a built-in TermSpec by the declaration fields that define it."""
+    from ..distributions._distribution import DistributionSpec
     from ._batch import BatchSpec
-    from .event_template import (
-        ArraySpec,
-        DistributionSpec,
+    from ._opaque import OpaqueSpec
+    from ._specs import (
         FunctionSpec,
-        OpaqueSpec,
+        NumericArraySpec,
         RecordSpec,
     )
 
@@ -373,7 +375,7 @@ def _update_value_spec(
     h.update(b".")
     h.update(spec_type.__qualname__.encode())
     h.update(b":")
-    if isinstance(spec, ArraySpec):
+    if isinstance(spec, NumericArraySpec):
         _update(h, spec.shape, depth + 1, max_array_bytes, state)
         h.update(b":dtype=")
         _update(
@@ -384,7 +386,7 @@ def _update_value_spec(
     elif isinstance(spec, OpaqueSpec):
         _update(h, spec.meta, depth + 1, max_array_bytes, state)
     elif isinstance(spec, RecordSpec):
-        _update(h, spec.event_template, depth + 1, max_array_bytes, state)
+        _update_event_template(h, spec, depth, max_array_bytes, state)
     elif isinstance(spec, DistributionSpec):
         _update(h, spec.event_spec, depth + 1, max_array_bytes, state)
     elif isinstance(spec, FunctionSpec):
@@ -546,6 +548,52 @@ def _update_tfp_object(
 # ---------------------------------------------------------------------------
 
 
+def _is_record_batch(obj: Any) -> bool:
+    try:
+        from ._record_batch import RecordBatch
+
+        return isinstance(obj, RecordBatch)
+    except ImportError:
+        return False
+
+
+def _update_record_batch(
+    h: hashlib._Hash,
+    batch: Any,
+    depth: int,
+    max_array_bytes: int | None,
+    state: _FingerprintState,
+) -> None:
+    """Hash a batch by its own type, its levels, and its columns in leaf order.
+
+    A batch is not a record, and is checked before one for that reason: a
+    single-field batch converts to its sole column, so an array-shaped read would
+    hash that column alone and call two batches equal that differ in schema or in
+    how their axes are grouped. The multiplicity is part of a batch's type, so the
+    levels and the element spec are hashed rather than left implicit.
+
+    Columns are read raw. A field that is not an array *presents* as the batch of
+    its element kind, and hashing that would fingerprint a wrapper minted for the
+    read rather than the values stored.
+    """
+    h.update(b"record_batch:")
+    h.update(type(batch).__name__.encode())
+    h.update(b":levels=")
+    for name, group in zip(batch.level_names, batch.axis_groups, strict=True):
+        h.update(name.encode())
+        h.update(b"@")
+        h.update(repr(tuple(group)).encode())
+        h.update(b",")
+    h.update(b":spec=")
+    _update(h, batch.element_spec, depth + 1, max_array_bytes, state)
+    h.update(b":")
+    for path in batch.event_template:
+        h.update(path.encode())
+        h.update(b"=")
+        _update(h, batch._raw_column(path), depth + 1, max_array_bytes, state)
+        h.update(b";")
+
+
 def _is_record(obj: Any) -> bool:
     try:
         from .record import Record
@@ -586,7 +634,7 @@ def _update_record(
 
 def _is_distribution(obj: Any) -> bool:
     try:
-        from ._distribution_base import Distribution
+        from ..distributions._distribution import Distribution
 
         return isinstance(obj, Distribution)
     except ImportError:
@@ -683,9 +731,7 @@ def _update_distribution(
             _update(h, dist.log_weights, depth + 1, max_array_bytes, state)
     else:
         # Generic fallback for other non-TFP distributions.
-        _SKIP = frozenset(
-            {"_name", "_name_is_auto", "_provenance", "_annotations", "_sampling_cost"}
-        )
+        _SKIP = frozenset({"_name", "_provenance", "_annotations", "_sampling_cost"})
         for attr, val in sorted(vars(dist).items()):
             if attr in _SKIP or attr.startswith("__"):
                 continue

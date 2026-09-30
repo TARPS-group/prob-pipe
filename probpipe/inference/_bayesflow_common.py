@@ -23,11 +23,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..core._record_array import NumericRecordArray
-from ..core.distribution import Distribution
+from ..core._numeric_record_batch import NumericRecordBatch
 from ..core.ops import sample as _sample_op
 from ..core.protocols import GenerativeLikelihood
 from ..custom_types import Array, PRNGKey
+from ..distributions._distribution import Distribution
 
 if TYPE_CHECKING:
     # Type-only: tfp is a hard dependency but is only needed here for
@@ -172,13 +172,13 @@ def _simulate_offline(
     # Round-trip through the canonical 1-D vector layout: single-field priors'
     # raw draws are not field-indexable by name, so from_vector gives uniform
     # named access. Structured draws serialize via to_vector; raw arrays ravel.
-    if isinstance(theta, NumericRecordArray):
+    if isinstance(theta, NumericRecordBatch):
         theta_flat = jnp.asarray(theta.to_vector()).reshape(num_simulations, -1)
     else:
         theta_flat = jnp.asarray(theta).reshape(num_simulations, -1)
     from ..core._numeric_record import _reconstruct_from_vector
 
-    record = _reconstruct_from_vector(prior.name, template, theta_flat, name_is_auto=True)
+    record = _reconstruct_from_vector(prior.name, template, theta_flat)
     # Invert before flattening: matrix-valued bijectors (positive-definite) require
     # the leaf's native (..., n, n) event shape, not the flat adapter layout.
     named = {}
@@ -195,7 +195,7 @@ def _simulate_offline(
         # rebuilds a single NumericRecord.
         from ..core._numeric_record import _reconstruct_from_vector
 
-        params = _reconstruct_from_vector("params", template, flat_row, name_is_auto=True)
+        params = _reconstruct_from_vector("params", template, flat_row)
         return jnp.ravel(simulator.generate_data(params, 1, key=k)[0])
 
     if sim_backend == "jax":

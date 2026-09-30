@@ -25,6 +25,14 @@ _warnings.filterwarnings(
     category=DeprecationWarning,
 )
 
+# ``probpipe.distributions`` must initialize before any ``probpipe.core`` module
+# that imports its base class. Importing the base initializes the whole package,
+# whose families import such modules back, so a core module loaded first is still
+# partially initialized when a family imports it.
+from probpipe import distributions
+
+# isort: split
+
 from probpipe._weights import Weights
 from probpipe.converters import (
     ConversionInfo,
@@ -38,17 +46,56 @@ from probpipe.core._array_backend import (
     register_array_backend,
 )
 from probpipe.core._batch import Batch, BatchSpec
-from probpipe.core._distribution_array import DistributionArray
-from probpipe.core._function_batch import FunctionBatch
-from probpipe.core._numeric_record import NumericRecord
-from probpipe.core._opaque_batch import OpaqueBatch
-from probpipe.core._record_array import NumericRecordArray, RecordArray
-from probpipe.core._registry_catalog import (
+from probpipe.core._broadcast_distributions import BroadcastDistribution
+from probpipe.core._catalog import (
     EntrySummary,
     RegistryInfo,
     SupportsRegistryCataloging,
     registry_catalog,
 )
+from probpipe.core._dispatch import MathematicalDomainError, ResolutionError
+from probpipe.core._distribution_array import DistributionArray
+from probpipe.core._empirical import (
+    BootstrapReplicateDistribution,
+    EmpiricalDistribution,
+    RecordBootstrapReplicateDistribution,
+    RecordEmpiricalDistribution,
+)
+from probpipe.core._function_batch import FunctionBatch
+from probpipe.core._numeric_array import NumericArray
+from probpipe.core._numeric_array_batch import NumericArrayBatch
+from probpipe.core._numeric_record import NumericRecord
+from probpipe.core._numeric_record_batch import NumericRecordBatch
+from probpipe.core._numeric_record_distribution import (
+    BootstrapDistribution,
+    FlatNumericRecordDistribution,
+    FlattenedDistributionView,
+    NumericRecordDistribution,
+    NumericRecordDistributionView,
+)
+from probpipe.core._opaque import Opaque, OpaqueSpec
+from probpipe.core._opaque_batch import OpaqueBatch
+from probpipe.core._random_functions import ArrayRandomFunction, RandomFunction
+from probpipe.core._random_measures import NumericRandomMeasure, RandomMeasure
+from probpipe.core._record_batch import RecordBatch
+from probpipe.core._record_distribution import RecordDistribution
+from probpipe.core._specs import (
+    FunctionSpec,
+    InputSpec,
+    NumericArraySpec,
+    NumericRecordSpec,
+    NumericSpec,
+    OutputSpec,
+    RecordSpec,
+    TermSpec,
+)
+from probpipe.core._workflow_context import workflow_run
+from probpipe.core._workflow_errors import (
+    ReplayCompatibilityError,
+    ReplayUnsupportedCallableError,
+    UnmanagedConcurrentWorkflowEntryError,
+)
+from probpipe.core._workflow_replay import replay_run
 from probpipe.core.config import ProvenanceMode, WorkflowKind, prefect_config, provenance_config
 from probpipe.core.constraints import (
     Constraint,
@@ -65,41 +112,6 @@ from probpipe.core.constraints import (
     sphere,
     unit_interval,
 )
-from probpipe.core.distribution import (
-    DEFAULT_NUM_EVALUATIONS,
-    RETURN_APPROX_DIST,
-    ArrayRandomFunction,
-    BootstrapDistribution,
-    BootstrapReplicateDistribution,
-    BroadcastDistribution,
-    Distribution,
-    EmpiricalDistribution,
-    FlatNumericRecordDistribution,
-    FlattenedDistributionView,
-    NumericRandomMeasure,
-    NumericRecordDistribution,
-    NumericRecordDistributionView,
-    # Random functions
-    RandomFunction,
-    # Random measures
-    RandomMeasure,
-    RecordBootstrapReplicateDistribution,
-    RecordDistribution,
-    RecordEmpiricalDistribution,
-    set_default_num_evaluations,
-    set_return_approx_dist,
-)
-from probpipe.core.event_template import (
-    ArraySpec,
-    DistributionSpec,
-    EventTemplate,
-    FunctionSpec,
-    NumericEventTemplate,
-    OpaqueSpec,
-    RecordSpec,
-    TermSpec,
-    ValueSpec,
-)
 from probpipe.core.named_tree import NamedTree
 from probpipe.core.node import (
     Function,
@@ -109,9 +121,10 @@ from probpipe.core.node import (
     workflow_method,
 )
 from probpipe.core.protocols import (
+    SupportsApproximateConditioning,
     SupportsArrayBackend,
-    SupportsConditioning,
     SupportsCovariance,
+    SupportsExactConditioning,
     SupportsExpectation,
     SupportsLogProb,
     SupportsMean,
@@ -178,6 +191,14 @@ from probpipe.distributions import (
     bijector_for,
     register_bijector,
 )
+from probpipe.distributions._distribution import (
+    DEFAULT_NUM_EVALUATIONS,
+    RETURN_APPROX_DIST,
+    Distribution,
+    DistributionSpec,
+    set_default_num_evaluations,
+    set_return_approx_dist,
+)
 from probpipe.inference import (
     ApproximateDistribution,
     BayesFlowLikelihood,
@@ -207,18 +228,14 @@ from probpipe.validation import predictive_check
 
 __all__ = [
     "Annotated",
-    # Inference
     "ApproximateDistribution",
     "ArrayBackend",
     "ArrayRandomFunction",
-    "ArraySpec",
     "Batch",
     "BatchSpec",
-    # Array-backend registry
     "BayesFlowLikelihood",
     "BayesFlowModel",
     "BayesFlowRatio",
-    # Discrete
     "Bernoulli",
     "Beta",
     "Binomial",
@@ -228,22 +245,17 @@ __all__ = [
     "Categorical",
     "Cauchy",
     "ConditionallyIndependentLikelihood",
-    # Constraints
     "Constraint",
     "ConversionInfo",
     "ConversionMethod",
     "Converter",
-    # Record-based designs
     "Design",
     "Dirichlet",
-    # Base classes
     "Distribution",
     "DistributionArray",
     "DistributionSpec",
     "EmpiricalDistribution",
-    # Registry catalog
     "EntrySummary",
-    "EventTemplate",
     "Exponential",
     "FlatNumericRecordDistribution",
     "FlattenedDistributionView",
@@ -251,7 +263,6 @@ __all__ = [
     "Function",
     "FunctionBatch",
     "FunctionSpec",
-    # Modeling
     "GLMLikelihood",
     "Gamma",
     "GaussianRandomFunction",
@@ -259,61 +270,65 @@ __all__ = [
     "HalfCauchy",
     "HalfNormal",
     "IncrementalConditioner",
+    "InputSpec",
     "InverseGamma",
     "JointEmpirical",
     "JointGaussian",
-    # KDE
     "KDEDistribution",
     "Laplace",
     "Likelihood",
     "LinearBasisFunction",
     "LogNormal",
+    "MathematicalDomainError",
     "MinibatchedDistribution",
     "Module",
     "Multinomial",
-    # Multivariate
     "MultivariateNormal",
     "NamedTree",
     "NegativeBinomial",
-    # Continuous
     "Normal",
-    "NumericEventTemplate",
+    "NumericArray",
+    "NumericArrayBatch",
+    "NumericArraySpec",
     "NumericJointEmpirical",
     "NumericRandomMeasure",
     "NumericRecord",
-    "NumericRecordArray",
+    "NumericRecordBatch",
     "NumericRecordDistribution",
     "NumericRecordDistributionView",
+    "NumericRecordSpec",
+    "NumericSpec",
+    "Opaque",
     "OpaqueBatch",
     "OpaqueSpec",
+    "OutputSpec",
     "ParentInfo",
     "Pareto",
     "Poisson",
     "ProbabilisticModel",
-    # Joint
     "ProductDistribution",
     "Provenance",
     "ProvenanceMode",
-    # Random functions
     "RandomFunction",
-    # Random measures
     "RandomMeasure",
-    # Record
     "Record",
-    "RecordArray",
+    "RecordBatch",
     "RecordBootstrapReplicateDistribution",
     "RecordDistribution",
     "RecordEmpiricalDistribution",
     "RecordSpec",
     "RegistryInfo",
+    "ReplayCompatibilityError",
+    "ReplayUnsupportedCallableError",
+    "ResolutionError",
     "SequentialJointDistribution",
     "SimpleGenerativeModel",
     "SimpleModel",
     "StudentT",
+    "SupportsApproximateConditioning",
     "SupportsArrayBackend",
-    "SupportsConditioning",
     "SupportsCovariance",
-    # Protocols
+    "SupportsExactConditioning",
     "SupportsExpectation",
     "SupportsLogProb",
     "SupportsMean",
@@ -327,23 +342,19 @@ __all__ = [
     "TFPDistribution",
     "TermSpec",
     "TrackedTerm",
-    # Transformed
     "TransformedDistribution",
     "TruncatedNormal",
     "Uniform",
-    "ValueSpec",
+    "UnmanagedConcurrentWorkflowEntryError",
     "VonMisesFisher",
-    # Weights
     "Weights",
     "Wishart",
-    # Configuration
     "WorkflowKind",
     "abstract_workflow_method",
     "array_backend_for",
     "bijector_for",
     "boolean",
     "condition_on_nutpie",
-    # Converters
     "converter_registry",
     "elliptical_slice",
     "function",
@@ -351,7 +362,6 @@ __all__ = [
     "inference_method_registry",
     "integer_interval",
     "interval",
-    # Transition / iteration
     "iterate",
     "learn_amortized_likelihood",
     "learn_amortized_posterior",
@@ -360,10 +370,8 @@ __all__ = [
     "non_negative_integer",
     "positive",
     "positive_definite",
-    # Validation
     "predictive_check",
     "prefect_config",
-    # Provenance
     "provenance_ancestors",
     "provenance_config",
     "provenance_dag",
@@ -371,6 +379,7 @@ __all__ = [
     "register_array_backend",
     "register_bijector",
     "registry_catalog",
+    "replay_run",
     "rwmh",
     "simplex",
     "sphere",
@@ -378,6 +387,7 @@ __all__ = [
     "with_conversion",
     "with_resampling",
     "workflow_method",
+    "workflow_run",
 ]
 
 # ---------------------------------------------------------------------------

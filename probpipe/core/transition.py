@@ -23,7 +23,7 @@ import contextlib
 from collections.abc import Callable, Iterable
 from typing import Any
 
-from .distribution import Distribution
+from ..distributions._distribution import Distribution
 from .node import Function, function
 from .provenance import Provenance
 
@@ -40,13 +40,13 @@ __all__ = [
 
 
 @function
-def iterate[T, S](
-    step_fn: Callable[[Distribution[T], S], Distribution[T]],
-    initial: Distribution[T],
+def iterate[S](
+    step_fn: Callable[[Distribution, S], Distribution],
+    initial: Distribution,
     inputs: Iterable[S],
     *,
-    callback: Callable[[int, Distribution[T]], Any] | None = None,
-) -> list[Distribution[T]]:
+    callback: Callable[[int, Distribution], Any] | None = None,
+) -> list[Distribution]:
     """Fold a step function over inputs, accumulating a distribution sequence.
 
     Starting from *initial*, applies ``step_fn(dist, inp)`` for each
@@ -61,10 +61,10 @@ def iterate[T, S](
     Parameters
     ----------
     step_fn : callable
-        ``(Distribution[T], S) -> Distribution[T]``.
+        ``(Distribution, S) -> Distribution``.
         Any callable matching this signature — plain functions,
         :class:`Function` instances, or bound methods.
-    initial : Distribution[T]
+    initial : Distribution
         The starting distribution.
     inputs : Iterable[S]
         Sequence of inputs to pass to the step function.
@@ -75,10 +75,10 @@ def iterate[T, S](
 
     Returns
     -------
-    list[Distribution[T]]
+    list[Distribution]
         The full sequence: ``[initial, dist_1, dist_2, ...]``.
     """
-    dists: list[Distribution[T]] = [initial]
+    dists: list[Distribution] = [initial]
     current = initial
 
     for i, inp in enumerate(inputs):
@@ -182,7 +182,7 @@ def with_resampling(
     """Wrap a step function to resample when particle weights degenerate.
 
     After calling *step_fn*, if the result is an
-    :class:`~probpipe.core.distribution.EmpiricalDistribution` with
+    :class:`~probpipe.EmpiricalDistribution` with
     ``ESS / N < ess_threshold``, performs multinomial resampling to
     produce equally-weighted particles.
 
@@ -216,7 +216,7 @@ def with_resampling(
     This API is likely to evolve as typical use cases become clearer.
     A future direction is a ``SupportsResampling`` protocol that would
     decouple this combinator from the concrete
-    :class:`~probpipe.core.distribution.EmpiricalDistribution` type.
+    :class:`~probpipe.EmpiricalDistribution` type.
     """
     import jax
 
@@ -225,7 +225,7 @@ def with_resampling(
 
     def _with_resampling_impl(dist: Distribution, inp: Any) -> Distribution:
         nonlocal call_count
-        from .distribution import EmpiricalDistribution
+        from ._empirical import EmpiricalDistribution
 
         out_dist = step_fn(dist, inp)
 
@@ -246,14 +246,11 @@ def with_resampling(
                 new_record = Record(
                     out_dist.name,
                     {k: v[indices] for k, v in out_dist.samples.items()},
-                    name_is_auto=True,
                 )
                 resampled = EmpiricalDistribution(
+                    out_dist.name,
                     new_record,
-                    name=out_dist.name,
                 )
-                # The result inherits out_dist's name, so it mirrors its flag.
-                object.__setattr__(resampled, "_name_is_auto", out_dist.name_is_auto)
                 resampled.with_provenance(
                     Provenance.create(
                         "resample",

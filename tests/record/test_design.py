@@ -1,9 +1,8 @@
 """Tests for ``probpipe.record.design``.
 
-A ``Design`` is a ``RecordArray`` whose rows are materialised from
+A ``Design`` is a ``RecordBatch`` whose rows are materialised from
 per-field marginals according to a subclass-specific rule. This file
-covers :class:`FullFactorialDesign`; other subclasses land in
-follow-up PRs.
+covers :class:`FullFactorialDesign`.
 """
 
 import jax.numpy as jnp
@@ -12,16 +11,19 @@ import pytest
 
 from probpipe import (
     FullFactorialDesign,
+    NumericArray,
+    NumericArrayBatch,
     NumericRecord,
-    NumericRecordArray,
+    NumericRecordBatch,
+    OpaqueBatch,
     Record,
-    RecordArray,
+    RecordBatch,
     function,
 )
 
-# Some assertions use NumericRecord / NumericRecordArray — these only
+# Some assertions use NumericRecord / NumericRecordBatch — these only
 # appear as Function outputs, not as Design types. A Design is
-# always a plain RecordArray subclass; the columns themselves are
+# always a plain RecordBatch subclass; the columns themselves are
 # jnp.ndarray for numeric marginals.
 
 
@@ -32,16 +34,16 @@ from probpipe import (
 
 class TestFullFactorial:
     """A FullFactorialDesign materialises the Cartesian product of its
-    marginals into a RecordArray whose ``batch_shape`` is
+    marginals into a RecordBatch whose ``batch_shape`` is
     ``(prod(sizes),)`` and whose rows sweep the axes in marginal-
     insertion order (row-major)."""
 
     def test_two_numeric_marginals(self):
         ff = FullFactorialDesign(r=[1.5, 1.8, 2.0], K=[60.0, 80.0])
-        assert isinstance(ff, RecordArray)
+        assert isinstance(ff, RecordBatch)
         assert ff.batch_shape == (6,)
         # Fields come back in insertion order.
-        assert ff.fields == ("r", "K")
+        assert ff.event_template.fields == ("r", "K")
         # Numeric-only marginals produce ``jnp.ndarray`` column leaves.
         assert isinstance(ff["r"], jnp.ndarray)
         assert isinstance(ff["K"], jnp.ndarray)
@@ -62,21 +64,21 @@ class TestFullFactorial:
 
     def test_single_marginal_edge_case(self):
         ff = FullFactorialDesign(method=["pymc"])
-        # Categorical-only falls back to RecordArray (non-numeric leaf).
-        assert isinstance(ff, RecordArray)
-        assert not isinstance(ff, NumericRecordArray)
+        # Categorical-only falls back to RecordBatch (non-numeric leaf).
+        assert isinstance(ff, RecordBatch)
+        assert not isinstance(ff, NumericRecordBatch)
         assert ff.batch_shape == (1,)
-        assert ff.fields == ("method",)
+        assert ff.event_template.fields == ("method",)
 
     def test_mixed_numeric_and_categorical(self):
         """String marginals produce ``dtype=object`` columns; the
-        design falls back to the permissive ``RecordArray`` base."""
+        design falls back to the permissive ``RecordBatch`` base."""
         ff = FullFactorialDesign(
             method=["nutpie", "pymc"],
             scale=[0.5, 1.0],
         )
-        assert isinstance(ff, RecordArray)
-        assert not isinstance(ff, NumericRecordArray)
+        assert isinstance(ff, RecordBatch)
+        assert not isinstance(ff, NumericRecordBatch)
         assert ff.batch_shape == (4,)
         # Insertion order: method outer, scale inner.
         assert list(ff["method"]) == ["nutpie", "nutpie", "pymc", "pymc"]
@@ -111,7 +113,7 @@ class TestFullFactorial:
 
     def test_single_row_record_indexing(self):
         """Integer-indexing a Design returns a single Record (scalar
-        row), matching the RecordArray contract."""
+        row), matching the RecordBatch contract."""
         ff = FullFactorialDesign(r=[1.5, 1.8], K=[60.0, 80.0])
         # Insertion order: r outer, K inner. Second row → (r=1.5, K=80).
         row = ff[1]
@@ -144,11 +146,11 @@ class TestDesignAsSweep:
 
         ff = FullFactorialDesign(r=[1.5, 1.8, 2.0], K=[60.0, 80.0])
         out = fit(p=ff)
-        assert isinstance(out, NumericRecordArray)
+        assert isinstance(out, NumericArrayBatch)
         assert out.batch_shape == (6,)
         # Insertion order: r outer, K inner.
         np.testing.assert_allclose(
-            np.asarray(out["fit"]),
+            out.values,
             [1.5 * 60, 1.5 * 80, 1.8 * 60, 1.8 * 80, 2.0 * 60, 2.0 * 80],
         )
 
@@ -156,20 +158,20 @@ class TestDesignAsSweep:
         """Splatting ``**design.select_all()`` yields sibling views of
         the same Design. The WF sweep layer groups them by parent
         identity and iterates in lockstep — one inner call per row —
-        producing a ``NumericRecordArray`` identical to the single
-        Record-arg pattern (``fit(p=design)``)."""
+        producing an aggregate identical to the single Record-arg pattern
+        (``fit(p=design)``)."""
 
         @function
         def product(r, K):
-            return r * K
+            return r["r"] * K["K"]
 
         ff = FullFactorialDesign(r=[1.5, 1.8, 2.0], K=[60.0, 80.0])
         out = product(**ff.select_all())
-        assert isinstance(out, NumericRecordArray)
+        assert isinstance(out, NumericArrayBatch)
         assert out.batch_shape == (6,)
         # Insertion order: r outer, K inner.
         np.testing.assert_allclose(
-            np.asarray(out["product"]),
+            out.values,
             [1.5 * 60, 1.5 * 80, 1.8 * 60, 1.8 * 80, 2.0 * 60, 2.0 * 80],
         )
 
@@ -184,15 +186,12 @@ class TestDesignAsSweep:
 
         @function
         def fit_b(r, K):
-            return r * K
+            return r["r"] * K["K"]
 
         out_a = fit_a(p=ff)
         out_b = fit_b(**ff.select_all())
         assert out_a.batch_shape == out_b.batch_shape == (6,)
-        np.testing.assert_allclose(
-            np.asarray(out_a["fit_a"]),
-            np.asarray(out_b["fit_b"]),
-        )
+        np.testing.assert_allclose(out_a.values, out_b.values)
 
     def test_raw_fields_still_cartesian_product(self):
         """Passing raw columns (``design["r"]``, ``design["K"]``) gives
@@ -209,10 +208,10 @@ class TestDesignAsSweep:
         # hints they're passed to the body wholesale and JAX broadcasts
         # the arithmetic to a (6,)-array; WF wraps as NumericRecord.
         out = product(r=ff["r"], K=ff["K"])
-        # Confirm the output is a single Record with the arithmetic
-        # result, not a swept NumericRecordArray.
-        assert isinstance(out, NumericRecord)
-        assert out["product"].shape == (6,)
+        # Confirm the output is a single value carrying the arithmetic
+        # result, not a swept NumericArrayBatch.
+        assert isinstance(out, NumericArray)
+        assert out.shape == (6,)
 
     def test_mixed_field_sweep_uses_record_arg_pattern(self):
         """Categorical fields can't ride JAX broadcasting — the single
@@ -228,9 +227,11 @@ class TestDesignAsSweep:
             scale=[0.5, 1.0],
         )
         out = label(p=ff)
-        assert isinstance(out, RecordArray)
+        # A string row is an opaque value, so the rows batch at that kind and
+        # the elements are reached by position rather than by a field name.
+        assert isinstance(out, OpaqueBatch)
         assert out.batch_shape == (4,)
-        assert list(out["label"]) == [
+        assert [out[i] for i in range(4)] == [
             "nutpie-0.5",
             "nutpie-1.0",
             "pymc-0.5",
@@ -249,16 +250,15 @@ class TestSelectAll:
         Design as their parent. Sibling views passed to a
         ``Function`` zip rather than cartesian-product — the
         mechanism behind ``f(**design.select_all()) ≡ f(p=design)``."""
-        from probpipe.core._record_array import _RecordArrayView
 
         ff = FullFactorialDesign(r=[1.5, 1.8], K=[60.0, 80.0])
         cols = ff.select_all()
         assert set(cols) == {"r", "K"}
-        # Views carry the Design as their parent.
-        assert isinstance(cols["r"], _RecordArrayView)
-        assert isinstance(cols["K"], _RecordArrayView)
-        assert cols["r"].parent is ff
-        assert cols["K"].parent is ff
-        # Shape / leaf access forwards to the underlying column.
-        assert cols["r"].shape == (4,)
-        assert cols["K"].shape == (4,)
+        # A view is a plain batch, not a Design: it holds none of the marginals.
+        assert type(cols["r"]) is RecordBatch
+        assert type(cols["K"]) is RecordBatch
+        # It carries the design's own level, which is what the sweep zips on.
+        assert cols["r"].level_names == cols["K"].level_names == ("design",)
+        assert cols["r"].batch_shape == cols["K"].batch_shape == (4,)
+        assert list(cols["r"].event_template) == ["r"]
+        assert list(cols["K"].event_template) == ["K"]

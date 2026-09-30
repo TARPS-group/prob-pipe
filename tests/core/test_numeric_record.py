@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from probpipe import NumericRecord, Record
-from probpipe.core.event_template import EventTemplate
+from probpipe.core._specs import RecordSpec
 
 # ---------------------------------------------------------------------------
 # Construction
@@ -149,27 +149,35 @@ class TestConstruction:
         """Every numeric gate must agree on what counts as numeric by consuming
         a shared predicate rather than duplicating the logic. Two levels are
         shared: the dtype-level ``_is_numeric_dtype`` (used directly where only
-        a dtype is in hand — ``NumericRecordArray``, the broadcast-template
-        builder, the ``Design`` marginals probe) and the leaf-level
-        ``_is_numeric_leaf`` (the registry-first resolver that wraps it,
-        consumed by ``NumericRecord`` and template inference)."""
+        a dtype is in hand — ``NumericRecordBatch``, the ``Design`` marginals
+        probe) and the leaf-level ``_is_numeric_leaf`` (the registry-first
+        resolver that wraps it, consumed by ``NumericRecord`` and template
+        inference).
+
+        Broadcast aggregation consumes neither: it picks the batch class from the
+        element declaration through ``_batch_class_for``, which is the same gate
+        one level up, so the module has no numeric decision of its own to keep in
+        agreement."""
         from probpipe.core import (
             _array_backend,
             _broadcast_distributions,
             _numeric_record,
-            _record_array,
-            event_template,
+            _record_batch,
+            _spec_base,
         )
         from probpipe.record import design
 
         # dtype-level predicate (lives in _array_backend): imported directly from
         # there wherever only a dtype is in hand
-        assert _record_array._is_numeric_dtype is _array_backend._is_numeric_dtype
-        assert _broadcast_distributions._is_numeric_dtype is _array_backend._is_numeric_dtype
+        assert _record_batch._is_numeric_dtype is _array_backend._is_numeric_dtype
         assert design._is_numeric_dtype is _array_backend._is_numeric_dtype
+        # Aggregation delegates instead of deciding: one factory, read from the
+        # element declaration.
+        assert _broadcast_distributions._batch_class_for is _record_batch._batch_class_for
+        assert not hasattr(_broadcast_distributions, "_is_numeric_dtype")
         # leaf-level predicate: one resolver shared by the record gate and inference
         assert _numeric_record._is_numeric_leaf is _array_backend._is_numeric_leaf
-        assert event_template._is_numeric_leaf is _array_backend._is_numeric_leaf
+        assert _spec_base._is_numeric_leaf is _array_backend._is_numeric_leaf
 
     def test_bfloat16_leaf_accepted(self):
         # ml_dtypes numerics (kind "V") are numeric leaves.
@@ -191,10 +199,11 @@ class TestConstruction:
         # common float across the mixed-dtype fields, and from_vector casts each
         # block back to its declared dtype. Before the cast + skeleton fix, the
         # int32 template made from_vector raise on the float32 placeholder.
-        from probpipe.core.event_template import ArraySpec, EventTemplate
+        from probpipe.core._specs import NumericArraySpec, RecordSpec
 
-        tpl = EventTemplate(
-            k=ArraySpec(shape=(3,), dtype=jnp.int32), x=ArraySpec(shape=(2,), dtype=jnp.float32)
+        tpl = RecordSpec(
+            k=NumericArraySpec(shape=(3,), dtype=jnp.int32),
+            x=NumericArraySpec(shape=(2,), dtype=jnp.float32),
         )
         nr = NumericRecord(
             "nr", k=jnp.array([1, 2, 3], dtype=jnp.int32), x=jnp.zeros(2), event_template=tpl
@@ -229,7 +238,7 @@ class TestToVectorFromVector:
         np.testing.assert_allclose(flat, [1.0, 2.0, 3.0])
 
     def test_unflatten_with_event_template(self):
-        tpl = EventTemplate(a=(), b=(3,))
+        tpl = RecordSpec(a=(), b=(3,))
         flat = jnp.array([1.0, 2.0, 3.0, 4.0])
         nr = NumericRecord.from_vector("nr", tpl, flat)
         assert isinstance(nr, NumericRecord)
@@ -237,7 +246,7 @@ class TestToVectorFromVector:
         np.testing.assert_allclose(nr["b"], [2.0, 3.0, 4.0])
 
     def test_roundtrip_with_template(self):
-        tpl = EventTemplate(r=(), K=(), phi=())
+        tpl = RecordSpec(r=(), K=(), phi=())
         nr = NumericRecord("nr", r=1.8, K=70.0, phi=10.0)
         flat = nr.to_vector()
         nr2 = NumericRecord.from_vector("nr2", tpl, flat)
@@ -246,10 +255,10 @@ class TestToVectorFromVector:
         np.testing.assert_allclose(float(nr2["phi"]), 10.0)
 
     def test_roundtrip_nested_template(self):
-        from probpipe.core.event_template import NumericEventTemplate
+        from probpipe.core._specs import NumericRecordSpec
 
-        inner_tpl = NumericEventTemplate(x=(), y=(2,))
-        outer_tpl = NumericEventTemplate(params=inner_tpl, z=(3,))
+        inner_tpl = NumericRecordSpec(x=(), y=(2,))
+        outer_tpl = NumericRecordSpec(params=inner_tpl, z=(3,))
         flat = jnp.arange(6.0)  # x=0, y=[1,2], z=[3,4,5]
         nr = NumericRecord.from_vector("nr", outer_tpl, flat)
         assert isinstance(nr.at_path("params"), NumericRecord)
@@ -304,8 +313,8 @@ class TestPyTree:
         # NumericRecord uses its own pytree registration (separate from the
         # base Record's), so pin that a flatten/unflatten round-trip
         # preserves the leaf values, the template, and the full identity
-        # pair (name + name_is_auto) — not just the field names.
-        nr = NumericRecord("nr", x=jnp.array([1.0, 2.0]), y=jnp.array(3.0), name_is_auto=True)
+        # name as well as the field names.
+        nr = NumericRecord("nr", x=jnp.array([1.0, 2.0]), y=jnp.array(3.0))
         leaves, treedef = jax.tree.flatten(nr)
         nr2 = jax.tree.unflatten(treedef, leaves)
         assert isinstance(nr2, NumericRecord)
@@ -313,7 +322,6 @@ class TestPyTree:
         assert nr2 == nr  # structural equality: template + field values
         np.testing.assert_allclose(np.asarray(nr2["x"]), [1.0, 2.0])
         assert nr2.name == "nr"
-        assert nr2.name_is_auto is True
 
     def test_jit(self):
         nr = NumericRecord("nr", a=1.0, b=2.0)
@@ -337,7 +345,7 @@ class TestPyTree:
 
 
 # ---------------------------------------------------------------------------
-# Single-field scalar-like coercion (issue #130 PR 1.5)
+# Single-field scalar-like coercion
 # ---------------------------------------------------------------------------
 
 

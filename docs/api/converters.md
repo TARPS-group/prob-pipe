@@ -16,6 +16,11 @@ the [array-backend registry](records.md#array-backend-registry)
 instead. That's a separate, simpler registry; this page is only about
 distribution-to-distribution conversion.
 
+Sampled conversions require `num_samples` to be a non-boolean positive
+integer, whether the converter uses workflow-owned randomness or an explicit
+`key=`. Supplying a key changes RNG ownership; it does not bypass conversion
+parameter validation.
+
 ## Registry
 
 ::: probpipe.converter_registry

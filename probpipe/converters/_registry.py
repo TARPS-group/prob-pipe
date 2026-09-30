@@ -2,12 +2,112 @@
 
 from __future__ import annotations
 
+import operator
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
-from ..core._registry_catalog import EntrySummary, registry_catalog
+from ..core import _workflow_broker, _workflow_descendants
+from ..core._catalog import EntrySummary, registry_catalog
+
+_ConversionExecutionMode = Literal[
+    "exact",
+    "analytic",
+    "sampled",
+    "conditional",
+    "delegated",
+]
+
+_PROBPIPE_PROVIDER_ABI = "probpipe.distribution/v1"
+_TFP_PROVIDER_ABI = "tensorflow_probability.substrates.jax/v1"
+_SCIPY_PROVIDER_ABI = "scipy.stats.seedsequence-pcg64/v1"
+_DECLARED_CONVERTER_ABI = "probpipe.converter.declared/v1"
+
+
+@dataclass(frozen=True)
+class _ConversionExecutionPlan:
+    """Private stochastic contract for one selected conversion."""
+
+    execution_mode: _ConversionExecutionMode
+    sample_shape: tuple[int, ...] | None
+    provider_abi: str
+    automatic_key_certified: bool
+
+
+def _validate_conversion_sample_count(value: Any) -> int:
+    """Validate and return a conversion sample count before RNG commit."""
+    if isinstance(value, bool):
+        raise TypeError(f"num_samples must be an integer; got {value!r}")
+    try:
+        count = operator.index(value)
+    except TypeError:
+        raise TypeError(f"num_samples must be an integer; got {value!r}") from None
+    if count <= 0:
+        raise ValueError(f"num_samples must be positive; got {value!r}")
+    return count
+
+
+def _sampled_conversion_plan(
+    num_samples: Any,
+    *,
+    provider_abi: str,
+    automatic_key_certified: bool = True,
+) -> _ConversionExecutionPlan:
+    """Build a validated sampled-conversion execution plan."""
+    count = _validate_conversion_sample_count(num_samples)
+    return _ConversionExecutionPlan(
+        execution_mode="sampled",
+        sample_shape=(count,),
+        provider_abi=provider_abi,
+        automatic_key_certified=automatic_key_certified,
+    )
+
+
+def _resolve_conversion_key(
+    key: Any | None,
+    plan: _ConversionExecutionPlan,
+    *,
+    captured: _workflow_descendants.CapturedStochasticConsumer | None = None,
+) -> Any:
+    """Preserve a caller key or claim the singleton conversion event."""
+    if key is not None:
+        return key
+    if plan.execution_mode not in ("sampled", "conditional"):
+        raise TypeError("a non-sampling conversion cannot request an automatic key")
+    if not plan.automatic_key_certified:
+        raise TypeError("an uncertified converter cannot request an automatic key")
+    return _workflow_broker._resolve_automatic_key(
+        None,
+        _workflow_broker._singleton_effect_plan(
+            operation_kind="conversion",
+            execution_mode=plan.execution_mode,
+            sample_shape=plan.sample_shape,
+            provider_abi=plan.provider_abi,
+            record_path=() if captured is None else captured.record_path,
+            descendant_descriptor=(None if captured is None else captured.descendant_descriptor),
+        ),
+    )
+
+
+def _sample_probpipe_conversion_source(
+    source: Any,
+    key: Any | None,
+    plan: _ConversionExecutionPlan,
+) -> Any:
+    """Sample a ProbPipe source through its closed root graph when keyless."""
+    sample_shape = plan.sample_shape
+    if sample_shape is None:
+        raise RuntimeError("a sampled conversion requires a sample shape")
+    if key is not None:
+        return source._sample(key, sample_shape)
+    captured = _workflow_descendants.capture_stochastic_consumer(source)
+    resolved_key = _resolve_conversion_key(None, plan, captured=captured)
+    return _workflow_descendants.sample_captured_consumer(
+        captured,
+        resolved_key,
+        sample_shape,
+    )
 
 
 class ConversionMethod(Enum):
@@ -86,23 +186,16 @@ class ConverterRegistry:
     Converters are tried in descending priority order.  The first
     converter whose ``check()`` returns ``feasible=True`` wins.
 
-    Cataloging surface
-    ------------------
-    The class carries the
-    :class:`~probpipe.core._registry_catalog.SupportsRegistryCataloging`
-    identity attributes (``name``, ``description``, ``kind``) as
-    class-level fields and implements :meth:`entry_summaries` and
-    :meth:`describe_entry` so the registry can be discovered via the
-    global :data:`registry_catalog` ("converters" key).  Dispatch
-    mechanics are unchanged — this is a *non-conforming* registry from
-    the dispatch perspective (the ``(source_type, target_type)`` shape
-    with ``target_type`` passed as a value-type doesn't fit
-    :class:`~probpipe.core._registry.BinaryDispatchRegistry`), but the
-    catalog only needs the introspection surface.
+    The registry is cataloged as ``"converters"``: it implements
+    :class:`~probpipe.core._catalog.SupportsRegistryCataloging` through the
+    class attributes ``name``, ``description``, and ``kind`` and the methods
+    :meth:`entry_summaries` and :meth:`describe_entry`. Its dispatch is
+    unchanged by that; a ``(source, target_type)`` lookup with the target
+    passed as a type does not fit
+    :class:`~probpipe.core._dispatch.BinaryDispatchRegistry`.
     """
 
-    #: Catalog identity attributes (class-level so they are stable
-    #: across the module-level singleton's lifetime).
+    #: The catalog identity, shared by every instance.
     name: ClassVar[str] = "converters"
     description: ClassVar[str] = (
         "Cross-type distribution converters (TFP, scipy, ProbPipe-internal, protocol-based)."
@@ -153,9 +246,38 @@ class ConverterRegistry:
 
         Raises ``TypeError`` if no converter can handle the pair.
         """
-        for conv in self._find_converters(type(source)):
-            info = conv.check(source, target_type)
-            if info.feasible:
+        with _workflow_broker._managed_stochastic_scope():
+            for conv in self._find_converters(type(source)):
+                info = conv.check(source, target_type)
+                if not info.feasible:
+                    continue
+                plan = self._plan_conversion(
+                    conv,
+                    info,
+                    source,
+                    target_type,
+                    kwargs,
+                )
+                if key is None and plan.execution_mode == "sampled":
+                    if not plan.automatic_key_certified:
+                        raise TypeError(
+                            f"{type(conv).__name__} declares a sampled conversion but "
+                            "is not certified for workflow-owned randomness; pass an "
+                            "explicit key= value."
+                        )
+                # Certified built-ins resolve the omitted key at the last
+                # pre-sampling boundary. This lets conditional converters defer
+                # their event and lets ProbPipe descendants validate/capture the
+                # closed root graph before committing workflow randomness.
+                executor = getattr(conv, "_workflow_execute_conversion", None)
+                if executor is not None:
+                    return executor(
+                        source,
+                        target_type,
+                        plan,
+                        key=key,
+                        **kwargs,
+                    )
                 return conv.convert(source, target_type, key=key, **kwargs)
         raise TypeError(
             f"No converter registered for {type(source).__name__} -> {target_type.__name__}"
@@ -168,7 +290,7 @@ class ConverterRegistry:
         external distribution types (e.g., TFP, scipy.stats) for which
         a registered converter declares support.
         """
-        from ..core.distribution import Distribution
+        from ..distributions._distribution import Distribution
 
         if isinstance(obj, Distribution):
             return True
@@ -226,8 +348,39 @@ class ConverterRegistry:
             ]
         return self._type_cache[source_type]
 
+    @staticmethod
+    def _plan_conversion(
+        converter: Converter,
+        info: ConversionInfo,
+        source: Any,
+        target_type: type,
+        kwargs: dict[str, Any],
+    ) -> _ConversionExecutionPlan:
+        """Resolve one converter's private execution contract exactly once."""
+        planner = getattr(converter, "_workflow_plan_conversion", None)
+        if planner is not None:
+            plan = planner(source, target_type, dict(kwargs))
+            if not isinstance(plan, _ConversionExecutionPlan):
+                raise TypeError(
+                    f"{type(converter).__name__} returned an invalid private "
+                    "conversion execution plan"
+                )
+            return plan
 
-# Module-level singleton.  Registered with the global registry catalog
-# so it is discoverable via ``probpipe.registry_catalog["converters"]``.
+        if info.method is ConversionMethod.SAMPLE:
+            return _sampled_conversion_plan(
+                kwargs.get("num_samples", 1024),
+                provider_abi=_DECLARED_CONVERTER_ABI,
+                automatic_key_certified=False,
+            )
+        return _ConversionExecutionPlan(
+            execution_mode=("exact" if info.method is ConversionMethod.EXACT else "analytic"),
+            sample_shape=None,
+            provider_abi=_DECLARED_CONVERTER_ABI,
+            automatic_key_certified=True,
+        )
+
+
+# Module-level singleton, cataloged as "converters".
 converter_registry = ConverterRegistry()
 registry_catalog.register(converter_registry)

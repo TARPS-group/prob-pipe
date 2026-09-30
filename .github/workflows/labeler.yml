@@ -17,8 +17,9 @@ permissions:
   contents: read
   pull-requests: write
 
+# Keyed on the PR: `github.ref` does not vary by PR under `pull_request_target`.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:

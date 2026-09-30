@@ -65,7 +65,7 @@ def _prior():
 
 
 def _nested_prior():
-    """Nested conjugate prior (issue #262): a sub-record ``outer={a, b}`` plus a
+    """Nested conjugate prior: a sub-record ``outer={a, b}`` plus a
     top-level ``m`` -- leaves ``outer/a``, ``outer/b``, ``m``, all ``N(0, 1)`` so
     ``_analytic_posterior`` applies per leaf (``flatten`` order ``[a, b, m]``)."""
     return ProductDistribution(
@@ -318,7 +318,7 @@ class TestConditioning:
         assert (ratio_band[0] < ratio).all() and (ratio < ratio_band[1]).all(), ratio
 
     def test_nle_nested_prior_end_to_end(self):
-        """NLE lifts a nested prior (issue #262): SimpleModel(nested prior, learned
+        """NLE lifts a nested prior: SimpleModel(nested prior, learned
         likelihood) + condition_on -> NUTS recovers the analytic conjugate
         posterior, per nested leaf. NLE feeds raw theta to the network, so the
         nesting is purely the leaf-keyed adapter routing (no bijectors)."""
@@ -338,7 +338,7 @@ class TestConditioning:
         )
 
     def test_nre_nested_prior_end_to_end(self):
-        """NRE lifts a nested prior (issue #262): the same nested conjugate
+        """NRE lifts a nested prior: the same nested conjugate
         recovery as NLE, via the leaf-keyed classifier routing."""
         prior = _nested_prior()
         nre = learn_amortized_ratio(
@@ -372,7 +372,7 @@ class TestConditioning:
 
         def _gamma_prior():
             return ProductDistribution(
-                pp.Gamma(5.0, 1.0, name="lam"), Normal(loc=0.0, scale=1.0, name="m")
+                pp.Gamma("lam", 5.0, 1.0), Normal(loc=0.0, scale=1.0, name="m")
             )
 
         y = np.asarray(_SIM.generate_data(jnp.array([5.0, 0.5]), 4, key=jax.random.PRNGKey(5)))
@@ -425,7 +425,7 @@ class TestConditioning:
         y_obs = jnp.array([[2.0, 1.0]])
         an_mean, an_std = 5.0 / 4.0, np.sqrt(5.0) / 4.0
         lik = learn_amortized_likelihood(
-            pp.Gamma(2.0, 2.0, name="lam"),
+            pp.Gamma("lam", 2.0, 2.0),
             _PoissonPairSim(),
             num_simulations=4000,
             epochs=25,
@@ -443,7 +443,7 @@ class TestConditioning:
             rtol=1e-6,
         )
         post = condition_on(
-            SimpleModel(prior=pp.Gamma(2.0, 2.0, name="lam"), likelihood=lik),
+            SimpleModel(prior=pp.Gamma("lam", 2.0, 2.0), likelihood=lik),
             y_obs,
             num_results=1500,
             num_warmup=500,

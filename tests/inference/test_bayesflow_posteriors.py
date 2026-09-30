@@ -20,10 +20,10 @@ import numpy as np
 import probpipe as pp
 from probpipe import (
     ApproximateDistribution,
-    EventTemplate,
     Normal,
     NumericRecord,
     ProductDistribution,
+    RecordSpec,
     condition_on,
     learn_amortized_posterior,
 )
@@ -199,13 +199,13 @@ class _PositiveLikelihood(Likelihood, GenerativeLikelihood):
 
 
 def _nested_prior():
-    """Nested ``ProductDistribution`` (issue #262): a sub-record ``outer`` (a
+    """Nested ``ProductDistribution``: a sub-record ``outer`` (a
     positive leaf ``r`` and a real leaf ``m``) plus a top-level real ``c`` --
     leaves ``outer/r``, ``outer/m``, ``c``. The ``Gamma`` leaf exercises a
     per-leaf bijector *under* nesting; ``flatten`` order is ``[r, m, c]``."""
     return ProductDistribution(
         name="joint",
-        outer={"r": pp.Gamma(3.0, 1.0, name="r"), "m": Normal(loc=0.0, scale=1.0, name="m")},
+        outer={"r": pp.Gamma("r", 3.0, 1.0), "m": Normal(loc=0.0, scale=1.0, name="m")},
         c=Normal(loc=0.0, scale=1.0, name="c"),
     )
 
@@ -584,14 +584,8 @@ class TestBayesFlowMethods:
         # Uncertainty: mean std ratio in [0.8, 1.25] (observed ~1.01-1.03 across seeds).
         assert 0.8 < np.mean(std_ratios) < 1.25
 
-    @pytest.mark.xfail(
-        reason="Nested-prior NPE builds a posterior over a nested NumericRecordArray, "
-        "whose leaf-keyed migration was deferred (batch types, #326/#235), so nested "
-        "empirical construction raises KeyError. Un-xfail when #340 lands.",
-        strict=False,
-    )
     def test_nested_prior_end_to_end(self):
-        """A nested prior (issue #262) trains and conditions end to end. The
+        """A nested prior trains and conditions end to end. The
         simulator receives the structured *nested* record (read by nested name),
         posterior draws come back under the same nested leaf names, and the
         constrained leaf ``outer/r`` is mapped back through its per-leaf bijector
@@ -627,7 +621,7 @@ class TestBayesFlowMethods:
         assert mean_c_hi > mean_c_lo
 
     def test_nested_prior_calibration_against_conjugate(self):
-        """Decisive correctness check for the nested lift (issue #262): against a
+        """Decisive correctness check for the nested lift: against a
         conjugate Gaussian with an analytic posterior, each *nested* leaf's
         posterior mean and spread match the analytic values. The leaves round-trip
         in flatten order (``outer/a``, ``outer/b``, ``m``); a mis-ordered column or
@@ -726,9 +720,7 @@ class TestBayesFlowMethods:
         """A constrained (positive) prior field is trained in unconstrained space and
         its draws are mapped back through the forward bijector, so they land in the
         support -- here all positive. The accompanying real-valued field is unaffected."""
-        prior = ProductDistribution(
-            pp.Gamma(3.0, 1.0, name="r"), Normal(loc=0.0, scale=1.0, name="m")
-        )
+        prior = ProductDistribution(pp.Gamma("r", 3.0, 1.0), Normal(loc=0.0, scale=1.0, name="m"))
         model = learn_amortized_posterior(
             prior,
             _PositiveLikelihood(),
@@ -776,9 +768,7 @@ class TestBayesFlowMethods:
         """A bounded-interval prior field (Beta, unit-interval support) rounds
         through the Sigmoid bijector: trained unconstrained, every posterior
         draw lands strictly inside (0, 1)."""
-        prior = ProductDistribution(
-            pp.Beta(2.0, 2.0, name="q"), Normal(loc=0.0, scale=1.0, name="m")
-        )
+        prior = ProductDistribution(pp.Beta("q", 2.0, 2.0), Normal(loc=0.0, scale=1.0, name="m"))
         model = learn_amortized_posterior(
             prior,
             _ConjugateGaussianLikelihood(),
@@ -828,7 +818,7 @@ class TestBayesFlowMethods:
         import bayesflow as bf
 
         model = learn_amortized_posterior(
-            pp.Dirichlet(jnp.ones(2), name="p"),
+            pp.Dirichlet("p", jnp.ones(2)),
             _ConjugateGaussianLikelihood(),
             method="npe",
             num_simulations=600,
@@ -963,9 +953,7 @@ class TestBayesFlowValidation:
     def test_rejects_discrete_prior(self):
         """A discrete prior field has no smooth bijector to R^d and is rejected up
         front with a clear error (here a Poisson count parameter)."""
-        bad_prior = ProductDistribution(
-            pp.Poisson(3.0, name="k"), Normal(loc=0.0, scale=1.0, name="m")
-        )
+        bad_prior = ProductDistribution(pp.Poisson("k", 3.0), Normal(loc=0.0, scale=1.0, name="m"))
         with pytest.raises(ValueError, match="discrete"):
             learn_amortized_posterior(bad_prior, _ToyLikelihood(), num_simulations=8, epochs=1)
 
@@ -975,7 +963,7 @@ class TestBayesFlowValidation:
         heterogeneous fields could silently pick the wrong bijector."""
 
         class _NoSupports:
-            event_template = EventTemplate(a=(), b=())
+            event_template = RecordSpec(a=(), b=())
 
             @property
             def supports(self):

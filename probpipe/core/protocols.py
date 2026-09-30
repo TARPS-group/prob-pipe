@@ -4,9 +4,11 @@ Each protocol declares a capability that a distribution may support.
 Operations in :mod:`probpipe.core.ops` check these protocols via
 ``isinstance`` to determine what computations are valid.
 
-All protocols are ``@runtime_checkable`` so that external distribution
+Most protocols are ``@runtime_checkable`` so that external distribution
 types (TFP, scipy) can satisfy them via structural subtyping without
-inheriting from ProbPipe base classes.
+inheriting from ProbPipe base classes. The two conditioning capabilities
+are the exception: they are claimed by inheritance, for the reason given
+on :class:`SupportsExactConditioning`.
 
 **Naming convention:** Protocol methods use an underscore prefix
 (``_sample``, ``_log_prob``, ``_mean``, …) to distinguish the
@@ -39,6 +41,11 @@ Protocol hierarchy
                               ``Distribution`` subclass can produce a fused
                               storage backend for ``DistributionArray``
 
+    SupportsExactConditioning        claimed by inheritance; a built-in
+    SupportsApproximateConditioning  ``_condition_on``, and whether it
+                                     returns the conditional law or a
+                                     stand-in for it
+
 The moment protocols (SupportsMean, SupportsVariance, SupportsCovariance)
 are independent of SupportsExpectation.  The ops layer falls back to
 MC estimation via SupportsExpectation when the exact protocol is absent.
@@ -51,6 +58,9 @@ Concrete classes that want default MC implementations can use the
 from __future__ import annotations
 
 import functools
+from abc import ABC, abstractmethod
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -59,10 +69,10 @@ from typing import (
     runtime_checkable,
 )
 
-from ..custom_types import Array, ArrayLike, PRNGKey
+from ..custom_types import Array, PRNGKey
 
 if TYPE_CHECKING:
-    from ._distribution_base import Distribution
+    from ..distributions._distribution import Distribution
 
 
 # ---------------------------------------------------------------------------
@@ -119,15 +129,21 @@ class SupportsSampling(Protocol):
 
     Return-type convention
     ----------------------
-    The shape of the return value depends on whether the distribution
-    emits structured samples and whether the caller asks for a batch:
+    The return lays the draws out on leading axes, and what carries them depends
+    on whether the distribution emits structured samples:
 
-    =====================  =======================  =========================================
-    Distribution kind      ``sample_shape == ()``   ``sample_shape == (S1, S2, ...)``
-    =====================  =======================  =========================================
-    Numeric (raw array)    ``Array[*event_shape]``  ``Array[*sample_shape, *event_shape]``
-    ``RecordDistribution`` ``Record`` / ``NumericRecord``  ``NumericRecordArray(batch_shape=sample_shape)``
-    =====================  =======================  =========================================
+    ======================  ==========================  ==============================
+    Distribution kind       ``sample_shape == ()``      ``sample_shape == (S1, ...)``
+    ======================  ==========================  ==============================
+    Numeric (raw array)     ``Array[*event_shape]``     ``Array[*sample_shape, ...]``
+    ``RecordDistribution``  ``Record``                  ``Record`` of stacked columns
+    ======================  ==========================  ==============================
+
+    An implementation is not asked to *name* what those axes range over: the
+    ``sample`` operation mints the level, since a law cannot know what a caller's
+    ``sample_shape`` means. So returning the columns is right here, and a batch
+    inside a ``vmap`` — whose pytree validation refuses a rank change it cannot
+    name — is avoided.
 
     To draw a single sample, call ``_sample(key, ())``. Implementations
     that find it clearer to factor out a single-draw helper should
@@ -166,40 +182,38 @@ class SupportsSampling(Protocol):
 
 
 @runtime_checkable
-class SupportsUnnormalizedLogProb[T](Protocol):
+class SupportsUnnormalizedLogProb(Protocol):
     """Distribution with an unnormalized log-density.
 
     Provides ``_unnormalized_log_prob(value)``, where *value* is a single
-    draw of the distribution's sample type ``T`` (or the batched form;
-    see :class:`SupportsLogProb`).
+    draw of the distribution (or the batched form; see
+    :class:`SupportsLogProb`).
     """
 
-    def _unnormalized_log_prob(self, value: T | ArrayLike) -> Array: ...
+    def _unnormalized_log_prob(self, value: Any) -> Array: ...
 
 
 @runtime_checkable
-class SupportsLogProb[T](SupportsUnnormalizedLogProb[T], Protocol):
+class SupportsLogProb(SupportsUnnormalizedLogProb, Protocol):
     """Distribution with a (normalized) log-density.
 
     Extends :class:`SupportsUnnormalizedLogProb` because any distribution
     with a normalized density also has an unnormalized one (they coincide).
-    The base :class:`~probpipe.core.distribution.Distribution` class
+    The base :class:`~probpipe.Distribution` class
     provides ``_unnormalized_log_prob`` defaulting to ``_log_prob``.
 
-    ``_log_prob`` accepts a single draw of the distribution's sample type
-    ``T`` or the batched form (``Array`` → ``Array`` with leading batch
-    axes; ``Record`` → ``RecordArray``; ``NumericRecord`` →
-    ``NumericRecordArray``). The ``T | ArrayLike`` annotation is
-    deliberately loose: ``ArrayLike`` covers the scalar batched case,
-    while Record-based batched forms follow the convention above. The
-    kwarg form ``log_prob(dist, field=value, ...)`` builds a single ``T``
-    via :meth:`Distribution._pack_value`; batched evaluation goes through
-    the positional path.
+    ``_log_prob`` accepts a single draw of the distribution or the batched
+    form (``Array`` → ``Array`` with leading batch axes; ``Record`` →
+    ``RecordBatch``; ``NumericRecord`` → ``NumericRecordBatch``), so its
+    ``value`` is annotated ``Any``. The kwarg form
+    ``log_prob(dist, field=value, ...)`` builds a single draw via
+    :meth:`Distribution._pack_value`; batched evaluation goes through the
+    positional path.
     """
 
-    def _log_prob(self, value: T | ArrayLike) -> Array: ...
+    def _log_prob(self, value: Any) -> Array: ...
 
-    def _unnormalized_log_prob(self, value: T | ArrayLike) -> Array:
+    def _unnormalized_log_prob(self, value: Any) -> Array:
         """Default: delegates to ``_log_prob``."""
         return self._log_prob(value)
 
@@ -213,16 +227,16 @@ class SupportsLogProb[T](SupportsUnnormalizedLogProb[T], Protocol):
 class SupportsMean(Protocol):
     """Distribution with an exact mean via ``_mean()``.
 
-    The return type is ``T``-shaped where ``T`` is the distribution's
-    sample type. For the common cases this is:
+    The result is shaped like one draw. For the common cases this is:
 
     * :class:`~probpipe.core._numeric_record_distribution.NumericRecordDistribution`
-      and friends (``T = Array``) — returns :class:`~probpipe.custom_types.Array`.
+      and friends, whose draws are arrays — returns
+      :class:`~probpipe.custom_types.Array`.
     * :class:`~probpipe.core._record_distribution.RecordDistribution` and
-      friends (``T = Record``) — returns :class:`~probpipe.record.Record`.
-    * :class:`~probpipe.core._random_measures.RandomMeasure[T]`
-      (``T = Distribution[T]``) — returns the marginalised
-      ``Distribution[T]`` with marginal ``D̄(A) = ∫ D(A) dM(D)``.
+      friends, whose draws are records — returns :class:`~probpipe.record.Record`.
+    * :class:`~probpipe.core._random_measures.RandomMeasure`, whose draws are
+      distributions — returns the marginalised ``Distribution`` with marginal
+      ``D̄(A) = ∫ D(A) dM(D)``.
 
     The protocol is sample-type-polymorphic by design: the array-valued
     and structured paths are unchanged; ``RandomMeasure`` opts in by
@@ -232,7 +246,7 @@ class SupportsMean(Protocol):
     back to MC estimation via ``SupportsExpectation`` when this protocol
     is absent.  Concrete classes that want the MC default can apply
     ``@compute_expectation`` to their ``_mean`` implementation (only
-    valid when ``T`` is array-like).
+    valid when the draws are arrays).
     """
 
     def _mean(self) -> Any: ...
@@ -285,7 +299,7 @@ class SupportsQuantile(Protocol):
 class SupportsRandomLogProb(Protocol):
     """Distribution over distributions with a random (normalized) log-density.
 
-    For a ``RandomMeasure[T]`` ``M``, ``_random_log_prob`` returns the
+    For a ``RandomMeasure`` ``M``, ``_random_log_prob`` returns the
     random function ``x ↦ log D(x)`` where ``D ~ M`` as a
     :class:`~probpipe.core._random_functions.RandomFunction`. The op
     layer (:func:`~probpipe.core.ops.random_log_prob`) optionally
@@ -322,24 +336,43 @@ class SupportsRandomUnnormalizedLogProb(Protocol):
 # ---------------------------------------------------------------------------
 
 
-@runtime_checkable
-class SupportsConditioning(Protocol):
-    """Distribution that has a fast, built-in ``condition_on`` path.
+class SupportsExactConditioning(ABC):
+    """Distribution whose built-in ``_condition_on`` returns the conditional law.
 
-    Implemented by distributions whose ``_condition_on`` produces a
-    posterior without calling into the inference registry — either
-    closed-form (conjugate updates, joint Gaussian marginalization)
-    or amortized (e.g., a pre-trained SBI posterior that just runs a
-    forward pass).  When ``condition_on(dist, observed)`` is called
-    and *dist* implements this protocol, the built-in path is used
-    directly; otherwise the inference method registry selects an
-    algorithm (NUTS, RWMH, variational, ...).
+    Inherit this to claim exact conditioning: a conjugate update, a joint
+    Gaussian marginalization, dropping an independent factor, or reweighting
+    an empirical joint. ``condition_on`` prefers this route over the
+    inference registry and keeps it when the caller asks for exactness.
 
-    Probabilistic models whose conditioning requires on-the-fly MCMC
-    or variational inference should **not** implement this protocol —
-    let the registry handle algorithm selection instead.
+    The capability is claimed by inheriting, not by defining
+    ``_condition_on``, which is why this class and
+    :class:`SupportsApproximateConditioning` are not ``@runtime_checkable``
+    protocols like the rest. Exactness is a claim about the result rather
+    than a fact about the method, so no structural check can read it, and
+    two protocols declaring the same ``_condition_on`` would match the same
+    classes.
     """
 
+    @abstractmethod
+    def _condition_on(self, observed: Any, /, **kwargs: Any) -> Any: ...
+
+
+class SupportsApproximateConditioning(ABC):
+    """Distribution whose built-in ``_condition_on`` returns a stand-in for the conditional law.
+
+    Inherit this to claim a built-in conditioning path that does not return
+    the conditional law itself, such as a pre-trained amortized posterior
+    that runs one forward pass. ``condition_on`` prefers this route over the
+    inference registry, and excludes it when the caller asks for exactness.
+    The capability is claimed by inheriting, as
+    :class:`SupportsExactConditioning` explains.
+
+    A model whose conditioning requires on-the-fly MCMC or variational
+    inference claims neither capability, so the inference registry selects
+    an algorithm for it.
+    """
+
+    @abstractmethod
     def _condition_on(self, observed: Any, /, **kwargs: Any) -> Any: ...
 
 
@@ -424,7 +457,7 @@ class SupportsArrayBackend(Protocol):
     A distribution class declares the capability by implementing the
     classmethod::
 
-        class MyDistribution(Distribution[T]):
+        class MyDistribution(Distribution):
             @classmethod
             def _make_array_backend(
                 cls,
@@ -491,6 +524,16 @@ def protocols_supported_by_all(
 # ---------------------------------------------------------------------------
 # Likelihoods and generative simulators
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _WorkflowGenerativeProviderCertificate:
+    """Private exact-provider authority for workflow-owned generation."""
+
+    provider_type: type[Any]
+    generate_data: Callable[..., Any]
+    provider_abi: str
+    preflight: Callable[[Any, str], None]
 
 
 @runtime_checkable
@@ -611,9 +654,10 @@ __all__ = [
     "ConditionallyIndependentLikelihood",
     "GenerativeLikelihood",
     "Likelihood",
+    "SupportsApproximateConditioning",
     "SupportsArrayBackend",
-    "SupportsConditioning",
     "SupportsCovariance",
+    "SupportsExactConditioning",
     "SupportsExpectation",
     "SupportsLogProb",
     "SupportsMean",

@@ -7,7 +7,652 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (breaking)
+
+- A distribution's name is the required first argument of every constructor
+  the design keeps, so `Normal("x", 0.0, 1.0)` replaces
+  `Normal(0.0, 1.0, name="x")`. A keyword `name=` still binds.
+  - The constructors are those of the parametric families and
+    `TFPDistribution`, the empirical and bootstrap laws, `KDEDistribution`,
+    `TransformedDistribution`, the random functions and measures,
+    `MinibatchedDistribution`, `StanModel`, and `PyMCModel`.
+  - A call without a name raises `TypeError`, since no kept class derives
+    one, and so does a call that passes a keyword `name=` after positional
+    arguments. A call in the old order whose first data argument binds to
+    `name` fails as well, with `TypeError` or with a constructor's own
+    `ValueError`: `MultivariateNormal(loc, scale_tril)`, for example, raises
+    `ValueError`, since it then finds neither `scale_tril` nor `cov`.
+  - A law that `expectation` constructs is named `expectation`, for the
+    operation, and a result of the Gaussian random-function algebra is named
+    from its operands, as `sum(f,g)`.
+  - The joints, `BroadcastDistribution`, `DistributionArray`, `SimpleModel`,
+    `SimpleGenerativeModel`, and `ApproximateDistribution` keep a keyword
+    `name`, and `BayesFlowModel` takes none and derives its own.
+- The distribution classes and the distribution capability protocols take no
+  type parameter. A draw's type follows from the distribution's event
+  declaration, so a parameter could record only the declaration's kind.
+  `Distribution`, `EmpiricalDistribution`, `BootstrapReplicateDistribution`,
+  `DistributionArray`, `RandomFunction`, `RandomMeasure`, `SupportsLogProb`, and
+  `SupportsUnnormalizedLogProb` lose theirs, so a subscripted annotation such as
+  `Distribution[Array]` now raises `TypeError` where it is evaluated. Annotate
+  with the class alone. A parameter annotated with a capability protocol now
+  receives the distribution itself, as one annotated `Distribution` does.
+- `Distribution` and `DistributionSpec` are defined in the distributions
+  package, and the `probpipe.core.distribution` module is removed. Its public
+  classes and functions are importable from `probpipe`, and
+  `probpipe.distributions` exports `Distribution` and `DistributionSpec` as well.
+  Two things the module provided have no public replacement: the
+  `MarginalizedBroadcastDistribution` alias, which is importable only from the
+  private `probpipe.core._broadcast_distributions`, and the current values of
+  `DEFAULT_NUM_EVALUATIONS` and `RETURN_APPROX_DIST`, since the names on
+  `probpipe` hold their import-time values. Moving the two classes changes the
+  module paths that pickles record and the fingerprints of the classes. The
+  fingerprints and replay anchors of declarations that contain a
+  `DistributionSpec` change with them, so values persisted before the change no
+  longer load or match.
+- Shared declarations now use one `TermSpec` protocol. `InputSpec` describes
+  named input slots; `OutputSpec` distinguishes a named whole return value from
+  exposed record fields, including a pending type in the single-keyword form.
+  A single array output remains an array; a one-field record remains a record.
+  `RecordSpec` is now the record schema itself, replacing `EventTemplate` and
+  its separate wrapper; `NumericRecordSpec` replaces `NumericEventTemplate`.
+  Replace `ValueSpec` with `TermSpec` in custom specs. Dimension binding returns
+  a refined spec, `with_dim_sizes` permits partial substitution, and `with_dim_names`
+  renames symbols throughout nested declarations. Existing live function and
+  distribution template APIs retain their signatures for their later migration.
+  Moving and renaming schema classes changes their fingerprints and those of
+  containing terms; affected persisted provenance fingerprints no longer match.
+  A custom `NumericSpec` implements `_vector_size`; the public `vector_size`
+  property is concrete and rejects an unbound dimension before calling it.
+  `TermSpec` declares `__weakref__`, so a subclass
+  must not declare that slot again. `RecordSpec(**{"": ...})` now raises
+  `ValueError` for an empty field name, matching the positional path form.
+
+- Frozen spec and workflow dataclasses now use instance dictionaries instead
+  of generated slots. This fixes Python 3.12's incorrect `TypeError` on unknown
+  attribute mutation, permits ordinary subclasses to manage their own fields,
+  and prevents discarded classes from remaining in subclass inventories (#454).
+  Their pickle state format changes; pickles from the former slotted definitions
+  are not supported. Frozen fields, constructor signatures, and value equality
+  are unchanged.
+
+- **An empty record is numeric, and a record's class agrees with its schema.**
+  `Record` picks `NumericRecord` from the raw values while the carried
+  `RecordSpec` is inferred separately, and the two disagreed on an empty child:
+  `Record("r", {"a": arr, "b": {}})` carried a `NumericRecordSpec` announcing a
+  flat layout on a plain `Record` with no `to_vector`. An empty record holds no
+  non-numeric leaf and has a well-defined zero-length flat layout, so it is
+  numeric — nested and at the root alike — and `RecordSpec()` is a
+  `NumericRecordSpec` with `vector_size == 0`. `to_vector` on a record with no
+  numeric leaves returns the zero-length vector rather than raising, and
+  `from_vector` reads it back. Previously an empty schema reported
+  `is_numeric` true while keeping the plain class; the class, the flag and the
+  value's class now always agree.
+
+- **A dispatch method declares whether it is exact; the integer priority
+  tiers are gone.** `probpipe.core._registry` is now `probpipe.core._dispatch`.
+  Every `BaseDispatchMethod` declares `exact: bool` at registration, fixed for
+  its life, and `priority: int | None` ranks methods of the same exactness,
+  `None` (the default) meaning opt-in only. Selection is exact before
+  approximate, then priority, then type specificity, then registration order,
+  in every registry.
+  `check` and `execute` take `exact_only=True` to exclude approximate methods.
+  `set_priorities` accepts a positional mapping as well as keywords, since a
+  method name need not be an identifier, and cannot change exactness.
+  `BaseDispatchMethod` is generic over the shape of `supported_types`, which
+  it now declares itself; `UnaryDispatchMethod` and `BinaryDispatchMethod` fix
+  the shape through the exported `UnarySupportedTypes` and
+  `BinarySupportedTypes`, also re-exported from `probpipe.inference`, and
+  registration rejects a `supported_types()` value of the wrong shape.
+  `Feasibility.feasible` must be a `bool` or `None`; a truthy or falsy stand-in
+  such as `1` or `""` is rejected at construction. A registry reads `name`, `exact`, `priority`, and
+  `supported_types()` once, at registration, and validates all four before it
+  changes, so a rejected method or a bad `set_priorities` value leaves it as
+  it was; a `bool` is not accepted as a priority.
+  A method's `check` returns a `Feasibility` (`feasible`, `description`,
+  `pending`); the registry's `check` returns a `MethodInfo`, a `Feasibility`
+  with `method_name` and `exact` set from the registration, so a method never
+  reports its own name or exactness. `feasible` may be `None` while required
+  declarations are unavailable, and `pending` then names them. A `MethodInfo`
+  that is feasible or unresolved names its method; only the infeasible report
+  that lists every method tried names none.
+  A call with no feasible method raises `ResolutionError`;
+  `MathematicalDomainError(ValueError)` is defined beside it for known
+  mathematical nonexistence and is never raised by the registry itself.
+  `OPT_IN_ONLY_PRIORITY` is removed. Every built-in inference method declares
+  `exact = False` through `InferenceMethod`; the former priority-0 methods
+  (`blackjax_hmc`, `blackjax_sghmc`, `pymc_advi`, `tfp_nuts`, `tfp_hmc`) are
+  `None`, and the other ranks are unchanged, so auto-selection is unchanged.
+  The converter registry is not a dispatch registry and is unchanged: it
+  keeps its `TypeError` and `ConversionMethod` until its move to
+  `distributions/_conversion.py` (design IV.3).
+
+- **`SupportsConditioning` is replaced by `SupportsExactConditioning` and
+  `SupportsApproximateConditioning`.** A distribution with a built-in
+  conditioning path now declares whether that path returns the conditional law
+  or a stand-in for it, and `condition_on` has one capability route for each.
+  Both are abstract base classes rather than `@runtime_checkable` protocols, so
+  a class claims one by inheriting it and a class that merely defines
+  `_condition_on` claims neither: exactness is a claim about the result, which
+  no structural check can read. `ProductDistribution`, `JointGaussian`, and
+  `SequentialJointDistribution` claim the exact capability; `BayesFlowModel`
+  claims the approximate one.
+
+- **`JointEmpirical` no longer offers conditioning.** Its `_condition_on`
+  dropped the named fields and kept every atom and weight, which ignores the
+  value conditioned on: `condition_on(je, x=0)` and `condition_on(je, x=1)`
+  returned the same distribution. That is marginalization rather than
+  conditioning, exact or approximate, so the route is removed and
+  `condition_on` on a `JointEmpirical` now raises `ResolutionError`. Build the
+  marginal directly instead, by constructing a `JointEmpirical` from the
+  fields to keep with the same `weights`.
+
+- **`condition_on` takes `exact_only` as a control.** It is a keyword-only
+  parameter beside `method`, so the operation consumes it and resolves it
+  before selecting a route. It previously fell through to `**kwargs`, which
+  forwarded it into `_condition_on` as if it were observed data: conditioning
+  a `ProductDistribution` with `exact_only=True` raised `KeyError`, and an
+  amortized posterior dropped the control and answered approximately.
+
+- **Both new exceptions are public, and an unknown `method=` name is a
+  resolution failure.** `from probpipe import ResolutionError,
+  MathematicalDomainError`. `ResolutionError` derives directly from
+  `Exception`; it is not a `TypeError`, because well-typed arguments can
+  still have no applicable method. `execute` and `check` raise it for a
+  `method=` name that is not registered, where they raised `KeyError`, so one
+  `except ResolutionError` covers every way a dispatch can fail to select a
+  method; `get_method` and `set_priorities` keep `KeyError`. Code that caught
+  `TypeError` from `condition_on` to mean "no method for this model" must
+  catch `ResolutionError` instead. `check` and `execute` raise `TypeError`
+  for fewer positional arguments than the arity requires, none included and
+  whether or not `method=` is given; `check()` with no arguments no longer
+  returns an infeasible report.
+
+- **`InferenceMethod` is a subclass of `UnaryDispatchMethod`, not an alias.**
+  It was an alias of `UnaryDispatchMethod`; it is now a subclass that declares
+  `exact = False` once for every built-in inference method, so a third-party
+  method subclassing `UnaryDispatchMethod` directly must declare `exact`
+  itself.
+
+- Names are set at construction and preserved by structural transforms;
+  `with_name` is the sole renaming operation. The `name_is_auto` attribute,
+  constructor keywords, and carried state are removed. `auto_name` now returns
+  only the resolved string. Existing pickles carrying the removed state are
+  unsupported.
+
+- **A batch's name is its first argument, and construction takes the axis
+  partition rather than the sizes (#398).** Two changes to the same signatures.
+
+  `Record(name, fields)` and `Opaque(name, value)` put the name first;
+  `NumericArray` and all five batch forms took it as a keyword. They now match —
+  `RecordBatch("draws", columns, "draw", element_spec=...)`,
+  `NumericArray("x", values)` — with the name and the data positional-only, as
+  `Record`'s are, and the level names still acceptable either way.
+
+  `axis_groups=` is replaced by `axes_per_level=`, which says how many axes each
+  level holds rather than restating their sizes: `axes_per_level=(2,)` for one
+  level over two axes, where the old form needed `axis_groups=((4, 5),)`. The
+  sizes were never information a constructor lacked — the elements fix them and
+  the batch/event split comes from `element_spec` — so stating them only created
+  a way to contradict the data. Two of the four refusals the old argument had are
+  gone with it: a grouping can no longer disagree with the store or transpose it.
+  What remains is a partition that does not cover every batch axis, or does not
+  give one count per level.
+
+  `Batch.axis_groups` still reports the sizes, and `BatchSpec` still stores them,
+  which is right: a *declaration* may leave a size symbolic, fixing the number of
+  levels before the counts are known. A live batch holds elements at positions,
+  so it cannot.
+
+  `axes_per_level` reads its counts through `operator.index`, as an axis *size*
+  already did, so a count computed from an array's rank arrives as a numpy integer
+  without conversion. A `bool` is refused first, since it satisfies `operator.index`
+  as 0 or 1 and is not a thing anyone means to write as a level count.
+
+- **`sample(law, sample_shape=...)` mints the `sample` level for every kind of
+  draw (#398).** The boundary assumed a law that assembles its own draws also
+  names what they range over. An empirical did not: numeric atoms came back as one
+  `NumericRecord` whose fields had grown an axis, record atoms and opaque atoms as
+  a single `Opaque` holding the whole array. All three now give the batch form of
+  the draw's kind — `NumericRecordBatch`, `NumericRecordBatch`, `OpaqueBatch` —
+  over a `sample` level, matching what a plain law already gave. Code that read
+  `drawn["field"]` on such a result now reads a column of a batch rather than a
+  field of a record, and `"field" in drawn` is now
+  `"field" in drawn.event_template`. A single draw is unchanged.
+
+- **Every batch requires a name (#398).** `RecordBatch`, `NumericRecordBatch`,
+  `OpaqueBatch`, and `FunctionBatch` defaulted to their own lowercased class name,
+  so a pipeline full of them read `recordbatch` / `opaquebatch` — a name that says
+  what the object *is*, which its type already says, and nothing about which one it
+  is. `NumericArray` and `NumericArrayBatch` require one for the same reason.
+
+  A name is now given, or derived from something that carries meaning. `stack`
+  derives one from the records it stacks, so no call site has to invent it, and a
+  structural transform carries the name forward with the flag saying where it came
+  from rather than dropping it for a default that no longer exists.
+
+  The distribution-side placeholders (`DistributionArray`, `EmpiricalDistribution`,
+  the marginal and bootstrap names) are deliberately untouched — those classes are
+  being reworked, and changing their naming now would collide with that.
+
+- **`ArraySpec` → `NumericArraySpec` (#434; design #443).** The public spec has
+  been hard-renamed with no compatibility alias; update imports and type
+  references to use `NumericArraySpec`. The bare backend-array alias remains
+  `Array`. The design baseline now gives each raw value kind a corresponding
+  tracked term and batch form, including `NumericArray` / `NumericArrayBatch`
+  and `Opaque` / `OpaqueBatch`, and defines `Batch.raw()` as a shared storage
+  view. Runtime implementations of those design contracts land in the
+  subsequent stack.
+
+- **Workflow-scoped structural RNG, co-sampling, and validated replay (#389).**
+  Function-owned RNG controls—`Function(..., seed=...)`, the former reserved
+  call-level RNG option, and `Function.with_options(seed=...)`—have been removed
+  without a deprecation shim. Reproducible ProbPipe-owned randomness now belongs
+  to a run:
+
+  ```python
+  from probpipe import workflow_run
+
+  with workflow_run(seed=42):
+      result = workflow(distribution_input)
+  ```
+
+  A bare omitted-key stochastic call receives a fresh ephemeral root; seeded,
+  anonymous, and nested `workflow_run` scopes derive keys from stable call,
+  source, and logical-unit identities. All omitted-key sampling, conversion,
+  validation, and diagnostics routes use the same broker. Explicit sampling
+  keys and inference `random_seed` arguments remain caller-owned, are passed
+  through unchanged, and do not advance the workflow stream. A wrapped user
+  callable's own `seed` parameter is still an ordinary input.
+
+  `score_posterior(..., key=None)` no longer uses a fixed
+  `jax.random.PRNGKey(0)` for sliced Wasserstein projections. It now follows
+  the same ownership rule: a bare score receives a fresh ephemeral root, while
+  benchmark scoring must run inside `workflow_run(seed=...)` (or pass an
+  explicit `key=`) to remain reproducible.
+
+  Omitted-key `predictive_check`, `simulation_based_calibration`, and `add_ppc`
+  certify only the exact built-in `GLMLikelihood` data generator. Custom or
+  otherwise opaque likelihoods, including subclasses, must pass `key=`
+  explicitly; inheriting `generate_data` does not certify that a subclass's
+  sampling still matches the built-in stochastic-effect descriptor. The
+  omitted-key route also requires that exact likelihood to carry its stored
+  design matrix.
+
+  PPC test functions must have unique `__name__` values because those names
+  label the returned statistics; use distinct named functions instead of
+  multiple lambdas or same-named methods.
+
+  Repeated aliases, record views, empirical weights, and the supported closed
+  set of transformed descendants now co-sample from one root realization.
+  Exact empirical eligibility likewise follows that recursive root, so calls
+  such as `f(emp["x"], emp["y"])` enumerate and weight the original atoms
+  instead of drawing unweighted rows. Because JAX dispatch does not implement
+  exact enumeration, explicitly requesting `dispatch="jax"` for this case now
+  raises `dispatch='jax' does not support exact empirical enumeration`; use
+  `auto`, `sequential`, or `thread` instead.
+
+  Managed thread/Prefect work items preserve logical RNG identity across
+  scheduling and retries, while rejecting unmanaged copied concurrent
+  contexts. JAX probing cannot consume workflow RNG state.
+
+  Successful workflow-owned stochastic results store an exact provenance RNG
+  recipe in FULL and LIGHTWEIGHT modes. `replay_run(provenance)` validates the
+  callable, plan, execution capability, provider ABI, and expected events
+  before re-deriving keys; OFF and legacy provenance without a recipe are not
+  guessed. The new public failures are
+  `UnmanagedConcurrentWorkflowEntryError`, `ReplayCompatibilityError`, and
+  `ReplayUnsupportedCallableError`.
+
+  A top-level workflow snapshots `provenance_config.mode` on entry. Nested
+  scopes and managed workers inherit that value, and configuration changes
+  made during execution apply only to the next top-level workflow.
+
+  RNG ABI v1 has no call-local replacement that recreates the old exact
+  sibling-realization behavior. Put related quantities in one joint Function
+  call, retain the resulting joint distribution, or materialize and reuse
+  samples explicitly when a shared realization is required.
+
+- **A sweep of opaque or callable rows aggregates at its own kind (#398).** Rows
+  that do not stack numerically fell to a single-field `RecordBatch` keyed by the
+  function's name — the burial the output boundary otherwise stopped doing — and
+  it was the one aggregation that left the result auto-named. Opaque rows now give
+  an `OpaqueBatch` and callable rows a `FunctionBatch`, both named for the
+  function as every other aggregation already was.
+- **An empty return keeps its host's kind (#398).** A `Function` returning `{}`
+  raised, and `[]` / `()` became an `Opaque`, because `Record`, `EventTemplate`,
+  and the object batches each required at least one entry. The kind now follows
+  the host's *type* whether or not anything is in it: `{}` is an empty `Record`,
+  and `[]` / `()` an `OpaqueBatch` of `batch_shape == (0,)` — no element can say
+  what kind it holds, and every element spec holds vacuously of none.
+
+  `Record()`, `EventTemplate()`, and `OpaqueBatch(name, [], level)` are legal as a
+  result. A *batch* of empty records is not: a batch reads its multiplicity off
+  a column, and a zero-field element supplies none, so `RecordBatch` still
+  requires at least one field. An empty template is **not** promoted to `NumericEventTemplate`:
+  vacuously every leaf is numeric, which is not a reason to claim it. A batch
+  still requires a batch *axis* — a single object with no axis is refused as
+  before.
+
+- **A sweep over numeric rows aggregates as a `NumericArrayBatch` (#398).** A
+  `Function` swept over a batch collected numeric rows into a single-field
+  `NumericRecordBatch` keyed by the function's own name, so `out["my_func"]`
+  reached the column. The aggregate is now the batch form of the rows' own kind,
+  read through `.values`.
+
+  A row that is itself a batch keeps its levels either way. Only `RecordBatch`
+  rows did before, so once a scalar law's `sample` began returning a
+  `NumericArrayBatch`, a swept `sample(dist_array, sample_shape=(7,))` read the
+  rows' `draw` axis as event shape and dropped the level. It now gives
+  `batch_shape == (n, 7)` on levels `("dist", "sample")`, as the record-valued
+  case already did.
+
+- **A non-empty `sample_shape` puts the draws on a `sample` level (#398).**
+  `sample(law, sample_shape=(5,))` for an array-valued law gives a
+  `NumericArrayBatch` whose `batch_shape` is the sample shape, on one level named
+  `sample`, with the event axes left to the element. An operation names the level
+  it mints after itself, as `quantile` already did; `sample` was the exception,
+  minting `draw`. The axis an *enumerated* argument ranges over keeps the name
+  `draw` for now — no operation mints it, and naming it is #427. Design V.2 states this; the
+  record-drawing laws implemented it and the array-drawing ones returned a flat
+  array, leaving the level algebra unavailable for the most common law kind.
+
+  `NumericArrayBatch` gains the array shim its `NumericRecordBatch` sibling
+  carries — `shape` (the whole store), `dtype`, `ndim`, and both conversion
+  hooks — and is a registered pytree under the two-transformation contract
+  `RecordBatch` states: every batch axis preserved, or every one removed.
+
+- **An operation returns the tracked term of its declared kind (#398).** The
+  `Function` output boundary wrapped every raw array in a single-field
+  `NumericRecord` keyed by the function's own name, and every other raw value in
+  a single-field `Record`. It now wraps each into its **own** kind:
+
+  | raw return | before | now |
+  | --- | --- | --- |
+  | numeric scalar / array | single-field `NumericRecord` | `NumericArray` |
+  | mapping | `Record` | `Record` |
+  | callable | single-field `Record` | `Function` |
+  | anything else | single-field `Record` | `Opaque` |
+
+  So `log_prob`, `mean`, `variance`, `quantile`, `expectation`, and a scalar
+  law's `sample` all return a `NumericArray`. **A result is no longer indexable
+  by the function's name** — `result["my_func"]` becomes `result` itself, and an
+  opaque result is read through `.value`.
+
+  A callable result is callable because it *is* the function kind, rather than
+  because a single-field record forwards `__call__`.
+
+  **Every tracked term keeps its kind**, uniformly: a body returning a
+  `Function`, `NumericArray`, or `Opaque` gets it back as itself, as a `Record`,
+  `Distribution`, or `Batch` always did. A declared `output_template` still
+  shapes the result, being a caller's declaration rather than a default.
+
+### Added
+
+- **`registry_catalog` — one place to discover every registry (design II.7).**
+  `print(probpipe.registry_catalog)` lists the cataloged registries,
+  `"inference"`, `"converters"`, and `"bijectors"`, with a one-line
+  description and an entry count each, and `registry_catalog.describe(name)`
+  lists one registry's entries in selection order before type specificity:
+  exact entries first, then by priority, with the opt-in-only entries in a
+  section of their own and each entry's exactness shown where the registry
+  declares one. An *entry* is one registered item: an inference method, a
+  converter, or a bijector factory.
+  - A registry is cataloged by implementing `SupportsRegistryCataloging`
+    (`name`, `description`, `kind`, `entry_summaries()`, `describe_entry()`)
+    and by an explicit `registry_catalog.register(registry)`, which rejects
+    an empty or duplicate name. Constructing a registry never catalogs it.
+  - Every dispatch registry implements the protocol: `BaseDispatchRegistry`
+    takes keyword-only `name` and `description` and has `kind = "dispatch"`,
+    and its `entry_summaries()` and `describe_entry(name)` report each
+    method's registered name, exactness, effective priority, supported types,
+    and description as an `EntrySummary`. A method may declare a one-line
+    `description`, which the registry reads and validates at registration
+    with its other declarations.
+  - The converter registry and the bijector factory implement the protocol
+    without changing how they dispatch; their entries report `exact=None`.
+  - `EntrySummary.is_opt_in_only` is `priority is None`, as in dispatch.
+  - Exported from `probpipe`: `registry_catalog`, `EntrySummary`,
+    `RegistryInfo`, and `SupportsRegistryCataloging`, defined in
+    `probpipe/core/_catalog.py`.
+
+- **`NumericArray` and `NumericArrayBatch` (#398).** The tracked class of the
+  numeric-array kind and its batch form, so `NumericArraySpec` has the pair every
+  other value spec has. Nothing returns them yet; the operations switch over in a
+  later change.
+
+  `NumericArray` holds one array and carries no batch axes, so its `shape` is the
+  event shape. Construction **validates without converting** — the value is stored
+  in its native form and materialises at most once, at the compute boundary — the
+  rule `NumericRecord` already follows for its leaves. It carries the full array
+  surface, and **arithmetic yields a bare value of the stored type**: identity is
+  attached by operations, and arithmetic is not one. It is a registered pytree,
+  which is what lets it cross a `jit` or `vmap` boundary; the boundary presents a
+  bare array, and its spec is re-derived from what arrives, since a shape and a
+  dtype state it exactly.
+
+  `NumericArrayBatch` stores one array with the batch axes leading and splits
+  them from the event axes by its element spec, which it validates the stored
+  dtype against at construction — the batch asserts that spec of every element,
+  so a store that reports no single dtype cannot carry a pinned one either.
+  Selection yields a `NumericArray` under the derived name, as `RecordBatch`
+  yields a `Record`.
+
+- **`Opaque` — the tracked class of the opaque kind (#398).** What an operation
+  returns when its declared kind is an `OpaqueSpec`, completing the pair with the
+  `OpaqueBatch` that already existed. It adds identity and nothing else: no
+  attribute forwarding, no `__call__`, no operators — the wrapped value is
+  reached through `.value`, explicitly. `OpaqueBatch`'s element contract is
+  unchanged; it still hands back the object the caller put in rather than
+  wrapping it.
+
+  The name is the required first argument, as a `Record`'s is: an opaque value
+  exposes nothing else that says what it is, so a default would name every one
+  of them alike. `OpaqueSpec` moves to the same module as the class it types;
+  the public import path is unchanged.
+
+- **`ArrayBackend.take` — positional selection for a native container.** `[]` is
+  positional on a numpy-protocol container and reads *labels* on a `pandas` one,
+  so a batch stored as a `DataFrame` could not address its own elements. Backends
+  now declare how to select by position, defaulting to `obj[index]`; the built-in
+  `pandas` backends select through `.iloc`.
+
+### Changed
+
+### Removed (breaking)
+
+- **`RecordArray` and `NumericRecordArray` are gone; the batch of records is
+  `RecordBatch` / `NumericRecordBatch`.** A batched record was a `Record`
+  subclass, which made `isinstance(x, Record)` true of a collection and put a
+  batch's `len` and iteration in competition with a record's fields. The batch
+  types are `Batch` subclasses now: they hold named levels, `len` and `iter`
+  speak about the collection, and the field structure is read from
+  `event_template` where it belongs. `RecordBatch.stack` replaces
+  `RecordArray.stack`, `NumericRecordBatch.to_vector` / `from_vector` replace
+  their array counterparts, and a producer that returned a `RecordArray` returns
+  a `RecordBatch`.
+
+  `_RecordArrayView` goes with them: a field selection off a batch is an ordinary
+  batch, and sibling selections align by their shared level names rather than by
+  a parent pointer. `Design` and `FullFactorialDesign` are batches.
+
+  The batch types were built alongside the array ones and then took over, so the
+  entries below describe the batch types throughout — this is the only entry that
+  names the classes being removed.
+
 ### Fixed
+
+- **`blackjax_rwmh` adaptive warmup no longer collapses its proposal.**
+  A warmup window in which the chain barely moves leaves a singular Welford
+  covariance, and refitting the proposal to it stopped the chain for the rest
+  of the run. A window that rejected every proposal refit to a proposal scale
+  near `1e-10`; a window with fewer accepted proposals than target dimensions
+  refit to a NaN proposal in float32, which rejects every move. Windows shorter
+  than the documented 25-step minimum made the first case common:
+  `num_warmup=100` split as `[7, 13, 27, 53]`, and a 2-D standard normal
+  stopped at that warmup for about a quarter of seeds. The second case stopped
+  every chain on a 20-dimensional target at the default `num_warmup=500`. The
+  window count is now reduced until every window holds at least 25 steps, so
+  `num_warmup=100` splits as `[33, 67]` and warmups shorter than 74 steps run
+  as one window. Each refit now computes
+  `(n * Sigma_hat + 5 * Sigma_prev) / (n + 5)`, which shrinks the Welford
+  covariance `Sigma_hat` toward the covariance `Sigma_prev` that the proposal
+  in use assumes and keeps the proposal positive definite. Adaptive runs draw
+  different samples than before for a fixed seed.
+
+- Native NumPy scalars retain their original dtype and precision in
+  `NumericArray` storage and NumPy conversion. `as_jax()` and `float(value)`
+  follow JAX's x64 configuration and may round or overflow; enable x64 before
+  the first conversion when float64 is required. Python numeric subclasses
+  continue to normalise at construction, with NumPy scalars excluded.
+  Sweeps of `OpaqueBatch` or `FunctionBatch` rows pass the rows' `element_spec`
+  to the aggregate constructor, preserving declarations previously replaced by
+  defaults. Mixed batch and non-batch rows report the same schema error in
+  either order (#446).
+
+- Batched sampling preserves complete opaque events, including array-shaped
+  events, by flattening only sampling axes during aggregation (#446).
+  Object-array draws whose leading axes do not match `sample_shape` are left
+  unchanged at the batch conversion boundary, matching numeric and record draws.
+
+- Explicit-key `sample` calls accept structural `SupportsSampling` objects
+  without `name` or `name_is_auto` attributes. Unnamed samplers use the automatic
+  name `sample`; a supplied name defaults to explicit when its naming flag is
+  absent. Single and batched raw draws retain the sampler's naming metadata
+  with either explicit or automatic keys (#446). Raw draws receive that metadata
+  during wrapping, so the name is checked at construction and sequence levels
+  retain their operation-derived names.
+
+- Sweeps returning `NumericArray`, including nested numeric operations such as
+  `log_prob`, now aggregate under `auto` and `jax` dispatch with named batch levels
+  preserved. When every numeric row is tracked, shared declarations survive
+  aggregation after symbolic event dimensions bind to the rows' actual shapes.
+  Differing dtypes promote together to their common NumPy dtype, independent of
+  row order, with JAX promotion for extended dtype combinations NumPy cannot
+  promote. Conflicting event shapes or supports raise an actionable error. A row
+  with an unspecified dtype leaves the aggregate's declared dtype unspecified.
+  Mixed raw and tracked numeric rows infer the aggregate's shape and dtype without adopting
+  a partial support declaration. Native-backed `NumericArray`, `NumericArrayBatch`, and
+  `NumericRecord` cache only concrete conversions, so values first converted
+  inside a JAX transform remain usable afterward (#446).
+
+- **The kind table is the single answer to which batch form a field has (#398).**
+  `RecordBatch` construction listed the admissible field kinds inline while the
+  reading end asked the registry, so registering a kind widened one and not the
+  other. Construction now asks the registry too. Aggregating a batch of rows also
+  converts each row through its own `as_jax`, whose set-once cache it was
+  bypassing by converting the raw store directly.
+
+- **A swept row of unstackable elements keeps its level (#398).** A row returning
+  a sequence of opaque objects or callables had its own batch stored whole as one
+  element of the aggregate, so the row's multiplicity vanished and a row of
+  callables came back as an `OpaqueBatch`. The row-stacking path now knows all
+  three batch families, so such a row aggregates to `(rows, row_size)` over both
+  levels and a row of callables gives a `FunctionBatch`. An empty sequence row is
+  a batch of nothing on its own level, as it already was for a single return,
+  which also settles a dispatch disagreement: the mapped path raised where the
+  row-wise path returned.
+
+- **Every density op keeps a batch operand's levels (#398).** `log_prob` restated
+  the levels its operand carried; `prob`, `unnormalized_log_prob`, and
+  `unnormalized_prob` handed back a bare array, so the same draws scored as a
+  batch over `("chain", "draw")` under one op and as one value of shape `(2, 3)`
+  under another. All four now restate them, so which op is called no longer
+  decides whether the draws were a multiplicity.
+
+- **A declared function can be swept over any kind of batch (#398).** Lifting a
+  declaration against a batched operand read `event_template`, the view only a
+  batch of records has, so a `NumericArrayBatch`, `OpaqueBatch`, or `FunctionBatch`
+  operand raised `does not expose an authoritative event_template for lifting`
+  however its declaration was written. It now reads `element_spec`, which the
+  `Batch` contract states at every kind. Two consequences: every batch kind is
+  read the same way, and a batch of one-field records no longer satisfies a
+  declaration that named a bare array — the record-only view unwrapped a
+  single-field element to its field, so `EventTemplate(v=())` accepted an operand
+  whose elements are records. A distribution operand is unchanged: it is lifted by
+  being sampled, and its event template remains what the draw is checked against.
+
+- **A swept row's kind no longer depends on which executor ran it (#398).** The
+  row-wise path gave each row the tracked class of its own kind; the mapped
+  (`jax.vmap`) path handed its rows to the aggregation raw, so a body returning a
+  mapping raised `cannot aggregate output of type dict` and one returning a
+  sequence raised a spurious row-count mismatch — under `dispatch="auto"`, on
+  bodies that worked under `dispatch="sequential"`. Both paths now read a row
+  through the same rule, and a record row crosses the map as inert columns over no
+  level of its own, the way a batch row already crossed it. A declared
+  `output_template` still names the row's kind, as before.
+
+- **Reading a distribution no longer modifies it.** `BroadcastDistribution`
+  assigned its marginal on the first `marginalize()`, and a backend-delegated
+  `DistributionArray` assigned its components on the first read, so a query
+  changed the object a caller was holding — against `C2` and the §V.1 promise
+  that an implementer's object is never modified. Each now fills a memo container
+  assigned at construction, so the result is still computed once and the term's
+  own fields stay as they were built. Both remain lazy.
+
+- **Every dispatch presents a one-field draw the same way.** A one-field
+  record-valued law — a `ProductDistribution` over a single distribution, say —
+  draws a batch of records. The row-wise paths presented each draw as its bare
+  leaf; the `vmap` path presented the record. Since the record shim carries
+  conversions but deliberately no arithmetic, a body as ordinary as `x * 2`
+  succeeded under `dispatch="sequential"` and crashed under the mapped
+  executor. All four paths now present a draw through one rule.
+
+  Design II.4 leaves the choice itself open, riding on the single-value
+  coercion question `Record` poses. What it does not leave open is that the
+  dispatches agree, which is what this restores; the bare-leaf presentation is
+  the one three of the four paths already made.
+
+- **A law that cannot report its `dtype` is probed rather than refused.** The
+  trace probe read `event_shape` and `dtype` to size a synthetic dummy. Reading
+  `dtype` was itself the refusal: `getattr(law, "dtype", None)` swallows only
+  `AttributeError`, so a law raising anything else — a
+  `SequentialJointDistribution` view raises `NotImplementedError` — failed the
+  probe and was sent to row-wise dispatch for want of a placeholder. The probe
+  now draws a sample instead, and the draw carries both.
+
+  `dispatch="jax"` consequently accepts cases it used to reject, those views
+  above all. They build each component from a Python callable, which is indeed
+  not traceable, but that runs while sampling, before the map, so only the body
+  is traced; the mapped result matches the row-wise one exactly. An empirical
+  law is unaffected, still enumerated so its exact weights are preserved.
+
+- **A body that returns a batch no longer crashes the marginalization path.**
+  Calling a `Function` whose body returns a `RecordBatch` with a `Distribution`
+  argument raised the pytree rank error out of `jax.vmap` instead of falling
+  back to sequential dispatch.
+
+  The trace probe that gates JAX dispatch models the transform its executor
+  applies, so that a body which traces cleanly bare but cannot survive the
+  transform is caught while a fallback is still available. It did that for the
+  sweep executor and not for `_broadcast_jax`, which also maps — over the draw
+  axis rather than over batch rows — so a batch-returning body passed the probe
+  and then failed inside the executor, where nothing was left to fall back to.
+  Both mapping executors are now probed under a map.
+
+- **`copy` and `pickle` no longer drop a term's annotations (#409).** `Record`,
+  `NumericRecord`, and `ProductDistribution` each reconstruct through a
+  `__reduce__` that listed its state by hand, and none of them listed
+  `_annotations`, so a copied or unpickled term came back with its annotations
+  gone — the diagnostics and inference-backend payloads written into that store
+  among them — and nothing raised. `__reduce__` governs `copy.copy` and `copy.deepcopy`
+  as well as `pickle`, so all three paths lost them.
+
+  The omission was systematic rather than careless: annotations are the one field
+  written *after* construction — the documented exception to immutability — so a
+  state list assembled from constructor arguments misses exactly this one.
+
+  So reconstruction reads the term's own state instead of a list: nothing has to
+  name a field for it to survive, and `TrackedTerm._restore_identity` — which
+  wrote identity onto an already-constructed object, bypassing both the
+  immutability guard and the write-once provenance rule for any caller who found
+  it — **is deleted**.
+
+  The container a reconstruction is handed is decoupled from the one it was built
+  from, as `with_name` already does: entries are shared, the container is not, so
+  a write on a copy does not show through on the original. Annotations still do
+  not cross a JAX transform boundary — `tree_unflatten` rebuilds a bare term,
+  unchanged.
 
 - **`is_concrete` no longer reports a polymorphic template as concrete (#390).**
   A symbolic dimension declared inside a term spec — a `RecordSpec`'s schema, a
@@ -33,7 +678,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cannot name: `BatchSpec` lives in `_batch.py`, which imports from
   `event_template.py`, so a type test there could report a batch axis as free
   while nothing could bind it. Every spec that reports a dimension implements
-  both binding methods — `ArraySpec` and `FunctionSpec` included, which the
+  both binding methods — `NumericArraySpec` and `FunctionSpec` included, which the
   unification pass had special-cased — so the four methods are one contract
   rather than a rule with exceptions.
 
@@ -45,7 +690,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   describes the one value returned, so it now meets the sole leaf of the
   callable's output template, and several output fields do not match it.
 
-  This brings the term specs into line with `ArraySpec`, which has always
+  This brings the term specs into line with `NumericArraySpec`, which has always
   accepted a concrete value against a symbolic shape and left the sizes to the
   single pass, per II.3's division of labor. A polymorphic term-spec declaration
   was previously unsatisfiable: `is_valid` compared inner templates for exact
@@ -81,17 +726,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   assembly read the row count from the samples' `shape`, which a record batch
   refuses unless it holds exactly one leaf; the count now comes from
   `batch_shape`, the one accessor that means the same thing for every batched
-  value. (Not `len`: on a `RecordArray` that is the *field* count, which would
-  have made `num_atoms` silently wrong.) And enumeration stacked each
-  argument's per-row values with `jnp.stack`, which a `Record` row is not; those
-  now stack through `RecordArray.stack`.
+  value. Enumeration also stacked each argument's per-row values with
+  `jnp.stack`, which a `Record` row is not; those now stack through
+  `RecordBatch.stack`.
 
   The first of those is what kept `f(d, d["x"])` — a parent alongside its own
   view, the remaining co-sampling case above — from running end to end once its
-  draws were shared. Record-valued laws now lift under `auto`, `sequential`, and
-  `thread` dispatch, including record-valued empiricals, whether enumerated or
-  passed twice. Explicit `dispatch="jax"` reports the usual not-traceable error
-  when the wrapped function indexes a record.
+  draws were shared. Record-valued laws now lift under `auto`, `sequential`,
+  `thread`, and `jax` dispatch when the mapped body is JAX-traceable, including
+  nested sampled records and repeated roots. Exactly enumerated empirical roots
+  still report the exact-enumeration error described above under explicit
+  `dispatch="jax"`.
 
   **The joint those lifts produce also resamples.** `include_inputs=True` keeps
   every input beside the output, and drawing from that joint gathers the same
@@ -101,26 +746,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one gather that reads the container it is given: an array indexes directly, a
   list of per-row objects gathers positionally, and a record is rebuilt from its
   gathered leaves. The rebuild is deliberate rather than a `jax.tree.map` — a
-  `RecordArray` stores its row count and a `Record` its event template, both in
+  `RecordBatch` stores its row count and a `Record` its event template, both in
   pytree aux data, so mapping over the leaves alone would have produced a batch
   quietly claiming the rows it started with. The same gather covers the output
   side, where a vectorized broadcast over a record-returning function leaves the
   output a batched `Record`. A single draw is unwrapped to one record rather than
   a one-row batch, its field names intact.
-
-  Two shapes are still unsupported. A record with **nested** fields cannot be
-  batched at all, since a record batch is keyed by its top-level children rather
-  than by leaf path, so lifting such a law is refused with a message naming the
-  argument rather than surfacing what the container said. That is #340, and a
-  strict `xfail` in the broadcast tests marks the case so it reports the day
-  record batches become leaf-keyed.
-
-  The other: a record-valued empirical passed alongside a
-  field view of itself. That group routes to sampling rather than enumeration,
-  where `RecordEmpiricalDistribution._sample` hands back a plain record batched
-  on its leaves rather than a record batch — deliberately, so a vmap'd caller
-  can flatten it — and the view half of the group has no rows to project from. That is a distribution-
-  layer contract gap rather than a broadcast one.
 
 - **Value specs are fingerprinted by declaration, not identity (#381).** The
   spec hasher now covers `RecordSpec` and recurses into a stored declaration
@@ -137,28 +768,147 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`RegistryCatalog` + `SupportsRegistryCataloging` protocol — a
-  discoverability layer over every registry in the process** (Stage 2 of
-  the multiple-dispatch plan from PR #184; builds on PR #204).  A new
-  global `probpipe.registry_catalog` singleton indexes every built-in
-  registry by name (`"inference"`, `"converters"`, `"bijectors"`),
-  exposes a uniform `describe(name)` / `list()` / `names()` surface, and
-  prints a terminal-friendly table at the REPL and an HTML table in
-  Jupyter.  Two new methods on `BaseDispatchRegistry` —
-  `entry_summaries() -> list[EntrySummary]` and `describe_entry(name)
-  -> EntrySummary` — carry the rich introspection the catalog uses;
-  `list_methods() -> list[str]` is unchanged.  Non-conforming registries
-  (`ConverterRegistry` and the new bijector facade `bijector_registry`)
-  satisfy the protocol via small adapter additions; their dispatch
-  behaviour is unchanged.  Re-exported at the top level:
-  `probpipe.registry_catalog`, `probpipe.EntrySummary`,
-  `probpipe.RegistryInfo`, `probpipe.SupportsRegistryCataloging`.
-- **`EventTemplate.with_dims(**sizes)`** binds symbolic dimensions explicitly,
-  returning a new template so refinement stays monotone, and naming any
-  dimension left unbound. It reaches through a term spec, and auto-promotes to
-  `NumericEventTemplate` when the bound template is all-numeric, so a bound
-  template gains its flat layout. The law-level `with_dims` design 03 names on
-  `Distribution` will delegate to it.
+- **A sweep whose body returns a batch now vectorizes (#405).** Such a body used
+  to fail the JAX trace probe and drop to row-wise dispatch: `vmap` inserts an
+  output axis and re-enters `RecordBatch`'s unflatten hook, which has no name to
+  give the new level and refuses rather than guess — the pytree contract carries
+  neither `in_axes` nor `out_axes`, so *a shape is not a provenance*.
+
+  The refusal stands; the executor no longer routes through it. A body's
+  returned batch is taken apart into raw columns for the crossing and rebuilt on
+  the far side by the executor, which holds the level names the hook lacked. The
+  result carries the sweep's levels followed by the body's, and equals what
+  row-wise dispatch produced. The input side already worked this way, rebuilding
+  each row's record from raw columns inside the traced call; this is the same
+  move on the output side.
+
+  A raw `jax.vmap` over a batch is refused exactly as before. Only an operation
+  that knows which axis it added may name the level, which is what the executor
+  knows and a bare transform does not.
+
+- **`RecordBatch` / `NumericRecordBatch` — a batch of records, stored columnar.**
+  A batch of records that all conform to one `EventTemplate`: the batched value a
+  `Function` produces and consumes, such as the many draws a `sample` yields. It
+  is a `Batch`, so `len`, `iter`, and `batch_shape` speak about the collection and
+  never about what one record contains, and its own type is a `BatchSpec` over the
+  `RecordSpec` its elements satisfy.
+
+  **Storage is columnar and keyed by leaf path** — one column per *field*, not per
+  top-level child, each shaped `(*batch_shape, *event_shape)`. A field access
+  hands back that column directly, and an element is assembled from the columns on
+  demand rather than stored twice. Keying by leaf path is what makes a nested field
+  reachable: `batch["outer/a"]` is a column like any other and `batch["outer"]` is
+  the sub-batch over the columns beneath it, so a nested record batches and reads
+  back. A column comes back in the batch form its spec calls for: the array itself
+  for an array field, a `FunctionBatch` or an `OpaqueBatch` for a field with no
+  native stacked form. Either way it is a **view** — the object batch shares the
+  column rather than copying it, so reading a field costs nothing per element.
+
+  **A batch is a collection, not a named tree**, so there is no field-keyed
+  `Mapping` protocol — no `keys()` / `values()` / `items()` / `children` /
+  `at_path` — and the field structure is read from `event_template`, where it
+  belongs. What `[]` does depends on the key: a position addresses the batch axes,
+  a name addresses a field within every element. `select` / `select_all` survive as
+  the field-splatting selector, resolving a path as `Record.select` does — a key
+  gives a one-column view, a partial path the sub-batch under it — and returning
+  batch *views* that carry the parent's level names, so an operation aligning
+  operands by level name lines them up. `select_all` keys by top-level name, as
+  the record's does, since a `/`-path could not bind to a parameter.
+
+  An element is **materialized** rather than stored, which is the other side of the
+  rule the batch base states: it takes the derived name (`"post[draw=1]"`), marked
+  auto, and inherits the batch's provenance. It is built against the batch's own
+  `element_spec`, so batch and element share one spec object — schema agreement is
+  structural, and a row costs no declaration to build. `NumericRecordBatch` adds
+  the batched flat layout: `to_vector` gives `(*batch_shape, vector_size)` with the
+  flat dimension last and the levels kept as the leading axes, and `from_vector`
+  inverts it, naming the levels it reconstructs so a multi-level batch round-trips
+  and casting each field back to its declared dtype, which concatenating promoted.
+  Its columns are the leaves `jit` / `vmap` / `grad` traverse; the batch itself
+  is rebuilt only under the transforms the contract below states.
+
+  **Raw pytree transformations have a stated contract**, because a batch cannot
+  thread its declaration through a round trip the way a `Record` does: `vmap`
+  removes an axis the stored spec still names, so rebuilding against that spec
+  verbatim would give back an object whose `batch_shape` its own columns
+  contradict, and every method reading that shape — `to_vector` among them — would
+  be wrong. What arrives is the only evidence, and **a shape is not a
+  provenance**: a no-op round trip and a transpose of a square batch arrive
+  identically, and a dropped middle axis with a resized survivor imitates a
+  dropped leading one. So two transformations are supported and the rest refused,
+  rather than inferring which axis went.
+
+  Supported: a transform that **preserves every batch axis** — the ordinary round
+  trip through `jit`, `grad`, and a shape-preserving `tree_map` — which reuses the
+  stored spec; and one that **removes every batch axis**, which yields a single
+  `Record`, as `vmap` over a single-level batch does.
+
+  Refused: a **partial** rank reduction, including `vmap` over one level of
+  several, since no shape says which level survived; an **added** axis, which
+  belongs to no level and which unflattening has no name to give one; a
+  **resized** axis, which a per-level slice and a slice-composed-with-a-transpose
+  reach alike; a column reporting **no shape**, which a stored column never does;
+  columns left **disagreeing** on the batch axes, since a batch states one
+  multiplicity for all its fields; and a **retyped element**, whose own axes and
+  dtype are the element type's rather than the transform's — the kind is
+  re-checked, not only a pinned dtype, so a numeric batch cannot come back holding
+  objects.
+
+  Preserving every batch axis is a **precondition**, not a check: an axis
+  permutation that preserves the shape satisfies neither supported case and cannot
+  be detected, so it is unsupported rather than refused. Mapping one level of a
+  multi-level batch needs an operation that knows which level it consumed — the
+  workflow sweep has that knowledge and never routes through the pytree hook,
+  mapping raw columns and building each row explicitly. Indexing is likewise
+  exact, since it is told which positions it keeps.
+
+  The structural transforms re-derive the class from their result, as the record
+  transforms do: an edit that removes the last non-numeric field promotes, one that
+  introduces a non-numeric field demotes, and a mixed `merge` therefore gives the
+  same answer whichever way round it is written. An edited field is typed the way
+  template inference would type it, so a field of callables stays a function field,
+  and `replace` accepts what field access hands back.
+
+  A batch holds what it validated. Every field is checked against what it declares:
+  an array field for a numeric dtype its declaration admits, by the same same-kind
+  rule `NumericArraySpec.is_valid` applies to one value, and every other field value by
+  value against its spec, naming the field and the position that failed. A field
+  with no stacked form is stored as a frozen object array, so its entries are the
+  values themselves and a caller keeping a handle cannot write in a value the spec
+  refuses afterwards. The field's *spec* decides its stored form rather than its
+  values, which is what keeps an opaque field opaque when its values happen to be
+  numeric.
+
+  This was additive: the batch types were built alongside what they replaced
+  and still what the library uses, and the new classes are not yet exported.
+
+- **`RecordSpec.with_dim_sizes(**sizes)`** binds symbolic dimensions explicitly,
+  returning a new schema so refinement stays monotone. It reaches through a term
+  spec, and auto-promotes to `NumericRecordSpec` when the bound schema is
+  all-numeric, so a bound schema gains its flat layout. Partial substitution is
+  allowed: unsupplied dimensions stay symbolic. The law-level method design 03
+  names on `Distribution` will delegate to it.
+- **A `Record` stores its `RecordSpec`.** `Record.spec` is the single stored
+  source of a record's type, and `event_template` returns that same object, so
+  the two cannot disagree. Construction takes a `RecordSpec`; it is stored
+  verbatim. Everything that reads `event_template` is unaffected.
+
+  This is the storage rule the tracked types share — a term carries the spec of
+  its kind, and its schema accessors are views on that one object — reaching
+  the record side. A `Distribution`'s `event_spec` and a `Function`'s
+  `output_spec` follow with their own layers, and the slot moves onto the
+  tracked base once every kind carries one. A batched record still subclasses
+  `Record` and is not one record, so a batched record's `spec` raised rather than
+  reporting an element's spec as the batch's own type: a batch's type specifies
+  the collection. That override goes away with the subclassing, when the batch
+  types become collections rather than records.
+
+  The JAX pytree aux data is now the `(spec, name, name_is_auto)` triple rather
+  than `(event_template, …)`, and pickled records serialize the spec. Aux stays
+  hashable and equal for equal declarations, so treedefs still compare by value
+  and a jit cache keyed on one is unaffected — including across the two
+  declaration forms, which agree. A pickle written before this change still
+  loads, its bare template accepted as the declaration it is.
 
 - **`FunctionBatch` and `OpaqueBatch` — the batch forms that store objects.** A
   numeric array batches natively, with the batch axes leading, so it needs no
@@ -186,17 +936,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   *materializes* an element per index; these store theirs, so what the caller put
   in is what comes out.
 
-  `OpaqueBatch` is the case a batch's own spec exists for — an `OpaqueSpec`
-  names no ProbPipe kind, yet the batch is specified all the same, at the family
-  kind over it. Every element is checked against the shared spec at construction,
+  `OpaqueBatch` is the case a batch's own spec exists for even though an
+  `OpaqueSpec` accepts arbitrary non-mapping Python objects. Every element is
+  checked against the shared spec at construction,
   reporting the position that failed, since a batch asserts that spec of *all*
   of them, and `axis_groups` must tile the shape the elements are stored in, so
   the spec cannot describe a shape the storage does not have.
 
 - **`TermSpec` — the term-spec sub-hierarchy, and declarations stored as specs
-  (#381).** `ValueSpec` now splits into *raw-value specs* (`ArraySpec`,
-  `OpaqueSpec`), which name no ProbPipe kind, and *term specs*, one per kind,
-  whose concrete class *is* the kind. `TermSpec(ValueSpec)` is the marker
+  (#381).** `ValueSpec` now splits into *raw-value specs* (`NumericArraySpec`,
+  `OpaqueSpec`), which describe the raw hosts held by corresponding tracked
+  kinds, and *term specs*, whose concrete class identifies an already tracked
+  kind. `TermSpec(ValueSpec)` is the marker
   `isinstance` reads; `is_valid` stays declared once on `ValueSpec`, so a term
   spec is accepted anywhere a leaf is. New `RecordSpec` completes the four
   corners beside `DistributionSpec`, `FunctionSpec`, and the conditional spec
@@ -205,8 +956,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   An **output declaration** is any value specification, matching the model's
   `Fun(σ, ρ)` with `ρ` a value specification: a callable may declare a term
-  result of any kind or a raw-value result, the latter typing the value the wrap
-  boundary places in a single-field `Record`. An **event** declaration is
+  result of any kind or a raw-value result, the latter typing the raw host that
+  the boundary wraps in its corresponding tracked kind. An **event** declaration is
   narrower, record-valued, because `DistributionSpec.is_valid` checks it.
 
   A *declaration* — of an event or an output — is now **stored as a spec**: a
@@ -285,7 +1036,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   immutable `Node` / `TrackedTerm` / `Annotated` object with a construction-time
   Python `signature`, optional authoritative `input_template` and
   `output_template`, and a raw `apply(*args, **kwargs)` execution boundary.
-  `ArraySpec` shapes accept symbolic dimension names; templates expose
+  `NumericArraySpec` shapes accept symbolic dimension names; templates expose
   `free_dims` / `is_concrete`, and each invocation unifies input and output
   symbols without mutating declarations. Decorated and private-
   implementation-backed Functions share the same planner, invocation-local
@@ -294,7 +1045,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-element planner slots; `Any` on a variadic parameter remains
   non-restrictive rather than suppressing those behaviors. Authoritative nested
   outputs aggregate identically across sequential, threaded, Prefect, and JAX
-  dispatch without changing the public `RecordArray.stack` contract, and
+  dispatch without changing the public stacking contract, and
   declared distribution sweeps expose their concrete schema through
   `DistributionArray.event_template`.
   Callable and private-implementation fingerprints encode frozen signatures
@@ -341,7 +1092,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   write-once `provenance` attached via `with_provenance`, plus `with_name` for
   rename-as-copy) and `Annotated` (a free-form `annotations` mapping).
   `Distribution` and `Record` / `NumericRecord` inherit both; the batch types
-  (`RecordArray` / `NumericRecordArray` / `DistributionArray`) are tracked
+  (`RecordBatch` / `NumericRecordBatch` / `DistributionArray`) are tracked
   terms too. `name_is_auto` records whether an object's name was auto-derived
   by the operation that produced it (`True`) or supplied by the user
   (`False`), so later composition can re-derive auto names while preserving
@@ -431,24 +1182,212 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **`BaseDispatchRegistry.__init__` accepts optional keyword-only
-  `name`, `description`, and `register_in_catalog` parameters
-  (back-compatible).** Construction without arguments still works
-  unchanged — a bare `UnaryDispatchRegistry()` / `BinaryDispatchRegistry()`
-  has an empty `self.name` and does not register in
-  `registry_catalog`. Passing `name="..."` opts the registry into the
-  catalog automatically; pass `register_in_catalog=False` to construct
-  a named but isolated registry (used by tests that exercise catalog
-  round-trips without polluting the global singleton).  `kind: ClassVar[str]
-  = "dispatch"` is now defined on `BaseDispatchRegistry` and inherited
-  by `UnaryDispatchRegistry` / `BinaryDispatchRegistry`.
+- **Terms that build a result write it before handing it over.**
+  `DistributionArray._from_backend`, `_make_distribution_array`,
+  `TFPProductDistribution`'s combined-view build, `make_posterior`'s annotations
+  store, and `SequentialJointDistribution`'s conditioning all populated a term
+  after allocating it, using plain attribute assignment. They now write through
+  `object.__setattr__`, the way a constructor does. No behavior changes — each
+  wrote before the object reached a caller — but an assignment guard on every
+  tracked term would refuse the old form, and `ApproximateDistribution`'s chain
+  concatenation moves to the same memo container as the two lazy reads above.
 
-### Internal
+- **Immutability is a property of being a tracked term (#395).** `TrackedTerm`
+  inherits `Immutable`, so assignment and deletion raise on a record, a batch, a
+  function, or a template once its constructor has returned — the design's `C2`
+  and the §V.1 promise that an implementer's object is never modified, enforced
+  rather than documented. Four classes enforced it individually before.
 
-- **Docstring re-flow on `BaseDispatchRegistry.set_priorities`.** Carried
-  over from a follow-up that didn't make it into PR #204: the "Overrides
-  also" paragraph in the class docstring is re-flowed so the second
-  sentence reads continuously (no semantic change).
+  **The distribution layer is exempt for now.** `Distribution` permits assignment
+  and deletion, because the documented way to build an emulator is to subclass a
+  random function and train it in place, and fitting has no contract yet that
+  returns a new term instead. That is two overrides — `__setattr__` and
+  `__delattr__` — and removing both turns the guard on for the other
+  seventy-two classes; removing one would leave half an exemption. A test
+  asserts `Distribution` is the *only* exempt class, so a second cannot appear
+  quietly.
+
+  Construction is unaffected: it runs inside a per-instance window the
+  `TrackedTerm` metaclass opens, so a host's `__init__` assigns normally and no
+  constructor needed converting. The window closes when `__init__` returns, and
+  also when it raises, so a half-built term left behind by a failure is as
+  immutable as a finished one. Code that allocates with `object.__new__` and then
+  calls a constructor by hand opens the window itself — three sites in the
+  package do.
+
+  Nothing changes for a caller: the classes that refuse assignment are the same
+  four families as before, and a distribution still accepts assignment *and*
+  deletion, the exemption covering both. What changes is
+  where the rule lives — in the term hierarchy rather than in four class bodies —
+  and that turning it on for the rest is now a deletion.
+
+- **Immutability is one mixin, and a term reconstructs from its state (#395).**
+  Four classes spelled out the same guard — three of them hardcoding a class name,
+  so `NumericRecord` reported `Record` and `NumericEventTemplate` reported
+  `EventTemplate` — and answered the round-trip that immutability forces in five
+  different ways. `Record`, `EventTemplate`, `Batch`, and `Function` now mix in
+  one `Immutable`, which owns the guard (naming the class the caller touched) and
+  the state round-trip.
+
+  What the round-trip carries comes from the attributes the object holds, not
+  from a list each class writes out: every assigned slot declared anywhere in the
+  hierarchy, a bare-string `__slots__`, and a subclass's instance dictionary
+  alike. That is what made the annotations bug (#409) possible — a hand-written
+  list cannot name a field written after construction — and it is now impossible
+  by construction rather than fixed once. A class names its memos in
+  `_transient_state` to keep a cache out of the payload (`NumericRecord`'s lazy
+  conversion cache), and a store written in place in `_decoupled_state` so a copy
+  takes its own container (the annotations channel).
+
+  Reconstruction allocates the resolved class and restores state, so it no longer
+  re-runs a constructor: an `EventTemplate` keeps the class its specs were
+  resolved to instead of re-deciding the numeric promotion, and a `Record` keeps
+  the exact schema it was written with. `Function` now writes its own state
+  through `object.__setattr__` like every other host, so the `_initializing`
+  window its constructor used to open is gone and one guard covers every case.
+
+  **Breaking:** a pickle written by an earlier version does not load. The
+  reconstruction entry points it names (`_unpickle_record`,
+  `_unpickle_numeric_record`, `_unpickle_event_template`) are gone, state being
+  restored directly now. Re-generate any persisted records, templates, or
+  batches.
+
+- **A joint law draws a `RecordBatch`.** `_sample` on the four joint laws —
+  product, sequential, Gaussian, and empirical — returns a `NumericRecordBatch`
+  (a `RecordBatch` when a leaf is non-numeric) for a batched draw, over a single
+  `draw` level spanning however many axes the `sample_shape` had. An unbatched
+  draw is a `Record`, unchanged. The flat-vector reconstruction behind
+  `unflatten_value` returns a batch for the same reason, and both classes are now
+  exported: a value handed to a caller must be nameable by that caller.
+
+  **A nested draw is one flat batch, not a batch per subtree.** A batch stores one
+  column per *field*, so a nested product draws into one mapping over leaf paths
+  and the result is a single batch whose `batch["outer"]` is a *view* over the
+  columns beneath `outer`. Where the previous nested draw built a record-array per
+  subtree, there is now one store, which is also what makes a nested field
+  reachable by path.
+
+  **A broadcast that stacks a batch per row names its own level.** Stacking rows
+  that are each a batch puts the sweep in front of the levels a row already
+  carried — the swept levels' own names in front of the row's — rather than
+  refusing nested batched
+  records as it used to. Since the columns are leaf-keyed, a nested element needs
+  no special case.
+
+  Three consequences for calling code. A batched draw is not a `Record`, so
+  `isinstance(draw, Record)` is `False` where it used to be `True`; ask for
+  `RecordBatch`, or for either. A batch is a collection, not a named tree, so a
+  draw's fields are read from `draw.event_template` rather than `draw.fields` /
+  `.items()` / `.at_path()`, while `draw["x"]` and `draw["outer/a"]` are
+  unchanged. And a batch has no `mean` / `var` over its batch axis; reduce the
+  column, as `jnp.mean(draw["x"], axis=0)`.
+
+  An object-valued law draws a batch on the same terms as a numeric one: the class
+  follows the leaves — `NumericRecordBatch` when the template is numeric, the
+  permissive `RecordBatch` otherwise — but a batched draw is a batch either way.
+
+  **A transform cannot add a level.** `vmap` strips the mapped axis on the way in,
+  which unflattening handles by re-deriving which levels survived; on the way out
+  it *adds* one, and an added axis belongs to no level. Unflattening has no name
+  to give, so it now raises instead of keeping the stored spec — which returned a
+  batch whose `batch_shape` its own columns contradicted, making every method that
+  reads the shape quietly wrong. Map over a batch's columns, or build the batch
+  where the axis is added.
+
+  **The sweep addresses a multi-level batch by position** — one indexer per
+  batch axis, where a flat index read the leading axis alone and ran off its end
+  — and the aggregate carries the swept groups' own axis partition, so two
+  independent sweeps followed by a batch-returning body mint one level per group
+  rather than refusing. An empty declared sweep builds its aggregate from the
+  output template, every declared field present at zero rows.
+
+  **Automatic dispatch probes the vmap it is choosing.** A body that traces
+  cleanly bare but cannot run under ``vmap`` — one returning a batch, whose
+  added axis no level names — now resolves to sequential dispatch, which
+  produces the same result by the dispatch-equivalence contract, instead of
+  failing mid-call.
+
+  **Levels align by name, and only whole.** Operands carrying the same level
+  names zip; operands with no level in common form a product; a level shared by
+  operands whose other levels differ is refused — aligning it would broadcast
+  the rest, which is not built, and a product would read the shared name as two
+  unrelated axes. Operands naming the same levels must also hold them on the
+  same axes: the flat shape can agree while the partition does not. A parameter
+  annotated `Batch` (or a generic alias such as `Batch[Record]`) takes the value
+  whole, since it names a batched container.
+
+  **A transform never resizes the element's own axes.** A per-column slice can
+  pass the rank check while shrinking the event, and a transpose reads an event
+  axis as a batch axis; both now raise, as does a reduction below the event
+  rank. An empty sweep builds its declared fields only when zero rows were
+  *expected* — an empty list where rows were expected is a missing-output error,
+  not a fabrication. The dispatch probe states the flat batch size exactly as
+  the executor does, so a zero-width event column passes under explicit
+  `dispatch="jax"`.
+
+  **Shape cannot recover axis provenance, so ambiguity refuses.** A removal
+  whose size matches more than one level (``vmap(..., in_axes=1)`` over equal
+  sizes) and a permutation of the batch axes (a transpose, which shape alone
+  cannot tell from a per-axis resize) both raise rather than guess; a
+  distinctly-sized removal now names the level that *survived*, not the
+  leftmost that fits. A pinned dtype is held like the event axes, under the
+  constructor's same-kind rule. And zero-row sweeps take one aggregation path
+  under every dispatch, so the output schema does not depend on how rows would
+  have been executed.
+
+  **A same-rank transform cannot lie about sizes.** Slicing a batch's columns
+  keeps every axis, so the levels carry over onto the sizes the columns actually
+  have; columns left disagreeing about their batch axes are refused rather than
+  papered over with the stored spec.
+
+  **A batch is fingerprinted by its levels and its columns.** A multi-field batch
+  failed fingerprinting outright, so provenance omitted it; a single-field one was
+  hashed as its sole column, omitting the schema and the levels. Both are fixed:
+  the spec, the level names and their axis groups, and the raw columns in leaf
+  order all contribute.
+
+  A declared `support` on a batched output is checked column by column. Walking a
+  batch as a named tree found no children and asked a multi-field batch to convert
+  to one array, so two valid columns raised.
+
+
+- **A batch of records is recognized wherever a batched record was.** A
+  `RecordBatch` is deliberately not a `Record`, so every place that recognized a
+  batched value by `isinstance(x, Record)`, by a `RecordBatch` subclass check, or
+  by duck-typing on `.fields` stopped recognizing one when a batch arrived. None
+  of those gates raise — they take the other branch — so a batch would have been
+  re-wrapped as a single opaque field, minibatched by its field count, or read as
+  a bare array. Each now admits a batch and does with it what it did with a
+  `RecordBatch`:
+
+  the `Function` boundary keeps a returned batch as the batch it is and copies it
+  into an independent result under the declared output template, validating each
+  column against its field; broadcast planning treats a batch argument as a
+  batched one and sweeps its rows, handing the body an *element*; the broadcast
+  helpers count, gather, and unwrap a batch's rows, a gather keeping the levels it
+  started with; a marginal peels a batch's rows axis into a record of batched
+  leaves; a field view reads its column out of a batch; the flat-vector boundary,
+  the joint log-densities, and the GLM design coercion accept one; minibatching
+  reads its row count from `batch_shape` and gathers a field at a time; and the
+  ArviZ bridge finds its variables through `event_template`, which a batch has and
+  `.fields` is not.
+
+  These are the gates a batch arrives at. Two
+  paths are deliberately left for the cutover, each needing a decision rather than
+  a wider gate: stacking a list of batched records from a broadcast, which has to
+  name the levels the broadcast grid mints, and
+  `RecordEmpiricalDistribution`, which requires a `Record` and is the subject of
+  #340.
+
+  Level alignment reads the levels an operand **has**. A batched operand carrying
+  none of its own — a `DistributionArray`, which is swept by
+  its `batch_shape` without being a `Batch` — has an anonymous multiplicity: it
+  aligns with nothing by name and products with everything. Standing its parameter
+  name in for the levels it lacks made a parameter named `draw` collide with a real
+  `draw` level on another operand, refusing a call whose two axes are independent,
+  over a level neither operand disagreed about. A `DistributionArray` stays
+  levelless, so this is not tied to any one batched-record class.
+
 - **Renamed, for the storage rule (#381):** `FunctionSpec.output_template` is
   now **`output_spec`**, storing any `ValueSpec` or `None`, and
   `DistributionSpec.event_template` is now **`event_spec`**, storing a
@@ -470,7 +1409,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Each field is now declared at the type it *stores* — `event_spec: RecordSpec`,
   `output_spec: ValueSpec | None` — with the wider template sugar carried by the
   constructor signature, so a type checker and the generated API reference both
-  read the post-construction guarantee. `ArraySpec` follows the same split, its
+  read the post-construction guarantee. `NumericArraySpec` follows the same split, its
   `dtype` field declared as the `numpy.dtype` it stores rather than the
   `DTypeLike` spellings it accepts.
 
@@ -480,7 +1419,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with the called Function as the first parent followed by tracked inputs.
   Resolved ordinary arguments are fingerprinted separately in
   `Provenance.inputs` and do not become ancestry nodes. When an implementation
-  directly returns a `Record`, `RecordArray`, or `Distribution`,
+  directly returns a `Record`, `RecordBatch`, or `Distribution`,
   `Function.__call__` returns a shallow independent result rather than the same
   object, clears the implementation result's provenance, and attaches only the
   current call provenance. Consequently, implementation-domain metadata such
@@ -554,7 +1493,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   converts). All-numeric records holding
   native containers **auto-promote** to `NumericRecord` (the previous
   backend-leaf exclusion is removed), and `EventTemplate.infer_from` infers
-  `ArraySpec` for them. Native leaves are stored by reference (no defensive
+  `NumericArraySpec` for them. Native leaves are stored by reference (no defensive
   copies). A native container's metadata (an `xarray` leaf's coords / dims /
   attrs, a `pandas` leaf's index / columns) is **part of a record's identity**:
   `Record.__eq__` and `fingerprint()` distinguish it, so two records with equal
@@ -611,15 +1550,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the value-level `NumericRecord.to_vector`. `Record.from_dict` likewise takes
   the name first. Construction now validates each
   leaf against its field spec's `is_valid` (structure only: shape and dtype,
-  the latter by `numpy.can_cast` same-kind, so a cross-kind dtype raises). An
-  `ArraySpec`'s `support` is descriptive metadata and is not checked by
+  the latter by `numpy.can_cast` same-kind, so a cross-kind dtype raises). A
+  `NumericArraySpec`'s `support` is descriptive metadata and is not checked by
   `is_valid` — a data-dependent check that is not `jax.jit`-traceable.
 
 - **Leaf specs unified under a `ValueSpec` base with `is_valid` (#337,
-  breaking).** `ArraySpec` / `OpaqueSpec` / `DistributionSpec` / `FunctionSpec`
+  breaking).** `NumericArraySpec` / `OpaqueSpec` / `DistributionSpec` / `FunctionSpec`
   now subclass a common `ValueSpec` ABC, and every spec implements
   `is_valid(value) -> bool` — a structural check that a concrete value matches
-  the spec (shape and dtype for arrays — an `ArraySpec`'s `support` is
+  the spec (shape and dtype for arrays — a `NumericArraySpec`'s `support` is
   descriptive metadata and is **not** checked by `is_valid`, being
   data-dependent and not `jax.jit`-traceable; `OpaqueSpec` accepts any
   non-mapping value; a `DistributionSpec` requires a `Distribution` carrying an
@@ -633,7 +1572,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now optional (default `None`, meaning "structure unspecified", so a bare
   `FunctionSpec()` describes any callable); either may still be given as a
   bare `ValueSpec`, wrapped in a single-field template (fields `input` /
-  `output`). `ArraySpec` fixes: `dtype` is
+  `output`). `NumericArraySpec` fixes: `dtype` is
   normalised to `numpy.dtype` at construction so equal dtypes compare and hash
   equal however they were spelled (the field is annotated `DTypeLike`
   accordingly), and a spec with an unset `dtype` no longer compares equal to
@@ -666,7 +1605,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (use `keys()`), `to_leaf_list` (use `list(values())`), `from_leaf_list` (use
   `from_field_values`), and `map_with_names` (use `map_with_keys`). `Record.fields`
   and `Record.to_dict` survive as **temporary** aliases for `children` and
-  `to_nested_dict`. `RecordArray` / `NumericRecordArray` keep a top-level mapping
+  `to_nested_dict`. `RecordBatch` / `NumericRecordBatch` keep a top-level mapping
   for now, pending the batch-axis rework.
 
 - **`EventTemplate` moved to its own module and `Record` now carries an
@@ -683,7 +1622,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `Record.to_numeric()`.
   - **Moved** `leaf_shapes` onto `NumericEventTemplate`; `numeric_leaf_shapes`
     is consolidated into `leaf_shapes`. (`to_vector` / `from_vector` are now
-    value-level methods on `NumericRecord` / `NumericRecordArray` — see the
+    value-level methods on `NumericRecord` / `NumericRecordBatch` — see the
     value-model entry above — not template methods.)
   - **Added** leaf-keyed (de)composition: the mapping protocol
     (`keys` / `values` / `items` / `__iter__`) enumerates every leaf by its
@@ -746,7 +1685,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   separate PR.)
 
 - **Nested `ProductDistribution` support in the record layer (#262).**
-  `RecordArray` accepts slash-delimited paths in string indexing
+  `RecordBatch` accepts slash-delimited paths in string indexing
   (`arr["outer/a"]`) and integer-indexes a nested array into a nested record
   element; `flatten` / `unflatten` recurse into nested record fields in
   depth-first leaf order; and a batched draw from a nested `ProductDistribution`
@@ -801,7 +1740,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NumericRecordTemplate` is `NumericEventTemplate`, and
   `Distribution.record_template` is `event_template` (hard rename, **no
   deprecation alias** — pre-stable). Template leaves are now a closed sum of
-  frozen, hashable specs (`ArraySpec` / `OpaqueSpec` / `DistributionSpec` /
+  frozen, hashable specs (`NumericArraySpec` / `OpaqueSpec` / `DistributionSpec` /
   `FunctionSpec`) instead of `tuple[int, ...] | None`; construction-time sugar
   is preserved (`EventTemplate(x=(3,), label=None, sub=…)` still works) and
   `__getitem__` now returns the spec object (shape access stays on
@@ -835,9 +1774,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ml_dtypes arrays (bfloat16, float8, int4) now classify as numeric
   (#343).** The numeric-dtype gates previously keyed on numpy's
   `dtype.kind`, under which the ml_dtypes extension types JAX registers
-  report `"V"` (void) — so a bfloat16 array failed `ArraySpec.is_valid`,
+  report `"V"` (void) — so a bfloat16 array failed `NumericArraySpec.is_valid`,
   inferred as an `OpaqueSpec`, and was rejected as a `NumericRecord` /
-  `NumericRecordArray` leaf. All five gates (template inference, spec
+  `NumericRecordBatch` leaf. All five gates (template inference, spec
   validation, the two record-layer leaf checks, the broadcast-template
   builder, and the `Design` marginals probe) now route through one shared
   predicate that also admits ml_dtypes numerics; structured (record)
@@ -847,7 +1786,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Core container indexing and nested reductions.** `DistributionArray`
   integer indexing now raises `IndexError` for positive overflow and negatives
   past the axis bounds, while 0-d arrays accept only empty-tuple indexing.
-  `NumericRecordArray.mean()` and `.var()` now recurse through nested numeric
+  `NumericRecordBatch.mean()` and `.var()` now recurse through nested numeric
   record fields instead of treating nested records as arrays.
 
 - **Linear-algebra and Gaussian-conditioning edge cases on the algebra bug-fix
@@ -1470,7 +2409,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ``(k,)``). The PyMC NUTS, PyMC ADVI, and nutpie inference paths all
   thread this through to ``make_posterior``, so ``mean(post)`` returns
   a ``NumericRecord`` keyed by RV name and ``draws()`` returns a
-  ``NumericRecordArray``. Previously, PyMC posteriors had no field
+  ``NumericRecordBatch``. Previously, PyMC posteriors had no field
   structure and ``draws()`` returned a flat ``(n_draws, n_params)``
   array. Models declared with multiple scalar RVs (e.g. separate
   ``intercept`` and ``slope`` ``pm.Normal`` calls) now produce a
@@ -1900,7 +2839,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`Record` field ordering is now insertion-order**, not alphabetical.
   ``Record(z=1, a=2)`` now iterates ``("z", "a")``. Same change applies
-  to ``RecordTemplate``, ``RecordArray``, and every Record-based
+  to ``RecordTemplate``, ``RecordBatch``, and every Record-based
   distribution that derives ``fields`` from the underlying store.
   Previous alphabetical ordering was an accident of
   ``OrderedDict(sorted(...))``.
@@ -1976,24 +2915,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`_RecordArrayView`** (`RecordArray.view(field)`) — single-field view of a
-  ``RecordArray`` column that carries its parent as shared-identity metadata.
-  The ``Function`` sweep layer groups sibling views from one parent
-  into a single zip axis; views from different parents product.
-- **Uniform `select_all()`** on ``Record`` / ``RecordArray`` /
+- **Uniform `select_all()`** on ``Record`` / ``RecordBatch`` /
   ``RecordDistribution``. Splatting the result into a
   ``@function`` preserves correlation on the two batched variants
   and plain splats fields on scalar ``Record``.
-- **Public `.parent` / `.field`** properties on both
-  ``_RecordArrayView`` and ``_RecordDistributionView``.
+- **Public `.parent` / `.field`** properties on ``_RecordDistributionView``,
+  which say two views draw from one law.
 - **Single-field `.shape` / `.ndim` shims** on ``RecordDistribution`` and
   ``_RecordDistributionView`` (mirror the existing shims on
-  ``NumericRecord`` / ``NumericRecordArray``). Multi-field distributions
+  ``NumericRecord`` / ``NumericRecordBatch``). Multi-field distributions
   raise ``TypeError``.
 
 ### Changed (breaking)
 
-- **`len(RecordArray)`** now returns the **field count** (matching
+- **`len(RecordBatch)`** now returns the **field count** (matching
   ``len(Record)``) instead of ``prod(batch_shape)``. For the flat batch
   size, use ``prod(ra.batch_shape)``.
 - **`event_shapes`** now always returns ``dict[str, tuple[int, ...]]``.

@@ -10,14 +10,11 @@ from types import MappingProxyType
 import jax.numpy as jnp
 
 from .._dtype import _promote_floats
+from ..core._numeric_record_distribution import NumericRecordDistribution, _mc_expectation
 from ..core._record_distribution import _build_event_template
-from ..core.distribution import (
-    NumericRecordDistribution,
-    _mc_expectation,
-)
 from ..core.protocols import (
-    SupportsConditioning,
     SupportsCovariance,
+    SupportsExactConditioning,
     SupportsLogProb,
     SupportsMean,
     SupportsSampling,
@@ -40,7 +37,7 @@ class JointGaussian(
     SupportsMean,
     SupportsVariance,
     SupportsCovariance,
-    SupportsConditioning,
+    SupportsExactConditioning,
 ):
     """
     Joint Gaussian distribution with named components and cross-covariance.
@@ -54,7 +51,8 @@ class JointGaussian(
     cov : array-like, shape ``(d, d)``
         Full (flat) covariance matrix.
     name : str, optional
-        Distribution name.
+        Distribution name. Keyword-only; defaults to ``joint_gaussian(a,b)``
+        over the component names.
     **component_shapes : int
         Named components with their dimensionality.  The sum of all
         dimensions must equal ``d``.
@@ -96,10 +94,8 @@ class JointGaussian(
 
         self._mean_vec = mean
         self._cov_mat = cov
-        name, name_is_auto = auto_name(
-            name, "joint_gaussian(" + ",".join(component_shapes.keys()) + ")"
-        )
-        super().__init__(name=name, name_is_auto=name_is_auto)
+        name = auto_name(name, "joint_gaussian(" + ",".join(component_shapes.keys()) + ")")
+        super().__init__(name=name)
         self._component_shapes = dict(component_shapes)
 
         # Build slices and component MultivariateNormal distributions
@@ -174,29 +170,31 @@ class JointGaussian(
 
     def _unflatten_flat_vec(self, flat: Array, sample_shape: tuple[int, ...] = ()):
         """Split a flat Gaussian sample vector into per-component arrays."""
-        from ..core._record_array import NumericRecordArray
+        from ..core._numeric_record_batch import NumericRecordBatch
 
         result = {}
         for cname in self._component_shapes:
             sl = self._component_slices[cname]
             result[cname] = flat[..., sl]
         if sample_shape:
-            return NumericRecordArray(
+            return NumericRecordBatch(
+                self.name,
                 result,
-                batch_shape=sample_shape,
-                template=self.event_template,
+                "sample",
+                element_spec=self.event_template,
+                axes_per_level=(len(sample_shape),),
             )
-        return Record(self.name, result, name_is_auto=True)
+        return Record(self.name, result)
 
     def _log_prob(self, value) -> Array:
-        from ..core._record_array import RecordArray
+        from ..core._record_batch import RecordBatch
 
-        if not isinstance(value, (Record, RecordArray)):
-            value = Record(self.name, value, name_is_auto=True)
+        if not isinstance(value, (Record, RecordBatch)):
+            value = Record(self.name, value)
         from .multivariate import MultivariateNormal as MVN
 
         full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat, name="_jg_internal")
-        # ``Record``/``RecordArray`` carry their own structure, so the
+        # A record, and a batch of them, carry their own structure, so the
         # static ``flatten_value`` ignores ``event_shape`` for these
         # inputs — don't ask ``self.event_shape`` (it raises on a
         # multi-field joint).
@@ -208,7 +206,7 @@ class JointGaussian(
         for cname in self._component_shapes:
             sl = self._component_slices[cname]
             result[cname] = self._mean_vec[sl]
-        return Record(self.name, result, name_is_auto=True)
+        return Record(self.name, result)
 
     def _variance(self) -> Record:
         diag = jnp.diag(self._cov_mat)
@@ -216,7 +214,7 @@ class JointGaussian(
         for cname in self._component_shapes:
             sl = self._component_slices[cname]
             result[cname] = diag[sl]
-        return Record(self.name, result, name_is_auto=True)
+        return Record(self.name, result)
 
     def _cov(self) -> Array:
         """Full covariance matrix."""

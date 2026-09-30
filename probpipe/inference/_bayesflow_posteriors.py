@@ -27,10 +27,10 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..core.distribution import Distribution
 from ..core.node import function
-from ..core.protocols import GenerativeLikelihood, SupportsConditioning
+from ..core.protocols import GenerativeLikelihood, SupportsApproximateConditioning
 from ..custom_types import ArrayLike, PRNGKey
+from ..distributions._distribution import Distribution
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._bayesflow_common import (
     _OBSERVATION_KEY,
@@ -139,11 +139,11 @@ def _field_bijectors(prior: Distribution, keys: tuple[str, ...]) -> dict[str, tf
 
 
 # ---------------------------------------------------------------------------
-# Trained-model wrapper: a SupportsConditioning direct sampler
+# Trained-model wrapper: an approximate-conditioning direct sampler
 # ---------------------------------------------------------------------------
 
 
-class BayesFlowModel(Distribution, SupportsConditioning):
+class BayesFlowModel(Distribution, SupportsApproximateConditioning):
     """A BayesFlow amortized model of the joint ``p(theta, y)``.
 
     Bundles the generative model it was trained from (``prior`` + ``simulator``,
@@ -186,7 +186,7 @@ class BayesFlowModel(Distribution, SupportsConditioning):
         self._bijectors = bijectors or {}
         # The TrackedTerm metaclass check requires a non-empty name; the
         # derived default is an auto name.
-        self._init_tracked(f"BayesFlowModel({method})", name_is_auto=True)
+        self._init_tracked(f"BayesFlowModel({method})")
 
     @property
     def prior(self) -> Distribution:

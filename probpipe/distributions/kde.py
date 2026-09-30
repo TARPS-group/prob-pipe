@@ -18,17 +18,16 @@ from .._dtype import _as_float_array
 from .._weights import Weights
 from ..core._empirical import RecordEmpiricalDistribution
 from ..core._numeric_record import NumericRecord
+from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._numeric_record_distribution import NumericRecordDistribution
-from ..core._record_array import NumericRecordArray
+from ..core._specs import NumericRecordSpec
 from ..core.constraints import Constraint, real
-from ..core.event_template import NumericEventTemplate
 from ..core.record import Record
-from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike
 from ._tfp_base import TFPDistribution
 
 if TYPE_CHECKING:
-    from ..core.event_template import EventTemplate
+    from ..core._specs import RecordSpec
 
 __all__ = ["KDEDistribution"]
 
@@ -43,6 +42,8 @@ class KDEDistribution(TFPDistribution):
 
     Parameters
     ----------
+    name : str
+        Distribution name for provenance.
     samples : array-like
         Sample matrix of shape ``(n,)`` or ``(n, d)``.
     weights : array-like, :class:`~probpipe.Weights`, or None
@@ -56,29 +57,27 @@ class KDEDistribution(TFPDistribution):
         Per-dimension bandwidth (standard deviation of each Gaussian
         kernel), shape ``(d,)`` or scalar.  If ``None``, Silverman's
         rule is used: ``n^{-1/(d+4)} * std_j`` for each dimension *j*.
-    event_template : EventTemplate or None
+    event_template : RecordSpec or None
         Structural template for the KDE's value type. When ``None`` (the
         default) a single-field template keyed by ``name`` is auto-built,
         matching the historical behavior. When supplied with multiple
         fields, the template defines how the flat ``(n, d)`` sample matrix
-        maps back to a structured ``NumericRecord`` / ``NumericRecordArray``
+        maps back to a structured ``NumericRecord`` / ``NumericRecordBatch``
         — preserving named fields end-to-end across e.g. an MCMC posterior
         being routed through KDE as the new prior in
         :class:`~probpipe.modeling.IncrementalConditioner`. The template's
         ``vector_size`` must equal ``samples.shape[1]``.
-    name : str or None
-        Distribution name for provenance.
     """
 
     def __init__(
         self,
+        name: str,
         samples: ArrayLike,
         weights: ArrayLike | Weights | None = None,
         *,
         log_weights: ArrayLike | Weights | None = None,
         bandwidth: ArrayLike | None = None,
-        event_template: EventTemplate | None = None,
-        name: str | None = None,
+        event_template: RecordSpec | None = None,
     ):
         samples = _as_float_array(samples)
         if samples.ndim == 0:
@@ -92,7 +91,6 @@ class KDEDistribution(TFPDistribution):
         n, d = samples.shape
         self._samples = samples
         self._d = d
-        name, name_is_auto = auto_name(name, "kde")
 
         # Multi-field template support: when the caller supplies a template
         # with more than one field, preset ``_event_template`` so that
@@ -100,7 +98,7 @@ class KDEDistribution(TFPDistribution):
         # single-field auto-build keyed by ``name``. Validate that the
         # template's flat width matches the samples' trailing dimension.
         if event_template is not None and len(event_template.fields) > 1:
-            if isinstance(event_template, NumericEventTemplate):
+            if isinstance(event_template, NumericRecordSpec):
                 expected = event_template.vector_size
             else:
                 expected = sum(
@@ -115,7 +113,7 @@ class KDEDistribution(TFPDistribution):
                 )
             object.__setattr__(self, "_event_template", event_template)
 
-        super().__init__(name=name, name_is_auto=name_is_auto)
+        super().__init__(name=name)
 
         # Weights
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
@@ -165,7 +163,7 @@ class KDEDistribution(TFPDistribution):
     # -- sampling & density (template-aware overrides) ------------------------
     #
     # When ``_event_template`` is multi-field, sample output is unflattened
-    # back into ``NumericRecord`` / ``NumericRecordArray`` keyed by the
+    # back into ``NumericRecord`` / ``NumericRecordBatch`` keyed by the
     # template, and log_prob accepts both structured and flat inputs. Single-
     # field auto-templates fall through to the TFP base class behaviour, so
     # existing call sites are unchanged.
@@ -180,7 +178,7 @@ class KDEDistribution(TFPDistribution):
     def _log_prob(self, value: Any) -> Array:
         tpl = getattr(self, "_event_template", None)
         if tpl is not None and len(tpl.fields) > 1:
-            if isinstance(value, (Record, NumericRecord, NumericRecordArray)):
+            if isinstance(value, (Record, NumericRecord, NumericRecordBatch)):
                 value = NumericRecordDistribution.flatten_value(value)
         return self._tfp_dist.log_prob(jnp.asarray(value))
 
@@ -220,13 +218,13 @@ class KDEDistribution(TFPDistribution):
         if len(tpl.fields) == 1:
             field = tpl.fields[0]
             arr = source.samples[field]
-            return cls(arr, weights=source._w, bandwidth=bandwidth, name=name)
+            return cls(name, arr, weights=source._w, bandwidth=bandwidth)
         return cls(
+            name,
             source.flat_samples,
             weights=source._w,
             bandwidth=bandwidth,
             event_template=tpl,
-            name=name,
         )
 
     def __repr__(self) -> str:

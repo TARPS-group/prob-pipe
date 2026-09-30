@@ -18,7 +18,7 @@ lazy conversion contract, the flat-vector layout (``to_vector`` /
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from math import prod
 from typing import Any
 
@@ -34,7 +34,11 @@ from ._array_backend import (
     _numpy_dtype_of,
     _to_jax_array,
 )
-from .event_template import EventTemplate, NumericEventTemplate
+from ._specs import (
+    NumericArraySpec,
+    NumericRecordSpec,
+    RecordSpec,
+)
 from .named_tree import _PATH_SEP, _check_no_path_sep, _unflatten_paths
 from .record import Record
 
@@ -74,10 +78,10 @@ class NumericRecord(Record):
     :attr:`~Record.children`, and :meth:`~Record.at_path` never convert.
     Conversion to ``jax.Array`` happens at the compute boundary — the JAX
     pytree flatten that ``jit`` / ``vmap`` / ``grad`` traverse,
-    :meth:`to_vector`, and the single-field scalar shim — through a set-once
-    per-leaf cache, so each leaf materialises at most once **per record
-    instance**. A JAX transform
-    therefore returns a record with bare ``jax.Array`` leaves (unflatten
+    :meth:`to_vector`, and the single-field scalar shim — through a per-leaf
+    cache. Concrete conversions are memoised per record instance; traced
+    conversions stay within their transform. A JAX transform
+    returns a record with bare ``jax.Array`` leaves (unflatten
     cannot rebuild native containers); structural transforms
     (:meth:`~Record.without` / :meth:`~Record.merge` / :meth:`~Record.replace`
     / :meth:`~Record.with_path_names`) and pickling reuse the native leaves
@@ -90,8 +94,8 @@ class NumericRecord(Record):
     place after construction therefore reaches the record. Once the leaf has
     crossed a compute boundary, navigation and compute can disagree:
     navigation reflects the mutation, but compute reuses the ``jax.Array``
-    snapshot cached at first conversion. Records assume their data is not
-    externally mutated mid-pipeline; no defensive copies are made.
+    snapshot cached at the first concrete conversion. Records assume their data
+    is not externally mutated mid-pipeline; no defensive copies are made.
 
     Equality, hashing, and lazy leaves
     ----------------------------------
@@ -133,19 +137,17 @@ class NumericRecord(Record):
     _fields : Mapping, optional
         Fields as a positional mapping — an alternative to keyword ``**fields``
         (passing both raises). As on :class:`Record`, use it when a field name
-        would collide with the ``event_template`` / ``name_is_auto`` keywords.
+        would collide with the ``event_template`` keyword.
     **fields
         Named numeric values: a numeric array or container (``jax`` /
         ``numpy`` / ``xarray`` / ``pandas`` / registered backends), a numeric
         Python scalar, or a nested ``NumericRecord``. At least one field is
         required.
-    name_is_auto : bool, optional
-        ``True`` when *name* was derived by the producing operation rather
-        than supplied by the user. Defaults to ``False``.
-    event_template : NumericEventTemplate, optional
-        The value's authoritative schema. When omitted it is inferred from the
-        field data at construction; when supplied it is validated against the
-        fields and stored. Either way it is fixed for the life of the record.
+    event_template : NumericRecordSpec, optional
+        The value's authoritative numeric schema. When omitted it is inferred from
+        the field data at construction; when supplied it is validated against
+        the fields. Either way it is fixed for the life of the record, readable
+        as :attr:`spec` or, for its structure, :attr:`event_template`.
 
     Raises
     ------
@@ -167,13 +169,18 @@ class NumericRecord(Record):
     The compute boundary presents a plain PyTree of arrays: the JAX pytree
     children are the converted leaves, so ``jit`` / ``vmap`` / ``grad`` see
     exactly the ProbPipe structure. As on :class:`Record`, the PyTree aux
-    carries the ``(event_template, name, name_is_auto)`` triple, so the
-    template and name survive a flatten/unflatten round-trip;
+    carries the ``(spec, name)`` pair, so the declared type
+    and the name survive a flatten/unflatten round-trip;
     :attr:`provenance`, :attr:`annotations`, and the native container types
     do not cross a JAX transform boundary.
     """
 
     __slots__ = ("_jax_cache", "_vector_size")
+
+    #: The lazy conversion cache is a memo over the stored leaves, so it is
+    #: rebuilt on demand rather than carried through ``copy`` and ``pickle`` —
+    #: carrying it would duplicate every converted array in the payload.
+    _transient_state = ("_jax_cache",)
 
     def __init__(
         self,
@@ -181,8 +188,7 @@ class NumericRecord(Record):
         _fields: Mapping[str, ArrayLike | NumericRecord] | None = None,
         /,
         *,
-        event_template: EventTemplate | None = None,
-        name_is_auto: bool = False,
+        event_template: RecordSpec | None = None,
         _validate_leaves: bool = True,
         **fields: ArrayLike | NumericRecord,
     ):
@@ -205,14 +211,12 @@ class NumericRecord(Record):
         for field_name, value in raw_inputs.items():
             if isinstance(value, Mapping):
                 # A mapping value is nested structure: materialise the child.
-                sub_template: EventTemplate | None = None
+                sub_template: RecordSpec | None = None
                 if event_template is not None:
                     child = event_template.children.get(field_name)
-                    if isinstance(child, EventTemplate):
+                    if isinstance(child, RecordSpec):
                         sub_template = child
-                raw_fields[field_name] = type(self)(
-                    field_name, value, event_template=sub_template, name_is_auto=True
-                )
+                raw_fields[field_name] = type(self)(field_name, value, event_template=sub_template)
             else:
                 raw_fields[field_name] = value
         validated = self._validate(raw_fields)
@@ -220,7 +224,6 @@ class NumericRecord(Record):
             name,
             validated,
             event_template=event_template,
-            name_is_auto=name_is_auto,
             _validate_leaves=_validate_leaves,
         )
         # Cache vector_size, reading only container metadata (shapes) — a
@@ -284,17 +287,32 @@ class NumericRecord(Record):
         boundary routes through. A leaf stored as a ``jax.Array`` (including a
         tracer inside a JAX transform) passes through untouched; a native
         container converts via its registered backend's ``to_jax`` (or
-        ``jnp.asarray``) exactly once, memoised in the set-once cache.
+        ``jnp.asarray``). Concrete conversions are memoised; traced conversions
+        stay within their transform.
         """
         val = self._tree[field_name]
         if isinstance(val, jnp.ndarray):
             return val
-        cache = self._jax_cache
+        cache = self._conversion_cache()
         arr = cache.get(field_name)
         if arr is None:
             arr = _to_jax_array(val)
-            cache[field_name] = arr
+            if not isinstance(arr, jax.core.Tracer):
+                cache[field_name] = arr
         return arr
+
+    def _conversion_cache(self) -> dict[str, jnp.ndarray]:
+        """The per-leaf conversion memo, created if this instance has none.
+
+        A record that arrives from ``copy`` or ``pickle`` carries no memo — it is
+        derived from the leaves, so it is rebuilt rather than transported — and
+        the first conversion after one lands here.
+        """
+        cache = getattr(self, "_jax_cache", None)
+        if cache is None:
+            cache = {}
+            object.__setattr__(self, "_jax_cache", cache)
+        return cache
 
     def _field_as_jax(self, key: str) -> jnp.ndarray:
         """The converted ``jax.Array`` for the field at *key*, at any depth.
@@ -326,8 +344,8 @@ class NumericRecord(Record):
         The numeric 1-D serialization: the record's numeric leaves, visited in
         canonical leaf order (:meth:`~probpipe.core.named_tree.NamedTree.keys` —
         insertion order, depth-first into nested records), each converted to
-        ``jax.Array`` (a compute boundary — lazy leaves materialise, once),
-        raveled, and concatenated into one dense vector. The inverse is
+        ``jax.Array`` at the compute boundary, raveled, and concatenated into
+        one dense vector. Concrete leaf conversions are memoised. The inverse is
         :meth:`from_vector`.
 
         This is distinct from ``list(record.values())``, which keeps each leaf
@@ -335,14 +353,19 @@ class NumericRecord(Record):
         numeric leaves into a single dense vector.
         """
         leaves = [self._field_as_jax(key) for key in self.event_template]
+        if not leaves:
+            # ``jnp.concatenate`` refuses an empty list; a record with no
+            # numeric leaves has ``vector_size == 0`` and serialises to the
+            # zero-length vector, which concatenates as the identity.
+            return jnp.zeros(0)
         return jnp.concatenate([jnp.reshape(leaf, -1) for leaf in leaves])
 
     @classmethod
-    def from_vector(cls, name: str, template: NumericEventTemplate, vec: Array) -> NumericRecord:
+    def from_vector(cls, name: str, template: NumericRecordSpec, vec: Array) -> NumericRecord:
         """Reconstruct a single record from its dense 1-D vector.
 
         The value-level inverse of :meth:`to_vector`: splits *vec* into the
-        template's per-field blocks, reshapes each to its ``ArraySpec`` shape
+        template's per-field blocks, reshapes each to its ``NumericArraySpec`` shape
         in canonical leaf order, and returns a ``NumericRecord`` carrying
         *template* as its authoritative schema under the user-given *name*.
         The reconstructed leaves are bare ``jax.Array``\\ s — a flat vector
@@ -352,8 +375,9 @@ class NumericRecord(Record):
         ----------
         name : str
             Name for the reconstructed record (user-given).
-        template : NumericEventTemplate
-            The flat layout supplying field names, shapes, and order.
+        template : NumericRecordSpec
+            The flat layout supplying field names, shapes, and order. Every
+            leaf must be a NumericArraySpec.
         vec : Array
             A vector of shape ``(template.vector_size,)`` — one single
             (unbatched) value.
@@ -367,8 +391,9 @@ class NumericRecord(Record):
         Raises
         ------
         TypeError
-            If *vec* carries leading batch axes — batched reconstruction is
-            the batch type's concern; use :meth:`NumericRecordArray.from_vector`
+            If the template contains a non-array leaf, or *vec* carries
+            leading batch axes — batched reconstruction is
+            the batch type's concern; use :meth:`NumericRecordBatch.from_vector`
             for a batched matrix.
         ValueError
             If the vector length does not equal ``template.vector_size``.
@@ -378,33 +403,15 @@ class NumericRecord(Record):
             raise TypeError(
                 f"NumericRecord.from_vector expects a 1-D vector (one value); "
                 f"got shape {tuple(vec.shape)}. Reconstruct a batch with "
-                f"NumericRecordArray.from_vector."
+                f"NumericRecordBatch.from_vector."
             )
-        return _reconstruct_from_vector(name, template, vec, name_is_auto=False)
+        return _reconstruct_from_vector(name, template, vec)
 
     def to_numeric(self) -> NumericRecord:
         """Return ``self`` — a ``NumericRecord`` is already numeric (identity)."""
         return self
 
     # -- Single-field scalar-like coercion ---------------------------------
-
-    def __reduce__(self):
-        # Native leaves pickle themselves, so one branch suffices: the stored
-        # field dict round-trips with native types intact at every nesting
-        # level, and the authoritative template is threaded back so an
-        # explicit (non-inferred) schema survives rather than being
-        # re-inferred. The conversion cache is deliberately not serialized —
-        # it is a memo, rebuilt on demand.
-        return (
-            _unpickle_numeric_record,
-            (
-                dict(self._tree),
-                self._name,
-                self._name_is_auto,
-                self._provenance,
-                self._event_template,
-            ),
-        )
 
     def _single_numeric_field(self) -> str:
         """Return the sole numeric field's name, or raise ``TypeError``."""
@@ -471,12 +478,10 @@ class NumericRecord(Record):
 # ---------------------------------------------------------------------------
 
 
-def _value_treedef(
-    template: NumericEventTemplate, batch_shape: tuple[int, ...]
-) -> jax.tree_util.PyTreeDef:
+def _value_treedef(template: NumericRecordSpec) -> jax.tree_util.PyTreeDef:
     """PyTreeDef of the value :func:`_reconstruct_from_vector` builds.
 
-    A throwaway ``NumericRecord`` / ``NumericRecordArray`` skeleton mirroring
+    A throwaway ``NumericRecord`` / ``NumericRecordBatch`` skeleton mirroring
     *template*; its structure (field names, nesting, ``batch_shape``, template)
     is all the treedef needs, so the placeholder leaves are cheap zero-stride
     broadcasts. Pairing this treedef with the real ordered leaves in
@@ -484,45 +489,45 @@ def _value_treedef(
     """
     numeric_fill = jnp.zeros((), dtype=jnp.float32)
 
-    def _build(tpl: NumericEventTemplate) -> NumericRecord:
+    def _build(tpl: NumericRecordSpec) -> NumericRecord:
         fields: dict[str, Any] = {}
         for name, spec in tpl.children.items():
-            if isinstance(spec, NumericEventTemplate):
+            if isinstance(spec, NumericRecordSpec):
                 fields[name] = _build(spec)
             else:
-                fields[name] = jnp.broadcast_to(numeric_fill, (*batch_shape, *spec.shape))
-        if batch_shape:
-            from ._record_array import NumericRecordArray
-
-            return NumericRecordArray(fields, batch_shape=batch_shape, template=tpl)
+                fields[name] = jnp.broadcast_to(numeric_fill, spec.shape)
         # A template carries no name; the caller renames the reconstructed
         # value. Skip leaf validation: the placeholder fill is float32 and the
         # template may pin another dtype (int32 / bool) — this skeleton exists
         # only to capture the treedef structure, and the real leaves are cast
         # to the field dtype in ``_reconstruct_from_vector``.
-        return Record(
-            "value", fields, event_template=tpl, name_is_auto=True, _validate_leaves=False
-        )
+        return NumericRecord("value", fields, event_template=tpl, _validate_leaves=False)
 
     return jax.tree_util.tree_structure(_build(template))
 
 
 def _reconstruct_from_vector(
-    name: str, template: NumericEventTemplate, vec: Array, *, name_is_auto: bool
+    name: str,
+    template: NumericRecordSpec,
+    vec: Array,
+    *,
+    level_names: str | Iterable[str] = "sample",
 ) -> NumericRecord | Any:
     """Reconstruct a numeric value from its flat vector, under *name*.
 
     Splits *vec* along its trailing axis into *template*'s leaves (canonical
     leaf order), reshapes each to its event shape, and rebuilds the structured
-    value: a single :class:`NumericRecord` when *vec* is 1-D, a batched
-    :class:`~probpipe.NumericRecordArray` (``batch_shape == vec.shape[:-1]``)
-    otherwise. This is the value-level machinery behind
-    :meth:`NumericRecord.from_vector` / :meth:`NumericRecordArray.from_vector`;
+    value: a single :class:`NumericRecord` when *vec* is 1-D, a
+    :class:`~probpipe.NumericRecordBatch` over one level of
+    ``vec.shape[:-1]`` otherwise. This is the value-level machinery behind
+    :meth:`NumericRecord.from_vector` / :meth:`NumericRecordBatch.from_vector`;
     the template supplies only the leaf layout (shapes, order), never
     constructing the value itself.
 
     Raises
     ------
+    TypeError
+        If a template leaf is not a NumericArraySpec.
     ValueError
         If *vec* is 0-dimensional, or its trailing axis is not
         ``template.vector_size``.
@@ -543,28 +548,43 @@ def _reconstruct_from_vector(
     offset = 0
     leaves: list[Any] = []
 
-    def _collect(tpl: NumericEventTemplate) -> None:
-        nonlocal offset
-        for spec in tpl.children.values():
-            if isinstance(spec, NumericEventTemplate):
-                _collect(spec)
-            else:
-                size = prod(spec.shape) if spec.shape else 1
-                chunk = vec[..., offset : offset + size]
-                offset += size
-                leaf = jnp.reshape(chunk, (*batch_shape, *spec.shape))
-                # Cast back to the field's declared dtype so a dtype-pinned
-                # template (e.g. int32 / bool) round-trips faithfully — the flat
-                # vector is typically float (``to_vector`` concatenates, which
-                # promotes across mixed-dtype fields).
-                if spec.dtype is not None:
-                    leaf = leaf.astype(spec.dtype)
-                leaves.append(leaf)
+    for path, spec in template._walk_leaves():
+        if not isinstance(spec, NumericArraySpec):
+            raise TypeError(
+                f"from_vector: field {path!r} has a {type(spec).__name__}; "
+                "reconstruction requires NumericArraySpec leaves"
+            )
+        size = prod(spec.shape)
+        chunk = vec[..., offset : offset + size]
+        offset += size
+        leaf = jnp.reshape(chunk, (*batch_shape, *spec.shape))
+        # Cast back to the field's declared dtype so a dtype-pinned
+        # template (e.g. int32 / bool) round-trips faithfully — the flat
+        # vector is typically float (``to_vector`` concatenates, which
+        # promotes across mixed-dtype fields).
+        if spec.dtype is not None:
+            leaf = leaf.astype(spec.dtype)
+        leaves.append(leaf)
+    if batch_shape:
+        # A batch reconstructs itself: its storage is one array per field, which
+        # the flat blocks already are, so there is no tree to unflatten.
+        from ._numeric_record_batch import NumericRecordBatch
 
-    _collect(template)
-    value = jax.tree_util.tree_unflatten(_value_treedef(template, batch_shape), leaves)
+        # A single name takes however many axes the flat vector carried, since a
+        # ``sample_shape`` of several axes is one multiplicity named once; several
+        # names take one axis each. The same rule ``from_vector`` states, and it
+        # is stated once here rather than assumed: hardcoding one level made the
+        # ``level_names`` parameter a lie for every caller who named two.
+        names = (level_names,) if isinstance(level_names, str) else tuple(level_names)
+        return NumericRecordBatch(
+            name,
+            dict(zip(template.keys(), leaves, strict=True)),
+            names,
+            element_spec=template,
+            axes_per_level=(len(batch_shape),) if len(names) == 1 else None,
+        )
+    value = jax.tree_util.tree_unflatten(_value_treedef(template), leaves)
     object.__setattr__(value, "_name", name)
-    object.__setattr__(value, "_name_is_auto", name_is_auto)
     return value
 
 
@@ -573,53 +593,39 @@ def _reconstruct_from_vector(
 # ---------------------------------------------------------------------------
 
 
-def _unpickle_numeric_record(
-    store: dict, name: str, name_is_auto: bool, provenance, event_template=None
-) -> NumericRecord:
-    # ``store`` holds the native leaves verbatim (they pickle themselves), so
-    # reconstruction is ordinary validation-without-conversion. The threaded
-    # template preserves an explicit (non-inferred) schema across the
-    # round-trip; ``None`` falls back to inference.
-    nr = NumericRecord(name, store, event_template=event_template)
-    return nr._restore_identity(name_is_auto=name_is_auto, provenance=provenance)
-
-
 # ---------------------------------------------------------------------------
 # JAX PyTree registration — converting flatten, custom unflatten
 # ---------------------------------------------------------------------------
 
 
-def _numeric_record_flatten(v: NumericRecord) -> tuple[list, tuple[EventTemplate, str, bool]]:
+def _numeric_record_flatten(v: NumericRecord) -> tuple[list, tuple[RecordSpec, str]]:
     """Flatten NumericRecord for JAX pytree traversal, converting at the boundary.
 
     Children are emitted in the template's field order (matching
     :func:`~probpipe.core.record._record_flatten`), with each non-record leaf
-    converted to ``jax.Array`` through the set-once cache — this is the
+    converted to ``jax.Array`` through the conversion cache — this is the
     compute boundary where native containers materialise. Nested
     ``NumericRecord`` children pass through whole; JAX recurses into them via
     their own registration. The static aux is the
-    ``(event_template, name, name_is_auto)`` triple; provenance, annotations,
+    ``(spec, name)`` pair; provenance, annotations,
     and the native container types do not cross a JAX transform boundary.
     """
     children = [
         child if isinstance(child, Record) else v._child_field_as_jax(name)
-        for name, child in ((n, v._tree[n]) for n in v._event_template.children)
+        for name, child in ((n, v._tree[n]) for n in v.event_template.children)
     ]
-    return children, (v._event_template, v._name, v._name_is_auto)
+    return children, (v._spec, v._name)
 
 
-def _numeric_record_unflatten(
-    aux: tuple[EventTemplate, str, bool], children: list
-) -> NumericRecord:
-    """Unflatten NumericRecord from JAX pytree traversal, threading the aux template."""
-    template, name, name_is_auto = aux
-    nr = NumericRecord(
+def _numeric_record_unflatten(aux: tuple[RecordSpec, str], children: list) -> NumericRecord:
+    """Unflatten NumericRecord from JAX pytree traversal, threading the aux spec."""
+    spec, name = aux
+    return NumericRecord(
         name,
-        dict(zip(tuple(template.children), children)),
-        event_template=template,
+        dict(zip(tuple(spec.children), children)),
+        event_template=spec,
         _validate_leaves=False,
     )
-    return nr._restore_identity(name_is_auto=name_is_auto, provenance=None)
 
 
 jax.tree_util.register_pytree_node(

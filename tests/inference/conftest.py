@@ -1,4 +1,4 @@
-"""Shared fixtures for inference-method validation (issue #301).
+"""Shared fixtures for inference-method validation.
 
 A conjugate Gaussian linear model with a *closed-form* posterior — the trusted
 reference an inference method is validated against by the suite in
@@ -115,7 +115,7 @@ def beta_bernoulli_model() -> BetaBernoulliModel:
     draws = jax.random.beta(jax.random.PRNGKey(99), post_alpha, post_beta, (5000,))[:, None]
     skew = float(jnp.mean((draws[:, 0] - mean) ** 3) / var**1.5)
     reference = Reference.from_moments(mean=jnp.array([mean]), cov=jnp.array([[var]]), draws=draws)
-    model = SimpleModel(Beta(alpha, beta, name="theta"), _BernoulliLikelihood())
+    model = SimpleModel(Beta("theta", alpha, beta), _BernoulliLikelihood())
     return BetaBernoulliModel(model=model, data=data, reference=reference, posterior_skewness=skew)
 
 

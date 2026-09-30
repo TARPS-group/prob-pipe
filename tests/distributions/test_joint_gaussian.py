@@ -11,13 +11,14 @@ from probpipe import (
     JointGaussian,
     MultivariateNormal,
     Record,
-    RecordArray,
+    RecordBatch,
     RecordDistribution,
     condition_on,
     log_prob,
     mean,
     sample,
     variance,
+    workflow_run,
 )
 from probpipe.core.node import Function
 
@@ -118,7 +119,7 @@ class TestSampling:
         )
         key = jax.random.PRNGKey(0)
         s = sample(jg, key=key)
-        assert isinstance(s, (Record, RecordArray))
+        assert isinstance(s, (Record, RecordBatch))
         assert set(s.fields) == {"x", "y"}
         assert s["x"].shape == (1,)
         assert s["y"].shape == (1,)
@@ -132,7 +133,7 @@ class TestSampling:
         )
         key = jax.random.PRNGKey(1)
         s = sample(jg, key=key, sample_shape=(10,))
-        assert isinstance(s, (Record, RecordArray))
+        assert isinstance(s, RecordBatch)
         assert s["x"].shape == (10, 1)
         assert s["y"].shape == (10, 1)
 
@@ -436,7 +437,7 @@ class TestConditionOn:
         # sd / sqrt(5000) ~ 0.006
         key = jax.random.PRNGKey(20)
         s = sample(cond, key=key, sample_shape=(5000,))
-        assert isinstance(s, (Record, RecordArray))
+        assert isinstance(s, RecordBatch)
         np.testing.assert_allclose(float(jnp.mean(s["y"])), 2.7, atol=0.03)
 
     def test_dict_for_leaf_raises(self):
@@ -485,9 +486,9 @@ class TestBroadcasting:
             func=add,
             dispatch="sequential",
             n_broadcast_samples=50,
-            seed=42,
         )
-        result = wf(a=jg["x"], b=jg["y"])
+        with workflow_run(seed=42):
+            result = wf(a=jg["x"], b=jg["y"])
         assert hasattr(result, "samples")
         # Both ~ N(0,1) with corr=0.9, so sum ~ N(0, 1+1+2*0.9) = N(0, 2.8)
         assert abs(float(jnp.mean(result.samples))) < 1.5

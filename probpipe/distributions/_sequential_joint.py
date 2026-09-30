@@ -9,22 +9,19 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable
+from functools import partial
 from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
 
+from ..core._numeric_record_distribution import NumericRecordDistribution, _mc_expectation
 from ..core._record_distribution import (
     RecordDistribution,
     _build_event_template,
 )
-from ..core.distribution import (
-    Distribution,
-    NumericRecordDistribution,
-    _mc_expectation,
-)
 from ..core.protocols import (
-    SupportsConditioning,
+    SupportsExactConditioning,
     SupportsLogProb,
     SupportsMean,
     SupportsSampling,
@@ -35,6 +32,7 @@ from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike, PRNGKey
+from ._distribution import Distribution
 from ._joint_utils import (
     KeyPath,
     _parse_condition_args,
@@ -52,10 +50,10 @@ def _resolve_callable_component(
     Filters ``namespace`` by ``inspect.signature(comp)`` parameters,
     then calls ``comp(**filtered)`` under the
     :func:`_allow_batched_tfp_init` bypass — the user lambda
-    typically writes ``Normal(loc=parent, scale=...)`` with batched
+    typically writes ``Normal("x", parent, ...)`` with batched
     parents, so the standard rejection of batched-parameter
     constructors must not fire here. Internal infra; user-facing
-    construction of ``Normal(loc=arr, ...)`` is rejected as usual.
+    construction of ``Normal("x", arr, ...)`` is rejected as usual.
     """
     sig = inspect.signature(comp)
     call_kw = {p: namespace[p] for p in sig.parameters if p in namespace}
@@ -74,7 +72,7 @@ def _sequential_class_for_components(components: dict) -> type:
     """Return a SequentialJointDistribution subclass whose bases match
     what the resolved components support.
 
-    Always includes ``SupportsSampling`` and ``SupportsConditioning``
+    Always includes ``SupportsSampling`` and ``SupportsExactConditioning``
     (forward sampling + conditioning work regardless of component
     capabilities). Adds :class:`NumericRecordDistribution` when every
     resolved leaf is itself a :class:`NumericRecordDistribution`,
@@ -111,7 +109,7 @@ def _sequential_class_for_components(components: dict) -> type:
 class SequentialJointDistribution(
     RecordDistribution,
     SupportsSampling,
-    SupportsConditioning,
+    SupportsExactConditioning,
 ):
     """
     Joint distribution with autoregressive (sequential) dependence.
@@ -139,9 +137,9 @@ class SequentialJointDistribution(
     Example::
 
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0, name="z"),
-            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
-            y=lambda z, x: Normal(loc=z + x, scale=0.1, name="y"),
+            z=Normal("z", 0.0, 1.0),
+            x=lambda z: Normal("x", z, 0.5),
+            y=lambda z, x: Normal("y", z + x, 0.1),
         )
 
     Callable signatures are inspected: parameter names must match earlier
@@ -155,7 +153,8 @@ class SequentialJointDistribution(
     Parameters
     ----------
     name : str, optional
-        Distribution name.
+        Distribution name. Keyword-only; defaults to ``sequential(a,b)`` over
+        the component names.
     **components : Distribution or Callable[..., Distribution]
         Named components in topological (dependency) order.
     """
@@ -175,8 +174,8 @@ class SequentialJointDistribution(
         self._raw_components: dict[str, Distribution | Callable[..., Distribution]] = dict(
             components
         )
-        name, name_is_auto = auto_name(name, "sequential(" + ",".join(components.keys()) + ")")
-        super().__init__(name=name, name_is_auto=name_is_auto)
+        name = auto_name(name, "sequential(" + ",".join(components.keys()) + ")")
+        super().__init__(name=name)
         self._conditioned_names: frozenset[str] = frozenset()
         self._conditioned_values: dict[str, Array] = {}
         self._sampleable_error: str | None = None
@@ -283,6 +282,11 @@ class SequentialJointDistribution(
         """Read-only view of the component distributions."""
         return MappingProxyType(self._components)
 
+    @property
+    def dtypes(self) -> dict[str, jnp.dtype]:
+        """Per-component dtypes from the resolved prototype distributions."""
+        return {name: component.dtype for name, component in self._components.items()}
+
     def _sample_sequential(
         self,
         key: PRNGKey,
@@ -321,17 +325,19 @@ class SequentialJointDistribution(
         key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ):
-        from ..core._record_array import NumericRecordArray
+        from ..core._numeric_record_batch import NumericRecordBatch
 
         full = self._sample_sequential(key, sample_shape)
         fields = {k: v for k, v in full.items() if k not in self._conditioned_names}
         if sample_shape:
-            return NumericRecordArray(
+            return NumericRecordBatch(
+                self.name,
                 fields,
-                batch_shape=sample_shape,
-                template=self.event_template,
+                "sample",
+                element_spec=self.event_template,
+                axes_per_level=(len(sample_shape),),
             )
-        return Record(self.name, fields, name_is_auto=True)
+        return Record(self.name, fields)
 
     def _eval_log_prob(self, value, *, components: str) -> Array:
         """Evaluate log-density over selected components.
@@ -348,7 +354,11 @@ class SequentialJointDistribution(
             (with conditioned values plugged in as parents), giving the
             normalized conditional when the Markov structure permits it.
         """
-        if isinstance(value, Record):
+        from ..core._record_batch import RecordBatch
+
+        if isinstance(value, RecordBatch):
+            value = {path: value[path] for path in value.event_template}
+        elif isinstance(value, Record):
             value = value.to_dict()
         structured = {k: jnp.asarray(v) for k, v in value.items()}
 
@@ -414,16 +424,13 @@ class SequentialJointDistribution(
         samples.  This returns the prototype (prior-evaluated) means
         as an approximation.
         """
-        return Record(
-            self.name, {k: v._mean() for k, v in self._proto_components.items()}, name_is_auto=True
-        )
+        return Record(self.name, {k: v._mean() for k, v in self._proto_components.items()})
 
     def _variance(self) -> Record:
         """Per-component variances (approximate --- uses prototype components)."""
         return Record(
             self.name,
             {k: v._variance() for k, v in self._proto_components.items()},
-            name_is_auto=True,
         )
 
     def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
@@ -483,23 +490,32 @@ class SequentialJointDistribution(
         }
         result_cls = _sequential_class_for_components(unconditioned_pre)
         result = result_cls.__new__(result_cls)
-        result._raw_components = dict(self._raw_components)  # originals unchanged
-        result._name = self._name
-        result._proto_components = dict(self._proto_components)
-        result._callable_parents = self._callable_parents
-        result._conditioned_names = all_conditioned
-        result._conditioned_values = {
-            **self._conditioned_values,
-            **{k: jnp.asarray(v) for k, v in observed.items()},
-        }
-        result._sampleable_error = self._compute_sampleable_error(
-            result._conditioned_names,
-            result._callable_parents,
+        # Allocate-then-populate stands in for a constructor here, so the fields
+        # are written the way a constructor writes them.
+        set_attribute = partial(object.__setattr__, result)
+        set_attribute("_raw_components", dict(self._raw_components))  # originals unchanged
+        set_attribute("_name", self._name)
+        set_attribute("_proto_components", dict(self._proto_components))
+        set_attribute("_callable_parents", self._callable_parents)
+        set_attribute("_conditioned_names", all_conditioned)
+        set_attribute(
+            "_conditioned_values",
+            {
+                **self._conditioned_values,
+                **{k: jnp.asarray(v) for k, v in observed.items()},
+            },
+        )
+        set_attribute(
+            "_sampleable_error",
+            self._compute_sampleable_error(
+                result._conditioned_names,
+                result._callable_parents,
+            ),
         )
 
         # Expose only unconditioned components
-        result._components = unconditioned_pre
-        result._event_template = _build_event_template(unconditioned_pre)
+        set_attribute("_components", unconditioned_pre)
+        set_attribute("_event_template", _build_event_template(unconditioned_pre))
 
         result.with_provenance(
             Provenance.create(

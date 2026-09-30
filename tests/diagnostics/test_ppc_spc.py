@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import jax
 import numpy as np
 import pytest
 import xarray as xr
@@ -184,6 +185,7 @@ class TestAddPpc:
             observed_data=observed,
             generative_likelihood=_NumpyLikelihood(),
             n_replications=20,
+            key=jax.random.key(0),
         )
         assert posterior._annotations is not None
         ppc_ds = posterior._annotations["diagnostics"]["runs"]["ppc"].to_dataset()
@@ -200,6 +202,7 @@ class TestAddPpc:
             observed_data=observed,
             generative_likelihood=_NumpyLikelihood(),
             n_replications=50,
+            key=jax.random.key(0),
         )
         view = PPCView(posterior._annotations["diagnostics"]["runs"]["ppc"])
         p = view.p_values.get("_mean")
@@ -207,8 +210,6 @@ class TestAddPpc:
             assert 0.0 <= p <= 1.0
 
     def test_p_value_matches_known_centered_case(self):
-        import jax
-
         posterior = _NormalLocationPosterior()
         add_ppc(
             posterior,
@@ -223,8 +224,6 @@ class TestAddPpc:
         assert view.p_values["_mean"] == pytest.approx(0.5, abs=0.06)
 
     def test_p_value_responds_to_shifted_observed_data(self):
-        import jax
-
         posterior = _NormalLocationPosterior()
         add_ppc(
             posterior,
@@ -246,6 +245,7 @@ class TestAddPpc:
             observed_data=observed,
             generative_likelihood=_NumpyLikelihood(),
             n_replications=20,
+            key=jax.random.key(0),
         )
         view = PPCView(posterior._annotations["diagnostics"]["runs"]["ppc"])
         assert set(view.p_values.keys()) == {"_mean", "_std"}
@@ -258,6 +258,7 @@ class TestAddPpc:
             observed_data=observed,
             generative_likelihood=_NumpyLikelihood(),
             n_replications=20,
+            key=jax.random.key(0),
         )
         view = PPCView(posterior._annotations["diagnostics"]["runs"]["ppc"])
         obs = view.observed.get("_mean")
@@ -272,6 +273,7 @@ class TestAddPpc:
             observed_data=observed,
             generative_likelihood=_NumpyLikelihood(),
             n_replications=5,
+            key=jax.random.key(0),
         )
         assert result is None
 
@@ -283,6 +285,7 @@ class TestAddPpc:
             num_observations=7,
             generative_likelihood=_NumpyLikelihood(),
             n_replications=5,
+            key=jax.random.key(0),
         )
 
         ppc_ds = posterior._annotations["diagnostics"]["runs"]["ppc"].to_dataset()
@@ -321,6 +324,7 @@ class TestAddPpc:
             observed_data=observed,
             generative_likelihood=_NumpyLikelihood(),
             n_replications=20,
+            key=jax.random.key(0),
         )
         view = DiagnosticsView(posterior._annotations["diagnostics"])
         assert view.ppc.exists
@@ -332,6 +336,7 @@ class TestAddPpc:
             observed_data=np.ones(5),
             generative_likelihood=_KeyedLikelihood(),
             n_replications=4,
+            key=jax.random.key(0),
         )
 
         ds = _dataset_from_payload(payload)

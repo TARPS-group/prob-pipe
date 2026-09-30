@@ -4,23 +4,23 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..core.distribution import Distribution
-from ..core.event_template import EventTemplate
+from ..core._specs import RecordSpec
 from ..core.protocols import SupportsLogProb
 from ..core.record import Record
 from ..core.tracked import auto_name
 from ..custom_types import Array
+from ..distributions._distribution import Distribution
 from ._base import ProbabilisticModel
 from ._likelihood import Likelihood
 
 __all__ = ["SimpleModel"]
 
 
-class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
+class SimpleModel[P, D](ProbabilisticModel, SupportsLogProb):
     """Probabilistic model as a joint distribution over (parameters, data).
 
-    A ``SimpleModel[P, D]`` is a ``Distribution[tuple[P, D]]`` — the joint
-    distribution $p(\\theta, y) = p(\\theta) \\, p(y \\mid \\theta)$.
+    A ``SimpleModel`` is the joint distribution
+    $p(\\theta, y) = p(\\theta) \\, p(y \\mid \\theta)$ over parameters and data.
     The prior must support :class:`SupportsLogProb` so that the joint
     log-density is always computable.
 
@@ -32,12 +32,12 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
 
     Parameters
     ----------
-    prior : Distribution[P] that supports SupportsLogProb
+    prior : Distribution that supports SupportsLogProb
         Prior distribution over model parameters.
     likelihood : Likelihood[P, D]
         Must have a ``log_likelihood(params, data)`` method.
     name : str or None
-        Model name for provenance.
+        Model name for provenance. Keyword-only; defaults to ``"SimpleModel"``.
     """
 
     _sampling_cost: str = "medium"
@@ -45,19 +45,19 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
 
     def __init__(
         self,
-        prior: SupportsLogProb[P],
+        prior: SupportsLogProb,
         likelihood: Likelihood[P, D],
         *,
         name: str | None = None,
     ):
-        # Type-annotated as ``SupportsLogProb[P]`` so static type
+        # Type-annotated as ``SupportsLogProb`` so static type
         # checkers catch a wrong-type prior at the call site. The
         # runtime checks remain as a backstop for callers who bypass
         # the type system: the prior must be both ``SupportsLogProb``
         # (so the joint log-density is computable) and a
         # ``RecordDistribution`` (so its ``event_template`` is a
-        # required, non-``None`` ``EventTemplate``).
-        from ..core.distribution import RecordDistribution
+        # required, non-``None`` ``RecordSpec``).
+        from ..core._record_distribution import RecordDistribution
 
         if not isinstance(prior, SupportsLogProb):
             raise TypeError(
@@ -74,8 +74,8 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
         self._likelihood = likelihood
         # Default to the class name when the caller does not supply one;
         # the default is an auto-derived name.
-        name, name_is_auto = auto_name(name or None, "SimpleModel")
-        self._init_tracked(name, name_is_auto=name_is_auto)
+        name = auto_name(name or None, "SimpleModel")
+        self._init_tracked(name)
 
         # Build merged event_template: prior params + likelihood data fields.
         # This makes fields include both parameter and data names,
@@ -86,14 +86,14 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
         # ``isinstance(prior, RecordDistribution)`` guard above implies
         # the metaclass invariant); ``data_tpl`` may be ``None`` for
         # likelihoods that don't declare a data template.
-        prior_tpl: EventTemplate = prior.event_template
+        prior_tpl: RecordSpec = prior.event_template
         data_tpl = getattr(likelihood, "data_template", None)
         # Convert legacy ``Record``-typed data templates to
-        # ``EventTemplate``. ``Record`` and ``EventTemplate`` are
+        # ``RecordSpec``. ``Record`` and ``RecordSpec`` are
         # unrelated types, so the ``Record`` check is sufficient on
         # its own.
         if isinstance(data_tpl, Record):
-            data_tpl = EventTemplate.infer_from(data_tpl)
+            data_tpl = RecordSpec.infer_from(data_tpl)
         if data_tpl is not None:
             overlap = set(prior_tpl.fields) & set(data_tpl.fields)
             if overlap:
@@ -102,14 +102,14 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
             # subtree is carried over whole rather than indexed by a top-level
             # subtree name (which leaf-keyed ``[]`` would reject).
             merged: dict[str, Any] = {**dict(prior_tpl.children), **dict(data_tpl.children)}
-            self._event_template: EventTemplate = EventTemplate(merged)
+            self._event_template: RecordSpec = RecordSpec(merged)
         else:
             self._event_template = prior_tpl
 
     # -- Distribution interface ---------------------------------------------
 
     @property
-    def prior(self) -> SupportsLogProb[P]:
+    def prior(self) -> SupportsLogProb:
         """The prior distribution over parameters."""
         return self._prior
 
@@ -119,8 +119,8 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
         return self._likelihood
 
     @property
-    def event_template(self) -> EventTemplate:
-        """Merged ``EventTemplate`` over prior fields + likelihood data fields.
+    def event_template(self) -> RecordSpec:
+        """Merged ``RecordSpec`` over prior fields + likelihood data fields.
 
         ``SimpleModel`` is not itself a :class:`RecordDistribution`, but
         it carries a template so :attr:`fields`, conditioning, and
@@ -180,7 +180,7 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
           fields). This is what the keyword API
           (``log_prob(model, intercept=..., y=...)``) produces. It is
           split into a parameter value — repacked via the prior's own
-          :meth:`~probpipe.core._distribution_base.Distribution._pack_value`
+          :meth:`~probpipe.Distribution._pack_value`
           so a single-field prior receives a bare array and a multi-field
           prior a ``Record`` — and a data sub-record built from the
           likelihood's ``data_template`` fields.
@@ -219,7 +219,7 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
                     f"positionally instead."
                 )
             params = self._prior._pack_value(**{f: value[f] for f in self._prior_fields})
-            data = Record("data", {f: value[f] for f in data_fields}, name_is_auto=True)
+            data = Record("data", {f: value[f] for f in data_fields})
             return params, data
         raise TypeError(
             f"SimpleModel._log_prob expects a Record over {self.fields} or a "

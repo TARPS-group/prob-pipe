@@ -71,7 +71,7 @@ class TestBlackJAXRegistration:
         # HMC is opt-in-only (same check() as NUTS would make it
         # structurally unreachable in auto-dispatch).
         assert nuts.priority == 85
-        assert hmc.priority == 0
+        assert hmc.priority is None
 
 
 class TestBlackJAXNuts:

@@ -2,14 +2,14 @@
 
 Provides:
 
-* :class:`MinibatchedDistribution` — a ``RandomMeasure[Record]`` whose
+* :class:`MinibatchedDistribution` — a ``RandomMeasure`` whose
   draws are unbiased stochastic surrogates of the full-data
   unnormalized log-posterior. Consumed by stochastic-gradient MCMC
   kernels and (future) tempered SMC.
 * :class:`_FixedMinibatchDistribution` (private) — one realisation of
   the measure, holding a single fixed minibatch.
 * :class:`_RandomMinibatchLogProb` (private) — the
-  ``RandomFunction[Record, Array]`` returned by
+  ``RandomFunction`` from parameter records to arrays returned by
   ``random_unnormalized_log_prob(measure)``; its ``_sample(key)``
   yields a deterministic unnormalized-log-density callable for one
   minibatch.
@@ -38,11 +38,13 @@ from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
-from ..core._distribution_base import Distribution
+from ..core._object_batch import _is_object_array
 from ..core._random_functions import RandomFunction
 from ..core._random_measures import RandomMeasure
-from ..core._record_array import RecordArray
+from ..core._record_batch import RecordBatch, _batch_class_for
+from ..core._record_spec import _reshaped_template
 from ..core.protocols import (
     SupportsLogProb,
     SupportsRandomUnnormalizedLogProb,
@@ -50,8 +52,8 @@ from ..core.protocols import (
     SupportsUnnormalizedLogProb,
 )
 from ..core.record import Record
-from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike, PRNGKey
+from ..distributions._distribution import Distribution
 
 if TYPE_CHECKING:
     from ..core.protocols import ConditionallyIndependentLikelihood
@@ -67,12 +69,12 @@ __all__ = ["MinibatchedDistribution"]
 def _data_size(data: Any) -> int:
     """Return the leading-axis length of *data*.
 
-    Accepts a ``RecordArray`` (uses ``batch_shape[0]``), a flat
+    Accepts a batch of records (uses ``batch_shape[0]``), a flat
     ``Record`` of equal-leading-axis array leaves, an array-like with
     ``.shape``, or any object with ``__len__``. Nested Records are
     rejected — minibatching expects a flat-field layout.
     """
-    if isinstance(data, RecordArray):
+    if isinstance(data, RecordBatch):
         return data.batch_shape[0]
     if isinstance(data, Record):
         children = dict(data.children)
@@ -82,7 +84,7 @@ def _data_size(data: Any) -> int:
                     f"MinibatchedDistribution requires a flat Record "
                     f"(no nested fields). Got nested Record at field "
                     f"{f!r}; flatten the structure or use a "
-                    f"RecordArray instead."
+                    f"RecordBatch instead."
                 )
         leading = {jnp.asarray(leaf).shape[0] for leaf in children.values()}
         if len(leading) != 1:
@@ -97,23 +99,70 @@ def _data_size(data: Any) -> int:
     return len(data)
 
 
-def _index_along_leading(data: Any, indices: Array) -> Any:
-    """Index along the leading axis. Works for Records, arrays, RecordArrays.
+DATUM_LEVEL = "datum"
 
-    Returns a plain ``Record`` (not a ``RecordArray``) when the source
-    is Record-shaped — the minibatch needs a flat dict of indexed
-    leaves; per-datum vmap dispatches over the leading axis of each.
-    ``RecordArray.__getitem__`` doesn't accept array indices, but since
-    ``RecordArray`` subclasses ``Record``, the Record branch picks it
-    up via field-name access.
+
+def _index_column(column: Any, indices: Array) -> Any:
+    """One column's rows at *indices*, keeping an object column out of ``jnp``."""
+    if _is_object_array(column):
+        return column[np.asarray(indices)]
+    return jnp.asarray(column)[indices]
+
+
+def _refuse_multi_axis_rows(data: Any) -> None:
+    """Refuse a batch whose rows are not a single axis.
+
+    Rows are the leading axis, so a batch spanning more than one is a grid whose
+    trailing axes have no agreed per-datum reading: gathering from a ``(N, K)``
+    batch leaves ``(b, K)`` columns with one rows axis to name two, and the
+    per-datum transform downstream removes one axis rather than one *of two*.
+    Checked where the distribution is built, so an unusable one cannot exist —
+    ``dataset_size`` would otherwise report the leading axis and the first draw
+    would raise.
     """
-    if isinstance(data, Record):
-        # Covers Record and RecordArray (the latter via subclass).
-        return Record(
-            data.name,
-            {f: jnp.asarray(child)[indices] for f, child in data.children.items()},
-            name_is_auto=True,
+    if isinstance(data, RecordBatch) and len(data.batch_shape) != 1:
+        raise ValueError(
+            f"MinibatchedDistribution takes a batch whose rows are one axis; got "
+            f"{data.batch_shape} over levels {data.level_names}. Index the batch down to a "
+            f"single rows axis before minibatching — what its trailing axes mean per datum "
+            f"is not defined"
         )
+
+
+def _index_along_leading(data: Any, indices: Array) -> Any:
+    """The rows of *data* at *indices*, in the kind *data* is.
+
+    A batch of records comes back a **batch** of the same elements. Handing back
+    a plain ``Record`` of gathered columns would state the batch's shape as one
+    element's, which is a false type and one a per-datum transform then reads;
+    a minibatch of records is a collection of them, so it is one here too.
+
+    A flat ``Record`` of equal-leading-axis leaves is the other accepted data
+    layout, and it is a batch in all but name — the leading axis *is* the rows.
+    It comes back as one, declared over what a row holds, so everything
+    downstream sees the same kind whichever way the data was supplied.
+
+    Positions are gathered a column at a time: neither kind indexes by an array
+    of positions, and a non-array field is read raw so an object column is not
+    handed to ``jnp``.
+    """
+    if isinstance(data, RecordBatch):
+        columns = {
+            path: _index_column(data._raw_column(path), indices) for path in data.event_template
+        }
+        return _batch_class_for(data.element_spec)(
+            data.name,
+            columns,
+            DATUM_LEVEL,
+            element_spec=data.element_spec,
+        )
+    if isinstance(data, Record):
+        columns = {path: jnp.asarray(leaf)[indices] for path, leaf in data.children.items()}
+        # The record's template describes the stacked leaves, so one row's is
+        # that template with the rows axis taken off — carried, not re-derived,
+        # so a pinned dtype or support reaches the per-datum call.
+        element = _reshaped_template(data.event_template, lambda shape: shape[1:])
+        return _batch_class_for(element)(data.name, columns, DATUM_LEVEL, element_spec=element)
     return jnp.asarray(data)[indices]
 
 
@@ -137,7 +186,7 @@ def _draw_indices(
 
 
 class MinibatchedDistribution(
-    RandomMeasure[Record],
+    RandomMeasure,
     SupportsRandomUnnormalizedLogProb,
 ):
     """Random measure realised by uniform minibatching.
@@ -161,6 +210,8 @@ class MinibatchedDistribution(
 
     Parameters
     ----------
+    name : str
+        Distribution name.
     prior : SupportsLogProb
         Prior distribution over parameters; provides the log-prior
         term :math:`\\log p(\\theta)`.
@@ -168,7 +219,7 @@ class MinibatchedDistribution(
         Likelihood that factorises as
         :math:`\\log p(\\mathcal{D} \\mid \\theta) = \\sum_i \\log p(d_i \\mid \\theta)`;
         supplies the per-datum log-density used in the rescaled sum.
-    data : array-like, Record, or RecordArray
+    data : array-like, Record, or RecordBatch
         Observed data. Indexed along its leading axis to draw
         minibatches; must have leading-axis length ``>= batch_size``.
     batch_size : int
@@ -176,8 +227,6 @@ class MinibatchedDistribution(
     with_replacement : bool, default False
         Sample minibatch indices with replacement. Default is
         without-replacement (uniform permutation, take first ``b``).
-    name : str, optional
-        Distribution name.
 
     Raises
     ------
@@ -186,7 +235,9 @@ class MinibatchedDistribution(
         ``likelihood`` is not
         :class:`~probpipe.ConditionallyIndependentLikelihood`.
     ValueError
-        If ``batch_size`` is not in ``[1, len(data)]``.
+        If ``batch_size`` is not in ``[1, len(data)]``; or if ``data`` is a
+        batch of records whose rows span more than one axis, since what its
+        trailing axes mean per datum is not defined.
     """
 
     _sampling_cost: str = "low"
@@ -194,13 +245,13 @@ class MinibatchedDistribution(
 
     def __init__(
         self,
+        name: str,
         prior: SupportsLogProb,
         likelihood: ConditionallyIndependentLikelihood,
-        data: ArrayLike | Record | RecordArray,
+        data: ArrayLike | Record | RecordBatch,
         batch_size: int,
         *,
         with_replacement: bool = False,
-        name: str | None = None,
     ):
         from ..core.protocols import ConditionallyIndependentLikelihood
 
@@ -219,6 +270,7 @@ class MinibatchedDistribution(
             )
 
         # Validate data + batch_size.
+        _refuse_multi_axis_rows(data)
         n = _data_size(data)
         if batch_size < 1 or batch_size > n:
             raise ValueError(f"batch_size must be in [1, len(data)={n}]; got {batch_size}.")
@@ -231,8 +283,7 @@ class MinibatchedDistribution(
         self._with_replacement = bool(with_replacement)
         self._rescale_factor = float(self._n / batch_size)
 
-        name, name_is_auto = auto_name(name, f"MinibatchedDistribution(batch_size={batch_size})")
-        super().__init__(name=name, name_is_auto=name_is_auto)
+        super().__init__(name=name)
 
     # -- read-only metadata --------------------------------------------------
 
@@ -291,7 +342,6 @@ class MinibatchedDistribution(
             batch=batch,
             rescale_factor=self._rescale_factor,
             name=f"{self.name}/draw",
-            name_is_auto=True,
         )
 
     # -- SupportsRandomUnnormalizedLogProb -----------------------------------
@@ -315,7 +365,7 @@ class MinibatchedDistribution(
 
 
 class _FixedMinibatchDistribution(
-    Distribution[Record],
+    Distribution,
     SupportsUnnormalizedLogProb,
 ):
     """One sampled inner distribution from a :class:`MinibatchedDistribution`.
@@ -348,11 +398,10 @@ class _FixedMinibatchDistribution(
         rescale_factor: float,
         *,
         name: str | None = None,
-        name_is_auto: bool = False,
     ):
         if not name:
-            name, name_is_auto = "fixed_minibatch_distribution", True
-        super().__init__(name=name, name_is_auto=name_is_auto)
+            name = "fixed_minibatch_distribution"
+        super().__init__(name=name)
         self._prior = prior
         self._likelihood = likelihood
         self._batch = batch
@@ -391,12 +440,12 @@ class _FixedMinibatchDistribution(
 
 
 # ---------------------------------------------------------------------------
-# _RandomMinibatchLogProb — RandomFunction[Record, Array]
+# _RandomMinibatchLogProb — a RandomFunction from parameter records to arrays
 # ---------------------------------------------------------------------------
 
 
 class _RandomMinibatchLogProb(
-    RandomFunction[Record, Array],
+    RandomFunction,
     SupportsSampling,
 ):
     """The function-valued random variable :math:`\\theta \\mapsto \\log \\tilde{D}_B(\\theta)`.
@@ -407,9 +456,9 @@ class _RandomMinibatchLogProb(
       *deterministic* unnormalized log-density callable for one
       minibatch draw — the primary form stochastic-gradient kernels
       consume.
-    * :meth:`__call__` (``theta``) returns a ``Distribution[Array]``
-      over log-density estimates at a fixed :math:`\\theta`. The
-      ``Distribution[Array]``'s :meth:`_sample` draws minibatched
+    * :meth:`__call__` (``theta``) returns an array-valued distribution
+      over log-density estimates at a fixed :math:`\\theta`. That
+      distribution's :meth:`_sample` draws minibatched
       log-density values, so its Monte-Carlo mean recovers
       :math:`\\log p_\\text{full}(\\theta)`.
     """
@@ -418,7 +467,7 @@ class _RandomMinibatchLogProb(
     _preferred_orchestration: str | None = None
 
     def __init__(self, measure: MinibatchedDistribution):
-        super().__init__(name=f"{measure.name}/random_log_prob", name_is_auto=True)
+        super().__init__(name=f"{measure.name}/random_log_prob")
         self._measure = measure
 
     # -- RandomFunction.__call__ --------------------------------------------
@@ -455,11 +504,11 @@ class _RandomMinibatchLogProb(
 
 
 # ---------------------------------------------------------------------------
-# _MinibatchLogProbAtPoint — Distribution[Array] over log-density at fixed theta
+# _MinibatchLogProbAtPoint — the distribution over log-density values at a fixed theta
 # ---------------------------------------------------------------------------
 
 
-class _MinibatchLogProbAtPoint(Distribution[Array], SupportsSampling):
+class _MinibatchLogProbAtPoint(Distribution, SupportsSampling):
     """Distribution over minibatched log-density values at a fixed ``theta``.
 
     Returned by ``_RandomMinibatchLogProb(theta)`` — the two-argument
@@ -477,7 +526,7 @@ class _MinibatchLogProbAtPoint(Distribution[Array], SupportsSampling):
     _preferred_orchestration: str | None = None
 
     def __init__(self, measure: MinibatchedDistribution, theta: Any):
-        super().__init__(name=f"{measure.name}@theta", name_is_auto=True)
+        super().__init__(name=f"{measure.name}@theta")
         self._measure = measure
         self._theta = theta
 

@@ -27,8 +27,9 @@ Provides:
 Distinct from :class:`~probpipe.DistributionArray` (housed in
 :mod:`_distribution_array`), which represents *n independent
 distributions stacked along a batch axis* — many random variables
-indexed by position, e.g. ``Normal(loc=jnp.zeros(5), scale=1.0)``
-stored as a length-5 array of independent ``Normal`` instances. A
+indexed by position, e.g. ``Normal.from_batched_params(name="x",
+loc=jnp.zeros(5), scale=1.0)``, a length-5 array of independent ``Normal``
+instances. A
 ``NumericRecordDistribution`` represents *one* random variable
 whose draw can itself have a numeric-valued event structure (a
 scalar, a vector, or a multi-field record), and ``DistributionArray``
@@ -44,17 +45,17 @@ from math import prod
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .event_template import NumericEventTemplate
+    from ._specs import NumericRecordSpec
 
 import jax
 import jax.numpy as jnp
 
 from .._dtype import _as_float_array
-from .._utils import _auto_key
 from .._weights import Weights
 from ..custom_types import Array, ArrayLike, PRNGKey
-from . import _distribution_base as _base
-from ._distribution_base import Distribution
+from ..distributions import _distribution as _base
+from ..distributions._distribution import Distribution
+from . import _workflow_broker, _workflow_descendants
 from ._record_distribution import RecordDistribution, _field_event_shape
 from .constraints import (
     Constraint,
@@ -69,7 +70,6 @@ from .protocols import (
     SupportsSampling,
     SupportsVariance,
 )
-from .tracked import auto_name
 
 # ---------------------------------------------------------------------------
 # Sampling & expectation helpers
@@ -140,14 +140,30 @@ def _mc_expectation(
         If ``None``, use the global ``RETURN_APPROX_DIST`` setting.
     """
     n = num_evaluations if num_evaluations is not None else _base.DEFAULT_NUM_EVALUATIONS
+    if isinstance(n, bool) or not isinstance(n, int):
+        raise TypeError(f"num_evaluations must be an integer; got {n!r}")
+    if n <= 0:
+        raise ValueError(f"num_evaluations must be positive; got {n!r}")
     if key is None:
-        key = _auto_key()
-    samples = dist._sample(key, sample_shape=(n,))
+        captured = _workflow_descendants.capture_stochastic_consumer(dist)
+        key = _workflow_broker._resolve_automatic_key(
+            None,
+            _workflow_broker._singleton_effect_plan(
+                operation_kind="expectation",
+                execution_mode="monte_carlo",
+                sample_shape=(n,),
+                record_path=captured.record_path,
+                descendant_descriptor=captured.descendant_descriptor,
+            ),
+        )
+        samples = _workflow_descendants.sample_captured_consumer(captured, key, (n,))
+    else:
+        samples = dist._sample(key, sample_shape=(n,))
     evals = jax.vmap(f)(samples)
 
     rd = return_dist if return_dist is not None else _base.RETURN_APPROX_DIST
     if rd:
-        return BootstrapDistribution(evals, name="E[f(X)]")
+        return BootstrapDistribution("expectation", evals)
     return jax.tree.map(lambda v: jnp.mean(v, axis=0), evals)
 
 
@@ -162,7 +178,7 @@ class NumericRecordDistribution(RecordDistribution):
     Extends :class:`RecordDistribution` with numeric-specific metadata
     (per-field shape, dtype, and support). The class is the most
     general numeric random variable in ProbPipe: one draw is a pytree
-    of ``jax.Array`` leaves named via a :class:`EventTemplate`.
+    of ``jax.Array`` leaves named via a :class:`RecordSpec`.
     Single-leaf distributions (``Normal``, ``Beta``,
     ``MultivariateNormal``, ...) are the trivial case; joint
     distributions (``ProductDistribution``, ``SequentialJointDistribution``,
@@ -195,7 +211,7 @@ class NumericRecordDistribution(RecordDistribution):
 
     A concrete subclass that declares ``event_shape`` and is constructed
     with a ``name=`` gets an auto-built single-field
-    ``EventTemplate(**{name: event_shape})`` on first read of
+    ``RecordSpec(**{name: event_shape})`` on first read of
     :attr:`event_template`. Multi-field subclasses (joints) override
     ``event_template`` directly to skip the auto-build.
 
@@ -215,9 +231,9 @@ class NumericRecordDistribution(RecordDistribution):
     - **Single-leaf** template → ``_sample(key, sample_shape)`` returns
       a raw ``jax.Array`` of shape ``sample_shape + event_shape``.
     - **Multi-leaf** template → ``_sample(key, sample_shape)`` returns a
-      :class:`~probpipe.NumericRecord` (or
-      :class:`~probpipe.NumericRecordArray` for a non-empty
-      ``sample_shape``) keyed by ``event_template.fields``.
+      :class:`~probpipe.NumericRecord` (or a
+      :class:`~probpipe.NumericRecordBatch` over one ``draw`` level for a
+      non-empty ``sample_shape``) keyed by ``event_template.fields``.
 
     The :attr:`treedef` property locks this invariant by deriving from
     ``event_template``.
@@ -230,7 +246,7 @@ class NumericRecordDistribution(RecordDistribution):
 
     @property
     def event_template(self):
-        """Auto-build a single-field ``EventTemplate`` from
+        """Auto-build a single-field ``RecordSpec`` from
         ``name`` + ``event_shape`` when the subclass hasn't set one.
 
         Cached via :meth:`object.__setattr__` on first read.
@@ -244,7 +260,7 @@ class NumericRecordDistribution(RecordDistribution):
         explicitly, or declare ``event_shape`` so the auto-build can
         proceed).
         """
-        from .event_template import EventTemplate
+        from ._specs import RecordSpec
 
         tpl = getattr(self, "_event_template", None)
         if tpl is not None:
@@ -262,7 +278,7 @@ class NumericRecordDistribution(RecordDistribution):
             raise TypeError(
                 f"{type(self).__name__} must declare event_shape or set _event_template explicitly."
             ) from None
-        tpl = EventTemplate(**{name: es})
+        tpl = RecordSpec(**{name: es})
         object.__setattr__(self, "_event_template", tpl)
         return tpl
 
@@ -473,7 +489,6 @@ class NumericRecordDistribution(RecordDistribution):
             placeholder = Record(
                 self.name,
                 {name: jnp.zeros(_field_event_shape(tpl, name)) for name in tpl.fields},
-                name_is_auto=True,
             )
             td = jax.tree.structure(placeholder)
         object.__setattr__(self, "_treedef", td)
@@ -493,14 +508,14 @@ class NumericRecordDistribution(RecordDistribution):
     def event_size(self) -> int:
         """Total number of scalar elements in one sample.
 
-        For a :class:`NumericEventTemplate` this is the cached
-        ``vector_size``. For a general ``EventTemplate``, sums the
+        For a :class:`NumericRecordSpec` this is the cached
+        ``vector_size``. For a general ``RecordSpec``, sums the
         numeric-leaf shapes; opaque leaves contribute zero.
         """
-        from .event_template import NumericEventTemplate
+        from ._specs import NumericRecordSpec
 
         tpl = self.event_template
-        if isinstance(tpl, NumericEventTemplate):
+        if isinstance(tpl, NumericRecordSpec):
             return tpl.vector_size
         return sum(
             prod(shape) if shape else 1 for shape in tpl.leaf_shapes.values() if shape is not None
@@ -510,17 +525,17 @@ class NumericRecordDistribution(RecordDistribution):
     def flatten_value(value, *, event_shape: tuple[int, ...] = ()) -> Array:
         """Flatten a sample to a flat trailing axis.
 
-        Accepts ``Record`` / ``NumericRecord`` / ``NumericRecordArray``
+        Accepts a ``Record``, a ``NumericRecord``, or a batch of either
         (which already carry their template) or a raw array. Raw-array
         inputs need ``event_shape`` to disambiguate batch axes from
         event axes; without it, the input gets a trailing singleton
         axis (matching the scalar-event default).
         """
         from ._numeric_record import NumericRecord
-        from ._record_array import NumericRecordArray
+        from ._numeric_record_batch import NumericRecordBatch
         from .record import Record
 
-        if isinstance(value, (NumericRecordArray, NumericRecord)):
+        if isinstance(value, (NumericRecordBatch, NumericRecord)):
             return value.to_vector()
         if isinstance(value, Record):
             return value.to_numeric().to_vector()
@@ -533,10 +548,10 @@ class NumericRecordDistribution(RecordDistribution):
 
     @staticmethod
     def unflatten_value(flat, *, template):
-        """Unflatten a flat trailing axis back to event dims, Record, or NumericRecordArray.
+        """Unflatten a flat trailing axis back to event dims, a record, or a batch.
 
         Multi-field templates → ``NumericRecord`` (single sample, i.e.
-        ``flat.ndim == 1``) or ``NumericRecordArray`` (batched). Single-
+        ``flat.ndim == 1``) or ``NumericRecordBatch`` (batched). Single-
         field templates → raw array reshaped to ``(*batch, *event_shape)``
         for ``_log_prob`` compatibility (preserves the original "single-
         leaf returns raw array" contract).
@@ -546,8 +561,8 @@ class NumericRecordDistribution(RecordDistribution):
             from ._numeric_record import _reconstruct_from_vector
 
             # ``_reconstruct_from_vector`` selects single (NumericRecord) vs
-            # batched (NumericRecordArray) from the rank of ``flat``.
-            return _reconstruct_from_vector("value", template, flat, name_is_auto=True)
+            # batched (NumericRecordBatch) from the rank of ``flat``.
+            return _reconstruct_from_vector("value", template, flat)
         # Single-field path
         if template is None or not template.fields:
             return flat[..., 0]
@@ -572,7 +587,7 @@ class NumericRecordDistribution(RecordDistribution):
     def as_record_distribution(
         self,
         *,
-        template: NumericEventTemplate,
+        template: NumericRecordSpec,
         name: str | None = None,
     ) -> NumericRecordDistribution:
         """Lift this distribution to a Record-keyed view under *template*.
@@ -626,6 +641,8 @@ class BootstrapDistribution(
 
     Parameters
     ----------
+    name : str
+        Distribution name.
     evaluations : array-like, shape ``(n, *stat_shape)``
         The individual ``f(x_i)`` values.
     weights : array-like, :class:`~probpipe.Weights`, or None
@@ -636,17 +653,15 @@ class BootstrapDistribution(
     log_weights : array-like, :class:`~probpipe.Weights`, or None
         Log-unnormalized weights.  A pre-built :class:`~probpipe.Weights`
         object is also accepted.  Mutually exclusive with *weights*.
-    name : str, optional
-        Distribution name.
     """
 
     def __init__(
         self,
+        name: str,
         evaluations: ArrayLike,
         *,
         weights: ArrayLike | Weights | None = None,
         log_weights: ArrayLike | Weights | None = None,
-        name: str | None = None,
     ):
         self._evaluations = _as_float_array(evaluations)
         if self._evaluations.ndim == 0:
@@ -657,8 +672,7 @@ class BootstrapDistribution(
             weights=weights,
             log_weights=log_weights,
         )
-        name, name_is_auto = auto_name(name, "bootstrap_dist")
-        super().__init__(name=name, name_is_auto=name_is_auto)
+        super().__init__(name=name)
         self._approximate = True
 
     _sampling_cost: str = "low"
@@ -790,20 +804,20 @@ class FlatNumericRecordDistribution(NumericRecordDistribution):
     def as_record_distribution(
         self,
         *,
-        template: NumericEventTemplate,
+        template: NumericRecordSpec,
         name: str | None = None,
     ) -> NumericRecordDistribution:
         """Lift this flat distribution to a Record-keyed view under *template*.
 
         Inverse of :meth:`~NumericRecordDistribution.as_flat_distribution`.
         Samples come back as :class:`NumericRecord` /
-        :class:`NumericRecordArray` keyed by ``template.fields``.
+        :class:`NumericRecordBatch` keyed by ``template.fields``.
 
         Parameters
         ----------
-        template : NumericEventTemplate
+        template : NumericRecordSpec
             Target structural skeleton. Must be a
-            :class:`NumericEventTemplate` — opaque (``None``) leaves
+            :class:`NumericRecordSpec` — opaque (``None``) leaves
             cannot be reconstructed from a flat numeric array.
         name : str, optional
             Name for the lifted distribution. Defaults to ``self.name``.
@@ -818,15 +832,15 @@ class FlatNumericRecordDistribution(NumericRecordDistribution):
         Raises
         ------
         TypeError
-            If ``template`` is not a ``NumericEventTemplate``.
+            If ``template`` is not a ``NumericRecordSpec``.
         ValueError
             If ``self.vector_size`` does not match ``template.vector_size``.
         """
-        from .event_template import NumericEventTemplate
+        from ._specs import NumericRecordSpec
 
-        if not isinstance(template, NumericEventTemplate):
+        if not isinstance(template, NumericRecordSpec):
             raise TypeError(
-                f"as_record_distribution requires a NumericEventTemplate, "
+                f"as_record_distribution requires a NumericRecordSpec, "
                 f"got {type(template).__name__}. Opaque (None) leaves "
                 f"cannot be reconstructed from a flat numeric array."
             )
@@ -901,6 +915,10 @@ def _flattened_distribution_view_class_for_base(base: Distribution) -> type:
         (FlattenedDistributionView, *extra_bases),
         extra_methods,
     )
+    _workflow_descendants._register_unsupported_descendant_type(
+        new_cls,
+        "FlattenedDistributionView",
+    )
     _FLATTENED_VIEW_CLASS_CACHE[key] = new_cls
     return new_cls
 
@@ -933,10 +951,8 @@ class FlattenedDistributionView(FlatNumericRecordDistribution):
 
     def __init__(self, base: Distribution):
         self._base = base
-        # Carry the base's identity through; ``base.name`` is guaranteed
-        # non-empty by the TrackedTerm metaclass check, and the view mirrors
-        # whether that name was auto-derived.
-        self._init_tracked(base.name, name_is_auto=base.name_is_auto)
+        # The view preserves the base's construction-time name.
+        self._init_tracked(base.name)
 
     @property
     def event_shape(self) -> tuple[int, ...]:
@@ -1012,7 +1028,7 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
     # Imports hoisted once for all closures below (and to avoid
     # circular-import risk at module load time).
     from ._numeric_record import NumericRecord
-    from ._record_array import NumericRecordArray
+    from ._numeric_record_batch import NumericRecordBatch
 
     protocols: set[str] = set()
     if isinstance(base, SupportsSampling):
@@ -1043,9 +1059,9 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
             from ._numeric_record import _reconstruct_from_vector
 
             # ``_reconstruct_from_vector`` selects single (NumericRecord, flat
-            # is 1-D) vs batched (NumericRecordArray, batch_shape ==
+            # is 1-D) vs batched (NumericRecordBatch, batch_shape ==
             # sample_shape) from the rank of ``flat``.
-            return _reconstruct_from_vector(self.name, self.event_template, flat, name_is_auto=True)
+            return _reconstruct_from_vector(self.name, self.event_template, flat)
 
         extra_methods["_sample"] = _sample
 
@@ -1053,7 +1069,7 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
         extra_bases.append(SupportsLogProb)
 
         def _log_prob(self, x) -> Array:
-            if isinstance(x, (NumericRecord, NumericRecordArray)):
+            if isinstance(x, (NumericRecord, NumericRecordBatch)):
                 flat = x.to_vector()
             else:
                 flat = jnp.asarray(x)
@@ -1075,7 +1091,7 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
                 self._base._mean(),
                 event_shape=self._base.event_shape,
             )
-            return _reconstruct_from_vector(self.name, self.event_template, flat, name_is_auto=True)
+            return _reconstruct_from_vector(self.name, self.event_template, flat)
 
         extra_methods["_mean"] = _mean
 
@@ -1089,7 +1105,7 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
                 self._base._variance(),
                 event_shape=self._base.event_shape,
             )
-            return _reconstruct_from_vector(self.name, self.event_template, flat, name_is_auto=True)
+            return _reconstruct_from_vector(self.name, self.event_template, flat)
 
         extra_methods["_variance"] = _variance
 
@@ -1116,14 +1132,30 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
             return_dist: bool | None = None,
         ) -> Any:
             # ``f`` operates on a Record-shaped sample. We can't pass the
-            # batched ``NumericRecordArray`` returned by ``self._sample``
+            # batched ``NumericRecordBatch`` returned by ``self._sample``
             # through ``jax.vmap(f)`` directly — vmap strips the leading
             # axis from each leaf while preserving ``batch_shape`` aux,
             # producing an invariant violation. Instead, sample the base
             # in flat form (no aux-shape invariants) and run vmap over a
             # closure that unflattens to a Record inside the loop body.
             n = num_evaluations if num_evaluations is not None else _base.DEFAULT_NUM_EVALUATIONS
-            sample_key = key if key is not None else _auto_key()
+            if isinstance(n, bool) or not isinstance(n, int):
+                raise TypeError(f"num_evaluations must be an integer; got {n!r}")
+            if n <= 0:
+                raise ValueError(f"num_evaluations must be positive; got {n!r}")
+            sample_key = key
+            if sample_key is None:
+                captured = _workflow_descendants.capture_stochastic_consumer(self)
+                sample_key = _workflow_broker._resolve_automatic_key(
+                    None,
+                    _workflow_broker._singleton_effect_plan(
+                        operation_kind="expectation",
+                        execution_mode="monte_carlo",
+                        sample_shape=(n,),
+                        record_path=captured.record_path,
+                        descendant_descriptor=captured.descendant_descriptor,
+                    ),
+                )
             base_samples = self._base._sample(sample_key, sample_shape=(n,))
             flat_samples = self._base.flatten_value(
                 base_samples,
@@ -1135,12 +1167,12 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
             def _f_on_flat(flat_row):
                 from ._numeric_record import _reconstruct_from_vector
 
-                return f(_reconstruct_from_vector(dist_name, template, flat_row, name_is_auto=True))
+                return f(_reconstruct_from_vector(dist_name, template, flat_row))
 
             evals = jax.vmap(_f_on_flat)(flat_samples)
             rd = return_dist if return_dist is not None else _base.RETURN_APPROX_DIST
             if rd:
-                return BootstrapDistribution(evals, name="E[f(X)]")
+                return BootstrapDistribution("expectation", evals)
             return jax.tree.map(lambda v: jnp.mean(v, axis=0), evals)
 
         extra_methods["_expectation"] = _expectation
@@ -1154,6 +1186,10 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
         (NumericRecordDistributionView, *extra_bases),
         extra_methods,
     )
+    _workflow_descendants._register_unsupported_descendant_type(
+        new_cls,
+        "NumericRecordDistributionView",
+    )
     _LIFTED_VIEW_CLASS_CACHE[type(base)] = new_cls
     return new_cls
 
@@ -1164,7 +1200,7 @@ class NumericRecordDistributionView(NumericRecordDistribution):
     Inverse of :class:`FlattenedDistributionView`. ``self._base`` is a
     :class:`FlatNumericRecordDistribution` (single-field, ``event_shape
     == (N,)``); ``self.event_template`` is the user-supplied
-    :class:`NumericEventTemplate` (not the source's auto-template).
+    :class:`NumericRecordSpec` (not the source's auto-template).
 
     Sampling, log-prob, and moments delegate to ``self._base`` and
     reshape via the template's flatten / unflatten machinery.
@@ -1181,7 +1217,7 @@ class NumericRecordDistributionView(NumericRecordDistribution):
     def __new__(
         cls,
         base: Distribution,
-        template: NumericEventTemplate,
+        template: NumericRecordSpec,
         *,
         name: str | None = None,
     ):
@@ -1191,7 +1227,7 @@ class NumericRecordDistributionView(NumericRecordDistribution):
     def __init__(
         self,
         base: Distribution,
-        template: NumericEventTemplate,
+        template: NumericRecordSpec,
         *,
         name: str | None = None,
     ):
@@ -1203,8 +1239,8 @@ class NumericRecordDistributionView(NumericRecordDistribution):
         if name is not None:
             self._init_tracked(name)
         else:
-            # Fall back to the base's name, mirroring its auto flag.
-            self._init_tracked(base.name, name_is_auto=base.name_is_auto)
+            # Fall back to the base's name.
+            self._init_tracked(base.name)
         # Pre-set the user-supplied template so the auto-build path in
         # ``NumericRecordDistribution.event_template`` is skipped.
         object.__setattr__(self, "_event_template", template)
@@ -1246,3 +1282,13 @@ class NumericRecordDistributionView(NumericRecordDistribution):
             f"NumericRecordDistributionView(base={type(self._base).__name__}, "
             f"template={self.event_template!r})"
         )
+
+
+_workflow_descendants._register_unsupported_descendant_type(
+    FlattenedDistributionView,
+    "FlattenedDistributionView",
+)
+_workflow_descendants._register_unsupported_descendant_type(
+    NumericRecordDistributionView,
+    "NumericRecordDistributionView",
+)

@@ -8,8 +8,13 @@ import numpy as np
 import pytest
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
-from probpipe import GLMLikelihood, MultivariateNormal, Normal, predictive_check
-from probpipe.core.distribution import EmpiricalDistribution
+from probpipe import (
+    EmpiricalDistribution,
+    GLMLikelihood,
+    MultivariateNormal,
+    Normal,
+    predictive_check,
+)
 from probpipe.validation import predictive_check as pc_direct
 from probpipe.validation._predictive_check import (
     _supports_key_arg,
@@ -168,7 +173,7 @@ class TestPredictiveCheck:
         numeric = NumericRecord("posterior", x=np.array([0.0, 1.0, 2.0]))
 
         class _FakeRecordEmpiricalDistribution:
-            def __init__(self, values, name=None):
+            def __init__(self, name, values):
                 self.values = values
                 self.name = name
 
@@ -444,7 +449,7 @@ class TestPredictiveCheckNonJax:
     def test_empirical_distribution_as_source(self):
         """Use an EmpiricalDistribution (non-parametric) as the source."""
         samples = jnp.array([0.5, 1.0, 1.5, 2.0, 2.5])
-        dist = EmpiricalDistribution(samples, name="x")
+        dist = EmpiricalDistribution("x", samples)
         lik = NumpyGaussianLikelihood(rng_seed=11)
 
         result = predictive_check(
@@ -455,7 +460,21 @@ class TestPredictiveCheckNonJax:
             num_replications=20,
             key=jax.random.PRNGKey(3),
         )
-        assert result["replicated_statistics"].num_atoms == 20
+        replicated = result["replicated_statistics"]
+        assert replicated.num_atoms == 20
+        # The likelihood adds noise from its own seeded stream to the parameter.
+        # Replaying the stream at parameter 0 gives that noise, and subtracting it
+        # recovers each replicate's parameter.
+        replay = NumpyGaussianLikelihood(rng_seed=11)
+        noise = np.array([np.mean(replay.generate_data(0.0, 10)) for _ in range(20)])
+        params = np.asarray(replicated.samples["replicated_statistics"]) - noise
+        # Every parameter is an atom of the source, and the replicates draw more than
+        # one atom. Observed across five seeds: the float32 statistics recover the
+        # atoms to within 1.2e-7.
+        atoms = np.asarray(samples)
+        nearest = np.abs(params[:, None] - atoms).argmin(axis=1)
+        np.testing.assert_allclose(params, atoms[nearest], rtol=0, atol=1e-6)
+        assert np.unique(nearest).size > 1
 
 
 # ---------------------------------------------------------------------------

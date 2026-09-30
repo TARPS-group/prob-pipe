@@ -12,13 +12,13 @@ Provides:
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any
 
 import jax
 import jax.numpy as jnp
 
-from ..core._distribution_base import Distribution
 from ..core._numeric_record_distribution import (
     NumericRecordDistribution,
     _mc_expectation,
@@ -28,8 +28,9 @@ from ..core._record_distribution import (
     _build_event_template,
     _register_dynamic_subclass,
 )
+from ..core.named_tree import _PATH_SEP
 from ..core.protocols import (
-    SupportsConditioning,
+    SupportsExactConditioning,
     SupportsLogProb,
     SupportsMean,
     SupportsSampling,
@@ -40,6 +41,7 @@ from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike, PRNGKey
+from ._distribution import Distribution
 from ._joint_utils import (
     KeyPath,
     _parse_condition_args,
@@ -71,7 +73,7 @@ def _product_class_for_components(components: dict) -> type:
       :class:`RecordDistribution` surface — sampling, conditioning,
       and named-component access still work; the numeric methods are
       simply absent.
-    - ``SupportsSampling`` and ``SupportsConditioning`` are always
+    - ``SupportsSampling`` and ``SupportsExactConditioning`` are always
       included.
     - ``SupportsLogProb``, ``SupportsMean``, ``SupportsVariance`` are
       added only when every leaf supports them.
@@ -154,7 +156,7 @@ def _merge_positional_and_keyword(
 class ProductDistribution(
     RecordDistribution,
     SupportsSampling,
-    SupportsConditioning,
+    SupportsExactConditioning,
 ):
     """Joint distribution with **independent** leaf components.
 
@@ -190,7 +192,8 @@ class ProductDistribution(
         Named distributions.  Each distribution's ``.name`` is used as
         the component key.
     name : str, optional
-        Distribution name for the joint.
+        Distribution name for the joint. Keyword-only; defaults to
+        ``product(a,b)`` over the component names.
     **components : NumericRecordDistribution or dict
         Named independent component distributions.  Values may be
         ``NumericRecordDistribution`` instances (leaves) or nested dicts
@@ -204,26 +207,43 @@ class ProductDistribution(
     ::
 
         # Positional — uses each distribution's name as the key:
-        ProductDistribution(Normal(0, 1, name="x"), Gamma(2, 1, name="y"))
+        ProductDistribution(Normal("x", 0, 1), Gamma("y", 2, 1))
 
         # Keyword — auto-renames if the key differs:
-        ProductDistribution(growth_rate=Normal(0, 1, name="x"))
+        ProductDistribution(growth_rate=Normal("x", 0, 1))
 
         # Mixed:
-        ProductDistribution(Normal(0, 1, name="x"), scale=Gamma(2, 1, name="y"))
+        ProductDistribution(Normal("x", 0, 1), scale=Gamma("y", 2, 1))
     """
 
     _sampling_cost = "low"
     _preferred_orchestration = None
 
-    def __new__(cls, *positional, name: str | None = None, **components):
+    def __new__(
+        cls,
+        *positional,
+        name: str | None = None,
+        _provenance: Provenance | None = None,
+        _annotations: Mapping[str, Any] | None = None,
+        **components,
+    ):
+        # ``__new__`` binds the same keywords as ``__init__``, reconstruction's
+        # included: anything left in ``**components`` is read as a component, and
+        # a stray one changes which class the probe below selects.
         components = _merge_positional_and_keyword(positional, components)
         if not components:
             return object.__new__(cls)
         actual_cls = _product_class_for_components(components)
         return object.__new__(actual_cls)
 
-    def __init__(self, *positional, name: str | None = None, **components):
+    def __init__(
+        self,
+        *positional,
+        name: str | None = None,
+        _provenance: Provenance | None = None,
+        _annotations: Mapping[str, Any] | None = None,
+        **components,
+    ):
         components = _merge_positional_and_keyword(positional, components)
         if not components:
             raise ValueError("ProductDistribution requires at least one component.")
@@ -245,14 +265,25 @@ class ProductDistribution(
                     f"All leaf components must be Distribution instances, got {type(leaf).__name__}"
                 )
         self._components = resolved
-        name, name_is_auto = auto_name(name, "product(" + ",".join(resolved.keys()) + ")")
-        super().__init__(name=name, name_is_auto=name_is_auto)
+        name = auto_name(name, "product(" + ",".join(resolved.keys()) + ")")
+        super().__init__(
+            name=name,
+            _provenance=_provenance,
+            _annotations=_annotations,
+        )
         self._event_template = _build_event_template(self._components)
 
     def __reduce__(self):
+        # Annotations are threaded explicitly: they are written after
+        # construction, so rebuilding from the components alone would drop them.
         return (
             _unpickle_product_distribution,
-            (dict(self._components), self._name, self._name_is_auto, self._provenance),
+            (
+                dict(self._components),
+                self._name,
+                self._provenance,
+                getattr(self, "_annotations", None),
+            ),
         )
 
     # -- Sampling (returns Record) ------------------------------------------
@@ -269,44 +300,41 @@ class ProductDistribution(
 
         Returns
         -------
-        Record or NumericRecordArray or RecordArray
+        Record or NumericRecordBatch or RecordBatch
             ``Record`` when ``sample_shape == ()``. With a non-empty
-            ``sample_shape``: ``NumericRecordArray`` when every leaf is
-            a :class:`NumericRecordDistribution` (the dynamic mixin
-            case), otherwise a plain :class:`RecordArray`.
+            ``sample_shape``: a batch of draws over one ``draw`` level,
+            :class:`NumericRecordBatch` when every leaf is a
+            :class:`NumericRecordDistribution` (the dynamic mixin case),
+            otherwise a plain :class:`RecordBatch`.
         """
-        from ..core._record_array import NumericRecordArray, RecordArray
+        from ..core._numeric_record_batch import NumericRecordBatch
+        from ..core._record_batch import RecordBatch
+
+        if sample_shape:
+            # A batch stores one column per *field*, so a nested product's draw
+            # is one flat batch over leaf paths rather than a batch per subtree.
+            # NRD mixin → the numeric batch; otherwise the plain one, which does
+            # not require numeric leaves.
+            cls = NumericRecordBatch if isinstance(self, NumericRecordDistribution) else RecordBatch
+            return cls(
+                self.name,
+                _sample_columns(self._components, key, sample_shape),
+                "sample",
+                element_spec=self.event_template,
+                axes_per_level=(len(sample_shape),),
+            )
 
         names = list(self._components.keys())
         keys = jax.random.split(key, len(names))
-        numeric = isinstance(self, NumericRecordDistribution)
         fields: dict[str, jnp.ndarray | Record] = {}
         for subkey, name in zip(keys, names):
             comp = self._components[name]
-            if isinstance(comp, dict):
-                # Pass the sub-template so a batched nested draw is a nested
-                # record-array (canonical, flattenable), not a plain Record.
-                sub_template = self.event_template.children[name] if sample_shape else None
-                fields[name] = _sample_nested(
-                    name, comp, subkey, sample_shape, template=sub_template, numeric=numeric
-                )
-            else:
-                fields[name] = comp._sample(subkey, sample_shape)
-        if sample_shape:
-            # NRD mixin → numeric batched container; otherwise the
-            # plain RecordArray which doesn't require numeric leaves.
-            if isinstance(self, NumericRecordDistribution):
-                return NumericRecordArray(
-                    fields,
-                    batch_shape=sample_shape,
-                    template=self.event_template,
-                )
-            return RecordArray(
-                fields,
-                batch_shape=sample_shape,
-                template=self.event_template,
+            fields[name] = (
+                _sample_nested(name, comp, subkey)
+                if isinstance(comp, dict)
+                else comp._sample(subkey, ())
             )
-        return Record(self.name, fields, name_is_auto=True)
+        return Record(self.name, fields)
 
     # -- Log-prob -----------------------------------------------------------
 
@@ -320,7 +348,8 @@ class ProductDistribution(
         general (non-numeric) case because ``unflatten_value`` isn't
         available there.
         """
-        from ..core._record_array import RecordArray
+        from ..core._record_batch import RecordBatch
+        from ..core.named_tree import _unflatten_paths
 
         if isinstance(value, jnp.ndarray):
             if not isinstance(self, NumericRecordDistribution):
@@ -345,8 +374,10 @@ class ProductDistribution(
             if isinstance(value, jnp.ndarray):
                 (field_name,) = self.event_template.fields
                 value = {field_name: value}
-        if isinstance(value, RecordArray):
-            value = {k: v for k, v in value.items()}
+        if isinstance(value, RecordBatch):
+            # Leaf-keyed columns, re-nested, so the tree map below pairs each
+            # column with the component that declared it.
+            value = _unflatten_paths({path: value[path] for path in value.event_template})
         if isinstance(value, Record):
             value = value.to_dict()
 
@@ -396,7 +427,7 @@ class ProductDistribution(
         """Per-leaf support constraints -- each leaf component's ``support``.
 
         Nested components are keyed by slash-delimited paths
-        (``"outer/a"``), matching ``EventTemplate.leaf_shapes``, so every
+        (``"outer/a"``), matching ``RecordSpec.leaf_shapes``, so every
         value is a ``Constraint``."""
         out: dict = {}
 
@@ -422,11 +453,6 @@ class ProductDistribution(
     ) -> ProductDistribution:
         new_components = _prune_leaves(self._components, set(observed_leaves.keys()))
         result = ProductDistribution(**new_components, name=self._name)
-        # The result inherits this joint's name, so it mirrors this joint's
-        # auto flag; the constructor would otherwise treat the inherited
-        # (possibly auto-derived) name as user-given. Set directly — the
-        # **components signature leaves no room for a name_is_auto keyword.
-        object.__setattr__(result, "_name_is_auto", self._name_is_auto)
         conditioned_names = [" > ".join(path) for path in observed_leaves]
         result.with_provenance(
             Provenance.create(
@@ -451,10 +477,14 @@ class ProductDistribution(
         return f"ProductDistribution({comp_str}{name_str})"
 
 
-def _unpickle_product_distribution(components, name, name_is_auto, provenance):
+def _unpickle_product_distribution(components, name, provenance, annotations):
     """Reconstruct a ProductDistribution (or dynamic subclass) from its components."""
-    p = ProductDistribution(**components, name=name)
-    return p._restore_identity(name_is_auto=name_is_auto, provenance=provenance)
+    return ProductDistribution(
+        **components,
+        name=name,
+        _provenance=provenance,
+        _annotations=annotations,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -474,12 +504,18 @@ class TFPProductDistribution(ProductDistribution):
     for interop with SBI and other TFP-dependent subsystems.
     """
 
-    def __init__(self, *positional, name: str | None = None, **components):
-        super().__init__(*positional, name=name, **components)
+    def __init__(self, *positional, **kwargs):
+        # Forwarded wholesale rather than restated: the base's keywords include
+        # the reconstruction ones, and a signature repeated here would silently
+        # swallow any it missed into ``**components``.
+        super().__init__(*positional, **kwargs)
         self._build_tfp_dist()
 
     def _build_tfp_dist(self):
         """Construct a combined TFP distribution from the components.
+
+        Called from ``__init__`` only, so it writes ``_tfp_dist`` through
+        ``object.__setattr__`` as the rest of construction does.
 
         Collects component TFP distributions in field-insertion order
         (matching the ``Record`` layout).  For the common case of
@@ -509,12 +545,13 @@ class TFPProductDistribution(ProductDistribution):
                 vals = [d.parameters[pname] for d in tfp_dists]
                 if all(v is not None for v in vals):
                     stacked_params[pname] = jnp.stack(vals)
-            self._tfp_dist = tfd.Independent(
+            combined = tfd.Independent(
                 type(exemplar)(**stacked_params),
                 reinterpreted_batch_ndims=1,
             )
         else:
-            self._tfp_dist = tfd.Blockwise(tfp_dists)
+            combined = tfd.Blockwise(tfp_dists)
+        object.__setattr__(self, "_tfp_dist", combined)
 
     @property
     def event_shape(self) -> tuple[int, ...]:
@@ -530,35 +567,65 @@ class TFPProductDistribution(ProductDistribution):
 # -- Helpers for nested component pytrees ----------------------------------
 
 
-def _sample_nested(name: str, components: dict, key, sample_shape, template=None, numeric=False):
-    """Recursively sample from nested component dicts.
+def _sample_columns(components: dict, key, sample_shape) -> dict:
+    """One column per leaf of *components*, keyed by its leaf path.
 
-    For an **unbatched** draw (``sample_shape == ()``) returns a plain nested
-    ``Record``. For a **batched** draw returns a nested record-array
-    (``NumericRecordArray`` when ``numeric`` else ``RecordArray``) carrying the
-    sub-``template`` and ``batch_shape``, so the result is canonical and
-    flattenable rather than a plain ``Record`` with batch-shaped leaves.
+    A batch stores a column per field rather than a value per element, so a
+    nested product draws into one flat mapping over ``/``-paths — the keying the
+    batch constructor takes. A component that draws a structured value of its own
+    contributes its leaves under its own path, so a sub-product nests by path
+    rather than by containment.
+
+    Keys are split per level, exactly as the unbatched recursion splits them, so
+    a batched draw and a single draw derive their subkeys the same way.
     """
+    from ..core._record_batch import RecordBatch
+
+    names = list(components.keys())
+    keys = jax.random.split(key, len(names))
+    columns: dict = {}
+    for subkey, field_name in zip(keys, names):
+        comp = components[field_name]
+        if isinstance(comp, dict):
+            columns.update(
+                {
+                    f"{field_name}{_PATH_SEP}{path}": column
+                    for path, column in _sample_columns(comp, subkey, sample_shape).items()
+                }
+            )
+            continue
+        drawn = comp._sample(subkey, sample_shape)
+        if isinstance(drawn, RecordBatch):
+            # Raw columns: a field that is not an array presents as its own object
+            # batch, and what belongs in this batch's storage is the column.
+            columns.update(
+                {
+                    f"{field_name}{_PATH_SEP}{path}": column
+                    for path, column in drawn._raw_columns().items()
+                }
+            )
+        elif isinstance(drawn, Record):
+            columns.update(
+                {f"{field_name}{_PATH_SEP}{path}": drawn[path] for path in drawn.event_template}
+            )
+        else:
+            columns[field_name] = drawn
+    return columns
+
+
+def _sample_nested(name: str, components: dict, key) -> Record:
+    """One single draw from nested component dicts, as a nested ``Record``."""
     names = list(components.keys())
     keys = jax.random.split(key, len(names))
     fields: dict = {}
     for subkey, field_name in zip(keys, names):
         comp = components[field_name]
-        if isinstance(comp, dict):
-            # ``children`` (not ``[]``): the sub-template is an interior node,
-            # and template ``[]`` is leaf-only.
-            sub_template = template.children[field_name] if template is not None else None
-            fields[field_name] = _sample_nested(
-                field_name, comp, subkey, sample_shape, template=sub_template, numeric=numeric
-            )
-        else:
-            fields[field_name] = comp._sample(subkey, sample_shape)
-    if sample_shape and template is not None:
-        from ..core._record_array import NumericRecordArray, RecordArray
-
-        cls = NumericRecordArray if numeric else RecordArray
-        return cls(fields, batch_shape=sample_shape, template=template)
-    return Record(name, fields, name_is_auto=True)
+        fields[field_name] = (
+            _sample_nested(field_name, comp, subkey)
+            if isinstance(comp, dict)
+            else comp._sample(subkey, ())
+        )
+    return Record(name, fields)
 
 
 def _map_components(name: str, components: dict, fn) -> Record:
@@ -569,7 +636,7 @@ def _map_components(name: str, components: dict, fn) -> Record:
             fields[field_name] = _map_components(field_name, comp, fn)
         else:
             fields[field_name] = fn(comp)
-    return Record(name, fields, name_is_auto=True)
+    return Record(name, fields)
 
 
 # ---------------------------------------------------------------------------

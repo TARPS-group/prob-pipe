@@ -3,25 +3,25 @@ Random function abstractions for ProbPipe.
 
 Provides:
   - ``RandomFunction``        – Distribution over functions f: X → Y.
-  - ``ArrayRandomFunction``   – Specialization for X = Array, Y = Array.
+  - ``ArrayRandomFunction``   – Specialization to array inputs and outputs.
 """
 
 from __future__ import annotations
 
 from abc import abstractmethod
-from collections.abc import Callable
+from typing import Any
 
 import jax.numpy as jnp
 
 from ..custom_types import Array, ArrayLike
-from ._distribution_base import Distribution
+from ..distributions._distribution import Distribution
 
 # ---------------------------------------------------------------------------
-# RandomFunction[X, Y]
+# RandomFunction
 # ---------------------------------------------------------------------------
 
 
-class RandomFunction[X, Y](Distribution[Callable[[X], Y]]):
+class RandomFunction(Distribution):
     """A distribution over functions f: X → Y.
 
     The primary interface is :meth:`__call__`. Calling the random
@@ -38,20 +38,19 @@ class RandomFunction[X, Y](Distribution[Callable[[X], Y]]):
     should inherit :class:`SupportsSampling` and implement
     ``_sample(key, sample_shape)``.
 
-    This class is generic in ``X`` (input type) and ``Y`` (output type).
+    Parameters
+    ----------
+    name : str
+        Distribution name.
     """
 
-    def __init__(self, *, name: str | None = None, name_is_auto: bool = False):
-        # Default only when no name was supplied; a subclass passing a
-        # derived name with name_is_auto=True keeps its flag.
-        if not name:
-            name, name_is_auto = type(self).__name__, True
-        super().__init__(name=name, name_is_auto=name_is_auto)
+    def __init__(self, name: str):
+        super().__init__(name=name)
 
     # -- Fundamental interface ----------------------------------------------
 
     @abstractmethod
-    def __call__(self, x: X) -> Distribution[Y]:
+    def __call__(self, x: Any) -> Distribution:
         """Return the distribution over outputs at input *x*.
 
         This is the fundamental interface of a random function.
@@ -76,7 +75,7 @@ class RandomFunction[X, Y](Distribution[Callable[[X], Y]]):
 # ---------------------------------------------------------------------------
 
 
-class ArrayRandomFunction(RandomFunction[Array, Array]):
+class ArrayRandomFunction(RandomFunction):
     """A random function mapping arrays to arrays.
 
     Given prediction input ``X`` with shape
@@ -106,6 +105,8 @@ class ArrayRandomFunction(RandomFunction[Array, Array]):
 
     Parameters
     ----------
+    name : str
+        Distribution name.
     input_shape : tuple of int
         Shape of a single input point, e.g. ``(3,)`` for 3-D inputs.
     output_shape : tuple of int
@@ -118,11 +119,7 @@ class ArrayRandomFunction(RandomFunction[Array, Array]):
     supports_joint_outputs: bool = False
 
     def __init__(
-        self,
-        input_shape: tuple[int, ...],
-        output_shape: tuple[int, ...] = (),
-        *,
-        name: str | None = None,
+        self, name: str, input_shape: tuple[int, ...], output_shape: tuple[int, ...] = ()
     ) -> None:
         super().__init__(name=name)
         self._input_shape = tuple(input_shape)

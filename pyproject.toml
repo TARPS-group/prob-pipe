@@ -124,11 +124,10 @@ ignore = [
 exclude = ["*.ipynb"]
 
 [tool.ruff.lint.per-file-ignores]
-# Re-export facades: unused-import (F401) is the point, and __init__ /
-# distribution.py set up warnings/registration or interleave a delegating
-# __getattr__ before importing, so module imports aren't all at the top (E402).
+# Re-export facades: unused-import (F401) is the point, and __init__ modules
+# set up warnings or registration before importing, so module imports aren't
+# all at the top (E402).
 "__init__.py" = ["F401", "E402"]
-"probpipe/core/distribution.py" = ["E402"]
 # Demo scripts and tests legitimately import after setup (sys.path / env) or a
 # pytest.importorskip(...) guard, so E402 there is expected.
 "example_scripts/*" = ["E402"]

@@ -20,7 +20,7 @@ In practice, these issues make it hard to explore the full design space of avail
 
 1. **`Distribution`**: the universal representation of random quantities (priors, posteriors, data-generating processes). A distribution's capabilities are declared via protocols (`SupportsSampling`, `SupportsLogProb`, ...), and ProbPipe converts between representations as needed.
 2. **`Record`**: the universal container for non-random structured data (observed datasets, hyperparameters, design matrices). `Record` is the deterministic counterpart of `Distribution`.
-3. **`Function`**: Usually constructed by decorating a function with `@function`. Pass the declared types of values and the Function runs normally. But pass a `Distribution` where a concrete value is expected, and ProbPipe propagates uncertainty automatically, returning a `Distribution` over the function's declared result type. Similarly, array-valued inputs (a `RecordArray`) broadcast across fixed values (e.g., for hyperparameter sweeps). To ensure composability and modularity, all returned values from a Function are wrapped as an appropriate `Record` / `Distribution`.
+3. **`Function`**: Usually constructed by decorating a function with `@function`. Pass the declared types of values and the Function runs normally. But pass a `Distribution` where a concrete value is expected, and ProbPipe propagates uncertainty automatically, returning a `Distribution` over the function's declared result type. Similarly, array-valued inputs (a `RecordBatch`) broadcast across fixed values (e.g., for hyperparameter sweeps). To ensure composability and modularity, all returned values from a Function are wrapped as an appropriate `Record` / `Distribution`.
 
 `Distribution` and `Record` share a single interface for named-field access (`fields`, `select(...)`, `select_all()`) and passing components into a `Function`, so they are interchangeable as arguments to Functions.
 
@@ -55,14 +55,14 @@ damage = jnp.asarray(df["damage"].values, dtype=jnp.float32)
 # --- 1. Build a model with named parameters ---
 likelihood = GLMLikelihood(tfp_glm.Bernoulli(), temperature)
 prior = ProductDistribution(
-    intercept=Normal(loc=0.0, scale=10.0, name="intercept"),
-    slope=Normal(loc=0.0, scale=1.0, name="slope"),
+    intercept=Normal("intercept", 0.0, 10.0),
+    slope=Normal("slope", 0.0, 1.0),
 )
 model = SimpleModel(prior, likelihood)
 
 # --- 2. Condition on data (auto-selects NUTS) ---
 posterior = condition_on(model, damage, random_seed=0)
-draws = posterior.draws()            # NumericRecordArray(intercept=..., slope=...)
+draws = posterior.draws()            # NumericRecordBatch(intercept=..., slope=...)
 float(draws["intercept"].mean())     #  ~12.8 — high baseline log-odds…
 float(draws["slope"].mean())         #  ~-0.2 — …attenuated by temperature
 
@@ -219,5 +219,3 @@ If you use ProbPipe in your research, please cite it:
 
 See the **[citation page](https://tarps-group.github.io/prob-pipe/cite/)** for
 version-specific DOIs and how to cite the inference backends ProbPipe builds on.
-
-

@@ -17,7 +17,7 @@ It is intended for contributors and AI assistants working on the codebase.
 Protocol classes are named `Supports<Capability>` in CamelCase:
 
 ```python
-SupportsSampling, SupportsLogProb, SupportsMean, SupportsConditioning,
+SupportsSampling, SupportsLogProb, SupportsMean, SupportsExactConditioning,
 SupportsArrayBackend
 ```
 
@@ -39,6 +39,13 @@ returns `True` too — instances inherit class attributes, and
 `runtime_checkable` just looks for the named attribute — but the
 result is misleading because the protocol's contract is the class
 declaring `_make_array_backend`, not the instance.
+
+`SupportsExactConditioning` and `SupportsApproximateConditioning` are the
+other exception: they are abstract base classes, not protocols, so a class
+claims one by inheriting it. Both declare the same `_condition_on`, and
+whether that method returns the conditional law or a stand-in for it is a
+claim about the result rather than a fact about the method, so a structural
+check cannot tell them apart.
 
 The corresponding *backend* interface that `_make_array_backend`
 returns (`_DistributionArrayBackend`) is private to the library —
@@ -111,7 +118,7 @@ are authoritative schemas but never derive or replace that signature. Use
 Use `__call__` for distribution lifting, array sweeps, orchestration, result
 wrapping, and Function-first provenance.
 
-If an implementation returns an existing `Record`, `RecordArray`, or
+If an implementation returns an existing `Record`, `RecordBatch`, or
 `Distribution`, `apply` preserves its identity. `__call__` instead creates a
 shallow result copy that shares value data and templates, owns a separate
 annotations container, and receives only the current call's provenance. Do not
@@ -169,14 +176,18 @@ Method classes are CamelCase: ``TFPNutsMethod``, ``CmdStanNutsMethod``,
 
 `Function` keeps ProbPipe controls separate from wrapped-function
 kwargs. Use `@function(...)` for definition-time controls
-such as `dispatch`, `seed`, and `n_broadcast_samples`, and use
+such as `dispatch` and `n_broadcast_samples`, and use
 `workflow.with_options(...)(...)` for one-call overrides such as
-`seed`, `n_broadcast_samples`, and `include_inputs`.
+`n_broadcast_samples` and `include_inputs`.
 
 Ordinary workflow calls should treat keyword arguments as user-function
 inputs. Wrapped functions may use names such as `seed`,
 `n_broadcast_samples`, and `include_inputs` when those names are part of
 their own domain API.
+
+`seed` is not a `Function` or `with_options` control. Put reproducible lifted
+executions inside `with workflow_run(seed=...):`; a wrapped function's own
+parameter named `seed` remains an ordinary domain input.
 
 ### 1.9 The `num_atoms` / `replicate_size` property convention
 
@@ -211,7 +222,7 @@ or a whole resampled replicate (use `replicate_size`).
 
 ### 1.10 Record field iteration and path access
 
-The mapping protocol on `Record` and `EventTemplate` (`keys` / `values`
+The mapping protocol on `Record` and `RecordSpec` (`keys` / `values`
 / `items` / `__iter__` / `__len__` / `__contains__` / `__getitem__`) is
 **leaf-keyed**: it enumerates every leaf by its full `/`-path, never
 interior nodes. The
@@ -236,13 +247,8 @@ sub-Record, whereas `record["params"]` raises when `params` is not a
 leaf. `keys()` lists every leaf's path using the same `/` separator, so
 those paths round-trip with `__getitem__`.
 
-Two surfaces are documented exceptions, each pending its own follow-up:
+One surface is a documented exception, pending its own follow-up:
 
-- `RecordArray` / `NumericRecordArray`: the mapping surface (`keys` /
-  `len` / `in`) is still **top-level** (first level of field names)
-  pending the batch-axis rework, so `"outer" in arr` can be `True` while
-  `arr["outer"]` raises if `outer` is an interior node. String `[]` *is*
-  leaf-keyed. Treat this as temporary.
 - Record-based **distributions** (`RecordDistribution`,
   `RecordEmpiricalDistribution`, …): their `fields` / `keys()` / `in` /
   `[]` surface is still **top-level** pending the distribution
@@ -279,9 +285,11 @@ accessed via `.samples` / `.draws()` and the size property
 (`num_atoms` or `replicate_size` per §1.9) reports the count.
 Parametric distributions do not have either property.
 
-Iteration is reserved for the `Record` family — `Record`,
-`NumericRecord`, `RecordArray`, `NumericRecordArray` — which iterate
-field names dict-style (`keys()` / `values()` / `items()`).
+Iteration is reserved for the `Record` family — `Record` and
+`NumericRecord` — which iterate field names dict-style
+(`keys()` / `values()` / `items()`). A
+`RecordBatch` is a collection, not a named tree: it iterates leading-axis
+views like an array, and its fields are read from `event_template`.
 
 `DistributionArray` is positional and follows numpy/jax conventions:
 `len(da)` is the leading-axis dim and `da.size` is the total cell
@@ -373,9 +381,9 @@ from probpipe.core.record import Record
 ```
 
 A handful of `core/` and `distributions/` modules fit this profile —
-`protocols.py`, `named_tree.py`, `record.py`, `distribution.py`, `ops.py`,
-`constraints.py`, `provenance.py`, `tracked.py`, `transition.py`, `node.py`,
-`continuous.py`, `discrete.py`, `multivariate.py`, `transformed.py`.
+`protocols.py`, `named_tree.py`, `record.py`, `ops.py`, `constraints.py`,
+`provenance.py`, `tracked.py`, `transition.py`, `node.py`, `continuous.py`,
+`discrete.py`, `multivariate.py`, `transformed.py`.
 Everything else in those subpackages (the `_*.py` files) is an
 implementation detail re-exported via the package `__init__.py`.
 
@@ -419,12 +427,12 @@ class Normal(TFPDistribution):
 
     Parameters
     ----------
+    name : str
+        Distribution name.
     loc : array-like
         Mean of the distribution.
     scale : array-like
         Standard deviation (> 0).
-    name : str
-        Distribution name (required for leaf distributions).
     """
 ```
 
@@ -497,9 +505,10 @@ Separate each group with a blank line.
 Always use **relative imports** for internal references:
 
 ```python
-from ..core.distribution import Distribution, Provenance
 from ..core.protocols import SupportsSampling
+from ..core.provenance import Provenance
 from ..custom_types import Array, PRNGKey
+from ..distributions._distribution import Distribution
 ```
 
 ### 4.4 Optional dependencies
@@ -602,10 +611,16 @@ validation/   (imports core/, inference/, custom_types)
 diagnostics/  (imports core/, inference/, validation/, custom_types)
 ```
 
+`distributions/_distribution.py` is the distribution base: it defines
+`Distribution` and `DistributionSpec` and imports only from `core/` at module
+level. Every package that works with distributions may import it, and `core/`
+does so under the first exception below.
+
 ### Rules
 
-1. **`core/`** must never import from `distributions/`, `record/`,
-   `linalg/`, `converters/`, `inference/`, or `modeling/`.
+1. **`core/`** must never import from `record/`, `linalg/`,
+   `converters/`, `inference/`, or `modeling/`, and it imports only the
+   distribution base from `distributions/`.
 2. **`distributions/`** must never import from `record/`, `linalg/`,
    `converters/`, `inference/`, or `modeling/`.
 3. **`record/`** must never import from `distributions/`, `linalg/`,
@@ -625,16 +640,26 @@ diagnostics/  (imports core/, inference/, validation/, custom_types)
 
 > **Exceptions** (intentional reverse edges):
 >
+> - `core/` → `distributions/_distribution.py` (module-level imports of the
+>   distribution base). The base is defined at its target location, while the
+>   `core/` modules that build on it have not yet moved out of `core/`.
+>   Importing the base initializes `probpipe.distributions`, whose families
+>   import those modules back, so the two packages form a cycle. The cycle stays
+>   benign because `probpipe/__init__.py` imports `probpipe.distributions` before
+>   any other first-party module. A `core/` module therefore imports the base
+>   from `..distributions._distribution`, never through the names
+>   `probpipe.distributions` re-exports, since that package's `__init__` is still
+>   running when the module loads.
 > - `inference/` → `modeling/` (lazy imports for model-type dispatch in
 >   `_tfp_mcmc`, `_nutpie`, `_cmdstan_method`, `_pymc_method`)
 > - `inference/` → `distributions/` (lazy imports: prior-type dispatch on
 >   distribution classes in `_blackjax_ess`, `bijector_for` constraint
 >   reparameterization in `_bayesflow_posteriors`)
-> - `core/` → `diagnostics.views` (lazy import inside
+> - `distributions/` → `diagnostics.views` (lazy import inside
 >   `Distribution.diagnostics` to construct the read-only diagnostics accessor)
 >
-> These use lazy (in-function) imports to avoid circular imports at
-> module load time.  Do not add new reverse edges without discussion.
+> Apart from the first, these use lazy (in-function) imports to avoid circular
+> imports at module load time. Do not add new reverse edges without discussion.
 
 ---
 
@@ -656,8 +681,9 @@ class SupportsFoo(Protocol):
 
 - `SupportsLogProb` extends `SupportsUnnormalizedLogProb`.
 - All other capability protocols (`SupportsSampling`, `SupportsMean`,
-  `SupportsVariance`, `SupportsCovariance`, `SupportsExpectation`,
-  `SupportsConditioning`) are standalone.
+  `SupportsVariance`, `SupportsCovariance`, `SupportsExpectation`) are
+  standalone, as are the two conditioning capabilities, which are abstract
+  base classes rather than protocols.
 - The likelihood / simulator protocols `Likelihood`,
   `ConditionallyIndependentLikelihood` (extends `Likelihood`), and
   `GenerativeLikelihood` also live in `core/protocols.py`. They type model
@@ -706,7 +732,7 @@ Define reusable fixtures at module scope:
 ```python
 @pytest.fixture
 def normal():
-    return Normal(loc=2.0, scale=0.5, name="x")
+    return Normal("x", 2.0, 0.5)
 ```
 
 Use `@pytest.fixture(params=...)` for parametrized testing across
@@ -792,7 +818,21 @@ Distribution and `Function` objects are immutable. Parameters, Function
 signatures, templates, controls, and implementations are fixed at construction;
 operations return new terms rather than mutating state.
 
-**The one carve-out is the `annotations` store** (`_annotations`, provided
+Records, batches, functions, and templates **enforce** this: assignment and
+deletion raise `AttributeError`, naming the class touched.
+
+**Distributions do not enforce it yet.** `Distribution` overrides both
+`__setattr__` and `__delattr__` to permit them, because the documented way to
+build an emulator is to subclass a random function and train it in place, and
+fitting has no contract yet that returns a new fitted term instead. Write new
+code as though the guard were on — an operation returns a new distribution — and
+do not add assignment to a distribution outside its constructor. The exemption
+lifts by removing both overrides, once fitting has that contract; removing one
+would leave a trainer that clears what it fitted still raising.
+
+Two stores are carved out of that rule, both written after construction.
+
+**The first is the `annotations` store** (`_annotations`, provided
 by the `Annotated` mixin in `probpipe.core.tracked` and carried by
 `Distribution` and `Record`): a string-keyed mapping — typically an
 `xarray.DataTree` — whose job is to collect post-construction metadata
@@ -802,6 +842,16 @@ alternative — returning a renamed clone for every diagnostic — would
 break the provenance/identity tracking that downstream code relies on.
 Treat it as append-only and never use it as a back-channel for mutating
 parameter-like state.
+
+**The second, narrower, is a memo**: a term that computes something
+lazily holds a `_memo` dictionary, assigned by its constructor and filled in
+place by the read that needs it (`BroadcastDistribution.marginalize`, a
+backend-delegated `DistributionArray.components`,
+`ApproximateDistribution._concat_chains`). Filling it leaves the term's own
+attributes as construction set them, which is what the immutability guard sees.
+A class holding one declares it in `_transient_state` so no copy inherits it —
+each copy rebuilds — and whatever reads it must tolerate its absence, since a
+copy or an unpickle arrives without one.
 
 ### 9.3 Error messages
 

@@ -21,7 +21,7 @@ case studies for applied, problem-first notebooks.
     ---
 
     Structured values and random records: `Record`, `NumericRecord`,
-    `RecordDistribution`, `RecordArray`, and `DistributionArray`.
+    `RecordDistribution`, `RecordBatch`, and `DistributionArray`.
 
 </div>
 
@@ -34,8 +34,8 @@ case studies for applied, problem-first notebooks.
     ---
 
     Automatic uncertainty propagation with `Function`, empirical
-    enumeration, cartesian products, vectorized execution, and reproducible
-    seeds.
+    enumeration, cartesian products, vectorized execution, and workflow-scoped
+    reproducibility.
 
 -   **[Joint distributions](user_guide/04_joint_distributions.ipynb)**
 
@@ -103,6 +103,7 @@ case studies for applied, problem-first notebooks.
     ---
 
     Global Prefect configuration for distributing bagged posterior fits across
-    every configured `Function`.
+    every configured `Function`, with route-neutral workflow RNG and retry
+    boundaries.
 
 </div>

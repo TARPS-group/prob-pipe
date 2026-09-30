@@ -1,8 +1,8 @@
 """Unit tests for the shared CI import-graph builder (scripts/ci/import_graph.py).
 
 The builder previously lived as two inline heredocs in ``ci.yml`` and could not
-be tested; see issue #266. Each test materialises a tiny fake ``probpipe``
-package in a temp cwd and exercises the graph functions against it.
+be tested. Each test materialises a tiny fake ``probpipe`` package in a temp cwd
+and exercises the graph functions against it.
 """
 
 from __future__ import annotations
@@ -262,14 +262,14 @@ class TestResolveTestTargets:
         fake_pkg(
             {
                 "probpipe/__init__.py": "",
-                "probpipe/_utils.py": "v = 1\n",
-                "tests/test_utils.py": "",
+                "probpipe/_array_utils.py": "v = 1\n",
+                "tests/test_array_utils.py": "",
                 "tests/test_coverage_gaps.py": "",
                 "tests/core/test_thing.py": "",  # subpackage test — must NOT be selected
             }
         )
-        assert set(resolve_test_targets(["probpipe/_utils.py"])) == {
-            "tests/test_utils.py",
+        assert set(resolve_test_targets(["probpipe/_array_utils.py"])) == {
+            "tests/test_array_utils.py",
             "tests/test_coverage_gaps.py",
         }
 

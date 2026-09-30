@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from math import prod
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from xarray import DataTree
@@ -11,30 +11,33 @@ if TYPE_CHECKING:
 import jax.numpy as jnp
 
 from .._weights import Weights
-from ..core.distribution import Distribution, RecordEmpiricalDistribution
-from ..core.event_template import ArraySpec, EventTemplate, NumericEventTemplate, OpaqueSpec
+from ..core._empirical import RecordEmpiricalDistribution
+from ..core._immutable import transient_memo
+from ..core._opaque import OpaqueSpec
+from ..core._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike
+from ..distributions._distribution import Distribution
 
 __all__ = ["ApproximateDistribution", "make_posterior"]
 
 
-def _spec_size(spec: ArraySpec | EventTemplate) -> int:
+def _spec_size(spec: NumericArraySpec | RecordSpec) -> int:
     """Number of scalar elements one field contributes to a flat vector.
 
-    Given the spec of a single field of an :class:`EventTemplate`, return how
+    Given the spec of a single field of a :class:`RecordSpec`, return how
     many scalars that field occupies in the dense 1-D vector layout (see
     :meth:`~probpipe.NumericRecord.to_vector`): ``prod(shape)`` for an
-    :class:`ArraySpec`, or :attr:`~NumericEventTemplate.vector_size` for a
-    nested :class:`NumericEventTemplate`. Summing this over a template's fields
+    :class:`NumericArraySpec`, or :attr:`~NumericRecordSpec.vector_size` for a
+    nested :class:`NumericRecordSpec`. Summing this over a template's fields
     gives the template's own ``vector_size``; it is used here to size each
     field's contiguous column block when splitting a flat chain.
 
     Parameters
     ----------
     spec
-        One field's spec, as returned by :meth:`EventTemplate.__getitem__`.
+        One field's spec, as returned by :meth:`RecordSpec.__getitem__`.
 
     Raises
     ------
@@ -42,20 +45,20 @@ def _spec_size(spec: ArraySpec | EventTemplate) -> int:
         If the field has no flat size — a non-numeric leaf
         (:class:`~probpipe.OpaqueSpec` / :class:`~probpipe.DistributionSpec` /
         :class:`~probpipe.FunctionSpec`) or a mixed (non-all-numeric) nested
-        :class:`EventTemplate`.
+        :class:`RecordSpec`.
     """
-    if isinstance(spec, NumericEventTemplate):
+    if isinstance(spec, NumericRecordSpec):
         return spec.vector_size
-    if isinstance(spec, EventTemplate):
+    if isinstance(spec, RecordSpec):
         raise TypeError(
             f"nested {type(spec).__name__} contains non-numeric leaves; "
-            f"a flat size requires a NumericEventTemplate."
+            f"a flat size requires a NumericRecordSpec."
         )
-    if isinstance(spec, ArraySpec):
+    if isinstance(spec, NumericArraySpec):
         return prod(spec.shape) if spec.shape else 1
     raise TypeError(
         f"template field ({type(spec).__name__}) has no flat size; only numeric "
-        f"(ArraySpec) fields and nested NumericEventTemplate fields do."
+        f"(NumericArraySpec) fields and nested NumericRecordSpec fields do."
     )
 
 
@@ -65,7 +68,7 @@ def _spec_size(spec: ArraySpec | EventTemplate) -> int:
 
 
 def _column_permutation(
-    event_template: EventTemplate,
+    event_template: RecordSpec,
     field_order: list[str],
 ) -> list[int]:
     """Column-index permutation mapping a *field_order*-laid-out flat chain
@@ -75,7 +78,7 @@ def _column_permutation(
     chain occupies. The returned ``perm`` satisfies: ``flat[..., perm]``
     lays the columns out in template-field order, so the positional split
     in :class:`ApproximateDistribution` maps each column to the right
-    field by name. See issue #233.
+    field by name.
 
     Raises
     ------
@@ -130,8 +133,8 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
     weights : array-like, :class:`~probpipe.Weights`, or None
         Optional per-sample importance weights (across all chains).
     name : str or None
-        Distribution name for provenance.
-    event_template : EventTemplate or None
+        Distribution name for provenance. Keyword-only; defaults to ``"posterior"``.
+    event_template : RecordSpec or None
         If given, names the posterior's fields: the concatenated chain is
         split into per-field arrays (multi-field) so :meth:`draws`,
         :meth:`_mean` / :meth:`_variance`, etc. return Records keyed by
@@ -153,7 +156,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
     :attr:`fields`, :attr:`event_shapes`, :attr:`dtypes`,
     :meth:`_mean` / :meth:`_variance`, and the public ops
     (``mean(post)`` / ``variance(post)``) all return Records whose
-    keys match :attr:`fields`. Nested ``EventTemplate`` fields are
+    keys match :attr:`fields`. Nested ``RecordSpec`` fields are
     stored as a flat ``(n, nested_vector_size)`` array under the
     top-level field name; the nested structure is recoverable via
     ``event_template[field]`` and via :meth:`draws`, which walks
@@ -161,27 +164,35 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
     per-chain samples.
     """
 
+    #: The memo is not state: a copy recomputes rather than inheriting one. It
+    #: matters for more than size here, since a memoised value can carry the
+    #: provenance of the term that computed it.
+    _transient_state = ("_memo",)
+
     def __init__(
         self,
         chains: list[Array],
         *,
         weights: ArrayLike | Weights | None = None,
         name: str | None = None,
-        event_template: EventTemplate | None = None,
+        event_template: RecordSpec | None = None,
         field_order: list[str] | None = None,
     ):
         if not chains:
             raise ValueError("Must provide at least one chain")
 
         self._chains = [jnp.asarray(c) for c in chains]
-        self._concatenated: Array | None = None
+        # A memo, filled on first read. Reading fills it in place, which leaves
+        # the term's own attributes as construction set them — what the
+        # immutability guard sees, and what a copy drops rather than inherits.
+        self._memo: dict[str, Array] = {}
 
         # When the caller's chain columns are laid out in a different
         # field order than the template — e.g. a backend whose trace
         # sorts variable names — permute them into ``event_template``
         # order. The positional split below (and ``draws()`` unflatten)
         # then map each column to the right field by name rather than by
-        # position, so callers don't have to pre-sort. See issue #233.
+        # position, so callers don't have to pre-sort.
         if field_order is not None:
             if event_template is None:
                 raise ValueError(
@@ -204,14 +215,14 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
                     )
             if len(event_template.fields) > 1:
                 self._chains = [c[..., perm] for c in self._chains]
-                self._concatenated = None
+                transient_memo(self).pop("concatenated", None)
 
         flat = self._concat_chains()
         # Track whether the user explicitly supplied a template; we use
         # this in ``draws()`` to decide whether to wrap the output.
         self._user_template = event_template is not None
         # Multi-field template → split the flat chain by top-level
-        # field. Nested ``EventTemplate`` fields are stored as a
+        # field. Nested ``RecordSpec`` fields are stored as a
         # 2-D ``(n, nested_vector_size)`` slice under the top-level
         # field name; the nested structure is recovered via
         # ``event_template[field]`` and ``draws()``. Slice sizes use
@@ -247,21 +258,17 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
             for field_name, size in zip(event_template.fields, sizes):
                 spec = event_template.children[field_name]
                 chunk = flat[..., offset : offset + size]
-                if isinstance(spec, EventTemplate):
+                if isinstance(spec, RecordSpec):
                     # Nested: keep flat-per-top-level-field. Shape is
                     # ``(*sample_shape, nested_vector_size)``.
                     fields[field_name] = chunk
                 else:
-                    # ArraySpec leaf (opaque rejected above, nested handled).
-                    assert isinstance(spec, ArraySpec)
-                    shape = spec.shape
+                    # NumericArraySpec leaf (opaque rejected above, nested handled).
+                    shape = cast(NumericArraySpec, spec).shape
                     fields[field_name] = chunk.reshape(*flat.shape[:-1], *shape)
                 offset += size
-            super().__init__(
-                Record(name or "posterior", fields, name_is_auto=True),
-                weights=weights,
-                name=name or "posterior",
-            )
+            label = name or "posterior"
+            super().__init__(label, Record(label, fields), weights=weights)
             self._event_template = event_template
         else:
             # Single-field path: ``name`` (default ``"posterior"``)
@@ -270,15 +277,17 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
             field_name = name or "posterior"
             if event_template is not None and len(event_template.fields) == 1:
                 field_name = event_template.fields[0]
-            super().__init__(flat, weights=weights, name=field_name)
+            super().__init__(field_name, flat, weights=weights)
             if event_template is not None:
                 self._event_template = event_template
 
     def _concat_chains(self) -> Array:
         """Lazily concatenated view of all chains."""
-        if self._concatenated is None:
-            self._concatenated = jnp.concatenate(self._chains, axis=0)
-        return self._concatenated
+        concatenated = transient_memo(self).get("concatenated")
+        if concatenated is None:
+            concatenated = jnp.concatenate(self._chains, axis=0)
+            transient_memo(self)["concatenated"] = concatenated
+        return concatenated
 
     # -- Chain access ---------------------------------------------------------
 
@@ -406,9 +415,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
             # the concatenated draws (a matrix ``(n, vector_size)``).
             from ..core._numeric_record import _reconstruct_from_vector
 
-            return _reconstruct_from_vector(
-                self.name, self.event_template, samples, name_is_auto=True
-            )
+            return _reconstruct_from_vector(self.name, self.event_template, samples)
         return samples
 
     def __repr__(self) -> str:
@@ -439,7 +446,7 @@ def make_posterior(
     algorithm: str,
     *,
     annotations: DataTree | None = None,
-    event_template: EventTemplate | None = None,
+    event_template: RecordSpec | None = None,
     field_order: list[str] | None = None,
     weights: ArrayLike | Weights | None = None,
     **meta: Any,
@@ -457,7 +464,7 @@ def make_posterior(
     annotations : DataTree or None
         Pre-built annotations DataTree (diagnostics, sample stats, warmup).
         Inference methods are responsible for building this.
-    event_template : EventTemplate or None
+    event_template : RecordSpec or None
         If provided, ``draws()`` returns named ``Record``.
     field_order : list of str or None
         Names the field each contiguous column-block of ``chains`` belongs
@@ -465,7 +472,7 @@ def make_posterior(
         ``event_template.fields`` order. Pass this when the chain's column
         order may differ from the template's (e.g. a backend that sorts
         variable names) so columns are aligned to fields by name rather
-        than position (see issue #233).
+        than position.
     weights : array-like, :class:`~probpipe.Weights`, or None
         Optional per-sample importance weights (across all chains),
         forwarded to :class:`ApproximateDistribution`. Lets weighted
@@ -500,7 +507,7 @@ def make_posterior(
             clean = group_path.lstrip("/")
             ds = node.to_dataset() if isinstance(node, xr.DataTree) else node
             dicto[f"arviz/{clean}"] = ds
-        result._annotations = xr.DataTree.from_dict(dicto)
+        result._init_annotations(xr.DataTree.from_dict(dicto))
 
     result.with_provenance(
         Provenance.create(

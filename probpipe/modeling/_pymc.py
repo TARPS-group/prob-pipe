@@ -11,8 +11,7 @@ from typing import Any
 
 import jax.numpy as jnp
 
-from ..core.event_template import NumericEventTemplate
-from ..core.tracked import auto_name
+from ..core._specs import NumericRecordSpec
 from ._base import ProbabilisticModel
 
 logger = logging.getLogger(__name__)
@@ -42,6 +41,8 @@ class PyMCModel(ProbabilisticModel):
 
     Parameters
     ----------
+    name : str
+        Model name for provenance.
     model_fn : callable
         Function that takes ``**observed`` keyword arguments and
         returns a ``pymc.Model`` context.  Example::
@@ -52,8 +53,6 @@ class PyMCModel(ProbabilisticModel):
                     sigma = pm.HalfNormal("sigma", 1)
                     pm.Normal("y", mu, sigma, observed=y)
                 return m
-    name : str or None
-        Model name for provenance.
 
     Raises
     ------
@@ -61,12 +60,7 @@ class PyMCModel(ProbabilisticModel):
         If ``pymc`` is not installed.
     """
 
-    def __init__(
-        self,
-        model_fn: Callable[..., Any],
-        *,
-        name: str | None = None,
-    ):
+    def __init__(self, name: str, model_fn: Callable[..., Any]):
         try:
             import pymc  # noqa: F401
         except ImportError as e:
@@ -75,10 +69,7 @@ class PyMCModel(ProbabilisticModel):
             ) from e
 
         self._model_fn = model_fn
-        # Default to the class name when the caller does not supply one;
-        # the default is an auto-derived name.
-        name, name_is_auto = auto_name(name or None, "PyMCModel")
-        self._init_tracked(name, name_is_auto=name_is_auto)
+        self._init_tracked(name)
 
         # Discover observed variable names from the model function signature.
         # Parameters with default value None are treated as observed variables
@@ -137,8 +128,7 @@ class PyMCModel(ProbabilisticModel):
             the build dropped, or a new non-observed free RV it
             introduced. ProbPipe does not support models whose
             non-observed random-variable set changes with the data
-            (dynamic random variables); see
-            https://github.com/TARPS-group/prob-pipe/issues/232.
+            (dynamic random variables).
         """
         free = {rv.name for rv in model.free_RVs}
         missing = [n for n in self._param_names if n not in free]
@@ -150,8 +140,7 @@ class PyMCModel(ProbabilisticModel):
                 f"of free random variables changes with the data (dynamic "
                 f"random variables); the parameter set must be fixed across "
                 f"builds, with only per-variable shapes allowed to depend "
-                f"on data size. See "
-                f"https://github.com/TARPS-group/prob-pipe/issues/232."
+                f"on data size."
             )
         extra = free - set(self._param_names) - set(self._observed_names)
         if extra:
@@ -162,8 +151,7 @@ class PyMCModel(ProbabilisticModel):
                 f"of free random variables changes with the data (dynamic "
                 f"random variables); the parameter set must be fixed across "
                 f"builds, with only per-variable shapes allowed to depend "
-                f"on data size. See "
-                f"https://github.com/TARPS-group/prob-pipe/issues/232."
+                f"on data size."
             )
         # Partial conditioning: include observed names left free.
         omitted_observed = tuple(n for n in self._observed_names if n in free)
@@ -182,7 +170,7 @@ class PyMCModel(ProbabilisticModel):
         self,
         model: Any,
         names: tuple[str, ...] | list[str],
-    ) -> NumericEventTemplate:
+    ) -> NumericRecordSpec:
         """Parameter template over *names*, read from a PyMC *model* build.
 
         Inference passes the data-conditioned build and the names from
@@ -200,7 +188,7 @@ class PyMCModel(ProbabilisticModel):
 
         Returns
         -------
-        NumericEventTemplate
+        NumericRecordSpec
             One field per name, carrying its event shape.
 
         Raises
@@ -221,10 +209,10 @@ class PyMCModel(ProbabilisticModel):
                     f"`pm.Normal({name!r}, 0, 1, shape=k)`)."
                 )
             fields[name] = tuple(int(s) for s in raw_shape)
-        return NumericEventTemplate(**fields)
+        return NumericRecordSpec(**fields)
 
     @property
-    def event_template(self) -> NumericEventTemplate:
+    def event_template(self) -> NumericRecordSpec:
         """Declared parameter template from the no-data build (canonical
         parameters, observed variables excluded).
 
@@ -288,7 +276,7 @@ class PyMCModel(ProbabilisticModel):
 
         * ``None`` — build the unconditioned model (used at
           construction time to discover free RVs).
-        * ``dict`` or ``Record`` (incl. ``RecordArray``) — unpack the
+        * ``dict`` or ``Record`` (incl. ``RecordBatch``) — unpack the
           fields named by ``_observed_names`` and pass them as keyword
           arguments to the model function. This is the canonical
           multi-observed-variable path: provenance tracks every named
@@ -308,8 +296,19 @@ class PyMCModel(ProbabilisticModel):
         if isinstance(data, dict):
             return self._model_fn(**{k: _to_numpy(v) for k, v in data.items()})
         # Local import to avoid a modeling→core cycle at module load.
+        from ..core._record_batch import RecordBatch
         from ..core.record import Record
 
+        if isinstance(data, RecordBatch):
+            # A batch's fields come from its schema, and its columns are read
+            # raw — an observed variable is the rows of one field.
+            return self._model_fn(
+                **{
+                    name: _to_numpy(data._raw_column(name))
+                    for name in self._observed_names
+                    if name in data.event_template
+                }
+            )
         if isinstance(data, Record):
             return self._model_fn(
                 **{

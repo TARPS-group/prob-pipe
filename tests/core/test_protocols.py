@@ -20,8 +20,9 @@ from probpipe import (
     TransformedDistribution,
 )
 from probpipe.core.protocols import (
-    SupportsConditioning,
+    SupportsApproximateConditioning,
     SupportsCovariance,
+    SupportsExactConditioning,
     SupportsExpectation,
     SupportsLogProb,
     SupportsMean,
@@ -43,18 +44,18 @@ def normal():
 @pytest.fixture
 def empirical():
     samples = jax.random.normal(jax.random.PRNGKey(0), (100, 2))
-    return EmpiricalDistribution(samples, name="x")
+    return EmpiricalDistribution("x", samples)
 
 
 @pytest.fixture
 def bootstrap():
     evals = jax.random.normal(jax.random.PRNGKey(1), (50,))
-    return BootstrapDistribution(evals)
+    return BootstrapDistribution("bootstrap", evals)
 
 
 @pytest.fixture
 def joint():
-    return ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
+    return ProductDistribution(x=Normal("x", 0, 1), y=Normal("y", 1, 2))
 
 
 # ---------------------------------------------------------------------------
@@ -190,14 +191,14 @@ class TestSupportsMean:
 
     def test_empirical_generic_no_moments(self):
         """Non-numeric EmpiricalDistribution does not support moments."""
-        dist = EmpiricalDistribution(["a", "b", "c"], name="x")
+        dist = EmpiricalDistribution("x", ["a", "b", "c"])
         assert not isinstance(dist, SupportsMean)
         assert not isinstance(dist, SupportsVariance)
         assert not isinstance(dist, SupportsCovariance)
 
     def test_array_empirical(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (100, 2))
-        dist = RecordEmpiricalDistribution(samples, name="x")
+        dist = RecordEmpiricalDistribution("x", samples)
         assert isinstance(dist, SupportsMean)
         assert isinstance(dist, SupportsVariance)
         assert isinstance(dist, SupportsCovariance)
@@ -208,20 +209,20 @@ class TestSupportsMean:
 
 
 # ---------------------------------------------------------------------------
-# SupportsConditioning
+# Conditioning capabilities
 # ---------------------------------------------------------------------------
 
 
-class TestSupportsConditioning:
+class TestConditioningCapabilities:
     def test_product_distribution(self, joint):
-        assert isinstance(joint, SupportsConditioning)
+        assert isinstance(joint, SupportsExactConditioning)
 
     def test_sequential_joint(self):
         sjd = SequentialJointDistribution(
-            x=Normal(0, 1, name="x"),
+            x=Normal("x", 0, 1),
             y=lambda x: Normal(loc=x, scale=1.0, name="y"),
         )
-        assert isinstance(sjd, SupportsConditioning)
+        assert isinstance(sjd, SupportsExactConditioning)
 
     def test_joint_gaussian(self):
         jg = JointGaussian(
@@ -230,10 +231,25 @@ class TestSupportsConditioning:
             x=2,
             y=2,
         )
-        assert isinstance(jg, SupportsConditioning)
+        assert isinstance(jg, SupportsExactConditioning)
 
     def test_normal_not_conditionable(self, normal):
-        assert not isinstance(normal, SupportsConditioning)
+        assert not isinstance(normal, SupportsExactConditioning)
+        assert not isinstance(normal, SupportsApproximateConditioning)
+
+    def test_the_exact_implementations_do_not_claim_approximate(self, joint):
+        assert not isinstance(joint, SupportsApproximateConditioning)
+
+    def test_the_capability_is_claimed_by_inheriting_not_by_the_method(self):
+        """Exactness is a claim about the result, so defining ``_condition_on`` claims nothing."""
+
+        class DefinesTheMethod:
+            def _condition_on(self, observed, /, **kwargs):
+                return observed
+
+        instance = DefinesTheMethod()
+        assert not isinstance(instance, SupportsExactConditioning)
+        assert not isinstance(instance, SupportsApproximateConditioning)
 
 
 # ---------------------------------------------------------------------------
@@ -272,17 +288,17 @@ class TestRecordDistributionViewDynamicProtocols:
     """A view over a field must only claim protocols its parent supports."""
 
     def test_view_over_log_prob_only_parent_is_not_sampling(self):
-        """Build a parent with an EventTemplate that supports only
+        """Build a parent with a RecordSpec that supports only
         log_prob, and verify the view doesn't claim to be
         SupportsSampling / SupportsMean / SupportsVariance."""
         from probpipe.core._record_distribution import (
             RecordDistribution,
             _RecordDistributionView,
         )
-        from probpipe.core.event_template import EventTemplate
+        from probpipe.core._specs import RecordSpec
 
         class _LogProbOnlyParent(RecordDistribution, SupportsLogProb):
-            event_template = EventTemplate(x=(), y=())
+            event_template = RecordSpec(x=(), y=())
 
             def __init__(self):
                 self._name = "lp_only"
@@ -335,10 +351,10 @@ class TestFlattenedDistributionViewDynamicProtocols:
             FlattenedDistributionView,
             NumericRecordDistribution,
         )
-        from probpipe.core.event_template import EventTemplate
+        from probpipe.core._specs import RecordSpec
 
         class _SampleOnlyBase(NumericRecordDistribution, SupportsSampling):
-            event_template = EventTemplate(x=())
+            event_template = RecordSpec(x=())
 
             def __init__(self):
                 self._name = "sample_only"
@@ -364,10 +380,10 @@ class TestFlattenedDistributionViewDynamicProtocols:
             FlattenedDistributionView,
             NumericRecordDistribution,
         )
-        from probpipe.core.event_template import EventTemplate
+        from probpipe.core._specs import RecordSpec
 
         class _LogProbOnlyBase(NumericRecordDistribution, SupportsLogProb):
-            event_template = EventTemplate(x=())
+            event_template = RecordSpec(x=())
 
             def __init__(self):
                 self._name = "lpo_base"
@@ -395,7 +411,7 @@ class TestSampleReturnTypeConvention:
 
     - Numeric distributions return ``Array`` (sample_shape + event_shape).
     - Record-based joints return ``Record`` / ``NumericRecord`` for an
-      unbatched draw (``sample_shape == ()``) and ``NumericRecordArray``
+      unbatched draw (``sample_shape == ()``) and ``NumericRecordBatch``
       for a batched draw.
     """
 
@@ -410,7 +426,7 @@ class TestSampleReturnTypeConvention:
 
     def test_product_distribution_return_types(self):
         from probpipe import Record
-        from probpipe.core._record_array import NumericRecordArray
+        from probpipe.core._numeric_record_batch import NumericRecordBatch
 
         dist = ProductDistribution(
             x=Normal(loc=0.0, scale=1.0, name="x"),
@@ -422,7 +438,7 @@ class TestSampleReturnTypeConvention:
         assert isinstance(s0, Record)
         # batched
         s1 = dist._sample(k, (5,))
-        assert isinstance(s1, NumericRecordArray)
+        assert isinstance(s1, NumericRecordBatch)
         assert s1.batch_shape == (5,)
 
     def test_no_distribution_exposes_sample_one(self):
@@ -434,8 +450,8 @@ class TestSampleReturnTypeConvention:
                 a=Normal(loc=0.0, scale=1.0, name="a"),
                 b=Normal(loc=0.0, scale=1.0, name="b"),
             ),
-            RecordEmpiricalDistribution(jnp.arange(5.0), name="x"),
-            BootstrapDistribution(jnp.arange(5.0)),
+            RecordEmpiricalDistribution("x", jnp.arange(5.0)),
+            BootstrapDistribution("bootstrap", jnp.arange(5.0)),
         ]
         for d in distributions:
             assert not hasattr(d, "_sample_one"), (
@@ -446,7 +462,7 @@ class TestSampleReturnTypeConvention:
         import numpy as np
 
         from probpipe import Record
-        from probpipe.core._record_array import NumericRecordArray
+        from probpipe.core._numeric_record_batch import NumericRecordBatch
 
         # Build a small JointEmpirical from stored per-component samples
         je = JointEmpirical(
@@ -455,12 +471,12 @@ class TestSampleReturnTypeConvention:
         )
         k = jax.random.PRNGKey(0)
         assert isinstance(je._sample(k, ()), Record)
-        assert isinstance(je._sample(k, (4,)), NumericRecordArray)
+        assert isinstance(je._sample(k, (4,)), NumericRecordBatch)
         assert je._sample(k, (4,)).batch_shape == (4,)
 
     def test_joint_gaussian_return_types(self):
         from probpipe import Record
-        from probpipe.core._record_array import NumericRecordArray
+        from probpipe.core._numeric_record_batch import NumericRecordBatch
 
         jg = JointGaussian(
             x=1,
@@ -470,14 +486,14 @@ class TestSampleReturnTypeConvention:
         )
         k = jax.random.PRNGKey(0)
         assert isinstance(jg._sample(k, ()), Record)
-        assert isinstance(jg._sample(k, (5,)), NumericRecordArray)
+        assert isinstance(jg._sample(k, (5,)), NumericRecordBatch)
         assert jg._sample(k, (5,)).batch_shape == (5,)
 
 
 class TestMixtureSamplingDispatch:
     """``_MixtureSampling._sample`` dispatches on component sample type.
 
-    Numeric components → Array; Record components → RecordArray;
+    Numeric components → Array; Record components → RecordBatch;
     incompatible types → clear TypeError.
     """
 
@@ -492,10 +508,9 @@ class TestMixtureSamplingDispatch:
         assert isinstance(s, jnp.ndarray)
         assert s.shape == (4,)
 
-    def test_record_components_stacked_as_record_array(self):
+    def test_record_components_stacked_as_record_batch(self):
         from probpipe import Record
         from probpipe.core._broadcast_distributions import _make_mixture_marginal
-        from probpipe.core._record_array import NumericRecordArray, RecordArray
 
         comps = [
             ProductDistribution(
@@ -504,12 +519,14 @@ class TestMixtureSamplingDispatch:
             )
             for i in range(3)
         ]
+        from probpipe import NumericRecordBatch
+
         mix = _make_mixture_marginal(comps)
-        # Batched → RecordArray
+        # Batched → RecordBatch
         s_batched = mix._sample(jax.random.PRNGKey(0), (5,))
-        assert isinstance(s_batched, (RecordArray, NumericRecordArray))
+        assert isinstance(s_batched, NumericRecordBatch)
         assert s_batched.batch_shape == (5,)
-        # Unbatched → Record (first row of the stacked RecordArray)
+        # Unbatched → Record (first row of the stacked RecordBatch)
         s_one = mix._sample(jax.random.PRNGKey(0), ())
         assert isinstance(s_one, Record)
 
@@ -527,7 +544,7 @@ class TestTransformedDistributionDynamicProtocols:
 
         from probpipe import Normal
 
-        td = TransformedDistribution(Normal(loc=0.0, scale=1.0, name="x"), tfb.Exp())
+        td = TransformedDistribution("td", Normal(loc=0.0, scale=1.0, name="x"), tfb.Exp())
         assert isinstance(td, SupportsSampling)
         assert isinstance(td, SupportsLogProb)
         assert isinstance(td, SupportsMean)
@@ -538,13 +555,13 @@ class TestTransformedDistributionDynamicProtocols:
         import tensorflow_probability.substrates.jax.bijectors as tfb
 
         from probpipe import NumericRecordDistribution
-        from probpipe.core.event_template import EventTemplate
+        from probpipe.core._specs import RecordSpec
         from probpipe.core.protocols import SupportsLogProb
 
         class _LogProbOnly(NumericRecordDistribution, SupportsLogProb):
             _sampling_cost = "low"
             _preferred_orchestration = None
-            event_template = EventTemplate(x=())
+            event_template = RecordSpec(x=())
 
             def __init__(self):
                 self._name = "lpo"
@@ -563,7 +580,7 @@ class TestTransformedDistributionDynamicProtocols:
                 return jnp.asarray(0.0)
 
         base = _LogProbOnly()
-        td = TransformedDistribution(base, tfb.Identity())
+        td = TransformedDistribution("td", base, tfb.Identity())
         assert isinstance(td, SupportsLogProb)
         assert not isinstance(td, SupportsSampling)
 
@@ -580,19 +597,19 @@ class TestSequentialJointDynamicProtocols:
         assert isinstance(joint, SupportsLogProb)
         assert isinstance(joint, SupportsMean)
         assert isinstance(joint, SupportsVariance)
-        assert isinstance(joint, SupportsConditioning)
+        assert isinstance(joint, SupportsExactConditioning)
 
     def test_bootstrap_component_drops_log_prob(self):
         """``BootstrapDistribution`` lacks ``SupportsLogProb``; a
         sequential joint containing one should not claim it."""
-        boot = BootstrapDistribution(jnp.array([1.0, 2.0, 3.0]), name="boot")
+        boot = BootstrapDistribution("boot", jnp.array([1.0, 2.0, 3.0]))
         joint = SequentialJointDistribution(
             z=Normal(loc=0.0, scale=1.0, name="z"),
             b=lambda z: boot,
         )
         # Sampling and conditioning always available.
         assert isinstance(joint, SupportsSampling)
-        assert isinstance(joint, SupportsConditioning)
+        assert isinstance(joint, SupportsExactConditioning)
         # MRO-level claims reflect missing log-prob on a component.
         assert SupportsLogProb not in type(joint).__mro__
 
@@ -606,7 +623,7 @@ class TestJointEmpiricalDispatch:
         je = JointEmpirical(x=jnp.zeros((5, 2)), y=jnp.zeros(5))
         assert type(je) is NumericJointEmpirical
         # Empirical distributions deliberately do not claim
-        # SupportsLogProb (PR-B); use the converter registry for a
+        # SupportsLogProb; use the converter registry for a
         # density on top of empirical samples.
         assert not isinstance(je, SupportsLogProb)
         assert isinstance(je, SupportsMean)
@@ -636,9 +653,10 @@ class TestJointEmpiricalDispatch:
         )
         assert type(je) is JointEmpirical
         assert not isinstance(je, NumericJointEmpirical)
-        # Sampling + conditioning still available on the generic base.
+        # Sampling is available on the generic base; conditioning is not offered.
         assert isinstance(je, SupportsSampling)
-        assert isinstance(je, SupportsConditioning)
+        assert not isinstance(je, SupportsExactConditioning)
+        assert not isinstance(je, SupportsApproximateConditioning)
         # Numeric protocols are not on the base class.
         assert SupportsLogProb not in type(je).__mro__
         assert SupportsMean not in type(je).__mro__
@@ -692,7 +710,7 @@ class TestProtocolsSupportedByAll:
         """A leaf missing one protocol removes that protocol from the result."""
         from probpipe.core.protocols import protocols_supported_by_all
 
-        boot = BootstrapDistribution(jnp.array([1.0, 2.0, 3.0]), name="b")
+        boot = BootstrapDistribution("b", jnp.array([1.0, 2.0, 3.0]))
         leaves = [Normal(loc=0.0, scale=1.0, name="n"), boot]
         result = protocols_supported_by_all(
             leaves,
@@ -742,15 +760,13 @@ class TestProtocolsSupportedByAll:
 
 
 class TestSupportsArrayBackendProtocolSurface:
-    """Structural checks on :class:`SupportsArrayBackend`.
+    """Structural checks on :class:`SupportsArrayBackend`:
 
-    Commit 1 of PR-C.1 only adds the protocol; concrete TFP / Record
-    implementations land in later commits, and the existing
-    ``Distribution`` subclasses don't yet implement
-    ``_make_array_backend``. These tests pin the protocol's *shape*
-    (importable, runtime-checkable, classmethod-level) so later
-    commits can layer on the implementations without regressing the
-    contract.
+    * the protocol and ``_DistributionArrayBackend`` are importable, and only
+      the protocol is exported;
+    * every TFP-backed distribution inherits ``_make_array_backend`` from
+      ``TFPDistribution``;
+    * ``_DistributionArrayBackend`` declares its minimum members.
     """
 
     def test_protocol_is_importable(self):
@@ -774,14 +790,13 @@ class TestSupportsArrayBackendProtocolSurface:
         ``_make_array_backend`` from ``TFPDistribution``.
 
         The protocol method is a classmethod, so the check is on the
-        class itself: ``hasattr(Normal, "_make_array_backend")``. Pins
-        the post-commit-2 contract — non-TFP distributions still don't
-        implement it and stay on the literal-array fallback path.
+        class itself: ``hasattr(Normal, "_make_array_backend")``.
+        Non-TFP distributions do not implement it and stay on the
+        literal-array fallback path.
         """
         for cls in (Normal, Beta, Gamma, MultivariateNormal):
             assert hasattr(cls, "_make_array_backend"), (
-                f"{cls.__name__} should inherit _make_array_backend "
-                f"from TFPDistribution after PR-C.1 commit 2."
+                f"{cls.__name__} should inherit _make_array_backend from TFPDistribution."
             )
 
     def test_backend_protocol_minimum_surface(self):

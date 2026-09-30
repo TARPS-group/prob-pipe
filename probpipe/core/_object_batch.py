@@ -1,6 +1,6 @@
 """Object-array storage for the batch forms of values that do not stack natively.
 
-An ``ArraySpec`` value batches natively — an array with the batch axes leading —
+A ``NumericArraySpec`` value batches natively — an array with the batch axes leading —
 so no class is needed for it. A callable and an opaque object have no such form:
 there is nothing to stack them *into*. :class:`_ObjectBatch` supplies the
 storage those two batch forms share, a numpy object array, leaving each public
@@ -23,8 +23,8 @@ from typing import Any, Self
 import jax
 import numpy as np
 
-from ._batch import Batch, BatchSpec, _axis_size
-from .event_template import ValueSpec
+from ._batch import Batch, BatchSpec, _axis_groups_for
+from ._specs import TermSpec
 from .provenance import Provenance
 
 
@@ -33,6 +33,10 @@ class _ObjectBatch[E](Batch[E]):
 
     Parameters
     ----------
+    name : str
+        The batch's name. Required, as it is for every batch: a batch is a value a
+        caller holds, and a name derived from its class says nothing about what it
+        holds.
     elements : numpy.ndarray or iterable
         The elements, as an object array of any shape or a flat iterable. A
         nested sequence is not unpacked: build the array to state a shape of
@@ -42,19 +46,14 @@ class _ObjectBatch[E](Batch[E]):
     level_names : str or iterable of str
         One name per level, outermost first; a single string names a single
         level. There is no default, deliberately — see *Notes*.
-    element_spec : ValueSpec
+    element_spec : TermSpec
         What every element satisfies, checked against each at construction.
-    axis_groups : iterable of iterable of int, optional
-        The axis *sizes* each level holds, in order, tiling the shape the
-        elements are stored in. Defaults to one axis per level, which requires
-        as many names as ``elements`` has axes; a level spanning several axes is
-        stated explicitly.
-    name : str, optional
-        The batch's name. Defaults to the class name lowercased, marked
-        auto-derived.
-    name_is_auto : bool, default False
-        Whether *name* is auto-derived rather than user-given. A batch left
-        unnamed is auto-named regardless.
+    axes_per_level : iterable of int, optional
+        How many axes each level holds, outermost first; they must account for
+        every batch axis. Defaults to one axis per level, which requires as many
+        names as there are batch axes. The *sizes* are read off the elements
+        rather than restated here — they are already fixed by the data, so the
+        only thing left to say is where one level ends and the next begins.
     provenance : Provenance, optional
         How this batch was produced.
 
@@ -65,10 +64,10 @@ class _ObjectBatch[E](Batch[E]):
         which iterates into something other than its elements — if it is not
         iterable at all, or if an ndarray of elements is not ``dtype=object``.
     ValueError
-        If ``elements`` is empty, or is a zero-dimensional array (one object with
-        no batch axis), if ``axis_groups`` does not tile the stored shape, or if
-        ``axis_groups`` is omitted and the number of names does not match the
-        number of axes.
+        If ``elements`` is a zero-dimensional array (one object, with no batch
+        axis to count along), if ``axes_per_level`` does not account for every
+        stored axis or gives a count that is not one per level, or if it is omitted
+        and the number of names does not match the number of axes.
 
     Notes
     -----
@@ -78,11 +77,11 @@ class _ObjectBatch[E](Batch[E]):
     :class:`~probpipe.core._batch.Batch` refuses to resolve a clash by
     suffixing. The caller that mints a level knows what it means.
 
-    Construction requires at least one element, while *selecting* none is
-    allowed: ``batch[0:0]`` is a batch of nothing, as the level algebra intends.
-    The asymmetry is deliberate — an empty literal at construction is almost
-    always a mistake, and a shape cannot be inferred from it — so an empty batch
-    is reached by selecting one rather than by building one.
+    Construction admits no elements, as selection always did: ``batch[0:0]`` and
+    ``OpaqueBatch("draws", [], "draw")`` are both a batch of nothing. Zero is a count the
+    level can carry, and an object array of no elements still reports the shape
+    ``(0,)`` to read it from. What is refused is a missing *axis*: a
+    zero-dimensional store is one object, with no level to count along.
     """
 
     _store: np.ndarray
@@ -94,18 +93,18 @@ class _ObjectBatch[E](Batch[E]):
 
     def __init__(
         self,
+        name: str,
         elements: np.ndarray | Iterable[E],
+        /,
         level_names: str | Iterable[str],
         *,
-        element_spec: ValueSpec,
-        axis_groups: Iterable[Iterable[int]] | None = None,
-        name: str | None = None,
-        name_is_auto: bool = False,
+        element_spec: TermSpec,
+        axes_per_level: Iterable[int] | None = None,
         provenance: Provenance | None = None,
     ) -> None:
         store = _as_object_array(elements, kind=type(self).__name__)
         names = (level_names,) if isinstance(level_names, str) else tuple(level_names)
-        groups = _axis_groups_for(store.shape, names, axis_groups, kind=type(self).__name__)
+        groups = _axis_groups_for(store.shape, names, axes_per_level, kind=type(self).__name__)
 
         object.__setattr__(self, "_store", store)
         _check_elements(
@@ -113,10 +112,32 @@ class _ObjectBatch[E](Batch[E]):
         )
         self._init_batch(
             BatchSpec(element_spec, groups, names),
-            name=name if name is not None else type(self).__name__.lower(),
-            name_is_auto=name is None or name_is_auto,
+            name=name,
             provenance=provenance,
         )
+
+    @classmethod
+    def _over_store(cls, store: np.ndarray, *, spec: BatchSpec, name: str) -> Self:
+        """This batch over *store* as given, without copying or re-checking it.
+
+        The public constructor copies the elements, freezes the copy, and checks
+        every entry against the element spec — each O(batch_size), and each
+        earning its cost against a caller who owns the array and may write to it
+        or have filled it with the wrong thing. A caller holding a store it
+        already froze and already validated has neither to defend against, and
+        entering through ``__init__`` would make presenting one field a walk over
+        the whole batch.
+
+        The store is shared, not copied, so this is a view: it is the caller's
+        responsibility that the buffer is frozen and its entries satisfy *spec*'s
+        element spec.
+        """
+        # ``object.__new__`` for the reason :meth:`_sub_batch_at` gives: a host's
+        # own ``__new__`` may select a class from constructor arguments.
+        batch = object.__new__(cls)
+        object.__setattr__(batch, "_store", store)
+        batch._init_batch(spec, name=name)
+        return batch
 
     # -- the storage seam ---------------------------------------------------
 
@@ -152,8 +173,29 @@ class _ObjectBatch[E](Batch[E]):
         # must not run again where there are none.
         view = object.__new__(type(self))
         object.__setattr__(view, "_store", self._store[index])
-        view._init_batch(spec, name=name, name_is_auto=True)
+        view._init_batch(spec, name=name)
         return view
+
+
+def _frozen_object_column(column: np.ndarray) -> np.ndarray:
+    """*column* as an object array nobody can write through.
+
+    A batch holds the columns it validated. An object column is the one kind a
+    caller can still mutate after construction — a JAX array is already immutable
+    and a numpy numeric column follows the aliasing convention the single-record
+    types already set — so it is copied and frozen, for the reason
+    ``_ObjectBatch`` states: a caller keeping a handle on what they passed cannot
+    write a value into the batch that its spec does not admit. Only the pointer
+    array is copied, so the elements stay shared.
+    """
+    frozen = np.array(column, dtype=object, subok=False)
+    frozen.setflags(write=False)
+    return frozen
+
+
+def _is_object_array(column: Any) -> bool:
+    """Whether *column* is a numpy array of objects, the non-array column form."""
+    return isinstance(column, np.ndarray) and column.dtype == object
 
 
 def _as_object_array(elements: np.ndarray | Iterable[Any], *, kind: str) -> np.ndarray:
@@ -182,8 +224,6 @@ def _as_object_array(elements: np.ndarray | Iterable[Any], *, kind: str) -> np.n
         _refuse_container(elements, kind=kind)
         store = _from_iterable(elements, kind=kind)
 
-    if store.size == 0:
-        raise ValueError(f"{kind} requires at least one element")
     if store.ndim == 0:
         raise ValueError(f"{kind} requires at least one batch axis; got a single object")
     store.setflags(write=False)
@@ -227,45 +267,8 @@ def _from_iterable(elements: Iterable[Any], *, kind: str) -> np.ndarray:
     return store
 
 
-def _axis_groups_for(
-    shape: tuple[int, ...],
-    names: tuple[str, ...],
-    axis_groups: Iterable[Iterable[int]] | None,
-    *,
-    kind: str,
-) -> tuple[tuple[int, ...], ...]:
-    """The axis groups for *shape*, defaulting to one axis per level.
-
-    A supplied grouping must tile the store's own shape: it says which axes each
-    level holds, and the axes are the ones the elements are actually arranged in.
-    A grouping that disagreed would make every accessor — ``batch_shape``,
-    ``len``, ``repr``, the spec itself — a statement about a shape the storage
-    does not have, and indexing would leave the batch's own bounds check to fail
-    somewhere inside numpy instead.
-    """
-    if axis_groups is None:
-        if len(names) != len(shape):
-            axes = "axis" if len(shape) == 1 else "axes"
-            raise ValueError(
-                f"{kind} places one axis per level unless axis_groups says otherwise, so "
-                f"{len(shape)} {axes} need {len(shape)} level names; "
-                f"got {len(names)}: {list(names)}"
-            )
-        return tuple((size,) for size in shape)
-
-    groups = tuple(tuple(_axis_size(size) for size in group) for group in axis_groups)
-    tiled = tuple(size for group in groups for size in group)
-    if tiled != shape:
-        raise ValueError(
-            f"axis_groups must tile the shape the elements are stored in: {groups} tiles "
-            f"{tiled}, but {kind} was given elements of shape {shape}. Each entry is an axis "
-            f"*size*, and the sizes in order are the store's own shape"
-        )
-    return groups
-
-
 def _check_elements(
-    store: np.ndarray, element_spec: ValueSpec, *, describing: str, kind: str
+    store: np.ndarray, element_spec: TermSpec, *, describing: str, kind: str
 ) -> None:
     """Fail on the first element the shared spec does not admit, naming its position.
 

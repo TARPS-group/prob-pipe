@@ -1,7 +1,7 @@
 # Contract Discipline — Value-Model Refactor (issue #235)
 
 **Audience:** every session (Claude or human) implementing a phase of the #235 value-model plan —
-`EventTemplate`, the `Record` / `Distribution` value containers, the Batch types
+`RecordSpec`, the `Record` / `Distribution` value containers, the Batch types
 (`*Array` → `*Batch`), `Function`, and naming/provenance. **Read this before you start, and
 follow it for every phase.** It is meant to outlive any single PR or session — do not assume the
 plan's author is available to restate these rules.
@@ -76,9 +76,9 @@ if it were user-guide reference text.
      enforces them lands. *Example:* `to_vector` / `from_vector` are **value**
      operations — a template describes structure and does not depend on the value
      type, so it carries neither. `to_vector` is `NumericRecord.to_vector` /
-     `NumericRecordArray.to_vector`; `from_vector(name, template, vec)` is the
+     `NumericRecordBatch.to_vector`; `from_vector(name, template, vec)` is the
      classmethod pair `NumericRecord.from_vector` (single) /
-     `NumericRecordArray.from_vector` (batched), each taking the template as an
+     `NumericRecordBatch.from_vector` (batched), each taking the template as an
      argument. These are the
      **numeric** 1-D (de)serialization — they ravel and concatenate numeric leaves (require
      `is_numeric`). The **general** (de)composition keeps each leaf whole (any type): export with
@@ -93,13 +93,22 @@ if it were user-guide reference text.
 | Abstraction | Canonical contract location |
 |---|---|
 | `NamedTree` (shared name-keyed tree substrate) | docstrings in `probpipe/core/named_tree.py`; #235 Chapter 1 |
-| `EventTemplate` / `NumericEventTemplate` / `ValueSpec` (raw-value: `ArraySpec`·`OpaqueSpec`; `TermSpec`: `RecordSpec`·`DistributionSpec`·`FunctionSpec`) | docstrings in `probpipe/core/event_template.py`; #235 Chapter 1 |
-| `Record` / `NumericRecord` | docstrings in `probpipe/core/record.py`, `_numeric_record.py`; #235 Chapter 2 |
+| `TermSpec` / `NumericSpec` (one spec protocol across all kinds) | docstrings in `probpipe/core/_spec_base.py`; design II.1–II.3 |
+| `NumericArraySpec` / `OpaqueSpec` (numeric-array and opaque value declarations) | docstrings in `probpipe/core/_spec_base.py`; design III.1–III.2 |
+| `DistributionSpec` (the distribution kind's declaration) | docstrings in `probpipe/distributions/_distribution.py`; design III.7 |
+| `FunctionSpec` (the callable kind's declaration) | docstrings in `probpipe/core/_kind_specs.py`; design III.3 |
+| `InputSpec` / `OutputSpec` (slots, component exposure, type holes) | docstrings in `probpipe/core/_specs.py`; design II.2 |
+| `RecordSpec` / `NumericRecordSpec` (the record kind spec is its schema) | docstrings in `probpipe/core/_record_spec.py`; design III.5 |
+| the kind table (which tracked class and which batch form each value spec has) | docstrings in `probpipe/core/_kinds.py` |
+| `NumericArray` / `Opaque` (the tracked classes of the two raw-value kinds) | docstrings in `probpipe/core/_numeric_array.py`, `_opaque.py` |
+| `Record` / `NumericRecord` (`spec` and `event_template` return the same stored `RecordSpec` object) | docstrings in `probpipe/core/record.py`, `_numeric_record.py`; #235 Chapter 2 |
 | `Batch` / `BatchSpec` (the multiplicity axis: levels, level names, view identity) | docstrings in `probpipe/core/_batch.py`; #235 Chapter 2 |
-| Batch types (`RecordArray`/`NumericRecordArray`/`DistributionArray` → `*Batch`) | docstrings in `_record_array.py`, `_distribution_array.py`; #235 Chapter 2 |
+| `NumericArrayBatch` (the batch form of the numeric-array kind; one native store, not columns) | docstrings in `probpipe/core/_numeric_array_batch.py`; #235 Chapter 2 |
+| `RecordBatch` / `NumericRecordBatch` (columnar, leaf-path-keyed storage; a collection, not a named tree) | docstrings in `probpipe/core/_record_batch.py`, `_numeric_record_batch.py`; #235 Chapter 2 |
 | `FunctionBatch` / `OpaqueBatch` (the batch forms that *store* their elements, over shared object-array storage) | docstrings in `probpipe/core/_function_batch.py`, `_opaque_batch.py` (storage in `_object_batch.py`); #235 Chapter 2 |
 | `Function` & ops (`sample`, `log_prob`, …) | docstrings in `core/node.py`, `core/ops.py`, `_workflow_result.py`; #235 Chapter 3 |
 | Naming / provenance / annotations (`TrackedTerm` / `Annotated` mixins) | docstrings in `probpipe/core/tracked.py` (and `provenance.py` for `Provenance` / `ParentInfo`); the naming contract in #235 Chapter 5 |
+| Immutability (`Immutable` mixin: the assignment guard, and the `copy` / `pickle` state round-trip it forces) | docstrings in `probpipe/core/_immutable.py`; `design/02-shared-abstractions.md` §II.4 |
 
 ## Canonical variable names (use these; don't invent synonyms)
 | Concept | Name |
@@ -108,15 +117,17 @@ if it were user-guide reference text.
 | a 1-D numeric serialization | `vec` |
 | values for leaves dropped by `numeric_subset`, supplied when reconstructing a full value | `non_numeric` |
 | batch dimensions | `batch_shape` |
-| batch axes tiled into levels | `axis_groups` |
+| batch axes tiled into levels | `axis_groups` (reported; construction takes `axes_per_level`) |
 | one name per level of a batch | `level_names` |
 | the spec every element of a batch satisfies | `element_spec` |
 | the objects a batch is built from | `elements` |
 | independent-draw shape prefix for `sample` | `sample_shape` |
-| a distribution's structural schema | `event_template` |
+| a distribution's current structural schema | `event_template` (RecordSpec; declaration migration is separate) |
 | PRNG key | `key` |
 | a tracked object's own identity name (the required first arg of `Record` / a distribution) | `name` |
 | a field key within a tree / the name being assigned to a field | `field_name` / `key` |
+| attributes an immutable class keeps out of its state round-trip (memos) | `_transient_state` |
+| attributes an immutable class restores into their own container (stores written in place) | `_decoupled_state` |
 *(Extend this table whenever a new contract introduces a recurring parameter.)*
 
 ## Per-PR checklist (copy into the PR description)

@@ -1,7 +1,7 @@
 """Backend-agnostic inference utilities.
 
 Functions for building target log-density callables and initial chain
-states from a :class:`~probpipe.core.distribution.Distribution` plus
+states from a :class:`~probpipe.Distribution` plus
 observed data. Shared across every inference backend in
 ``probpipe.inference`` so they consume the same source of truth.
 
@@ -35,11 +35,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..core.distribution import Distribution
-from ..core.event_template import EventTemplate
+from ..core._specs import RecordSpec
 from ..core.protocols import SupportsSampling
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike
+from ..distributions._distribution import Distribution
 
 logger = logging.getLogger(__name__)
 
@@ -273,7 +273,7 @@ def get_prior(dist: Distribution) -> Distribution:
     return dist._prior if is_simple_model(dist) else dist
 
 
-def extract_event_template(dist: Distribution) -> EventTemplate | None:
+def extract_event_template(dist: Distribution) -> RecordSpec | None:
     """Return *dist*'s prior's ``event_template``, or ``None``.
 
     Uses ``getattr`` to tolerate priors that aren't a
@@ -341,7 +341,7 @@ def build_target_log_prob_flat(
     *,
     init: ArrayLike | None = None,
     random_seed: int | Array = 0,
-) -> tuple[Callable[[Array], Array], Array, EventTemplate | None]:
+) -> tuple[Callable[[Array], Array], Array, RecordSpec | None]:
     """Build a flat-vector target + initial state + (optional) record template.
 
     Returns ``(target_flat_fn, flat_init, event_template)``:

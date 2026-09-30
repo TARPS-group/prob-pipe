@@ -12,7 +12,7 @@ from probpipe import (
     ProductDistribution,
     Provenance,
     Record,
-    RecordArray,
+    RecordBatch,
     SupportsCovariance,
     SupportsLogProb,
     SupportsMean,
@@ -22,8 +22,9 @@ from probpipe import (
     mean,
     sample,
     variance,
+    workflow_run,
 )
-from probpipe.core.distribution import (
+from probpipe.core._broadcast_distributions import (
     _ListMarginal,
     _make_marginal,
     _make_mixture_marginal,
@@ -167,7 +168,7 @@ class TestResamplingARecordValuedComponent:
         """A batch of three rows whose record input determines the output."""
         rows = [Record("r", x=jnp.array(float(i)), y=jnp.array(10.0 * i)) for i in range(1, 4)]
         return BroadcastDistribution(
-            input_samples={"a": RecordArray.stack(rows)},
+            input_samples={"a": RecordBatch.stack(rows, level_name="draw")},
             output_samples=jnp.array([10.0, 20.0, 30.0]),
             weights=None,
             broadcast_args=["a"],
@@ -177,7 +178,7 @@ class TestResamplingARecordValuedComponent:
     def test_a_record_valued_input_resamples(self, key):
         batch = self._paired()._sample(key, (5,))
 
-        assert isinstance(batch["a"], RecordArray)
+        assert isinstance(batch["a"], RecordBatch)
         assert batch["a"].batch_shape == (5,)
         assert batch["_output"].shape == (5,)
 
@@ -191,7 +192,7 @@ class TestResamplingARecordValuedComponent:
         assert set(x.tolist()) <= {1.0, 2.0, 3.0}
 
     def test_the_resampled_batch_states_the_rows_it_holds(self, key):
-        """A RecordArray stores its row count, so a gather has to restate it.
+        """A RecordBatch stores its row count, so a gather has to restate it.
 
         Rebuilding through ``jax.tree.map`` would carry the count over from the
         pytree aux data and claim three rows while holding five.
@@ -199,13 +200,13 @@ class TestResamplingARecordValuedComponent:
         batch = self._paired()._sample(key, (5,))
 
         assert batch["a"].batch_shape == (batch["a"]["x"].shape[0],)
-        assert all(spec.shape == () for spec in batch["a"].template.values())
+        assert all(spec.shape == () for spec in batch["a"].event_template.values())
 
     def test_one_draw_is_a_record_rather_than_a_one_row_batch(self, key):
         drawn = self._paired()._sample(key, ())
 
         assert isinstance(drawn["a"], Record)
-        assert not isinstance(drawn["a"], RecordArray)
+        assert not isinstance(drawn["a"], RecordBatch)
         assert drawn["a"]["x"].shape == ()
         np.testing.assert_allclose(
             float(np.asarray(drawn["_output"])), float(np.asarray(drawn["a"]["y"])), atol=1e-5
@@ -393,10 +394,13 @@ class TestMixtureMarginal:
         # Should be bimodal around -100 and 100
         assert float(jnp.min(draws)) < -50
         assert float(jnp.max(draws)) > 50
+        # Equal component weights put half the draws in each mode. Observed across
+        # five seeds: positive fraction 0.467-0.514 (binomial sd 0.016).
+        np.testing.assert_allclose(float(jnp.mean(draws > 0)), 0.5, rtol=0, atol=0.05)
 
     def test_no_sampling_when_components_lack_it(self):
         """Components without SupportsSampling → marginal shouldn't support it."""
-        from probpipe.core.distribution import Distribution
+        from probpipe import Distribution
 
         class NoSampleDist(Distribution):
             pass
@@ -441,20 +445,20 @@ class TestMakeMarginal:
         assert isinstance(m, _RecordMarginal)
 
     def test_declared_bare_array_requires_single_leaf_template(self):
-        from probpipe import EventTemplate
+        from probpipe import RecordSpec
 
         with pytest.raises(ValueError, match=r"bare array.*single-leaf"):
             _make_marginal(
                 jnp.ones((5, 2)),
                 None,
-                event_template=EventTemplate(left=(2,), right=(2,)),
+                event_template=RecordSpec(left=(2,), right=(2,)),
             )
 
     def test_declared_bare_array_preserves_nested_single_leaf_path(self):
-        from probpipe import EventTemplate
+        from probpipe import RecordSpec
 
         samples = jnp.arange(10.0).reshape(5, 2)
-        template = EventTemplate(stats=EventTemplate(value=(2,)))
+        template = RecordSpec(stats=RecordSpec(value=(2,)))
 
         marginal = _make_marginal(samples, None, event_template=template)
 
@@ -633,40 +637,64 @@ class TestArrayMarginalAdditional:
         np.testing.assert_allclose(result, jnp.array([2.5]), atol=1e-4)
 
     def test_expectation_subsampled(self, key):
-        """Subsampled expectation returns BootstrapDistribution by default."""
-        from probpipe.core.distribution import BootstrapDistribution
+        """Subsampled expectation returns a BootstrapDistribution by default, whose
+        atoms are num_evaluations distinct sample values."""
+        from probpipe import BootstrapDistribution
 
         samples = jnp.arange(100, dtype=jnp.float32).reshape(-1, 1)
         m = _RecordMarginal(samples, None)
         result = m._expectation(lambda x: x, key=key, num_evaluations=20)
         assert isinstance(result, BootstrapDistribution)
+        assert result.num_atoms == 20
+        atoms = np.asarray(result.evaluations)
+        assert np.unique(atoms).size == 20
+        assert np.isin(atoms, samples).all()
 
     def test_expectation_subsampled_no_dist(self, key):
-        """Subsampled expectation with return_dist=False returns array."""
+        """With return_dist=False, the subsampled expectation is the mean of the
+        atoms that return_dist=True returns for the same key."""
         samples = jnp.arange(100, dtype=jnp.float32).reshape(-1, 1)
         m = _RecordMarginal(samples, None)
         result = m._expectation(lambda x: x, key=key, num_evaluations=20, return_dist=False)
         assert isinstance(result, jnp.ndarray)
+        atoms = np.asarray(m._expectation(lambda x: x, key=key, num_evaluations=20).evaluations)
+        np.testing.assert_allclose(result, np.mean(atoms, axis=0), rtol=1e-6)
 
     def test_expectation_subsampled_weighted(self, key):
-        """Subsampled expectation with weights."""
-        from probpipe.core.distribution import BootstrapDistribution
+        """With unequal weights, subsampled expectation returns a BootstrapDistribution
+        over num_evaluations distinct sample values, weighted by their renormalized
+        weights."""
+        from probpipe import BootstrapDistribution
 
         n = 50
         samples = jnp.arange(n, dtype=jnp.float32).reshape(-1, 1)
-        w = jnp.ones(n) / n
+        w = jnp.arange(1.0, n + 1.0)
         m = _RecordMarginal(samples, w)
         result = m._expectation(lambda x: x, key=key, num_evaluations=10)
         assert isinstance(result, BootstrapDistribution)
+        assert result.num_atoms == 10
+        atoms = np.asarray(result.evaluations)
+        assert np.unique(atoms).size == 10
+        assert np.isin(atoms, samples).all()
+        # The samples are 0, ..., n - 1, so each atom's value is also its index into w.
+        atom_w = np.asarray(w)[atoms.ravel().astype(int)]
+        np.testing.assert_allclose(
+            mean(result), np.average(atoms, axis=0, weights=atom_w), rtol=1e-6
+        )
 
     def test_expectation_subsampled_weighted_no_dist(self, key):
-        """Subsampled weighted expectation with return_dist=False."""
+        """With unequal weights and return_dist=False, the subsampled expectation is
+        the weighted mean of the atoms that return_dist=True returns for the same key."""
         n = 50
         samples = jnp.arange(n, dtype=jnp.float32).reshape(-1, 1)
-        w = jnp.ones(n) / n
+        w = jnp.arange(1.0, n + 1.0)
         m = _RecordMarginal(samples, w)
         result = m._expectation(lambda x: x, key=key, num_evaluations=10, return_dist=False)
         assert isinstance(result, jnp.ndarray)
+        atoms = np.asarray(m._expectation(lambda x: x, key=key, num_evaluations=10).evaluations)
+        # The samples are 0, ..., n - 1, so each atom's value is also its index into w.
+        atom_w = np.asarray(w)[atoms.ravel().astype(int)]
+        np.testing.assert_allclose(result, np.average(atoms, axis=0, weights=atom_w), rtol=1e-6)
 
     def test_cov_weighted(self):
         """Weighted covariance."""
@@ -758,8 +786,8 @@ class TestMakeMarginalEdgeCases:
 # ---------------------------------------------------------------------------
 
 
-class TestRecordArrayMarginal:
-    """Record-returning Function outputs should be RecordArrayMarginal,
+class TestRecordBatchMarginal:
+    """Record-returning Function outputs should be RecordBatchMarginal,
     not _ListMarginal, and must support mean/variance/sample."""
 
     @pytest.fixture
@@ -777,7 +805,7 @@ class TestRecordArrayMarginal:
             Normal(loc=2.0, scale=0.1, name="y"),
         )
 
-    def test_record_output_produces_record_array_marginal(
+    def test_record_output_produces_record_batch_marginal(
         self,
         record_workflow,
         prior,
@@ -786,7 +814,8 @@ class TestRecordArrayMarginal:
         assert isinstance(result, _RecordMarginal)
 
     def test_mean_per_field(self, record_workflow, prior):
-        result = record_workflow(**prior.select("x", "y"))
+        with workflow_run(seed=0):
+            result = record_workflow(**prior.select("x", "y"))
         m = mean(result)
         assert isinstance(m, Record)
         # sum = x + y ~ N(3, sqrt(0.02)); diff = x - y ~ N(-1, sqrt(0.02))
@@ -795,7 +824,8 @@ class TestRecordArrayMarginal:
         np.testing.assert_allclose(float(m["diff"]), -1.0, atol=mc_se)
 
     def test_variance_per_field(self, record_workflow, prior):
-        result = record_workflow(**prior.select("x", "y"))
+        with workflow_run(seed=0):
+            result = record_workflow(**prior.select("x", "y"))
         v = variance(result)
         assert isinstance(v, Record)
         # Var(x+y) = Var(x) + Var(y) = 0.02 when jointly sampled independently.
@@ -803,10 +833,16 @@ class TestRecordArrayMarginal:
         np.testing.assert_allclose(float(v["sum"]), 0.02, atol=0.02)
         np.testing.assert_allclose(float(v["diff"]), 0.02, atol=0.02)
 
-    def test_sample_returns_record(self, record_workflow, prior, key):
+    def test_sample_returns_a_batch_of_records_on_the_sample_level(
+        self, record_workflow, prior, key
+    ):
+        """The draws are a multiplicity, and the level says what they range over."""
         result = record_workflow(**prior.select("x", "y"))
+
         s = sample(result, key=key, sample_shape=(5,))
-        assert "sum" in s
+
+        assert (s.batch_shape, s.level_names) == ((5,), ("sample",))
+        assert list(s.event_template) == ["sum", "diff"]
         assert s["sum"].shape == (5,)
         assert s["diff"].shape == (5,)
 
@@ -817,7 +853,7 @@ class TestRecordArrayMarginal:
 
 
 # ===========================================================================
-# _make_stack — RecordArray-broadcast sibling of _make_marginal (issue #130)
+# _make_stack — RecordBatch-broadcast sibling of _make_marginal
 # ===========================================================================
 
 
@@ -826,107 +862,140 @@ class TestMakeStack:
     shape-(n,) aggregate. Every case is a parameter-sweep-like scenario
     where row identity must survive; there is no marginalisation."""
 
-    def test_list_of_scalars_wraps_as_numeric_record_array(self):
-        from probpipe import NumericRecordArray
+    def test_the_shape_is_given_exactly_once(self):
+        """``batch_shape`` and ``n`` are two spellings of one thing."""
         from probpipe.core._broadcast_distributions import _make_stack
 
-        out = _make_stack([1.0, 2.0, 3.0, 4.0], n=4, field_name="demo")
-        assert isinstance(out, NumericRecordArray)
-        assert out.batch_shape == (4,)
-        assert out.fields == ("demo",)
-        np.testing.assert_allclose(out["demo"], [1.0, 2.0, 3.0, 4.0])
+        with pytest.raises(TypeError, match="requires either batch_shape or n"):
+            _make_stack([1.0], field_name="demo", level_names=("sweep",))
+        with pytest.raises(TypeError, match="batch_shape OR n, not both"):
+            _make_stack([1.0], batch_shape=(1,), n=1, field_name="demo", level_names=("sweep",))
+
+    def test_one_level_name_per_group_of_axes(self):
+        """A level name that names no group would name nothing."""
+        from probpipe.core._broadcast_distributions import _make_stack
+
+        with pytest.raises(ValueError, match="mints one level per group"):
+            _make_stack(
+                [1.0, 2.0, 3.0, 4.0],
+                batch_shape=(2, 2),
+                axis_groups=((2,), (2,)),
+                field_name="demo",
+                level_names=("only_one",),
+            )
+
+    def test_list_of_scalars_wraps_as_numeric_array_batch(self):
+        """Numeric rows aggregate at their own kind, with no field to address."""
+        from probpipe import NumericArrayBatch
+        from probpipe.core._broadcast_distributions import _make_stack
+
+        out = _make_stack([1.0, 2.0, 3.0, 4.0], n=4, field_name="demo", level_names=("sweep",))
+        assert isinstance(out, NumericArrayBatch)
+        assert (out.batch_shape, out.level_names) == ((4,), ("sweep",))
+        assert tuple(out.element_spec.shape) == ()
+        np.testing.assert_allclose(out.values, [1.0, 2.0, 3.0, 4.0])
 
     def test_list_of_arrays_preserves_event_shape(self):
-        from probpipe import NumericRecordArray
+        """The rows' own shape is the element's; only the sweep axis is a level."""
+        from probpipe import NumericArrayBatch
         from probpipe.core._broadcast_distributions import _make_stack
 
         values = [jnp.arange(3.0) + 10.0 * i for i in range(4)]
-        out = _make_stack(values, n=4, field_name="demo")
-        assert isinstance(out, NumericRecordArray)
+        out = _make_stack(values, n=4, field_name="demo", level_names=("sweep",))
+        assert isinstance(out, NumericArrayBatch)
         assert out.batch_shape == (4,)
-        assert out["demo"].shape == (4, 3)
+        assert tuple(out.element_spec.shape) == (3,)
+        assert out.values.shape == (4, 3)
 
     def test_list_of_numeric_records_promotes_to_numeric_array(self):
-        from probpipe import NumericRecord, NumericRecordArray
+        from probpipe import NumericRecord, NumericRecordBatch
         from probpipe.core._broadcast_distributions import _make_stack
 
         records = [NumericRecord("nr", a=float(i), b=float(i) * 2) for i in range(5)]
-        out = _make_stack(records, n=5, field_name="demo")
-        assert isinstance(out, NumericRecordArray)
+        out = _make_stack(records, n=5, field_name="demo", level_names=("sweep",))
+        assert isinstance(out, NumericRecordBatch)
         assert out.batch_shape == (5,)
         np.testing.assert_allclose(out["a"], [0, 1, 2, 3, 4])
         np.testing.assert_allclose(out["b"], [0, 2, 4, 6, 8])
 
-    def test_list_of_mixed_records_falls_back_to_recordarray(self):
+    def test_list_of_mixed_records_falls_back_to_record_batch(self):
         """Records with a string (non-numeric) leaf can't go through
-        ``NumericRecordArray.stack``. The fallback path builds each
+        ``NumericRecordBatch.stack``. The fallback path builds each
         field independently — numeric leaves via ``jnp.stack``,
         opaque leaves via ``np.asarray(dtype=object)``."""
-        from probpipe import NumericRecordArray, Record, RecordArray
+        from probpipe import NumericRecordBatch, Record, RecordBatch
         from probpipe.core._broadcast_distributions import _make_stack
 
         records = [Record("r", a=float(i), label=f"row{i}") for i in range(3)]
-        out = _make_stack(records, n=3, field_name="demo")
-        assert isinstance(out, RecordArray)
-        assert not isinstance(out, NumericRecordArray)
+        out = _make_stack(records, n=3, field_name="demo", level_names=("sweep",))
+        assert isinstance(out, RecordBatch)
+        assert not isinstance(out, NumericRecordBatch)
         np.testing.assert_allclose(out["a"], [0.0, 1.0, 2.0])
         np.testing.assert_array_equal(out["label"], ["row0", "row1", "row2"])
 
     def test_bfloat16_field_inferred_numeric_not_opaque(self):
         """The broadcast-template builder shares the numeric-dtype gate, so an
-        ml_dtypes (bfloat16) field stacks into an ArraySpec column rather than
-        being mislabeled opaque (#343)."""
-        from probpipe import Record, RecordArray
+        ml_dtypes (bfloat16) field stacks into a NumericArraySpec column rather than
+        being mislabeled opaque."""
+        from probpipe import Record, RecordBatch
         from probpipe.core._broadcast_distributions import _make_stack
-        from probpipe.core.event_template import ArraySpec, OpaqueSpec
+        from probpipe.core._opaque import OpaqueSpec
+        from probpipe.core._specs import NumericArraySpec
 
         records = [Record("r", x=jnp.ones(2, dtype=jnp.bfloat16), label=f"r{i}") for i in range(3)]
-        out = _make_stack(records, n=3, field_name="demo")
-        assert isinstance(out, RecordArray)
+        out = _make_stack(records, n=3, field_name="demo", level_names=("sweep",))
+        assert isinstance(out, RecordBatch)
         assert out["x"].dtype == jnp.bfloat16
-        assert out.template["x"] == ArraySpec((2,))  # numeric, not None/opaque
-        assert out.template["label"] == OpaqueSpec()
+        assert out.event_template["x"] == NumericArraySpec((2,))  # numeric, not None/opaque
+        assert out.event_template["label"] == OpaqueSpec()
 
     def test_list_of_distributions_gives_distribution_array(self):
         from probpipe import DistributionArray, Normal
         from probpipe.core._broadcast_distributions import _make_stack
 
         comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(3)]
-        out = _make_stack(comps, n=3, field_name="demo")
+        out = _make_stack(comps, n=3, field_name="demo", level_names=("sweep",))
         assert isinstance(out, DistributionArray)
         assert out.batch_shape == (3,)
         assert out[0] is comps[0]
 
-    def test_list_of_record_arrays_nests_batch_shape(self):
-        """Each inner RecordArray has its own batch_shape (m,). Stacking
-        n of them produces a RecordArray with batch_shape (n, m)."""
-        from probpipe import NumericRecord, NumericRecordArray
+    def test_list_of_record_batches_nests_batch_shape(self):
+        """Each inner RecordBatch has its own batch_shape (m,). Stacking
+        n of them produces a RecordBatch with batch_shape (n, m)."""
+        from probpipe import NumericRecord, NumericRecordBatch
         from probpipe.core._broadcast_distributions import _make_stack
 
         inner = [
-            NumericRecordArray.stack([NumericRecord("nr", x=float(i * 10 + j)) for j in range(4)])
+            NumericRecordBatch.stack(
+                [NumericRecord("nr", x=float(i * 10 + j)) for j in range(4)], level_name="draw"
+            )
             for i in range(3)
         ]
-        out = _make_stack(inner, n=3, field_name="demo")
-        assert isinstance(out, NumericRecordArray)
+        out = _make_stack(inner, n=3, field_name="demo", level_names=("sweep",))
+        assert isinstance(out, NumericRecordBatch)
         assert out.batch_shape == (3, 4)
         np.testing.assert_allclose(out["x"][0], [0, 1, 2, 3])
         np.testing.assert_allclose(out["x"][2], [20, 21, 22, 23])
 
-    def test_vmap_ndarray_wraps_as_numeric_record_array(self):
+    def test_vmap_ndarray_wraps_as_numeric_array_batch(self):
         """A bare ``jnp.ndarray`` with leading axis n (typical ``jax.vmap``
-        output for scalar-returning fns) wraps without unstacking."""
-        from probpipe import NumericRecordArray
+        output for scalar-returning fns) wraps without unstacking.
+
+        The mapped path agrees with the row-wise one above: same kind, same
+        split of the sweep axis from the element's.
+        """
+        from probpipe import NumericArrayBatch
         from probpipe.core._broadcast_distributions import _make_stack
 
         arr = jnp.arange(12.0).reshape(4, 3)
-        out = _make_stack(arr, n=4, field_name="demo")
-        assert isinstance(out, NumericRecordArray)
+        out = _make_stack(arr, n=4, field_name="demo", level_names=("sweep",))
+        assert isinstance(out, NumericArrayBatch)
         assert out.batch_shape == (4,)
-        assert out["demo"].shape == (4, 3)
+        assert tuple(out.element_spec.shape) == (3,)
+        assert out.values.shape == (4, 3)
 
     def test_declared_vmap_array_requires_single_leaf_template(self):
-        from probpipe import EventTemplate
+        from probpipe import RecordSpec
         from probpipe.core._broadcast_distributions import _make_stack
 
         with pytest.raises(ValueError, match=r"bare array.*single-leaf"):
@@ -934,38 +1003,41 @@ class TestMakeStack:
                 jnp.ones((4, 2)),
                 n=4,
                 field_name="demo",
-                event_template=EventTemplate(left=(2,), right=(2,)),
+                event_template=RecordSpec(left=(2,), right=(2,)),
+                level_names=("sweep",),
             )
 
     def test_declared_vmap_array_preserves_nested_single_leaf_path(self):
-        from probpipe import EventTemplate
+        from probpipe import RecordSpec
         from probpipe.core._broadcast_distributions import _make_stack
 
         values = jnp.arange(8.0).reshape(4, 2)
-        template = EventTemplate(stats=EventTemplate(value=(2,)))
+        template = RecordSpec(stats=RecordSpec(value=(2,)))
 
         out = _make_stack(
             values,
             n=4,
             field_name="demo",
             event_template=template,
+            level_names=("sweep",),
         )
 
         assert out.event_template == template
         np.testing.assert_allclose(out["stats/value"], values)
 
     def test_declared_vmap_array_supports_multidimensional_batch_shape(self):
-        from probpipe import EventTemplate
+        from probpipe import RecordSpec
         from probpipe.core._broadcast_distributions import _make_stack
 
         values = jnp.arange(12.0).reshape(6, 2)
-        template = EventTemplate(stats=EventTemplate(value=(2,)))
+        template = RecordSpec(stats=RecordSpec(value=(2,)))
 
         out = _make_stack(
             values,
             batch_shape=(2, 3),
             field_name="demo",
             event_template=template,
+            level_names=("sweep",),
         )
 
         assert out.batch_shape == (2, 3)
@@ -976,25 +1048,25 @@ class TestMakeStack:
         """``jax.vmap`` of a Record-returning fn produces a Record whose
         leaves are already batched along a leading axis. That's the
         input form for the pytree branch of ``_make_stack``."""
-        from probpipe import NumericRecordArray, Record
+        from probpipe import NumericRecordBatch, Record
         from probpipe.core._broadcast_distributions import _make_stack
 
         rec = Record("r", x=jnp.arange(5.0), y=jnp.arange(5.0) + 10)
-        out = _make_stack(rec, n=5, field_name="demo")
-        assert isinstance(out, NumericRecordArray)
+        out = _make_stack(rec, n=5, field_name="demo", level_names=("sweep",))
+        assert isinstance(out, NumericRecordBatch)
         assert out.batch_shape == (5,)
 
     def test_length_mismatch_raises(self):
         from probpipe.core._broadcast_distributions import _make_stack
 
         with pytest.raises(ValueError, match=r"expected prod\(batch_shape\)=5"):
-            _make_stack([1.0, 2.0, 3.0], n=5, field_name="demo")
+            _make_stack([1.0, 2.0, 3.0], n=5, field_name="demo", level_names=("sweep",))
 
     def test_ndarray_leading_axis_mismatch_raises(self):
         from probpipe.core._broadcast_distributions import _make_stack
 
         with pytest.raises(ValueError, match="expected leading axis"):
-            _make_stack(jnp.arange(6.0), n=4, field_name="demo")
+            _make_stack(jnp.arange(6.0), n=4, field_name="demo", level_names=("sweep",))
 
 
 # ===========================================================================
@@ -1036,11 +1108,13 @@ class TestCoerceOutput:
         assert isinstance(out, Record)
         assert list(out.keys()) == ["summary/mean", "summary/count", "x"]
 
-    def test_stack_mode_attaches_to_recordarray(self):
-        from probpipe import NumericRecord, NumericRecordArray
+    def test_stack_mode_attaches_to_record_batch(self):
+        from probpipe import NumericRecord, NumericRecordBatch
         from probpipe.core._workflow_result import _coerce_output
 
-        ra = NumericRecordArray.stack([NumericRecord("nr", x=float(i)) for i in range(3)])
+        ra = NumericRecordBatch.stack(
+            [NumericRecord("nr", x=float(i)) for i in range(3)], level_name="draw"
+        )
         assert ra.provenance is None
         prov = Provenance("sweep", parents=())
         out = _coerce_output(ra, broadcast_mode="stack", provenance=prov, field_name="f")
@@ -1056,6 +1130,7 @@ class TestCoerceOutput:
             [Normal(loc=0.0, scale=1.0, name=f"d{i}") for i in range(3)],
             n=3,
             field_name="demo",
+            level_names=("sweep",),
         )
         assert isinstance(da, DistributionArray)
         assert da.provenance is None

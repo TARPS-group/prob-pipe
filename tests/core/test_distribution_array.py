@@ -19,11 +19,12 @@ import numpy as np
 import pytest
 
 from probpipe import (
-    EventTemplate,
     Normal,
-    NumericRecordArray,
+    NumericArrayBatch,
+    NumericRecordBatch,
     ProductDistribution,
     Provenance,
+    RecordSpec,
     log_prob,
     mean,
     sample,
@@ -53,7 +54,7 @@ class TestConstruction:
 
         array = DistributionArray(components, name="common")
 
-        assert array.event_template == EventTemplate(y=())
+        assert array.event_template == RecordSpec(y=())
 
     def test_mismatched_component_event_templates_report_none(self):
         components = [
@@ -71,15 +72,15 @@ class TestConstruction:
         array = _make_distribution_array(
             components,
             name="declared",
-            event_template=EventTemplate(y=()),
+            event_template=RecordSpec(y=()),
         )
 
-        assert array.event_template == EventTemplate(y=())
+        assert array.event_template == RecordSpec(y=())
         with pytest.raises(ValueError, match="does not match declared template"):
             _make_distribution_array(
                 components,
                 name="invalid",
-                event_template=EventTemplate(z=()),
+                event_template=RecordSpec(z=()),
             )
 
     def test_indexing_returns_component(self):
@@ -154,7 +155,7 @@ class TestConstruction:
     def test_factory_returns_distribution_subclass(self):
         comps = [Normal(loc=0.0, scale=1.0, name="d0")]
         da = _make_distribution_array(comps)
-        from probpipe.core._distribution_base import Distribution
+        from probpipe.distributions._distribution import Distribution
 
         assert isinstance(da, Distribution)
 
@@ -179,7 +180,7 @@ class TestConstruction:
 
 
 # ---------------------------------------------------------------------------
-# Container surface — len, size, iteration (numpy / jax alignment, #178)
+# Container surface — len, size, iteration (numpy / jax alignment)
 # ---------------------------------------------------------------------------
 
 
@@ -422,28 +423,31 @@ class TestZeroDDispatch:
 class TestSampleViaSweep:
     """``sample(da)`` vectorizes over the DistArray's batch_shape.
 
-    Each cell is a scalar Distribution; ``sample(component, sample_shape)``
-    returns a leaf-shaped array; ``_make_stack`` assembles them into a
-    ``NumericRecordArray`` with ``batch_shape = da.batch_shape`` and
-    per-field leaf shape equal to ``sample_shape + event_shape``.
+    Each cell is a scalar Distribution, so each row's draw is a
+    ``NumericArrayBatch``; the sweep stacks them into one, its own level in
+    front of the rows' ``draw``.
     """
 
     def test_scalar_components_no_sample_shape(self):
         comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(4)]
         da = _make_distribution_array(comps)
         s = sample(da)
-        assert isinstance(s, NumericRecordArray)
-        assert s.batch_shape == (4,)
-        assert s["sample"].shape == (4,)
+        assert isinstance(s, NumericArrayBatch)
+        assert (s.batch_shape, s.level_names) == ((4,), ("dist",))
+        assert s.values.shape == (4,)
 
     def test_scalar_components_with_sample_shape(self):
+        """The rows' draw level survives the sweep rather than becoming shape.
+
+        A drawn axis read as event shape would state that each cell holds one
+        7-vector, where it holds seven draws.
+        """
         comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(4)]
         da = _make_distribution_array(comps)
         s = sample(da, sample_shape=(7,))
-        assert isinstance(s, NumericRecordArray)
-        # batch_shape is the DistArray's own shape; sample_shape is leaf.
-        assert s.batch_shape == (4,)
-        assert s["sample"].shape == (4, 7)
+        assert isinstance(s, NumericArrayBatch)
+        assert (s.batch_shape, s.level_names) == ((4, 7), ("dist", "sample"))
+        assert tuple(s.element_spec.shape) == ()
 
     def test_components_drive_samples(self):
         """Per-cell mean of the 1000-sample draw concentrates at each
@@ -451,16 +455,17 @@ class TestSampleViaSweep:
         comps = [Normal(loc=float(i) * 100, scale=1e-3, name=f"d{i}") for i in range(3)]
         da = _make_distribution_array(comps)
         s = sample(da, sample_shape=(1000,))
-        # batch_shape (3,), leaf (1000,) → field shape (3, 1000).
-        means = s["sample"].mean(axis=-1)
+        # Levels (dist, draw) over (3, 1000): the draw axis is the trailing one.
+        means = s.values.mean(axis=-1)
         np.testing.assert_allclose(means, jnp.array([0.0, 100.0, 200.0]), atol=0.2)
 
     def test_multi_d_batch_shape(self):
+        """A multi-axis sweep keeps its own axes in front of the draw level."""
         comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(6)]
         da = _make_distribution_array(comps, batch_shape=(2, 3))
         s = sample(da, sample_shape=(5,))
-        assert s.batch_shape == (2, 3)
-        assert s["sample"].shape == (2, 3, 5)
+        assert (s.batch_shape, s.level_names) == ((2, 3, 5), ("dist", "sample"))
+        assert s.values.shape == (2, 3, 5)
 
     def test_record_valued_components_scalar_sample(self):
         comps = [
@@ -472,9 +477,9 @@ class TestSampleViaSweep:
         ]
         da = _make_distribution_array(comps)
         s = sample(da)
-        from probpipe import RecordArray
+        from probpipe import RecordBatch
 
-        assert isinstance(s, RecordArray)
+        assert isinstance(s, RecordBatch)
         assert s.batch_shape == (3,)
         np.testing.assert_allclose(s["x"], [0.0, 1.0, 2.0], atol=1e-2)
 
@@ -483,7 +488,7 @@ class TestSampleViaSweep:
         the outer sweep prepends ``da.batch_shape`` to it. Scalar
         components land in the trailing ``sample_shape`` as leaf; Record
         components land in the batch (because their per-cell return is
-        already a batched ``NumericRecordArray``, not a raw array). Under
+        already a batched ``NumericRecordBatch``, not a raw array). Under
         direct vectorization both are the concatenation of outer sweep
         axes with the inner return's shape.
         """
@@ -496,7 +501,10 @@ class TestSampleViaSweep:
         ]
         da = _make_distribution_array(comps)
         s = sample(da, sample_shape=(5,))
-        assert isinstance(s, NumericRecordArray)
+        assert isinstance(s, NumericRecordBatch)
+        # The sweep mints the level it swept — here the argument's own name,
+        # the distribution array carrying no levels of its own yet.
+        assert s.level_names == ("dist", "sample")
         # sweep (3,) + inner batch (5,) → (3, 5); fields carry no leaf
         # (scalar Normals inside the Product).
         assert s.batch_shape == (3, 5)
@@ -509,19 +517,18 @@ class TestMeanVianSweep:
         comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(4)]
         da = _make_distribution_array(comps)
         m = mean(da)
-        assert isinstance(m, NumericRecordArray)
+        assert isinstance(m, NumericArrayBatch)
         assert m.batch_shape == (4,)
-        assert m["mean"].shape == (4,)
-        np.testing.assert_allclose(m["mean"], [0.0, 1.0, 2.0, 3.0])
+        np.testing.assert_allclose(m.values, [0.0, 1.0, 2.0, 3.0])
 
     def test_multi_d_mean_shape(self):
         comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(6)]
         da = _make_distribution_array(comps, batch_shape=(3, 2))
         m = mean(da)
         assert m.batch_shape == (3, 2)
-        assert m["mean"].shape == (3, 2)
+        assert m.values.shape == (3, 2)
 
-    def test_record_components_mean_is_recordarray(self):
+    def test_record_components_mean_is_record_batch(self):
         comps = [
             ProductDistribution(
                 x=Normal(loc=float(i), scale=1.0, name=f"x{i}"),
@@ -531,9 +538,9 @@ class TestMeanVianSweep:
         ]
         da = _make_distribution_array(comps)
         m = mean(da)
-        from probpipe import RecordArray
+        from probpipe import RecordBatch
 
-        assert isinstance(m, RecordArray)
+        assert isinstance(m, RecordBatch)
         assert m.batch_shape == (3,)
         np.testing.assert_allclose(m["x"], [0.0, 1.0, 2.0])
         np.testing.assert_allclose(m["y"], [0.0, -1.0, -2.0])
@@ -544,10 +551,9 @@ class TestVarianceViaSweep:
         comps = [Normal(loc=0.0, scale=float(i + 1), name=f"d{i}") for i in range(3)]
         da = _make_distribution_array(comps)
         v = variance(da)
-        assert isinstance(v, NumericRecordArray)
+        assert isinstance(v, NumericArrayBatch)
         assert v.batch_shape == (3,)
-        assert v["variance"].shape == (3,)
-        np.testing.assert_allclose(v["variance"], [1.0, 4.0, 9.0])
+        np.testing.assert_allclose(v.values, [1.0, 4.0, 9.0])
 
 
 class TestLogProbViaSweep:
@@ -565,14 +571,14 @@ class TestLogProbViaSweep:
         # Single scalar value broadcasts to every cell.
         value = jnp.asarray(0.0)
         lp = log_prob(da, value=value)
-        assert isinstance(lp, NumericRecordArray)
+        assert isinstance(lp, NumericArrayBatch)
         assert lp.batch_shape == (3,)
         # Cell i evaluates Normal(i, 1) at 0 → gaussian log-density at
         # distance ``i`` from the mean.
         expected = jnp.array(
             [Normal(loc=float(i), scale=1.0, name=f"d{i}")._log_prob(0.0) for i in range(3)]
         )
-        np.testing.assert_allclose(lp["log_prob"], expected, rtol=1e-5)
+        np.testing.assert_allclose(lp.values, expected, rtol=1e-5)
 
 
 # ---------------------------------------------------------------------------
@@ -596,15 +602,14 @@ class TestProvenance:
 
 
 # ---------------------------------------------------------------------------
-# Backend-delegated storage (PR-C.1 commit 3)
+# Backend-delegated storage
 # ---------------------------------------------------------------------------
 
 
 class TestBackendDelegatedStorage:
     """Tests for the ``_from_backend`` private constructor + lazy
-    component materialisation. The factory entry point
-    (``from_batched_params``) lands in commit 4; this commit pins the
-    storage refactor in isolation.
+    component materialisation, in isolation from the ``from_batched_params``
+    factory that ``TestFromBatchedParams`` covers.
     """
 
     def _make_backend(self, n=5):
@@ -690,8 +695,10 @@ class TestBackendDelegatedStorage:
         assert len(c1) == 3
         # Cached: same tuple identity returned.
         assert c1 is c2
-        # And now _components is populated.
-        assert da._components is c1
+        # The memo holds it; the literal-components slot stays empty, which is
+        # what marks this array as backend-delegated.
+        assert da._memo["components"] is c1
+        assert da._components is None
 
     def test_slice_indexing_materialises_components(self):
         from probpipe import DistributionArray
@@ -700,7 +707,7 @@ class TestBackendDelegatedStorage:
         da = DistributionArray._from_backend(backend, name="x")
         sub = da[1:4]
         # Slicing forces materialisation (rare path).
-        assert da._components is not None
+        assert da._memo["components"] is not None
         assert isinstance(sub, DistributionArray)
         assert len(sub) == 3
 
@@ -741,7 +748,7 @@ class TestBackendDelegatedStorage:
 
 
 # ---------------------------------------------------------------------------
-# from_batched_params factory (PR-C.1 commit 4)
+# from_batched_params factory
 # ---------------------------------------------------------------------------
 
 
@@ -885,7 +892,7 @@ class TestFromBatchedParams:
         eager construction, no backend.
         """
         from probpipe import DistributionArray
-        from probpipe.core._distribution_base import Distribution
+        from probpipe.distributions._distribution import Distribution
 
         class MyDist(Distribution):
             def __init__(self, value, *, name):
@@ -918,9 +925,8 @@ class TestFromBatchedParams:
         produces samples / means / variances matching ``tfd.Normal``
         constructed natively with the same batched params.
 
-        Pre-PR-C.2 this test compared to ``Normal(loc=arr, scale=...)``
-        directly; PR-C.2 rejects that form, so the comparison goes
-        against TFP's own batched form (which is what
+        ``Normal(loc=arr, scale=...)`` rejects batched parameters, so the
+        comparison goes against TFP's own batched form (which is what
         ``_TFPArrayBackend`` wraps internally anyway).
         """
         import tensorflow_probability.substrates.jax.distributions as tfd
@@ -964,12 +970,12 @@ class TestFromBatchedParams:
 
 
 # ---------------------------------------------------------------------------
-# Distribution.from_batched_params alias (PR-C.1 commit 5)
+# Distribution.from_batched_params alias
 # ---------------------------------------------------------------------------
 
 
 class TestDistributionFromBatchedParamsAlias:
-    """Ergonomic per-class alias on Distribution[T]."""
+    """Ergonomic per-class alias on Distribution."""
 
     def test_alias_dispatches_to_distribution_array_factory(self):
         from probpipe import DistributionArray, Normal
@@ -1019,12 +1025,12 @@ class TestDistributionFromBatchedParamsAlias:
             MultivariateNormal,
             Normal,
         )
-        from probpipe.core._distribution_base import Distribution
+        from probpipe.distributions._distribution import Distribution
 
-        # Every Distribution subclass inherits the alias.
-        for cls in (Distribution, Normal, Beta, Gamma, MultivariateNormal, EmpiricalDistribution):
-            assert hasattr(cls, "from_batched_params")
-            assert callable(cls.from_batched_params)
+        # No Distribution subclass overrides the base alias.
+        alias = Distribution.__dict__["from_batched_params"].__func__
+        for cls in (Normal, Beta, Gamma, MultivariateNormal, EmpiricalDistribution):
+            assert cls.from_batched_params.__func__ is alias
 
     def test_alias_with_explicit_batch_shape(self):
         from probpipe import MultivariateNormal
@@ -1043,7 +1049,7 @@ class TestDistributionFromBatchedParamsAlias:
         """The alias inherits the factory's protocol-vs-fallback
         dispatch, so non-protocol Distribution subclasses also get the
         literal-array fallback when invoking the alias."""
-        from probpipe.core._distribution_base import Distribution
+        from probpipe.distributions._distribution import Distribution
 
         class MyDist(Distribution):
             def __init__(self, value, *, name):

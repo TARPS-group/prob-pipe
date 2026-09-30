@@ -13,15 +13,14 @@ import numpy as np
 import pytest
 
 from probpipe import (
-    ArraySpec,
     DistributionSpec,
-    EventTemplate,
     FunctionSpec,
     Normal,
+    NumericArraySpec,
     OpaqueSpec,
     Record,
     RecordSpec,
-    ValueSpec,
+    TermSpec,
 )
 from probpipe.core._fingerprint import (
     _fingerprint_with_strength,
@@ -363,15 +362,15 @@ class TestDistributionHashing:
         from probpipe import RecordEmpiricalDistribution
 
         samples = jnp.array([1.0, 2.0, 3.0])
-        e1 = RecordEmpiricalDistribution(samples, name="posterior")
-        e2 = RecordEmpiricalDistribution(samples, name="posterior")
+        e1 = RecordEmpiricalDistribution("posterior", samples)
+        e2 = RecordEmpiricalDistribution("posterior", samples)
         assert fingerprint(e1) == fingerprint(e2)
 
     def test_empirical_different_samples_differ(self):
         from probpipe import RecordEmpiricalDistribution
 
-        e1 = RecordEmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), name="post")
-        e2 = RecordEmpiricalDistribution(jnp.array([1.0, 2.0, 9.0]), name="post")
+        e1 = RecordEmpiricalDistribution("post", jnp.array([1.0, 2.0, 3.0]))
+        e2 = RecordEmpiricalDistribution("post", jnp.array([1.0, 2.0, 9.0]))
         assert fingerprint(e1) != fingerprint(e2)
 
     def test_empirical_non_uniform_weights_differ(self):
@@ -379,9 +378,9 @@ class TestDistributionHashing:
         from probpipe import RecordEmpiricalDistribution
 
         samples = jnp.array([1.0, 2.0, 3.0])
-        uniform = RecordEmpiricalDistribution(samples, name="post")
+        uniform = RecordEmpiricalDistribution("post", samples)
         reweighted = RecordEmpiricalDistribution(
-            samples, weights=jnp.array([0.7, 0.2, 0.1]), name="post"
+            "post", samples, weights=jnp.array([0.7, 0.2, 0.1])
         )
         assert fingerprint(uniform) != fingerprint(reweighted)
 
@@ -390,16 +389,16 @@ class TestDistributionHashing:
         from probpipe.distributions.kde import KDEDistribution
 
         pts = jnp.array([0.0, 1.0, 2.0])
-        k1 = KDEDistribution(pts, name="kde")
-        k2 = KDEDistribution(pts, name="kde")
+        k1 = KDEDistribution("kde", pts)
+        k2 = KDEDistribution("kde", pts)
         assert fingerprint(k1) == fingerprint(k2)
 
     def test_kde_different_points_differ(self):
         """Two KDE distributions with different data must have different fingerprints."""
         from probpipe.distributions.kde import KDEDistribution
 
-        k1 = KDEDistribution(jnp.array([0.0, 1.0, 2.0]), name="kde")
-        k2 = KDEDistribution(jnp.array([0.0, 1.0, 99.0]), name="kde")
+        k1 = KDEDistribution("kde", jnp.array([0.0, 1.0, 2.0]))
+        k2 = KDEDistribution("kde", jnp.array([0.0, 1.0, 99.0]))
         assert fingerprint(k1) != fingerprint(k2)
 
 
@@ -410,15 +409,23 @@ class TestBootstrapSourceFingerprint:
     def test_different_sources_differ(self):
         from probpipe import BootstrapReplicateDistribution
 
-        b1 = BootstrapReplicateDistribution(Normal(loc=0.0, scale=1.0, name="x"), replicate_size=10)
-        b2 = BootstrapReplicateDistribution(Normal(loc=5.0, scale=1.0, name="x"), replicate_size=10)
+        b1 = BootstrapReplicateDistribution(
+            "boot", Normal(loc=0.0, scale=1.0, name="x"), replicate_size=10
+        )
+        b2 = BootstrapReplicateDistribution(
+            "boot", Normal(loc=5.0, scale=1.0, name="x"), replicate_size=10
+        )
         assert fingerprint(b1) != fingerprint(b2)
 
     def test_same_source_matches(self):
         from probpipe import BootstrapReplicateDistribution
 
-        b1 = BootstrapReplicateDistribution(Normal(loc=0.0, scale=1.0, name="x"), replicate_size=10)
-        b2 = BootstrapReplicateDistribution(Normal(loc=0.0, scale=1.0, name="x"), replicate_size=10)
+        b1 = BootstrapReplicateDistribution(
+            "boot", Normal(loc=0.0, scale=1.0, name="x"), replicate_size=10
+        )
+        b2 = BootstrapReplicateDistribution(
+            "boot", Normal(loc=0.0, scale=1.0, name="x"), replicate_size=10
+        )
         assert fingerprint(b1) == fingerprint(b2)
 
 
@@ -429,7 +436,7 @@ class TestBootstrapSourceFingerprint:
 
 class TestFunctionHashing:
     def _make_wf(self, func):
-        return Function(func=func, dispatch="sequential", n_broadcast_samples=10, seed=42)
+        return Function(func=func, dispatch="sequential", n_broadcast_samples=10)
 
     def test_legacy_content_marker_is_preserved(self):
         """A pure API rename must not invalidate existing cache identities."""
@@ -461,8 +468,8 @@ class TestFunctionHashing:
         def build(*, input_shape=(), output_shape=()):
             return Function(
                 func=identity,
-                input_template=EventTemplate(x=input_shape),
-                output_template=EventTemplate(y=output_shape),
+                input_template=RecordSpec(x=input_shape),
+                output_template=RecordSpec(y=output_shape),
             )
 
         baseline = build()
@@ -561,7 +568,7 @@ class TestFunctionHashing:
                 transform = lambda v: v * 2.0  # noqa: E731
                 return transform(x)
 
-            wf = Function(func=f, dispatch="sequential", n_broadcast_samples=10, seed=42)
+            wf = Function(func=f, dispatch="sequential", n_broadcast_samples=10)
             print(fingerprint(wf))
         """)
         site = str(next(p for p in sys.path if "site-packages" in p))
@@ -649,7 +656,7 @@ class TestFingerprintInProvenance:
 
 
 # ===========================================================================
-# 9. Review-fix regressions — determinism, collisions, leaf-keyed records
+# 9. Regressions — determinism, collisions, leaf-keyed records
 # ===========================================================================
 
 
@@ -657,7 +664,7 @@ class TestFunctionCapture:
     """Bytecode alone is not enough: referenced names, closures, and defaults."""
 
     def _wf(self, func):
-        return Function(func=func, dispatch="sequential", n_broadcast_samples=10, seed=42)
+        return Function(func=func, dispatch="sequential", n_broadcast_samples=10)
 
     def test_called_name_differs(self):
         # ``jnp.sin`` vs ``jnp.cos``: identical co_code + co_consts, differing
@@ -758,7 +765,7 @@ class TestEmpiricalReweighting:
         from probpipe.core._empirical import EmpiricalDistribution
 
         s = jnp.array([1.0, 2.0, 3.0])
-        return EmpiricalDistribution(s, log_weights=jnp.log(jnp.array(weights)), name="p")
+        return EmpiricalDistribution("p", s, log_weights=jnp.log(jnp.array(weights)))
 
     def test_reweighted_differs(self):
         assert fingerprint(self._emp([0.7, 0.2, 0.1])) != fingerprint(self._emp([0.1, 0.2, 0.7]))
@@ -922,7 +929,7 @@ class TestNumericContainerHashing:
         assert run() == run()
 
 
-class TestValueSpecFingerprints:
+class TestTermSpecFingerprints:
     """Specs are hashed as template leaves, by declaration and not by identity.
 
     A declaration is stored as a spec (`DistributionSpec.event_spec`,
@@ -940,36 +947,36 @@ class TestValueSpecFingerprints:
         still returns a digest — so every comparison below would be meaningless
         without this check.
         """
-        digest, weak = _fingerprint_with_strength(EventTemplate(field=spec))
+        digest, weak = _fingerprint_with_strength(RecordSpec(field=spec))
         assert not weak, "spec hashed by identity, not by declaration"
         return digest
 
     @pytest.fixture
     def tau(self):
-        return EventTemplate(x=())
+        return RecordSpec(x=())
 
     def test_every_spec_kind_is_reachable_by_the_hasher(self, tau):
         """Each kind hashes by declaration; none falls through to identity."""
         for spec in (
-            ArraySpec(()),
+            NumericArraySpec(()),
             OpaqueSpec(),
             RecordSpec(tau),
             DistributionSpec(tau),
             FunctionSpec(tau, tau),
             FunctionSpec(),
         ):
-            _, weak = _fingerprint_with_strength(EventTemplate(field=spec))
+            _, weak = _fingerprint_with_strength(RecordSpec(field=spec))
             assert not weak, f"{type(spec).__name__} hashed by identity"
 
     def test_an_unknown_spec_kind_is_reported_weak(self, tau):
         """The contract boundary: a spec the hasher does not know is not silently
         treated as strong, so a future kind that skips the hasher is visible."""
 
-        class _UnknownSpec(ValueSpec):
+        class _UnknownSpec(TermSpec):
             def is_valid(self, value):
                 return True
 
-        _, weak = _fingerprint_with_strength(EventTemplate(field=_UnknownSpec()))
+        _, weak = _fingerprint_with_strength(RecordSpec(field=_UnknownSpec()))
         assert weak
 
     @pytest.mark.parametrize(
@@ -985,10 +992,10 @@ class TestValueSpecFingerprints:
     def test_equal_declarations_fingerprint_equal(self, make):
         # Distinct-but-equal templates, so this pins declaration equality
         # rather than object identity.
-        assert self._fp(make(EventTemplate(x=()))) == self._fp(make(EventTemplate(x=())))
+        assert self._fp(make(RecordSpec(x=()))) == self._fp(make(RecordSpec(x=())))
 
     def test_distinct_declarations_fingerprint_differently(self, tau):
-        other = EventTemplate(y=())
+        other = RecordSpec(y=())
         assert self._fp(RecordSpec(tau)) != self._fp(RecordSpec(other))
         assert self._fp(DistributionSpec(tau)) != self._fp(DistributionSpec(other))
         assert self._fp(FunctionSpec(tau, tau)) != self._fp(FunctionSpec(tau, other))
@@ -1010,7 +1017,7 @@ class TestValueSpecFingerprints:
         An output declaration may itself be a FunctionSpec, so the chain is
         unbounded; hashing it must degrade to the depth marker and report weak
         rather than exhaust the interpreter stack. The spec is hashed directly:
-        nesting it in a template instead would recurse in ``EventTemplate``'s
+        nesting it in a template instead would recurse in ``RecordSpec``'s
         own hash, which is a separate concern.
         """
         spec = FunctionSpec()
@@ -1030,15 +1037,15 @@ class TestValueSpecFingerprints:
     def test_spec_outside_a_template_is_still_hashed_by_declaration(self, wrap, tau):
         """A spec reached other than as a template leaf must not hash by identity.
 
-        The generic hasher must route a `ValueSpec` to the spec hasher, which
+        The generic hasher must route a `TermSpec` to the spec hasher, which
         records the object type and the declaration fields. Falling through to
         identity hashing would make equal declarations hash differently and
         silently break cache keys and provenance.
         """
         # Both specs are bound and alive simultaneously, so they cannot share an
         # address: under identity hashing the digests would differ.
-        left = RecordSpec(EventTemplate(x=()))
-        right = RecordSpec(EventTemplate(x=()))
+        left = RecordSpec(x=())
+        right = RecordSpec(x=())
         first, weak = _fingerprint_with_strength(wrap(left))
         second, _ = _fingerprint_with_strength(wrap(right))
 
@@ -1057,8 +1064,8 @@ class TestValueSpecFingerprints:
         the type name too, so it separates a RecordSpec from a DistributionSpec
         on its own. Only reading the declaration fields separates these.
         """
-        one = RecordSpec(EventTemplate(x=()))
-        other = RecordSpec(EventTemplate(y=()))
+        one = RecordSpec(x=())
+        other = RecordSpec(y=())
         first, weak = _fingerprint_with_strength(wrap(one))
         second, _ = _fingerprint_with_strength(wrap(other))
 

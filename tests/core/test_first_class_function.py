@@ -18,20 +18,20 @@ import pytest
 import probpipe
 from probpipe import (
     Annotated,
-    ArraySpec,
     Distribution,
     DistributionArray,
-    EventTemplate,
     Function,
     FunctionSpec,
     Gamma,
     Normal,
+    NumericArraySpec,
     NumericRecord,
-    NumericRecordArray,
+    NumericRecordBatch,
     Provenance,
     ProvenanceMode,
     Record,
-    RecordArray,
+    RecordBatch,
+    RecordSpec,
     TrackedTerm,
     function,
     mean,
@@ -39,6 +39,7 @@ from probpipe import (
     positive_definite,
     real,
     simplex,
+    workflow_run,
 )
 
 
@@ -52,7 +53,6 @@ class TestFunctionValueContract:
         assert isinstance(wrapped, TrackedTerm)
         assert isinstance(wrapped, Annotated)
         assert wrapped.name == "increment"
-        assert wrapped.name_is_auto
         assert wrapped.provenance is None
         assert wrapped.annotations == {}
         wrapped.annotations["note"] = "append-only metadata"
@@ -60,7 +60,7 @@ class TestFunctionValueContract:
         with pytest.raises(AttributeError, match="immutable"):
             wrapped._seed = 3
 
-    def test_decorator_name_is_auto_but_explicit_name_is_not(self):
+    def test_decorator_and_explicit_names_are_set_at_construction(self):
         @function
         def automatic(x):
             return x
@@ -68,9 +68,7 @@ class TestFunctionValueContract:
         named = Function(func=lambda x: x, name="chosen")
 
         assert automatic.name == "automatic"
-        assert automatic.name_is_auto
         assert named.name == "chosen"
-        assert not named.name_is_auto
 
     def test_rename_synchronizes_callable_metadata_and_records_provenance(
         self, full_provenance_mode
@@ -108,7 +106,7 @@ class TestApplyContract:
         def affine(x, /, scale=2, *, offset=1):
             return x * scale + offset
 
-        wrapped = Function(func=affine, output_template=EventTemplate(answer=()))
+        wrapped = Function(func=affine, output_template=RecordSpec(answer=()))
 
         assert wrapped.apply(3, offset=4) == 10
         result = wrapped(3, offset=4)
@@ -141,8 +139,8 @@ class TestApplyContract:
     def test_parameter_named_self_is_not_treated_as_a_method_receiver(self):
         wrapped = Function(
             func=lambda self: self + 1,
-            input_template=EventTemplate(self=()),
-            output_template=EventTemplate(result=()),
+            input_template=RecordSpec(self=()),
+            output_template=RecordSpec(result=()),
         )
 
         assert wrapped.apply(2) == 3
@@ -160,15 +158,15 @@ class TestApplyContract:
     def test_apply_validates_output_without_wrapping(self):
         wrapped = Function(
             func=lambda x: np.ones((x,)),
-            input_template=EventTemplate(x=()),
-            output_template=EventTemplate(y=(3,)),
+            input_template=RecordSpec(x=()),
+            output_template=RecordSpec(y=(3,)),
         )
 
         with pytest.raises(ValueError, match="output at 'y'"):
             wrapped.apply(2)
 
     def test_dtype_pinned_output_accepts_bare_and_inferred_record(self):
-        template = EventTemplate(y=ArraySpec((), dtype="float32"))
+        template = RecordSpec(y=NumericArraySpec((), dtype="float32"))
         value = jnp.asarray(3.0, dtype=jnp.float32)
         returned = Record("returned", y=value)
         bare = Function(func=lambda: value, output_template=template)
@@ -185,13 +183,15 @@ class TestApplyContract:
         assert result.event_template == template
         assert returned.event_template != template
 
-    def test_declared_output_accepts_record_array_as_a_batched_event(self):
-        intrinsic = EventTemplate(y=())
-        declared = EventTemplate(y=ArraySpec((), dtype="float32"))
-        returned = NumericRecordArray(
+    def test_declared_output_accepts_record_batch_as_a_batched_event(self):
+        intrinsic = RecordSpec(y=())
+        declared = RecordSpec(y=NumericArraySpec((), dtype="float32"))
+        returned = NumericRecordBatch(
+            "batch",
             {"y": jnp.asarray([1.0, 2.0], dtype=jnp.float32)},
-            batch_shape=(2,),
-            template=intrinsic,
+            level_names="draw",
+            axes_per_level=(1,),
+            element_spec=intrinsic,
         )
         wrapped = Function(func=lambda: returned, output_template=declared)
 
@@ -200,22 +200,24 @@ class TestApplyContract:
         result = wrapped()
 
         assert result is not returned
-        assert isinstance(result, NumericRecordArray)
+        assert isinstance(result, NumericRecordBatch)
         assert result.batch_shape == (2,)
         assert result.event_template == declared
         assert returned.event_template is intrinsic
         np.testing.assert_allclose(result["y"], np.asarray([1.0, 2.0]))
 
     @pytest.mark.parametrize("batch_shape", [(2, 3), (0, 3)])
-    def test_declared_output_accepts_multidimensional_and_empty_record_arrays(
+    def test_declared_output_accepts_multidimensional_and_empty_record_batches(
         self,
         batch_shape,
     ):
-        template = EventTemplate(y=(2,))
-        returned = NumericRecordArray(
+        template = RecordSpec(y=(2,))
+        returned = NumericRecordBatch(
+            "batch",
             {"y": jnp.ones((*batch_shape, 2))},
-            batch_shape=batch_shape,
-            template=template,
+            level_names="draw",
+            axes_per_level=(len(batch_shape),),
+            element_spec=template,
         )
         wrapped = Function(func=lambda: returned, output_template=template)
 
@@ -226,37 +228,39 @@ class TestApplyContract:
         assert result.event_template == template
         np.testing.assert_allclose(result["y"], np.ones((*batch_shape, 2)))
 
-    def test_declared_output_rejects_record_array_with_wrong_event_shape(self):
-        template = EventTemplate(y=())
-        returned = RecordArray(
+    def test_declared_output_rejects_a_batch_with_the_wrong_event_shape(self):
+        returned = RecordBatch(
+            "batch",
             {"y": jnp.ones((2, 3))},
-            batch_shape=(2,),
-            template=template,
+            level_names="draw",
+            axes_per_level=(1,),
+            element_spec=RecordSpec(y=(3,)),
         )
-        wrapped = Function(func=lambda: returned, output_template=template)
+        wrapped = Function(func=lambda: returned, output_template=RecordSpec(y=()))
 
-        with pytest.raises(
-            ValueError,
-            match=r"output/y has event shape \(3,\), expected \(\)",
-        ):
+        with pytest.raises(ValueError, match=r"shape"):
             wrapped.apply()
 
-    def test_declared_output_checks_record_array_dtype_and_support(self):
-        dtype_template = EventTemplate(y=ArraySpec((), dtype="int32"))
-        float_array = RecordArray(
+    def test_declared_output_checks_record_batch_dtype_and_support(self):
+        dtype_template = RecordSpec(y=NumericArraySpec((), dtype="int32"))
+        float_array = RecordBatch(
+            "batch",
             {"y": jnp.asarray([1.0, 2.0], dtype=jnp.float32)},
-            batch_shape=(2,),
-            template=EventTemplate(y=()),
+            level_names="draw",
+            axes_per_level=(1,),
+            element_spec=RecordSpec(y=()),
         )
 
         with pytest.raises(ValueError, match=r"output/y dtype float32 does not conform"):
             Function(func=lambda: float_array, output_template=dtype_template).apply()
 
-        support_template = EventTemplate(y=ArraySpec((), support=positive))
-        invalid_array = NumericRecordArray(
+        support_template = RecordSpec(y=NumericArraySpec((), support=positive))
+        invalid_array = NumericRecordBatch(
+            "batch",
             {"y": jnp.asarray([1.0, -2.0])},
-            batch_shape=(2,),
-            template=EventTemplate(y=()),
+            level_names="draw",
+            axes_per_level=(1,),
+            element_spec=RecordSpec(y=()),
         )
 
         with pytest.raises(ValueError, match=r"output at 'y'.*support positive"):
@@ -277,7 +281,7 @@ class TestApplyContract:
         declared_dtype,
     ):
         value = np.asarray(3, dtype=actual_dtype)
-        template = EventTemplate(y=ArraySpec((), dtype=declared_dtype))
+        template = RecordSpec(y=NumericArraySpec((), dtype=declared_dtype))
 
         Function(func=lambda: value, output_template=template).apply()
         Function(func=lambda: Record("returned", y=value), output_template=template).apply()
@@ -288,22 +292,22 @@ class TestApplyContract:
         returned = Record("returned", y=value) if structured else value
         wrapped = Function(
             func=lambda: returned,
-            output_template=EventTemplate(y=ArraySpec((), dtype="int32")),
+            output_template=RecordSpec(y=NumericArraySpec((), dtype="int32")),
         )
 
         with pytest.raises(ValueError, match=r"output/y.*dtype|output at 'y'"):
             wrapped.apply()
 
     def test_support_pinned_scalar_output_is_enforced(self):
-        template = EventTemplate(y=ArraySpec((), support=positive))
+        template = RecordSpec(y=NumericArraySpec((), support=positive))
 
         assert Function(func=lambda: jnp.asarray(3.0), output_template=template).apply() == 3.0
         with pytest.raises(ValueError, match=r"output at 'y'.*support positive"):
             Function(func=lambda: jnp.asarray(-3.0), output_template=template).apply()
 
     def test_support_pinned_nested_mapping_output_is_enforced(self):
-        template = EventTemplate(
-            stats=EventTemplate(y=ArraySpec((2,), support=positive)),
+        template = RecordSpec(
+            stats=RecordSpec(y=NumericArraySpec((2,), support=positive)),
         )
         wrapped = Function(
             func=lambda value: {"stats": {"y": value}},
@@ -315,8 +319,8 @@ class TestApplyContract:
             wrapped.apply(jnp.asarray([1.0, -2.0]))
 
     def test_support_pinned_nested_record_output_is_enforced(self):
-        template = EventTemplate(
-            stats=EventTemplate(y=ArraySpec((2,), support=positive)),
+        template = RecordSpec(
+            stats=RecordSpec(y=NumericArraySpec((2,), support=positive)),
         )
         valid = Record("returned", stats=Record("stats", y=jnp.asarray([1.0, 2.0])))
         invalid = Record("returned", stats=Record("stats", y=jnp.asarray([1.0, -2.0])))
@@ -329,20 +333,20 @@ class TestApplyContract:
         returned = Record(
             "returned",
             y=jnp.asarray(3.0),
-            event_template=EventTemplate(y=ArraySpec((), support=real)),
+            event_template=RecordSpec(y=NumericArraySpec((), support=real)),
         )
         wrapped = Function(
             func=lambda: returned,
-            output_template=EventTemplate(y=ArraySpec((), support=positive)),
+            output_template=RecordSpec(y=NumericArraySpec((), support=positive)),
         )
 
         with pytest.raises(ValueError, match=r"output/y support real does not conform to positive"):
             wrapped.apply()
 
     def test_shape_only_distribution_output_keeps_intrinsic_template(self):
-        returned = Normal(0, 1, name="y")
+        returned = Normal("y", 0, 1)
         intrinsic = returned.event_template
-        declared = EventTemplate(y=())
+        declared = RecordSpec(y=())
         wrapped = Function(func=lambda: returned, output_template=declared)
 
         assert intrinsic == declared
@@ -373,8 +377,8 @@ class TestApplyContract:
             def supports(self):
                 raise AssertionError("Function must not read Distribution.supports")
 
-        intrinsic = EventTemplate(y=ArraySpec((), dtype="float32", support=positive))
-        declared = EventTemplate(y=ArraySpec((), dtype="float32", support=positive))
+        intrinsic = RecordSpec(y=NumericArraySpec((), dtype="float32", support=positive))
+        declared = RecordSpec(y=NumericArraySpec((), dtype="float32", support=positive))
         returned = SchemaCompleteDistribution(intrinsic)
         wrapped = Function(func=lambda: returned, output_template=declared)
 
@@ -390,12 +394,12 @@ class TestApplyContract:
     def test_distribution_requires_metadata_in_its_own_event_template(self):
         cases = [
             (
-                Normal(0, 1, name="y"),
-                EventTemplate(y=ArraySpec((), dtype="float32")),
+                Normal("y", 0, 1),
+                RecordSpec(y=NumericArraySpec((), dtype="float32")),
             ),
             (
-                Gamma(1, 1, name="y"),
-                EventTemplate(y=ArraySpec((), support=real)),
+                Gamma("y", 1, 1),
+                RecordSpec(y=NumericArraySpec((), support=real)),
             ),
         ]
 
@@ -421,7 +425,7 @@ class TestApplyContract:
         ],
     )
     def test_output_support_reductions_are_enforced(self, support, valid, invalid):
-        template = EventTemplate(y=ArraySpec(valid.shape, support=support))
+        template = RecordSpec(y=NumericArraySpec(valid.shape, support=support))
 
         Function(func=lambda: valid, output_template=template).apply()
         with pytest.raises(ValueError, match=r"output at 'y'.*declared support"):
@@ -430,7 +434,7 @@ class TestApplyContract:
     def test_support_validation_rejects_direct_jax_jit(self):
         wrapped = Function(
             func=lambda x: x + 1,
-            output_template=EventTemplate(y=ArraySpec((), support=positive)),
+            output_template=RecordSpec(y=NumericArraySpec((), support=positive)),
         )
 
         with pytest.raises(jax.errors.TracerBoolConversionError):
@@ -440,44 +444,237 @@ class TestApplyContract:
         class SupportAnnotatedNormal(Normal):
             @property
             def event_template(self):
-                return EventTemplate(x=ArraySpec((), support=real))
+                return RecordSpec(x=NumericArraySpec((), support=real))
 
         wrapped = Function(
             func=lambda x: x,
-            input_template=EventTemplate(x=ArraySpec((), support=positive)),
+            input_template=RecordSpec(x=NumericArraySpec((), support=positive)),
             dispatch="sequential",
             n_broadcast_samples=5,
-            seed=0,
         )
 
-        result = wrapped(SupportAnnotatedNormal(0, 1, name="x"))
+        with workflow_run(seed=0):
+            result = wrapped(SupportAnnotatedNormal("x", 0, 1))
 
         assert result.num_atoms == 5
 
+    @pytest.mark.parametrize(
+        "template",
+        [RecordSpec(outer=RecordSpec(inner=(3,))), RecordSpec(x=(3,), empty=RecordSpec())],
+        ids=["nested_leaf", "empty_sibling"],
+    )
+    def test_sampling_lift_does_not_flatten_record_structure(self, template):
+        class StructuredNormal(Normal):
+            @property
+            def event_template(self):
+                return template
+
+            def _sample(self, key, sample_shape=()):
+                raise AssertionError("An incompatible schema must be rejected before sampling")
+
+        law = StructuredNormal("x", 0, 1)
+        wrapped = Function(
+            func=lambda v: v,
+            input_template=RecordSpec(v=(3,)),
+            dispatch="sequential",
+            n_broadcast_samples=5,
+        )
+        with pytest.raises(ValueError, match=r"RecordSpec.*does not conform"):
+            wrapped(v=law)
+
+    @pytest.mark.parametrize(
+        "template",
+        [RecordSpec(x=(3,)), RecordSpec(outer=RecordSpec(inner=(3,)))],
+        ids=["flat", "nested"],
+    )
+    def test_sampling_lift_preserves_explicit_record_declarations(self, template):
+        from probpipe.core._function_contract import _bind_planned_function_inputs
+
+        class StructuredNormal(Normal):
+            @property
+            def event_template(self):
+                return template
+
+        declared = RecordSpec(v=template)
+        bound, bindings = _bind_planned_function_inputs(
+            function_name="f",
+            input_template=declared,
+            values={"v": StructuredNormal("x", 0, 1)},
+            lifted_names={"v"},
+        )
+        assert bound == declared
+        assert bindings == {}
+
+    def test_every_batch_kind_lifts_against_its_element_spec(self):
+        """A batch states what one element satisfies in ``element_spec``, at every
+        kind, so a declared function reads every batch the same way."""
+        from probpipe import FunctionBatch, NumericArrayBatch, OpaqueBatch
+
+        cases = [
+            (
+                NumericArrayBatch(
+                    "rows",
+                    jnp.arange(3.0),
+                    "row",
+                    element_spec=NumericArraySpec(()),
+                ),
+                RecordSpec(v=()),
+            ),
+            (
+                OpaqueBatch(
+                    "rows",
+                    [object(), object()],
+                    "row",
+                ),
+                RecordSpec(v=None),
+            ),
+            (
+                FunctionBatch(
+                    "rows",
+                    [lambda z: z, lambda z: z],
+                    "row",
+                ),
+                RecordSpec(v=FunctionSpec()),
+            ),
+            (
+                NumericRecordBatch(
+                    "rows",
+                    {"x": jnp.arange(3.0)},
+                    "row",
+                    element_spec=RecordSpec(x=()),
+                ),
+                RecordSpec(v=RecordSpec(x=())),
+            ),
+        ]
+        for operand, input_template in cases:
+            wrapped = Function(
+                func=lambda v: 1.0,
+                name="f",
+                input_template=input_template,
+                dispatch="sequential",
+            )
+
+            result = wrapped(v=operand)
+
+            assert isinstance(result, NumericArrayBatch), type(operand).__name__
+            assert result.level_names == ("row",), type(operand).__name__
+
+    def test_a_batch_of_records_does_not_satisfy_a_bare_array_declaration(self):
+        """Reading the record-only view made a one-field element pass as its field."""
+        rows = NumericRecordBatch(
+            "rows",
+            {"x": jnp.arange(3.0)},
+            "row",
+            element_spec=RecordSpec(x=()),
+        )
+        wrapped = Function(
+            func=lambda v: 1.0,
+            name="f",
+            input_template=RecordSpec(v=()),
+            dispatch="sequential",
+        )
+
+        with pytest.raises(ValueError, match=r"RecordSpec.*does not conform"):
+            wrapped(v=rows)
+
+    @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
+    @pytest.mark.parametrize("reverse", [False, True])
+    def test_lifted_and_raw_inputs_share_dimension_bindings(self, dispatch, reverse):
+        fields = [("x", RecordSpec(value=("n",))), ("offset", NumericArraySpec(("n",)))]
+        if reverse:
+            fields.reverse()
+        wrapped = Function(
+            func=lambda x, offset: x["value"] + offset,
+            name="shift",
+            input_template=RecordSpec(dict(fields)),
+            output_template=RecordSpec(result=("n",)),
+            dispatch=dispatch,
+        )
+        data = jnp.arange(6.0).reshape(2, 3)
+        rows = NumericRecordBatch(
+            "rows", {"value": data}, "row", element_spec=RecordSpec(value=(3,))
+        )
+
+        result = wrapped(x=rows, offset=jnp.ones(3))
+
+        assert result.level_names == ("row",)
+        assert result.batch_shape == (2,)
+        assert result.event_template == RecordSpec(result=(3,))
+        np.testing.assert_allclose(result["result"], np.asarray(data) + 1, rtol=0, atol=0)
+        assert wrapped.input_template.free_dims == {"n"}
+        with pytest.raises(ValueError, match="already bound"):
+            wrapped(x=rows, offset=jnp.ones(4))
+
+    @pytest.mark.parametrize("entrypoint, evaluations", [("apply", 1), ("__call__", 0)])
+    def test_unbound_output_dimensions_are_reported(self, entrypoint, evaluations):
+        calls = []
+
+        def evaluate(x, fn):
+            calls.append(True)
+            return np.zeros((2, 3, 4))
+
+        wrapped = Function(
+            func=evaluate,
+            name="unbound",
+            input_template=RecordSpec(
+                x=("n",), fn=FunctionSpec(output_spec=NumericArraySpec(("z", "a")))
+            ),
+            output_template=RecordSpec(y=("n", "z", "a")),
+            dispatch="sequential",
+        )
+        # A plain callable is valid but supplies no declared dimensions.
+        with pytest.raises(ValueError) as caught:
+            getattr(wrapped, entrypoint)(np.zeros(2), lambda: None)
+        assert str(caught.value) == (
+            "Function 'unbound' output_template has unbound symbolic dimensions: a, z"
+        )
+        assert len(calls) == evaluations
+        assert wrapped.input_template.free_dims == {"n", "z", "a"}
+        assert wrapped.output_template.free_dims == {"n", "z", "a"}
+
+    def test_a_mismatched_element_kind_names_both_specs(self):
+        from probpipe import OpaqueBatch
+
+        wrapped = Function(
+            func=lambda v: 1.0,
+            name="f",
+            input_template=RecordSpec(v=()),
+            dispatch="sequential",
+        )
+
+        with pytest.raises(ValueError, match=r"OpaqueSpec.*does not conform.*NumericArraySpec"):
+            wrapped(
+                v=OpaqueBatch(
+                    "rows",
+                    [object()],
+                    "row",
+                )
+            )
+
     def test_authoritative_nested_mapping_must_match_exactly(self):
-        template = EventTemplate(
-            stats=EventTemplate(copy=("obs",), total=()),
+        template = RecordSpec(
+            stats=RecordSpec(copy=("obs",), total=()),
         )
         wrapped = Function(
             func=lambda x: {"stats": {"copy": x, "total": x.sum()}},
-            input_template=EventTemplate(x=("obs",)),
+            input_template=RecordSpec(x=("obs",)),
             output_template=template,
         )
 
         result = wrapped(np.ones((3,)))
 
-        assert result.event_template == EventTemplate(stats=EventTemplate(copy=(3,), total=()))
+        assert result.event_template == RecordSpec(stats=RecordSpec(copy=(3,), total=()))
         with pytest.raises(ValueError, match="do not match template fields"):
             Function(
                 func=lambda x: {"stats": {"copy": x}},
-                input_template=EventTemplate(x=("obs",)),
+                input_template=RecordSpec(x=("obs",)),
                 output_template=template,
             ).apply(np.ones((3,)))
 
     def test_raw_result_cannot_satisfy_multi_leaf_output_template(self):
         wrapped = Function(
             func=lambda x: x,
-            output_template=EventTemplate(left=(), right=()),
+            output_template=RecordSpec(left=(), right=()),
         )
 
         with pytest.raises(ValueError, match="scalar/array for a multi-field"):
@@ -486,14 +683,14 @@ class TestApplyContract:
     def test_existing_record_requires_matching_authoritative_template(self):
         wrapped = Function(
             func=lambda x: Record("result", wrong=x),
-            output_template=EventTemplate(expected=()),
+            output_template=RecordSpec(expected=()),
         )
 
         with pytest.raises(ValueError, match=r"fields .* do not match template fields"):
             wrapped.apply(1)
 
     def test_existing_distribution_requires_matching_authoritative_template(self):
-        matching = Normal(0, 1, name="draw")
+        matching = Normal("draw", 0, 1)
         wrapped = Function(
             func=lambda x: matching,
             output_template=matching.event_template,
@@ -501,14 +698,20 @@ class TestApplyContract:
 
         assert wrapped.apply(1) is matching
 
-        mismatching = Normal(0, 1, name="other")
+        mismatching = Normal("other", 0, 1)
         with pytest.raises(ValueError, match="does not exactly match declared concrete template"):
             Function(
                 func=lambda x: mismatching,
                 output_template=matching.event_template,
             ).apply(1)
 
-    def test_function_return_remains_event_payload_without_template(self, full_provenance_mode):
+    def test_a_returned_function_keeps_its_kind(self, full_provenance_mode):
+        """A term an operation returns is never buried inside another kind.
+
+        ``apply`` hands back the implementer's object itself; the default call
+        derives a result term from it — the same kind under the call's own
+        provenance.
+        """
         learned = Function(func=lambda x: x + 1, name="learned")
         wrapped = Function(func=lambda: learned, name="fit_like")
 
@@ -516,18 +719,19 @@ class TestApplyContract:
 
         result = wrapped()
 
-        assert isinstance(result, Record)
-        assert result["fit_like"] is learned
+        assert isinstance(result, Function)
+        assert result is not learned
+        assert float(result(1.0)) == 2.0
         assert result.provenance.parents[0].parent is wrapped
 
     def test_function_spec_return_remains_authoritative_event_payload(self, full_provenance_mode):
         learned = Function(
             func=lambda x: x + 1,
             name="learned",
-            input_template=EventTemplate(x=()),
-            output_template=EventTemplate(y=()),
+            input_template=RecordSpec(x=()),
+            output_template=RecordSpec(y=()),
         )
-        output_template = EventTemplate(
+        output_template = RecordSpec(
             learned=FunctionSpec(
                 input_template=learned.input_template,
                 output_spec=learned.output_template,
@@ -556,8 +760,8 @@ class TestTemplateDeclarationContract:
 
         wrapped = Function(
             func=subtract,
-            input_template=EventTemplate(y=(), x=()),
-            output_template=EventTemplate(result=()),
+            input_template=RecordSpec(y=(), x=()),
+            output_template=RecordSpec(result=()),
         )
 
         assert wrapped.apply(4) == 3
@@ -565,7 +769,7 @@ class TestTemplateDeclarationContract:
 
     @pytest.mark.parametrize(
         "template",
-        [EventTemplate(x=()), EventTemplate(x=(), y=(), z=())],
+        [RecordSpec(x=()), RecordSpec(x=(), y=(), z=())],
     )
     def test_signature_template_requires_total_bijection(self, template):
         with pytest.raises(ValueError, match="exactly match signature parameters"):
@@ -577,7 +781,7 @@ class TestTemplateDeclarationContract:
     )
     def test_authoritative_input_template_rejects_variadics(self, callable_):
         with pytest.raises(ValueError, match="variadic parameters"):
-            Function(func=callable_, input_template=EventTemplate(x=()))
+            Function(func=callable_, input_template=RecordSpec(x=()))
 
     def test_invalid_default_and_construction_binding_fail_at_construction(self):
         invalid_default = np.ones((2,))
@@ -586,11 +790,11 @@ class TestTemplateDeclarationContract:
             return x
 
         with pytest.raises(ValueError, match="default/x"):
-            Function(func=defaulted, input_template=EventTemplate(x=(3,)))
+            Function(func=defaulted, input_template=RecordSpec(x=(3,)))
         with pytest.raises(ValueError, match="construction binding/x"):
             Function(
                 func=lambda x: x,
-                input_template=EventTemplate(x=(3,)),
+                input_template=RecordSpec(x=(3,)),
                 bind={"x": np.ones((2,))},
             )
 
@@ -604,13 +808,13 @@ class TestTemplateDeclarationContract:
         with pytest.raises(ValueError, match=r"default/y.*already bound to 2"):
             Function(
                 func=inconsistent_defaults,
-                input_template=EventTemplate(x=("n",), y=("n",)),
+                input_template=RecordSpec(x=("n",), y=("n",)),
             )
 
         with pytest.raises(ValueError, match=r"construction binding/y.*already bound to 2"):
             Function(
                 func=lambda x, y: (x, y),
-                input_template=EventTemplate(x=("n",), y=("n",)),
+                input_template=RecordSpec(x=("n",), y=("n",)),
                 bind={"x": np.ones((2,)), "y": np.ones((3,))},
             )
 
@@ -622,8 +826,8 @@ class TestTemplateDeclarationContract:
         with pytest.raises(ValueError, match="not declared by input_template: new"):
             Function(
                 func=lambda x: x,
-                input_template=EventTemplate(x=("obs",)),
-                output_template=EventTemplate(y=("new",)),
+                input_template=RecordSpec(x=("obs",)),
+                output_template=RecordSpec(y=("new",)),
             )
 
     def test_type_errors_for_non_templates(self):
@@ -636,8 +840,8 @@ class TestSymbolicCalls:
     def regression_function(self):
         return Function(
             func=lambda X, p: X @ p,
-            input_template=EventTemplate(X=("obs", "p"), p=("p",)),
-            output_template=EventTemplate(y=("obs",)),
+            input_template=RecordSpec(X=("obs", "p"), p=("p",)),
+            output_template=RecordSpec(y=("obs",)),
             dispatch="sequential",
         )
 
@@ -647,10 +851,10 @@ class TestSymbolicCalls:
         first = regression_function(np.ones((3, 2)), np.ones((2,)))
         second = regression_function(np.ones((5, 4)), np.ones((4,)))
 
-        assert first.event_template == EventTemplate(y=(3,))
-        assert second.event_template == EventTemplate(y=(5,))
+        assert first.event_template == RecordSpec(y=(3,))
+        assert second.event_template == RecordSpec(y=(5,))
         assert regression_function.input_template is declaration
-        assert declaration == EventTemplate(X=("obs", "p"), p=("p",))
+        assert declaration == RecordSpec(X=("obs", "p"), p=("p",))
 
     def test_template_less_distribution_array_reports_lifting_contract(self):
         def identity(x):
@@ -658,13 +862,13 @@ class TestSymbolicCalls:
 
         wrapped = Function(
             func=identity,
-            input_template=EventTemplate(x=()),
+            input_template=RecordSpec(x=()),
             dispatch="sequential",
         )
         values = DistributionArray(
             [
-                Normal(0, 1, name="left"),
-                Normal(1, 1, name="right"),
+                Normal("left", 0, 1),
+                Normal("right", 1, 1),
             ]
         )
 
@@ -672,8 +876,9 @@ class TestSymbolicCalls:
         with pytest.raises(
             ValueError,
             match=(
-                r"Function 'identity' input 'x' does not expose an authoritative "
-                r"event_template for lifting"
+                r"Function 'identity' input 'x' states no element specification for "
+                r"lifting: a DistributionArray reports neither an element_spec nor an "
+                r"event_template"
             ),
         ):
             wrapped(values)
@@ -688,8 +893,8 @@ class TestSymbolicCalls:
     def test_output_symbol_conflict_fails_before_publication(self):
         wrapped = Function(
             func=lambda x: x[:-1],
-            input_template=EventTemplate(x=("obs",)),
-            output_template=EventTemplate(y=("obs",)),
+            input_template=RecordSpec(x=("obs",)),
+            output_template=RecordSpec(y=("obs",)),
         )
 
         with pytest.raises(ValueError, match="output at 'y'"):
@@ -697,19 +902,19 @@ class TestSymbolicCalls:
 
     @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
     def test_sweep_preserves_concrete_declared_output_template(self, dispatch):
-        rows = NumericRecordArray.stack(
-            [NumericRecord("row", value=jnp.ones((2,)) * i) for i in range(3)]
+        rows = NumericRecordBatch.stack(
+            [NumericRecord("row", value=jnp.ones((2,)) * i) for i in range(3)], level_name="draw"
         )
         wrapped = Function(
             func=lambda row: row["value"] + 1,
-            input_template=EventTemplate(row=EventTemplate(value=("p",))),
-            output_template=EventTemplate(prediction=("p",)),
+            input_template=RecordSpec(row=RecordSpec(value=("p",))),
+            output_template=RecordSpec(prediction=("p",)),
             dispatch=dispatch,
         )
 
         result = wrapped(rows)
 
-        assert result.event_template == EventTemplate(prediction=(2,))
+        assert result.event_template == RecordSpec(prediction=(2,))
         assert result.batch_shape == (3,)
         np.testing.assert_allclose(
             result["prediction"],
@@ -720,16 +925,16 @@ class TestSymbolicCalls:
     def test_distribution_broadcast_preserves_declared_output_template(self, dispatch):
         wrapped = Function(
             func=lambda x: jnp.stack((x, x + 1)),
-            input_template=EventTemplate(x=()),
-            output_template=EventTemplate(pair=(2,)),
+            input_template=RecordSpec(x=()),
+            output_template=RecordSpec(pair=(2,)),
             dispatch=dispatch,
             n_broadcast_samples=8,
-            seed=4,
         )
 
-        result = wrapped(Normal(0, 1, name="x"))
+        with workflow_run(seed=4):
+            result = wrapped(Normal("x", 0, 1))
 
-        assert result.event_template == EventTemplate(pair=(2,))
+        assert result.event_template == RecordSpec(pair=(2,))
         assert result.num_atoms == 8
         assert result.samples["pair"].shape == (8, 2)
         np.testing.assert_allclose(
@@ -738,13 +943,13 @@ class TestSymbolicCalls:
         )
 
     def test_every_sweep_cell_is_validated_against_output_template(self):
-        rows = NumericRecordArray.stack(
-            [NumericRecord("row", size=2), NumericRecord("row", size=3)]
+        rows = NumericRecordBatch.stack(
+            [NumericRecord("row", size=2), NumericRecord("row", size=3)], level_name="draw"
         )
         wrapped = Function(
             func=lambda row: jnp.ones((int(row["size"]),)),
-            input_template=EventTemplate(row=EventTemplate(size=())),
-            output_template=EventTemplate(value=(2,)),
+            input_template=RecordSpec(row=RecordSpec(size=())),
+            output_template=RecordSpec(value=(2,)),
             dispatch="sequential",
         )
 
@@ -752,16 +957,17 @@ class TestSymbolicCalls:
             wrapped(rows)
 
     def test_every_sweep_cell_is_validated_against_output_support(self):
-        rows = NumericRecordArray.stack(
+        rows = NumericRecordBatch.stack(
             [
                 NumericRecord("row", value=jnp.asarray(1.0)),
                 NumericRecord("row", value=jnp.asarray(-1.0)),
-            ]
+            ],
+            level_name="draw",
         )
         wrapped = Function(
             func=lambda row: row["value"],
-            input_template=EventTemplate(row=EventTemplate(value=())),
-            output_template=EventTemplate(value=ArraySpec((), support=positive)),
+            input_template=RecordSpec(row=RecordSpec(value=())),
+            output_template=RecordSpec(value=NumericArraySpec((), support=positive)),
             dispatch="sequential",
         )
 
@@ -771,43 +977,42 @@ class TestSymbolicCalls:
     def test_support_pinned_broadcast_auto_falls_back_to_sequential(self):
         wrapped = Function(
             func=lambda x: x**2 + 1,
-            input_template=EventTemplate(x=()),
-            output_template=EventTemplate(y=ArraySpec((), support=positive)),
+            input_template=RecordSpec(x=()),
+            output_template=RecordSpec(y=NumericArraySpec((), support=positive)),
             dispatch="auto",
             n_broadcast_samples=8,
-            seed=11,
         )
 
-        result = wrapped(Normal(0, 1, name="x"))
+        with workflow_run(seed=11):
+            result = wrapped(Normal("x", 0, 1))
 
         assert result.provenance.metadata["dispatch"] == "sequential"
-        assert result.event_template == EventTemplate(y=ArraySpec((), support=positive))
+        assert result.event_template == RecordSpec(y=NumericArraySpec((), support=positive))
         assert bool(jnp.all(result.samples["y"] > 0))
 
     def test_support_pinned_broadcast_explicit_jax_reports_traceability_error(self):
         wrapped = Function(
             func=lambda x: x**2 + 1,
-            input_template=EventTemplate(x=()),
-            output_template=EventTemplate(y=ArraySpec((), support=positive)),
+            input_template=RecordSpec(x=()),
+            output_template=RecordSpec(y=NumericArraySpec((), support=positive)),
             dispatch="jax",
             n_broadcast_samples=8,
-            seed=11,
         )
 
         with pytest.raises(
             ValueError,
             match=r"dispatch='jax' cannot validate output_template support constraints",
         ):
-            wrapped(Normal(0, 1, name="x"))
+            wrapped(Normal("x", 0, 1))
 
     def test_support_pinned_sweep_auto_falls_back_to_sequential(self):
-        rows = NumericRecordArray.stack(
-            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)]
+        rows = NumericRecordBatch.stack(
+            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)], level_name="draw"
         )
-        template = EventTemplate(y=ArraySpec((), support=positive))
+        template = RecordSpec(y=NumericArraySpec((), support=positive))
         wrapped = Function(
             func=lambda row: row["value"] + 1,
-            input_template=EventTemplate(row=EventTemplate(value=())),
+            input_template=RecordSpec(row=RecordSpec(value=())),
             output_template=template,
             dispatch="auto",
         )
@@ -818,13 +1023,13 @@ class TestSymbolicCalls:
         np.testing.assert_allclose(result["y"], np.arange(3.0) + 1)
 
     def test_support_pinned_sweep_explicit_jax_reports_traceability_error(self):
-        rows = NumericRecordArray.stack(
-            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)]
+        rows = NumericRecordBatch.stack(
+            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)], level_name="draw"
         )
         wrapped = Function(
             func=lambda row: row["value"] + 1,
-            input_template=EventTemplate(row=EventTemplate(value=())),
-            output_template=EventTemplate(y=ArraySpec((), support=positive)),
+            input_template=RecordSpec(row=RecordSpec(value=())),
+            output_template=RecordSpec(y=NumericArraySpec((), support=positive)),
             dispatch="jax",
         )
 
@@ -836,18 +1041,18 @@ class TestSymbolicCalls:
 
     @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
     def test_nested_mapping_sweep_preserves_declared_structure(self, dispatch):
-        rows = NumericRecordArray.stack(
-            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)]
+        rows = NumericRecordBatch.stack(
+            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)], level_name="draw"
         )
         wrapped = Function(
             func=lambda row: {
                 "prediction": row["value"] + 1,
                 "stats": {"doubled": row["value"] * 2},
             },
-            input_template=EventTemplate(row=EventTemplate(value=())),
-            output_template=EventTemplate(
+            input_template=RecordSpec(row=RecordSpec(value=())),
+            output_template=RecordSpec(
                 prediction=(),
-                stats=EventTemplate(doubled=()),
+                stats=RecordSpec(doubled=()),
             ),
             dispatch=dispatch,
         )
@@ -855,9 +1060,9 @@ class TestSymbolicCalls:
         result = wrapped(rows)
 
         assert result.batch_shape == (3,)
-        assert result.event_template == EventTemplate(
+        assert result.event_template == RecordSpec(
             prediction=(),
-            stats=EventTemplate(doubled=()),
+            stats=RecordSpec(doubled=()),
         )
         np.testing.assert_allclose(result["prediction"], np.arange(3.0) + 1)
         np.testing.assert_allclose(result["stats/doubled"], np.arange(3.0) * 2)
@@ -866,19 +1071,19 @@ class TestSymbolicCalls:
     def test_nested_mapping_distribution_broadcast_preserves_declared_structure(self, dispatch):
         wrapped = Function(
             func=lambda x: {"stats": {"value": x, "doubled": x * 2}},
-            input_template=EventTemplate(x=()),
-            output_template=EventTemplate(
-                stats=EventTemplate(value=(), doubled=()),
+            input_template=RecordSpec(x=()),
+            output_template=RecordSpec(
+                stats=RecordSpec(value=(), doubled=()),
             ),
             dispatch=dispatch,
             n_broadcast_samples=8,
-            seed=7,
         )
 
-        result = wrapped(Normal(0, 1, name="x"))
+        with workflow_run(seed=7):
+            result = wrapped(Normal("x", 0, 1))
 
-        assert result.event_template == EventTemplate(
-            stats=EventTemplate(value=(), doubled=()),
+        assert result.event_template == RecordSpec(
+            stats=RecordSpec(value=(), doubled=()),
         )
         assert result.samples["stats/value"].shape == (8,)
         np.testing.assert_allclose(
@@ -886,8 +1091,8 @@ class TestSymbolicCalls:
             result.samples["stats/value"] * 2,
         )
         averaged = mean(result)
-        assert averaged.event_template == EventTemplate(
-            stats=EventTemplate(value=(), doubled=()),
+        assert averaged.event_template == RecordSpec(
+            stats=RecordSpec(value=(), doubled=()),
         )
         np.testing.assert_allclose(
             averaged["stats/doubled"],
@@ -896,18 +1101,18 @@ class TestSymbolicCalls:
 
     def test_distribution_outputs_keep_declared_template_through_broadcast(self):
         wrapped = Function(
-            func=lambda x: Normal(x, 1, name="y"),
-            input_template=EventTemplate(x=()),
-            output_template=EventTemplate(y=()),
+            func=lambda x: Normal("y", x, 1),
+            input_template=RecordSpec(x=()),
+            output_template=RecordSpec(y=()),
             dispatch="sequential",
             n_broadcast_samples=8,
-            seed=3,
         )
 
-        broadcast = wrapped.with_options(include_inputs=True)(Normal(0, 1, name="x"))
+        with workflow_run(seed=3):
+            broadcast = wrapped.with_options(include_inputs=True)(Normal("x", 0, 1))
         result = broadcast.marginalize()
 
-        assert result.event_template == EventTemplate(y=())
+        assert result.event_template == RecordSpec(y=())
         assert result.num_atoms == 8
         np.testing.assert_allclose(
             jnp.stack([component.loc for component in result.components]),
@@ -920,35 +1125,34 @@ class TestSymbolicCalls:
 
     def test_distribution_broadcast_rejects_incomplete_intrinsic_template(self):
         wrapped = Function(
-            func=lambda x: Normal(x, 1, name="y"),
-            input_template=EventTemplate(x=()),
-            output_template=EventTemplate(y=ArraySpec((), support=real)),
+            func=lambda x: Normal("y", x, 1),
+            input_template=RecordSpec(x=()),
+            output_template=RecordSpec(y=NumericArraySpec((), support=real)),
             dispatch="sequential",
             n_broadcast_samples=8,
-            seed=3,
         )
 
         with pytest.raises(
             ValueError,
             match="does not exactly match declared concrete template",
         ):
-            wrapped(Normal(0, 1, name="x"))
+            wrapped(Normal("x", 0, 1))
 
     def test_distribution_outputs_keep_declared_template_through_sweep(self):
-        rows = NumericRecordArray.stack(
-            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)]
+        rows = NumericRecordBatch.stack(
+            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)], level_name="draw"
         )
         wrapped = Function(
-            func=lambda row: Normal(row["value"], 1, name="y"),
-            input_template=EventTemplate(row=EventTemplate(value=())),
-            output_template=EventTemplate(y=()),
+            func=lambda row: Normal("y", row["value"], 1),
+            input_template=RecordSpec(row=RecordSpec(value=())),
+            output_template=RecordSpec(y=()),
             dispatch="sequential",
         )
 
         result = wrapped(rows)
 
         assert isinstance(result, DistributionArray)
-        assert result.event_template == EventTemplate(y=())
+        assert result.event_template == RecordSpec(y=())
         assert result.size == 3
         np.testing.assert_allclose(
             jnp.stack([component.loc for component in result.components]),
@@ -960,25 +1164,26 @@ class TestSymbolicCalls:
         )
 
     def test_nested_broadcast_distribution_array_keeps_declared_template(self):
-        rows = NumericRecordArray.stack(
-            [NumericRecord("row", offset=jnp.asarray(float(i))) for i in range(2)]
+        rows = NumericRecordBatch.stack(
+            [NumericRecord("row", offset=jnp.asarray(float(i))) for i in range(2)],
+            level_name="draw",
         )
         wrapped = Function(
             func=lambda row, noise: {"prediction": row["offset"] + noise},
-            input_template=EventTemplate(
-                row=EventTemplate(offset=()),
+            input_template=RecordSpec(
+                row=RecordSpec(offset=()),
                 noise=(),
             ),
-            output_template=EventTemplate(prediction=()),
+            output_template=RecordSpec(prediction=()),
             dispatch="sequential",
             n_broadcast_samples=8,
-            seed=5,
         )
 
-        result = wrapped(rows, Normal(0, 1, name="noise"))
+        with workflow_run(seed=5):
+            result = wrapped(rows, Normal("noise", 0, 1))
 
         assert isinstance(result, DistributionArray)
-        assert result.event_template == EventTemplate(prediction=())
+        assert result.event_template == RecordSpec(prediction=())
 
 
 @dataclass(frozen=True)
@@ -1007,8 +1212,8 @@ class TestDynamicImplementation:
             _AddImplementation(2),
             signature=signature,
             name="dynamic_add",
-            input_template=EventTemplate(x=()),
-            output_template=EventTemplate(y=()),
+            input_template=RecordSpec(x=()),
+            output_template=RecordSpec(y=()),
             dispatch="sequential",
         )
 
@@ -1047,8 +1252,8 @@ class TestDynamicImplementation:
                 implementation,
                 signature=signature,
                 name="dynamic",
-                input_template=EventTemplate(x=()),
-                output_template=EventTemplate(y=()),
+                input_template=RecordSpec(x=()),
+                output_template=RecordSpec(y=()),
             )
 
         assert fingerprint(build(_AddImplementation(1))) == fingerprint(
@@ -1138,32 +1343,35 @@ class TestDynamicImplementation:
         assert fingerprint(
             build(
                 base,
-                input_template=EventTemplate(x=()),
-                output_template=EventTemplate(y=()),
+                input_template=RecordSpec(x=()),
+                output_template=RecordSpec(y=()),
             )
         ) != fingerprint(
             build(
                 base,
-                input_template=EventTemplate(x=(1,)),
-                output_template=EventTemplate(y=(1,)),
+                input_template=RecordSpec(x=(1,)),
+                output_template=RecordSpec(y=(1,)),
             )
         )
 
 
 class TestReentrancyAndProvenance:
-    def test_same_seed_is_repeatable_across_sequential_and_concurrent_calls(self):
+    def test_seeded_runs_are_repeatable_across_sequential_and_concurrent_calls(self):
         probpipe.provenance_config.mode = ProvenanceMode.OFF
         wrapped = Function(
             func=lambda x: x + 1,
             n_broadcast_samples=12,
             dispatch="sequential",
-            seed=19,
         )
-        source = Normal(0, 1, name="x")
+        source = Normal("x", 0, 1)
 
-        sequential = [wrapped(source).samples["marginal"] for _ in range(2)]
+        def evaluate(_):
+            with workflow_run(seed=19):
+                return wrapped(source).samples["marginal"]
+
+        sequential = [evaluate(index) for index in range(2)]
         with ThreadPoolExecutor(max_workers=2) as pool:
-            concurrent = list(pool.map(lambda _: wrapped(source).samples["marginal"], range(2)))
+            concurrent = list(pool.map(evaluate, range(2)))
 
         assert jnp.array_equal(sequential[0], sequential[1])
         assert all(jnp.array_equal(sequential[0], value) for value in concurrent)
@@ -1188,14 +1396,19 @@ class TestReentrancyAndProvenance:
         "stored",
         [
             NumericRecord("stored", value=1.0),
-            NumericRecordArray.stack([NumericRecord("stored", value=1.0)]),
-            Normal(0, 1, name="stored"),
+            NumericRecordBatch.stack([NumericRecord("stored", value=1.0)], level_name="draw"),
+            Normal("stored", 0, 1),
         ],
     )
     def test_preprovenanced_tracked_return_is_copied_for_each_call(
         self, stored, full_provenance_mode
     ):
-        object.__setattr__(stored, "_annotations", {"owner": "callable"})
+        # A batch carries no annotations — its slots hold the batch's own state
+        # alone — so the annotation half of the contract applies to the hosts
+        # that have them.
+        carries_annotations = hasattr(stored, "annotations")
+        if carries_annotations:
+            object.__setattr__(stored, "_annotations", {"owner": "callable"})
         stored.with_provenance(Provenance("inner"))
         wrapped = Function(func=lambda x: stored)
 
@@ -1209,9 +1422,10 @@ class TestReentrancyAndProvenance:
         assert stored.provenance.operation == "inner"
         assert first.provenance.parents[0].parent is wrapped
         assert second.provenance.parents[0].parent is wrapped
-        assert first.annotations == stored.annotations
-        first.annotations["result"] = True
-        assert "result" not in stored.annotations
+        if carries_annotations:
+            assert first.annotations == stored.annotations
+            first.annotations["result"] = True
+            assert "result" not in stored.annotations
 
     def test_off_mode_still_copies_a_tracked_return(self):
         probpipe.provenance_config.mode = ProvenanceMode.OFF
@@ -1255,30 +1469,30 @@ class TestVariadicPlanning:
             func=lambda *items: items[0] + items[1],
             dispatch="sequential",
             n_broadcast_samples=8,
-            seed=11,
         )
 
-        result = wrapped.with_options(include_inputs=True)(Normal(0, 1, name="x"), 2.0)
+        with workflow_run(seed=11):
+            result = wrapped.with_options(include_inputs=True)(Normal("x", 0, 1), 2.0)
 
         assert isinstance(result, Distribution)
         assert result.num_atoms == 8
         assert tuple(result.input_samples) == ("*items[0]",)
         assert result.provenance.metadata["broadcast_args"] == ["*items[0]"]
 
-    def test_record_array_in_varargs_is_swept(self):
-        rows = NumericRecordArray.stack(
-            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)]
+    def test_record_batch_in_varargs_is_swept(self):
+        rows = NumericRecordBatch.stack(
+            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)], level_name="draw"
         )
         wrapped = Function(func=lambda *items: items[0]["value"] + items[1])
 
         result = wrapped(rows, 2.0)
 
         assert result.batch_shape == (3,)
-        np.testing.assert_allclose(result["<lambda>"], np.arange(3.0) + 2)
+        np.testing.assert_allclose(result.values, np.arange(3.0) + 2)
 
-    def test_record_array_in_any_varargs_is_swept(self):
-        rows = NumericRecordArray.stack(
-            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)]
+    def test_record_batch_in_any_varargs_is_swept(self):
+        rows = NumericRecordBatch.stack(
+            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)], level_name="draw"
         )
 
         def double(*items: Any):
@@ -1287,11 +1501,11 @@ class TestVariadicPlanning:
         result = Function(func=double)(rows)
 
         assert result.batch_shape == (3,)
-        np.testing.assert_allclose(result["double"], np.arange(3.0) * 2)
+        np.testing.assert_allclose(result.values, np.arange(3.0) * 2)
 
-    def test_record_array_in_any_varkwargs_is_swept(self):
-        rows = NumericRecordArray.stack(
-            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)]
+    def test_record_batch_in_any_varkwargs_is_swept(self):
+        rows = NumericRecordBatch.stack(
+            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)], level_name="draw"
         )
 
         def double(**extras: Any):
@@ -1300,7 +1514,7 @@ class TestVariadicPlanning:
         result = Function(func=double)(rows=rows)
 
         assert result.batch_shape == (3,)
-        np.testing.assert_allclose(result["double"], np.arange(3.0) * 2)
+        np.testing.assert_allclose(result.values, np.arange(3.0) * 2)
 
     def test_tracked_varargs_are_provenance_parents(self, full_provenance_mode):
         first = NumericRecord("first", value=1.0)
@@ -1385,7 +1599,7 @@ class TestVariadicPlanning:
 
         wrapped = Function(func=count)
 
-        assert float(wrapped(Normal(0, 1, name="x"))) == 1
+        assert float(wrapped(Normal("x", 0, 1))) == 1
 
     def test_distribution_annotation_applies_to_each_varkwarg(self):
         def count(**extras: Distribution):
@@ -1393,18 +1607,18 @@ class TestVariadicPlanning:
 
         wrapped = Function(func=count)
 
-        assert float(wrapped(x=Normal(0, 1, name="x"))) == 1
+        assert float(wrapped(x=Normal("x", 0, 1))) == 1
 
     def test_construction_bound_varargs_participate_in_lifting(self):
         wrapped = Function(
             func=lambda *items: items[0] + items[1],
-            bind={"items": (Normal(0, 1, name="x"), 2.0)},
+            bind={"items": (Normal("x", 0, 1), 2.0)},
             dispatch="sequential",
             n_broadcast_samples=8,
-            seed=13,
         )
 
-        result = wrapped()
+        with workflow_run(seed=13):
+            result = wrapped()
 
         assert result.num_atoms == 8
         assert result.provenance.metadata["broadcast_args"] == ["*items[0]"]
@@ -1414,10 +1628,47 @@ class TestVariadicPlanning:
             func=lambda **extras: extras["x"] + extras["offset"],
             dispatch="sequential",
             n_broadcast_samples=8,
-            seed=17,
         )
 
-        result = wrapped(x=Normal(0, 1, name="x"), offset=2.0)
+        with workflow_run(seed=17):
+            result = wrapped(x=Normal("x", 0, 1), offset=2.0)
 
         assert result.num_atoms == 8
         assert result.provenance.metadata["broadcast_args"] == ["**extras['x']"]
+
+
+class TestDeclaredSupportOnABatchedOutput:
+    def test_every_column_is_checked_against_its_own_support(self):
+        """A batch is a collection, not a named tree: walking it as one finds no
+        children and asks a multi-field batch to convert to a single array."""
+        from probpipe import NumericRecordBatch
+
+        template = RecordSpec(
+            a=NumericArraySpec((), support=positive), b=NumericArraySpec((), support=positive)
+        )
+        valid = NumericRecordBatch(
+            "batch",
+            {"a": jnp.ones(3), "b": jnp.ones(3) * 2},
+            "draw",
+            element_spec=RecordSpec(a=(), b=()),
+        )
+
+        result = Function(func=lambda: valid, output_template=template).apply()
+
+        assert result is valid
+
+    def test_a_column_outside_its_support_is_named(self):
+        from probpipe import NumericRecordBatch
+
+        template = RecordSpec(
+            a=NumericArraySpec((), support=positive), b=NumericArraySpec((), support=positive)
+        )
+        invalid = NumericRecordBatch(
+            "batch",
+            {"a": jnp.ones(3), "b": jnp.asarray([1.0, -2.0, 3.0])},
+            "draw",
+            element_spec=RecordSpec(a=(), b=()),
+        )
+
+        with pytest.raises(ValueError, match=r"output at 'b'.*support positive"):
+            Function(func=lambda: invalid, output_template=template).apply()

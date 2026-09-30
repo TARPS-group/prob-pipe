@@ -21,7 +21,7 @@ type, how to answer the four questions every numeric gate asks:
 * ``to_jax(obj)`` / ``to_numpy(obj)`` — materialising conversions, used at
   the compute boundary and for content fingerprints.
 
-Every consumer — template inference and ``ArraySpec.is_valid``, the
+Every consumer — template inference and ``NumericArraySpec.is_valid``, the
 ``Record`` → ``NumericRecord`` promotion probe, the ``NumericRecord``
 conversion cache, batch stacking, and ``fingerprint()`` — resolves
 **registry first, duck-typing second**, so registering one backend makes a
@@ -103,7 +103,7 @@ def _is_numeric_dtype(dtype: Any) -> bool:
     predicate governs only the duck path, not the registry. Structured
     (record) dtypes are likewise not numeric.
     Every place that decides "is this array numeric?" — template inference,
-    spec validation, and the ``NumericRecord`` / ``NumericRecordArray`` leaf
+    spec validation, and the ``NumericRecord`` / ``NumericRecordBatch`` leaf
     gates — routes through this predicate so the sites cannot drift apart.
     """
     try:
@@ -147,6 +147,14 @@ class ArrayBackend:
     to_numpy : callable, optional
         ``to_numpy(obj) -> np.ndarray`` — the fingerprint materialisation.
         Defaults to ``np.asarray(obj)``.
+    take : callable, optional
+        ``take(obj, index) -> Any`` — **positional** selection along the
+        leading axes, where *index* is a tuple of ints and slices, one per
+        leading axis. Defaults to ``obj[index]``, which is positional for a
+        numpy-protocol container. A container whose ``[]`` means something else
+        must override it: ``pandas`` reads labels there, so its backend selects
+        through ``.iloc``. This is what lets a batch address its elements by
+        position without materialising the whole store.
     metadata : callable, optional
         ``metadata(obj) -> Any`` — the container's **identity-bearing
         metadata beyond its values** (an ``xarray`` array's dims / coords /
@@ -167,6 +175,7 @@ class ArrayBackend:
     is_numeric: Callable[[Any], bool] = field(kw_only=True, default=lambda obj: True)
     to_jax: Callable[[Any], jax.Array] = field(kw_only=True, default=_default_to_jax)
     to_numpy: Callable[[Any], np.ndarray] = field(kw_only=True, default=_default_to_numpy)
+    take: Callable[[Any, tuple], Any] = field(kw_only=True, default=lambda obj, index: obj[index])
     metadata: Callable[[Any], Any] = field(kw_only=True, default=lambda obj: None)
 
 
@@ -179,7 +188,7 @@ def register_array_backend(leaf_type: type, backend: ArrayBackend) -> None:
     """Register *backend* as the array-backend hooks for *leaf_type*.
 
     Registering a type makes its instances first-class numeric leaves
-    everywhere at once: template inference and ``ArraySpec.is_valid``
+    everywhere at once: template inference and ``NumericArraySpec.is_valid``
     recognise them, all-numeric records holding them auto-promote to
     ``NumericRecord``, the compute boundary converts them through
     ``backend.to_jax``, batch stacking coerces them per element, and
@@ -315,6 +324,20 @@ def _numpy_dtype_of(value: Any) -> np.dtype | None:
     if nd is None:
         nd = np.asarray(value).dtype
     return nd
+
+
+def _take_at(value: Any, index: tuple) -> Any:
+    """Select positionally along *value*'s leading axes.
+
+    The one place positional selection happens, so a container whose ``[]``
+    means something other than position — a ``pandas`` object, where it reads
+    labels — is addressed through its backend rather than by a caller that
+    happens to know.
+    """
+    backend = array_backend_for(value)
+    if backend is not None:
+        return backend.take(value, index)
+    return value[index]
 
 
 def _to_numpy_array(value: Any) -> np.ndarray:
@@ -483,6 +506,7 @@ def _register_pandas() -> None:
             is_numeric=lambda s: _column_numeric(s.dtype),
             to_jax=lambda s: jnp.asarray(_dense(s, (s.dtype,))),
             to_numpy=lambda s: _dense(s, (s.dtype,)),
+            take=lambda obj, index: obj.iloc[index],
             metadata=_series_metadata,
         ),
     )
@@ -511,6 +535,7 @@ def _register_pandas() -> None:
             is_numeric=_frame_is_numeric,
             to_jax=lambda df: jnp.asarray(_dense(df, df.dtypes)),
             to_numpy=lambda df: _dense(df, df.dtypes),
+            take=lambda obj, index: obj.iloc[index],
             metadata=_frame_metadata,
         ),
     )

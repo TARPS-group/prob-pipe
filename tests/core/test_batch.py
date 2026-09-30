@@ -10,13 +10,22 @@ named key; and `_ViewBatch`, which copies nothing and reads one shared store.
 from __future__ import annotations
 
 import copy
+import inspect
 import itertools
 import pickle
 from typing import get_type_hints
 
+import jax.numpy as jnp
+import numpy as np
 import pytest
 
-from probpipe import ArraySpec, EventTemplate, OpaqueSpec, TermSpec
+from probpipe import (
+    NumericArraySpec,
+    NumericRecordBatch,
+    OpaqueSpec,
+    RecordSpec,
+    TermSpec,
+)
 from probpipe.core._batch import Batch, BatchSpec
 from probpipe.core._fingerprint import fingerprint
 from probpipe.core.provenance import Provenance
@@ -36,11 +45,11 @@ def _spec(axis_groups, level_names, element_spec=_ELEMENT_SPEC):
 class _Leaf(TrackedTerm):
     """A minimal tracked element."""
 
-    __slots__ = ("_name", "_name_is_auto", "_provenance", "value")
+    __slots__ = ("_name", "_provenance", "value")
 
-    def __init__(self, value, name="leaf", *, name_is_auto=False):
+    def __init__(self, value, name="leaf"):
         object.__setattr__(self, "value", value)
-        self._init_tracked(name, name_is_auto=name_is_auto)
+        self._init_tracked(name)
 
 
 class _ListBatch(Batch[_Leaf]):
@@ -48,9 +57,9 @@ class _ListBatch(Batch[_Leaf]):
 
     __slots__ = ("_store",)
 
-    def __init__(self, store, spec, *, name="b", name_is_auto=False):
+    def __init__(self, store, spec, *, name="b"):
         object.__setattr__(self, "_store", list(store))
-        self._init_batch(spec, name=name, name_is_auto=name_is_auto)
+        self._init_batch(spec, name=name)
 
     # -- the storage seam --
 
@@ -61,7 +70,7 @@ class _ListBatch(Batch[_Leaf]):
         return offset
 
     def _element_at(self, index, *, name):
-        built = _Leaf(self._store[self._flat(index)], name=name, name_is_auto=True)
+        built = _Leaf(self._store[self._flat(index)], name=name)
         return self._inherit_provenance(built)
 
     def _sub_batch_at(self, index, *, spec, name):
@@ -71,7 +80,7 @@ class _ListBatch(Batch[_Leaf]):
             self._store[self._flat(position)]
             for position in itertools.product(*_selected(index, self.batch_shape))
         ]
-        return type(self)(kept, spec, name=name, name_is_auto=True)
+        return type(self)(kept, spec, name=name)
 
 
 class _NestedBatch(_ListBatch):
@@ -121,9 +130,7 @@ class _ViewBatch(Batch[_Leaf]):
 
     __slots__ = ("_root_shape", "_root_store", "_store_selection")
 
-    def __init__(
-        self, store, spec, *, name="b", name_is_auto=False, root_shape=None, store_selection=None
-    ):
+    def __init__(self, store, spec, *, name="b", root_shape=None, store_selection=None):
         object.__setattr__(self, "_root_store", store)
         object.__setattr__(self, "_root_shape", root_shape or spec.batch_shape)
         object.__setattr__(
@@ -133,7 +140,7 @@ class _ViewBatch(Batch[_Leaf]):
             if store_selection is not None
             else tuple(range(size) for size in spec.batch_shape),
         )
-        self._init_batch(spec, name=name, name_is_auto=name_is_auto)
+        self._init_batch(spec, name=name)
 
     def _offset(self, index):
         """Where this view's positional *index* lands in the root store."""
@@ -153,7 +160,7 @@ class _ViewBatch(Batch[_Leaf]):
     # -- the storage seam --
 
     def _element_at(self, index, *, name):
-        built = _Leaf(self._root_store[self._offset(index)], name=name, name_is_auto=True)
+        built = _Leaf(self._root_store[self._offset(index)], name=name)
         return self._inherit_provenance(built)
 
     def _sub_batch_at(self, index, *, spec, name):
@@ -172,7 +179,6 @@ class _ViewBatch(Batch[_Leaf]):
             self._root_store,
             spec,
             name=name,
-            name_is_auto=True,
             root_shape=self._root_shape,
             store_selection=tuple(composed),
         )
@@ -190,15 +196,15 @@ class _StoringBatch(Batch[_Leaf]):
 
     __slots__ = ("_store",)
 
-    def __init__(self, elements, spec, *, name="b", name_is_auto=False):
+    def __init__(self, elements, spec, *, name="b"):
         object.__setattr__(self, "_store", list(elements))
-        self._init_batch(spec, name=name, name_is_auto=name_is_auto)
+        self._init_batch(spec, name=name)
 
     def _element_at(self, index, *, name):
         return self._store[index[0]]
 
     def _sub_batch_at(self, index, *, spec, name):
-        return type(self)(self._store[index[0]], spec, name=name, name_is_auto=True)
+        return type(self)(self._store[index[0]], spec, name=name)
 
 
 class _StringSlotsBatch(Batch[int]):
@@ -212,15 +218,15 @@ class _StringSlotsBatch(Batch[int]):
 
     __slots__ = "_store"  # a bare string, deliberately: the point of the double
 
-    def __init__(self, store, spec, *, name="b", name_is_auto=False):
+    def __init__(self, store, spec, *, name="b"):
         object.__setattr__(self, "_store", list(store))
-        self._init_batch(spec, name=name, name_is_auto=name_is_auto)
+        self._init_batch(spec, name=name)
 
     def _element_at(self, index, *, name):
         return self._store[index[0]]
 
     def _sub_batch_at(self, index, *, spec, name):
-        return type(self)(self._store[index[0]], spec, name=name, name_is_auto=True)
+        return type(self)(self._store[index[0]], spec, name=name)
 
 
 class _DictBatch(_ListBatch):
@@ -319,8 +325,8 @@ class TestSpec:
 
     def test_an_element_spec_naming_no_kind_is_well_formed(self):
         """The case ``BatchSpec`` exists to cover: a batch of raw values."""
-        bare = _BareBatch(range(3), _spec([(3,)], ["draw"], ArraySpec(shape=())))
-        assert bare.element_spec == ArraySpec(shape=())
+        bare = _BareBatch(range(3), _spec([(3,)], ["draw"], NumericArraySpec(shape=())))
+        assert bare.element_spec == NumericArraySpec(shape=())
         assert isinstance(bare.spec, BatchSpec)
 
     def test_axis_groups_are_normalized_to_tuples(self):
@@ -343,7 +349,7 @@ class TestSpec:
         assert _spec([(4,)], ["draw"]) != _spec([(4,)], ["chain"])
 
     def test_an_element_spec_must_be_a_value_spec(self):
-        with pytest.raises(TypeError, match="must be a ValueSpec"):
+        with pytest.raises(TypeError, match="must be a TermSpec"):
             BatchSpec("not a spec", [(2,)], ["draw"])
 
     def test_a_batch_must_be_given_a_batch_spec(self):
@@ -388,7 +394,7 @@ class TestLevelNames:
         """The default is a shallow copy: no storage is rebuilt, no identity minted."""
         renamed = nested.with_level_names(chain="walker")
         assert renamed._store is nested._store
-        assert (renamed.name, renamed.name_is_auto) == (nested.name, nested.name_is_auto)
+        assert renamed.name == nested.name
 
     def test_renaming_leaves_the_original_alone(self, nested):
         nested.with_level_names(chain="walker")
@@ -539,7 +545,6 @@ class TestElementIdentity:
     def test_an_element_derives_the_level_it_was_selected_at(self, flat):
         element = flat[2]
         assert element.name == "b[draw=2]"
-        assert element.name_is_auto
 
     def test_nested_levels_name_every_level_selected(self, nested):
         assert nested[1][2].name == "b[chain=1, draw=2]"
@@ -549,7 +554,6 @@ class TestElementIdentity:
 
     def test_a_sub_batch_view_also_derives_its_name(self, nested):
         assert nested[1].name == "b[chain=1]"
-        assert nested[1].name_is_auto
 
     def test_a_negative_index_names_the_position_it_resolves_to(self, flat):
         assert flat[-1].name == flat[3].name == "b[draw=3]"
@@ -571,14 +575,11 @@ class TestElementIdentity:
         assert nested.at_levels().name == "b"
         assert nested[:].name == "b"
 
-    def test_a_user_given_name_survives_a_no_op_selection(self, nested):
-        assert not nested.at_levels().name_is_auto
-
     def test_a_renamed_batch_roots_the_names_of_its_own_views(self, nested):
         assert nested[1].with_name("inner")[2].name == "inner[draw=2]"
 
     def test_bare_elements_carry_no_identity(self):
-        bare = _BareBatch(range(3), _spec([(3,)], ["draw"], ArraySpec(shape=())))
+        bare = _BareBatch(range(3), _spec([(3,)], ["draw"], NumericArraySpec(shape=())))
         assert bare[1] == 1
         assert not isinstance(bare[1], TrackedTerm)
 
@@ -736,7 +737,7 @@ class TestViewProvenance:
         assert produced[1][2].provenance is produced.provenance
 
     def test_a_bare_element_has_nowhere_to_carry_it(self, full_provenance_mode):
-        bare = _BareBatch(range(3), _spec([(3,)], ["draw"], ArraySpec(shape=())))
+        bare = _BareBatch(range(3), _spec([(3,)], ["draw"], NumericArraySpec(shape=())))
         produced = self._from_an_operation(bare)
 
         assert produced[1] == 1
@@ -796,7 +797,7 @@ class TestSpecValidation:
             _spec([(2.7,)], ["draw"])
 
     def test_an_identifier_is_a_symbolic_axis_size(self):
-        """A name defers a size, as an `ArraySpec` shape entry may."""
+        """A name defers a size, as a `NumericArraySpec` shape entry may."""
         assert _spec([("draws",)], ["draw"]).axis_groups == (("draws",),)
 
     def test_a_symbolic_axis_size_must_be_an_identifier(self):
@@ -804,7 +805,7 @@ class TestSpecValidation:
             _spec([("not an identifier",)], ["draw"])
 
     def test_a_numeric_string_is_not_a_size(self):
-        """The likeliest slip: "3" is a name, and not one with_dims could bind."""
+        """The likeliest slip: "3" is a name, and not one with_dim_sizes could bind."""
         with pytest.raises(ValueError, match="must be an identifier"):
             _spec([("3",)], ["draw"])
 
@@ -948,11 +949,16 @@ class TestSerialization:
 
 
 class TestRenamingAView:
-    def test_a_renamed_view_and_its_own_views_read_the_level_alike(self, nested):
-        renamed = nested[0:1].with_level_names(chain="group")
-        assert renamed.name == "b[group=0:1]"
-        assert renamed[0:1].name == "b[group=0:1]"
+    def test_level_renaming_keeps_the_view_name_and_names_new_selections(self, nested):
+        view = nested[0:1]
+        renamed = view.with_level_names(chain="group")
+        assert renamed.name == view.name == "b[chain=0:1]"
+        assert renamed[0:1].name == renamed.name
         assert renamed.at_levels().name == renamed.name
+        assert renamed.at_levels(group=0).name == "b[group=0]"
+        assert renamed.at_levels(group=0)[1].name == "b[group=0, draw=1]"
+        assert renamed.at_levels(group=0)[1].value == nested[0][1].value
+        assert view.level_names == ("chain", "draw")
 
     def test_renaming_records_itself_and_leaves_room_for_more(self, nested, full_provenance_mode):
         view = nested[1]
@@ -962,10 +968,10 @@ class TestRenamingAView:
         assert renamed.provenance is not view.provenance
 
     def test_renaming_onto_a_dropped_root_level_name_says_why(self, nested):
-        """The view's own levels allow it, but the name it derives from would not."""
+        """A dropped root level still participates in naming subsequent selections."""
         view = nested[1]
         assert view.level_names == ("draw",)
-        with pytest.raises(ValueError, match="derives its name from but no longer carries"):
+        with pytest.raises(ValueError, match="names of subsequent selections ambiguous"):
             view.with_level_names(draw="chain")
 
     def test_the_same_rename_is_fine_once_the_view_is_its_own_root(self, nested):
@@ -974,19 +980,25 @@ class TestRenamingAView:
 
 class TestBatchSpecFingerprint:
     def test_equal_specs_fingerprint_alike(self):
-        one = _spec([(3,)], ["draw"], ArraySpec(shape=(2,)))
-        two = _spec([(3,)], ["draw"], ArraySpec(shape=(2,)))
+        one = _spec([(3,)], ["draw"], NumericArraySpec(shape=(2,)))
+        two = _spec([(3,)], ["draw"], NumericArraySpec(shape=(2,)))
         assert fingerprint(one) == fingerprint(two)
 
     def test_the_multiplicity_is_part_of_the_digest(self):
-        base = _spec([(3,)], ["draw"], ArraySpec(shape=(2,)))
-        assert fingerprint(base) != fingerprint(_spec([(4,)], ["draw"], ArraySpec(shape=(2,))))
-        assert fingerprint(base) != fingerprint(_spec([(3,)], ["chain"], ArraySpec(shape=(2,))))
-        assert fingerprint(base) != fingerprint(_spec([(3,)], ["draw"], ArraySpec(shape=(5,))))
+        base = _spec([(3,)], ["draw"], NumericArraySpec(shape=(2,)))
+        assert fingerprint(base) != fingerprint(
+            _spec([(4,)], ["draw"], NumericArraySpec(shape=(2,)))
+        )
+        assert fingerprint(base) != fingerprint(
+            _spec([(3,)], ["chain"], NumericArraySpec(shape=(2,)))
+        )
+        assert fingerprint(base) != fingerprint(
+            _spec([(3,)], ["draw"], NumericArraySpec(shape=(5,)))
+        )
 
     def test_a_spec_in_a_template_fingerprints_by_content(self):
-        one = EventTemplate(post=_spec([(3,)], ["draw"], ArraySpec(shape=(2,))), y=(2,))
-        two = EventTemplate(post=_spec([(3,)], ["draw"], ArraySpec(shape=(2,))), y=(2,))
+        one = RecordSpec(post=_spec([(3,)], ["draw"], NumericArraySpec(shape=(2,))), y=(2,))
+        two = RecordSpec(post=_spec([(3,)], ["draw"], NumericArraySpec(shape=(2,))), y=(2,))
         assert fingerprint(one) == fingerprint(two)
 
 
@@ -1147,7 +1159,11 @@ class TestDegenerateAxesInUse:
         assert [inner.name for inner in view] == ["b[chain=0, draw=0:0]", "b[chain=1, draw=0:0]"]
 
     def test_an_empty_level_can_still_be_renamed(self, nested):
-        assert nested.at_levels(draw=slice(1, 1)).with_level_names(draw="d").name == "b[d=0:0]"
+        view = nested.at_levels(draw=slice(1, 1))
+        renamed = view.with_level_names(draw="d")
+        assert renamed.name == view.name == "b[draw=0:0]"
+        assert renamed.at_levels().name == view.name
+        assert renamed.level_names == ("chain", "d")
 
     def test_reversing_a_single_element_axis_selects_all_of_it(self):
         """One position in the same order is the whole axis, so nothing is derived."""
@@ -1526,7 +1542,7 @@ class TestAStoredElementKeepsItsOwnIdentity:
 
 
 class TestSymbolicMultiplicity:
-    """An axis size may be a name, as an `ArraySpec` shape entry may.
+    """An axis size may be a name, as a `NumericArraySpec` shape entry may.
 
     A *declaration* may defer how many elements a level holds — "returns a batch
     of `S` draws" before `S` is known. A live batch may not: it holds elements at
@@ -1541,20 +1557,20 @@ class TestSymbolicMultiplicity:
 
     def test_free_dims_unions_the_element_schema_and_the_multiplicity(self):
         """Distinct names, so neither operand can pass for the union."""
-        spec = BatchSpec(ArraySpec(shape=("d",)), [("S",)], ["draw"])
+        spec = BatchSpec(NumericArraySpec(shape=("d",)), [("S",)], ["draw"])
 
         assert spec.free_dims == frozenset({"S", "d"})
         assert spec.free_axis_dims == frozenset({"S"})
 
     def test_a_shared_name_declares_a_square_batch(self):
         """One scope: `("n",)` of arrays of shape `("n",)` is square by declaration."""
-        spec = BatchSpec(ArraySpec(shape=("n",)), [("n",)], ["row"])
+        spec = BatchSpec(NumericArraySpec(shape=("n",)), [("n",)], ["row"])
 
         assert spec.free_dims == frozenset({"n"})
 
     def test_only_the_multiplicity_must_be_concrete_for_a_live_batch(self):
         """How many elements there are is a different question from what one is."""
-        spec = BatchSpec(ArraySpec(shape=("d",)), [(4,)], ["draw"])
+        spec = BatchSpec(NumericArraySpec(shape=("d",)), [(4,)], ["draw"])
 
         assert spec.free_axis_dims == frozenset()
         assert spec.batch_size == 4
@@ -1577,8 +1593,8 @@ class TestSymbolicMultiplicity:
     def test_a_symbolic_axis_is_substitutable(self):
         spec = _spec([("S",)], ["draw"])
 
-        assert spec.with_bound_dims({"S": 3}).axis_groups == ((3,),)
-        assert spec.with_bound_dims({"S": 3}).free_dims == frozenset()
+        assert spec._substitute_dims({"S": 3}).axis_groups == ((3,),)
+        assert spec._substitute_dims({"S": 3}).free_dims == frozenset()
 
     def test_a_concrete_batch_still_builds(self, flat):
         assert flat.batch_shape == (4,)
@@ -1592,34 +1608,34 @@ class TestSymbolicMultiplicity:
         """
         bindings: dict[str, int] = {}
 
-        assert _spec([("S",)], ["draw"]).bind_dims_from_spec(
+        assert _spec([("S",)], ["draw"])._bind_dims_from_spec(
             _spec([(3,)], ["draw"]), bindings, "path"
         )
         assert bindings == {"S": 3}
 
     def test_an_axis_and_an_element_dimension_share_one_scope(self):
         """A batch of `("n",)` over arrays of shape `("n",)` binds `n` once."""
-        declared = BatchSpec(ArraySpec(shape=("n",)), [("n",)], ["row"])
+        declared = BatchSpec(NumericArraySpec(shape=("n",)), [("n",)], ["row"])
         bindings: dict[str, int] = {}
 
-        assert declared.bind_dims_from_spec(
-            BatchSpec(ArraySpec(shape=(3,)), [(3,)], ["row"]), bindings, "path"
+        assert declared._bind_dims_from_spec(
+            BatchSpec(NumericArraySpec(shape=(3,)), [(3,)], ["row"]), bindings, "path"
         )
         assert bindings == {"n": 3}
 
     def test_a_batch_that_is_not_square_is_refused(self):
         """The other half of declaring it square: 3 elements of length 5 is not."""
-        declared = BatchSpec(ArraySpec(shape=("n",)), [("n",)], ["row"])
-        actual = BatchSpec(ArraySpec(shape=(5,)), [(3,)], ["row"])
+        declared = BatchSpec(NumericArraySpec(shape=("n",)), [("n",)], ["row"])
+        actual = BatchSpec(NumericArraySpec(shape=(5,)), [(3,)], ["row"])
 
         with pytest.raises(ValueError, match=r"symbolic dimension 'n' to 5, .*already bound to 3"):
-            declared.bind_dims_from_spec(actual, {}, "path")
+            declared._bind_dims_from_spec(actual, {}, "path")
 
     def test_binding_leaves_the_spec_unsubstituted(self):
         """Substitution waits for the closed scope, as it does for every leaf."""
         declared = _spec([("S",)], ["draw"])
 
-        declared.bind_dims_from_spec(_spec([(3,)], ["draw"]), {}, "path")
+        declared._bind_dims_from_spec(_spec([(3,)], ["draw"]), {}, "path")
 
         assert declared.axis_groups == (("S",),)
 
@@ -1628,25 +1644,25 @@ class TestSymbolicMultiplicity:
         declared = BatchSpec(OpaqueSpec(), [("S",), ("T",)], ["chain", "draw"])
 
         with pytest.raises(ValueError, match="has levels"):
-            declared.bind_dims_from_spec(_spec([(3,)], ["draw"]), {}, "path")
+            declared._bind_dims_from_spec(_spec([(3,)], ["draw"]), {}, "path")
 
     def test_a_name_repeated_within_one_level_binds_once(self):
         """`("n", "n")` on one level is a square grid, as it is in an array shape."""
         declared = BatchSpec(OpaqueSpec(), [("n", "n")], ["grid"])
         bindings: dict[str, int] = {}
 
-        declared.bind_dims_from_spec(_spec([(3, 3)], ["grid"]), bindings, "path")
+        declared._bind_dims_from_spec(_spec([(3, 3)], ["grid"]), bindings, "path")
         assert bindings == {"n": 3}
 
         with pytest.raises(ValueError, match=r"'n' to 4, .*already bound to 3"):
-            declared.bind_dims_from_spec(_spec([(3, 4)], ["grid"]), {}, "path")
+            declared._bind_dims_from_spec(_spec([(3, 4)], ["grid"]), {}, "path")
 
     def test_levels_bind_their_own_dimensions(self):
         """Distinct names on distinct levels each take their own axis."""
         declared = BatchSpec(OpaqueSpec(), [("C",), ("D",)], ["chain", "draw"])
         bindings: dict[str, int] = {}
 
-        declared.bind_dims_from_spec(_spec([(2,), (4,)], ["chain", "draw"]), bindings, "path")
+        declared._bind_dims_from_spec(_spec([(2,), (4,)], ["chain", "draw"]), bindings, "path")
 
         assert bindings == {"C": 2, "D": 4}
 
@@ -1656,7 +1672,7 @@ class TestSymbolicMultiplicity:
         actual = BatchSpec(BatchSpec(OpaqueSpec(), [(5,)], ["inner"]), [(2,)], ["outer"])
         bindings: dict[str, int] = {}
 
-        declared.bind_dims_from_spec(actual, bindings, "path")
+        declared._bind_dims_from_spec(actual, bindings, "path")
 
         assert bindings == {"o": 2, "i": 5}
 
@@ -1667,18 +1683,190 @@ class TestSymbolicMultiplicity:
         oblong = BatchSpec(BatchSpec(OpaqueSpec(), [(5,)], ["inner"]), [(4,)], ["outer"])
         bindings: dict[str, int] = {}
 
-        declared.bind_dims_from_spec(square, bindings, "path")
+        declared._bind_dims_from_spec(square, bindings, "path")
         assert bindings == {"n": 4}
 
         with pytest.raises(ValueError, match=r"'n' to 5, .*already bound to 4"):
-            declared.bind_dims_from_spec(oblong, {}, "path")
+            declared._bind_dims_from_spec(oblong, {}, "path")
 
     def test_an_element_dimension_binds_through_the_element_spec(self):
         """The element's own schema binds by the same rule one level in."""
-        declared = BatchSpec(ArraySpec(shape=("d",)), [("n",)], ["item"])
-        actual = BatchSpec(ArraySpec(shape=(7,)), [(3,)], ["item"])
+        declared = BatchSpec(NumericArraySpec(shape=("d",)), [("n",)], ["item"])
+        actual = BatchSpec(NumericArraySpec(shape=(7,)), [(3,)], ["item"])
         bindings: dict[str, int] = {}
 
-        declared.bind_dims_from_spec(actual, bindings, "path")
+        declared._bind_dims_from_spec(actual, bindings, "path")
 
         assert bindings == {"n": 3, "d": 7}
+
+
+# ---------------------------------------------------------------------------
+# The constructor signature contract
+# ---------------------------------------------------------------------------
+
+#: The six classes whose constructors take the name first. Five are batches;
+#: ``NumericArray`` is the single value that shares the rule, since it too has no
+#: fields to describe it and so nothing to derive a name from.
+NAME_FIRST = [
+    "NumericArray",
+    "NumericArrayBatch",
+    "RecordBatch",
+    "NumericRecordBatch",
+    "OpaqueBatch",
+    "FunctionBatch",
+]
+
+
+def _args_for(kind: str, *, shape: tuple[int, ...], levels):
+    """The positional data and the spec keyword *kind* is built from."""
+    if kind == "NumericArray":
+        return (jnp.zeros(shape),), {}
+    if kind in {"OpaqueBatch", "FunctionBatch"}:
+        store = np.empty(shape, dtype=object)
+        store[...] = (lambda: 1) if kind == "FunctionBatch" else "x"
+        return (store, levels), {}
+    if kind == "NumericArrayBatch":
+        return (jnp.zeros(shape), levels), {"element_spec": NumericArraySpec(())}
+    return ({"x": jnp.zeros(shape)}, levels), {"element_spec": RecordSpec(x=())}
+
+
+class TestTheConstructorSignatureContract:
+    """Read from the signature, not from a message the interpreter produced.
+
+    The tests this replaces asked ``pytest.raises(match="name")`` of a call in the
+    *old* argument order. Such a call fails on the missing ``level_names``, and
+    ``name`` is a substring of ``level_names``, so they passed without ever
+    exercising the rule. A signature cannot pass for that reason.
+    """
+
+    @pytest.fixture(params=NAME_FIRST)
+    def kind(self, request):
+        return request.param
+
+    @pytest.fixture
+    def cls(self, kind):
+        import probpipe
+
+        return getattr(probpipe, kind)
+
+    @staticmethod
+    def _own_params(cls):
+        return list(inspect.signature(cls.__init__).parameters.values())[1:]
+
+    def test_the_name_is_first_positional_only_and_has_no_default(self, cls):
+        """A default is what the whole change removes, so its absence is asserted
+        rather than inferred from a refusal."""
+        first = self._own_params(cls)[0]
+
+        assert first.name == "name"
+        assert first.kind is inspect.Parameter.POSITIONAL_ONLY
+        assert first.default is inspect.Parameter.empty
+
+    def test_the_data_is_second_positional_only_and_has_no_default(self, cls):
+        second = self._own_params(cls)[1]
+
+        assert second.kind is inspect.Parameter.POSITIONAL_ONLY
+        assert second.default is inspect.Parameter.empty
+
+    def test_the_name_cannot_be_passed_by_keyword(self, cls, kind):
+        args, kwargs = _args_for(kind, shape=(2,), levels="draw")
+
+        with pytest.raises(TypeError, match="positional-only"):
+            cls(*args, name="b", **kwargs)
+
+    def test_the_removed_axis_groups_keyword_is_refused(self, cls, kind):
+        if kind == "NumericArray":
+            pytest.skip("carries no levels, so it never took a grouping")
+        args, kwargs = _args_for(kind, shape=(2,), levels="draw")
+
+        with pytest.raises(TypeError, match="axis_groups"):
+            cls("b", *args, axis_groups=((2,),), **kwargs)
+
+    def test_a_level_may_hold_several_axes(self, cls, kind):
+        """The partition is the argument; the sizes come back off the data."""
+        if kind == "NumericArray":
+            pytest.skip("carries no levels")
+        args, kwargs = _args_for(kind, shape=(2, 3), levels="draw")
+
+        batch = cls("b", *args, axes_per_level=(2,), **kwargs)
+
+        assert (batch.level_names, batch.axis_groups) == (("draw",), ((2, 3),))
+
+    @pytest.mark.parametrize(
+        ("count", "exc", "match"),
+        [
+            (0, ValueError, "at least one axis"),
+            (-1, ValueError, "at least one axis"),
+            (True, TypeError, "a bool is not one"),
+            (2.0, TypeError, "integer axis counts"),
+            ("2", TypeError, "integer axis counts"),
+        ],
+        ids=["zero", "negative", "bool", "float", "str"],
+    )
+    def test_an_axis_count_that_is_not_a_count_is_refused(self, cls, kind, count, exc, match):
+        if kind == "NumericArray":
+            pytest.skip("carries no levels")
+        args, kwargs = _args_for(kind, shape=(2, 3), levels="draw")
+
+        with pytest.raises(exc, match=match):
+            cls("b", *args, axes_per_level=(count,), **kwargs)
+
+    @pytest.mark.parametrize("count", [np.int64(2), np.uint8(2)], ids=["int64", "uint8"])
+    def test_an_integer_like_count_is_accepted(self, cls, kind, count):
+        """Read through ``operator.index``, as an axis *size* already is: a count
+        computed from an array's rank arrives as a numpy integer."""
+        if kind == "NumericArray":
+            pytest.skip("carries no levels")
+        args, kwargs = _args_for(kind, shape=(2, 3), levels="draw")
+
+        batch = cls("b", *args, axes_per_level=(count,), **kwargs)
+
+        assert batch.axis_groups == ((2, 3),)
+
+
+class TestFromVectorTakesThePartitionToo:
+    """``from_vector`` names the levels, so it takes the same partition."""
+
+    @staticmethod
+    def _vec(batch_shape):
+        return jnp.zeros((*batch_shape, 2))
+
+    def test_one_name_takes_every_batch_axis(self):
+        rebuilt = NumericRecordBatch.from_vector(
+            "post", RecordSpec(x=(2,)), self._vec((4, 5)), level_names="sample"
+        )
+
+        assert (rebuilt.batch_shape, rebuilt.level_names) == ((4, 5), ("sample",))
+        assert rebuilt.axis_groups == ((4, 5),)
+
+    def test_several_names_take_one_axis_each(self):
+        rebuilt = NumericRecordBatch.from_vector(
+            "post", RecordSpec(x=(2,)), self._vec((4, 5)), level_names=("chain", "draw")
+        )
+
+        assert rebuilt.axis_groups == ((4,), (5,))
+
+    def test_the_removed_axis_groups_keyword_is_refused(self):
+        """`from_vector` names the levels, so it took the grouping too — and had
+        to lose the same keyword the constructors did."""
+        with pytest.raises(TypeError, match="unexpected keyword argument 'axis_groups'"):
+            NumericRecordBatch.from_vector(
+                "post",
+                RecordSpec(x=(2,)),
+                self._vec((4, 5)),
+                level_names=("chain", "draw"),
+                axis_groups=((4,), (5,)),
+            )
+
+    def test_an_explicit_partition_groups_the_axes_it_names(self):
+        """Three axes, two levels: the first level holds two of them."""
+        rebuilt = NumericRecordBatch.from_vector(
+            "post",
+            RecordSpec(x=(2,)),
+            self._vec((2, 3, 4)),
+            level_names=("grid", "draw"),
+            axes_per_level=(2, 1),
+        )
+
+        assert (rebuilt.batch_shape, rebuilt.level_names) == ((2, 3, 4), ("grid", "draw"))
+        assert rebuilt.axis_groups == ((2, 3), (4,))

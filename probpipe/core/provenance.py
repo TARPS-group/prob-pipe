@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import copy
 import logging
+import math
 from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from .config import ProvenanceMode, provenance_config
+from .config import ProvenanceMode
 
 logger = logging.getLogger(__name__)
 
@@ -106,12 +108,30 @@ class Provenance:
         Descriptors of resolved plain inputs, keyed by stable parameter label.
         These descriptors preserve call-defining values without turning them
         into lineage nodes.
+    controls : mapping of str to JSON-native values
+        Exact replay/control data. Unlike metadata, values are never stringified.
+    diagnostics : mapping of str to JSON-native values
+        Exact non-semantic execution observations and drift information.
     """
 
     operation: str
     parents: tuple[Any, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
     inputs: Mapping[str, ParentInfo] = field(default_factory=dict)
+    controls: Mapping[str, Any] = field(default_factory=dict)
+    diagnostics: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "controls",
+            _copy_json_mapping(self.controls, field_name="controls"),
+        )
+        object.__setattr__(
+            self,
+            "diagnostics",
+            _copy_json_mapping(self.diagnostics, field_name="diagnostics"),
+        )
 
     def __repr__(self) -> str:
         parent_names = ", ".join(p.name or p.type_name for p in self.parents)
@@ -156,6 +176,8 @@ class Provenance:
             "parents": parent_dicts,
             "inputs": input_dicts,
             "metadata": safe_metadata,
+            "controls": copy.deepcopy(dict(self.controls)),
+            "diagnostics": copy.deepcopy(dict(self.diagnostics)),
         }
 
     @classmethod
@@ -176,6 +198,8 @@ class Provenance:
                 "_inputs_info": d.get("inputs", {}),
             },
             inputs={},
+            controls=d.get("controls", {}),
+            diagnostics=d.get("diagnostics", {}),
         )
 
     @classmethod
@@ -185,8 +209,10 @@ class Provenance:
         parents: tuple | list = (),
         metadata: dict[str, Any] | None = None,
         inputs: Mapping[str, Any] | None = None,
+        controls: Mapping[str, Any] | None = None,
+        diagnostics: Mapping[str, Any] | None = None,
     ) -> Provenance | None:
-        """Build provenance respecting the global :attr:`~probpipe.provenance_config` mode.
+        """Build provenance respecting the active workflow's provenance mode.
 
         Returns ``None`` when the mode is :attr:`ProvenanceMode.OFF` so that
         call sites can pass the result directly to ``with_provenance()``
@@ -203,9 +229,18 @@ class Provenance:
             Optional mapping of scalar/string metadata.
         inputs:
             Resolved plain inputs keyed by stable parameter label.
+        controls:
+            Exact JSON-native replay and execution controls.
+        diagnostics:
+            Exact JSON-native non-semantic execution observations.
         """
-        mode = provenance_config.mode
+        from . import _workflow_context
+
+        mode = _workflow_context._active_provenance_mode()
         if mode is ProvenanceMode.OFF:
+            return None
+
+        if _workflow_context._workflow_side_effects_forbidden():
             return None
         keep = mode is ProvenanceMode.FULL
 
@@ -240,7 +275,42 @@ class Provenance:
             parents=refs,
             metadata=metadata or {},
             inputs=input_refs,
+            controls={} if controls is None else controls,
+            diagnostics={} if diagnostics is None else diagnostics,
         )
+
+
+def _copy_json_mapping(
+    value: Mapping[str, Any],
+    *,
+    field_name: str,
+) -> dict[str, Any]:
+    """Validate and detach one exact JSON-native provenance mapping."""
+    if not isinstance(value, Mapping):
+        raise TypeError(f"Provenance.{field_name} must be a JSON-native mapping")
+    detached = copy.deepcopy(dict(value))
+    _validate_json_native(detached, path=f"Provenance.{field_name}")
+    return detached
+
+
+def _validate_json_native(value: Any, *, path: str) -> None:
+    if value is None or isinstance(value, (str, bool, int)):
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError(f"{path} numbers must be finite JSON values")
+        return
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            _validate_json_native(item, path=f"{path}[{index}]")
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise TypeError(f"{path} must use string keys in JSON-native mappings")
+            _validate_json_native(item, path=f"{path}.{key}")
+        return
+    raise TypeError(f"{path} contains non-JSON-native value {type(value).__name__}")
 
 
 # ---------------------------------------------------------------------------

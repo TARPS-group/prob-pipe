@@ -1,10 +1,11 @@
 """Iteration regression tests: distributions are non-iterable; only the
-Record family iterates field names (#142).
+Record family iterates field names.
 
 The rule (codified in STYLE_GUIDE.md §1.11):
 
-* :class:`Record`, :class:`NumericRecord`, :class:`RecordArray`,
-  :class:`NumericRecordArray` iterate field names dict-style.
+* :class:`Record` and :class:`NumericRecord` iterate field names dict-style.
+* :class:`RecordBatch` / :class:`NumericRecordBatch` are collections: they
+  iterate leading-axis views, and fields are read from ``event_template``.
 * :class:`DistributionArray` is positional (access via ``da[i]``);
   ``len(da)`` is the leading-axis size, ``prod(da.batch_shape)`` is
   the total cell count. Not generally treated as an iterable.
@@ -32,10 +33,10 @@ from probpipe import (
     MultivariateNormal,
     Normal,
     NumericRecord,
-    NumericRecordArray,
+    NumericRecordBatch,
     ProductDistribution,
     Record,
-    RecordArray,
+    RecordBatch,
     TransformedDistribution,
 )
 
@@ -50,14 +51,14 @@ def _make_transformed():
     import tensorflow_probability.substrates.jax.bijectors as tfb
 
     return TransformedDistribution(
+        "td",
         Normal(loc=0.0, scale=1.0, name="base"),
         tfb.Exp(),
-        name="td",
     )
 
 
 # User-constructible Distribution subclasses, parametrised here to pin
-# the non-iterable rule (#142). WF-output classes (BroadcastDistribution,
+# the non-iterable rule. WF-output classes (BroadcastDistribution,
 # _RecordMarginal / _MixtureMarginal / _ListMarginal, BootstrapDistribution
 # of an op return) are produced by the Function layer rather than
 # user code; they inherit non-iterability from their bases (Distribution
@@ -87,25 +88,26 @@ DISTRIBUTIONS = [
         id="TransformedDistribution",
     ),
     pytest.param(
-        lambda: KDEDistribution(jnp.zeros((20, 3)), name="kde"),
+        lambda: KDEDistribution("kde", jnp.zeros((20, 3))),
         id="KDEDistribution",
     ),
     pytest.param(
         lambda: EmpiricalDistribution(
+            "theta",
             jnp.zeros((10, 3)),
-            name="theta",
         ),
         id="RecordEmpiricalDistribution",
     ),
     pytest.param(
         lambda: BootstrapReplicateDistribution(
+            "obs",
             jnp.zeros((10, 2)),
-            name="obs",
         ),
         id="RecordBootstrapReplicateDistribution",
     ),
     pytest.param(
         lambda: BootstrapReplicateDistribution(
+            "boot",
             Normal(loc=0.0, scale=1.0, name="x"),
             replicate_size=5,
         ),
@@ -133,7 +135,7 @@ def _make_minibatched_distribution():
     y = jnp.array([1.0, 0.0, 1.0, 0.0])
     prior = MultivariateNormal(loc=jnp.zeros(4), cov=jnp.eye(4), name="theta")
     lik = GLMLikelihood(tfp_glm.Bernoulli(), x=X)
-    return MinibatchedDistribution(prior, lik, Record("r", X=X, y=y), batch_size=2)
+    return MinibatchedDistribution("measure", prior, lik, Record("r", X=X, y=y), batch_size=2)
 
 
 @pytest.mark.parametrize("make_dist", DISTRIBUTIONS)
@@ -178,25 +180,31 @@ def test_numeric_record_iterates_field_names():
     assert list(iter(nr)) == ["a", "b"]
 
 
-def test_record_array_iterates_field_names():
-    from probpipe.core.event_template import EventTemplate
+def test_a_record_batch_iterates_leading_axis_views():
+    from probpipe.core._specs import RecordSpec
 
-    ra = RecordArray(
-        a=jnp.zeros((5,)),
-        b=jnp.zeros((5,)),
-        batch_shape=(5,),
-        template=EventTemplate(a=(), b=()),
+    batch = RecordBatch(
+        "batch",
+        {"a": jnp.zeros((5,)), "b": jnp.zeros((5,))},
+        level_names="draw",
+        axes_per_level=(1,),
+        element_spec=RecordSpec(a=(), b=()),
     )
-    assert list(iter(ra)) == ["a", "b"]
+    rows = list(iter(batch))
+    assert len(rows) == 5
+    assert all(tuple(row.keys()) == ("a", "b") for row in rows)
 
 
-def test_numeric_record_array_iterates_field_names():
-    from probpipe.core.event_template import NumericEventTemplate
+def test_a_numeric_record_batch_iterates_leading_axis_views():
+    from probpipe.core._specs import NumericRecordSpec
 
-    nra = NumericRecordArray(
-        a=jnp.zeros((4,)),
-        b=jnp.zeros((4,)),
-        batch_shape=(4,),
-        template=NumericEventTemplate(a=(), b=()),
+    batch = NumericRecordBatch(
+        "batch",
+        {"a": jnp.zeros((4,)), "b": jnp.zeros((4,))},
+        level_names="draw",
+        axes_per_level=(1,),
+        element_spec=NumericRecordSpec(a=(), b=()),
     )
-    assert list(iter(nra)) == ["a", "b"]
+    rows = list(iter(batch))
+    assert len(rows) == 4
+    assert all(tuple(row.keys()) == ("a", "b") for row in rows)

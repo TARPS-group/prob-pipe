@@ -21,8 +21,10 @@ from probpipe import (
     mean,
     sample,
     variance,
+    workflow_run,
 )
-from probpipe.core._record_array import RecordArray
+from probpipe.core._numeric_record_batch import NumericRecordBatch
+from probpipe.core._record_batch import RecordBatch
 from probpipe.core._record_distribution import _RecordDistributionView
 from probpipe.core.node import Function
 from probpipe.core.record import Record
@@ -107,7 +109,7 @@ class TestProductDistribution:
     def test_sample_returns_values(self, joint_xy):
         key = jax.random.PRNGKey(0)
         s = sample(joint_xy, key=key)
-        assert isinstance(s, (Record, RecordArray))
+        assert isinstance(s, Record)
         assert set(s.fields) == {"x", "y"}
 
     def test_sample_shapes_scalar(self, joint_xy):
@@ -183,7 +185,7 @@ class TestProductDistribution:
     def test_supports_per_field(self):
         """``supports`` maps each field to its component's support constraint
         (heterogeneous constraints preserved per field)."""
-        joint = ProductDistribution(Gamma(2.0, 1.0, name="g"), Normal(loc=0.0, scale=1.0, name="x"))
+        joint = ProductDistribution(Gamma("g", 2.0, 1.0), Normal(loc=0.0, scale=1.0, name="x"))
         sup = joint.supports
         assert set(sup.keys()) == {"g", "x"}
         assert sup["g"] == joint.components["g"].support
@@ -198,7 +200,7 @@ class TestProductDistribution:
             name="joint",
             outer={
                 "a": Normal(loc=0.0, scale=1.0, name="a"),
-                "deep": {"g": Gamma(2.0, 1.0, name="g")},
+                "deep": {"g": Gamma("g", 2.0, 1.0)},
             },
             m=Normal(loc=0.0, scale=1.0, name="m"),
         )
@@ -232,7 +234,7 @@ class TestFlattenUnflatten:
     def test_roundtrip_scalar_components(self, joint_xy):
         key = jax.random.PRNGKey(60)
         s = sample(joint_xy, key=key)
-        assert isinstance(s, (Record, RecordArray))
+        assert isinstance(s, Record)
         flat = joint_xy.flatten_value(s)
         assert flat.shape == (2,)
         recovered = joint_xy.unflatten_value(
@@ -246,7 +248,7 @@ class TestFlattenUnflatten:
     def test_roundtrip_mixed_components(self, joint_xz):
         key = jax.random.PRNGKey(61)
         s = sample(joint_xz, key=key)
-        assert isinstance(s, (Record, RecordArray))
+        assert isinstance(s, Record)
         flat = joint_xz.flatten_value(s)
         assert flat.shape == (4,)
         recovered = joint_xz.unflatten_value(
@@ -260,7 +262,7 @@ class TestFlattenUnflatten:
     def test_roundtrip_no_batch_dim(self, joint_xy):
         key = jax.random.PRNGKey(62)
         s = sample(joint_xy, key=key)
-        assert isinstance(s, (Record, RecordArray))
+        assert isinstance(s, Record)
         flat = joint_xy.flatten_value(s)
         assert flat.shape == (2,)
         recovered = joint_xy.unflatten_value(
@@ -273,14 +275,14 @@ class TestFlattenUnflatten:
 
 
 # ===========================================================================
-# 3b. TestNestedSampleFlatten (issue #262)
+# 3b. TestNestedSampleFlatten
 # ===========================================================================
 
 
 class TestNestedSampleFlatten:
-    """A batched draw from a nested ProductDistribution is a canonical, nested
-    NumericRecordArray that flattens and round-trips; the unbatched draw stays
-    a plain Record."""
+    """A batched draw from a nested ProductDistribution is one flat
+    NumericRecordBatch over leaf paths that flattens and round-trips; the
+    unbatched draw stays a plain Record."""
 
     @pytest.fixture
     def nested(self):
@@ -293,26 +295,22 @@ class TestNestedSampleFlatten:
             m=Normal(loc=-1.0, scale=1.0, name="m"),
         )
 
-    def test_batched_nested_field_is_record_array(self, nested):
-        from probpipe.core._record_array import NumericRecordArray
-
+    def test_batched_nested_field_is_a_sub_batch(self, nested):
         s = sample(nested, key=jax.random.PRNGKey(0), sample_shape=(6,))
-        assert isinstance(s, NumericRecordArray)
-        assert isinstance(s.at_path("outer"), NumericRecordArray)  # not a plain Record
+        assert isinstance(s, NumericRecordBatch)
+        assert isinstance(s["outer"], NumericRecordBatch)  # the sub-batch, not a plain Record
 
     def test_unbatched_nested_field_stays_record(self, nested):
         s = sample(nested, key=jax.random.PRNGKey(0))
-        assert isinstance(s, Record) and not isinstance(s, RecordArray)
+        assert isinstance(s, Record) and not isinstance(s, RecordBatch)
         assert isinstance(s.at_path("outer"), Record) and not isinstance(
-            s.at_path("outer"), RecordArray
+            s.at_path("outer"), RecordBatch
         )
 
     def test_batched_depth_two_nested_sampling(self):
         # A depth-2 nesting exercises the interior-subtree lookup inside
         # _sample_nested (template.children, since template [] is leaf-only);
         # only leaf components sit below depth 1 in the fixtures above.
-        from probpipe.core._record_array import NumericRecordArray
-
         deep = ProductDistribution(
             name="deep",
             grp={
@@ -322,13 +320,11 @@ class TestNestedSampleFlatten:
             noise=Normal(loc=0.0, scale=1.0, name="noise"),
         )
         s = sample(deep, key=jax.random.PRNGKey(0), sample_shape=(4,))
-        assert isinstance(s, NumericRecordArray)
-        assert tuple(s.template.keys()) == ("grp/sub/force", "grp/mass", "noise")
+        assert isinstance(s, NumericRecordBatch)
+        assert tuple(s.event_template.keys()) == ("grp/sub/force", "grp/mass", "noise")
         assert s["grp/sub/force"].shape == (4,)
 
     def test_batched_nested_flatten_roundtrip(self, nested):
-        from probpipe.core._record_array import NumericRecordArray
-
         s = sample(nested, key=jax.random.PRNGKey(1), sample_shape=(6,))
         leaves = list(nested.event_template.leaf_shapes)
         flat = s.to_vector()
@@ -340,16 +336,15 @@ class TestNestedSampleFlatten:
         for i, leaf in enumerate(leaves):
             np.testing.assert_allclose(flat[:, i], s[leaf], atol=1e-6)
         # Secondary: the columns round-trip back to the same leaves via unflatten.
-        rec = NumericRecordArray.from_vector("nra", nested.event_template, flat)
+        rec = NumericRecordBatch.from_vector("nrb", nested.event_template, flat, level_names="draw")
         for leaf in leaves:
             np.testing.assert_allclose(rec[leaf], s[leaf], atol=1e-6)
 
-    def test_batched_nested_non_numeric_field_is_plain_record_array(self):
+    def test_batched_nested_non_numeric_field_is_a_plain_batch(self):
         # A non-numeric joint (an object-dtype JointEmpirical leaf) makes the
-        # batched nested field a plain RecordArray, not a NumericRecordArray
-        # (the else branch of _sample_nested); such a field is not flattenable.
+        # batched draw a plain RecordBatch, not a NumericRecordBatch; such a
+        # field is not flattenable.
         from probpipe import JointEmpirical
-        from probpipe.core._record_array import NumericRecordArray, RecordArray
 
         je = JointEmpirical(
             labels=np.array(["a", "b", "c"], dtype=object),
@@ -366,9 +361,9 @@ class TestNestedSampleFlatten:
         )
         assert not isinstance(joint, NumericRecordDistribution)
         s = sample(joint, key=jax.random.PRNGKey(0), sample_shape=(4,))
-        assert isinstance(s, RecordArray) and not isinstance(s, NumericRecordArray)
-        assert isinstance(s.at_path("outer"), RecordArray)
-        assert not isinstance(s.at_path("outer"), NumericRecordArray)
+        assert isinstance(s, RecordBatch) and not isinstance(s, NumericRecordBatch)
+        assert isinstance(s["outer"], RecordBatch)
+        assert not isinstance(s["outer"], NumericRecordBatch)
 
 
 # ===========================================================================
@@ -407,7 +402,7 @@ class TestDistributionView:
         # Regression: the _map_components loop variable must not shadow the
         # threaded name, or mean/variance come back named after the last
         # component ("y") instead of the product distribution.
-        prod = ProductDistribution(x=Normal(0.0, 1.0, name="x"), y=Normal(0.0, 1.0, name="y"))
+        prod = ProductDistribution(x=Normal("x", 0.0, 1.0), y=Normal("y", 0.0, 1.0))
         assert mean(prod).name == prod.name
         assert variance(prod).name == prod.name
         assert mean(prod).name != "y"
@@ -449,8 +444,9 @@ class TestConditionOn:
         cond = condition_on(joint_xy, x=jnp.array(2.0))
         key = jax.random.PRNGKey(20)
         s = sample(cond, key=key, sample_shape=(10,))
-        assert "x" not in s
-        assert "y" in s
+        # A batch is a collection, so its fields are read from the schema.
+        assert "x" not in s.event_template
+        assert "y" in s.event_template
 
     def test_unconditioned_component_still_varies(self, joint_xy):
         cond = condition_on(joint_xy, x=jnp.array(0.0))
@@ -503,7 +499,6 @@ class TestBroadcastingReconnection:
             func=add,
             dispatch=backend,
             n_broadcast_samples=50,
-            seed=42,
         )
 
     def test_joint_views_sampled_together_loop(self):
@@ -524,7 +519,8 @@ class TestBroadcastingReconnection:
             y=Normal(loc=10.0, scale=1.0, name="y"),
         )
         wf = self._make_add_workflow("sequential")
-        result = wf(a=joint["x"], b=joint["y"])
+        with workflow_run(seed=42):
+            result = wf(a=joint["x"], b=joint["y"])
         assert hasattr(result, "samples")
         # x ~ N(0,1), y ~ N(10,1), independent => a+b ~ N(10, sqrt(2))
         # With n=128 (default broadcast), MC SE on mean ~ sqrt(2)/sqrt(128) ~ 0.125
@@ -550,9 +546,9 @@ class TestBroadcastingReconnection:
             func=subtract,
             dispatch="sequential",
             n_broadcast_samples=20,
-            seed=99,
         )
-        result = wf(a=view_x, b=view_x)
+        with workflow_run(seed=99):
+            result = wf(a=view_x, b=view_x)
         assert hasattr(result, "samples")
         # a and b are the same samples, so a - b = 0 for every sample
         np.testing.assert_allclose(np.array(result.samples), 0.0, atol=1e-5)
@@ -572,9 +568,9 @@ class TestBroadcastingReconnection:
             func=add3,
             dispatch="sequential",
             n_broadcast_samples=50,
-            seed=77,
         )
-        result = wf(a=joint["x"], b=joint["y"], c=independent)
+        with workflow_run(seed=77):
+            result = wf(a=joint["x"], b=joint["y"], c=independent)
         assert hasattr(result, "samples")
         # x ~ N(0,1), y ~ N(5,1), c ~ N(100, 0.1) => sum ~ N(105, ...)
         mean_val = float(jnp.mean(result.samples))
@@ -594,9 +590,9 @@ class TestBroadcastingReconnection:
             func=add,
             dispatch="jax",
             n_broadcast_samples=50,
-            seed=55,
         )
-        result = wf(a=joint["x"], b=joint["y"])
+        with workflow_run(seed=55):
+            result = wf(a=joint["x"], b=joint["y"])
         assert hasattr(result, "samples")
         mean_val = float(jnp.mean(result.samples))
         assert abs(mean_val - 10.0) < 2.0
@@ -616,9 +612,9 @@ class TestBroadcastingReconnection:
             func=subtract,
             dispatch="jax",
             n_broadcast_samples=20,
-            seed=88,
         )
-        result = wf(a=view_x, b=view_x)
+        with workflow_run(seed=88):
+            result = wf(a=view_x, b=view_x)
         assert hasattr(result, "samples")
         np.testing.assert_allclose(np.array(result.samples), 0.0, atol=1e-5)
 
@@ -674,14 +670,14 @@ class TestProductProtocolDuckTyping:
         """All Normal components → isinstance SupportsLogProb True."""
         from probpipe import SupportsLogProb
 
-        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
+        joint = ProductDistribution(x=Normal("x", 0, 1), y=Normal("y", 1, 2))
         assert isinstance(joint, SupportsLogProb)
 
     def test_all_mean_variance_components(self):
         """All Normal components → isinstance SupportsMean/SupportsVariance True."""
         from probpipe import SupportsMean, SupportsVariance
 
-        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
+        joint = ProductDistribution(x=Normal("x", 0, 1), y=Normal("y", 1, 2))
         assert isinstance(joint, SupportsMean)
         assert isinstance(joint, SupportsVariance)
 
@@ -689,27 +685,27 @@ class TestProductProtocolDuckTyping:
         """Component lacking SupportsLogProb → product lacks it too."""
         from probpipe import BootstrapDistribution, SupportsLogProb
 
-        boot = BootstrapDistribution(jnp.array([1.0, 2.0, 3.0]), name="y")
-        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=boot)
+        boot = BootstrapDistribution("y", jnp.array([1.0, 2.0, 3.0]))
+        joint = ProductDistribution(x=Normal("x", 0, 1), y=boot)
         assert not isinstance(joint, SupportsLogProb)
 
     def test_always_supports_sampling(self):
         """ProductDistribution always supports SupportsSampling."""
         from probpipe import SupportsSampling
 
-        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
+        joint = ProductDistribution(x=Normal("x", 0, 1), y=Normal("y", 1, 2))
         assert isinstance(joint, SupportsSampling)
 
     def test_always_supports_conditioning(self):
-        """ProductDistribution always supports SupportsConditioning."""
-        from probpipe import SupportsConditioning
+        """ProductDistribution always claims SupportsExactConditioning."""
+        from probpipe import SupportsExactConditioning
 
-        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
-        assert isinstance(joint, SupportsConditioning)
+        joint = ProductDistribution(x=Normal("x", 0, 1), y=Normal("y", 1, 2))
+        assert isinstance(joint, SupportsExactConditioning)
 
     def test_dynamic_subclass_pytree_roundtrip(self):
         """Dynamic ProductDistribution subclass is JAX pytree-compatible."""
-        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
+        joint = ProductDistribution(x=Normal("x", 0, 1), y=Normal("y", 1, 2))
         children, aux = jax.tree.flatten(joint)
         reconstructed = jax.tree.unflatten(aux, children)
         assert isinstance(reconstructed, ProductDistribution)
@@ -721,8 +717,8 @@ class TestProductProtocolDuckTyping:
         exposes the numeric API.
         """
         joint = ProductDistribution(
-            x=Normal(0, 1, name="x"),
-            y=Normal(1, 2, name="y"),
+            x=Normal("x", 0, 1),
+            y=Normal("y", 1, 2),
         )
         assert isinstance(joint, NumericRecordDistribution)
         # Numeric API is available.
@@ -749,7 +745,7 @@ class TestProductProtocolDuckTyping:
             name="je",
         )
         # Combine with a numeric Normal: mixed leaves.
-        joint = ProductDistribution(x=Normal(0, 1, name="x"), je=je)
+        joint = ProductDistribution(x=Normal("x", 0, 1), je=je)
         assert isinstance(joint, ProductDistribution)
         assert isinstance(joint, RecordDistribution)
         # No numeric mixin → numeric API methods are absent.
@@ -778,7 +774,7 @@ class TestProductProtocolDuckTyping:
             ids=np.array([0, 1, 2]),
             name="je",
         )
-        joint = ProductDistribution(x=Normal(0, 1, name="x"), je=je)
+        joint = ProductDistribution(x=Normal("x", 0, 1), je=je)
         r = repr(joint)
         assert "x=Normal" in r
         # Non-numeric leaf prints its class name, not ``{...}``.
@@ -862,7 +858,7 @@ class TestLogProbBatchValues:
         batch_lps = jnp.asarray(log_prob(joint_xy, samples))
 
         for i in range(10):
-            s_i = Record("r", {k: v[i] for k, v in samples.items()})
+            s_i = Record("r", {k: samples[k][i] for k in samples.event_template})
             expected = float(log_prob(normal_x, s_i["x"])) + float(log_prob(normal_y, s_i["y"]))
             np.testing.assert_allclose(float(batch_lps[i]), expected, atol=1e-5)
 
@@ -1016,7 +1012,7 @@ class TestEnumerateWithDistributionViews:
         view_y = joint["y"]
 
         # Small empirical that will be enumerated
-        ed = EmpiricalDistribution(jnp.array([[10.0], [20.0]]), name="x")
+        ed = EmpiricalDistribution("x", jnp.array([[10.0], [20.0]]))
 
         def compute(a: float, b: float, c: float) -> float:
             return (a - b) + c
@@ -1025,9 +1021,9 @@ class TestEnumerateWithDistributionViews:
             func=compute,
             dispatch="sequential",
             n_broadcast_samples=50,
-            seed=123,
         )
-        result = wf(a=view_x, b=view_y, c=ed)
+        with workflow_run(seed=123):
+            result = wf(a=view_x, b=view_y, c=ed)
         assert hasattr(result, "samples")
         assert result.num_atoms == 50
 
@@ -1043,8 +1039,8 @@ class TestNestedProductDistribution:
     A nested ProductDistribution groups components into sub-dicts::
 
         ProductDistribution(
-            physics={"force": Normal(0, 1, name="force"), "mass": Gamma(2, 1, name="mass")},
-            observation=Normal(0, 0.1, name="observation"),
+            physics={"force": Normal("force", 0, 1), "mass": Gamma("mass", 2, 1)},
+            observation=Normal("observation", 0, 0.1),
         )
 
     The nesting is purely organizational — all leaf components remain
@@ -1092,7 +1088,7 @@ class TestNestedProductDistribution:
     def test_sample_returns_nested_values(self, nested_joint):
         key = jax.random.PRNGKey(1)
         s = sample(nested_joint, key=key)
-        assert isinstance(s, (Record, RecordArray))
+        assert isinstance(s, Record)
         assert isinstance(s.at_path("physics"), Record)
         assert "force" in s.at_path("physics")
         assert "mass" in s.at_path("physics")
@@ -1159,7 +1155,7 @@ class TestNestedProductDistribution:
     def test_flatten_unflatten_roundtrip(self, nested_joint):
         key = jax.random.PRNGKey(20)
         s = sample(nested_joint, key=key)
-        assert isinstance(s, (Record, RecordArray))
+        assert isinstance(s, Record)
         flat = nested_joint.flatten_value(s)
         assert flat.shape == (3,)
         recovered = nested_joint.unflatten_value(
@@ -1235,12 +1231,11 @@ class TestNestedProductDistribution:
         cond = condition_on(nested_joint, physics={"force": jnp.array(1.0)})
         key = jax.random.PRNGKey(50)
         s = sample(cond, key=key, sample_shape=(5,))
-        assert isinstance(s, (Record, RecordArray))
-        assert "physics" in s
-        assert isinstance(s.at_path("physics"), Record)
-        assert "mass" in s.at_path("physics")
-        assert "force" not in s.at_path("physics")
-        assert "observation" in s
+        assert isinstance(s, RecordBatch)
+        assert isinstance(s["physics"], RecordBatch)
+        assert "physics/mass" in s.event_template
+        assert "physics/force" not in s.event_template
+        assert "observation" in s.event_template
         assert s["physics/mass"].shape == (5,)
         assert s["observation"].shape == (5,)
 
@@ -1362,9 +1357,9 @@ class TestNestedProductDistribution:
             func=add,
             dispatch="sequential",
             n_broadcast_samples=30,
-            seed=42,
         )
-        result = wf(a=view_force, b=view_obs)
+        with workflow_run(seed=42):
+            result = wf(a=view_force, b=view_obs)
         assert hasattr(result, "samples")
         assert result.num_atoms == 30
 
@@ -1401,8 +1396,8 @@ class TestNestedWithMVN:
     def test_sample_and_flatten(self, nested_mvn):
         key = jax.random.PRNGKey(50)
         s = sample(nested_mvn, key=key, sample_shape=(5,))
-        assert isinstance(s, (Record, RecordArray))
-        assert isinstance(s.at_path("group"), Record)
+        assert isinstance(s, RecordBatch)
+        assert isinstance(s["group"], RecordBatch)
         assert s["group/position"].shape == (5, 2)
         assert s["group/scale"].shape == (5,)
         assert s["label"].shape == (5,)

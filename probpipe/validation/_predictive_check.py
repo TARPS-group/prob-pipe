@@ -8,13 +8,17 @@ from typing import Any
 import jax
 import numpy as np
 
-from .._utils import _auto_key
+from ..core._empirical import RecordEmpiricalDistribution
 from ..core._numeric_record import NumericRecord
-from ..core.distribution import Distribution, RecordEmpiricalDistribution
 from ..core.node import function
-from ..core.protocols import SupportsSampling
+from ..core.protocols import GenerativeLikelihood, SupportsSampling
 from ..custom_types import PRNGKey
-from ..modeling._likelihood import GenerativeLikelihood  # needed for type hint resolution
+from ..distributions._distribution import Distribution
+from ._workflow_rng import (
+    _require_certified_generative_provider,
+    _resolve_validation_key,
+    _validate_positive_int,
+)
 
 __all__ = ["predictive_check"]
 
@@ -50,7 +54,7 @@ def predictive_check[P, D](
 
     Parameters
     ----------
-    distribution : Distribution[P]
+    distribution : Distribution
         Prior or posterior to sample parameters from.
     generative_likelihood : GenerativeLikelihood[P, D]
         Must have ``generate_data(params: P, num_observations: int, *,
@@ -87,15 +91,31 @@ def predictive_check[P, D](
         if observed_data is None:
             raise ValueError("num_observations is required when observed_data is not provided")
         num_observations = len(observed_data)
-
-    if key is None:
-        key = _auto_key()
+    num_observations = _validate_positive_int("num_observations", num_observations)
+    num_replications = _validate_positive_int("num_replications", num_replications)
+    if not callable(test_fn):
+        raise TypeError(f"test_fn must be callable; got {type(test_fn).__name__}")
 
     # -- Unwrap NumericRecord if the node system resolved the distribution --
     if isinstance(distribution, NumericRecord):
         distribution = RecordEmpiricalDistribution(
+            getattr(distribution, "name", "posterior"),
             distribution,  # NumericRecord is a Record subclass — accepted directly
-            name=getattr(distribution, "name", "posterior"),
+        )
+    if not callable(getattr(distribution, "_sample", None)):
+        raise TypeError(f"{type(distribution).__name__} does not support predictive sampling")
+
+    if key is None:
+        provider_abi = _require_certified_generative_provider(
+            generative_likelihood,
+            "predictive_check",
+        )
+        key = _resolve_validation_key(
+            None,
+            operation_kind="predictive-check",
+            execution_mode="sampled",
+            sample_shape=(num_replications,),
+            provider_abi=provider_abi,
         )
 
     # -- Fast path: batched generation + vmap test_fn -----------------------
@@ -119,8 +139,8 @@ def predictive_check[P, D](
         )
 
     replicated_dist = RecordEmpiricalDistribution(
+        "replicated_statistics",
         stats_array,
-        name="replicated_statistics",
     )
 
     test_fn_name = getattr(test_fn, "__name__", repr(test_fn))

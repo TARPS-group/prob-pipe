@@ -1,10 +1,9 @@
-"""Dogfood the validation metrics on real fits (issue #301).
+"""Dogfood the validation metrics on real fits.
 
-NUTS recovers the conjugate model's closed-form posterior (closing #301's
-acceptance: a method reproduces the analytic reference within measured
-tolerances); vanilla fixed-step ``blackjax_sgld`` exhibits the covariance bias
-that #304's calibration is meant to remove. Tolerances are measured across
-seeds 0–2 per STYLE_GUIDE §8.6.
+NUTS recovers the conjugate model's closed-form posterior within measured
+tolerances, and the metrics detect the covariance bias of vanilla fixed-step
+``blackjax_sgld``. Tolerances are measured across seeds 0–2 per STYLE_GUIDE
+§8.6.
 """
 
 from __future__ import annotations
@@ -47,7 +46,7 @@ class TestSGLDCovarianceBias:
         rce_sgld = float(relative_cov_error(sgld, m.reference))
         # Vanilla fixed-step SGLD mis-estimates the posterior covariance. Measured
         # across seeds 0–2: SGLD rce ∈ [0.18, 0.35] vs NUTS [0.04, 0.08], a 2.7–6×
-        # gap — the bias #304's calibration must remove.
+        # gap.
         assert rce_sgld > 2.0 * rce_nuts
         assert rce_sgld > 0.12
 
@@ -61,7 +60,11 @@ class TestNUTSReproducesNonGaussianReference:
         assert m.posterior_skewness > 0.5  # Gaussian skewness is 0; measured ≈ 0.7
         # NUTS captures the shape: the distributional metrics sit near the sampling
         # floor. Measured across seeds 0–2: mmd ≤ 0.001, sliced_W ≤ 0.009.
-        nuts = score_posterior(beta_bernoulli_nuts_posterior, m.reference)
+        nuts = score_posterior(
+            beta_bernoulli_nuts_posterior,
+            m.reference,
+            key=jax.random.PRNGKey(0),
+        )
         assert float(nuts["mmd"]) < 0.004
         assert float(nuts["sliced_wasserstein"]) < 0.014
         assert float(nuts["relative_cov_error"]) < 0.2
@@ -74,6 +77,10 @@ class TestNUTSReproducesNonGaussianReference:
         mean = m.reference.mean
         sd = jnp.sqrt(jnp.diag(m.reference.cov))
         gaussian = mean + sd * jax.random.normal(jax.random.PRNGKey(7), (5000, mean.shape[0]))
-        control = score_posterior(gaussian, m.reference)
+        control = score_posterior(
+            gaussian,
+            m.reference,
+            key=jax.random.PRNGKey(0),
+        )
         assert float(control["relative_cov_error"]) < 0.05  # moments match
         assert float(control["mmd"]) > 0.004  # but the non-Gaussian shape is rejected

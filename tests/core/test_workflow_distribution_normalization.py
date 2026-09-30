@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import inspect
+import types
 from typing import Any, Protocol, runtime_checkable
+from unittest.mock import patch
 
 import jax.numpy as jnp
 import numpy as np
@@ -16,13 +18,16 @@ from probpipe import (
     EmpiricalDistribution,
     KDEDistribution,
     Normal,
-    NumericRecordArray,
+    NumericArrayBatch,
     NumericRecordDistribution,
+    converter_registry,
     log_prob,
     mean,
+    workflow_run,
 )
 from probpipe.core._workflow_call import make_signature_info_from_signature
 from probpipe.core._workflow_distribution_normalization import (
+    DISTRIBUTION_HINT_PROTOCOLS,
     normalize_distribution_values,
 )
 from probpipe.core.node import Function
@@ -37,8 +42,8 @@ def normal_external():
 @pytest.fixture
 def empirical_dist():
     return EmpiricalDistribution(
+        "x",
         jnp.asarray([[0.0], [1.0], [2.0]]),
-        name="x",
     )
 
 
@@ -95,6 +100,28 @@ class TestNormalizeDistributionValues:
         assert normalized["dist"] is not empirical_dist
         assert isinstance(normalized["dist"], KDEDistribution)
         assert isinstance(normalized["dist"], SupportsLogProb)
+
+    def test_protocol_hint_preserves_value_when_conversion_raises_type_error(self, empirical_dist):
+        with patch.object(converter_registry, "convert", side_effect=TypeError("unsupported")):
+            normalized = normalize_distribution_values(
+                values={"dist": empirical_dist},
+                signature_info=_signature_info(("dist",), {"dist": SupportsLogProb}),
+            )
+
+        assert normalized["dist"] is empirical_dist
+
+    def test_protocol_hint_propagates_invalid_conversion_plan(self, empirical_dist):
+        error = RuntimeError("a sampled conversion requires a sample shape")
+        with (
+            patch.object(converter_registry, "convert", side_effect=error),
+            pytest.raises(RuntimeError, match="requires a sample shape") as exc_info,
+        ):
+            normalize_distribution_values(
+                values={"dist": empirical_dist},
+                signature_info=_signature_info(("dist",), {"dist": SupportsLogProb}),
+            )
+
+        assert exc_info.value is error
 
     def test_zero_dimensional_distribution_array_unwraps_to_scalar_component(self):
         da = DistributionArray.from_batched_params(
@@ -207,9 +234,9 @@ class TestDistributionArrayHandling:
 
         result = wf(dist=da)
 
-        assert isinstance(result, NumericRecordArray)
+        assert isinstance(result, NumericArrayBatch)
         assert result.batch_shape == (1,)
-        np.testing.assert_allclose(result[result.fields[0]], jnp.asarray([3.0]))
+        np.testing.assert_allclose(result.values, jnp.asarray([3.0]))
 
 
 class TestUnhintedExternalDistribution:
@@ -225,11 +252,11 @@ class TestUnhintedExternalDistribution:
             func=double,
             n_broadcast_samples=8,
             dispatch="sequential",
-            seed=42,
         )
         external = tfd.Normal(loc=1.0, scale=0.1)
 
-        result = wf(external)
+        with workflow_run(seed=42):
+            result = wf(external)
 
         assert result.num_atoms == 8
         assert [value.shape for value in seen_values] == [()] * 8
@@ -262,11 +289,45 @@ def test_non_distribution_capability_protocol_does_not_disable_lifting():
         func=consume,
         n_broadcast_samples=8,
         dispatch="sequential",
-        seed=12,
     )
 
-    result = wrapped(Normal(0, 1, name="x"))
+    with workflow_run(seed=12):
+        result = wrapped(Normal("x", 0, 1))
 
     assert result.num_atoms == 8
     assert len(seen) == 8
     assert all(not isinstance(value, Distribution) for value in seen)
+
+
+def _unreachable(self, *args, **kwargs):
+    raise AssertionError("a law that passes through unlifted is not evaluated")
+
+
+def _law_claiming(capability: type) -> Distribution:
+    """Return a minimal law whose class inherits *capability*."""
+    # The conditioning capabilities are abstract, so the class implements
+    # ``_condition_on``; the structural protocols need nothing further.
+    law_type = types.new_class(
+        f"_Claims{capability.__name__}",
+        (Distribution, capability),
+        exec_body=lambda namespace: namespace.update(_condition_on=_unreachable),
+    )
+    return law_type(name="law")
+
+
+@pytest.mark.parametrize("capability", DISTRIBUTION_HINT_PROTOCOLS, ids=lambda c: c.__name__)
+def test_capability_annotation_passes_the_law_through(capability):
+    seen = []
+
+    def consume(law):
+        seen.append(law)
+        return 0.0
+
+    consume.__annotations__ = {"law": capability}
+    law = _law_claiming(capability)
+    wrapped = Function(func=consume, n_broadcast_samples=8, dispatch="sequential")
+
+    wrapped(law)
+
+    assert len(seen) == 1
+    assert seen[0] is law
