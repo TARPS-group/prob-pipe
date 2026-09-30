@@ -27,7 +27,9 @@ from probpipe.core._dispatch import Feasibility
 from probpipe.distributions import ConditionalDistribution, Distribution
 from probpipe.distributions._capabilities import (
     _CONDITIONAL_TWINS,
+    _NORMALIZING_CAPABILITIES,
     SupportsConditionalLogProb,
+    SupportsConditionalSampling,
     SupportsConditionalUnnormalizedLogProb,
     SupportsCovariance,
     SupportsExpectation,
@@ -43,6 +45,8 @@ from probpipe.distributions._capabilities import (
     _capability_guard,
     _capability_subclass,
     _conjunction,
+    _is_normalized,
+    _kernel_is_normalized,
 )
 
 #: The unconditional capabilities the design declares as protocols. The two
@@ -362,6 +366,73 @@ class TestConditionalLogProb:
         kernel = _implementing({"_conditional_unnormalized_log_prob"})
         assert isinstance(kernel, SupportsConditionalUnnormalizedLogProb)
         assert not isinstance(kernel, SupportsConditionalLogProb)
+
+
+#: The capabilities whose answer presupposes a probability law (III.8).
+_NORMALIZING = (
+    SupportsLogProb,
+    SupportsSampling,
+    SupportsMean,
+    SupportsVariance,
+    SupportsCovariance,
+    SupportsQuantile,
+    SupportsExpectation,
+)
+
+#: The capabilities that fix no normalizing constant when claimed alone.
+_NON_NORMALIZING = (
+    SupportsUnnormalizedLogProb,
+    SupportsRandomUnnormalizedLogProb,
+    SupportsRandomLogProb,
+    SupportsMarginals,
+)
+
+
+def _named(protocols: tuple[type, ...]) -> list:
+    return [pytest.param(protocol, id=protocol.__name__) for protocol in protocols]
+
+
+def _refuse(self: Any, *args: Any, **kwargs: Any) -> None:
+    raise AssertionError("the classification called a capability")
+
+
+class TestNormalization:
+    def test_the_normalizing_capabilities_are_the_density_sampling_and_integrals(self):
+        assert set(_NORMALIZING_CAPABILITIES) == set(_NORMALIZING)
+
+    @pytest.mark.parametrize("protocol", _named(_NORMALIZING))
+    def test_a_law_claiming_a_normalizing_capability_is_normalized(self, protocol):
+        assert _is_normalized(_implementing(_methods(protocol)))
+
+    @pytest.mark.parametrize("protocol", _named(_NON_NORMALIZING))
+    def test_a_law_claiming_only_another_capability_is_unnormalized(self, protocol):
+        assert not _is_normalized(_implementing(_methods(protocol)))
+
+    def test_a_law_claiming_no_capability_is_unnormalized(self):
+        assert not _is_normalized(_Host("h"))
+
+    def test_a_parametric_family_is_normalized(self):
+        assert _is_normalized(Normal("x", 0.0, 1.0))
+
+    def test_the_classification_calls_no_capability_and_reads_no_guard(self):
+        law = type("Refusing", (), {"_sample": _refuse, "_sample_guard": _refuse})()
+        assert _is_normalized(law)
+        assert _is_normalized(_GuardedDensityLaw("g"))
+
+    @pytest.mark.parametrize("protocol", _named(_NORMALIZING))
+    def test_a_kernel_claiming_a_normalizing_twin_is_normalized(self, protocol):
+        assert _kernel_is_normalized(_implementing(_methods(_CONDITIONAL_TWINS[protocol])))
+
+    @pytest.mark.parametrize("protocol", _named(_NON_NORMALIZING))
+    def test_a_kernel_claiming_only_another_twin_is_unnormalized(self, protocol):
+        assert not _kernel_is_normalized(_implementing(_methods(_CONDITIONAL_TWINS[protocol])))
+
+    def test_a_kernel_whose_density_guard_declines_is_still_normalized(self):
+        assert _kernel_is_normalized(_GuardedDensityKernel("k"))
+
+    def test_a_kernel_is_read_by_its_twins_and_a_law_by_its_capabilities(self):
+        assert not _kernel_is_normalized(_implementing(_methods(SupportsSampling)))
+        assert not _is_normalized(_implementing(_methods(SupportsConditionalSampling)))
 
 
 class TestCapabilityGuard:

@@ -19,6 +19,8 @@ Provides:
     :class:`SupportsMarginals`;
   - their conditional twins for a ``ConditionalDistribution``, whose methods
     prepend the conditioning value ``given`` to the unconditional signature;
+  - :func:`_is_normalized` and :func:`_kernel_is_normalized`, which classify a
+    law, or a kernel's laws, as normalized from the capabilities claimed;
   - :func:`_capability_subclass`, the subclass of a base that claims exactly a
     chosen set of capabilities, for a class whose instances differ in what
     they support.
@@ -370,6 +372,47 @@ _CONDITIONAL_TWINS: dict[type, type] = {
     SupportsExpectation: SupportsConditionalExpectation,
     SupportsMarginals: SupportsConditionalMarginals,
 }
+
+
+# ---------------------------------------------------------------------------
+# Normalization
+# ---------------------------------------------------------------------------
+
+#: The capabilities whose answer presupposes a probability law: a density that
+#: integrates to one, draws, which determine the law, and integrals against it.
+_NORMALIZING_CAPABILITIES: tuple[type, ...] = (
+    SupportsLogProb,
+    SupportsSampling,
+    SupportsMean,
+    SupportsVariance,
+    SupportsCovariance,
+    SupportsQuantile,
+    SupportsExpectation,
+)
+
+
+def _is_normalized(law: Any) -> bool:
+    """Whether *law* is normalized: it claims a capability that presupposes a probability law.
+
+    The capabilities are ``SupportsLogProb``, ``SupportsSampling``, and the
+    moment, quantile, and expectation capabilities. A law that claims none of
+    them is unnormalized, since no capability it claims fixes its normalizing
+    constant. The classification reads protocol membership alone, so it calls
+    no capability and reads no guard.
+    """
+    return any(isinstance(law, capability) for capability in _NORMALIZING_CAPABILITIES)
+
+
+def _kernel_is_normalized(kernel: Any) -> bool:
+    """Whether *kernel*'s laws are normalized: it claims the twin of a normalizing capability.
+
+    The twins are those of the capabilities :func:`_is_normalized` reads, and
+    the classification reads protocol membership alone, as that one does.
+    """
+    return any(
+        isinstance(kernel, _CONDITIONAL_TWINS[capability])
+        for capability in _NORMALIZING_CAPABILITIES
+    )
 
 
 # ---------------------------------------------------------------------------
