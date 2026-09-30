@@ -1,7 +1,7 @@
 """Built-in operations for distribution computation.
 
 Each public function (``sample``, ``mean``, ``log_prob``, …) is a
-:class:`~probpipe.core.node.Function` created via the
+:class:`~probpipe.values._function_base.Function` created via the
 ``@function`` decorator.  This means every call automatically
 participates in broadcasting and Prefect orchestration when a
 distribution argument is passed where a concrete value is expected.
@@ -27,9 +27,8 @@ import jax.numpy as jnp
 
 from ..custom_types import Array, PRNGKey
 from ..distributions._distribution import Distribution
-from . import _workflow_broker, _workflow_descendants
+from ..functions import _broker, _descendants, function
 from ._random_functions import RandomFunction
-from .node import function
 from .protocols import (
     SupportsApproximateConditioning,
     SupportsCovariance,
@@ -104,10 +103,10 @@ def sample(
     if any(axis < 0 for axis in sample_shape):
         raise ValueError(f"sample_shape dimensions must be non-negative; got {sample_shape!r}")
     if key is None:
-        captured = _workflow_descendants.capture_stochastic_consumer(dist)
-        key = _workflow_broker._resolve_automatic_key(
+        captured = _descendants.capture_stochastic_consumer(dist)
+        key = _broker._resolve_automatic_key(
             None,
-            _workflow_broker._singleton_effect_plan(
+            _broker._singleton_effect_plan(
                 operation_kind="sample",
                 execution_mode="sampled",
                 sample_shape=sample_shape,
@@ -116,7 +115,7 @@ def sample(
             ),
         )
         return _drawn_at_its_batch_form(
-            _workflow_descendants.sample_captured_consumer(captured, key, sample_shape),
+            _descendants.sample_captured_consumer(captured, key, sample_shape),
             sample_shape,
             name=getattr(dist, "name", "sample"),
         )
@@ -162,7 +161,7 @@ def _drawn_at_its_batch_form(drawn: Any, sample_shape: tuple[int, ...], *, name:
     if not sample_shape:
         if isinstance(drawn, TrackedTerm):
             return drawn
-        from ._workflow_result import _wrap_as_term
+        from ..functions._result import _wrap_as_term
 
         return _wrap_as_term(drawn, SAMPLE_LEVEL, name=name)
 

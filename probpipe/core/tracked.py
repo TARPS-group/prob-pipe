@@ -168,6 +168,8 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     need their own name check.
     """
 
+    _name: str
+    _provenance: Provenance | None
     __slots__ = ()
 
     def _init_tracked(

@@ -20,6 +20,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `r.with_path_names(mu="loc")` with `r.with_path_names({"g/mu": "loc"})`. A
   top-level node whose name recurs deeper, which no key could address, is
   renamed by its name.
+- **Function declarations and engine migration (#448 B1).** Construct with
+  `Function(name, fn, *, input_spec=None, output_spec=None, output_name=None, ...)`.
+  The name is required; decorators default it to the Python callable's name.
+  `FunctionSpec` now stores `InputSpec` and `OutputSpec`. The old Function
+  template properties are removed. Legacy constructor keywords emit
+  `FutureWarning`: template parameters and `seed` are ignored, while `func`
+  overrides `fn`; the required `name` and `fn` arguments remain. Bare record
+  specs expose fields; other bare term specs declare one whole component under
+  `output_name`, which defaults to the initial function name and survives
+  `with_name`. Arrays remain arrays and single-field records remain records.
+  Type holes and symbolic output dimensions are completed per call. Existing
+  tracked returns are copied and relabeled by `__call__`; `apply` preserves them.
+  This includes operation wrappers: `sample(law)` uses the label `sample`,
+  independently of the law's component names and the result's batch levels.
+  `Function`/`FunctionSpec` live in `values/`, and workflow helpers move from
+  `core/_workflow_*` into `functions/`; old imports have no shims. Declaration
+  fingerprints and replay anchors change, so regenerate persisted artifacts.
+  `Module`, `AbstractModule`, and both method decorators are experimental.
+  Resolved output declarations survive sweeps and broadcasts, including type
+  holes, output-only dimensions, and returned Function contracts. Module methods
+  infer their returns normally and use the method name as their output label.
+
 - `event_template` is removed from every distribution, so a law's event
   declaration is the one schema it records. Read the declaration instead:
   replace `law.event_template` with `law.event_spec.spec` for a law that draws
@@ -38,13 +60,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `NumericRecord` or a `NumericRecordBatch` whatever its number of fields, so
     a one-field record no longer comes back as a bare array. `treedef` follows
     the same rule.
-  - A Function with an output template checks a returned distribution as it
-    checks a returned record. The record the law's components form must match
-    the template's fields and shapes, a dtype the template sets admits a
-    same-kind cast, and a support it sets must hold the law's. Before, the law's
-    `event_template` had to equal the template, and a parametric family's
-    template carried no dtype or support, so a template that set either
-    rejected such a law.
+  - A Function declares a returned law with `DistributionSpec`; matching uses
+    event-declaration unification, including packaging, component names,
+    dimensions, and same-kind dtypes. Support metadata is not compared, and
+    the returned law retains its own declaration through calls and lifting.
   - The BayesFlow learners accept a prior whose declaration is numeric,
     whatever its class, and raise `TypeError` for any other before simulating.
 - `NumericRecord.from_vector` and `NumericRecordBatch.from_vector` name their
@@ -156,8 +175,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its separate wrapper; `NumericRecordSpec` replaces `NumericEventTemplate`.
   Replace `ValueSpec` with `TermSpec` in custom specs. Dimension binding returns
   a refined spec, `with_dim_sizes` permits partial substitution, and `with_dim_names`
-  renames symbols throughout nested declarations. Existing live function and
-  distribution template APIs retain their signatures for their later migration.
+  renames symbols throughout nested declarations. The live distribution template API retains its signature for its later migration.
   Moving and renaming schema classes changes their fingerprints and those of
   containing terms; affected persisted provenance fingerprints no longer match.
   A custom `NumericSpec` implements `_vector_size`; the public `vector_size`

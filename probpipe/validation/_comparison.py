@@ -41,8 +41,8 @@ from typing import Literal, Protocol, runtime_checkable
 import jax
 import jax.numpy as jnp
 
-from ..core import _workflow_context
 from ..custom_types import Array, ArrayLike, PRNGKey
+from ..functions import _context
 from ._workflow_rng import (
     _SLICED_WASSERSTEIN_PROVIDER_ABI,
     _resolve_validation_key,
@@ -391,7 +391,7 @@ def score_posterior(
     ephemeral root. Enclose benchmark scoring in ``workflow_run(seed=...)`` or
     pass an explicit ``key=`` to keep it reproducible.
     """
-    _workflow_context._assert_workflow_admission()
+    _context._assert_workflow_admission()
     metric_names = tuple(metrics)
     supported_metrics = {
         "standardized_mean_error",

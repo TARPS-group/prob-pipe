@@ -1082,11 +1082,11 @@ class TestCoerceOutput:
     arithmetic / attribute access)."""
 
     def test_wrap_mode_with_no_provenance_wraps_scalar(self):
-        from probpipe.core import _workflow_result
+        from probpipe.functions import _result
 
-        out = _workflow_result._coerce_output(
+        out = _result._coerce_output(
             3.14,
-            broadcast_mode=_workflow_result.BROADCAST_WRAP,
+            broadcast_mode=_result.BROADCAST_WRAP,
             provenance=None,
             field_name="f",
         )
@@ -1098,7 +1098,7 @@ class TestCoerceOutput:
         # A workflow return of a nested dict denotes tree structure: it wraps
         # into a nested Record (mappings are never leaves), not a TypeError.
         from probpipe import Record
-        from probpipe.core._workflow_result import _coerce_output
+        from probpipe.functions._result import _coerce_output
 
         out = _coerce_output(
             {"summary": {"mean": 1.0, "count": 2.0}, "x": 3.0},
@@ -1111,7 +1111,7 @@ class TestCoerceOutput:
 
     def test_stack_mode_attaches_to_record_batch(self):
         from probpipe import NumericRecord, NumericRecordBatch
-        from probpipe.core._workflow_result import _coerce_output
+        from probpipe.functions._result import _coerce_output
 
         ra = NumericRecordBatch.stack(
             [NumericRecord("nr", x=float(i)) for i in range(3)], level_name="draw"
@@ -1119,13 +1119,15 @@ class TestCoerceOutput:
         assert ra.provenance is None
         prov = Provenance("sweep", parents=())
         out = _coerce_output(ra, broadcast_mode="stack", provenance=prov, field_name="f")
-        assert out is ra
-        assert ra.provenance.operation == "sweep"
+        assert out is not ra
+        assert out.name == "f"
+        assert out.provenance.operation == "sweep"
+        assert ra.provenance is None
 
     def test_attaches_to_distribution_array(self):
         from probpipe import DistributionArray, Normal
         from probpipe.core._broadcast_distributions import _make_stack
-        from probpipe.core._workflow_result import _coerce_output
+        from probpipe.functions._result import _coerce_output
 
         da = _make_stack(
             [Normal(loc=0.0, scale=1.0, name=f"d{i}") for i in range(3)],
@@ -1136,8 +1138,10 @@ class TestCoerceOutput:
         assert isinstance(da, DistributionArray)
         assert da.provenance is None
         prov = Provenance("nested", parents=())
-        _coerce_output(da, broadcast_mode="nested", provenance=prov, field_name="f")
-        assert da.provenance.operation == "nested"
+        out = _coerce_output(da, broadcast_mode="nested", provenance=prov, field_name="f")
+        assert out.name == "f"
+        assert out.provenance.operation == "nested"
+        assert da.provenance is None
 
     def test_existing_provenance_is_not_overwritten(self):
         """If the broadcasting layer has already wired a fresh inner
@@ -1145,7 +1149,7 @@ class TestCoerceOutput:
         its own provenance), ``_coerce_output`` must not crash and the
         existing source must remain."""
         from probpipe import NumericRecord
-        from probpipe.core._workflow_result import _coerce_output
+        from probpipe.functions._result import _coerce_output
 
         nr = NumericRecord("nr", x=1.0).with_provenance(Provenance("inner", parents=()))
         # Second set would normally raise RuntimeError; _coerce_output

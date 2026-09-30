@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import cast
 
-from ._kind_specs import FunctionSpec
 from ._record_spec import NumericRecordSpec, RecordSpec
 from ._spec_base import (
     NumericArraySpec,
@@ -26,7 +25,6 @@ from .constraints import _supports_compatible
 from .named_tree import _PATH_SEP
 
 __all__ = [
-    "FunctionSpec",
     "InputSpec",
     "NumericArraySpec",
     "NumericRecordSpec",

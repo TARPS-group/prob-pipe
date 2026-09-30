@@ -16,7 +16,7 @@ probably a public replacement — check [Operations](operations.md),
 `dist["field"]` on a [`RecordDistribution`][probpipe.core._record_distribution.RecordDistribution]
 returns a `_RecordDistributionView` — a lightweight reference that preserves
 correlation when multiple views from the same parent are used in
-[`@function`][probpipe.core.node.function] broadcasting. The
+[`@function`][probpipe.functions._function.function] broadcasting. The
 view's protocol membership (`SupportsSampling`, `SupportsMean`,
 `SupportsVariance`, `SupportsLogProb`, `SupportsCovariance`) is computed
 dynamically from the parent's capabilities, so

@@ -12,10 +12,11 @@ from types import MappingProxyType
 from typing import Any
 
 from ..core.config import WorkflowKind
-from ..core.node import Function, Module
 from ..core.protocols import ConditionallyIndependentLikelihood, GenerativeLikelihood, Likelihood
 from ..core.transition import iterate
 from ..distributions._distribution import Distribution
+from ..functions import Module
+from ..values import Function
 
 logger = logging.getLogger(__name__)
 
@@ -94,8 +95,8 @@ class _ConditioningStep[P, D](Function):
         )
 
         super().__init__(
-            func=self._step_impl,
-            name="conditioning_step",
+            "conditioning_step",
+            self._step_impl,
             workflow_kind=workflow_kind,
         )
 

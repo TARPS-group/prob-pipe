@@ -21,7 +21,7 @@ from probpipe import (
     workflow_run,
 )
 from probpipe.core._record_distribution import _RecordDistributionView
-from probpipe.core.node import Function
+from probpipe.values._function_base import Function
 
 # ---------------------------------------------------------------------------
 # Construction
@@ -454,7 +454,8 @@ class TestBroadcastingReconnection:
             return a - b
 
         wf = Function(
-            func=subtract,
+            name="subtract",
+            fn=subtract,
             dispatch="sequential",
             n_broadcast_samples=30,
         )
@@ -484,7 +485,8 @@ class TestBroadcastingReconnection:
 
         def run(dispatch):
             workflow = Function(
-                func=subtract,
+                name="subtract",
+                fn=subtract,
                 dispatch=dispatch,
                 n_broadcast_samples=30,
             )
@@ -512,7 +514,8 @@ class TestBroadcastingReconnection:
             return a - b
 
         wf = Function(
-            func=subtract,
+            name="subtract",
+            fn=subtract,
             dispatch="auto",
             n_broadcast_samples=30,
         )

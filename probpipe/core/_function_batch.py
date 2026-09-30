@@ -10,9 +10,9 @@ from typing import cast
 
 import numpy as np
 
+from ..values._function_base import FunctionSpec
 from ._kinds import register_kind
 from ._object_batch import _ObjectBatch
-from ._specs import FunctionSpec
 from .provenance import Provenance
 
 __all__ = ["FunctionBatch"]
@@ -33,7 +33,7 @@ class FunctionBatch(_ObjectBatch[Callable]):
         One name per level, outermost first.
     element_spec : FunctionSpec, optional
         What every element satisfies. Defaults to ``FunctionSpec()``, which
-        specifies a callable and neither of its templates.
+        specifies a callable and neither of its input/output declarations.
     axes_per_level : iterable of int, optional
         How many axes each level holds, outermost first; they must account for
         every batch axis. Defaults to one axis per level, which requires as many

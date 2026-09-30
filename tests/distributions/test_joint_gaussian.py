@@ -20,7 +20,7 @@ from probpipe import (
     variance,
     workflow_run,
 )
-from probpipe.core.node import Function
+from probpipe.values._function_base import Function
 
 # ---------------------------------------------------------------------------
 # Construction
@@ -483,7 +483,8 @@ class TestBroadcasting:
             return a + b
 
         wf = Function(
-            func=add,
+            name="add",
+            fn=add,
             dispatch="sequential",
             n_broadcast_samples=50,
         )

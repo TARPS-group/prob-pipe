@@ -251,7 +251,7 @@ closures, and other composite values.
 | TFP-backed distribution (`Normal`, `Gamma`, …) | class name + distribution name + all TFP constructor parameters |
 | `EmpiricalDistribution` | class name + name + sample arrays + log-normalised weight array |
 | `Record` | field names + values, recursively |
-| `Function` | frozen signature and input/output templates, plus user-function bytecode/defaults/closure or the private implementation type |
+| `Function` | frozen signature and `InputSpec`/`OutputSpec` declarations (including component exposure), plus user-function bytecode/defaults/closure or the private implementation type |
 | JAX / NumPy array | shape + dtype + raw bytes (large arrays are sampled) |
 | Closure-free Python function | module + qualified name + bytecode + defaults |
 | Closure-bearing function, bound method, partial, callable instance, class, builtin, or unsupported object | process-local identity; marked weak |

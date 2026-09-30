@@ -287,7 +287,7 @@ class TestControlsViaWithOptions:
     def test_op_is_its_own_function(self):
         # No wrapper: log_prob *is* a Function, so with_options is its
         # own bound method — not a re-implementation.
-        from probpipe.core.node import Function
+        from probpipe.values._function_base import Function
 
         assert isinstance(log_prob, Function)
         assert log_prob.with_options.__self__ is log_prob

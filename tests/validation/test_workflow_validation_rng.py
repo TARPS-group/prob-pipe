@@ -19,7 +19,7 @@ from probpipe import (
     predictive_check,
     workflow_run,
 )
-from probpipe.core import _workflow_context
+from probpipe.functions import _context
 from probpipe.validation import (
     Reference,
     score_posterior,
@@ -57,8 +57,8 @@ class TestPredictiveCheckBroker:
         def run(num_replications):
             with (
                 patch(
-                    "probpipe.core._workflow_context.derive_event_key_words_from_encoded",
-                    wraps=_workflow_context.derive_event_key_words_from_encoded,
+                    "probpipe.functions._context.derive_event_key_words_from_encoded",
+                    wraps=_context.derive_event_key_words_from_encoded,
                 ) as derive,
                 workflow_run(seed=7),
             ):
@@ -86,7 +86,7 @@ class TestPredictiveCheckBroker:
         prior = _RecordingNormal(calls)
 
         with (
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=7),
             pytest.raises(TypeError, match="explicit key"),
         ):
@@ -102,9 +102,7 @@ class TestPredictiveCheckBroker:
         commit.assert_not_called()
 
         explicit = jax.random.key(11)
-        with patch(
-            "probpipe.core._workflow_context._commit_stochastic_invocation"
-        ) as explicit_commit:
+        with patch("probpipe.functions._context._commit_stochastic_invocation") as explicit_commit:
             predictive_check(
                 prior,
                 _OpaqueLikelihood(),
@@ -146,7 +144,7 @@ class TestPredictiveCheckBroker:
         kwargs = {"num_observations": 6, "num_replications": 3, argument: value}
 
         with (
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=7),
             pytest.raises((TypeError, ValueError)),
         ):
@@ -159,7 +157,7 @@ class TestPredictiveCheckBroker:
         likelihood.generate_data = _OpaqueLikelihood().generate_data
 
         with (
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=7),
             pytest.raises(TypeError, match="explicit key"),
         ):
@@ -184,7 +182,7 @@ class TestPredictiveCheckBroker:
         )
 
         with (
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=7),
             pytest.raises(TypeError, match="explicit key"),
         ):
@@ -203,7 +201,7 @@ class TestPredictiveCheckBroker:
         monkeypatch.setattr(GLMLikelihood, "generate_data", _OpaqueLikelihood.generate_data)
 
         with (
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=7),
             pytest.raises(TypeError, match="explicit key"),
         ):
@@ -222,7 +220,7 @@ class TestPredictiveCheckBroker:
         likelihood = GLMLikelihood(tfp_glm.Normal())
 
         with (
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=7),
             pytest.raises(ValueError, match="design matrix"),
         ):
@@ -274,8 +272,8 @@ class TestSimulationBasedCalibrationBroker:
             inference_seeds.clear()
             with (
                 patch(
-                    "probpipe.core._workflow_context._commit_stochastic_invocation",
-                    wraps=_workflow_context._commit_stochastic_invocation,
+                    "probpipe.functions._context._commit_stochastic_invocation",
+                    wraps=_context._commit_stochastic_invocation,
                 ) as commit,
                 workflow_run(seed=7),
             ):
@@ -298,9 +296,7 @@ class TestSimulationBasedCalibrationBroker:
         second_commit.assert_called_once_with("operation")
         larger_commit.assert_called_once_with("operation")
 
-        with patch(
-            "probpipe.core._workflow_context._commit_stochastic_invocation"
-        ) as explicit_commit:
+        with patch("probpipe.functions._context._commit_stochastic_invocation") as explicit_commit:
             simulation_based_calibration(
                 self._model(),
                 num_simulations=2,
@@ -331,8 +327,8 @@ class TestSimulationBasedCalibrationBroker:
 
         with (
             patch(
-                "probpipe.core._workflow_context._commit_stochastic_invocation",
-                wraps=_workflow_context._commit_stochastic_invocation,
+                "probpipe.functions._context._commit_stochastic_invocation",
+                wraps=_context._commit_stochastic_invocation,
             ) as commit,
             workflow_run(seed=11),
         ):
@@ -365,7 +361,7 @@ class TestSimulationBasedCalibrationBroker:
             argument: value,
         }
         with (
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=7),
             pytest.raises((TypeError, ValueError)),
         ):
@@ -379,7 +375,7 @@ class TestSimulationBasedCalibrationBroker:
             likelihood=_OpaqueLikelihood(),
         )
         with (
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=7),
             pytest.raises(TypeError, match="explicit key"),
         ):
@@ -406,8 +402,8 @@ class TestPosteriorScoreBroker:
         def run():
             with (
                 patch(
-                    "probpipe.core._workflow_context._commit_stochastic_invocation",
-                    wraps=_workflow_context._commit_stochastic_invocation,
+                    "probpipe.functions._context._commit_stochastic_invocation",
+                    wraps=_context._commit_stochastic_invocation,
                 ) as commit,
                 workflow_run(seed=7),
             ):
@@ -429,7 +425,7 @@ class TestPosteriorScoreBroker:
         approx, reference = self._inputs()
         moments = Reference.from_moments(jnp.zeros(2), jnp.eye(2))
 
-        with patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit:
+        with patch("probpipe.functions._context._commit_stochastic_invocation") as commit:
             score_posterior(approx, reference, metrics=("mmd",))
             score_posterior(approx, moments, metrics=("sliced_wasserstein",))
 
@@ -439,7 +435,7 @@ class TestPosteriorScoreBroker:
         approx, reference = self._inputs()
 
         with (
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=7),
             pytest.raises(ValueError, match="unknown metric"),
         ):
@@ -455,7 +451,7 @@ class TestPosteriorScoreBroker:
         reference = Reference(draws=jnp.zeros((8, 2)))
 
         with (
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=7),
             pytest.raises(ValueError, match="n, d"),
         ):
@@ -505,7 +501,7 @@ class TestPosteriorScoreBroker:
                 "probpipe.validation._comparison.sliced_wasserstein",
                 return_value=jnp.asarray(0.0),
             ) as metric,
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
         ):
             score_posterior(
                 approx,

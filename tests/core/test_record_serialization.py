@@ -27,11 +27,7 @@ from probpipe import (
 )
 from probpipe.core._empirical import BootstrapReplicateDistribution, EmpiricalDistribution
 from probpipe.core._opaque import OpaqueSpec
-from probpipe.core._specs import (
-    NumericArraySpec,
-    NumericRecordSpec,
-    RecordSpec,
-)
+from probpipe.core._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
 from probpipe.core.record import Record
 
 # ---------------------------------------------------------------------------

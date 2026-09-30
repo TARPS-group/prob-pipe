@@ -29,7 +29,6 @@ from probpipe import (
     RecordSpec,
 )
 from probpipe.core._specs import NumericRecordSpec
-from probpipe.core._workflow_result import _wrap_as_term
 from probpipe.core.ops import (
     log_prob,
     mean,
@@ -39,6 +38,7 @@ from probpipe.core.ops import (
     unnormalized_prob,
     variance,
 )
+from probpipe.functions._result import _wrap_as_term
 
 KEY = jax.random.PRNGKey(0)
 ELEMENT = NumericRecordSpec(a=())
@@ -55,7 +55,7 @@ def _named(kind):
             jnp.arange(3.0),
         ),
         "Opaque": lambda: Opaque("given", object()),
-        "Function": lambda: Function(func=lambda: 1, name="given"),
+        "Function": lambda: Function(fn=lambda: 1, name="given"),
         "Normal": lambda: Normal("given", 0.0, 1.0),
         "RecordBatch": lambda: RecordBatch(
             "given",
@@ -170,7 +170,7 @@ class TestWhichKindsRequireAName:
         def predict():
             return 1.0
 
-        assert Function(func=predict).name == "predict"
+        assert Function(name="predict", fn=predict).name == "predict"
 
 
 class TestADerivedNameSaysSo:
@@ -218,21 +218,20 @@ class TestAnOperationNamesItsResult:
 
         assert result.name == label
 
-    def test_a_record_law_result_is_named_for_the_law(self):
-        """An already tracked draw retains the name its producer set."""
+    def test_a_record_law_result_takes_the_output_name(self):
+        """An already tracked draw is copied under the Function result label."""
         joint = ProductDistribution(a=Normal("a", 0.0, 1.0), name="joint")
 
         drawn = sample(joint, key=KEY)
 
-        assert drawn.name == "joint"
+        assert drawn.name == sample.output_name
 
     @pytest.mark.parametrize("sample_shape", [(), (4,)], ids=["single", "batch"])
-    def test_draws_take_the_laws_name(self, sample_shape):
-        """Raw draws are named for the law, so it is a caller's statement
-        exactly when the caller's name for the law was one."""
+    def test_draws_take_the_sample_output_name(self, sample_shape):
+        """Both a single draw and a batch cross the same result boundary."""
         given = sample(Normal("height", 0.0, 1.0), sample_shape=sample_shape, key=KEY)
 
-        assert given.name == "height"
+        assert given.name == sample.output_name
 
 
 class TestTheOutputBoundaryNamesEveryKindAlike:
@@ -251,7 +250,7 @@ class TestTheOutputBoundaryNamesEveryKindAlike:
         ],
     )
     def test_the_result_takes_the_functions_name(self, label, body):
-        result = Function(func=body, name="myfunc")()
+        result = Function(fn=body, name="myfunc")()
 
         assert result.name == "myfunc"
 
@@ -274,7 +273,7 @@ class TestLevelsAreNamedForWhatMintsThem:
     def test_a_sweep_mints_the_level_it_swept(self):
         """A returned sequence ranges over nothing the call named, so the level
         takes the function's own name."""
-        result = Function(func=lambda: [1.0, 2.0], name="myfunc")()
+        result = Function(fn=lambda: [1.0, 2.0], name="myfunc")()
 
         assert result.level_names == ("myfunc",)
 
@@ -313,7 +312,7 @@ class TestLevelsAreNamedForWhatMintsThem:
 
         assert not isinstance(drawn, NumericRecordBatch)
 
-    def test_the_draws_keep_the_law_s_name_and_whether_it_was_given(self):
+    def test_the_draws_take_the_sample_functions_output_name(self):
         from probpipe import EmpiricalDistribution
 
         drawn = sample(
@@ -322,7 +321,7 @@ class TestLevelsAreNamedForWhatMintsThem:
             key=KEY,
         )
 
-        assert drawn.name == "atoms"
+        assert drawn.name == sample.output_name
 
 
 class TestABatchOperandKeepsItsLevelsThroughAnOperation:
@@ -354,10 +353,10 @@ class TestABatchOperandKeepsItsLevelsThroughAnOperation:
 
         assert (scored.batch_shape, scored.level_names) == ((3,), ("sample",))
 
-    def test_the_result_is_named_for_the_operand_it_scored(self, density_op):
+    def test_the_result_uses_the_scoring_functions_output_name(self, density_op):
         drawn = sample(self.LAW, sample_shape=(3,), key=KEY)
 
-        assert density_op(self.LAW, drawn).name == drawn.name
+        assert density_op(self.LAW, drawn).name == density_op.output_name
 
     def test_several_levels_are_all_restated(self, density_op):
         """The operand's own tiling, not one flat axis."""
@@ -434,7 +433,9 @@ class TestRawDrawNaming:
             ),
         ],
     )
-    def test_a_raw_draw_takes_the_laws_name_without_renaming_levels(self, make, kind, levels):
+    def test_a_draw_takes_the_functions_output_name_without_renaming_levels(
+        self, make, kind, levels
+    ):
         class Sampler:
             name = "law"
             _sampling_cost = "low"
@@ -447,20 +448,23 @@ class TestRawDrawNaming:
         result = sample(law, key=KEY)
 
         assert isinstance(result, kind)
-        assert result.name == "law"
+        assert result.name == sample.output_name
         assert result.provenance is not None
         if levels is not None:
             assert result.level_names == levels
 
     @pytest.mark.parametrize("value", [2.0, {"x": 2.0}], ids=["scalar", "mapping"])
     def test_a_declared_raw_result_takes_the_requested_name(self, value):
-        template = RecordSpec(x=NumericArraySpec(()))
-        result = _wrap_as_term(value, "sample", template, name="law")
+        from probpipe import OutputSpec
 
-        assert isinstance(result, Record)
+        template = RecordSpec(x=NumericArraySpec(()))
+        declaration = (
+            OutputSpec(template) if isinstance(value, dict) else OutputSpec(x=template["x"])
+        )
+        result = _wrap_as_term(value, "sample", declaration, name="law")
         assert result.name == "law"
-        assert result.event_template == template
-        assert float(result["x"]) == 2.0
+        assert result.spec == declaration.spec
+        assert float(result["x"] if isinstance(result, Record) else result) == 2.0
 
     def test_a_raw_draws_name_is_validated_by_its_constructor(self):
         class Sampler:
@@ -497,7 +501,7 @@ class TestEveryAggregateIsNamedForItsFunction:
         )
 
     def _swept(self, body, **controls):
-        return Function(func=body, name="double", dispatch="sequential", **controls)(v=self._rows())
+        return Function(fn=body, name="double", dispatch="sequential", **controls)(v=self._rows())
 
     @pytest.mark.parametrize(
         ("label", "body"),
@@ -517,7 +521,7 @@ class TestEveryAggregateIsNamedForItsFunction:
     def test_a_declared_aggregate_is_named_the_same_way(self):
         from probpipe import RecordSpec
 
-        result = self._swept(lambda v: {"y": jnp.asarray(v["x"])}, output_template=RecordSpec(y=()))
+        result = self._swept(lambda v: {"y": jnp.asarray(v["x"])}, output_spec=RecordSpec(y=()))
 
         assert result.name == "double"
 
@@ -534,7 +538,7 @@ class TestEveryAggregateIsNamedForItsFunction:
         )
 
         result = Function(
-            func=lambda v: {"y": jnp.asarray(v["x"])}, name="double", dispatch="sequential"
+            fn=lambda v: {"y": jnp.asarray(v["x"])}, name="double", dispatch="sequential"
         )(v=grid)
 
         assert result.name == "double"
