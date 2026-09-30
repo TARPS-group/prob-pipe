@@ -25,15 +25,14 @@ from .._weights import (
 from ..core._array_backend import _to_jax_array
 from ..core._batch import Batch
 from ..core._dispatch import Feasibility
-from ..core._empirical import _weighted_quantile
 from ..core._numeric_array_batch import NumericArrayBatch
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._object_batch import _is_object_array, _ObjectBatch
 from ..core._record_batch import RecordBatch
-from ..core._record_spec import NumericRecordSpec, RecordSpec, _reshaped_template
+from ..core._record_spec import NumericRecordSpec, RecordSpec
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec
 from ..core._specs import OutputSpec
-from ..core.record import Record
+from ..core.named_tree import _unflatten_paths
 from ..linalg import DenseLinOp
 from ._capabilities import (
     SupportsCovariance,
@@ -46,6 +45,7 @@ from ._capabilities import (
     _capability_subclass,
 )
 from ._distribution import Distribution, _whole_term_component
+from ._factored import _stacked
 from ._views import _node_at
 
 if TYPE_CHECKING:
@@ -175,11 +175,6 @@ def _taken(column: Any, index: Any) -> Any:
     return column[index]
 
 
-def _stacked(values: list[Any]) -> Any:
-    """The pytrees in *values*, stacked leaf by leaf along a new leading axis."""
-    return jax.tree.map(lambda *leaves: jnp.stack([jnp.asarray(leaf) for leaf in leaves]), *values)
-
-
 def _ranks(atoms: Batch) -> tuple[int, ...]:
     """How many axes each level of *atoms* holds, outermost first."""
     return tuple(len(group) for group in atoms.axis_groups)
@@ -191,10 +186,13 @@ def _ranks(atoms: Batch) -> tuple[int, ...]:
 
 
 def _leafwise(law: EmpiricalDistribution, reduce: Callable[[Array | None, Array], Array]) -> Any:
-    """*reduce* of the weights and each leaf's atoms, which gives a value shaped like one draw."""
+    """*reduce* of the weights and each leaf's atoms, in the raw form of one draw.
+
+    A record event gives the nested mapping of each leaf's result.
+    """
     rows, weights = law._rows, law._p
     if isinstance(rows, dict):
-        return Record(law.name, {path: reduce(weights, column) for path, column in rows.items()})
+        return _unflatten_paths({path: reduce(weights, column) for path, column in rows.items()})
     return reduce(weights, rows)
 
 
@@ -225,24 +223,65 @@ def _empirical_cov(self: EmpiricalDistribution) -> LinOp:
     return DenseLinOp(weighted_covariance(self._p, _coordinates(self)))
 
 
-def _empirical_quantile(self: EmpiricalDistribution, q: ArrayLike) -> Array:
-    """The weighted quantiles of each coordinate at the levels *q* in ``[0, 1]``.
+def _inverse_cdf(values: Array, weights: Array | None, q: ArrayLike) -> Array:
+    """The generalized inverse ``inf{x : F(x) >= q}`` of each coordinate's weighted CDF.
 
-    Each coordinate's sorted atoms sit at their cumulative weight less half
-    their own weight, and a level between two positions interpolates linearly,
-    which is the midpoint (Hazen) rule. The level axes come first. An array
-    event's shape follows them, and a record event's flat coordinates follow
-    them, so a record event's result has shape ``(*q.shape, d)``.
+    For each coordinate of the atoms and each level ``q`` in ``[0, 1]``, the
+    quantile is the smallest atom at which the cumulative weight reaches ``q``
+    of the total. A zero-weight atom therefore has no effect, and the level
+    ``0`` gives the smallest atom of positive weight, the limit of the levels
+    above it. Every quantile is an atom, so it keeps the atoms' dtype.
+
+    Parameters
+    ----------
+    values : Array
+        The atoms along the leading axis, shaped ``(n, *event_shape)``.
+    weights : Array or None
+        The atoms' weights, shaped ``(n,)``; ``None`` for uniform weights.
+    q : ArrayLike
+        The levels, of any shape.
+
+    Returns
+    -------
+    Array
+        The quantiles, shaped ``(*q.shape, *event_shape)``.
     """
     levels = jnp.asarray(q)
-    spec = self.event_spec.spec
-    if isinstance(spec, NumericArraySpec):
-        values, per_level = self._rows, tuple(spec.shape)
-    else:
-        values = _coordinates(self)
-        per_level = (values.shape[1],)
-    quantiles = _weighted_quantile(values, self.weights, jnp.reshape(levels, (-1,)))
-    return jnp.reshape(quantiles, (*levels.shape, *per_level))
+    count = values.shape[0]
+    flat = jnp.reshape(values, (count, -1))
+    order = jnp.argsort(flat, axis=0)
+    ordered = jnp.take_along_axis(flat, order, axis=0)
+    mass = jnp.ones(count) if weights is None else jnp.asarray(weights)
+    cumulative = jnp.cumsum(mass[order], axis=0)
+    targets = jnp.reshape(levels, (-1,))
+
+    def column(cdf: Array, atoms: Array) -> Array:
+        reached = jnp.searchsorted(cdf, targets * cdf[-1], side="left")
+        first_positive = jnp.searchsorted(cdf, 0.0, side="right")
+        index = jnp.where(targets > 0, reached, first_positive)
+        return atoms[jnp.minimum(index, count - 1)]
+
+    quantiles = jax.vmap(column, in_axes=1, out_axes=1)(cumulative, ordered)
+    return jnp.reshape(quantiles, (*levels.shape, *values.shape[1:]))
+
+
+def _empirical_quantile(self: EmpiricalDistribution, q: ArrayLike) -> Array | dict[str, Any]:
+    """The weighted quantiles of each coordinate at the levels *q* in ``[0, 1]``.
+
+    The quantile at a level ``q`` is the generalized inverse of the
+    coordinate's CDF, ``inf{x : F(x) >= q}``: the smallest atom at which the
+    cumulative weight reaches ``q`` (see :func:`_inverse_cdf`). So the atoms 1,
+    2, 3, 4 with uniform weights have median 2, and a zero-weight atom has no
+    effect.
+
+    Returns
+    -------
+    Array or dict
+        The event's raw form with the level axes leading in each leaf: an
+        array of shape ``(*q.shape, *event_shape)`` for an array event, and the
+        nested mapping of such arrays for a record event.
+    """
+    return _leafwise(self, lambda weights, column: _inverse_cdf(column, weights, q))
 
 
 #: The capabilities an instance claims when its event is numeric, with their methods.
@@ -287,12 +326,14 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
     ``_mean``, ``_variance``    the weighted moments of a numeric event
     ``_cov``                    the weighted covariance of a numeric event as a
                                 ``DenseLinOp`` over its flat coordinates
-    ``_quantile``               the weighted quantiles of each coordinate of a
-                                numeric event
+    ``_quantile``               the generalized inverse ``inf{x : F(x) >= q}`` of
+                                each coordinate's weighted CDF, for a numeric event
     ==========================  ===================================================
 
     An instance whose event is not numeric claims no moment. The law claims no
-    density, since an empirical measure has none in general.
+    density, since an empirical measure has none in general. Every result that
+    is shaped like a draw is in the draw's raw form, so a record event's draw,
+    moment, or quantiles are a nested mapping of raw leaves.
 
     Parameters
     ----------
@@ -412,22 +453,14 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
     def _atoms_at(self, index: Any) -> Any:
         """The atoms at *index*, an integer array, in their raw form with its axes leading.
 
-        A record atom is a ``Record`` carrying the event's record spec; with
-        leading axes it is a record of stacked columns, which keeps the spec's
-        dtypes and supports when the record is numeric.
+        A record atom is the nested mapping of its raw leaves. With leading axes
+        each leaf is the stacked column of the indexed atoms, which is an object
+        array for a leaf that is not numeric.
         """
-        spec = self.event_spec.spec
         rows = self._rows
-        if not isinstance(spec, RecordSpec):
+        if not isinstance(self.event_spec.spec, RecordSpec):
             return _taken(rows, index)
-        columns = {path: _taken(column, index) for path, column in rows.items()}
-        axes = tuple(jnp.shape(index))
-        if not axes:
-            return Record(self.name, columns, event_template=spec)
-        if isinstance(spec, NumericRecordSpec):
-            stacked = _reshaped_template(spec, lambda shape: (*axes, *shape))
-            return Record(self.name, columns, event_template=stacked)
-        return Record(self.name, columns)
+        return _unflatten_paths({path: _taken(column, index) for path, column in rows.items()})
 
     # -- sampling ---------------------------------------------------------------
 
@@ -438,9 +471,9 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         -------
         Any
             One atom in its raw form for ``sample_shape=()``: an array for array
-            atoms, a ``Record`` for record atoms, and the stored object
-            otherwise. A non-empty shape prepends its axes to the array, to each
-            column of the record, or as the axes of an object array.
+            atoms, the nested mapping of raw leaves for record atoms, and the
+            stored object otherwise. A non-empty shape prepends its axes to the
+            array, to each leaf of the mapping, or as the axes of an object array.
         """
         index = weighted_choice(key, self.num_atoms, weights=self._p, shape=tuple(sample_shape))
         return self._atoms_at(index)
@@ -450,10 +483,11 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
     def _expectation(self, f: Callable[[Any], Array]) -> Array:
         """The exact ``E[f(X)]``: the weighted mean of ``f`` over the atoms.
 
-        ``f`` receives each atom in its raw form, as a draw is returned, and
-        returns an array or a pytree of arrays. Over a numeric event ``f`` is
-        evaluated at every atom at once with ``jax.vmap``, so it must be
-        traceable; over any other event it is called on each atom in turn.
+        ``f`` receives each atom in its raw form, as a draw is returned, so a
+        record atom is the nested mapping of its raw leaves, and returns an
+        array or a pytree of arrays. Over a numeric event ``f`` is evaluated at
+        every atom at once with ``jax.vmap``, so it must be traceable; over any
+        other event it is called on each atom in turn.
 
         Returns
         -------
@@ -465,11 +499,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         if isinstance(spec, NumericArraySpec):
             values = jax.vmap(f)(rows)
         elif isinstance(spec, NumericRecordSpec):
-
-            def at_atom(columns: dict[str, Array]) -> Any:
-                return f(Record(self.name, columns, event_template=spec))
-
-            values = jax.vmap(at_atom)(rows)
+            values = jax.vmap(f)(_unflatten_paths(rows))
         else:
             values = _stacked([f(self._atoms_at(index)) for index in range(self.num_atoms)])
         return jax.tree.map(lambda value: weighted_mean(self._p, value), values)

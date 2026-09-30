@@ -9,16 +9,47 @@ workflow-owned random event, so the operation takes no key.
 from __future__ import annotations
 
 import operator
+from collections.abc import Mapping
 from typing import Any
 
-from ..core._batch import BatchSpec
+from ..core._batch import BatchSpec, _ranks_of
 from ..core._broadcast_distributions import SAMPLE_LEVEL
+from ..core._record_batch import _batch_class_for
+from ..core._record_spec import RecordSpec
 from ..core._specs import OutputSpec
 from ..distributions._capabilities import SupportsSampling
 from ..distributions._distribution import Distribution, DistributionSpec
+from ..distributions._factored import _raw_record
 from ._operation import ApplicabilityError, BoundCall, _workflow_draws, operation
 
 __all__ = ["sample"]
+
+
+def _record_batch(value: Any, call: BoundCall, result: OutputSpec | None) -> Any:
+    """*value*, a nested mapping of raw columns, as the batch of records *result* declares.
+
+    A record-valued raw result is a nested mapping of raw leaves, stacked with
+    the batch axes leading. The engine's return step assembles a declared batch
+    from arrays, records of columns, and object arrays, so a mapping is
+    assembled here: as the ``RecordBatch`` or ``NumericRecordBatch`` the
+    declared element calls for, on the declared levels and under the
+    operation's result label. A record held inside the mapping is read as its
+    own nested mapping. Under ``raw`` the mapping is the result. Any other value
+    is returned as it is, and so is a value whose declared result is not a
+    batch of records.
+    """
+    if call.controls["raw"] or not isinstance(value, Mapping) or result is None:
+        return value
+    spec = result.spec
+    if not isinstance(spec, BatchSpec) or not isinstance(spec.element_spec, RecordSpec):
+        return value
+    return _batch_class_for(spec.element_spec)(
+        call.operation.output_name,
+        _raw_record(value),
+        tuple(spec.level_names),
+        element_spec=spec.element_spec,
+        axes_per_level=_ranks_of(spec.axis_groups),
+    )
 
 
 def _sample_shape(sample_shape: Any) -> tuple[int, ...]:
@@ -83,7 +114,8 @@ def sample(d: Distribution, sample_shape: tuple[int, ...] = ()):
         ``NumericArray`` or a ``Record``; or, for a non-empty *sample_shape*, the
         batch form of that kind with the leading axes on a level named
         ``sample``. Under ``with_options(raw=True)`` the draws are returned as
-        ``d._sample`` gives them.
+        ``d._sample`` gives them, so a record-valued law's batch of draws is the
+        nested mapping of its raw columns.
 
     Raises
     ------
@@ -98,14 +130,16 @@ def _draw(call: BoundCall, result: OutputSpec | None) -> Any:
     """``d._sample`` under the sample shape, with a workflow-owned key.
 
     Under a non-empty shape the key splits by draw index inside ``_sample``, so
-    the draws are jointly independent and reproducible together.
+    the draws are jointly independent and reproducible together. Draws that are
+    a nested mapping of raw columns become the declared batch of records.
     """
-    return _workflow_draws(
+    draws = _workflow_draws(
         call.operands["d"],
         _sample_shape(call.operands["sample_shape"]),
         operation_kind="sample",
         execution_mode="sampled",
     )
+    return _record_batch(draws, call, result)
 
 
 sample.capability_route(

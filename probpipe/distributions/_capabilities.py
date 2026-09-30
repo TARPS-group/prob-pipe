@@ -168,9 +168,16 @@ class SupportsCovariance(Protocol):
 
 @runtime_checkable
 class SupportsQuantile(Protocol):
-    """A numeric distribution with quantiles, ``_quantile(q)``, per coordinate at each level."""
+    """A numeric distribution with quantiles, ``_quantile(q)``, per coordinate at each level.
 
-    def _quantile(self, q: ArrayLike) -> Array: ...
+    The result is the event's raw form with the level axes leading in each
+    leaf: an array of shape ``(*q.shape, *event_shape)`` for an array event,
+    and the nested mapping of such arrays for a record event. The ``quantile``
+    operation wraps it: one level as a value of the event's kind, and several
+    levels as the matching batch on a level of their own.
+    """
+
+    def _quantile(self, q: ArrayLike) -> Array | Mapping[str, Any]: ...
 
 
 @runtime_checkable

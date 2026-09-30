@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import math
 from typing import Any
 
 import jax.numpy as jnp
@@ -13,6 +14,7 @@ from probpipe import (
     NumericArray,
     NumericArrayBatch,
     NumericArraySpec,
+    NumericRecordBatch,
     Record,
     RecordSpec,
     workflow_run,
@@ -25,6 +27,10 @@ from probpipe.core._dispatch import (
 )
 from probpipe.core._specs import OutputSpec
 from probpipe.core.constraints import non_negative, real, unit_interval
+from probpipe.distributions._capabilities import SupportsConditionalSampling, SupportsSampling
+from probpipe.distributions._conditional import ConditionalDistribution
+from probpipe.distributions._distribution import Distribution
+from probpipe.distributions._empirical import EmpiricalDistribution
 from probpipe.linalg import LinOp
 from probpipe.operations import RouteSource
 from probpipe.operations._moments import (
@@ -39,9 +45,68 @@ from probpipe.operations._moments import (
 from probpipe.operations._operation import ApplicabilityError
 from probpipe.values import Function
 
-from ._laws import Bare, Coin, ExactPosterior, Gaussian, GuardedMean, Measure, Pair, Sampler, Vector
+from ._laws import (
+    REAL,
+    Bare,
+    Coin,
+    ExactPosterior,
+    Gaussian,
+    GuardedMean,
+    Measure,
+    Pair,
+    Sampler,
+    Vector,
+)
 
 _DRAWS = 4000
+
+
+class _Shift(ConditionalDistribution, SupportsConditionalSampling):
+    """The kernel ``y | mu``, a point mass one above its given, which only samples."""
+
+    def __init__(self) -> None:
+        super().__init__("y", {"mu": REAL}, OutputSpec(y=REAL))
+
+    def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
+        raise NotImplementedError("the moment tests bind no given of the kernel")
+
+    def _conditional_sample(self, given: Any, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
+        return jnp.asarray(given["mu"], jnp.float32) + jnp.ones(sample_shape, jnp.float32)
+
+
+def _dependent_joint() -> Any:
+    """``y = mu + 1`` with ``mu ~ Normal(2, 1)``: a joint that samples and has no moment."""
+    return _Shift() * Gaussian("mu", 2.0)
+
+
+class _Ramp(Distribution, SupportsSampling):
+    """A law whose i-th of n draws is ``(i, 2i)``, whatever the key.
+
+    A draw is an array of shape (2,), or with ``record=True`` the record of the
+    scalar fields ``x`` and ``y``, returned as its mapping.
+    """
+
+    def __init__(self, name: str, *, record: bool = False) -> None:
+        pair = RecordSpec(x=REAL, y=REAL)
+        super().__init__(name, pair if record else NumericArraySpec((2,), jnp.float32, real))
+        self.record = record
+
+    def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
+        index = jnp.arange(math.prod(sample_shape), dtype=jnp.float32).reshape(sample_shape)
+        if self.record:
+            return {"x": index, "y": 2.0 * index}
+        return jnp.stack([index, 2.0 * index], axis=-1)
+
+
+def _record_empirical() -> EmpiricalDistribution:
+    """Three equally weighted record atoms, whose leaves ``b`` and ``a`` each rank the atoms alike."""
+    atoms = NumericRecordBatch(
+        "rows",
+        {"b": jnp.array([[1.0, 2.0], [0.0, 1.0], [2.0, 3.0]]), "a": jnp.array([2.0, 1.0, 3.0])},
+        "row",
+        element_spec=RecordSpec(b=(2,), a=()),
+    )
+    return EmpiricalDistribution("post", atoms)
 
 
 class _QuadratureStandIn(ExpectationMethod):
@@ -204,6 +269,36 @@ class TestQuantile:
             estimate = quantile.with_options(n_broadcast_samples=_DRAWS)(Sampler("s"), 0.5)
         assert abs(_value(estimate)) < 0.1
 
+    @pytest.mark.parametrize("record", [False, True], ids=["array", "record"])
+    def test_the_fallback_is_the_inverse_cdf_of_the_draws(self, record):
+        # Four draws of x are 0, 1, 2, 3, whose CDF reaches 0.25 at 0.
+        view = quantile.with_options(n_broadcast_samples=4)
+        estimate = view(_Ramp("ramp", record=record), jnp.array([0.25, 0.5, 1.0]))
+        x = estimate["x"] if record else estimate.values[:, 0]
+        np.testing.assert_array_equal(np.asarray(x), [0.0, 1.0, 3.0])
+
+    def test_method_selects_the_fallback_over_the_closed_form(self):
+        view = quantile.with_options(method="monte_carlo")
+        assert view.check(Gaussian("g"), 0.5).route == "monte_carlo"
+
+    def test_one_level_of_a_record_law_is_a_record_of_its_quantiles(self):
+        result = quantile(_record_empirical(), 0.5)
+        assert isinstance(result, Record) and result.fields == ("b", "a")
+        np.testing.assert_allclose(np.asarray(result["b"]), [1.0, 2.0])
+        assert _value(result["a"]) == 2.0
+
+    def test_several_levels_of_a_record_law_are_a_batch_of_records(self):
+        result = quantile(_record_empirical(), jnp.array([0.0, 0.5, 1.0]))
+        assert isinstance(result, NumericRecordBatch)
+        assert (result.level_names, result.batch_shape) == (("quantile",), (3,))
+        np.testing.assert_allclose(np.asarray(result["a"]), [1.0, 2.0, 3.0])
+        np.testing.assert_allclose(np.asarray(result["b"]), [[0.0, 1.0], [1.0, 2.0], [2.0, 3.0]])
+
+    def test_a_raw_record_law_s_levels_are_the_mapping_of_their_columns(self):
+        result = quantile.with_options(raw=True)(_record_empirical(), jnp.array([0.0, 1.0]))
+        assert isinstance(result, dict) and list(result) == ["b", "a"]
+        assert jnp.shape(result["b"]) == (2, 2)
+
     def test_quantiles_require_a_numeric_event(self):
         with pytest.raises(ApplicabilityError, match="numeric value"):
             quantile(Measure("m"), 0.5)
@@ -211,6 +306,62 @@ class TestQuantile:
     def test_the_levels_are_numeric(self):
         with pytest.raises(ApplicabilityError, match="levels"):
             quantile(Gaussian("g"), "median")
+
+
+class TestTheFallbacksOnFewDraws:
+    """A fallback reports the moments of the empirical law of its draws, whatever the packaging."""
+
+    @pytest.mark.parametrize("record", [False, True], ids=["array", "record"])
+    def test_the_covariance_divides_by_the_number_of_draws(self, record):
+        # The three draws (0, 0), (1, 2), and (2, 4) deviate from their mean (1, 2)
+        # by (-1, -2), (0, 0), and (1, 2).
+        estimate = cov.with_options(n_broadcast_samples=3)(_Ramp("ramp", record=record))
+        expected = np.array([[2.0, 4.0], [4.0, 8.0]]) / 3.0
+        np.testing.assert_allclose(np.asarray(estimate), expected, rtol=1e-6)
+
+    @pytest.mark.parametrize("record", [False, True], ids=["array", "record"])
+    def test_the_variance_is_the_diagonal_of_the_covariance(self, record):
+        law = _Ramp("ramp", record=record)
+        spread = variance.with_options(n_broadcast_samples=7)(law)
+        covariance = cov.with_options(n_broadcast_samples=7)(law)
+        values = [_value(spread["x"]), _value(spread["y"])] if record else np.asarray(spread)
+        np.testing.assert_allclose(values, np.diag(np.asarray(covariance)), rtol=1e-6)
+
+    @pytest.mark.parametrize("record", [False, True], ids=["array", "record"])
+    def test_one_draw_has_no_covariance(self, record):
+        estimate = cov.with_options(n_broadcast_samples=1)(_Ramp("ramp", record=record))
+        np.testing.assert_array_equal(np.asarray(estimate), np.zeros((2, 2)))
+
+
+class TestTheFallbacksOfAJoint:
+    """A joint's draws are a mapping of columns, which each fallback reads per component."""
+
+    def test_the_mean_is_the_average_of_each_component(self):
+        with workflow_run(seed=7):
+            estimate = mean.with_options(n_broadcast_samples=_DRAWS)(_dependent_joint())
+        assert isinstance(estimate, Record) and estimate.fields == ("y", "mu")
+        assert abs(_value(estimate["mu"]) - 2.0) < 0.1
+        assert abs(_value(estimate["y"]) - 3.0) < 0.1
+
+    def test_the_variance_is_the_sample_variance_of_each_component(self):
+        with workflow_run(seed=8):
+            estimate = variance.with_options(n_broadcast_samples=_DRAWS)(_dependent_joint())
+        assert isinstance(estimate, Record)
+        assert abs(_value(estimate["mu"]) - 1.0) < 0.15
+        assert abs(_value(estimate["y"]) - 1.0) < 0.15
+
+    def test_the_covariance_couples_the_components(self):
+        with workflow_run(seed=9):
+            estimate = cov.with_options(n_broadcast_samples=_DRAWS)(_dependent_joint())
+        np.testing.assert_allclose(np.asarray(estimate), np.ones((2, 2)), atol=0.15)
+
+    def test_several_quantile_levels_give_a_batch_of_records(self):
+        levels = jnp.array([0.25, 0.5])
+        with workflow_run(seed=10):
+            estimate = quantile.with_options(n_broadcast_samples=_DRAWS)(_dependent_joint(), levels)
+        assert (estimate.level_names, estimate.batch_shape) == (("quantile",), (2,))
+        assert abs(float(estimate["mu"][1]) - 2.0) < 0.1
+        assert abs(float(estimate["y"][1]) - 3.0) < 0.1
 
 
 class TestExpectation:

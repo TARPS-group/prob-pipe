@@ -266,9 +266,11 @@ class TestWeights:
             ("chain", "draw"),
             element_spec=NumericArraySpec(()),
         )
-        law = EmpiricalDistribution("x", atoms, jnp.array([[1.0, 0.0, 0.0], [0.0, 0.0, 3.0]]))
-        assert np.allclose(law.weights, [0.25, 0.0, 0.0, 0.0, 0.0, 0.75])
-        assert jnp.allclose(law._mean(), 0.25 * 0.0 + 0.75 * 5.0)
+        # The weights of the atoms 0, ..., 5 in row-major order are 1, 2, 0, 0, 0, 3;
+        # in column-major order they would be 1, 0, 2, 0, 0, 3, with mean 19/6.
+        law = EmpiricalDistribution("x", atoms, jnp.array([[1.0, 2.0, 0.0], [0.0, 0.0, 3.0]]))
+        assert np.allclose(law.weights, np.array([1.0, 2.0, 0.0, 0.0, 0.0, 3.0]) / 6.0)
+        assert jnp.allclose(law._mean(), (0.0 * 1.0 + 1.0 * 2.0 + 5.0 * 3.0) / 6.0)
 
     @pytest.mark.parametrize(
         ("weights", "match"),
@@ -322,10 +324,25 @@ class TestSampling:
 
     def test_a_record_draw_is_one_atom_whole(self):
         draw = _record_law()._sample(jax.random.PRNGKey(0))
-        assert isinstance(draw, Record)
-        assert draw.event_template == _RECORD_SPEC
+        assert isinstance(draw, dict)
+        assert _RECORD_SPEC.is_valid(draw)
         rows = {(*np.asarray(b), float(a)) for b, a in zip(_B, _A)}
         assert (*np.asarray(draw["b"]), float(draw["a"])) in rows
+
+    @pytest.mark.parametrize("sample_shape", [(), (5,)])
+    def test_a_record_draw_is_the_nested_mapping_of_its_raw_leaves(self, sample_shape):
+        draws = EmpiricalDistribution("m", _mixed_atoms())._sample(
+            jax.random.PRNGKey(0), sample_shape
+        )
+        assert isinstance(draws, dict) and isinstance(draws["g"], dict)
+        assert list(draws) == ["label", "g"] and list(draws["g"]) == ["u", "v"]
+        assert jnp.shape(draws["g"]["v"]) == (*sample_shape, 2)
+        if sample_shape:
+            assert draws["label"].dtype == object and draws["label"].shape == sample_shape
+            rows = {(label, float(u)) for label, u in zip(_LABELS, _U)}
+            assert {(label, float(u)) for label, u in zip(draws["label"], draws["g"]["u"])} <= rows
+        else:
+            assert draws["label"] in set(_LABELS)
 
     def test_record_draws_resample_whole_rows(self):
         draws = _record_law()._sample(jax.random.PRNGKey(0), (200,))
@@ -348,6 +365,13 @@ class TestSampling:
         assert isinstance(sample(_record_law(), key=key, sample_shape=(4,)), NumericRecordBatch)
         for law in (_array_law(), _record_law(), _opaque_law()):
             assert law.event_spec.spec.is_valid(sample(law, key=key))
+
+    def test_the_sample_operation_draws_a_batch_of_mixed_records(self):
+        law = EmpiricalDistribution("m", _mixed_atoms())
+        draws = sample(law, key=jax.random.PRNGKey(0), sample_shape=(4,))
+        assert type(draws) is RecordBatch
+        assert (draws.batch_shape, draws.level_names) == ((4,), ("sample",))
+        assert draws.element_spec == law.event_spec.spec
 
 
 # -- Moments --------------------------------------------------------------------
@@ -387,7 +411,8 @@ class TestMoments:
     def test_the_moments_of_record_atoms_are_shaped_like_a_draw(self):
         law = _record_law()
         mean = law._mean()
-        assert isinstance(mean, Record)
+        assert isinstance(mean, dict) and list(mean) == ["b", "a"]
+        assert _RECORD_SPEC.is_valid(mean)
         assert jnp.allclose(mean["a"], 1.75)
         assert jnp.allclose(mean["b"], jnp.array([0.75, 1.0]))
         variance = law._variance()
@@ -402,14 +427,33 @@ class TestMoments:
         )
         assert jnp.allclose(_record_law()._cov().to_dense(), expected, atol=1e-6)
 
-    def test_the_quantile_interpolates_the_weighted_atoms_at_their_midpoints(self):
-        # Each sorted atom sits at its cumulative weight less half its own:
-        # 0.05, 0.2, 0.45, and 0.8 for the atoms 1, 2, 4, and 7.
+    def test_the_quantile_is_the_generalized_inverse_of_the_weighted_cdf(self):
+        # The CDF of the atoms 1, 2, 4, and 7 reaches 0.1, 0.3, 0.6, and 1 at them,
+        # and the quantile at q is the smallest atom where it reaches q.
         law = _array_law()
-        assert jnp.allclose(law._quantile(0.2), 2.0)
-        assert jnp.allclose(law._quantile(0.45), 4.0)
-        assert jnp.allclose(law._quantile(0.5), 4.0 + 3.0 * 0.05 / 0.35)
-        assert jnp.allclose(law._quantile(jnp.array([0.0, 1.0])), jnp.array([1.0, 7.0]))
+        levels = jnp.array([0.05, 0.2, 0.45, 0.5, 0.61, 0.99])
+        assert jnp.array_equal(law._quantile(levels), jnp.array([1.0, 2.0, 4.0, 4.0, 7.0, 7.0]))
+        assert jnp.array_equal(law._quantile(jnp.array([0.0, 1.0])), jnp.array([1.0, 7.0]))
+
+    def test_the_median_of_four_equally_weighted_atoms_is_the_second(self):
+        law = EmpiricalDistribution("x", jnp.array([3.0, 1.0, 4.0, 2.0]))
+        assert float(law._quantile(0.5)) == 2.0
+        assert jnp.array_equal(law._quantile(jnp.array([0.25, 0.75])), jnp.array([1.0, 3.0]))
+
+    def test_an_atom_of_zero_weight_has_no_effect_on_the_quantiles(self):
+        levels = jnp.array([0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0])
+        with_zero = EmpiricalDistribution("x", jnp.array([1.0, 2.9, 3.0]), jnp.array([0.5, 0, 0.5]))
+        without = EmpiricalDistribution("x", jnp.array([1.0, 3.0]), jnp.array([0.5, 0.5]))
+        assert jnp.array_equal(with_zero._quantile(levels), without._quantile(levels))
+
+    def test_every_quantile_is_an_atom(self):
+        atoms = jax.random.normal(jax.random.PRNGKey(0), (9, 2))
+        weights = jax.random.uniform(jax.random.PRNGKey(1), (9,))
+        quantiles = EmpiricalDistribution("x", atoms, weights)._quantile(jnp.linspace(0, 1, 11))
+        for coordinate in range(2):
+            assert set(np.asarray(quantiles[:, coordinate]).tolist()) <= set(
+                np.asarray(atoms[:, coordinate]).tolist()
+            )
 
     def test_the_quantile_of_array_atoms_puts_the_levels_before_the_event_shape(self):
         law = EmpiricalDistribution("x", jnp.arange(12.0).reshape(4, 3))
@@ -417,16 +461,21 @@ class TestMoments:
         assert law._quantile(jnp.array([0.25, 0.75])).shape == (2, 3)
         assert law._quantile(jnp.full((2, 2), 0.5)).shape == (2, 2, 3)
 
-    def test_the_quantile_of_record_atoms_is_over_the_flat_coordinates(self):
+    def test_the_quantile_of_record_atoms_is_the_mapping_of_each_leaf_s_quantiles(self):
         levels = jnp.array([0.25, 0.5])
         quantiles = _record_law()._quantile(levels)
-        assert quantiles.shape == (2, 3)
-        coordinates = _flat_record_atoms()
-        for coordinate in range(3):
-            law = EmpiricalDistribution(
-                "c", jnp.asarray(coordinates[:, coordinate]), _RECORD_WEIGHTS
-            )
-            assert jnp.allclose(quantiles[:, coordinate], law._quantile(levels))
+        assert isinstance(quantiles, dict) and list(quantiles) == ["b", "a"]
+        assert quantiles["b"].shape == (2, 2) and quantiles["a"].shape == (2,)
+        for coordinate in range(2):
+            law = EmpiricalDistribution("c", _B[:, coordinate], _RECORD_WEIGHTS)
+            assert jnp.allclose(quantiles["b"][:, coordinate], law._quantile(levels))
+        a_law = EmpiricalDistribution("c", _A, _RECORD_WEIGHTS)
+        assert jnp.allclose(quantiles["a"], a_law._quantile(levels))
+
+    def test_one_level_of_record_atoms_is_shaped_like_a_draw(self):
+        quantiles = _record_law()._quantile(0.5)
+        assert _RECORD_SPEC.is_valid(quantiles)
+        assert (jnp.shape(quantiles["b"]), jnp.shape(quantiles["a"])) == ((2,), ())
 
     @pytest.mark.parametrize(
         "make",
@@ -450,15 +499,18 @@ class TestExpectation:
         expected = _weighted_sum(_NORMALIZED, np.asarray(_VALUES) ** 2)
         assert jnp.allclose(_array_law()._expectation(lambda x: x**2), expected)
 
-    def test_a_record_integrand_reads_each_atom_as_a_record(self):
+    def test_a_record_integrand_reads_each_atom_as_its_raw_mapping(self):
         expected = _weighted_sum(
             _RECORD_WEIGHTS, [float(a) * float(np.sum(b)) for b, a in zip(_B, _A)]
         )
+        received: list[type] = []
 
-        def integrand(record: Record) -> jax.Array:
-            return record["a"] * jnp.sum(record["b"])
+        def integrand(atom: dict) -> jax.Array:
+            received.append(type(atom))
+            return atom["a"] * jnp.sum(atom["b"])
 
         assert jnp.allclose(_record_law()._expectation(integrand), expected)
+        assert received and all(kind is dict for kind in received)
 
     def test_the_identity_integrates_to_the_mean(self):
         law = _record_law()
@@ -478,7 +530,7 @@ class TestExpectation:
 
     def test_a_mixed_record_is_integrated_one_atom_at_a_time(self):
         law = EmpiricalDistribution("m", _mixed_atoms())
-        integrated = law._expectation(lambda record: len(record["label"]) * record["g/u"])
+        integrated = law._expectation(lambda atom: len(atom["label"]) * atom["g"]["u"])
         assert jnp.allclose(integrated, (5 * 1.0 + 5 * 2.0 + 4 * 3.0) / 3)
 
     def test_callable_atoms_are_integrated_at_a_point(self):
@@ -514,7 +566,7 @@ class TestMarginals:
         assert isinstance(marginal, SupportsMean)
         assert jnp.allclose(marginal._mean()["u"], jnp.mean(_U))
         draw = marginal._sample(jax.random.PRNGKey(0))
-        assert isinstance(draw, Record)
+        assert isinstance(draw, dict)
         assert list(draw.keys()) == ["u", "v"]
 
     def test_the_marginal_of_a_nested_leaf_takes_its_final_segment(self):

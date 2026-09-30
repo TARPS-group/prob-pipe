@@ -20,10 +20,14 @@ import jax.numpy as jnp
 from jax.scipy.linalg import block_diag
 
 from ..core._dispatch import Feasibility, ResolutionError
+from ..core._object_batch import _is_object_array
+from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
-from ..core._spec_base import NumericArraySpec, TermSpec, _unify_specs
+from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import InputSpec, OutputSpec
+from ..core.named_tree import _unflatten_paths
 from ..core.provenance import Provenance
+from ..core.record import Record
 from ..linalg import DenseLinOp, to_dense
 from ._capabilities import (
     _CONDITIONAL_TWINS,
@@ -55,7 +59,6 @@ from ._distribution import (
 )
 
 if TYPE_CHECKING:
-    from ..core.record import Record
     from ..custom_types import Array, ArrayLike, PRNGKey
 
 __all__ = [
@@ -300,19 +303,37 @@ def _factor_graph(
 # extraction, so every factor receives a value of the kind it declares.
 
 
+def _raw_record(value: Any) -> Any:
+    """*value* in the raw form of a record-valued result: the nested mapping of its raw leaves.
+
+    A ``Record`` gives the nested mapping of its leaves, and a batch of records
+    the nested mapping of its columns with the batch axes leading. A mapping is
+    converted value by value, and any other value is returned as it is.
+    """
+    if isinstance(value, RecordBatch):
+        return _unflatten_paths(value._raw_columns())
+    if isinstance(value, Record):
+        return value.to_nested_dict()
+    if isinstance(value, Mapping):
+        return {key: _raw_record(entry) for key, entry in value.items()}
+    return value
+
+
 def _children(value: Any) -> Mapping[str, Any]:
     """The immediate children of *value*, the raw form of a record, keyed by name.
 
-    A raw record is a mapping of its fields, and a ``Record`` is read through
-    its one-level view.
+    A raw record is a mapping of its fields. A ``Record`` is read through its
+    one-level view, and a batch of records through its raw columns.
 
     Raises
     ------
     TypeError
-        If *value* is neither a mapping nor a ``Record``.
+        If *value* is none of these.
     """
     if isinstance(value, Mapping):
         return value
+    if isinstance(value, RecordBatch):
+        return _raw_record(value)
     children = getattr(value, "children", None)
     if isinstance(children, Mapping):
         return children
@@ -382,14 +403,71 @@ def _leading_axes(value: Any, spec: TermSpec) -> tuple[int, ...] | None:
 
 
 def _flatten_draws(tree: Any, batch_shape: tuple[int, ...]) -> Any:
-    """*tree* with the leading *batch_shape* axes of each leaf merged into one axis."""
+    """*tree* with the leading *batch_shape* axes of each leaf merged into one axis.
+
+    An object array holds a column of values that are not arrays, and it is
+    merged too.
+    """
     rank, count = len(batch_shape), math.prod(batch_shape)
-    return jax.tree.map(lambda leaf: jnp.reshape(leaf, (count, *jnp.shape(leaf)[rank:])), tree)
+
+    def merged(leaf: Any) -> Any:
+        if _is_object_array(leaf):
+            return leaf.reshape((count, *leaf.shape[rank:]))
+        return jnp.reshape(leaf, (count, *jnp.shape(leaf)[rank:]))
+
+    return jax.tree.map(merged, tree)
 
 
 def _unflatten_draws(tree: Any, batch_shape: tuple[int, ...]) -> Any:
     """*tree* with the leading axis of each leaf split into *batch_shape*."""
     return jax.tree.map(lambda leaf: jnp.reshape(leaf, (*batch_shape, *jnp.shape(leaf)[1:])), tree)
+
+
+def _stacked(values: Sequence[Any]) -> Any:
+    """The pytrees in *values*, stacked leaf by leaf along a new leading axis."""
+    return jax.tree.map(lambda *leaves: jnp.stack([jnp.asarray(leaf) for leaf in leaves]), *values)
+
+
+def _numeric_givens(factor: ConditionalDistribution, values: Mapping[str, Any]) -> bool:
+    """Whether every given slot of *factor* that *values* binds is numeric, so a call traces."""
+    return all(isinstance(factor.given_spec[slot], NumericSpec) for slot in values)
+
+
+def _each_value(function: Callable[..., Any], count: int, *trees: Any, traceable: bool) -> Any:
+    """*function* at each of the *count* values along the leading axis of *trees*, stacked.
+
+    A traceable call is vectorized with ``jax.vmap``. Otherwise *function* is
+    called on one value at a time, since a value that is not an array cannot be
+    traced, and the results are stacked leaf by leaf.
+    """
+    if traceable:
+        return jax.vmap(function)(*trees)
+    return _stacked(
+        [
+            function(*(jax.tree.map(lambda leaf, at=index: leaf[at], tree) for tree in trees))
+            for index in range(count)
+        ]
+    )
+
+
+def _batch_axes(
+    factor: ConditionalDistribution, inner: Mapping[str, Any], event: Any
+) -> tuple[int, ...]:
+    """The batch axes of *factor*'s part of a joint's value, or ``()`` for one value.
+
+    They are read at the first array leaf of the components that *inner* binds
+    and, when no bound component has one, at the factor's own event. With no
+    bound component the factor scores its part in one call.
+    """
+    for slot, value in inner.items():
+        axes = _leading_axes(value, factor.given_spec[slot])
+        if axes is not None:
+            return axes
+    if inner:
+        axes = _leading_axes(event, factor.event_spec.spec)
+        if axes is not None:
+            return axes
+    return ()
 
 
 # ---------------------------------------------------------------------------
@@ -403,7 +481,9 @@ def _ancestral_sample(
     """The draw of the joint of *graph*, each unmet given set by *fixed*.
 
     Conditional-first order makes right to left an ancestral order, so every
-    component a factor conditions on is drawn before the factor draws.
+    component a factor conditions on is drawn before the factor draws. Each
+    factor's draw is read in its raw form, so the joint's draw is the nested
+    mapping of raw leaves whatever form a factor returns.
     """
     keys = jax.random.split(key, len(graph.factors))
     drawn: dict[str, Any] = {}
@@ -413,7 +493,7 @@ def _ancestral_sample(
             draw = _conditional_draw(factor, drawn, fixed, keys[index], sample_shape)
         else:
             draw = factor._sample(keys[index], sample_shape)
-        drawn.update(_components_of(factor.event_spec, draw))
+        drawn.update(_components_of(factor.event_spec, _raw_record(draw)))
     return {component: drawn[component] for component in graph.event_spec.components}
 
 
@@ -424,7 +504,11 @@ def _conditional_draw(
     key: PRNGKey,
     sample_shape: tuple[int, ...],
 ) -> Any:
-    """A draw of *factor* at the components in *drawn* it names and its unmet givens in *fixed*."""
+    """A draw of *factor* at the components in *drawn* it names and its unmet givens in *fixed*.
+
+    Under a non-empty *sample_shape* the factor is mapped over the draws of
+    those components, one given value per call, each call with its own key.
+    """
     inner = {slot: drawn[slot] for slot in factor.given_spec if slot in drawn}
 
     def given(values: Mapping[str, Any]) -> dict[str, Any]:
@@ -432,8 +516,13 @@ def _conditional_draw(
 
     if not inner or not sample_shape:
         return factor._conditional_sample(given(inner), key, sample_shape)
-    draws = jax.vmap(lambda values, subkey: factor._conditional_sample(given(values), subkey, ()))(
-        _flatten_draws(inner, sample_shape), jax.random.split(key, math.prod(sample_shape))
+    count = math.prod(sample_shape)
+    draws = _each_value(
+        lambda values, subkey: factor._conditional_sample(given(values), subkey, ()),
+        count,
+        _flatten_draws(inner, sample_shape),
+        jax.random.split(key, count),
+        traceable=_numeric_givens(factor, inner),
     )
     return _unflatten_draws(draws, sample_shape)
 
@@ -469,18 +558,14 @@ def _conditional_score(
         return {slot: values[slot] if slot in values else fixed[slot] for slot in factor.given_spec}
 
     density = getattr(factor, method)
-    batch = next(
-        (
-            axes
-            for slot, value in inner.items()
-            if (axes := _leading_axes(value, factor.given_spec[slot])) is not None
-        ),
-        (),
-    )
+    batch = _batch_axes(factor, inner, event)
     if not batch:
         return density(given(inner), event)
-    scores = jax.vmap(lambda values, one: density(given(values), one))(
-        *_flatten_draws((inner, event), batch)
+    scores = _each_value(
+        lambda values, one: density(given(values), one),
+        math.prod(batch),
+        *_flatten_draws((inner, event), batch),
+        traceable=_numeric_givens(factor, inner),
     )
     return _unflatten_draws(scores, batch)
 
@@ -508,10 +593,10 @@ def _factor_results(
 def _componentwise(
     graph: _FactorGraph, fixed: Mapping[str, Any], method: str, *arguments: Any
 ) -> dict[str, Any]:
-    """Each factor's event-typed *method* result, assembled per component in canonical order."""
+    """Each factor's event-typed *method* result in its raw form, assembled per component."""
     assembled: dict[str, Any] = {}
     for factor, result in _factor_results(graph, fixed, method, *arguments):
-        assembled.update(_components_of(factor.event_spec, result))
+        assembled.update(_components_of(factor.event_spec, _raw_record(result)))
     return {component: assembled[component] for component in graph.event_spec.components}
 
 
@@ -553,11 +638,11 @@ def _sole_field_projection(method: str) -> Callable[..., Any]:
     """The capability of a :class:`_SoleField` that takes the one field of the law's *method*."""
 
     def projected(self: _SoleField, *arguments: Any) -> Any:
-        return _children(getattr(self._law, method)(*arguments))[self._component]
+        return _children(_raw_record(getattr(self._law, method)(*arguments)))[self._component]
 
     projected.__name__ = method
     projected.__qualname__ = f"_SoleField.{method}"
-    projected.__doc__ = f"The one field of the record law's ``{method}``."
+    projected.__doc__ = f"The one field of the record law's ``{method}``, in its raw form."
     return projected
 
 
@@ -591,8 +676,8 @@ def _sole_field_cov(self: _SoleField) -> Any:
 
 
 def _sole_field_expectation(self: _SoleField, f: Callable[[Any], Array]) -> Array:
-    """The record law's expectation of *f* at the one field of each draw."""
-    return self._law._expectation(lambda record: f(_children(record)[self._component]))
+    """The record law's expectation of *f* at the one field of each draw, in its raw form."""
+    return self._law._expectation(lambda record: f(_children(_raw_record(record))[self._component]))
 
 
 def _sole_field_marginal(self: _SoleField, path: str | tuple[str, ...]) -> Distribution:
@@ -675,23 +760,60 @@ class _SoleField(Distribution):
         object.__setattr__(self, "_component", component)
 
 
+def _requested_paths(joint: Any, path: str | tuple[str, ...]) -> tuple[str, ...]:
+    """The event paths of *joint* that *path* requests: one path, or a selection of several.
+
+    Raises
+    ------
+    KeyError
+        If a path is not an event path of the joint.
+    TypeError
+        If a path is not a string.
+    ValueError
+        If a selection names no path, or two of its paths share a final
+        segment.
+    """
+    paths = (path,) if isinstance(path, str) else tuple(path)
+    if not paths:
+        raise ValueError("a selection of event paths names at least one path")
+    record = joint._graph.event_spec.spec
+    for requested in paths:
+        if not isinstance(requested, str):
+            raise TypeError(f"an event path is a string, got {type(requested).__name__}")
+        try:
+            record.at_path(*requested.split(_PATH_SEP))
+        except KeyError:
+            raise KeyError(
+                f"{requested!r} is not an event path of {joint.name!r}, whose components are "
+                f"{list(joint.event_spec.components)}"
+            ) from None
+    finals = [requested.rsplit(_PATH_SEP, 1)[-1] for requested in paths]
+    shared = sorted({final for final in finals if finals.count(final) > 1})
+    if shared:
+        raise ValueError(
+            f"the selected paths {list(paths)} share the final segments {shared}, which would "
+            f"name two fields of the selected record alike"
+        )
+    return paths
+
+
 def _marginal_guard(self: Any, path: str | tuple[str, ...]) -> Feasibility:
     """Whether the marginal at *path* is exact, by the factor graph.
 
-    The target's ancestor closure must add no factor, since integrating out a
-    field that a kept factor conditions on has no closed form here. Within the
-    target, a factor requested whole is kept whole, and a factor requested in
-    part delegates to its own marginal guard, provided no other requested factor
-    conditions on what that reduction integrates out.
+    A path must be an event path of the joint, and the paths of a selection
+    must end in distinct segments. The target's ancestor closure must add no
+    factor, since integrating out a field that a kept factor conditions on has
+    no closed form here. Within the target, a factor requested whole is kept
+    whole, and a factor requested in part delegates to its own marginal guard,
+    provided no other requested factor conditions on what that reduction
+    integrates out.
     """
     graph: _FactorGraph = self._graph
-    paths = (path,) if isinstance(path, str) else tuple(path)
-    if not paths:
-        return Feasibility(False, "no path was requested")
+    try:
+        paths = _requested_paths(self, path)
+    except (KeyError, TypeError, ValueError) as error:
+        return Feasibility(False, str(error.args[0]) if error.args else repr(error))
     heads = {p.split(_PATH_SEP, 1)[0] for p in paths}
-    unknown = heads - set(graph.producers)
-    if unknown:
-        return Feasibility(False, f"the joint has no component {sorted(unknown)}")
     targets = {graph.producers[head] for head in heads}
     ancestors = graph.ancestors(targets) - targets
     if ancestors:
@@ -834,7 +956,9 @@ def _joint_quantile(self: Any, q: ArrayLike) -> dict[str, Any]:
     """The quantiles of an edge-free joint at the levels *q*, assembled per component.
 
     A whole-term factor's quantiles are its component's, and an exposed record's
-    are the children of the factor's result.
+    are the children of the factor's result. Each factor's result is its
+    event's raw form with the level axes leading in each leaf, so the joint's is
+    the same form of its own event.
 
     Returns
     -------
@@ -950,8 +1074,9 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
     whole term: a kept factor that exposes a record of that one component is
     returned as the law of its field. A selection of several paths returns an
     exposed record: the one factor itself when it exposes a record, and
-    otherwise the joint of the kept factors in factor order, labeled by their
-    labels joined with ``·``.
+    otherwise the joint of the kept factors in factor order. The marginal is
+    labeled as the view at *path* is: by the path, or by the paths of a
+    selection joined with ``", "``.
 
     Parameters
     ----------
@@ -965,18 +1090,27 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
 
     Raises
     ------
+    KeyError
+        If a path is not an event path of the joint.
+    TypeError
+        If a path is not a string.
+    ValueError
+        If a selection names no path, or two of its paths share a final
+        segment.
     ResolutionError
         If the marginal guard does not accept *path*, so no exact marginal is
         available there.
     """
+    paths = _requested_paths(self, path)
     report = _marginal_guard(self, path)
     if report.feasible is not True:
         reason = report.description or "; ".join(report.pending)
         raise ResolutionError(f"{self.name!r} has no exact marginal at {path!r}: {reason}")
     graph: _FactorGraph = self._graph
     projection = isinstance(path, str)
+    label = path if projection else ", ".join(paths)
     kept: list[Distribution] = []
-    for index, requested in _requests(graph, (path,) if projection else tuple(path)).items():
+    for index, requested in _requests(graph, paths).items():
         factor = graph.factors[index]
         if not _kept_whole(factor, requested):
             kept.append(factor._marginal(_factor_request(requested)))
@@ -985,8 +1119,9 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
         else:
             kept.append(factor)
     if len(kept) == 1 and (projection or kept[0].event_spec.exposes_record):
-        return kept[0]
-    return FactoredDistribution(_LABEL_SEP.join(factor.name for factor in kept), kept)
+        (marginal,) = kept
+        return marginal if marginal.name == label else marginal.with_name(label)
+    return FactoredDistribution(label, kept)
 
 
 def _all_claim(factors: Sequence[Factor], protocol: type) -> bool:

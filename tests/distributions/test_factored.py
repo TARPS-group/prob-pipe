@@ -18,6 +18,7 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 from jax.scipy.stats import norm
 
@@ -25,6 +26,7 @@ from probpipe import (
     MultivariateNormal,
     Normal,
     NumericArraySpec,
+    NumericRecordBatch,
     OpaqueSpec,
     OutputSpec,
     Record,
@@ -50,6 +52,7 @@ from probpipe.distributions import (
     FactoredFullyNumericConditionalDistribution,
     FactoredNumericConditionalDistribution,
     FactoredNumericDistribution,
+    FieldView,
     NumericConditionalDistribution,
     NumericDistribution,
     SupportsConditionalCovariance,
@@ -63,6 +66,8 @@ from probpipe.distributions import (
     SupportsMarginals,
 )
 from probpipe.distributions._capabilities import _capability_guard
+from probpipe.distributions._empirical import EmpiricalDistribution
+from probpipe.distributions._factored import _SoleField
 from probpipe.linalg import DenseLinOp
 
 SCALAR = NumericArraySpec(())
@@ -159,6 +164,19 @@ class ScoringKernel(NormalKernel, SupportsConditionalLogProb):
 
     def _conditional_log_prob(self, given, value):
         return norm.logpdf(value, self._location(given), self._scale)
+
+
+class NormKernel(NormalKernel, SupportsConditionalLogProb):
+    """``y | beta ~ Normal(‖beta‖, sigma)``, whose location reduces over every axis of ``beta``.
+
+    The scale is the given ``sigma`` when the kernel has that slot, and one
+    otherwise. Called once on a batch of betas it would take the norm of the
+    whole batch, so it scores a batch correctly only when called value by value.
+    """
+
+    def _conditional_log_prob(self, given, value):
+        scale = given["sigma"] if "sigma" in self.given_spec else 1.0
+        return norm.logpdf(value, jnp.linalg.norm(jnp.asarray(given["beta"])), scale)
 
 
 class UnnormalizedKernel(NormalKernel, SupportsConditionalUnnormalizedLogProb):
@@ -323,6 +341,45 @@ class OneFieldNormal(Law, SupportsSampling, SupportsLogProb):
 
     def _log_prob(self, value):
         return norm.logpdf(value["beta"], 0.0, 2.0)
+
+
+#: The labels of :class:`LabelLaw`, whose lengths locate :class:`LengthKernel`.
+_LABELS = ("a", "bb", "ccc")
+
+
+class LabelLaw(Law, SupportsSampling, SupportsLogProb):
+    """A uniform law over three labels, an opaque event, drawn as an object array in a batch."""
+
+    def _sample(self, key, sample_shape=()):
+        choices = np.asarray(jax.random.randint(key, sample_shape, 0, len(_LABELS)))
+        if not sample_shape:
+            return _LABELS[int(choices)]
+        labels = np.empty(choices.shape, dtype=object)
+        for position, choice in np.ndenumerate(choices):
+            labels[position] = _LABELS[choice]
+        return labels
+
+    def _log_prob(self, value):
+        return jnp.full(np.shape(value), -jnp.log(3.0))
+
+
+class LengthKernel(NormalKernel, SupportsConditionalSampling, SupportsConditionalLogProb):
+    """``y | label ~ Normal(len(label), 1)``, which reads one label per call.
+
+    A draw is the location itself, so a draw shows which label it was given.
+    """
+
+    def _conditional_sample(self, given, key, sample_shape=()):
+        return jnp.full(sample_shape, float(len(given["label"])))
+
+    def _conditional_log_prob(self, given, value):
+        return norm.logpdf(value, float(len(given["label"])), 1.0)
+
+
+def _labeled_joint() -> FactoredDistribution:
+    """``y | label`` composed with the law of ``label``, an opaque component."""
+    kernel = LengthKernel("lik", {"label": OpaqueSpec()}, OutputSpec(y=SCALAR))
+    return kernel * LabelLaw("labels", OutputSpec(label=OpaqueSpec()))
 
 
 class UndecidedSamplingKernel(SamplingKernel):
@@ -658,6 +715,33 @@ class TestMomentCapabilities:
         assert jnp.allclose(quantiles["a"], levels + 1.0)
         assert jnp.allclose(quantiles["b"], levels + 10.0)
 
+    def test_the_quantiles_of_a_joint_of_empirical_laws_keep_each_leaf(self):
+        atoms = NumericRecordBatch(
+            "rows",
+            {"b": jnp.array([[0.0, 1.0], [1.0, 0.0], [2.0, 2.0]]), "a": jnp.array([1.0, 2.0, 3.0])},
+            "row",
+            element_spec=RecordSpec(b=(2,), a=()),
+        )
+        record = EmpiricalDistribution("post", atoms, jnp.array([0.5, 0.25, 0.25]))
+        theta = EmpiricalDistribution("theta", jnp.array([4.0, 5.0, 6.0]))
+        levels = jnp.array([0.25, 0.75])
+        quantiles = FactoredDistribution("j", [record, theta])._quantile(levels)
+        assert list(quantiles) == ["b", "a", "theta"]
+        assert quantiles["b"].shape == (2, 2)
+        expected = record._quantile(levels)
+        assert jnp.allclose(quantiles["b"], expected["b"])
+        assert jnp.allclose(quantiles["a"], expected["a"])
+        assert jnp.allclose(quantiles["theta"], theta._quantile(levels))
+
+    def test_the_law_of_the_one_field_of_an_empirical_record_has_its_quantiles(self):
+        column = jnp.array([3.0, 1.0, 2.0, 4.0])
+        atoms = NumericRecordBatch("rows", {"x": column}, "row", element_spec=RecordSpec(x=()))
+        field = _SoleField(EmpiricalDistribution("one", atoms))
+        levels = jnp.array([0.25, 0.5])
+        expected = EmpiricalDistribution("x", column)._quantile(levels)
+        assert jnp.allclose(field._quantile(levels), expected)
+        assert jnp.shape(field._quantile(0.5)) == ()
+
     def test_an_edge_free_conditional_joint_has_its_moments_at_its_given(self):
         joint = MomentKernel("k", {"x": SCALAR}, OutputSpec(a=SCALAR)) * Normal("b", 1.0, 2.0)
         mean = joint._conditional_mean({"x": 0.5})
@@ -741,6 +825,20 @@ class TestMarginalGuard:
         joint = _pair(law=TotalMarginalLaw) * _law("other", "c")
         assert joint._marginal_guard("a").feasible is True
 
+    @pytest.mark.parametrize(
+        "path",
+        [
+            pytest.param("gamma", id="unknown-component"),
+            pytest.param("a/zzz", id="below-a-leaf"),
+            pytest.param(("a", "gamma"), id="in-a-selection"),
+        ],
+    )
+    def test_a_path_that_is_not_an_event_path_is_declined_with_a_reason(self, path):
+        joint = _pair(law=TotalMarginalLaw) * _law("other", "c")
+        report = joint._marginal_guard(path)
+        assert report.feasible is False
+        assert "not an event path" in report.description
+
     def test_a_path_inside_a_factor_without_marginals_is_declined(self):
         report = (_pair() * _law("other", "c"))._marginal_guard("a")
         assert report.feasible is False
@@ -821,9 +919,25 @@ class TestMarginalValues:
         assert pair.marginalized == ["a"]
         assert marginal.event_spec == OutputSpec(a=SCALAR)
 
-    def test_the_marginal_of_a_group_is_labeled_by_its_factors(self):
+    def test_the_marginal_of_a_group_is_labeled_by_its_paths(self):
         joint = _law("u", "a") * _law("v", "b") * _law("w", "c")
-        assert joint._marginal(("a", "c")).name == "u·w"
+        assert joint._marginal(("a", "c")).name == "a, c"
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            pytest.param("beta", id="kept-factor"),
+            pytest.param(("y", "beta"), id="sub-joint"),
+            pytest.param(("beta",), id="selection-of-one"),
+            pytest.param("record", id="field-of-a-record"),
+            pytest.param("params/u", id="reduced-factor"),
+        ],
+    )
+    def test_a_marginal_is_labeled_by_its_path_as_the_view_there_is(self, path):
+        record = OneFieldNormal("one", OutputSpec(RecordSpec(record=SCALAR)))
+        params = MarginalLaw("p", OutputSpec(params=RecordSpec(u=SCALAR)), exact=("params/u",))
+        joint = _likelihood() * _prior() * record * params
+        assert joint._marginal(path).name == FieldView(joint, path).name
 
     def test_a_selection_of_one_whole_term_is_an_exposed_record(self):
         prior = _prior()
@@ -831,9 +945,25 @@ class TestMarginalValues:
         assert marginal.event_spec == OutputSpec(RecordSpec(beta=prior.event_spec.spec))
         assert marginal.factors == (prior,)
 
-    def test_a_selection_of_a_record_factor_components_is_that_factor(self):
+    def test_a_selection_of_a_record_factor_components_is_that_factor_under_the_paths(self):
         pair = _pair()
-        assert (pair * _law("other", "c"))._marginal(("a", "b")) is pair
+        marginal = (pair * _law("other", "c"))._marginal(("a", "b"))
+        assert type(marginal) is type(pair) and marginal.spec == pair.spec
+        assert (marginal.name, pair.name) == ("a, b", "pair")
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            pytest.param("gamma", id="unknown-component"),
+            pytest.param("beta/zzz", id="below-a-leaf"),
+            pytest.param(("beta", "gamma"), id="in-a-selection"),
+            pytest.param("", id="empty"),
+        ],
+    )
+    def test_a_path_that_is_not_an_event_path_raises_key_error(self, path):
+        joint = _likelihood() * _prior()
+        with pytest.raises(KeyError, match="not an event path"):
+            joint._marginal(path)
 
     def test_a_projection_onto_a_one_field_record_is_the_law_of_its_field(self):
         record = OneFieldNormal("record", OutputSpec(RecordSpec(beta=SCALAR)))
@@ -844,6 +974,14 @@ class TestMarginalValues:
         assert jnp.allclose(marginal._log_prob(0.7), norm.logpdf(0.7, 0.0, 2.0))
         draws = marginal._sample(jax.random.PRNGKey(0), (3,))
         assert jnp.allclose(draws, record._sample(jax.random.PRNGKey(0), (3,))["beta"])
+
+    def test_the_law_of_a_record_field_draws_the_nested_mapping_of_its_leaves(self):
+        fields = OutputSpec(RecordSpec(params=RecordSpec(u=SCALAR, v=SCALAR)))
+        draw = Record("draw", {"params": {"u": jnp.asarray(1.0), "v": jnp.asarray(2.0)}})
+        joint = PointLaw("record", fields, draw) * _law("other", "c")
+        value = joint._marginal("params")._sample(jax.random.PRNGKey(0))
+        assert isinstance(value, dict) and list(value) == ["u", "v"]
+        assert (float(value["u"]), float(value["v"])) == (1.0, 2.0)
 
     def test_a_marginal_the_guard_declines_raises(self):
         with pytest.raises(ResolutionError, match=_mentions("'y'", "'prior'")):
@@ -1160,6 +1298,14 @@ class TestJointSampling:
         assert jnp.shape(draws["y"]) == jnp.shape(draws["beta"]) == (5,)
         assert jnp.allclose(draws["y"], draws["beta"] + 10.0, atol=1e-4)
 
+    def test_a_kernel_on_an_opaque_component_draws_once_per_draw(self):
+        joint = _labeled_joint()
+        assert _capability_guard(joint, "_sample").feasible is True
+        draws = joint._sample(jax.random.PRNGKey(9), (2, 3))
+        assert draws["label"].dtype == object and draws["label"].shape == (2, 3)
+        lengths = np.vectorize(len, otypes=[float])(draws["label"])
+        np.testing.assert_array_equal(np.asarray(draws["y"]), lengths)
+
 
 class TestJointDensity:
     """Scoring reconstructs each factor's event and sums the factors' log-densities."""
@@ -1238,6 +1384,39 @@ class TestJointDensity:
         for index in range(2):
             one = {name: column[index] for name, column in values.items()}
             assert jnp.allclose(scores[index], joint._conditional_log_prob({"sigma": 1.5}, one))
+
+    def test_a_kernel_that_does_not_broadcast_scores_each_value_at_its_own_given(self):
+        joint = _likelihood(NormKernel) * _prior(scale=2.0)
+        y, beta = jnp.array([0.3, -1.0, 2.0]), jnp.array([-0.2, 0.5, 1.0])
+        # log N(y_i; |beta_i|, 1) + log N(beta_i; 0, 2^2), written out.
+        expected = (
+            -0.5 * (y - jnp.abs(beta)) ** 2
+            - 0.5 * (beta / 2.0) ** 2
+            - jnp.log(2.0)
+            - jnp.log(2.0 * jnp.pi)
+        )
+        assert jnp.allclose(joint._log_prob({"y": y, "beta": beta}), expected)
+
+    def test_a_kernel_that_does_not_broadcast_scores_each_value_under_the_given(self):
+        lik = NormKernel("lik", {"beta": SCALAR, "sigma": SCALAR}, OutputSpec(y=SCALAR))
+        y, beta = jnp.array([0.3, 1.2]), jnp.array([-0.2, 0.4])
+        scores = (lik * _prior())._conditional_log_prob({"sigma": 0.5}, {"y": y, "beta": beta})
+        # log N(y_i; |beta_i|, 0.5^2) + log N(beta_i; 0, 1), written out.
+        expected = (
+            -0.5 * ((y - jnp.abs(beta)) / 0.5) ** 2
+            - jnp.log(0.5)
+            - 0.5 * beta**2
+            - jnp.log(2.0 * jnp.pi)
+        )
+        assert jnp.allclose(scores, expected)
+
+    def test_a_kernel_on_an_opaque_component_scores_value_by_value(self):
+        y = jnp.array([1.0, 2.0, 0.0])
+        values = {"y": y, "label": np.array(["a", "bb", "ccc"], dtype=object)}
+        scores = _labeled_joint()._log_prob(values)
+        # log N(y_i; len(label_i), 1) + log(1/3), with the lengths 1, 2, and 3.
+        expected = -0.5 * (y - jnp.array([1.0, 2.0, 3.0])) ** 2 - 0.5 * jnp.log(2 * jnp.pi)
+        assert jnp.allclose(scores, expected - jnp.log(3.0))
 
     def test_an_edge_free_density_is_the_sum_of_the_factor_densities(self):
         first, second = Normal("a", 0.0, 1.0), Normal("b", 1.0, 2.0)

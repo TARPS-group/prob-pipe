@@ -1745,6 +1745,9 @@ def _batch_at(value: Any, spec: BatchSpec, label: str) -> Any:
     if isinstance(value, Batch):
         require_leading(tuple(value.batch_shape))
         return value
+    if isinstance(value, Mapping) and not isinstance(value, Record):
+        # A record-valued route returns the nested mapping of its stacked columns.
+        value = Record(label, **value)
     if isinstance(value, Record):
         template = value.event_template
         columns = {path: value[path] for path in template}

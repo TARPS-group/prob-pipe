@@ -499,14 +499,18 @@ class TestRenamedLawMoves:
         original = {"u": jnp.array([0.5]), "y": jnp.array([1.0, 2.0])}
         assert jnp.allclose(renamed._log_prob(value), parent._log_prob(original))
 
-    def test_a_moved_empirical_law_permutes_its_covariance_and_quantiles(self):
+    def test_a_moved_empirical_law_permutes_its_covariance_and_moves_its_quantiles(self):
         parent = _grouped_law()
         renamed = parent.with_path_names({"a/x": "b/x"})
         assert renamed.event_spec == OutputSpec(RecordSpec(b=RecordSpec(y=_SCALAR, x=_SCALAR)))
         order = jnp.array([1, 0])
         assert jnp.allclose(renamed._cov().to_dense(), parent._cov().to_dense()[order][:, order])
         q = jnp.array([0.5])
-        assert jnp.allclose(renamed._quantile(q), parent._quantile(q)[..., order])
+        moved, original = renamed._quantile(q), parent._quantile(q)
+        assert list(moved) == ["b"]
+        assert list(moved["b"]) == ["y", "x"]
+        assert jnp.allclose(moved["b"]["x"], original["a"]["x"])
+        assert jnp.allclose(moved["b"]["y"], original["b"]["y"])
 
     def test_the_marginal_at_a_moved_field_is_the_parent_marginal_at_its_origin(self):
         parent = _grouped_law()

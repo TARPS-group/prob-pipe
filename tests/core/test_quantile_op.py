@@ -7,8 +7,18 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import EmpiricalDistribution, Normal, NumericRecord, SupportsQuantile, quantile
+from probpipe import (
+    EmpiricalDistribution,
+    Normal,
+    NumericArrayBatch,
+    NumericRecord,
+    NumericRecordBatch,
+    RecordSpec,
+    SupportsQuantile,
+    quantile,
+)
 from probpipe.core.record import Record
+from probpipe.distributions._empirical import EmpiricalDistribution as AtomsLaw
 
 
 def _np_weighted_quantile(values, weights, qs):
@@ -112,3 +122,35 @@ class TestQuantileOp:
     def test_empirical_satisfies_supports_quantile(self):
         emp = EmpiricalDistribution("x", jnp.arange(10.0))
         assert isinstance(emp, SupportsQuantile)
+
+
+class TestRawQuantilesAtTheirLevels:
+    """A law's raw quantiles lead each leaf with the level axes, and the op wraps them."""
+
+    @staticmethod
+    def _record_law():
+        atoms = NumericRecordBatch(
+            "rows",
+            {"b": jnp.array([[1.0, 2.0], [0.0, 1.0], [2.0, 3.0]]), "a": jnp.array([2.0, 1.0, 3.0])},
+            "row",
+            element_spec=RecordSpec(b=(2,), a=()),
+        )
+        return AtomsLaw("post", atoms)
+
+    def test_several_levels_of_an_array_law_are_a_batch_on_the_level_quantile(self):
+        result = quantile(AtomsLaw("x", jnp.array([2.0, 4.0, 1.0, 3.0])), jnp.array([0.0, 1.0]))
+        assert isinstance(result, NumericArrayBatch)
+        assert (result.level_names, result.batch_shape) == (("quantile",), (2,))
+        np.testing.assert_allclose(np.asarray(result.values), [1.0, 4.0])
+
+    def test_one_level_of_a_record_law_is_a_record(self):
+        result = quantile(self._record_law(), 1.0)
+        assert isinstance(result, NumericRecord) and result.fields == ("b", "a")
+        np.testing.assert_allclose(np.asarray(result["b"]), [2.0, 3.0])
+
+    def test_several_levels_of_a_record_law_are_a_batch_of_records(self):
+        result = quantile(self._record_law(), jnp.array([0.0, 1.0]))
+        assert isinstance(result, NumericRecordBatch)
+        assert (result.level_names, result.batch_shape) == (("quantile",), (2,))
+        np.testing.assert_allclose(np.asarray(result["a"]), [1.0, 3.0])
+        np.testing.assert_allclose(np.asarray(result["b"]), [[0.0, 1.0], [2.0, 3.0]])

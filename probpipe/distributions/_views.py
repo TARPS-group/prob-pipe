@@ -58,7 +58,7 @@ from ._conditional import (
     _install_renamed_kernel,
 )
 from ._distribution import Distribution, _install_renamed_law, _whole_term_component
-from ._factored import SupportsFactors
+from ._factored import SupportsFactors, _raw_record
 
 if TYPE_CHECKING:
     from ..custom_types import Array, ArrayLike, PRNGKey
@@ -200,77 +200,25 @@ def _is_within(path: str, ancestor: str) -> bool:
 
 
 def _extract(value: Any, segments: tuple[str, ...]) -> Any:
-    """The node at *segments* below the top of *value*, a raw draw or a value shaped like one.
+    """The node at *segments* below the top of *value*, a raw value shaped like a draw.
 
-    A record gives its field or sub-record, a batch of records the field's
-    column or the sub-batch, and a nested mapping its entry.
+    *value* is in raw form, so a value with paths is a nested mapping of raw
+    leaves, which each segment indexes. With no segments *value* is returned
+    whole.
 
     Raises
     ------
     TypeError
-        If *segments* is not empty and *value* is none of these.
+        If *segments* is not empty and *value* is not a mapping.
     """
-    if not segments:
-        return value
-    if isinstance(value, Record):
-        return value.at_path(*segments)
-    if isinstance(value, RecordBatch):
-        return value[segments]
-    if isinstance(value, Mapping):
-        for segment in segments:
-            value = value[segment]
-        return value
-    raise TypeError(
-        f"the node at {_PATH_SEP.join(segments)!r} cannot be read from a "
-        f"{type(value).__name__}; a value with paths is a record, a batch of records, "
-        f"or a mapping"
-    )
-
-
-def _assemble(value: Any, parts: Sequence[tuple[str, tuple[str, ...]]], name: str) -> Any:
-    """The record of the nodes of *value* at each part's segments, keyed by its component.
-
-    The result keeps the raw form of *value*: a batch of records gives a batch
-    at the same levels, a record a record, and a mapping a mapping. The result's
-    schema is read from the schema *value* carries. A value of any other kind
-    is a whole term, which every part takes whole, and gives a record named
-    *name*.
-    """
-    if isinstance(value, RecordBatch):
-        template = value.element_spec
-        stored = value._raw_columns()
-        columns: dict[str, Any] = {}
-        for component, segments in parts:
-            prefix = _PATH_SEP.join(segments)
-            for key, column in stored.items():
-                if not segments:
-                    columns[f"{component}{_PATH_SEP}{key}"] = column
-                elif key == prefix:
-                    columns[component] = column
-                elif key.startswith(prefix + _PATH_SEP):
-                    columns[component + key[len(prefix) :]] = column
-        schema = RecordSpec(
-            {
-                component: template.at_path(*segments) if segments else template
-                for component, segments in parts
-            }
-        )
-        return value._rebuilt(columns, schema)
-    if isinstance(value, Record):
-        template = value.event_template
-        return Record(
-            value.name,
-            {component: _extract(value, segments) for component, segments in parts},
-            event_template=RecordSpec(
-                {
-                    component: template.at_path(*segments) if segments else template
-                    for component, segments in parts
-                }
-            ),
-        )
-    if isinstance(value, Mapping):
-        return {component: _extract(value, segments) for component, segments in parts}
-    return Record(name, {component: value for component, _ in parts})
+    for segment in segments:
+        if not isinstance(value, Mapping):
+            raise TypeError(
+                f"the node at {_PATH_SEP.join(segments)!r} cannot be read from a "
+                f"{type(value).__name__}; a raw value with paths is a mapping"
+            )
+        value = value[segment]
+    return value
 
 
 def _named_as(law: Distribution, components: Sequence[str]) -> Distribution:
@@ -328,18 +276,15 @@ def _view_cov(self: FieldView) -> LinOp:
     return selection @ cov @ selection.T
 
 
-def _view_quantile(self: FieldView, q: ArrayLike) -> Array:
-    """Restriction of the parent's per-coordinate quantiles to the path.
+def _view_quantile(self: FieldView, q: ArrayLike) -> Any:
+    """Restriction of the parent's per-coordinate quantiles to the view's node.
 
-    The parent's quantiles carry the level axes first and the parent's flat
-    coordinates last, and the view keeps its own coordinates of the last axis.
-
-    Raises
-    ------
-    TypeError
-        If the parent's declaration is not numeric.
+    The parent's quantiles are its event's raw form with the level axes
+    leading in each leaf, so the view's quantiles are the parent's at the
+    view's node, projected as a draw is, with the level axes leading in each
+    leaf.
     """
-    return jnp.asarray(self._parent._quantile(q))[..., jnp.asarray(self._coordinates())]
+    return self._project(self._parent._quantile(q))
 
 
 def _view_expectation(self: FieldView, f: Callable[[Any], Array]) -> Array:
@@ -653,16 +598,19 @@ class FieldView(Distribution):
     def _project(self, value: Any) -> Any:
         """pi: the view's node of *value*, a raw parent draw or a value shaped like one.
 
-        A selection gives the record of its nodes, in the raw form of *value*.
+        The node is in raw form: a leaf's raw value, or the nested mapping of a
+        group's raw leaves, and a selection gives the mapping of its nodes keyed
+        by component. Leading batch axes stay on every leaf. A ``Record`` or a
+        batch of records is read through that raw form.
         """
+        raw = _raw_record(value)
         declaration = self._parent.event_spec
         if isinstance(self._path, str):
-            return _extract(value, _draw_segments(declaration, self._path))
-        parts = [
-            (component, _draw_segments(declaration, path))
+            return _extract(raw, _draw_segments(declaration, self._path))
+        return {
+            component: _extract(raw, _draw_segments(declaration, path))
             for component, path in self._component_paths().items()
-        ]
-        return _assemble(value, parts, self.name)
+        }
 
     def _coordinates(self) -> list[int]:
         """The view's coordinates of the parent's flat vector, in the view's order.

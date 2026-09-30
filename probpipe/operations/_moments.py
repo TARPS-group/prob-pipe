@@ -3,9 +3,10 @@
 Each summarizes a distribution by a deterministic value. ``mean``, ``variance``,
 ``cov``, and ``quantile`` carry a capability route on their matching protocol,
 ``closed_form``, and a Monte Carlo fallback, ``monte_carlo``, on the event kinds
-where the required averaging is defined. A moment of the event's kind keeps the
-event's components and packaging and derives only its term specs, support
-included.
+where the required averaging is defined. A capability returns the law's own
+moment, and a numeric fallback returns that moment of the empirical law of its
+draws. A moment of the event's kind keeps the event's components and packaging
+and derives only its term specs, support included.
 
 ``expectation(d, f)`` returns ``E[f(X)]`` for ``X ~ d``. The methods that can
 compute it form a dispatch registry keyed on the distribution's type, and the
@@ -37,14 +38,15 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..core._batch import BatchSpec
+from ..core._batch import Batch, BatchSpec
+from ..core._broadcast_distributions import SAMPLE_LEVEL
 from ..core._dispatch import (
     Feasibility,
     MathematicalDomainError,
     UnaryDispatchMethod,
     UnaryDispatchRegistry,
 )
-from ..core._empirical import EmpiricalDistribution
+from ..core._record_batch import _batch_class_for
 from ..core._record_spec import RecordSpec
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec
 from ..core._specs import OutputSpec
@@ -69,9 +71,12 @@ from ..distributions._capabilities import (
     _capability_guard,
 )
 from ..distributions._distribution import Distribution, DistributionSpec
+from ..distributions._empirical import EmpiricalDistribution
+from ..distributions._factored import _raw_record
 from ..functions import _broker, _descendants, function
 from ..values import Function, FunctionSpec
 from ._operation import ApplicabilityError, BoundCall, _workflow_draws, operation
+from ._sample import _record_batch
 
 __all__ = [
     "ExpectationMethod",
@@ -420,27 +425,38 @@ def _monte_carlo_draws(call: BoundCall, operation_kind: str) -> Any:
     )
 
 
-def _empirical_of(call: BoundCall, draws: Any) -> Any:
-    """The empirical law of record-valued draws, which computes their moments per field."""
-    return EmpiricalDistribution(call.operation.name, draws)
+def _empirical_of(call: BoundCall, draws: Any) -> EmpiricalDistribution:
+    """The empirical law of the draws, whose moments the fallbacks report.
+
+    Draws of an array event are its atoms along their leading axis. Draws of a
+    record event are its atoms as the batch of records the law's event
+    declaration calls for, whether they arrive as a nested mapping of raw
+    columns or as a record of columns. A batch of records is taken as it is.
+    """
+    name = call.operation.name
+    event = call.operands["d"].event_spec.spec
+    if isinstance(draws, Batch) or not isinstance(event, RecordSpec):
+        return EmpiricalDistribution(
+            name, draws if isinstance(draws, Batch) else jnp.asarray(draws)
+        )
+    atoms = _batch_class_for(event)(name, _raw_record(draws), SAMPLE_LEVEL, element_spec=event)
+    return EmpiricalDistribution(name, atoms)
 
 
 def _mc_mean(call: BoundCall, result: OutputSpec | None) -> Any:
-    """The coordinatewise average of the draws."""
-    event = call.operands["d"].event_spec.spec
-    if isinstance(event, NumericArraySpec):
-        return jnp.mean(jnp.asarray(_monte_carlo_draws(call, "mean")), axis=0)
-    if isinstance(event, NumericSpec):
+    """The mean of the empirical law of the draws, their coordinatewise average."""
+    if isinstance(call.operands["d"].event_spec.spec, NumericSpec):
         return _empirical_of(call, _monte_carlo_draws(call, "mean"))._mean()
     raise NotImplementedError("mean.monte_carlo: the average of function- and measure-valued draws")
 
 
 def _mc_variance(call: BoundCall, result: OutputSpec | None) -> Any:
-    """The coordinatewise sample variance of the draws."""
-    event = call.operands["d"].event_spec.spec
-    if isinstance(event, NumericArraySpec):
-        return jnp.var(jnp.asarray(_monte_carlo_draws(call, "variance")), axis=0)
-    if isinstance(event, NumericSpec):
+    """The variance of the empirical law of the draws.
+
+    Each coordinate's variance is the mean squared deviation of the draws from
+    their mean, dividing by the number of draws.
+    """
+    if isinstance(call.operands["d"].event_spec.spec, NumericSpec):
         return _empirical_of(call, _monte_carlo_draws(call, "variance"))._variance()
     raise NotImplementedError("variance.monte_carlo: the pointwise variance of function draws")
 
@@ -452,13 +468,12 @@ def _dense(covariance: Any) -> Any:
 
 
 def _mc_cov(call: BoundCall, result: OutputSpec | None) -> Any:
-    """The sample covariance of the flattened draws."""
-    event = call.operands["d"].event_spec.spec
-    draws = _monte_carlo_draws(call, "cov")
-    if isinstance(event, NumericArraySpec):
-        flat = jnp.asarray(draws).reshape((call.controls["n_broadcast_samples"], -1))
-        return jnp.atleast_2d(jnp.cov(flat, rowvar=False))
-    return _dense(_empirical_of(call, draws)._cov())
+    """The covariance of the empirical law of the draws, over their flat coordinates.
+
+    It divides by the number of draws, as the variance does, so its diagonal
+    is the variance and one draw has none.
+    """
+    return _dense(_empirical_of(call, _monte_carlo_draws(call, "cov"))._cov())
 
 
 def _check_levels(q: Any) -> Any:
@@ -480,13 +495,16 @@ def _check_levels(q: Any) -> Any:
 
 
 def _mc_quantile(call: BoundCall, result: OutputSpec | None) -> Any:
-    """The per-coordinate empirical quantiles of the draws, the level axes leading."""
+    """The quantiles of the empirical law of the draws, the level axes leading.
+
+    Each coordinate's quantile at a level ``q`` is the generalized inverse
+    ``inf{x : F(x) >= q}`` of the draws' CDF, the rule of the empirical law's
+    own quantiles. A record event's quantiles at several levels are the
+    declared batch of records.
+    """
     levels = _check_levels(call.operands["q"])
-    event = call.operands["d"].event_spec.spec
     draws = _monte_carlo_draws(call, "quantile")
-    if isinstance(event, NumericArraySpec):
-        return jnp.quantile(jnp.asarray(draws), levels, axis=0)
-    return _empirical_of(call, draws)._quantile(levels)
+    return _record_batch(_empirical_of(call, draws)._quantile(levels), call, result)
 
 
 # ---------------------------------------------------------------------------
@@ -581,6 +599,12 @@ cov.fallback_route("monte_carlo", check=_can_sample, execute=_mc_cov, exact=Fals
 def quantile(d: Distribution, q: Any):
     """The per-coordinate quantiles of ``X ~ d`` at the levels *q*.
 
+    The routes are the law's closed form, ``closed_form``, and the Monte Carlo
+    fallback, ``monte_carlo``, which ``with_options(method=...)`` selects
+    between. The fallback's quantile at a level ``q`` is the generalized
+    inverse ``inf{x : F(x) >= q}`` of each coordinate's CDF over the draws, as
+    an empirical law's is.
+
     Parameters
     ----------
     d : Distribution
@@ -606,8 +630,13 @@ def quantile(d: Distribution, q: Any):
 
 
 def _closed_form_quantile(call: BoundCall, result: OutputSpec | None) -> Any:
-    """``d._quantile(q)`` at levels in ``[0, 1]``."""
-    return call.operands["d"]._quantile(_check_levels(call.operands["q"]))
+    """``d._quantile(q)`` at levels in ``[0, 1]``.
+
+    A record event's quantiles at several levels are the declared batch of
+    records.
+    """
+    quantiles = call.operands["d"]._quantile(_check_levels(call.operands["q"]))
+    return _record_batch(quantiles, call, result)
 
 
 quantile.capability_route(

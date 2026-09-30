@@ -41,7 +41,6 @@ from probpipe import (
     OutputSpec,
     ProductDistribution,
     Record,
-    RecordBatch,
     RecordSpec,
 )
 from probpipe.core._dispatch import Feasibility
@@ -69,6 +68,7 @@ from probpipe.distributions._capabilities import (
     _capability_guard,
     _capability_subclass,
 )
+from probpipe.distributions._empirical import EmpiricalDistribution
 from probpipe.linalg import DenseLinOp, LinOp
 
 # -- Declarations -------------------------------------------------------------
@@ -223,14 +223,16 @@ class _QuantileLaw(_Law, SupportsQuantile):
     """A numeric law over ``x`` of shape (1,) and ``y`` of shape (2,).
 
     The quantile at a level is the level plus the coordinate's index in the flat
-    event, so the level axes come first and the three coordinates last.
+    event, returned as the mapping of each leaf's quantiles with the level axes
+    leading.
     """
 
     def __init__(self, name: str) -> None:
         super().__init__(name, OutputSpec(RecordSpec(x=(1,), y=(2,))))
 
     def _quantile(self, q: Any) -> Any:
-        return jnp.asarray(q)[..., None] + jnp.arange(3.0)
+        flat = jnp.asarray(q)[..., None] + jnp.arange(3.0)
+        return {"x": flat[..., :1], "y": flat[..., 1:]}
 
 
 class _FiniteLaw(_Law, SupportsExpectation):
@@ -259,17 +261,22 @@ class _NumericLaw(
 
     A draw is a standard normal flat vector split into the leaves, a batch of
     draws is a record batch on the level ``sample``, and the mean is ``(0, ..., 5)``.
-    The quantile at a level is the level plus the coordinate's index.
+    The quantile at a level is the level plus the coordinate's index, returned as
+    the nested mapping of each leaf's quantiles with the level axes leading.
     """
 
     def __init__(self, name: str) -> None:
         super().__init__(name, _EVENT)
 
-    def _record(self, flat: Any, sample_shape: tuple[int, ...] = ()) -> Any:
-        fields = {
+    @staticmethod
+    def _fields(flat: Any) -> dict[str, Any]:
+        return {
             "model": {"theta": {"mu": flat[..., 0], "tau": flat[..., 1:3]}},
             "y": flat[..., 3:],
         }
+
+    def _record(self, flat: Any, sample_shape: tuple[int, ...] = ()) -> Any:
+        fields = self._fields(flat)
         if sample_shape:
             return NumericRecordBatch(
                 self.name,
@@ -293,7 +300,7 @@ class _NumericLaw(
         return DenseLinOp(_FLAT_COV)
 
     def _quantile(self, q: Any) -> Any:
-        return jnp.asarray(q)[..., None] + jnp.arange(6.0)
+        return self._fields(jnp.asarray(q)[..., None] + jnp.arange(6.0))
 
 
 class _WholeLaw(_Law, SupportsSampling, SupportsCovariance):
@@ -836,11 +843,40 @@ class TestDerivedBehavior:
         assert cov.shape == (2, 2)
         assert jnp.allclose(cov.to_dense(), _COV[1:, 1:])
 
-    def test_the_view_quantiles_are_the_parent_quantiles_at_its_coordinates(self):
+    def test_the_view_quantiles_are_the_parent_quantiles_at_its_node(self):
         levels = jnp.array([0.25, 0.5])
         quantiles = FieldView(_QuantileLaw("parent"), "y")._quantile(levels)
         assert quantiles.shape == (2, 2)
         assert jnp.allclose(quantiles, levels[:, None] + jnp.array([1.0, 2.0]))
+
+    @pytest.mark.parametrize(("q", "shape"), [(0.5, ()), (jnp.array([0.25, 0.75]), (2,))])
+    def test_the_quantiles_of_a_scalar_leaf_of_an_empirical_record(self, q, shape):
+        atoms = NumericRecordBatch(
+            "rows",
+            {"b": jnp.array([[0.0, 1.0], [1.0, 0.0], [2.0, 2.0]]), "a": jnp.array([3.0, 1.0, 2.0])},
+            "row",
+            element_spec=RecordSpec(b=(2,), a=()),
+        )
+        parent = EmpiricalDistribution("post", atoms)
+        quantiles = FieldView(parent, "a")._quantile(q)
+        assert jnp.shape(quantiles) == shape
+        expected = EmpiricalDistribution("a", jnp.array([3.0, 1.0, 2.0]))._quantile(q)
+        assert jnp.allclose(quantiles, expected)
+
+    def test_a_selection_of_a_whole_array_keeps_every_level(self):
+        parent = EmpiricalDistribution("theta", jnp.array([4.0, 1.0, 3.0, 2.0]))
+        levels = jnp.array([0.25, 0.5, 1.0])
+        quantiles = FieldView(parent, ("theta",))._quantile(levels)
+        assert list(quantiles) == ["theta"]
+        assert jnp.allclose(quantiles["theta"], parent._quantile(levels))
+
+    def test_the_view_quantiles_of_a_parent_with_record_quantiles(self):
+        values = jnp.array([[1.0, 2.0], [3.0, 5.0], [2.0, 4.0]])
+        parent = probpipe.EmpiricalDistribution("e", Record("r", u=values[:, 0], v=values[:, 1]))
+        levels = jnp.array([0.25, 0.5])
+        quantiles = FieldView(parent, "v")._quantile(levels)
+        assert quantiles.shape == (2,)
+        assert jnp.allclose(quantiles, parent._quantile(levels)["v"])
 
     def test_the_view_expectation_composes_with_the_projection(self):
         expectation = FieldView(_FiniteLaw("parent"), "b")._expectation(lambda b: b**2)
@@ -866,23 +902,36 @@ class TestDerivedBehavior:
         assert [set(given) for given in parent.given_calls] == [{"model/theta/tau"}]
         assert conditioned.event_spec == OutputSpec(theta=RecordSpec(mu=_REAL))
 
-    def test_a_group_view_draws_the_sub_record_of_the_parent_draw(self, key):
+    def test_a_group_view_draws_the_nested_mapping_of_the_parent_draw_at_its_node(self, key):
         parent = _NumericLaw("parent")
         draw = FieldView(parent, "model/theta")._sample(key)
-        assert isinstance(draw, Record)
+        assert isinstance(draw, dict)
         assert list(draw.keys()) == ["mu", "tau"]
         assert jnp.array_equal(draw["tau"], parent._sample(key)["model/theta/tau"])
 
-    def test_a_batched_group_draw_is_the_sub_batch_of_the_parent_draws(self, key):
+    def test_a_batched_group_draw_is_the_mapping_of_the_parent_columns_at_its_node(self, key):
         parent = _NumericLaw("parent")
         draws = FieldView(parent, "model/theta")._sample(key, (4,))
-        assert isinstance(draws, RecordBatch)
-        assert draws.batch_shape == (4,)
+        assert isinstance(draws, dict)
+        assert jnp.shape(draws["mu"]) == (4,)
         assert jnp.array_equal(draws["tau"], parent._sample(key, (4,))["model/theta/tau"])
+
+    def test_a_view_of_a_mapping_parent_draws_its_node_of_the_mapping(self, key):
+        parent = ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 2.0, 3.0)) * Normal(
+            "c", 0.0, 1.0
+        )
+        draws = FieldView(parent, ("c", "b"))._sample(key, (3,))
+        parent_draws = parent._sample(key, (3,))
+        assert isinstance(draws, dict) and list(draws) == ["c", "b"]
+        assert jnp.array_equal(draws["c"], parent_draws["c"])
+        assert jnp.array_equal(draws["b"], parent_draws["b"])
 
     def test_a_view_of_a_whole_record_at_its_component_draws_the_term(self, key):
         parent = _WholeLaw("parent")
-        assert FieldView(parent, "parameters")._sample(key) == parent._sample(key)
+        draw = FieldView(parent, "parameters")._sample(key)
+        assert isinstance(draw, dict) and list(draw) == ["beta", "sigma"]
+        term = parent._sample(key)
+        assert all(jnp.array_equal(draw[name], term[name]) for name in draw)
 
     def test_a_view_of_a_whole_record_field_draws_the_field_of_the_term(self, key):
         parent = _WholeLaw("parent")
@@ -972,35 +1021,35 @@ class TestSelections:
 
     _PATHS = ("y", "model/theta")
 
-    def test_a_selection_co_samples_the_record_of_its_nodes(self, key):
+    def test_a_selection_co_samples_the_mapping_of_its_nodes(self, key):
         parent = _NumericLaw("parent")
         draw = parent._sample(key)
         selected = FieldView(parent, self._PATHS)._sample(key)
-        assert isinstance(selected, Record)
-        assert list(selected.children) == ["y", "theta"]
+        assert isinstance(selected, dict) and isinstance(selected["theta"], dict)
+        assert list(selected) == ["y", "theta"]
         assert jnp.array_equal(selected["y"], draw["y"])
-        assert jnp.array_equal(selected["theta/tau"], draw["model/theta/tau"])
+        assert jnp.array_equal(selected["theta"]["tau"], draw["model/theta/tau"])
 
     def test_the_declaration_admits_a_selection_draw(self, key):
         selection = FieldView(_NumericLaw("parent"), self._PATHS)
         assert selection.event_spec.spec.is_valid(selection._sample(key))
 
-    def test_a_batched_selection_draw_is_a_record_batch_at_the_parent_levels(self, key):
+    def test_a_batched_selection_draw_is_the_mapping_of_the_parent_columns(self, key):
         parent = _NumericLaw("parent")
         draws = FieldView(parent, self._PATHS)._sample(key, (4,))
         parent_draws = parent._sample(key, (4,))
-        assert isinstance(draws, RecordBatch)
-        assert (draws.batch_shape, draws.level_names) == ((4,), parent_draws.level_names)
-        assert list(draws.element_spec.children) == ["y", "theta"]
-        assert jnp.array_equal(draws["theta/mu"], parent_draws["model/theta/mu"])
+        assert isinstance(draws, dict)
+        assert list(draws) == ["y", "theta"] and list(draws["theta"]) == ["mu", "tau"]
+        assert jnp.array_equal(draws["theta"]["mu"], parent_draws["model/theta/mu"])
         assert jnp.array_equal(draws["y"], parent_draws["y"])
 
-    def test_the_moments_of_a_selection_are_records_of_the_parent_moments(self):
+    def test_the_moments_of_a_selection_are_mappings_of_the_parent_moments(self):
         selection = FieldView(_NumericLaw("parent"), self._PATHS)
         mean, variance = selection._mean(), selection._variance()
+        assert isinstance(mean, dict) and isinstance(variance, dict)
         assert jnp.allclose(mean["y"], jnp.array([3.0, 4.0, 5.0]))
-        assert jnp.allclose(mean["theta/tau"], jnp.array([1.0, 2.0]))
-        assert jnp.allclose(variance["theta/mu"], _FLAT_COV[0, 0])
+        assert jnp.allclose(mean["theta"]["tau"], jnp.array([1.0, 2.0]))
+        assert jnp.allclose(variance["theta"]["mu"], _FLAT_COV[0, 0])
 
     def test_the_covariance_of_a_selection_keeps_the_selection_order(self):
         cov = FieldView(_NumericLaw("parent"), ("y", "model/theta/mu"))._cov()
@@ -1008,10 +1057,12 @@ class TestSelections:
         assert cov.shape == (4, 4)
         assert jnp.allclose(cov.to_dense(), _FLAT_COV[index][:, index])
 
-    def test_the_quantiles_of_a_selection_keep_the_selection_order(self):
+    def test_the_quantiles_of_a_selection_are_the_mapping_of_its_nodes_in_order(self):
         levels = jnp.array([0.25, 0.5])
         quantiles = FieldView(_NumericLaw("parent"), ("y", "model/theta/mu"))._quantile(levels)
-        assert jnp.allclose(quantiles, levels[:, None] + jnp.array([3.0, 4.0, 5.0, 0.0]))
+        assert list(quantiles) == ["y", "mu"]
+        assert jnp.allclose(quantiles["y"], levels[:, None] + jnp.array([3.0, 4.0, 5.0]))
+        assert jnp.allclose(quantiles["mu"], levels)
 
     def test_the_expectation_of_a_selection_integrates_the_record_of_its_nodes(self):
         selection = FieldView(_FiniteLaw("parent"), ("b", "a"))
