@@ -91,7 +91,12 @@ from probpipe.core._numeric_record_distribution import (
 from probpipe.core._random_measures import RandomMeasure
 from probpipe.core._record_distribution import _RecordDistributionView
 from probpipe.core._specs import RecordSpec
-from probpipe.distributions import FactoredDistribution, FactoredNumericDistribution, FieldView
+from probpipe.distributions import (
+    FactoredDistribution,
+    FactoredNumericDistribution,
+    FieldView,
+    _empirical,
+)
 from probpipe.distributions._capabilities import SupportsSampling
 from probpipe.distributions._joint_empirical import NumericJointEmpirical
 from probpipe.distributions._product import TFPProductDistribution
@@ -326,6 +331,9 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
         "g", [MultivariateNormal("x", jnp.zeros(2), cov=jnp.eye(2))]
     ),
     GaussianProcess: lambda: GaussianProcess("f", _zero_mean, _squared_exponential),
+    _empirical.EmpiricalDistribution: lambda: _empirical.EmpiricalDistribution(
+        "e", jnp.zeros((5, 2))
+    ),
 }
 
 # The catalog's families whose implementation has not merged construct by raising.

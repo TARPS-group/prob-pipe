@@ -21,6 +21,7 @@ from probpipe.distributions import (
     _conditional,
     _conversion,
     _distribution,
+    _empirical,
     _factored,
     _views,
 )
@@ -37,7 +38,16 @@ pytestmark = pytest.mark.skipif(
 _SECTIONS = ("III.7", "III.8", "III.9", "III.10", "IV.1", "IV.2", "IV.3", "VII.2")
 
 #: The modules a declared name is looked up in, first match winning.
-_MODULES = (_distribution, _views, _capabilities, _conditional, _batches, _factored, _conversion)
+_MODULES = (
+    _distribution,
+    _views,
+    _capabilities,
+    _conditional,
+    _batches,
+    _factored,
+    _conversion,
+    _empirical,
+)
 
 #: Declarations of those sections that another package owns.
 _OTHER_PACKAGES = frozenset(
@@ -52,9 +62,7 @@ _OTHER_PACKAGES = frozenset(
 )
 
 #: Declarations the implementation does not match yet, with the change each awaits.
-_PENDING = {
-    "EmpiricalDistribution": "the empirical law takes atoms and an event declaration",
-}
+_PENDING: dict[str, str] = {}
 
 
 def _tool():
