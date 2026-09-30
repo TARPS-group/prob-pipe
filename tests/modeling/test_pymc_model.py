@@ -110,15 +110,19 @@ class TestPyMCModel:
         """mu (scalar) + sigma (scalar) -> event_shape == (2,)."""
         assert model.event_shape == (2,)
 
-    def test_sample_scalar(self, model):
-        key = jax.random.PRNGKey(0)
-        s = model._sample(key, sample_shape=())
-        assert s.shape == (2,)  # 2 scalar params
+    def test_a_draw_is_a_record_of_the_declared_parameters(self, model):
+        draw = model._sample(jax.random.PRNGKey(0), sample_shape=())
+        assert model.event_spec.spec.is_valid(draw)
+        assert all(np.shape(draw[name]) == () for name in model.event_spec.components)
 
-    def test_sample_batched(self, model):
-        key = jax.random.PRNGKey(0)
-        s = model._sample(key, sample_shape=(5,))
-        assert s.shape == (5, 2)
+    def test_batched_draws_carry_the_sample_axes_before_each_field(self, model):
+        draws = model._sample(jax.random.PRNGKey(0), sample_shape=(5,))
+        assert all(np.shape(draws[name]) == (5,) for name in model.event_spec.components)
+
+    def test_the_sample_operation_returns_a_draw_of_the_declaration(self, model):
+        from probpipe import sample
+
+        assert model.event_spec.spec.is_valid(sample(model, key=jax.random.PRNGKey(0)))
 
     def test_pymc_model_no_data(self, model):
         m = model._pymc_model()

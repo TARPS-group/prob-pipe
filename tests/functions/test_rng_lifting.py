@@ -38,9 +38,6 @@ class _RecordingNormal(Normal):
 
 
 class _GoldenBitsDistribution(NumericRecordDistribution, SupportsSampling):
-    _sampling_cost = "low"
-    _preferred_orchestration = None
-
     def __init__(self, sample_calls):
         self.sample_calls = sample_calls
         super().__init__("bits", NumericArraySpec((), "float32", real))

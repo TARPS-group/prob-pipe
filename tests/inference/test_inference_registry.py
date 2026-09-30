@@ -243,7 +243,7 @@ def _make_unnormalized_distribution():
 
 
 def _make_normalized_distribution():
-    from probpipe.core.protocols import SupportsLogProb
+    from probpipe.distributions._capabilities import SupportsLogProb
     from probpipe.distributions._distribution import Distribution
 
     class NormalizedDist(_NormalizedTarget, Distribution, SupportsLogProb):
@@ -259,7 +259,7 @@ class TestUnnormalizedLogProbInference:
     """MCMC accepts distributions with only ``SupportsUnnormalizedLogProb``."""
 
     def test_unnormalized_only_satisfies_protocol(self):
-        from probpipe.core.protocols import (
+        from probpipe.distributions._capabilities import (
             SupportsLogProb,
             SupportsUnnormalizedLogProb,
         )

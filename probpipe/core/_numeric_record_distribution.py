@@ -53,6 +53,14 @@ from .._dtype import _as_float_array
 from .._weights import Weights
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..distributions import _distribution as _base
+from ..distributions._capabilities import (
+    SupportsCovariance,
+    SupportsExpectation,
+    SupportsLogProb,
+    SupportsMean,
+    SupportsSampling,
+    SupportsVariance,
+)
 from ..distributions._distribution import Distribution, NumericDistribution
 from ..functions import _broker, _descendants
 from ._record_distribution import (
@@ -68,14 +76,6 @@ from .constraints import (
     _Sphere,
     _supports_compatible,
     real,
-)
-from .protocols import (
-    SupportsCovariance,
-    SupportsExpectation,
-    SupportsLogProb,
-    SupportsMean,
-    SupportsSampling,
-    SupportsVariance,
 )
 
 # ---------------------------------------------------------------------------
@@ -544,9 +544,6 @@ class BootstrapDistribution(
         )
         self._approximate = True
 
-    _sampling_cost: str = "low"
-    _preferred_orchestration: str | None = None
-
     @property
     def num_atoms(self) -> int:
         """Number of stored atoms (function evaluations) backing this distribution."""
@@ -792,9 +789,6 @@ class FlattenedDistributionView(FlatNumericRecordDistribution):
     view that is not ``SupportsSampling``, and a sampling-only base
     produces one that is not ``SupportsLogProb``.
     """
-
-    _sampling_cost: str = "low"
-    _preferred_orchestration: str | None = None
 
     def __new__(cls, base: Distribution):
         actual_cls = _flattened_distribution_view_class_for_base(base)
@@ -1044,9 +1038,6 @@ class NumericRecordDistributionView(NumericRecordDistribution):
     Constructed via
     :meth:`FlatNumericRecordDistribution.as_record_distribution`.
     """
-
-    _sampling_cost: str = "low"
-    _preferred_orchestration: str | None = None
 
     def __new__(
         cls,

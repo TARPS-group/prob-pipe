@@ -207,9 +207,7 @@ class TestMarginals:
 
 
 class TestUnconditionalProtocols:
-    @pytest.mark.parametrize(
-        "protocol", _cases({SupportsSampling: "SupportsSampling declares only _sample"})
-    )
+    @pytest.mark.parametrize("protocol", _cases())
     def test_a_class_defining_the_capability_methods_claims_the_capability(self, protocol):
         assert isinstance(_implementing(_methods(protocol)), protocol)
 
@@ -238,9 +236,7 @@ class TestConditionalMirror:
         expected = {f"_conditional{method}" for method in _methods(protocol)}
         assert _methods(_CONDITIONAL_TWINS[protocol]) == expected
 
-    @pytest.mark.parametrize(
-        "protocol", _cases({SupportsExpectation: "the exact expectation takes only f"})
-    )
+    @pytest.mark.parametrize("protocol", _cases())
     def test_a_twin_method_prepends_given_to_the_unconditional_signature(self, protocol):
         twin = _CONDITIONAL_TWINS[protocol]
         for method in sorted(_methods(protocol)):

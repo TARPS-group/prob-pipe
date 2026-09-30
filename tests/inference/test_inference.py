@@ -850,7 +850,7 @@ class TestRWMH:
     def test_non_supports_mean_init(self):
         """RWMH falls back to zeros init when dist has no SupportsMean."""
         from probpipe import NumericRecordDistribution
-        from probpipe.core.protocols import SupportsLogProb
+        from probpipe.distributions._capabilities import SupportsLogProb
 
         class LogProbOnlyDist(NumericRecordDistribution, SupportsLogProb):
             def __init__(self, name):
@@ -881,7 +881,7 @@ class TestRWMH:
     def test_mean_exception_fallback(self):
         """RWMH falls back to zeros init when _mean() raises."""
         from probpipe import NumericRecordDistribution
-        from probpipe.core.protocols import SupportsLogProb, SupportsMean
+        from probpipe.distributions._capabilities import SupportsLogProb, SupportsMean
 
         class BrokenMeanLogProbDist(NumericRecordDistribution, SupportsLogProb, SupportsMean):
             def __init__(self, name):

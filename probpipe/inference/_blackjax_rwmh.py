@@ -39,8 +39,8 @@ import numpy as np
 from blackjax.adaptation.mass_matrix import welford_algorithm
 
 from ..core._dispatch import Feasibility
-from ..core.protocols import SupportsUnnormalizedLogProb
 from ..custom_types import Array, ArrayLike
+from ..distributions._capabilities import SupportsUnnormalizedLogProb
 from ..distributions._distribution import Distribution
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._inference_utils import (

@@ -83,7 +83,7 @@ class TestSimpleModel:
         runtime guard is the only backstop.
         """
         from probpipe import Distribution
-        from probpipe.core.protocols import SupportsLogProb
+        from probpipe.distributions._capabilities import SupportsLogProb
 
         class _LogProbOnly(Distribution, SupportsLogProb):
             """A SupportsLogProb distribution that is not a RecordDistribution."""

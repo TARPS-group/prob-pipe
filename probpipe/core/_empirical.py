@@ -49,6 +49,14 @@ from .._dtype import _as_float_array
 from .._weights import Weights
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..distributions import _distribution as _base
+from ..distributions._capabilities import (
+    SupportsCovariance,
+    SupportsExpectation,
+    SupportsMean,
+    SupportsQuantile,
+    SupportsSampling,
+    SupportsVariance,
+)
 from ..distributions._distribution import Distribution
 from ..functions import _broker
 from ._numeric_record import NumericRecord
@@ -60,14 +68,6 @@ from ._record_batch import RecordBatch
 from ._record_spec import _reshaped_template
 from ._specs import NumericArraySpec, NumericRecordSpec, OpaqueSpec, RecordSpec, TermSpec
 from .constraints import real
-from .protocols import (
-    SupportsCovariance,
-    SupportsExpectation,
-    SupportsMean,
-    SupportsQuantile,
-    SupportsSampling,
-    SupportsVariance,
-)
 from .record import Record
 
 # ---------------------------------------------------------------------------
@@ -358,9 +358,6 @@ class EmpiricalDistribution(
         super().__init__(name, OpaqueSpec())
         self._approximate = True
 
-    _sampling_cost: str = "low"
-    _preferred_orchestration: str | None = None
-
     # -- properties ---------------------------------------------------------
 
     @property
@@ -522,9 +519,6 @@ class RecordEmpiricalDistribution(
     ``super().__init__`` if they need to skip the generic-base storage
     path.
     """
-
-    _sampling_cost: str = "low"
-    _preferred_orchestration: str | None = None
 
     def __init__(
         self,
@@ -870,9 +864,6 @@ class BootstrapReplicateDistribution(
         size); defaults to the source's size otherwise.
     """
 
-    _sampling_cost: str = "low"
-    _preferred_orchestration: str | None = None
-
     def __new__(cls, *args, **kwargs):
         source = args[1] if len(args) > 1 else kwargs.get("source")
         if cls is BootstrapReplicateDistribution and source is not None:
@@ -1164,9 +1155,6 @@ class RecordBootstrapReplicateDistribution(
         instance can reach this constructor, and its non-numeric
         samples can't be bootstrapped meaningfully.
     """
-
-    _sampling_cost: str = "low"
-    _preferred_orchestration: str | None = None
 
     def __init__(self, name: str, source: Any, *, replicate_size: int | None = None):
         if isinstance(source, RecordEmpiricalDistribution):

@@ -16,10 +16,10 @@ from ..core.constraints import (
     real,
     unit_interval,
 )
-from ..core.protocols import SupportsLogProb, SupportsMean, SupportsSampling, SupportsVariance
 from ..core.provenance import Provenance
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..functions import _descendants
+from ._capabilities import SupportsLogProb, SupportsMean, SupportsSampling, SupportsVariance
 from ._tfp_base import TFPDistribution
 
 __all__ = ["TransformedDistribution"]
@@ -192,9 +192,6 @@ class TransformedDistribution(NumericRecordDistribution):
                 metadata={"bijector": type(bijector).__name__},
             )
         )
-
-    _sampling_cost: str = "low"
-    _preferred_orchestration: str | None = None
 
     # -- convenient accessors -----------------------------------------------
 

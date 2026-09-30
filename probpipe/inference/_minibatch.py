@@ -46,14 +46,14 @@ from ..core._random_measures import RandomMeasure
 from ..core._record_batch import RecordBatch, _batch_class_for
 from ..core._record_spec import _reshaped_template
 from ..core._specs import NumericArraySpec, OpaqueSpec, OutputSpec
-from ..core.protocols import (
+from ..core.record import Record
+from ..custom_types import Array, ArrayLike, PRNGKey
+from ..distributions._capabilities import (
     SupportsLogProb,
     SupportsRandomUnnormalizedLogProb,
     SupportsSampling,
     SupportsUnnormalizedLogProb,
 )
-from ..core.record import Record
-from ..custom_types import Array, ArrayLike, PRNGKey
 from ..distributions._distribution import Distribution, DistributionSpec
 from ..values._function_base import FunctionSpec
 
@@ -254,9 +254,6 @@ class MinibatchedDistribution(
         trailing axes mean per datum is not defined.
     """
 
-    _sampling_cost: str = "low"
-    _preferred_orchestration: str | None = None
-
     def __init__(
         self,
         name: str,
@@ -405,9 +402,6 @@ class _FixedMinibatchDistribution(
     construct this class directly.
     """
 
-    _sampling_cost: str = "free"  # log_prob is closed-form
-    _preferred_orchestration: str | None = None
-
     def __init__(
         self,
         prior: SupportsLogProb,
@@ -484,9 +478,6 @@ class _RandomMinibatchLogProb(
       :math:`\\log p_\\text{full}(\\theta)`.
     """
 
-    _sampling_cost: str = "low"
-    _preferred_orchestration: str | None = None
-
     def __init__(self, measure: MinibatchedDistribution):
         super().__init__(
             f"{measure.name}/random_log_prob", OutputSpec(random_log_prob=FunctionSpec())
@@ -544,9 +535,6 @@ class _MinibatchLogProbAtPoint(Distribution, SupportsSampling):
     log-posterior at ``theta``) — i.e. this is the unbiased
     log-density estimator the random-measure machinery promises.
     """
-
-    _sampling_cost: str = "low"
-    _preferred_orchestration: str | None = None
 
     def __init__(self, measure: MinibatchedDistribution, theta: Any):
         # A draw is one scalar log-density value.

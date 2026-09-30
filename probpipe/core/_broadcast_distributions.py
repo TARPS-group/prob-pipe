@@ -21,6 +21,12 @@ import numpy as np
 
 from .._weights import Weights
 from ..custom_types import Array
+from ..distributions._capabilities import (
+    SupportsLogProb,
+    SupportsMean,
+    SupportsSampling,
+    SupportsVariance,
+)
 from ..distributions._distribution import Distribution
 from ._array_backend import _event_shape_of, _is_numeric_leaf, _to_jax_array
 from ._batch import _ranks_of
@@ -48,12 +54,6 @@ from ._specs import (
     TermSpec,
 )
 from .named_tree import _PATH_SEP
-from .protocols import (
-    SupportsLogProb,
-    SupportsMean,
-    SupportsSampling,
-    SupportsVariance,
-)
 from .record import Record
 from .tracked import auto_name
 
@@ -176,9 +176,6 @@ class _MixtureSampling:
     ``Function``). Opaque / non-stackable component outputs
     raise a ``TypeError`` with the component types listed.
     """
-
-    _sampling_cost: str = "medium"
-    _preferred_orchestration: str | None = None
 
     def _sample(self, key, sample_shape=()):
         from .record import Record
@@ -1382,9 +1379,6 @@ class BroadcastDistribution(Distribution, SupportsSampling):
     #: matters for more than size here, since a memoised value can carry the
     #: provenance of the term that computed it.
     _transient_state = ("_memo",)
-
-    _sampling_cost: str = "low"
-    _preferred_orchestration: str | None = None
 
     def __init__(
         self,

@@ -12,6 +12,7 @@ from typing import Any
 import jax.numpy as jnp
 
 from ..core._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
+from ..core.record import Record
 from ._base import ProbabilisticModel
 
 logger = logging.getLogger(__name__)
@@ -249,7 +250,11 @@ class PyMCModel(ProbabilisticModel):
     # -- Sampling (prior predictive) ----------------------------------------
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
-        """Prior predictive sampling via PyMC."""
+        """Draw the parameters from the prior via PyMC, as a record of the declared fields.
+
+        One draw for ``sample_shape=()``; otherwise each field carries the
+        sample axes before its declared shape.
+        """
         import pymc as pm
 
         n = 1
@@ -260,16 +265,13 @@ class PyMCModel(ProbabilisticModel):
         with model:
             prior = pm.sample_prior_predictive(draws=max(n, 1))
 
-        # Concatenate parameter values into a single array
-        arrays = []
-        for name in self._param_names:
-            vals = prior.prior[name].values.reshape(n, -1)
-            arrays.append(jnp.asarray(vals))
-        samples = jnp.concatenate(arrays, axis=-1)
-
-        if sample_shape == ():
-            return samples[0]
-        return samples.reshape(*sample_shape, -1)
+        fields = {}
+        for name, spec in self.event_spec.spec.children.items():
+            values = jnp.asarray(prior.prior[name].values).reshape(n, *spec.shape)
+            fields[name] = (
+                values[0] if sample_shape == () else values.reshape(*sample_shape, *spec.shape)
+            )
+        return Record(self.name, **fields)
 
     # -- PyMC model access (for nutpie integration) -------------------------
 

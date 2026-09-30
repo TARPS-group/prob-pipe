@@ -678,7 +678,7 @@ class TestEdgeCases:
 # Protocol-based conversion
 # ---------------------------------------------------------------------------
 
-from probpipe.core.protocols import (
+from probpipe.distributions._capabilities import (
     SupportsCovariance,
     SupportsLogProb,
     SupportsMean,

@@ -26,7 +26,7 @@ from probpipe import (
     mean,
     workflow_run,
 )
-from probpipe.core.protocols import SupportsLogProb
+from probpipe.distributions._capabilities import SupportsLogProb
 from probpipe.functions._normalization import (
     DISTRIBUTION_HINT_PROTOCOLS,
     normalize_distribution_values,

@@ -33,7 +33,7 @@ from probpipe import (
     variance,
 )
 from probpipe.core._numeric_record_distribution import NumericRecordDistributionView
-from probpipe.core.protocols import (
+from probpipe.distributions._capabilities import (
     SupportsCovariance,
     SupportsExpectation,
     SupportsLogProb,

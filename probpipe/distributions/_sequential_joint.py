@@ -22,18 +22,18 @@ from ..core._record_distribution import (
 )
 from ..core._record_spec import RecordSpec
 from ..core._spec_base import NumericArraySpec, TermSpec
-from ..core.protocols import (
+from ..core.protocols import protocols_supported_by_all
+from ..core.provenance import Provenance
+from ..core.record import Record
+from ..core.tracked import auto_name
+from ..custom_types import Array, ArrayLike, PRNGKey
+from ._capabilities import (
     SupportsExactConditioning,
     SupportsLogProb,
     SupportsMean,
     SupportsSampling,
     SupportsVariance,
-    protocols_supported_by_all,
 )
-from ..core.provenance import Provenance
-from ..core.record import Record
-from ..core.tracked import auto_name
-from ..custom_types import Array, ArrayLike, PRNGKey
 from ._distribution import Distribution
 from ._joint_utils import (
     KeyPath,
@@ -193,9 +193,6 @@ class SequentialJointDistribution(
     **components : Distribution or Callable[..., Distribution]
         Named components in topological (dependency) order.
     """
-
-    _sampling_cost = "medium"
-    _preferred_orchestration = None
 
     def __init__(
         self,

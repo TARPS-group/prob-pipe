@@ -1187,8 +1187,6 @@ class TestEmpiricalDeclarations:
 
         class _Sampler:
             # Implements SupportsSampling without being a Distribution.
-            _sampling_cost = "low"
-            _preferred_orchestration = None
 
             def _sample(self, key, sample_shape=()):
                 return jax.random.normal(key, (*sample_shape, 2))

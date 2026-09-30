@@ -19,7 +19,7 @@ from probpipe import (
     SequentialJointDistribution,
     TransformedDistribution,
 )
-from probpipe.core.protocols import (
+from probpipe.distributions._capabilities import (
     SupportsApproximateConditioning,
     SupportsCovariance,
     SupportsExactConditioning,
@@ -263,19 +263,6 @@ class TestNamedComponents:
 
     def test_normal_fields_has_name(self, normal):
         assert normal.fields == ("x",)
-
-
-# ---------------------------------------------------------------------------
-# Orchestration hints
-# ---------------------------------------------------------------------------
-
-
-class TestOrchestrationHints:
-    def test_default_sampling_cost(self, normal):
-        assert normal._sampling_cost == "low"
-
-    def test_default_preferred_orchestration(self, normal):
-        assert normal._preferred_orchestration is None
 
 
 # ---------------------------------------------------------------------------
@@ -543,12 +530,9 @@ class TestTransformedDistributionDynamicProtocols:
         from probpipe import NumericRecordDistribution
         from probpipe.core._specs import NumericArraySpec
         from probpipe.core.constraints import real
-        from probpipe.core.protocols import SupportsLogProb
+        from probpipe.distributions._capabilities import SupportsLogProb
 
         class _LogProbOnly(NumericRecordDistribution, SupportsLogProb):
-            _sampling_cost = "low"
-            _preferred_orchestration = None
-
             def __init__(self):
                 super().__init__("lpo", NumericArraySpec((), "float32", real))
 

@@ -29,18 +29,18 @@ from ..core._record_distribution import (
     _register_dynamic_subclass,
 )
 from ..core.named_tree import _PATH_SEP
-from ..core.protocols import (
+from ..core.protocols import protocols_supported_by_all
+from ..core.provenance import Provenance
+from ..core.record import Record
+from ..core.tracked import auto_name
+from ..custom_types import Array, ArrayLike, PRNGKey
+from ._capabilities import (
     SupportsExactConditioning,
     SupportsLogProb,
     SupportsMean,
     SupportsSampling,
     SupportsVariance,
-    protocols_supported_by_all,
 )
-from ..core.provenance import Provenance
-from ..core.record import Record
-from ..core.tracked import auto_name
-from ..custom_types import Array, ArrayLike, PRNGKey
 from ._distribution import Distribution
 from ._joint_utils import (
     KeyPath,
@@ -218,9 +218,6 @@ class ProductDistribution(
         # Mixed:
         ProductDistribution(Normal("x", 0, 1), scale=Gamma("y", 2, 1))
     """
-
-    _sampling_cost = "low"
-    _preferred_orchestration = None
 
     def __new__(
         cls,

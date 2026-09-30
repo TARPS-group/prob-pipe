@@ -23,7 +23,7 @@ from typing import Any
 from ..converters import converter_registry
 from ..core._distribution_array import DistributionArray
 from ..core._numeric_record_distribution import NumericRecordDistribution
-from ..core.protocols import (
+from ..distributions._capabilities import (
     SupportsApproximateConditioning,
     SupportsCovariance,
     SupportsExactConditioning,

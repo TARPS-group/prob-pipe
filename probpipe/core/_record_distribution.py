@@ -18,17 +18,17 @@ import jax
 import jax.numpy as jnp
 
 from ..custom_types import Array, PRNGKey
-from ..distributions._distribution import Distribution
-from ._specs import NumericArraySpec, OutputSpec, RecordSpec, TermSpec, _components_record
-from .constraints import Constraint
-from .named_tree import _PATH_SEP
-from .protocols import (
+from ..distributions._capabilities import (
     SupportsCovariance,
     SupportsLogProb,
     SupportsMean,
     SupportsSampling,
     SupportsVariance,
 )
+from ..distributions._distribution import Distribution
+from ._specs import NumericArraySpec, OutputSpec, RecordSpec, TermSpec, _components_record
+from .constraints import Constraint
+from .named_tree import _PATH_SEP
 from .record import Record
 
 __all__ = ["RecordDistribution", "_RecordDistributionView"]
@@ -186,9 +186,6 @@ class _RecordDistributionView(Distribution):
         The field's path in the parent's draw, as a slash path or a tuple of
         segments.
     """
-
-    _sampling_cost = "low"
-    _preferred_orchestration = None
 
     def __new__(
         cls,

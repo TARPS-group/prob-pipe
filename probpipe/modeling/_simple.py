@@ -5,10 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from ..core._specs import OutputSpec, RecordSpec, _components_record
-from ..core.protocols import SupportsLogProb
 from ..core.record import Record
 from ..core.tracked import auto_name
 from ..custom_types import Array
+from ..distributions._capabilities import SupportsLogProb
 from ..distributions._distribution import Distribution
 from ._base import ProbabilisticModel
 from ._likelihood import Likelihood
@@ -39,9 +39,6 @@ class SimpleModel[P, D](ProbabilisticModel, SupportsLogProb):
     name : str or None
         Model name for provenance. Keyword-only; defaults to ``"SimpleModel"``.
     """
-
-    _sampling_cost: str = "medium"
-    _preferred_orchestration: str | None = None
 
     def __init__(
         self,

@@ -78,9 +78,6 @@ class _DiracRandomMeasure(
     ``SurrogatePosterior`` will subclass.
     """
 
-    _sampling_cost = "low"
-    _preferred_orchestration = None
-
     def __init__(self, components, weights=None, *, name=None):
         components = list(components)
         if not components:
@@ -145,9 +142,6 @@ class _DiracRandomMeasure(
 
 class _SamplingOnlyRandomMeasure(RandomMeasure, SupportsSampling):
     """Minimal subclass implementing only sampling — for opt-in protocol checks."""
-
-    _sampling_cost = "low"
-    _preferred_orchestration = None
 
     def __init__(self, component, name="sampling_only_rm"):
         super().__init__(name=name)

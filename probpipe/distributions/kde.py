@@ -1,8 +1,8 @@
 """Kernel density estimation distribution backed by TFP.
 
 Provides :class:`KDEDistribution`, a Gaussian KDE that satisfies both
-:class:`~probpipe.core.protocols.SupportsLogProb` and
-:class:`~probpipe.core.protocols.SupportsSampling`.  Useful for
+:class:`~probpipe.SupportsLogProb` and
+:class:`~probpipe.SupportsSampling`.  Useful for
 converting a sampling-only distribution (e.g., MCMC output) into one
 that supports density evaluation.
 """

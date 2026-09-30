@@ -32,7 +32,7 @@ except ImportError:
 
 # -- register protocol converter with built-in resolvers --------------------
 
-from ..core.protocols import SupportsLogProb
+from ..distributions._capabilities import SupportsLogProb
 from ._protocol import ProtocolConverter, _resolve_target_for_log_prob
 
 _protocol_converter = ProtocolConverter(converter_registry)

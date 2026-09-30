@@ -10,8 +10,9 @@ import numpy as np
 
 from ..core._empirical import RecordEmpiricalDistribution
 from ..core._numeric_record import NumericRecord
-from ..core.protocols import GenerativeLikelihood, SupportsSampling
+from ..core.protocols import GenerativeLikelihood
 from ..custom_types import PRNGKey
+from ..distributions._capabilities import SupportsSampling
 from ..distributions._distribution import Distribution
 from ..functions import function
 from ._workflow_rng import (

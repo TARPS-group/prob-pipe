@@ -15,8 +15,8 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..core._specs import NumericRecordSpec
-from ..core.protocols import SupportsLogProb
 from ..custom_types import Array, ArrayLike
+from ..distributions._capabilities import SupportsLogProb
 from ..distributions._distribution import Distribution
 from ._base import ProbabilisticModel
 

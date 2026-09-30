@@ -48,7 +48,7 @@ class _ConditioningStep[P, D](Function):
     using ProbPipe's standard ``condition_on`` dispatch.
 
     If the current distribution does not support
-    :class:`~probpipe.core.protocols.SupportsLogProb`, it is
+    :class:`~probpipe.SupportsLogProb`, it is
     automatically converted (e.g., MCMC samples -> KDE) via ProbPipe's
     converter registry before building the model.
 
@@ -105,7 +105,7 @@ class _ConditioningStep[P, D](Function):
         dist: Distribution,
         data: Any,
     ) -> Distribution:
-        from ..core.protocols import SupportsLogProb
+        from ..distributions._capabilities import SupportsLogProb
         from ._simple import SimpleModel
 
         prior = dist

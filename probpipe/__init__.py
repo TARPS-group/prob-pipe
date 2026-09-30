@@ -100,21 +100,7 @@ from probpipe.core.constraints import (
     unit_interval,
 )
 from probpipe.core.named_tree import NamedTree
-from probpipe.core.protocols import (
-    SupportsApproximateConditioning,
-    SupportsArrayBackend,
-    SupportsCovariance,
-    SupportsExactConditioning,
-    SupportsExpectation,
-    SupportsLogProb,
-    SupportsMean,
-    SupportsQuantile,
-    SupportsRandomLogProb,
-    SupportsRandomUnnormalizedLogProb,
-    SupportsSampling,
-    SupportsUnnormalizedLogProb,
-    SupportsVariance,
-)
+from probpipe.core.protocols import SupportsArrayBackend
 from probpipe.core.provenance import ParentInfo, Provenance, provenance_ancestors, provenance_dag
 from probpipe.core.record import (
     Record,
@@ -170,6 +156,20 @@ from probpipe.distributions import (
     Wishart,
     bijector_for,
     register_bijector,
+)
+from probpipe.distributions._capabilities import (
+    SupportsApproximateConditioning,
+    SupportsCovariance,
+    SupportsExactConditioning,
+    SupportsExpectation,
+    SupportsLogProb,
+    SupportsMean,
+    SupportsQuantile,
+    SupportsRandomLogProb,
+    SupportsRandomUnnormalizedLogProb,
+    SupportsSampling,
+    SupportsUnnormalizedLogProb,
+    SupportsVariance,
 )
 from probpipe.distributions._distribution import (
     DEFAULT_NUM_EVALUATIONS,

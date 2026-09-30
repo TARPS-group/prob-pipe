@@ -47,19 +47,19 @@ sampling a function or a distribution can be intractable).  Concrete
 subclasses opt into capabilities via the protocols in
 :mod:`probpipe.core.protocols`:
 
-* :class:`~probpipe.core.protocols.SupportsSampling` — implement
+* :class:`~probpipe.SupportsSampling` — implement
   ``_sample(key, sample_shape)`` returning a ``Distribution`` for
   ``sample_shape == ()`` and a ``DistributionArray`` of shape
   ``sample_shape`` otherwise.
-* :class:`~probpipe.core.protocols.SupportsMean` — implement ``_mean()``
+* :class:`~probpipe.SupportsMean` — implement ``_mean()``
   returning the marginalised ``Distribution`` ``D̄(A) = ∫ D(A) dM(D)``.
   This is the natural sample-type-polymorphic specialisation of
   ``mean``: a draw from a ``RandomMeasure`` is itself a
   ``Distribution``, so its expected value is a ``Distribution``.
   Array-path ``_mean`` implementations elsewhere in the hierarchy are
   unaffected.
-* :class:`~probpipe.core.protocols.SupportsRandomLogProb` /
-  :class:`~probpipe.core.protocols.SupportsRandomUnnormalizedLogProb` —
+* :class:`~probpipe.SupportsRandomLogProb` /
+  :class:`~probpipe.SupportsRandomUnnormalizedLogProb` —
   implement ``_random_log_prob`` / ``_random_unnormalized_log_prob``
   returning a :class:`~probpipe.core._random_functions.RandomFunction`.
   The matching ops accept an optional ``value`` argument that, when

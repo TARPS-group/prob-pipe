@@ -545,9 +545,6 @@ class TestTargetAdmission:
         with pytest.raises(ResolutionError):
             registry.convert(Source(), SupportsLogProb)
 
-    @pytest.mark.pending(
-        reason="SupportsSampling declares only the _sample method", raises=TypeError
-    )
     def test_a_sampling_target_admits_the_converter_declaring_it(self):
         registry = _registry(
             ToyConverter(
@@ -559,9 +556,6 @@ class TestTargetAdmission:
         )
         assert registry.check(Source(), SupportsSampling).method_name == "to_sampler"
 
-    @pytest.mark.pending(
-        reason="SupportsSampling declares only the _sample method", raises=TypeError
-    )
     def test_a_sampling_source_type_admits_a_law_that_samples(self):
         registry = _registry(ToyConverter("from_samplers", sources=(SupportsSampling,)))
         assert registry.check(Sampled("x", _SCALAR), Target).method_name == "from_samplers"

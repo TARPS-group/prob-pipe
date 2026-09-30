@@ -11,8 +11,8 @@ import numpy as np
 import tensorflow_probability.substrates.jax.mcmc as tfp_mcmc
 
 from ..core._dispatch import Feasibility
-from ..core.protocols import SupportsUnnormalizedLogProb
 from ..custom_types import Array
+from ..distributions._capabilities import SupportsUnnormalizedLogProb
 from ..distributions._distribution import Distribution
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._inference_utils import (

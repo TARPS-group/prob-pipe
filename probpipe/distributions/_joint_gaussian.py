@@ -12,7 +12,11 @@ import jax.numpy as jnp
 from .._dtype import _promote_floats
 from ..core._numeric_record_distribution import NumericRecordDistribution, _mc_expectation
 from ..core._record_distribution import _joint_event_spec
-from ..core.protocols import (
+from ..core.provenance import Provenance
+from ..core.record import Record
+from ..core.tracked import auto_name
+from ..custom_types import Array, ArrayLike, PRNGKey
+from ._capabilities import (
     SupportsCovariance,
     SupportsExactConditioning,
     SupportsLogProb,
@@ -20,10 +24,6 @@ from ..core.protocols import (
     SupportsSampling,
     SupportsVariance,
 )
-from ..core.provenance import Provenance
-from ..core.record import Record
-from ..core.tracked import auto_name
-from ..custom_types import Array, ArrayLike, PRNGKey
 from ._joint_utils import (
     KeyPath,
     _parse_condition_args,
@@ -66,9 +66,6 @@ class JointGaussian(
     ...     yz=3,   # yz is 3-dimensional
     ... )
     """
-
-    _sampling_cost = "low"
-    _preferred_orchestration = None
 
     def __init__(
         self,

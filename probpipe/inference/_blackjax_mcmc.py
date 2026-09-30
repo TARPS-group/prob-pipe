@@ -11,7 +11,7 @@ Two :class:`~probpipe.core._dispatch.UnaryDispatchMethod` subclasses registered 
   mean ``num_integration_steps`` (a user-tunable kwarg, default ``10``),
   breaking the fixed-``L`` resonance that can stall a static-HMC chain.
 
-Both methods consume any :class:`~probpipe.core.protocols.SupportsUnnormalizedLogProb`
+Both methods consume any :class:`~probpipe.SupportsUnnormalizedLogProb`
 target whose log-density is JAX-traceable. They run on the flat-vector
 form of the target produced by
 :func:`~probpipe.inference._inference_utils.build_target_log_prob_flat`,
@@ -48,8 +48,8 @@ from blackjax.mcmc.dynamic_hmc import (
 )
 
 from ..core._dispatch import Feasibility
-from ..core.protocols import SupportsUnnormalizedLogProb
 from ..custom_types import Array
+from ..distributions._capabilities import SupportsUnnormalizedLogProb
 from ..distributions._distribution import Distribution
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._inference_utils import (

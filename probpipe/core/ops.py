@@ -26,10 +26,7 @@ import jax
 import jax.numpy as jnp
 
 from ..custom_types import Array, PRNGKey
-from ..distributions._distribution import Distribution
-from ..functions import _broker, _descendants, function
-from ._random_functions import RandomFunction
-from .protocols import (
+from ..distributions._capabilities import (
     SupportsApproximateConditioning,
     SupportsCovariance,
     SupportsExactConditioning,
@@ -43,6 +40,9 @@ from .protocols import (
     SupportsUnnormalizedLogProb,
     SupportsVariance,
 )
+from ..distributions._distribution import Distribution
+from ..functions import _broker, _descendants, function
+from ._random_functions import RandomFunction
 
 __all__ = [
     "condition_on",

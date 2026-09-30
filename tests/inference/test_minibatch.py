@@ -27,7 +27,7 @@ from probpipe import (
 from probpipe.core._random_functions import RandomFunction
 from probpipe.core._random_measures import RandomMeasure
 from probpipe.core._specs import OpaqueSpec, OutputSpec
-from probpipe.core.protocols import (
+from probpipe.distributions._capabilities import (
     SupportsRandomUnnormalizedLogProb,
     SupportsUnnormalizedLogProb,
 )
@@ -182,7 +182,7 @@ class TestProtocols:
         — its "samples" are themselves distributions, not values.
         Use ``_random_unnormalized_log_prob`` to get the stochastic
         log-density callable that SGMCMC kernels consume."""
-        from probpipe.core.protocols import SupportsSampling
+        from probpipe.distributions._capabilities import SupportsSampling
 
         assert not isinstance(measure, SupportsSampling)
 

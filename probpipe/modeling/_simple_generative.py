@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 from ..core._specs import OpaqueSpec
-from ..core.protocols import SupportsSampling
 from ..core.tracked import auto_name
+from ..distributions._capabilities import SupportsSampling
 from ._base import ProbabilisticModel
 from ._likelihood import GenerativeLikelihood
 
@@ -23,7 +23,7 @@ class SimpleGenerativeModel[P, D](ProbabilisticModel, SupportsSampling):
     simulation-based inference (SBI) and approximate Bayesian
     computation (ABC) methods.
 
-    **Sampling:** implements :class:`~probpipe.core.protocols.SupportsSampling`
+    **Sampling:** implements :class:`~probpipe.SupportsSampling`
     via the obvious joint draw — sample parameters from the prior, then
     call ``likelihood.generate_data(params, ...)`` for the data.
 
@@ -44,9 +44,6 @@ class SimpleGenerativeModel[P, D](ProbabilisticModel, SupportsSampling):
     name : str or None
         Model name for provenance. Keyword-only; defaults to ``"SimpleGenerativeModel"``.
     """
-
-    _sampling_cost: str = "medium"
-    _preferred_orchestration: str | None = None
 
     def _sample(self, key, sample_shape=()):
         """Draw one joint ``(params, data)`` sample.

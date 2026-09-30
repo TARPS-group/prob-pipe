@@ -20,8 +20,8 @@ from math import prod
 import jax.numpy as jnp
 
 from ..core._random_functions import ArrayRandomFunction
-from ..core.protocols import SupportsSampling
 from ..custom_types import Array, ArrayLike, PRNGKey
+from ._capabilities import SupportsSampling
 from ._conditional import ConditionalDistribution
 from ._distribution import Distribution
 
@@ -325,9 +325,6 @@ class LinearBasisFunction(GaussianRandomFunction, SupportsSampling):
     """
 
     supports_joint_inputs = True
-
-    _sampling_cost: str = "low"
-    _preferred_orchestration: str | None = None
 
     def __init__(
         self,

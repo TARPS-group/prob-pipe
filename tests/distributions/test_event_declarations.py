@@ -90,8 +90,8 @@ from probpipe.core._numeric_record_distribution import (
 from probpipe.core._random_measures import RandomMeasure
 from probpipe.core._record_distribution import _RecordDistributionView
 from probpipe.core._specs import RecordSpec
-from probpipe.core.protocols import SupportsSampling
 from probpipe.distributions import FactoredDistribution, FactoredNumericDistribution, FieldView
+from probpipe.distributions._capabilities import SupportsSampling
 from probpipe.distributions._joint_empirical import NumericJointEmpirical
 from probpipe.distributions._product import TFPProductDistribution
 from probpipe.distributions.gaussian_random_function import (

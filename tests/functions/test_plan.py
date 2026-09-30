@@ -20,7 +20,7 @@ from probpipe import (
     NumericRecordBatch,
     ProductDistribution,
 )
-from probpipe.core.protocols import SupportsSampling
+from probpipe.distributions._capabilities import SupportsSampling
 from probpipe.functions._normalization import (
     normalize_distribution_values,
 )

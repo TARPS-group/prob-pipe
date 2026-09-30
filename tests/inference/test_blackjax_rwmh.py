@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 
 from probpipe import Distribution, MultivariateNormal, NumericArraySpec, NumericRecordDistribution
-from probpipe.core.protocols import SupportsLogProb
+from probpipe.distributions._capabilities import SupportsLogProb
 from probpipe.inference import (
     inference_method_registry,
     rwmh,

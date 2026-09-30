@@ -234,7 +234,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     replaces it.
 
     Sampling and expectation capabilities are provided by the
-    :class:`~probpipe.core.protocols.SupportsSampling` protocol.
+    :class:`~probpipe.SupportsSampling` protocol.
 
     **The event declaration.** A law stores one ``DistributionSpec``, its
     :attr:`spec`, whose :attr:`event_spec` is the output declaration of one

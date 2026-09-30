@@ -438,8 +438,6 @@ class TestRawDrawNaming:
     ):
         class Sampler:
             name = "law"
-            _sampling_cost = "low"
-            _preferred_orchestration = None
 
             def _sample(self, key, sample_shape=()):
                 return make()
@@ -469,8 +467,6 @@ class TestRawDrawNaming:
     def test_a_raw_draws_name_is_validated_by_its_constructor(self):
         class Sampler:
             name = ""
-            _sampling_cost = "low"
-            _preferred_orchestration = None
 
             def _sample(self, key, sample_shape=()):
                 return 2.0

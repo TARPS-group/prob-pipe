@@ -62,9 +62,6 @@ def no_moments():
     """A distribution that samples and takes expectations but implements no moment protocol."""
 
     class NoMomentsDist(NumericRecordDistribution, SupportsSampling, SupportsExpectation):
-        _sampling_cost = "low"
-        _preferred_orchestration = None
-
         def __init__(self, name):
             super().__init__(name, NumericArraySpec(()))
 
@@ -114,9 +111,6 @@ class TestSample:
     @pytest.mark.parametrize("explicit_key", [False, True], ids=["automatic-key", "explicit-key"])
     def test_sample_accepts_structural_samplers(self, sample_shape, sampler_name, explicit_key):
         class Sampler:
-            _sampling_cost = "low"
-            _preferred_orchestration = None
-
             def _sample(self, key: jax.Array, sample_shape: tuple[int, ...] = ()) -> jax.Array:
                 return jnp.ones(sample_shape, dtype=jnp.float32)
 
@@ -150,8 +144,6 @@ class TestSample:
 
         class Sampler:
             name = "sampler"
-            _sampling_cost = "low"
-            _preferred_orchestration = None
 
             def _sample(self, key, sample_shape=()):
                 return drawn
@@ -200,9 +192,6 @@ class TestSample:
         drawn = np.asarray(["a", "b", "c", "d", "e"], dtype=object)
 
         class Sampler:
-            _sampling_cost = "low"
-            _preferred_orchestration = None
-
             def _sample(self, key, sample_shape=()):
                 return drawn
 

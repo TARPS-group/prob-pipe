@@ -26,6 +26,7 @@ from probpipe import (
     condition_on,
     learn_amortized_posterior,
 )
+from probpipe.distributions._capabilities import SupportsSampling
 from probpipe.modeling import GenerativeLikelihood, Likelihood
 
 from ._bayesflow_helpers import theta_vec
@@ -305,14 +306,12 @@ class TestBayesFlowNPE:
         with pytest.raises(ValueError, match="positive integer"):
             condition_on(npe_model, _observe(0.0, 0.0, 2), num_results=bad)
 
-    def test_direct_sampling_not_implemented(self, npe_model):
-        """BayesFlowModel has no direct sampler: ``_sample`` raises
-        NotImplementedError -- the signal Function's dispatch fallback
-        catches -- pointing to condition_on and the prior/simulator components.
-        The properties pass the training inputs through (which remain available
-        for forward simulation by hand)."""
-        with pytest.raises(NotImplementedError, match="condition_on"):
-            npe_model._sample(jax.random.PRNGKey(0))
+    def test_the_model_claims_no_direct_sampling(self, npe_model):
+        """BayesFlowModel does not sample directly, so it does not claim
+        SupportsSampling; posterior draws come from condition_on, and the prior
+        and simulator properties pass the training inputs through for forward
+        simulation."""
+        assert not isinstance(npe_model, SupportsSampling)
         assert tuple(npe_model.prior.event_spec.components) == ("a", "b")
         assert isinstance(npe_model.simulator, _ToyLikelihood)
 

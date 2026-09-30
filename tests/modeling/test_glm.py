@@ -252,7 +252,7 @@ class TestIncrementalConditionerAutoConvert:
 
     def test_auto_convert_to_kde(self):
         """update() should work without a custom condition_fn."""
-        from probpipe.core.protocols import SupportsLogProb
+        from probpipe.distributions._capabilities import SupportsLogProb
         from probpipe.inference import ApproximateDistribution
         from probpipe.modeling import IncrementalConditioner
 

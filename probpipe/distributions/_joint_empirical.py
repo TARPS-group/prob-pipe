@@ -34,14 +34,10 @@ from ..core._numeric_record_distribution import NumericRecordDistribution, _mc_e
 from ..core._record_distribution import RecordDistribution
 from ..core._specs import NumericArraySpec, OpaqueSpec, RecordSpec
 from ..core.constraints import real
-from ..core.protocols import (
-    SupportsMean,
-    SupportsSampling,
-    SupportsVariance,
-)
 from ..core.record import Record
 from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike, PRNGKey
+from ._capabilities import SupportsMean, SupportsSampling, SupportsVariance
 
 __all__ = ["JointEmpirical", "NumericJointEmpirical"]
 
@@ -86,9 +82,6 @@ class JointEmpirical(RecordDistribution, SupportsSampling):
         Named component sample arrays. Each must have the same number of
         rows (first dimension = ``n``).
     """
-
-    _sampling_cost = "low"
-    _preferred_orchestration = None
 
     def __new__(
         cls,
@@ -266,8 +259,8 @@ class NumericJointEmpirical(
     """Joint empirical where every field is a numeric array.
 
     Subclass of :class:`JointEmpirical` that additionally implements
-    :class:`~probpipe.core.protocols.SupportsMean` and
-    :class:`~probpipe.core.protocols.SupportsVariance`, and mixes in
+    :class:`~probpipe.SupportsMean` and
+    :class:`~probpipe.SupportsVariance`, and mixes in
     :class:`NumericRecordDistribution` to expose the numeric-only API
     (``event_size``, ``flatten_value``, ``unflatten_value``,
     ``as_flat_distribution``). For a density on top of empirical

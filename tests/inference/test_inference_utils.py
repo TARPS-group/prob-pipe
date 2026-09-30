@@ -19,7 +19,7 @@ from probpipe import (
     SimpleModel,
     condition_on,
 )
-from probpipe.core.protocols import SupportsSampling
+from probpipe.distributions._capabilities import SupportsSampling
 from probpipe.distributions._distribution import Distribution
 from probpipe.inference._inference_utils import (
     as_prng_key,

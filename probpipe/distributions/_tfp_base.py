@@ -16,14 +16,14 @@ from .._array_utils import _slice_leading_axes
 from ..core._numeric_record_distribution import NumericRecordDistribution, _mc_expectation
 from ..core._specs import NumericArraySpec, OutputSpec
 from ..core.constraints import Constraint
-from ..core.protocols import (
+from ..custom_types import Array, ArrayLike, PRNGKey
+from ._capabilities import (
     SupportsCovariance,
     SupportsLogProb,
     SupportsMean,
     SupportsSampling,
     SupportsVariance,
 )
-from ..custom_types import Array, ArrayLike, PRNGKey
 from ._distribution import Distribution
 
 if TYPE_CHECKING:
@@ -136,8 +136,6 @@ class TFPDistribution(
     """
 
     _tfp_dist: tfd.Distribution
-    _sampling_cost: str = "low"
-    _preferred_orchestration: str | None = None
 
     def __init__(self, name: str, event_spec: OutputSpec | TermSpec | None = None) -> None:
         """Final-stage initializer for TFP-backed distributions.

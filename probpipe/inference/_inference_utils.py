@@ -36,9 +36,9 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..core._specs import OutputSpec
-from ..core.protocols import SupportsSampling
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike
+from ..distributions._capabilities import SupportsSampling
 from ..distributions._distribution import Distribution
 
 logger = logging.getLogger(__name__)

@@ -28,8 +28,9 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..core._specs import _components_record
-from ..core.protocols import GenerativeLikelihood, SupportsApproximateConditioning
-from ..custom_types import ArrayLike, PRNGKey
+from ..core.protocols import GenerativeLikelihood
+from ..custom_types import ArrayLike
+from ..distributions._capabilities import SupportsApproximateConditioning
 from ..distributions._distribution import Distribution
 from ..functions import function
 from ._approximate_distribution import ApproximateDistribution, make_posterior
@@ -196,15 +197,6 @@ class BayesFlowModel(Distribution, SupportsApproximateConditioning):
     def simulator(self) -> GenerativeLikelihood:
         """The generative likelihood (provides ``generate_data``)."""
         return self._simulator
-
-    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Any:
-        # Present so sampleability probes get NotImplementedError -- which
-        # Function's dispatch fallback catches -- not AttributeError.
-        raise NotImplementedError(
-            "BayesFlowModel does not implement direct sampling; draw posterior "
-            "samples by conditioning (condition_on(model, observed)), or simulate "
-            "from the joint via the prior / simulator properties."
-        )
 
     def _condition_on(
         self, observed: ArrayLike | np.ndarray, /, **kwargs: Any

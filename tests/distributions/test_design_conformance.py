@@ -53,9 +53,6 @@ _OTHER_PACKAGES = frozenset(
 
 #: Declarations the implementation does not match yet, with the change each awaits.
 _PENDING = {
-    "SupportsExpectation": "the exact expectation takes only f",
-    "SupportsExactConditioning": "the conditioning primitive names its argument given",
-    "SupportsApproximateConditioning": "the conditioning primitive names its argument given",
     "EmpiricalDistribution": "the empirical law takes atoms and an event declaration",
 }
 

@@ -4,7 +4,7 @@ import jax
 import pytest
 
 from probpipe import Normal, SimpleGenerativeModel
-from probpipe.core.protocols import SupportsLogProb, SupportsSampling
+from probpipe.distributions._capabilities import SupportsLogProb, SupportsSampling
 from probpipe.modeling import GenerativeLikelihood, ProbabilisticModel
 
 
