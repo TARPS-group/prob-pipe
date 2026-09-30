@@ -520,11 +520,13 @@ A law that claims none of these is **unnormalized**, since no capability it clai
 | `_cov` | the sub-block `P Σ Pᵀ`, with `P` the coordinate-selection `LinOp`, built lazily through the operator algebra | parent `SupportsCovariance`, numeric field |
 | `_quantile` | restriction of the parent's per-coordinate quantiles to `p` | parent `SupportsQuantile`, numeric field |
 | `_expectation` | composition: `d._expectation(f ∘ π)` | parent `SupportsExpectation` |
-| `_log_prob` / `_unnormalized_log_prob` | via the detached marginal `d._marginal(p)` | parent `SupportsMarginals`, exact at `p`, and the marginal scores |
+| `_log_prob` / `_unnormalized_log_prob` | via the detached marginal `d._marginal(p)` | parent `SupportsMarginals`, exact at `p`, and the marginal at `p` reports the density |
 | `_marginal` at a sub-path `q` | path composition: `d._marginal(p/q)` | parent `SupportsMarginals`, exact at `p/q` |
 | `_condition_on` a sub-field `s ⊂ p` | conditioning commutes with marginalization: `d.condition_on(s)[p ∖ s]`, both sides the law of `p ∖ s` given `s` | parent conditioning available for `s` |
 
 The projection rows are exact whenever the parent's answer is, and the density rows are exact per path. Only sampling requires the parent to sample, so a view on a non-sampling parent still carries its projected moments.
+
+**The marginal's capabilities.** A law claiming `SupportsMarginals` may define the companion `_marginal_capabilities(path)`, which returns the capabilities its exact marginal at `path` claims, read from its declarations without building the marginal. The marginals of a law that defines none claim what the law claims itself. A factored joint reports the claims of the factors a marginal keeps, and an empirical law reports sampling and its moments but no density, so a view of `Normal("a", 0.0, 1.0) * EmpiricalDistribution("b", atoms)` at `a` claims a density and one at `b` does not. A view reads the report once, at construction, since its path is fixed, and claims a density row when the report includes that density. The projection rows derive from the parent's own capabilities, since a view co-samples its parent.
 
 ### Rationale
 
