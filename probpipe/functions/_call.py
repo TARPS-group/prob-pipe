@@ -179,8 +179,10 @@ def _expects_value(expected: Any) -> bool:
 def admit_arguments(info: WorkflowSignatureInfo, values: Mapping[str, Any]) -> None:
     """Admit each bound argument against what its parameter accepts.
 
-    A conditional distribution at a parameter that expects a value is refused,
-    since a kernel has no marginal law to lift over.
+    Each argument is admitted against its parameter's own annotation, so an
+    argument that a variadic parameter annotated ``Any`` collects is admitted
+    whatever its kind. A conditional distribution at a parameter that expects a
+    value is refused, since a kernel has no marginal law to lift over.
 
     Parameters
     ----------
@@ -197,7 +199,7 @@ def admit_arguments(info: WorkflowSignatureInfo, values: Mapping[str, Any]) -> N
     for ref in _binding.iter_input_refs(info, values):
         value = _binding.input_ref_value(values, ref)
         if isinstance(value, ConditionalDistribution) and _expects_value(
-            _binding.input_ref_hint(info, ref)
+            info.hints.get(ref.parameter_name)
         ):
             raise ApplicabilityError(
                 f"parameter {ref.label!r} expects a value, and a value parameter accepts no "

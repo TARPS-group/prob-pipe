@@ -554,40 +554,15 @@ def _stack_rows(rows: list[Any], *, arg_name: str) -> Any:
     return jnp.stack(rows)
 
 
-def _sole_leaf_path(drawn: Any) -> str | None:
-    """The one leaf path a draw presents as, or ``None`` if it presents whole.
+def _index_sample(s: Any, i: int) -> Any:
+    """Row ``i`` of a per-argument sample batch, at the kind one draw is.
 
-    The single place the single-field question is decided, so that every path
-    presenting a draw decides it the same way. Design II.4 leaves the choice
-    itself open — it rides on the single-value-coercion question ``Record``
-    poses — but not the agreement: the record shim is deliberately narrow,
-    carrying conversions and no arithmetic, so a body written for the value
-    would work under one dispatch and fail under another if they diverged.
+    A record draw stays a record whatever its number of fields, and an array
+    draw is an array.
     """
     from ..core._record_batch import RecordBatch
     from ..core.record import Record
 
-    if isinstance(drawn, (Record, RecordBatch)):
-        leaf_paths = tuple(drawn.event_template.keys())
-        if len(leaf_paths) == 1:
-            return leaf_paths[0]
-    return None
-
-
-def _present_draw(drawn: Any) -> Any:
-    """How one already-sliced draw is presented to the wrapped function."""
-    path = _sole_leaf_path(drawn)
-    return drawn if path is None else drawn[path]
-
-
-def _index_sample(s: Any, i: int) -> Any:
-    """Index row ``i`` of a per-argument sample batch, as that row presents."""
-    from ..core._record_batch import RecordBatch
-    from ..core.record import Record
-
-    path = _sole_leaf_path(s)
-    if path is not None:
-        return s[path][i]
     if isinstance(s, (Record, RecordBatch)):
         # Index each leaf field's batch row; rebuild by path key so a nested
         # sample is reconstructed with its structure intact. A row of a batch is
@@ -606,14 +581,12 @@ def mapped_draw_body(
 
     Shared so the probe traces exactly what the executor runs, which two
     separately maintained functions cannot promise. Mapping a batch of records
-    yields a record per draw, which :func:`_present_draw` then presents the same
-    way the row-wise paths do.
+    yields a record per draw, which the body receives as the row-wise paths
+    present it.
     """
 
     def one_draw(broadcast_slice):
-        replacements = {
-            ref: _present_draw(drawn) for ref, drawn in zip(broadcast_args, broadcast_slice)
-        }
+        replacements = dict(zip(broadcast_args, broadcast_slice, strict=True))
         return func(**replace_input_refs(values, replacements))
 
     return one_draw

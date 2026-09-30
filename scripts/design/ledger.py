@@ -10,7 +10,9 @@ Three lists make up the report:
   pytest.
 - **Stale docs**: in the notebooks under ``docs/`` and the scripts in
   ``example_scripts/``, every import of a name a ``probpipe`` module no longer
-  has, and every keyword argument in :data:`RETIRED_KEYWORDS`.
+  has, every keyword argument in :data:`RETIRED_KEYWORDS`, and every keyword a
+  call of ``function(...)`` or ``Function(...)`` passes that is neither a
+  construction parameter nor an engine control.
 
 Usage::
 
@@ -26,6 +28,7 @@ from __future__ import annotations
 import argparse
 import ast
 import importlib
+import inspect
 import json
 import re
 import subprocess
@@ -151,9 +154,42 @@ def _doc_sources(root: Path) -> Iterator[tuple[str, str, str]]:
         yield str(path.relative_to(root)), "script", path.read_text()
 
 
+def _function_keywords() -> dict[str, frozenset[str]]:
+    """The keywords ``Function`` and ``function`` take: construction parameters and controls."""
+    from probpipe import Function, function
+
+    controls = frozenset(Function("ledger", lambda: None).options)
+
+    def parameters(callable_: object) -> frozenset[str]:
+        keyword_kinds = (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+        return frozenset(
+            name
+            for name, parameter in inspect.signature(callable_).parameters.items()
+            if parameter.kind in keyword_kinds and name != "self"
+        )
+
+    return {
+        "Function": parameters(Function.__init__) | controls,
+        "function": parameters(function) | controls,
+    }
+
+
+def _callee(call: ast.Call) -> str | None:
+    """``Function`` or ``function`` when *call* calls one, bare or as an attribute."""
+    target = call.func
+    name = target.id if isinstance(target, ast.Name) else getattr(target, "attr", None)
+    return name if name in ("Function", "function") else None
+
+
 def stale_docs(root: Path = ROOT) -> Iterator[StaleUse]:
-    """Every import of a name a probpipe module no longer has, and every retired keyword."""
+    """Every stale use in the docs notebooks and the example scripts.
+
+    A stale use imports a name a probpipe module no longer has, passes a retired
+    keyword, or passes ``function(...)`` or ``Function(...)`` a keyword that is
+    neither a construction parameter nor a control.
+    """
     modules: dict[str, object | None] = {}
+    accepted: dict[str, frozenset[str]] | None = None
     for path, location, source in _doc_sources(root):
         # Drop IPython magics and shell escapes, which are not Python.
         lines = [line for line in source.splitlines() if not line.lstrip().startswith(("%", "!"))]
@@ -185,6 +221,20 @@ def stale_docs(root: Path = ROOT) -> Iterator[StaleUse]:
                     location,
                     f"passes {node.arg}=, which is removed: {RETIRED_KEYWORDS[node.arg]}",
                 )
+            elif isinstance(node, ast.Call) and (callee := _callee(node)) is not None:
+                if accepted is None:
+                    accepted = _function_keywords()
+                for keyword in node.keywords:
+                    if keyword.arg is None or keyword.arg in RETIRED_KEYWORDS:
+                        continue
+                    if keyword.arg not in accepted[callee]:
+                        yield StaleUse(
+                            path,
+                            location,
+                            f"passes {keyword.arg}= to {callee}, which is neither a construction "
+                            f"parameter nor a control: bind an argument of the wrapped function "
+                            f"with bind=",
+                        )
 
 
 def main(argv: Sequence[str] | None = None) -> int:

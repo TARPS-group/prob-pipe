@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 import math
 import warnings
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from functools import partial
 from typing import Any, overload
@@ -42,8 +42,8 @@ except ImportError:
 from ..core._batch import Batch
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._record_batch import RecordBatch
-from ..core._record_distribution import RecordDistribution
-from ..core._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
+from ..core._spec_base import NumericSpec, TermSpec
+from ..core._specs import InputSpec, NumericArraySpec, NumericRecordSpec, OutputSpec, RecordSpec
 from ..core.config import ProvenanceMode, WorkflowKind, prefect_config
 from ..core.node import Node
 from ..core.provenance import Provenance
@@ -52,6 +52,7 @@ from ..values._function_base import (
     Function,
     _bind_function_inputs,
     _FunctionInvocationContext,
+    _refuse_unknown_controls,
     _validate_function_output,
     install_call_engine,
 )
@@ -104,7 +105,15 @@ def function(
 def function(
     _func: Callable[..., Any] | None = None,
     /,
-    **kwargs: Any,
+    *,
+    name: str | None = None,
+    input_spec: InputSpec | Mapping[str, TermSpec] | None = None,
+    output_spec: OutputSpec | TermSpec | None = None,
+    output_name: str | None = None,
+    differentiable: NumericSpec | None = None,
+    bind: Mapping[str, Any] | None = None,
+    module: Any | None = None,
+    **controls: Any,
 ) -> Function | Callable[[Callable[..., Any]], Function]:
     """Decorator to create a :class:`Function` from a plain function.
 
@@ -129,21 +138,38 @@ def function(
     _func : Callable or None
         Function being decorated for bare ``@function`` usage.
         Users should not pass this argument by keyword.
-    **kwargs : Any
-        Construction-time ``Function`` controls and declarations such as
-        ``dispatch``, ``n_broadcast_samples``, ``include_inputs``,
-        ``workflow_kind``, ``input_spec``, ``output_spec``, and ``output_name``.
+    name : str or None
+        The function label, defaulting to the decorated callable's ``__name__``.
+    input_spec, output_spec, output_name, differentiable, bind, module
+        The declarations and construction bindings :class:`Function` takes.
+    **controls : Any
+        The engine's controls, which :class:`Function` lists.
 
     Returns
     -------
     Function or Callable
         Wrapped Function for bare usage, or a decorator when called
         with parentheses.
+
+    Raises
+    ------
+    TypeError
+        If a keyword is no control, before any callable is wrapped.
     """
+    _refuse_unknown_controls(controls)
 
     def decorator(func: Callable[..., Any]) -> Function:
-        options = dict(kwargs)
-        return Function(options.pop("name", func.__name__), func, **options)
+        return Function(
+            func.__name__ if name is None else name,
+            func,
+            input_spec=input_spec,
+            output_spec=output_spec,
+            output_name=output_name,
+            differentiable=differentiable,
+            bind=bind,
+            module=module,
+            **controls,
+        )
 
     if _func is not None:
         return decorator(_func)
@@ -267,7 +293,6 @@ def _call_with_options_in_context(
         signature_info=function._signature_info,
     )
     _call.admit_arguments(function._signature_info, values)
-    _resolve_route(function)
     broadcast_plan = _plan.build_broadcast_plan(
         values=values,
         signature_info=function._signature_info,
@@ -314,6 +339,7 @@ def _call_with_options_in_context(
     concrete_output_template = (
         _output_record_spec(concrete_output_spec) if concrete_output_spec is not None else None
     )
+    _resolve_route(function)
     provenance_parents: list[TrackedTerm] = [function]
     provenance_inputs: dict[str, Any] = {}
     seen_parent_ids = {id(function)}
@@ -638,7 +664,9 @@ def _jax_traceability_error(
                             (1, *template[path].shape),
                             dtype,
                         )
-                    if isinstance(root, RecordDistribution):
+                    # The stand-in draw is at the kind the law's event declaration
+                    # names, as the law's own draws are.
+                    if root.event_spec.exposes_record:
                         root_probe = NumericRecordBatch(
                             root.name,
                             columns,
@@ -692,7 +720,12 @@ def _require_jax_traceable(
     func: Callable[..., Any],
     stochastic_plan: _plan.StochasticPlan | None,
 ) -> None:
-    """Raise a clear error if explicit JAX dispatch cannot trace."""
+    """Raise a clear error if explicit JAX dispatch cannot trace.
+
+    A result that violates its declaration while the probe traces raises its
+    :class:`~._result.ResultSchemaError` or :class:`~._result.ResultKindError`
+    unchanged, as the other dispatch modes raise it at return.
+    """
     output = function.output_spec.spec if function.output_spec is not None else None
     if _has_output_support(output):
         raise ValueError(
@@ -704,6 +737,8 @@ def _require_jax_traceable(
     )
     if trace_error is None:
         return
+    if isinstance(trace_error, (_result.ResultSchemaError, _result.ResultKindError)):
+        raise trace_error
     if isinstance(trace_error, _UnvectorizableBatchSignal):
         raise TypeError(
             f"dispatch='jax' cannot vectorize over {', '.join(trace_error.kinds)}: the "

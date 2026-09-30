@@ -9,10 +9,13 @@ decorator or at ``with_options``, before any call.
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 from probpipe import (
+    Distribution,
     Function,
     NumericArraySpec,
     OutputSpec,
@@ -21,6 +24,8 @@ from probpipe import (
     function,
     workflow_run,
 )
+from probpipe.core._dispatch import BinaryDispatchMethod, Feasibility
+from probpipe.functions import _rules
 
 from ._design_helpers import error_of, standard_normal
 
@@ -170,15 +175,70 @@ class TestAdmissibility:
         with pytest.raises(TypeError):
             view.options["conversions"]["x"]["exact_only"] = False
 
-    @pytest.mark.pending(
-        reason="a keyword at the decorator is a control or a declaration, never an argument",
-        raises=AssertionError,
-    )
     def test_a_decorator_keyword_that_is_no_control_raises(self):
         def body(x, **kwargs):
             return x
 
         assert isinstance(error_of(lambda: function(budget=3)(body)), TypeError)
+
+    def test_an_unknown_control_raises_at_the_decorator_before_wrapping_naming_it(self):
+        with pytest.raises(TypeError, match="budget"):
+            function(budget=3)
+
+    @pytest.mark.parametrize("body", [lambda x, y=0: x + y, lambda x, **kwargs: x])
+    def test_an_unknown_control_raises_at_construction_naming_it(self, body):
+        with pytest.raises(TypeError, match=r"Unknown Function controls: \['y'\]"):
+            Function("add", body, y=2)
+
+    def test_an_argument_binds_at_construction_through_bind(self):
+        wrapped = Function("add", lambda x, y: x + y, bind={"y": 2.0})
+
+        @function(bind={"y": 2.0})
+        def add(x, y):
+            return x + y
+
+        assert float(wrapped(1.0).value) == float(add(1.0).value) == 3.0
+
+    @pytest.mark.pending(
+        reason="a control that a registered method declares is admitted", raises=TypeError
+    )
+    def test_a_control_a_registered_method_defines_is_admitted(self, monkeypatch):
+        class _Quadrature(BinaryDispatchMethod):
+            """A rule that declares its own numerical budget, the number of nodes."""
+
+            @property
+            def name(self) -> str:
+                return "quadrature"
+
+            @property
+            def exact(self) -> bool:
+                return False
+
+            @property
+            def priority(self) -> int:
+                return 0
+
+            @property
+            def controls(self) -> dict[str, Any]:
+                return {"n_nodes": 16}
+
+            def supported_types(self) -> tuple[tuple[type, ...], tuple[type, ...]]:
+                return ((Function,), (Distribution,))
+
+            def check(self, f: Any, operand: Any, /, **call: Any) -> Feasibility:
+                return Feasibility(True)
+
+            def execute(self, f: Any, operand: Any, /, **call: Any) -> Any:
+                return None
+
+        registry = type(_rules.evaluation_rule_registry)()
+        registry.register(_Quadrature())
+        monkeypatch.setattr(_rules, "evaluation_rule_registry", registry)
+
+        wrapped = Function("identity", _identity, n_nodes=32)
+
+        assert wrapped.options["n_nodes"] == 32
+        assert wrapped.with_options(n_nodes=8).options["n_nodes"] == 8
 
 
 class TestControlsThatSelectTheRoute:

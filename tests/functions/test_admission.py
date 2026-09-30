@@ -12,16 +12,21 @@ sub-steps on each argument:
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
     ApplicabilityError,
+    Beta,
     Distribution,
     DistributionSpec,
     Function,
+    Gamma,
     InputSpec,
+    Normal,
     NumericArray,
     NumericArraySpec,
     OutputSpec,
@@ -132,6 +137,55 @@ class TestConversionPlanning:
         assert isinstance(result, Distribution)
         assert result.num_atoms == 6
 
+    @pytest.mark.parametrize("annotation", [Normal, Normal | None], ids=["class", "optional"])
+    def test_a_law_of_another_class_is_converted_to_the_class_the_parameter_names(self, annotation):
+        seen = []
+
+        def consume(d):
+            seen.append(d)
+            return 0.0
+
+        consume.__annotations__ = {"d": annotation}
+        Function("consume", consume)(Gamma("g", 2.0, 1.0))
+
+        assert isinstance(seen[0], Normal)
+
+    @pytest.mark.parametrize(
+        "annotation", [Distribution, Distribution | None], ids=["class", "optional"]
+    )
+    def test_a_backend_law_at_a_distribution_parameter_enters_probpipe(self, annotation):
+        seen = []
+
+        def consume(d):
+            seen.append(d)
+            return 0.0
+
+        consume.__annotations__ = {"d": annotation}
+        Function("consume", consume)(tfd.Normal(0.0, 1.0))
+
+        assert isinstance(seen[0], Distribution)
+
+    def test_a_union_of_several_distribution_classes_refuses_to_choose_a_conversion(self):
+        def consume(d: Normal | Gamma):
+            return 0.0
+
+        error = error_of(lambda: Function("consume", consume)(Beta("b", 2.0, 2.0)))
+
+        assert isinstance(error, ApplicabilityError)
+        assert "'d'" in str(error) and "Normal" in str(error) and "Beta" in str(error)
+
+    def test_a_union_of_several_distribution_classes_admits_a_law_of_one_of_them(self):
+        seen = []
+
+        def consume(d: Normal | Gamma):
+            seen.append(d)
+            return 0.0
+
+        law = Gamma("g", 2.0, 1.0)
+        Function("consume", consume)(law)
+
+        assert seen == [law]
+
     @pytest.mark.pending(
         reason="a conversion with no converter raises ResolutionError", raises=AssertionError
     )
@@ -207,6 +261,37 @@ class TestAdmission:
         consume(kernel)
 
         assert seen == [kernel]
+
+    @pytest.mark.parametrize("slot", ["parameter", "variadic positional", "variadic keyword"])
+    def test_a_kernel_at_a_slot_annotated_any_passes(self, slot):
+        seen = []
+
+        def at_parameter(proposal: Any):
+            seen.append(proposal)
+            return 0.0
+
+        def at_args(*proposals: Any):
+            seen.extend(proposals)
+            return 0.0
+
+        def at_options(**options: Any):
+            seen.extend(options.values())
+            return 0.0
+
+        kernel = _kernel()
+        if slot == "variadic keyword":
+            Function("body", at_options)(proposal=kernel)
+        else:
+            Function("body", at_parameter if slot == "parameter" else at_args)(kernel)
+
+        assert len(seen) == 1 and seen[0] is kernel
+
+    def test_a_kernel_at_an_unannotated_variadic_slot_is_refused(self):
+        def at_options(**options):
+            return 0.0
+
+        with pytest.raises(ApplicabilityError, match=r"proposal"):
+            Function("body", at_options)(proposal=_kernel())
 
     def test_a_distribution_over_the_accepted_kind_is_admitted_for_lifting(self):
         wrapped = Function(

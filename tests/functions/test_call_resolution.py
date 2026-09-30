@@ -288,8 +288,7 @@ class TestArgumentBinding:
             name="affine_func",
             fn=affine_func,
             dispatch="sequential",
-            bind={"offset": 3.0},
-            scale=2.0,
+            bind={"offset": 3.0, "scale": 2.0},
         )
 
         assert float(default_wf(x=1.0)) == 11.0

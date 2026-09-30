@@ -182,6 +182,40 @@ class StochasticPlan:
         )
 
 
+def _is_batched(value: Any) -> bool:
+    """Whether *value* holds a multiplicity on at least one level.
+
+    Any Batch is such an operand: what makes a value sweepable is that it holds
+    a multiplicity on named levels, which is the Batch contract rather than
+    anything specific to records. A DistributionArray holds one too, although it
+    is a Distribution rather than a Batch.
+    """
+    return isinstance(value, (Batch, DistributionArray)) and len(value.batch_shape) > 0
+
+
+def is_swept(value: Any, expected: Any) -> bool:
+    """Whether the call sweeps *value* at a parameter whose lifting annotation is *expected*.
+
+    A batched argument is swept unless the annotation names a batched class it
+    satisfies or is ``Any``, either of which passes it to the body whole.
+    """
+    return _is_batched(value) and not (_value_matches_hint(value, expected) or expected is Any)
+
+
+def is_broadcast(value: Any, expected: Any) -> bool:
+    """Whether the call samples *value* at a parameter whose lifting annotation is *expected*.
+
+    A distribution is broadcast unless it is batched, in which case the call
+    sweeps it or passes it whole, or the annotation names a distribution, which
+    consumes it.
+    """
+    return (
+        isinstance(value, Distribution)
+        and not _is_batched(value)
+        and not _normalization.is_distribution_hint(expected)
+    )
+
+
 def build_broadcast_plan(
     *,
     values: Mapping[str, Any],
@@ -194,22 +228,9 @@ def build_broadcast_plan(
     for ref in _binding.iter_input_refs(signature_info, values):
         value = _binding.input_ref_value(values, ref)
         expected = _binding.input_ref_hint(signature_info, ref)
-
-        # Any Batch is an operand: what makes a value sweepable is that it holds
-        # a multiplicity on named levels, which is the Batch contract rather than
-        # anything specific to records. A DistributionArray is a Distribution, not
-        # a Batch, so it stays a separate test.
-        is_batch = isinstance(value, Batch)
-        is_dist_array = isinstance(value, DistributionArray)
-        if (is_batch or is_dist_array) and len(value.batch_shape) > 0:
-            if _value_matches_hint(value, expected) or expected is Any:
-                continue
+        if is_swept(value, expected):
             array_args.append(ref)
-            continue
-
-        if isinstance(value, Distribution):
-            if _normalization.is_distribution_hint(expected):
-                continue
+        elif is_broadcast(value, expected):
             dist_args.append(ref)
 
     array_groups = build_array_zip_groups(values=values, refs=array_args)

@@ -161,7 +161,7 @@ class TestApplyContract:
         def collect(x, /, **extras):
             return x + sum(extras.values())
 
-        wrapped = Function(name="collect", fn=collect, bind={"x": 2}, bonus=3)
+        wrapped = Function(name="collect", fn=collect, bind={"x": 2, "bonus": 3})
 
         assert wrapped.apply() == 5
         assert wrapped.apply(bonus=4) == 6
@@ -926,7 +926,7 @@ class TestTemplateDeclarationContract:
 
     def test_unknown_construction_binding_is_rejected(self):
         with pytest.raises(ValueError, match="invalid construction bindings"):
-            Function(name="function", fn=lambda x: x, missing=1)
+            Function(name="function", fn=lambda x: x, bind={"missing": 1})
 
     def test_output_symbols_can_bind_independently_of_inputs(self):
         wrapped = Function(

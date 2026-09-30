@@ -729,7 +729,7 @@ def test_exact_empirical_root_and_descendant_keep_weights_once():
     np.testing.assert_allclose(result.weights, jnp.asarray([0.2, 0.8]))
     np.testing.assert_allclose(
         result.input_samples["exp_base"],
-        jnp.exp(result.input_samples["base"]),
+        jnp.exp(result.input_samples["base"]["base"]),
         rtol=1e-6,
     )
 
@@ -788,7 +788,7 @@ def test_mixed_empirical_descendant_multiplies_root_weight_once():
     np.testing.assert_allclose(result.samples[result.name][:, 0], 0.0, atol=1e-6)
     np.testing.assert_allclose(
         result.input_samples["exp_exact"],
-        jnp.exp(result.input_samples["exact"]),
+        jnp.exp(result.input_samples["exact"]["exact"]),
         rtol=1e-6,
     )
     np.testing.assert_allclose(

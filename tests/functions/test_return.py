@@ -16,11 +16,13 @@ import pytest
 from probpipe import (
     ApplicabilityError,
     Batch,
+    BatchSpec,
     Distribution,
     Function,
     NumericArray,
     NumericArrayBatch,
     NumericArraySpec,
+    NumericRecordBatch,
     Opaque,
     OutputSpec,
     Record,
@@ -153,6 +155,87 @@ class TestResultErrors:
 
         with pytest.raises(ResultSchemaError, match="output"):
             wrapped()
+
+    @pytest.mark.parametrize("dispatch", ["jax", "sequential", "thread", "auto"])
+    @pytest.mark.parametrize("regime", ["broadcast", "sweep"])
+    def test_a_lifted_output_violation_raises_result_schema_error_under_every_dispatch(
+        self, regime, dispatch
+    ):
+        wrapped = Function(
+            "f",
+            lambda x: jnp.ones(3),
+            output_spec=NumericArraySpec((2,)),
+            dispatch=dispatch,
+            n_broadcast_samples=6,
+        )
+        operand = (
+            standard_normal()
+            if regime == "broadcast"
+            else NumericRecordBatch(
+                "rows", {"x": jnp.arange(3.0)}, "row", element_spec=RecordSpec(x=())
+            )
+        )
+
+        with workflow_run(seed=0), pytest.raises(ResultSchemaError, match="output"):
+            wrapped(operand)
+
+    @pytest.mark.parametrize(
+        ("returned", "declared"),
+        [(jnp.int32, jnp.float32), (jnp.bool_, jnp.float32), (jnp.float32, jnp.int32)],
+        ids=["integer-for-float", "bool-for-float", "float-for-integer"],
+    )
+    def test_a_returned_dtype_of_another_kind_raises_result_schema_error(self, returned, declared):
+        wrapped = Function(
+            "f", lambda: jnp.ones((), dtype=returned), output_spec=NumericArraySpec((), declared)
+        )
+
+        with pytest.raises(ResultSchemaError, match="dtype"):
+            wrapped()
+        with pytest.raises(ValueError, match="dtype"):
+            wrapped.apply()
+
+    def test_a_returned_dtype_of_the_declared_kind_keeps_the_declaration(self):
+        wrapped = Function(
+            "f",
+            lambda: jnp.ones((), dtype=jnp.float32),
+            output_spec=NumericArraySpec((), jnp.float64),
+        )
+
+        assert wrapped().spec == NumericArraySpec((), jnp.float64)
+
+    def test_a_record_field_of_another_dtype_kind_raises_result_schema_error(self):
+        wrapped = Function(
+            "f",
+            lambda: {"y": jnp.ones((), dtype=jnp.int32)},
+            output_spec=RecordSpec(y=NumericArraySpec((), jnp.float32)),
+        )
+
+        with pytest.raises(ResultSchemaError, match="output/y dtype int32"):
+            wrapped()
+
+    def test_a_batch_of_another_dtype_kind_raises_result_schema_error(self):
+        returned = NumericArrayBatch(
+            "rows", jnp.arange(3, dtype=jnp.int32), "row", element_spec=NumericArraySpec(())
+        )
+        declared = BatchSpec(
+            NumericArraySpec((), jnp.float32), returned.axis_groups, returned.level_names
+        )
+
+        with pytest.raises(ResultSchemaError, match="dtype int32"):
+            Function("f", lambda: returned, output_spec=declared)()
+
+    @pytest.mark.parametrize("dispatch", ["jax", "sequential"])
+    def test_a_lifted_dtype_of_another_kind_raises_result_schema_error(self, dispatch):
+        wrapped = Function(
+            "f",
+            lambda x: jnp.ones((), dtype=jnp.int32),
+            output_spec=NumericArraySpec((), jnp.float32),
+            dispatch=dispatch,
+            n_broadcast_samples=6,
+        )
+
+        with workflow_run(seed=0), pytest.raises(ResultSchemaError, match="dtype"):
+            wrapped(standard_normal())
 
     def test_a_violated_support_raises_result_schema_error(self):
         wrapped = Function(
