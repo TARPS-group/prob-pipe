@@ -165,6 +165,19 @@ class ScoringKernel(NormalKernel, SupportsConditionalLogProb):
         return norm.logpdf(value, self._location(given), self._scale)
 
 
+class NormKernel(NormalKernel, SupportsConditionalLogProb):
+    """``y | beta ~ Normal(‖beta‖, sigma)``, whose location reduces over every axis of ``beta``.
+
+    The scale is the given ``sigma`` when the kernel has that slot, and one
+    otherwise. Called once on a batch of betas it would take the norm of the
+    whole batch, so it scores a batch correctly only when called value by value.
+    """
+
+    def _conditional_log_prob(self, given, value):
+        scale = given["sigma"] if "sigma" in self.given_spec else 1.0
+        return norm.logpdf(value, jnp.linalg.norm(jnp.asarray(given["beta"])), scale)
+
+
 class UnnormalizedKernel(NormalKernel, SupportsConditionalUnnormalizedLogProb):
     """A normal kernel with the log-density of ``K(given, ·)`` up to an additive constant."""
 
@@ -1324,6 +1337,31 @@ class TestJointDensity:
         for index in range(2):
             one = {name: column[index] for name, column in values.items()}
             assert jnp.allclose(scores[index], joint._conditional_log_prob({"sigma": 1.5}, one))
+
+    def test_a_kernel_that_does_not_broadcast_scores_each_value_at_its_own_given(self):
+        joint = _likelihood(NormKernel) * _prior(scale=2.0)
+        y, beta = jnp.array([0.3, -1.0, 2.0]), jnp.array([-0.2, 0.5, 1.0])
+        # log N(y_i; |beta_i|, 1) + log N(beta_i; 0, 2^2), written out.
+        expected = (
+            -0.5 * (y - jnp.abs(beta)) ** 2
+            - 0.5 * (beta / 2.0) ** 2
+            - jnp.log(2.0)
+            - jnp.log(2.0 * jnp.pi)
+        )
+        assert jnp.allclose(joint._log_prob({"y": y, "beta": beta}), expected)
+
+    def test_a_kernel_that_does_not_broadcast_scores_each_value_under_the_given(self):
+        lik = NormKernel("lik", {"beta": SCALAR, "sigma": SCALAR}, OutputSpec(y=SCALAR))
+        y, beta = jnp.array([0.3, 1.2]), jnp.array([-0.2, 0.4])
+        scores = (lik * _prior())._conditional_log_prob({"sigma": 0.5}, {"y": y, "beta": beta})
+        # log N(y_i; |beta_i|, 0.5^2) + log N(beta_i; 0, 1), written out.
+        expected = (
+            -0.5 * ((y - jnp.abs(beta)) / 0.5) ** 2
+            - jnp.log(0.5)
+            - 0.5 * beta**2
+            - jnp.log(2.0 * jnp.pi)
+        )
+        assert jnp.allclose(scores, expected)
 
     def test_a_kernel_on_an_opaque_component_scores_value_by_value(self):
         y = jnp.array([1.0, 2.0, 0.0])

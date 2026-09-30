@@ -266,9 +266,11 @@ class TestWeights:
             ("chain", "draw"),
             element_spec=NumericArraySpec(()),
         )
-        law = EmpiricalDistribution("x", atoms, jnp.array([[1.0, 0.0, 0.0], [0.0, 0.0, 3.0]]))
-        assert np.allclose(law.weights, [0.25, 0.0, 0.0, 0.0, 0.0, 0.75])
-        assert jnp.allclose(law._mean(), 0.25 * 0.0 + 0.75 * 5.0)
+        # The weights of the atoms 0, ..., 5 in row-major order are 1, 2, 0, 0, 0, 3;
+        # in column-major order they would be 1, 0, 2, 0, 0, 3, with mean 19/6.
+        law = EmpiricalDistribution("x", atoms, jnp.array([[1.0, 2.0, 0.0], [0.0, 0.0, 3.0]]))
+        assert np.allclose(law.weights, np.array([1.0, 2.0, 0.0, 0.0, 0.0, 3.0]) / 6.0)
+        assert jnp.allclose(law._mean(), (0.0 * 1.0 + 1.0 * 2.0 + 5.0 * 3.0) / 6.0)
 
     @pytest.mark.parametrize(
         ("weights", "match"),
