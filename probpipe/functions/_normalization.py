@@ -7,10 +7,11 @@ It is not a general normalization layer for all values entering a
 The normalization step runs after call resolution and before broadcast
 planning. It performs value-changing work that the planner should not
 do: converting external distribution objects through the converter
-registry, converting ProbPipe distributions to satisfy concrete
-``Distribution`` hints or distribution capability protocols, and
-unwrapping scalar ``DistributionArray`` inputs when the function expects
-a scalar distribution value.
+registry, converting distributions to satisfy the ``Distribution`` class or
+the distribution capability protocol a parameter names, and unwrapping
+scalar ``DistributionArray`` inputs when the function expects a scalar
+distribution value. A union annotation names what its arms other than
+``None`` name, so ``Normal | None`` converts as ``Normal`` does.
 
 Keeping those conversions here lets broadcast planning remain a pure
 classification step over already-normalized values.
@@ -103,14 +104,14 @@ def normalize_distribution_values(
         if isinstance(value, DistributionArray):
             if (
                 value.batch_shape == ()
-                and not _is_distribution_array_hint(expected)
+                and not any(_is_distribution_array_hint(arm) for arm in _arms(expected))
                 and expected is not Any
             ):
                 out = _binding.replace_input_ref(out, ref, value._flat_component(0))
             continue
 
         if expected is not None:
-            value = _convert_hinted_distribution(value, expected)
+            value = _convert_hinted_distribution(value, expected, label=ref.label)
             out = _binding.replace_input_ref(out, ref, value)
 
         if (
@@ -127,33 +128,69 @@ def normalize_distribution_values(
     return out
 
 
-def _convert_hinted_distribution(value: Any, expected: Any) -> Any:
-    is_dist_subclass = _is_concrete_distribution_hint(expected)
+def _arms(expected: Any) -> tuple[Any, ...]:
+    """The arms of a union annotation other than ``None``, or the annotation itself."""
+    if get_origin(expected) in (Union, UnionType):
+        return tuple(arm for arm in get_args(expected) if arm is not type(None))
+    return (expected,)
 
-    if (
-        is_dist_subclass
-        and converter_registry.is_distribution_type(value)
-        and not isinstance(value, expected)
-    ):
-        return converter_registry.convert(value, expected)
 
-    if (
-        not is_dist_subclass
-        and expected in DISTRIBUTION_HINT_PROTOCOLS
-        and isinstance(value, Distribution)
-        and not isinstance(value, expected)
-    ):
+def _hint_class(arm: Any) -> Any:
+    """The class a parametrized annotation names, or the annotation itself."""
+    origin = getattr(arm, "__origin__", None)
+    return origin if isinstance(origin, type) else arm
+
+
+def _convert_hinted_distribution(value: Any, expected: Any, *, label: str) -> Any:
+    """The argument converted to the distribution class or capability its parameter names.
+
+    *expected* names the distribution classes and capability protocols among its
+    arms, with ``None`` and value types set aside. A distribution of one of them
+    passes unchanged, and any other converts to the single one named.
+
+    Raises
+    ------
+    ApplicabilityError
+        If *value* is a distribution of none of several named classes, which
+        leaves no single conversion target.
+    TypeError
+        If no converter produces the named class.
+    """
+    arms = tuple(arm for arm in _arms(expected) if is_distribution_hint(arm))
+    if not arms or not converter_registry.is_distribution_type(value):
+        return value
+    if any(isinstance(value, _hint_class(arm)) for arm in arms):
+        return value
+    if len(arms) > 1:
+        from ._call import ApplicabilityError
+
+        accepted = " | ".join(getattr(_hint_class(arm), "__name__", repr(arm)) for arm in arms)
+        raise ApplicabilityError(
+            f"parameter {label!r} accepts {accepted}, and got a {type(value).__name__}, which is "
+            f"none of them. A union of several distribution classes names no single conversion "
+            f"target: pass a law of one of those classes, or annotate the parameter with the "
+            f"class to convert to"
+        )
+    (arm,) = arms
+    if _is_concrete_distribution_hint(arm):
+        target = _hint_class(arm)
+        if not isinstance(value, Distribution) and issubclass(NumericRecordDistribution, target):
+            # A backend object enters ProbPipe as the representation the registry
+            # converts it to, which is an instance of the class the parameter names.
+            target = NumericRecordDistribution
+        return converter_registry.convert(value, target)
+    if arm in DISTRIBUTION_HINT_PROTOCOLS and isinstance(value, Distribution):
         try:
-            return converter_registry.convert(value, expected)
+            return converter_registry.convert(value, arm)
         except (TypeError, AttributeError):
             return value
-
     return value
 
 
 def _is_concrete_distribution_hint(expected: Any) -> bool:
     try:
-        return isinstance(expected, type) and issubclass(expected, Distribution)
+        expected_class = _hint_class(expected)
+        return isinstance(expected_class, type) and issubclass(expected_class, Distribution)
     except TypeError:
         return False
 

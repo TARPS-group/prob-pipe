@@ -141,6 +141,25 @@ class TestNormalizeDistributionValues:
         assert isinstance(normalized["dist"], Normal)
         assert float(normalized["dist"].loc) == 3.0
 
+    @pytest.mark.parametrize(
+        "hint", [DistributionArray, DistributionArray | None], ids=["class", "optional"]
+    )
+    def test_zero_dimensional_distribution_array_stays_whole_where_named(self, hint):
+        da = DistributionArray.from_batched_params(
+            Normal,
+            batch_shape=(),
+            loc=jnp.asarray(3.0),
+            scale=jnp.asarray(1.0),
+            name="zero_d",
+        )
+
+        normalized = normalize_distribution_values(
+            values={"dist": da},
+            signature_info=_signature_info(("dist",), {"dist": hint}),
+        )
+
+        assert normalized["dist"] is da
+
     def test_size_one_distribution_array_remains_a_sweep(self):
         da = DistributionArray.from_batched_params(
             Normal,
