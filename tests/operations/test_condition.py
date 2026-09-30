@@ -6,9 +6,10 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
-from probpipe import Record, RecordSpec
+from probpipe import MultivariateNormal, Record, RecordSpec
 from probpipe.core._dispatch import Feasibility, ResolutionError, UnaryDispatchRegistry
 from probpipe.core._specs import InputSpec, OutputSpec
 from probpipe.distributions._capabilities import (
@@ -27,6 +28,7 @@ from probpipe.distributions._conditional import (
     ConditionalDistributionSpec,
 )
 from probpipe.distributions._distribution import Distribution, DistributionSpec
+from probpipe.distributions._empirical import EmpiricalDistribution
 from probpipe.operations._condition import (
     _INFERENCE_METHOD_CONTROLS,
     InferenceMethod,
@@ -34,7 +36,9 @@ from probpipe.operations._condition import (
     condition_on,
     inference_method_registry,
 )
+from probpipe.operations._convert import convert
 from probpipe.operations._operation import ApplicabilityError, _RegistryRoute
+from probpipe.operations._sample import sample
 
 from ._laws import REAL, Amortized, Bare, ExactPosterior, Gaussian, Kernel, Unnormalized
 
@@ -541,3 +545,174 @@ class TestTheOperation:
         joint = Kernel("y", ("beta",)) * Gaussian("beta")
         conditional = condition_on(joint, {"beta": 0.5})
         assert conditional.event_spec.components.keys() == {"y"}
+
+
+# ---------------------------------------------------------------------------
+# End to end: condition_on returns a normalized law for each kind of model
+# ---------------------------------------------------------------------------
+
+_MCMC = {"num_results": 60, "num_warmup": 60, "random_seed": 0}
+
+
+def _logistic_joint():
+    from probpipe.families import BernoulliFamily, glm_likelihood
+
+    X = jnp.array([[1.0, 0.5], [1.0, -0.3], [1.0, 1.2], [1.0, -1.1]])
+    likelihood = glm_likelihood("y", BernoulliFamily(), X=X)
+    return likelihood * MultivariateNormal("beta", jnp.zeros(2), jnp.eye(2))
+
+
+def _unnormalized_pair():
+    """The unnormalized law of ``(a, b)`` with ``b | a ~ N(a, 1)`` and ``a ~ N(0, 1)``."""
+    from probpipe import NumericArraySpec
+    from probpipe.families import UnnormalizedDistribution
+
+    return UnnormalizedDistribution(
+        "pair",
+        lambda v: -0.5 * (jnp.asarray(v["a"]) ** 2 + (jnp.asarray(v["b"]) - v["a"]) ** 2),
+        OutputSpec(RecordSpec(a=NumericArraySpec(()), b=NumericArraySpec(()))),
+    )
+
+
+def _unnormalized_vector():
+    from probpipe import NumericArraySpec
+    from probpipe.families import UnnormalizedDistribution
+
+    return UnnormalizedDistribution(
+        "u", lambda x: -0.5 * jnp.sum((x - 1.0) ** 2), OutputSpec(x=NumericArraySpec((2,)))
+    )
+
+
+class TestEndToEnd:
+    def test_a_normal_kernel_bound_to_a_value_needs_no_inference(self):
+        from probpipe.families import GaussianFamily, glm_likelihood
+
+        X = jnp.array([[1.0, 0.5], [1.0, -0.3], [1.0, 1.2]])
+        beta = jnp.array([0.2, -0.1])
+        likelihood = glm_likelihood("y", GaussianFamily(), X=X, dispersion=1.0)
+        report = condition_on.check(likelihood, {"beta": beta})
+        assert (report.route, report.method, report.exact) == ("curry", None, True)
+        law = condition_on(likelihood, {"beta": beta})
+        assert _is_normalized(law)
+        np.testing.assert_allclose(law._mean(), X @ beta, rtol=1e-6)
+
+    def test_a_joint_conditioned_on_its_observation_is_normalized_by_a_method(self):
+        joint, y = _logistic_joint(), {"y": jnp.array([1, 0, 1, 0])}
+        view = condition_on.with_options(**_MCMC)
+        report = view.check(joint, y)
+        assert (report.route, report.method, report.exact) == ("bayes", "blackjax_nuts", False)
+        posterior = view(joint, y)
+        assert _is_normalized(posterior)
+        assert tuple(posterior.event_spec.components) == ("beta",)
+
+    def test_an_unnormalized_distribution_conditioned_on_a_field_is_normalized(self):
+        view = condition_on.with_options(**_MCMC)
+        posterior = view(_unnormalized_pair(), {"b": 1.0})
+        assert _is_normalized(posterior)
+        assert tuple(posterior.event_spec.components) == ("a",)
+        assert view.check(_unnormalized_pair(), {"b": 1.0}).method == "blackjax_nuts"
+
+    def test_an_unnormalized_distribution_samples_through_a_method(self):
+        view = sample.with_options(**_MCMC)
+        report = view.check(_unnormalized_vector())
+        assert (report.route, report.method, report.exact) == ("normalize", "blackjax_nuts", False)
+        assert jnp.shape(jnp.asarray(view(_unnormalized_vector()).value)) == (2,)
+        assert view(_unnormalized_vector(), sample_shape=(5,)).batch_shape == (5,)
+
+    def test_a_law_that_samples_does_not_normalize(self):
+        assert sample.check(Gaussian("g")).route == "exact"
+        with pytest.raises(ResolutionError):
+            sample(Bare("b"))
+
+    def test_an_unnormalized_distribution_converts_through_a_method(self):
+        view = convert.with_options(**_MCMC)
+        law = _unnormalized_vector()
+        assert view.check(law, EmpiricalDistribution).route == "normalize"
+        empirical = view(law, EmpiricalDistribution)
+        assert isinstance(empirical, EmpiricalDistribution)
+        assert tuple(empirical.event_spec.components) == ("x",)
+        assert isinstance(view(law, SupportsSampling), SupportsSampling)
+
+    def test_a_pymc_model_with_a_covariate_bound_and_its_observation_conditioned(self):
+        pm = pytest.importorskip("pymc")
+        from probpipe.families import PyMCModel
+
+        def regression(x=None, y=None):
+            x = np.zeros(3) if x is None else np.asarray(x)
+            with pm.Model() as model:
+                beta = pm.Normal("beta", 0, 1)
+                sigma = pm.HalfNormal("sigma", 1)
+                pm.Normal("y", beta * x, sigma, observed=y)
+            return model
+
+        kernel = PyMCModel("regression", regression)
+        given = {"x": np.linspace(0.0, 1.0, 6), "y": np.linspace(0.0, 1.0, 6)}
+        view = condition_on.with_options(num_results=30, num_warmup=30, num_chains=1)
+        report = view.check(kernel, given)
+        assert report.route == "bayes"
+        assert report.method in ("nutpie_nuts", "pymc_nuts")
+        posterior = view(kernel, given)
+        assert _is_normalized(posterior)
+        assert set(posterior.event_spec.components) == {"beta", "sigma"}
+
+    def test_a_stan_model_bound_to_its_data_is_normalized_by_a_stan_method(self, tmp_path):
+        from probpipe.families import StanModel
+
+        program = tmp_path / "normal_mean.stan"
+        program.write_text(
+            "data { int N; vector[N] y; } parameters { real mu; } "
+            "model { mu ~ normal(0, 1); y ~ normal(mu, 1); }"
+        )
+        report = condition_on.check(StanModel("mean", str(program)), {"N": 3, "y": [1.0, 2.0, 3.0]})
+        assert report.route == "curry"
+        stan_methods = {"nutpie_nuts", "cmdstan_nuts"} & set(
+            inference_method_registry.list_methods()
+        )
+        if not stan_methods:
+            pytest.skip("no Stan method is registered here")
+        assert report.method in stan_methods | {"blackjax_rwmh"}
+
+    @pytest.mark.usefixtures("_stan_toolchain")
+    def test_a_stan_posterior_is_sampled_by_a_stan_method(self, tmp_path):
+        from probpipe.families import StanModel
+
+        program = tmp_path / "normal_mean.stan"
+        program.write_text(
+            "data { int N; vector[N] y; } parameters { real mu; } "
+            "model { mu ~ normal(0, 1); y ~ normal(mu, 1); }"
+        )
+        view = condition_on.with_options(num_results=30, num_warmup=30, num_chains=1)
+        posterior = view(StanModel("mean", str(program)), {"N": 3, "y": [1.0, 2.0, 3.0]})
+        assert _is_normalized(posterior)
+
+    def test_unnormalized_returns_the_exact_stage_of_a_joint(self):
+        target = condition_on.with_options(method="unnormalized")(
+            _logistic_joint(), {"y": jnp.array([1, 0, 1, 0])}
+        )
+        assert isinstance(target, _UnnormalizedConditional)
+        assert not _is_normalized(target)
+        assert tuple(target.event_spec.components) == ("beta",)
+
+    def test_exact_only_raises_for_a_joint_naming_the_unnormalized_method(self):
+        with pytest.raises(ResolutionError, match='method="unnormalized"'):
+            condition_on.with_options(exact_only=True)(
+                _logistic_joint(), {"y": jnp.array([1, 0, 1, 0])}
+            )
+
+    @pytest.mark.pending(
+        reason="the engine keeps the selected route's record as a parent of its own",
+        raises=AssertionError,
+    )
+    def test_provenance_names_both_stages(self, full_provenance_mode):
+        from probpipe import provenance_ancestors
+
+        posterior = condition_on.with_options(**_MCMC)(
+            _logistic_joint(), {"y": jnp.array([1, 0, 1, 0])}
+        )
+        operations = {
+            ancestor.parent.provenance.operation
+            for ancestor in provenance_ancestors(posterior)
+            if getattr(ancestor, "parent", None) is not None
+            and ancestor.parent.provenance is not None
+        }
+        assert {"blackjax_nuts", "condition_on"} <= operations

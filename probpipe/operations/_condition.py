@@ -62,6 +62,7 @@ from ..core._dispatch import (
     UnaryDispatchMethod,
     UnaryDispatchRegistry,
 )
+from ..core._empirical import RecordEmpiricalDistribution
 from ..core._record_spec import RecordSpec
 from ..core._spec_base import TermSpec
 from ..core._specs import InputSpec, OutputSpec, _components_record
@@ -80,7 +81,9 @@ from ..distributions._capabilities import (
 )
 from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
 from ..distributions._distribution import Distribution, DistributionSpec
+from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import SupportsFactors
+from ._convert import convert
 from ._operation import (
     BoundCall,
     CallCheck,
@@ -89,8 +92,10 @@ from ._operation import (
     _Candidate,
     _CheckedRoute,
     _RegistryRoute,
+    _workflow_draws,
     operation_registry,
 )
+from ._sample import _record_batch, _sample_result, _sample_shape, sample
 
 __all__ = ["InferenceMethod", "condition_on", "inference_method_registry"]
 
@@ -1013,4 +1018,125 @@ _EXACT_CONDITIONING = _ExactStage(
     compute=_condition_exactly,
     exact=_always,
     normalized=_always,
+)
+
+
+# ---------------------------------------------------------------------------
+# The draws and conversions of an unnormalized law
+# ---------------------------------------------------------------------------
+
+
+class _NormalizingThen(_RegistryRoute):
+    """A route of ``sample`` or ``convert`` that normalizes an unnormalized law, then answers.
+
+    The law is the target of a method the inference-method registry selects,
+    as in ``condition_on``'s normalization stage, and the call is answered on
+    the normalized result. The route's exactness is the selected method's, and
+    its budgets are the parameters of the registered methods.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        *,
+        admits: Callable[[BoundCall], Feasibility],
+        answer: Callable[[BoundCall, Any], Any],
+    ) -> None:
+        super().__init__(name, registry=inference_method_registry, controls=_NORMALIZATION_CONTROLS)
+        self._admits = admits
+        self._answer = answer
+
+    @property
+    def condition(self) -> str:
+        """The law is unnormalized, the call is admitted, and a registered method applies."""
+        return (
+            f"The law is unnormalized, and a method the registry selects among "
+            f"{', '.join(self.registry.list_methods()) or 'none'} normalizes it. "
+            f"{_guard_condition(self._admits)}"
+        )
+
+    def probe(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Feasibility:
+        """Whether the law is unnormalized and admitted, then the registry's report for it."""
+        law = call.operands["d"]
+        if not isinstance(law, Distribution) or _is_normalized(law):
+            return Feasibility(False, f"route {self.name!r} declined: the law is normalized")
+        admitted = self._admits(call)
+        if admitted.feasible is not True:
+            return admitted
+        return self.registry.check(law, method=method, exact_only=exact_only, **self.budgets(call))
+
+    def run(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Any:
+        """The answer on the law the selected method returns."""
+        normalized = self.registry.execute(
+            call.operands["d"], method=method, exact_only=exact_only, **self.budgets(call)
+        )
+        return self._answer(call, normalized)
+
+
+def _every_sample_shape(call: BoundCall) -> Feasibility:
+    """Every sample shape is admitted."""
+    return Feasibility(True)
+
+
+def _declared_as_source(call: BoundCall, law: Any) -> Any:
+    """The normalized *law* under the source's event declaration.
+
+    A law that declares the source's event is returned as it is; otherwise its
+    atoms and weights form an ``EmpiricalDistribution`` under the source's
+    declaration, since a posterior over a whole-term event draws a one-field
+    record of it.
+    """
+    source = call.operands["d"]
+    if law.event_spec == source.event_spec:
+        return law
+    return EmpiricalDistribution(
+        source.name, law.draws(), law.weights, event_spec=source.event_spec
+    )
+
+
+def _draws_of(call: BoundCall, law: Any) -> Any:
+    """Draws of the normalized *law*, as ``sample`` draws them from a law that samples."""
+    draws = _workflow_draws(
+        _declared_as_source(call, law),
+        _sample_shape(call.operands["sample_shape"]),
+        operation_kind="sample",
+        execution_mode="sampled",
+    )
+    result = _sample_result(call.operands["d"].spec, call.operands["sample_shape"])
+    return _record_batch(draws, call, result)
+
+
+def _an_empirical_target(call: BoundCall) -> Feasibility:
+    """The target is an empirical class, or a capability protocol an empirical law claims."""
+    target = call.operands["target"]
+    if issubclass(EmpiricalDistribution, target) or issubclass(RecordEmpiricalDistribution, target):
+        return Feasibility(True)
+    return Feasibility(
+        False, f"route 'normalize' declined: an empirical law does not satisfy {target.__name__}"
+    )
+
+
+def _empirical_of(call: BoundCall, law: Any) -> Any:
+    """The normalized *law* at the target, carrying the source's event declaration.
+
+    Raises
+    ------
+    TypeError
+        If the normalized law under the source's declaration is not the target.
+    """
+    source, target = call.operands["d"], call.operands["target"]
+    for candidate in (law, _declared_as_source(call, law)):
+        if isinstance(candidate, target) and candidate.event_spec == source.event_spec:
+            return candidate
+    empirical = EmpiricalDistribution(
+        source.name, law.draws(), law.weights, event_spec=source.event_spec
+    )
+    if not isinstance(empirical, target):
+        raise TypeError(f"the normalized law of {source.name!r} is not a {target.__name__}")
+    return empirical
+
+
+sample.register_route(_NormalizingThen("normalize", admits=_every_sample_shape, answer=_draws_of))
+convert.register_route(
+    _NormalizingThen("normalize", admits=_an_empirical_target, answer=_empirical_of)
 )
