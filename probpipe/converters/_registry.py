@@ -8,8 +8,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Literal
 
-from ..functions import _broker as _workflow_broker
-from ..functions import _descendants as _workflow_descendants
+from ..functions import _broker, _descendants
 
 _ConversionExecutionMode = Literal[
     "exact",
@@ -68,7 +67,7 @@ def _resolve_conversion_key(
     key: Any | None,
     plan: _ConversionExecutionPlan,
     *,
-    captured: _workflow_descendants.CapturedStochasticConsumer | None = None,
+    captured: _descendants.CapturedStochasticConsumer | None = None,
 ) -> Any:
     """Preserve a caller key or claim the singleton conversion event."""
     if key is not None:
@@ -77,9 +76,9 @@ def _resolve_conversion_key(
         raise TypeError("a non-sampling conversion cannot request an automatic key")
     if not plan.automatic_key_certified:
         raise TypeError("an uncertified converter cannot request an automatic key")
-    return _workflow_broker._resolve_automatic_key(
+    return _broker._resolve_automatic_key(
         None,
-        _workflow_broker._singleton_effect_plan(
+        _broker._singleton_effect_plan(
             operation_kind="conversion",
             execution_mode=plan.execution_mode,
             sample_shape=plan.sample_shape,
@@ -101,9 +100,9 @@ def _sample_probpipe_conversion_source(
         raise RuntimeError("a sampled conversion requires a sample shape")
     if key is not None:
         return source._sample(key, sample_shape)
-    captured = _workflow_descendants.capture_stochastic_consumer(source)
+    captured = _descendants.capture_stochastic_consumer(source)
     resolved_key = _resolve_conversion_key(None, plan, captured=captured)
-    return _workflow_descendants.sample_captured_consumer(
+    return _descendants.sample_captured_consumer(
         captured,
         resolved_key,
         sample_shape,
@@ -231,7 +230,7 @@ class ConverterRegistry:
 
         Raises ``TypeError`` if no converter can handle the pair.
         """
-        with _workflow_broker._managed_stochastic_scope():
+        with _broker._managed_stochastic_scope():
             for conv in self._find_converters(type(source)):
                 info = conv.check(source, target_type)
                 if not info.feasible:

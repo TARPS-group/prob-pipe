@@ -23,8 +23,7 @@ from probpipe import (
     workflow_run,
 )
 from probpipe.core.constraints import real
-from probpipe.functions import _context as _workflow_context
-from probpipe.functions import _plan as _workflow_plan
+from probpipe.functions import _context, _plan
 
 
 class _RecordingNormal(Normal):
@@ -81,8 +80,8 @@ class TestSequentialLiftingWorkflowRun:
 
         with (
             patch(
-                "probpipe.functions._function._workflow_plan.build_stochastic_plan",
-                wraps=_workflow_plan.build_stochastic_plan,
+                "probpipe.functions._function._plan.build_stochastic_plan",
+                wraps=_plan.build_stochastic_plan,
             ) as build_plan,
             workflow_run(seed=7),
         ):
@@ -125,7 +124,7 @@ class TestSequentialLiftingWorkflowRun:
         first = _RecordingNormal(first_calls, name="first")
         second = _RecordingNormal(second_calls, name="second")
         claims = []
-        original_key_for = _workflow_context._WorkflowInvocation.key_for
+        original_key_for = _context._WorkflowInvocation.key_for
 
         def recording_key_for(
             invocation,
@@ -144,7 +143,7 @@ class TestSequentialLiftingWorkflowRun:
 
         with (
             patch.object(
-                _workflow_context._WorkflowInvocation,
+                _context._WorkflowInvocation,
                 "key_for",
                 new=recording_key_for,
             ),

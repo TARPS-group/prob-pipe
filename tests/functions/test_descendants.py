@@ -24,8 +24,7 @@ from probpipe import (
     TransformedDistribution,
     workflow_run,
 )
-from probpipe.functions import _call as _workflow_call
-from probpipe.functions import _descendants as _workflow_descendants
+from probpipe.functions import _call, _descendants
 from probpipe.functions._plan import build_broadcast_plan, build_stochastic_plan
 
 
@@ -33,7 +32,7 @@ def _stochastic_plan(values, n_broadcast_samples=16):
     signature = inspect.Signature(
         [inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in values]
     )
-    signature_info = _workflow_call.make_signature_info_from_signature(signature)
+    signature_info = _call.make_signature_info_from_signature(signature)
     broadcast_plan = build_broadcast_plan(values=values, signature_info=signature_info)
     return build_stochastic_plan(values, broadcast_plan, n_broadcast_samples)
 
@@ -75,7 +74,7 @@ def test_approved_bijectors_capture_root_and_live_forward(bijector):
     base = Normal(loc=0.0, scale=1.0, name="base")
     descendant = TransformedDistribution("descendant", base, bijector)
 
-    captured = _workflow_descendants.capture_stochastic_consumer(descendant)
+    captured = _descendants.capture_stochastic_consumer(descendant)
     key = jax.random.PRNGKey(9)
     root_samples = base._sample(key, (11,))
 
@@ -121,7 +120,7 @@ def test_captured_bijector_snapshot_does_not_drift_after_original_mutation(
         Normal("base", 0.0, 1.0),
         bijector,
     )
-    captured = _workflow_descendants.capture_stochastic_consumer(descendant)
+    captured = _descendants.capture_stochastic_consumer(descendant)
     descriptor = captured.descendant_descriptor
 
     mutate(bijector)
@@ -143,13 +142,13 @@ def test_bijector_snapshot_failure_and_semantic_drift_fail_closed():
         patch.object(tfb.Shift, "copy", side_effect=RuntimeError("copy failed")),
         pytest.raises(TypeError, match="snapshot"),
     ):
-        _workflow_descendants.capture_stochastic_consumer(descendant)
+        _descendants.capture_stochastic_consumer(descendant)
 
     with (
         patch.object(tfb.Shift, "copy", return_value=tfb.Shift(2.0)),
         pytest.raises(TypeError, match="changed its semantic descriptor"),
     ):
-        _workflow_descendants.capture_stochastic_consumer(descendant)
+        _descendants.capture_stochastic_consumer(descendant)
 
 
 def test_plan_capture_memoizes_repeated_descendant_identity():
@@ -157,9 +156,9 @@ def test_plan_capture_memoizes_repeated_descendant_identity():
     descendant = TransformedDistribution("descendant", base, tfb.Shift(1.0))
 
     with patch.object(
-        _workflow_descendants,
+        _descendants,
         "_capture_bijector",
-        wraps=_workflow_descendants._capture_bijector,
+        wraps=_descendants._capture_bijector,
     ) as capture_bijector:
         plan = _stochastic_plan({"first": descendant, "second": descendant})
 
@@ -176,9 +175,9 @@ def test_plan_capture_memoizes_shared_transformed_ancestor():
     right = TransformedDistribution("right", shared, tfb.Scale(2.0))
 
     with patch.object(
-        _workflow_descendants,
+        _descendants,
         "_capture_bijector",
-        wraps=_workflow_descendants._capture_bijector,
+        wraps=_descendants._capture_bijector,
     ) as capture_bijector:
         _stochastic_plan({"left": left, "right": right})
 
@@ -192,9 +191,9 @@ def test_plan_capture_memoizes_shared_bijector_identity():
     right = TransformedDistribution("right", Normal("right", 0.0, 1.0), shared_bijector)
 
     with patch.object(
-        _workflow_descendants,
+        _descendants,
         "_capture_bijector",
-        wraps=_workflow_descendants._capture_bijector,
+        wraps=_descendants._capture_bijector,
     ) as capture_bijector:
         _stochastic_plan({"left": left, "right": right})
 
@@ -209,9 +208,9 @@ def test_plan_capture_keeps_equal_distinct_bijectors_independent():
     right = TransformedDistribution("right", Normal("right", 0.0, 1.0), right_bijector)
 
     with patch.object(
-        _workflow_descendants,
+        _descendants,
         "_capture_bijector",
-        wraps=_workflow_descendants._capture_bijector,
+        wraps=_descendants._capture_bijector,
     ) as capture_bijector:
         _stochastic_plan({"left": left, "right": right})
 
@@ -228,9 +227,9 @@ def test_capture_memo_is_scoped_to_one_plan_build():
     )
 
     with patch.object(
-        _workflow_descendants,
+        _descendants,
         "_capture_bijector",
-        wraps=_workflow_descendants._capture_bijector,
+        wraps=_descendants._capture_bijector,
     ) as capture_bijector:
         _stochastic_plan({"value": descendant})
         _stochastic_plan({"value": descendant})
@@ -244,8 +243,8 @@ def test_capture_session_does_not_cache_failed_bijector_capture():
         Normal("base", 0.0, 1.0),
         tfb.Shift(1.0),
     )
-    session = _workflow_descendants._StochasticCaptureSession()
-    capture_bijector = _workflow_descendants._capture_bijector
+    session = _descendants._StochasticCaptureSession()
+    capture_bijector = _descendants._capture_bijector
     call_count = 0
 
     def flaky_capture(bijector, *, active_bijectors):
@@ -256,7 +255,7 @@ def test_capture_session_does_not_cache_failed_bijector_capture():
         return capture_bijector(bijector, active_bijectors=active_bijectors)
 
     with patch.object(
-        _workflow_descendants,
+        _descendants,
         "_capture_bijector",
         side_effect=flaky_capture,
     ):
@@ -269,7 +268,7 @@ def test_capture_session_does_not_cache_failed_bijector_capture():
 
 
 def test_capture_session_rejects_corrupted_identity_cache_entries():
-    session = _workflow_descendants._StochasticCaptureSession()
+    session = _descendants._StochasticCaptureSession()
     cached_source = Normal("cached", 0.0, 1.0)
     requested_source = Normal("requested", 0.0, 1.0)
     captured_source = session.capture_consumer(cached_source)
@@ -352,18 +351,18 @@ def test_golden_shift_descriptor_and_digest_are_hard_coded():
 
     assert descriptor == expected
     assert (
-        _workflow_descendants.descriptor_digest(expected)
+        _descendants.descriptor_digest(expected)
         == "e63fc9be717837f2c266b5b1a5bf74fbec6808a45e88f8611b90fbfaffb9be29"
     )
 
 
 def test_semantic_value_encoding_distinguishes_null_bool_scalar_and_rank_zero_array():
     encoded = {
-        _workflow_descendants.encode_semantic_value(None),
-        _workflow_descendants.encode_semantic_value(False),
-        _workflow_descendants.encode_semantic_value(0.0),
-        _workflow_descendants.encode_semantic_value(np.float32(0.0)),
-        _workflow_descendants.encode_semantic_value(jnp.asarray(0.0, dtype=jnp.float32)),
+        _descendants.encode_semantic_value(None),
+        _descendants.encode_semantic_value(False),
+        _descendants.encode_semantic_value(0.0),
+        _descendants.encode_semantic_value(np.float32(0.0)),
+        _descendants.encode_semantic_value(jnp.asarray(0.0, dtype=jnp.float32)),
     }
 
     assert len(encoded) == 5
@@ -372,7 +371,7 @@ def test_semantic_value_encoding_distinguishes_null_bool_scalar_and_rank_zero_ar
 def test_array_state_is_c_contiguous_little_endian_and_complete():
     value = np.asarray([[1, 2], [3, 4]], dtype=">i4")[:, ::-1]
 
-    encoded = _workflow_descendants.encode_semantic_value(value)
+    encoded = _descendants.encode_semantic_value(value)
 
     assert encoded == (
         "array",
@@ -388,15 +387,9 @@ def test_names_are_excluded_but_semantic_parameters_are_not():
     renamed = TransformedDistribution("second", base, tfb.Shift(1.0, name="second"))
     changed = TransformedDistribution("first", base, tfb.Shift(2.0, name="first"))
 
-    first_descriptor = _workflow_descendants.capture_stochastic_consumer(
-        first
-    ).descendant_descriptor
-    renamed_descriptor = _workflow_descendants.capture_stochastic_consumer(
-        renamed
-    ).descendant_descriptor
-    changed_descriptor = _workflow_descendants.capture_stochastic_consumer(
-        changed
-    ).descendant_descriptor
+    first_descriptor = _descendants.capture_stochastic_consumer(first).descendant_descriptor
+    renamed_descriptor = _descendants.capture_stochastic_consumer(renamed).descendant_descriptor
+    changed_descriptor = _descendants.capture_stochastic_consumer(changed).descendant_descriptor
 
     assert first_descriptor == renamed_descriptor
     assert first_descriptor != changed_descriptor
@@ -413,11 +406,9 @@ def test_nested_transforms_and_chain_child_order_are_structural():
         "reversed_chain", base, tfb.Chain([tfb.Shift(2.0), tfb.Exp()])
     )
 
-    nested_capture = _workflow_descendants.capture_stochastic_consumer(nested)
-    first_descriptor = _workflow_descendants.capture_stochastic_consumer(
-        first_chain
-    ).descendant_descriptor
-    reversed_descriptor = _workflow_descendants.capture_stochastic_consumer(
+    nested_capture = _descendants.capture_stochastic_consumer(nested)
+    first_descriptor = _descendants.capture_stochastic_consumer(first_chain).descendant_descriptor
+    reversed_descriptor = _descendants.capture_stochastic_consumer(
         reversed_chain
     ).descendant_descriptor
 
@@ -458,7 +449,7 @@ def test_captured_record_projection_does_not_reread_the_live_view_path():
         y=Normal("y", 1.0, 1.0),
     )
     view = root["x"]
-    captured = _workflow_descendants.capture_stochastic_consumer(view)
+    captured = _descendants.capture_stochastic_consumer(view)
     root_sample = root._sample(jax.random.key(13), ())
 
     object.__setattr__(view, "_key", "y")
@@ -504,7 +495,7 @@ def test_unsupported_bijector_types_fail_closed(make_bad, message):
     descendant = make_bad(Normal(loc=0.0, scale=1.0, name="base"))
 
     with pytest.raises(TypeError, match=message):
-        _workflow_descendants.capture_stochastic_consumer(descendant)
+        _descendants.capture_stochastic_consumer(descendant)
 
 
 def test_instance_forward_override_fails_closed():
@@ -513,7 +504,7 @@ def test_instance_forward_override_fails_closed():
     descendant = TransformedDistribution("descendant", Normal("base", 0.0, 1.0), bijector)
 
     with pytest.raises(TypeError, match="instance method/property overrides"):
-        _workflow_descendants.capture_stochastic_consumer(descendant)
+        _descendants.capture_stochastic_consumer(descendant)
 
 
 def test_transformed_subclass_and_instance_sampling_override_fail_closed():
@@ -527,9 +518,9 @@ def test_transformed_subclass_and_instance_sampling_override_fail_closed():
     object.__setattr__(overridden, "_sample", lambda key, sample_shape=(): 0.0)
 
     with pytest.raises(TypeError, match="rejects TransformedDistribution subclasses"):
-        _workflow_descendants.capture_stochastic_consumer(subclassed)
+        _descendants.capture_stochastic_consumer(subclassed)
     with pytest.raises(TypeError, match="instance method/property overrides"):
-        _workflow_descendants.capture_stochastic_consumer(overridden)
+        _descendants.capture_stochastic_consumer(overridden)
 
 
 def test_nonzero_forward_event_rank_fails_closed():
@@ -538,7 +529,7 @@ def test_nonzero_forward_event_rank_fails_closed():
     descendant = TransformedDistribution("descendant", Normal("base", 0.0, 1.0), bijector)
 
     with pytest.raises(TypeError, match="forward_min_event_ndims == 0"):
-        _workflow_descendants.capture_stochastic_consumer(descendant)
+        _descendants.capture_stochastic_consumer(descendant)
 
 
 @pytest.mark.parametrize("event_rank", [False, 0.5, "0"])
@@ -548,7 +539,7 @@ def test_non_integer_forward_event_rank_fails_closed(event_rank):
     descendant = TransformedDistribution("descendant", Normal("base", 0.0, 1.0), bijector)
 
     with pytest.raises(TypeError, match="concrete non-boolean integer"):
-        _workflow_descendants.capture_stochastic_consumer(descendant)
+        _descendants.capture_stochastic_consumer(descendant)
 
 
 def test_unencodable_semantic_state_fails_closed():
@@ -557,7 +548,7 @@ def test_unencodable_semantic_state_fails_closed():
     descendant = TransformedDistribution("descendant", Normal("base", 0.0, 1.0), bijector)
 
     with pytest.raises(TypeError, match="semantic state"):
-        _workflow_descendants.capture_stochastic_consumer(descendant)
+        _descendants.capture_stochastic_consumer(descendant)
 
 
 def test_cyclic_descendant_and_chain_graphs_fail_closed():
@@ -566,13 +557,13 @@ def test_cyclic_descendant_and_chain_graphs_fail_closed():
     object.__setattr__(descendant, "_base", descendant)
 
     with pytest.raises(TypeError, match="Cyclic TransformedDistribution"):
-        _workflow_descendants.capture_stochastic_consumer(descendant)
+        _descendants.capture_stochastic_consumer(descendant)
 
     chain = tfb.Chain([tfb.Exp()])
     cyclic_chain_descendant = TransformedDistribution("cyclic_chain_descendant", base, chain)
     object.__setattr__(chain, "_bijectors", (chain,))
     with pytest.raises(TypeError, match="Cyclic TFP Chain"):
-        _workflow_descendants.capture_stochastic_consumer(cyclic_chain_descendant)
+        _descendants.capture_stochastic_consumer(cyclic_chain_descendant)
 
 
 @pytest.mark.parametrize("cycle_kind", ["self", "pair"])
@@ -590,7 +581,7 @@ def test_cyclic_record_view_graphs_fail_closed(cycle_kind):
         object.__setattr__(second, "_parent", first)
 
     with pytest.raises(TypeError, match="Cyclic record distribution view"):
-        _workflow_descendants.capture_stochastic_consumer(first)
+        _descendants.capture_stochastic_consumer(first)
 
 
 def test_known_unapproved_record_wrappers_fail_closed():
@@ -810,10 +801,10 @@ def test_elementwise_transform_of_vector_event_matches_direct_sampling():
     calls = []
     root = _RecordingMultivariateNormal(calls)
     descendant = TransformedDistribution("descendant", root, tfb.Exp())
-    captured = _workflow_descendants.capture_stochastic_consumer(descendant)
+    captured = _descendants.capture_stochastic_consumer(descendant)
     key = jax.random.key(43)
 
-    actual = _workflow_descendants.sample_captured_consumer(captured, key, (9,))
+    actual = _descendants.sample_captured_consumer(captured, key, (9,))
     expected = descendant._sample(key, (9,))
 
     assert [shape for _key, shape in calls] == [(9,)]

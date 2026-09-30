@@ -11,7 +11,7 @@ from threading import Event, Lock
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from ..custom_types import PRNGKey
-from . import _context as _workflow_context
+from . import _context
 from ._rng import _RandomEventPath, _validate_random_event_value
 
 if TYPE_CHECKING:
@@ -122,7 +122,7 @@ class _ManagedUnitClaimState:
     """Operational retry state for one canonical managed unit."""
 
     frame: ManagedUnitFrame
-    child_invocations: list[_workflow_context._WorkflowInvocation] = field(default_factory=list)
+    child_invocations: list[_context._WorkflowInvocation] = field(default_factory=list)
     active_attempt: bytes | None = None
     active_transport: Literal["local", "remote"] | None = None
     active_parent_occurrence_path: _RandomEventPath | None = None
@@ -150,7 +150,7 @@ class _ManagedAttemptContext:
     parent_broker: Any
     frame: ManagedUnitFrame
     attempt: ManagedAttemptState
-    workflow_frame: _workflow_context._WorkflowFrame
+    workflow_frame: _context._WorkflowFrame
     next_child_ordinal: int = 0
     claimed_effects_by_identity: dict[tuple[Any, ...], ManagedEffectClaim] = field(
         default_factory=dict
@@ -159,7 +159,7 @@ class _ManagedAttemptContext:
         default_factory=dict
     )
 
-    def claim_child_invocation(self) -> _workflow_context._WorkflowInvocation:
+    def claim_child_invocation(self) -> _context._WorkflowInvocation:
         """Claim or retry the next child occurrence in canonical order."""
         ordinal = self.next_child_ordinal
         self.next_child_ordinal += 1
@@ -171,17 +171,17 @@ class _ManagedAttemptContext:
 
     def claim_scoped_child_invocation(
         self,
-        workflow_frame: _workflow_context._WorkflowFrame,
+        workflow_frame: _context._WorkflowFrame,
         occurrence_kind: _OccurrenceKind,
-    ) -> _workflow_context._WorkflowInvocation:
+    ) -> _context._WorkflowInvocation:
         """Claim a child whose active nested run supplies its root and scope path."""
         managed_child = self.claim_child_invocation()
-        scope_path = _workflow_context._materialize_descendant_path(
+        scope_path = _context._materialize_descendant_path(
             workflow_frame,
             self.workflow_frame,
         )
         local_ordinal = workflow_frame.ledger.commit()
-        return _workflow_context._WorkflowInvocation(
+        return _context._WorkflowInvocation(
             frame=workflow_frame,
             occurrence_path=(
                 *managed_child.occurrence_path,
@@ -303,8 +303,8 @@ class _AutomaticKeyBroker:
     """Lazily commit and serve keys for one stochastic occurrence."""
 
     occurrence_kind: _OccurrenceKind
-    _frame: _workflow_context._WorkflowFrame | None = None
-    _invocation: _workflow_context._WorkflowInvocation | None = None
+    _frame: _context._WorkflowFrame | None = None
+    _invocation: _context._WorkflowInvocation | None = None
     _managed_attempt: _ManagedAttemptContext | None = None
     _managed_claims: _ManagedClaimRegistry = field(default_factory=_ManagedClaimRegistry)
     _lifecycle: _BrokerLifecycle = field(
@@ -322,7 +322,7 @@ class _AutomaticKeyBroker:
 
     def key_for(self, plan: StochasticEffectPlan) -> PRNGKey:
         """Return the workflow-owned key for one planned effect."""
-        _workflow_context._assert_workflow_admission(self._frame)
+        _context._assert_workflow_admission(self._frame)
         self._assert_broker_open()
         if not isinstance(plan, StochasticEffectPlan):
             raise TypeError("automatic key requests require a StochasticEffectPlan")
@@ -337,7 +337,7 @@ class _AutomaticKeyBroker:
             descendant_descriptor=plan.descendant_descriptor,
         )
         _guard_remote_coordination(self._frame)
-        _workflow_context._guard_automatic_key_request()
+        _context._guard_automatic_key_request()
         self.validate_replay_effect_plan(plan)
         with self._lock:
             if self._invocation is None:
@@ -363,9 +363,9 @@ class _AutomaticKeyBroker:
             parent_broker = self._managed_attempt.parent_broker
             claim_replay_effect = getattr(parent_broker, "claim_replay_effect", None)
             if claim_replay_effect is None:
-                from . import _replay as _workflow_replay
+                from . import _replay
 
-                _workflow_replay._claim_effect_before_derivation(
+                _replay._claim_effect_before_derivation(
                     effect,
                     attempt=self._managed_attempt.attempt,
                 )
@@ -445,9 +445,9 @@ class _AutomaticKeyBroker:
             if parent_claim is not None:
                 parent_claim(effect, attempt=attempt)
                 return
-        from . import _replay as _workflow_replay
+        from . import _replay
 
-        _workflow_replay._claim_effect_before_derivation(effect, attempt=attempt)
+        _replay._claim_effect_before_derivation(effect, attempt=attempt)
 
     def validate_replay_effect_plan(self, plan: StochasticEffectPlan) -> None:
         """Reject direct-operation plan drift before committing its occurrence."""
@@ -461,9 +461,9 @@ class _AutomaticKeyBroker:
             if parent_validate is not None:
                 parent_validate(plan)
                 return
-        from . import _replay as _workflow_replay
+        from . import _replay
 
-        _workflow_replay._validate_effect_plan_before_commit(plan)
+        _replay._validate_effect_plan_before_commit(plan)
 
     def claim_managed_effect(
         self,
@@ -768,14 +768,14 @@ class _AutomaticKeyBroker:
         """Materialize authority for an already-reserved remote attempt."""
         _guard_remote_coordination(self._frame)
         parent_invocation = self._ensure_parent_invocation()
-        from . import _replay as _workflow_replay
+        from . import _replay
 
         return ManagedParentEnvelope(
-            root_words=_workflow_context._resolve_root_words(parent_invocation.frame),
+            root_words=_context._resolve_root_words(parent_invocation.frame),
             parent_occurrence_path=parent_invocation.occurrence_path,
             frame=frame,
             attempt=attempt,
-            replay_expected_effects=_workflow_replay._expected_effects_for_managed_unit(
+            replay_expected_effects=_replay._expected_effects_for_managed_unit(
                 parent_invocation.occurrence_path,
                 frame.unit_segment,
             ),
@@ -840,7 +840,7 @@ class _AutomaticKeyBroker:
         report: ManagedClaimReport,
     ) -> tuple[
         _ManagedUnitClaimState,
-        tuple[_workflow_context._WorkflowInvocation, ...],
+        tuple[_context._WorkflowInvocation, ...],
     ]:
         """Validate a remote report without changing any parent ledger."""
         state = self._require_active_remote_attempt_unlocked(report.attempt, report.frame)
@@ -870,7 +870,7 @@ class _AutomaticKeyBroker:
         if parent_invocation is None or parent_invocation.occurrence_path != parent_path:
             raise RuntimeError("remote report lost its reserved parent occurrence authority")
         child_invocations = tuple(
-            _workflow_context._WorkflowInvocation(
+            _context._WorkflowInvocation(
                 frame=parent_invocation.frame,
                 occurrence_path=(
                     *parent_path,
@@ -909,7 +909,7 @@ class _AutomaticKeyBroker:
         frame: ManagedUnitFrame,
         attempt: ManagedAttemptState,
         child_ordinal: int,
-    ) -> _workflow_context._WorkflowInvocation:
+    ) -> _context._WorkflowInvocation:
         """Claim one retry-stable child occurrence for a managed attempt."""
         with self._managed_claims.lock:
             self._assert_broker_open_unlocked()
@@ -928,7 +928,7 @@ class _AutomaticKeyBroker:
                 raise RuntimeError("managed child claims must be made in ordinal order")
 
             parent_invocation = self._ensure_parent_invocation()
-            invocation = _workflow_context._WorkflowInvocation(
+            invocation = _context._WorkflowInvocation(
                 frame=parent_invocation.frame,
                 occurrence_path=(
                     *parent_invocation.occurrence_path,
@@ -939,14 +939,14 @@ class _AutomaticKeyBroker:
             state.child_invocations.append(invocation)
             return invocation
 
-    def _ensure_parent_invocation(self) -> _workflow_context._WorkflowInvocation:
+    def _ensure_parent_invocation(self) -> _context._WorkflowInvocation:
         """Lazily materialize the containing public Function occurrence."""
         with self._lock:
             if self._invocation is None:
                 self._invocation = self._claim_own_invocation()
             return self._invocation
 
-    def _claim_own_invocation(self) -> _workflow_context._WorkflowInvocation:
+    def _claim_own_invocation(self) -> _context._WorkflowInvocation:
         """Commit this broker while preserving a nested run inside a managed unit."""
         if self._managed_attempt is not None:
             if self._frame is None or self._frame is self._managed_attempt.workflow_frame:
@@ -957,9 +957,9 @@ class _AutomaticKeyBroker:
             )
         if self._frame is None:
             raise RuntimeError("automatic-key broker has no workflow frame")
-        if _workflow_context._capture_active_workflow_frame() is self._frame:
-            return _workflow_context._commit_stochastic_invocation(self.occurrence_kind)
-        return _workflow_context._commit_stochastic_invocation_in_frame(
+        if _context._capture_active_workflow_frame() is self._frame:
+            return _context._commit_stochastic_invocation(self.occurrence_kind)
+        return _context._commit_stochastic_invocation_in_frame(
             self._frame,
             self.occurrence_kind,
         )
@@ -997,10 +997,10 @@ class _ManagedCoordinationRequired(RuntimeError):
 
 
 def _guard_remote_coordination(
-    frame: _workflow_context._WorkflowFrame | None,
+    frame: _context._WorkflowFrame | None,
 ) -> None:
     """Require parent authority before a rootless remote effect can commit."""
-    observation = _workflow_context._find_remote_coordination_observation(frame)
+    observation = _context._find_remote_coordination_observation(frame)
     if observation is None:
         return
     observation.observe_effect()
@@ -1013,8 +1013,8 @@ class _RemoteManagedParent:
 
     envelope: ManagedParentEnvelope
     attempt: ManagedAttemptState
-    workflow_frame: _workflow_context._WorkflowFrame
-    child_invocations: list[_workflow_context._WorkflowInvocation] = field(default_factory=list)
+    workflow_frame: _context._WorkflowFrame
+    child_invocations: list[_context._WorkflowInvocation] = field(default_factory=list)
     effect_claims_by_identity: dict[tuple[Any, ...], ManagedEffectClaim] = field(
         default_factory=dict
     )
@@ -1049,12 +1049,12 @@ class _RemoteManagedParent:
         frame: ManagedUnitFrame,
         attempt: ManagedAttemptState,
         child_ordinal: int,
-    ) -> _workflow_context._WorkflowInvocation:
+    ) -> _context._WorkflowInvocation:
         if frame != self.envelope.frame or attempt != self.attempt:
             raise RuntimeError("remote managed child does not own its envelope")
         if child_ordinal != len(self.child_invocations):
             raise RuntimeError("remote managed child claims must be made in order")
-        invocation = _workflow_context._WorkflowInvocation(
+        invocation = _context._WorkflowInvocation(
             frame=self.workflow_frame,
             occurrence_path=(
                 *self.envelope.parent_occurrence_path,
@@ -1144,20 +1144,20 @@ def _function_stochastic_scope(
     occurrence_path: tuple[Any, ...] | None = None,
 ) -> Generator[_AutomaticKeyBroker, None, None]:
     """Install a lazy broker for one public Function invocation."""
-    _workflow_context._assert_workflow_admission()
-    frame = _workflow_context._capture_active_workflow_frame()
-    from . import _replay as _workflow_replay
+    _context._assert_workflow_admission()
+    frame = _context._capture_active_workflow_frame()
+    from . import _replay
 
     broker = _AutomaticKeyBroker(
         "invocation",
         _frame=frame,
         _managed_attempt=_ACTIVE_MANAGED_ATTEMPT.get(),
-        _replay_state=_workflow_replay._capture_active_replay_state(),
+        _replay_state=_replay._capture_active_replay_state(),
     )
     if occurrence_path is not None:
         if frame is None or broker._managed_attempt is not None:
             raise RuntimeError("a replay occurrence requires a standalone workflow frame")
-        broker._invocation = _workflow_context._WorkflowInvocation(
+        broker._invocation = _context._WorkflowInvocation(
             frame=frame,
             occurrence_path=occurrence_path,
         )
@@ -1168,7 +1168,7 @@ def _function_stochastic_scope(
 @contextmanager
 def _managed_stochastic_scope() -> Generator[_AutomaticKeyBroker, None, None]:
     """Reuse an active broker or install one managed-operation broker."""
-    _workflow_context._assert_workflow_admission()
+    _context._assert_workflow_admission()
     active = _ACTIVE_AUTOMATIC_KEY_BROKER.get()
     if active is not None:
         yield active
@@ -1178,17 +1178,17 @@ def _managed_stochastic_scope() -> Generator[_AutomaticKeyBroker, None, None]:
     if managed_attempt is not None:
         broker = _AutomaticKeyBroker(
             "operation",
-            _frame=_workflow_context._capture_active_workflow_frame(),
+            _frame=_context._capture_active_workflow_frame(),
             _managed_attempt=managed_attempt,
         )
         with _installed_stochastic_broker_scope(broker):
             yield broker
         return
 
-    with _workflow_context._ephemeral_workflow_run():
+    with _context._ephemeral_workflow_run():
         broker = _AutomaticKeyBroker(
             "operation",
-            _frame=_workflow_context._capture_active_workflow_frame(),
+            _frame=_context._capture_active_workflow_frame(),
         )
         with _installed_stochastic_broker_scope(broker):
             yield broker
@@ -1196,7 +1196,7 @@ def _managed_stochastic_scope() -> Generator[_AutomaticKeyBroker, None, None]:
 
 def _capture_active_broker() -> _AutomaticKeyBroker | None:
     """Capture the admitted parent broker for managed execution transport."""
-    _workflow_context._assert_workflow_admission()
+    _context._assert_workflow_admission()
     return _ACTIVE_AUTOMATIC_KEY_BROKER.get()
 
 
@@ -1204,9 +1204,9 @@ def _record_active_execution_contract(
     contract: WorkflowRngExecutionContract,
 ) -> None:
     """Attach an actual route contract to the current public invocation."""
-    from . import _replay as _workflow_replay
+    from . import _replay
 
-    _workflow_replay._validate_active_execution_contract(contract)
+    _replay._validate_active_execution_contract(contract)
     broker = _ACTIVE_AUTOMATIC_KEY_BROKER.get()
     if broker is not None:
         broker.record_execution_contract(contract)
@@ -1214,9 +1214,9 @@ def _record_active_execution_contract(
 
 def _record_active_requested_execution(dispatch: str, workflow_kind: str) -> None:
     """Attach requested route diagnostics to the current public invocation."""
-    from . import _replay as _workflow_replay
+    from . import _replay
 
-    _workflow_replay._record_active_requested_execution(dispatch, workflow_kind)
+    _replay._record_active_requested_execution(dispatch, workflow_kind)
     broker = _ACTIVE_AUTOMATIC_KEY_BROKER.get()
     if broker is not None:
         broker.set_requested_execution(dispatch, workflow_kind)
@@ -1233,9 +1233,9 @@ def _snapshot_active_recipe_state() -> _BrokerRecipeSnapshot | None:
         return None
     invocation = broker._invocation
     return _BrokerRecipeSnapshot(
-        root_words=_workflow_context._resolve_root_words(invocation.frame),
+        root_words=_context._resolve_root_words(invocation.frame),
         occurrence_path=invocation.occurrence_path,
-        rng_origin=_workflow_context._describe_rng_origin(invocation.frame),
+        rng_origin=_context._describe_rng_origin(invocation.frame),
         effects=effects,
         execution_contracts=tuple(broker._execution_contracts),
         requested_dispatch=broker._requested_dispatch,
@@ -1248,7 +1248,7 @@ def _snapshot_active_recipe_state() -> _BrokerRecipeSnapshot | None:
 def _remote_coordination_probe_scope() -> Generator[_RemoteCoordinationObservation, None, None]:
     """Run a remote item without permitting automatic stochastic commit."""
     observation = _RemoteCoordinationObservation()
-    frame = _workflow_context._capture_active_workflow_frame()
+    frame = _context._capture_active_workflow_frame()
     if frame is None:
         raise RuntimeError("remote coordination requires a transported workflow frame")
     with frame.state.lock:
@@ -1284,10 +1284,10 @@ def _remote_managed_work_item_stochastic_scope(
     """Install parent-authorized RNG derivation inside a remote worker."""
     if envelope.attempt != attempt or envelope.frame.token != attempt.work_item_token:
         raise RuntimeError("remote managed attempt does not own its parent envelope")
-    frame = _workflow_context._capture_active_workflow_frame()
+    frame = _context._capture_active_workflow_frame()
     if frame is None:
         raise RuntimeError("remote managed randomness requires a transported frame")
-    _workflow_context._assert_transported_frame_consistency(frame, envelope.root_words)
+    _context._assert_transported_frame_consistency(frame, envelope.root_words)
     parent = _RemoteManagedParent(
         envelope=envelope,
         attempt=attempt,
@@ -1299,12 +1299,12 @@ def _remote_managed_work_item_stochastic_scope(
         attempt=attempt,
         workflow_frame=frame,
     )
-    from . import _replay as _workflow_replay
+    from . import _replay
 
     attempt_token = _ACTIVE_MANAGED_ATTEMPT.set(state)
     broker_token = _ACTIVE_AUTOMATIC_KEY_BROKER.set(None)
     try:
-        with _workflow_replay._remote_replay_claim_scope(
+        with _replay._remote_replay_claim_scope(
             envelope.replay_expected_effects,
             attempt,
         ):
@@ -1326,7 +1326,7 @@ def _managed_work_item_stochastic_scope(
     if attempt is None:
         attempt = ManagedAttemptState.create(frame.token)
     parent_broker.validate_managed_attempt_preflight(attempt, frame)
-    workflow_frame = _workflow_context._capture_active_workflow_frame()
+    workflow_frame = _context._capture_active_workflow_frame()
     if workflow_frame is None:
         raise RuntimeError("managed randomness requires an active workflow frame")
     with workflow_frame.state.lock:

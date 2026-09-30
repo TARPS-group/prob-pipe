@@ -54,8 +54,7 @@ from .._weights import Weights
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..distributions import _distribution as _base
 from ..distributions._distribution import Distribution, NumericDistribution
-from ..functions import _broker as _workflow_broker
-from ..functions import _descendants as _workflow_descendants
+from ..functions import _broker, _descendants
 from ._record_distribution import (
     RecordDistribution,
     _field_event_shape,
@@ -149,10 +148,10 @@ def _mc_expectation(
     if n <= 0:
         raise ValueError(f"num_evaluations must be positive; got {n!r}")
     if key is None:
-        captured = _workflow_descendants.capture_stochastic_consumer(dist)
-        key = _workflow_broker._resolve_automatic_key(
+        captured = _descendants.capture_stochastic_consumer(dist)
+        key = _broker._resolve_automatic_key(
             None,
-            _workflow_broker._singleton_effect_plan(
+            _broker._singleton_effect_plan(
                 operation_kind="expectation",
                 execution_mode="monte_carlo",
                 sample_shape=(n,),
@@ -160,7 +159,7 @@ def _mc_expectation(
                 descendant_descriptor=captured.descendant_descriptor,
             ),
         )
-        samples = _workflow_descendants.sample_captured_consumer(captured, key, (n,))
+        samples = _descendants.sample_captured_consumer(captured, key, (n,))
     else:
         samples = dist._sample(key, sample_shape=(n,))
     evals = jax.vmap(f)(samples)
@@ -738,7 +737,7 @@ def _flattened_distribution_view_class_for_base(base: Distribution) -> type:
         (FlattenedDistributionView, *extra_bases),
         extra_methods,
     )
-    _workflow_descendants._register_unsupported_descendant_type(
+    _descendants._register_unsupported_descendant_type(
         new_cls,
         "FlattenedDistributionView",
     )
@@ -900,10 +899,10 @@ def _nrdvfactory_expectation(
         raise ValueError(f"num_evaluations must be positive; got {n!r}")
     sample_key = key
     if sample_key is None:
-        captured = _workflow_descendants.capture_stochastic_consumer(self)
-        sample_key = _workflow_broker._resolve_automatic_key(
+        captured = _descendants.capture_stochastic_consumer(self)
+        sample_key = _broker._resolve_automatic_key(
             None,
-            _workflow_broker._singleton_effect_plan(
+            _broker._singleton_effect_plan(
                 operation_kind="expectation",
                 execution_mode="monte_carlo",
                 sample_shape=(n,),
@@ -976,7 +975,7 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
             tuple(bases),
             methods,
         )
-        _workflow_descendants._register_unsupported_descendant_type(
+        _descendants._register_unsupported_descendant_type(
             cls,
             "NumericRecordDistributionView",
         )
@@ -1052,11 +1051,11 @@ class NumericRecordDistributionView(NumericRecordDistribution):
         )
 
 
-_workflow_descendants._register_unsupported_descendant_type(
+_descendants._register_unsupported_descendant_type(
     FlattenedDistributionView,
     "FlattenedDistributionView",
 )
-_workflow_descendants._register_unsupported_descendant_type(
+_descendants._register_unsupported_descendant_type(
     NumericRecordDistributionView,
     "NumericRecordDistributionView",
 )

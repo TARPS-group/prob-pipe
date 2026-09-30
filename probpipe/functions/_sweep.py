@@ -32,34 +32,27 @@ from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
 from ..distributions._distribution import Distribution
-from . import _broker as _workflow_broker
-from . import _call as _workflow_call
-from . import _context as _workflow_context
-from . import _execution as _workflow_execution
-from . import _execution_contract as _workflow_execution_contract
-from . import _plan as _workflow_plan
-from . import _recipe as _workflow_recipe
-from . import _result as _workflow_result
+from . import _broker, _call, _context, _execution, _execution_contract, _plan, _recipe, _result
 
 
 def execute_sweep(
     *,
     func: Callable[..., Any],
     values: dict[str, Any],
-    plan: _workflow_plan.BroadcastPlan,
-    stochastic_plan: _workflow_plan.StochasticPlan | None,
+    plan: _plan.BroadcastPlan,
+    stochastic_plan: _plan.StochasticPlan | None,
     make_execution_config: Callable[
         [],
-        _workflow_execution.WorkflowExecutionConfig,
+        _execution.WorkflowExecutionConfig,
     ],
     requested_dispatch: str,
     resolve_dispatch: Callable[..., str],
-    require_jax_traceable: Callable[[dict[str, Any], list[_workflow_call.WorkflowInputRef]], None],
+    require_jax_traceable: Callable[[dict[str, Any], list[_call.WorkflowInputRef]], None],
     distribution_broadcast: Callable[
         [
             dict[str, Any],
-            _workflow_plan.StochasticPlan,
-            _workflow_plan.LogicalUnit,
+            _plan.StochasticPlan,
+            _plan.LogicalUnit,
             bool,
         ],
         BroadcastDistribution | Distribution,
@@ -104,8 +97,8 @@ def execute_sweep(
             output_name=output_name,
         )
         if output_spec is not None:
-            output_spec = _workflow_result._aggregate_output_spec(output_spec, per_row)
-            output_template = _workflow_result._output_record_spec(output_spec)
+            output_spec = _result._aggregate_output_spec(output_spec, per_row)
+            output_template = _result._output_record_spec(output_spec)
         aggregate = _make_stack(
             per_row,
             batch_shape=plan.sweep_batch_shape,
@@ -129,9 +122,9 @@ def execute_sweep(
             inputs=provenance_inputs,
             stochastic_plan=None,
         )
-        return _workflow_result._coerce_output(
+        return _result._coerce_output(
             aggregate,
-            broadcast_mode=_workflow_result.BROADCAST_STACK,
+            broadcast_mode=_result.BROADCAST_STACK,
             provenance=provenance,
             field_name=output_name,
         )
@@ -179,9 +172,9 @@ def execute_sweep(
         inputs=provenance_inputs,
         stochastic_plan=stochastic_plan,
     )
-    return _workflow_result._coerce_output(
+    return _result._coerce_output(
         stacked,
-        broadcast_mode=_workflow_result.BROADCAST_NESTED,
+        broadcast_mode=_result.BROADCAST_NESTED,
         provenance=provenance,
         field_name=output_name,
     )
@@ -191,7 +184,7 @@ def slice_sweep_values(
     *,
     values: Mapping[str, Any],
     index: int,
-    array_groups: tuple[_workflow_plan.ArrayBroadcastGroup, ...],
+    array_groups: tuple[_plan.ArrayBroadcastGroup, ...],
 ) -> dict[str, Any]:
     """Materialize one row-major sweep cell under the zip groups."""
     out = dict(values)
@@ -208,16 +201,16 @@ def slice_sweep_values(
         position: Any = idx
         if len(group.batch_shape) > 1:
             position = tuple(int(i) for i in np.unravel_index(idx, group.batch_shape))
-        replacements: dict[_workflow_call.WorkflowInputRef, Any] = {}
+        replacements: dict[_call.WorkflowInputRef, Any] = {}
         for ref in group.arg_refs:
-            source = _workflow_call.input_ref_value(values, ref)
+            source = _call.input_ref_value(values, ref)
             if isinstance(source, DistributionArray):
                 replacements[ref] = source._flat_component(idx)
             elif isinstance(source, Batch):
                 replacements[ref] = source[position]
             else:
                 replacements[ref] = source[idx]
-        out = _workflow_call.replace_input_refs(out, replacements)
+        out = _call.replace_input_refs(out, replacements)
     return out
 
 
@@ -225,15 +218,15 @@ def execute_sweep_rows(
     *,
     func: Callable[..., Any],
     values: dict[str, Any],
-    array_args: list[_workflow_call.WorkflowInputRef],
-    plan: _workflow_plan.BroadcastPlan,
+    array_args: list[_call.WorkflowInputRef],
+    plan: _plan.BroadcastPlan,
     make_execution_config: Callable[
         [],
-        _workflow_execution.WorkflowExecutionConfig,
+        _execution.WorkflowExecutionConfig,
     ],
     requested_dispatch: str,
     resolve_dispatch: Callable[..., str],
-    require_jax_traceable: Callable[[dict[str, Any], list[_workflow_call.WorkflowInputRef]], None],
+    require_jax_traceable: Callable[[dict[str, Any], list[_call.WorkflowInputRef]], None],
     workflow_kind: WorkflowKind = WorkflowKind.OFF,
     workflow_name: str,
     output_is_declared: bool = False,
@@ -248,18 +241,17 @@ def execute_sweep_rows(
         return []
 
     has_dist_array = any(
-        isinstance(_workflow_call.input_ref_value(values, ref), DistributionArray)
-        for ref in array_args
+        isinstance(_call.input_ref_value(values, ref), DistributionArray) for ref in array_args
     )
     jax_structure_supported = not (
         has_dist_array or len(plan.array_groups) > 1 or len(array_args) > 1
     )
-    jax_contract = _workflow_execution_contract.make_execution_contract(
+    jax_contract = _execution_contract.make_execution_contract(
         evaluator="jax_vmap",
-        transport=_workflow_execution_contract.transport_for_workflow_kind(workflow_kind),
+        transport=_execution_contract.transport_for_workflow_kind(workflow_kind),
         stochastic_plan=None,
     )
-    jax_supported = _workflow_execution_contract.supports_execution_contract(
+    jax_supported = _execution_contract.supports_execution_contract(
         jax_contract,
         None,
         jax_structure_supported=jax_structure_supported,
@@ -277,7 +269,7 @@ def execute_sweep_rows(
     )
 
     if dispatch == "jax":
-        _workflow_broker._record_active_execution_contract(jax_contract)
+        _broker._record_active_execution_contract(jax_contract)
         if requested_dispatch == "jax":
             require_jax_traceable(values, array_args)
         return execute_sweep_rows_jax(
@@ -300,32 +292,32 @@ def execute_sweep_rows(
         for i in range(plan.n_sweep)
     ]
     execution = make_execution_config()
-    request = _workflow_execution.WorkflowExecutionRequest(
+    request = _execution.WorkflowExecutionRequest(
         func=func,
-        work_items=_workflow_execution.make_managed_work_items(
+        work_items=_execution.make_managed_work_items(
             per_row_values,
             unit_segments=tuple(
-                _workflow_execution.sweep_unit_segment(tuple(coordinates))
+                _execution.sweep_unit_segment(tuple(coordinates))
                 for coordinates in cartesian_product(
                     *(range(axis) for axis in plan.sweep_batch_shape)
                 )
             ),
         ),
         execution=execution,
-        contract=_workflow_execution_contract.make_execution_contract(
+        contract=_execution_contract.make_execution_contract(
             evaluator="rowwise",
-            transport=_workflow_execution_contract.transport_for_execution_mode(execution.mode),
+            transport=_execution_contract.transport_for_execution_mode(execution.mode),
             stochastic_plan=None,
         ),
     )
-    return _workflow_execution.execute_many(request)
+    return _execution.execute_many(request)
 
 
 def mapped_row_body(
     *,
     func: Callable[..., Any],
     values: dict[str, Any],
-    array_args: Sequence[_workflow_call.WorkflowInputRef],
+    array_args: Sequence[_call.WorkflowInputRef],
     field_name: str,
     output_is_declared: bool = False,
 ) -> Callable[[Any], Any]:
@@ -351,7 +343,7 @@ def mapped_row_body(
         replacements = {
             ref: Record(ref.label, leaves) for ref, leaves in zip(array_args, array_slice_leaves)
         }
-        out = func(**_workflow_call.replace_input_refs(values, replacements))
+        out = func(**_call.replace_input_refs(values, replacements))
         if not output_is_declared:
             out = _row_at_its_kind(out, field_name)
             if isinstance(out, Record):
@@ -371,7 +363,7 @@ def execute_sweep_rows_jax(
     *,
     func: Callable[..., Any],
     values: dict[str, Any],
-    array_args: list[_workflow_call.WorkflowInputRef],
+    array_args: list[_call.WorkflowInputRef],
     n_total: int,
     workflow_kind: WorkflowKind = WorkflowKind.OFF,
     workflow_name: str,
@@ -389,7 +381,7 @@ def execute_sweep_rows_jax(
 
     vmap_input = []
     for ref in array_args:
-        array_value = _workflow_call.input_ref_value(values, ref)
+        array_value = _call.input_ref_value(values, ref)
         n_batch = len(array_value.batch_shape)
         vmap_input.append(
             {
@@ -399,7 +391,7 @@ def execute_sweep_rows_jax(
         )
 
     def run_vmap():
-        with _workflow_context._workflow_jax_runtime_guard():
+        with _context._workflow_jax_runtime_guard():
             return jax.vmap(single_call)(tuple(vmap_input))
 
     if workflow_kind in (WorkflowKind.TASK, WorkflowKind.FLOW):
@@ -422,14 +414,14 @@ def execute_sweep_rows_jax(
 def make_sweep_provenance(
     *,
     values: Mapping[str, Any],
-    array_args: list[_workflow_call.WorkflowInputRef],
-    dist_args: list[_workflow_call.WorkflowInputRef],
+    array_args: list[_call.WorkflowInputRef],
+    dist_args: list[_call.WorkflowInputRef],
     workflow_name: str,
     batch_shape: tuple[int, ...],
     k: int,
     parents: list[TrackedTerm] | None = None,
     inputs: Mapping[str, Any] | None = None,
-    stochastic_plan: _workflow_plan.StochasticPlan | None = None,
+    stochastic_plan: _plan.StochasticPlan | None = None,
 ) -> Provenance | None:
     """Build provenance metadata for pure and nested sweep outputs.
 
@@ -439,14 +431,14 @@ def make_sweep_provenance(
     """
     regime = "nested" if dist_args else "stack"
     if parents is None:
-        array_candidates = [_workflow_call.input_ref_value(values, ref) for ref in array_args]
+        array_candidates = [_call.input_ref_value(values, ref) for ref in array_args]
         dist_candidates = [
-            _workflow_call.input_ref_value(values, ref)
+            _call.input_ref_value(values, ref)
             for ref in dist_args
-            if isinstance(_workflow_call.input_ref_value(values, ref), Distribution)
+            if isinstance(_call.input_ref_value(values, ref), Distribution)
         ]
         parents = array_candidates + dist_candidates
-    controls, diagnostics = _workflow_recipe.provenance_recipe_fields(stochastic_plan)
+    controls, diagnostics = _recipe.provenance_recipe_fields(stochastic_plan)
     return Provenance.create(
         f"workflow.{regime}",
         parents=parents,

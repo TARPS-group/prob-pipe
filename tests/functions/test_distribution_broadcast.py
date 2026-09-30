@@ -27,27 +27,21 @@ from probpipe import (
 from probpipe.core.config import WorkflowKind
 from probpipe.distributions import SequentialJointDistribution
 from probpipe.functions import (
-    _broadcast as _workflow_distribution_broadcast,
-)
-from probpipe.functions import (
-    _call as _workflow_call,
-)
-from probpipe.functions import (
-    _context as _workflow_context,
-)
-from probpipe.functions import (
-    _execution as _workflow_execution,
+    _broadcast,
+    _call,
+    _context,
+    _execution,
 )
 from probpipe.functions._plan import build_broadcast_plan, build_stochastic_plan
 
 
 def _execution_config(
     *,
-    mode: _workflow_execution.WorkflowExecutionMode = "sequential",
+    mode: _execution.WorkflowExecutionMode = "sequential",
     max_workers: int | None = None,
     name: str = "workflow",
-) -> _workflow_execution.WorkflowExecutionConfig:
-    return _workflow_execution.WorkflowExecutionConfig(
+) -> _execution.WorkflowExecutionConfig:
+    return _execution.WorkflowExecutionConfig(
         mode=mode,
         max_workers=max_workers,
         name=name,
@@ -78,15 +72,15 @@ def _resolve_to(dispatch: str):
     return resolve_dispatch
 
 
-def _ref(name: str) -> _workflow_call.WorkflowInputRef:
-    return _workflow_call.WorkflowInputRef(name)
+def _ref(name: str) -> _call.WorkflowInputRef:
+    return _call.WorkflowInputRef(name)
 
 
 def _stochastic_plan(values, n_broadcast_samples):
     signature = inspect.Signature(
         [inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in values]
     )
-    signature_info = _workflow_call.make_signature_info_from_signature(signature)
+    signature_info = _call.make_signature_info_from_signature(signature)
     broadcast_plan = build_broadcast_plan(values=values, signature_info=signature_info)
     return build_stochastic_plan(values, broadcast_plan, n_broadcast_samples)
 
@@ -113,7 +107,7 @@ class TestExecuteDistributionBroadcast:
         values = {"first": shared, "second": shared}
 
         plan = _stochastic_plan(values, 12)
-        result = _workflow_distribution_broadcast.execute_distribution_broadcast(
+        result = _broadcast.execute_distribution_broadcast(
             func=lambda first, second: first - second,
             values=values,
             stochastic_plan=plan,
@@ -143,7 +137,7 @@ class TestExecuteDistributionBroadcast:
         }
 
         plan = _stochastic_plan(values, 12)
-        result = _workflow_distribution_broadcast.execute_distribution_broadcast(
+        result = _broadcast.execute_distribution_broadcast(
             func=lambda first, second: first - second,
             values=values,
             stochastic_plan=plan,
@@ -192,7 +186,7 @@ class TestExecuteDistributionBroadcast:
         values = {"root": joint, "leaf": joint["nested"]["leaf"]}
 
         plan = _stochastic_plan(values, 8)
-        result = _workflow_distribution_broadcast.execute_distribution_broadcast(
+        result = _broadcast.execute_distribution_broadcast(
             func=lambda root, leaf: root["nested/leaf"] - leaf,
             values=values,
             stochastic_plan=plan,
@@ -218,7 +212,7 @@ class TestExecuteDistributionBroadcast:
         values = {"first": shared, "second": shared}
 
         plan = _stochastic_plan(values, 8)
-        result = _workflow_distribution_broadcast.execute_distribution_broadcast(
+        result = _broadcast.execute_distribution_broadcast(
             func=lambda first, second: first - second,
             values=values,
             stochastic_plan=plan,
@@ -252,7 +246,7 @@ class TestExecuteDistributionBroadcast:
         values = {"root": shared, "x": shared["x"]}
 
         plan = _stochastic_plan(values, 8)
-        result = _workflow_distribution_broadcast.execute_distribution_broadcast(
+        result = _broadcast.execute_distribution_broadcast(
             func=lambda root, x: root["x"] - x,
             values=values,
             stochastic_plan=plan,
@@ -288,12 +282,12 @@ class TestExecuteDistributionBroadcast:
             return [request.func(**item.call_values()) for item in request.work_items]
 
         monkeypatch.setattr(
-            _workflow_distribution_broadcast._workflow_execution,
+            _broadcast._execution,
             "execute_many",
             fake_execute_many,
         )
 
-        result = _workflow_distribution_broadcast.execute_distribution_broadcast(
+        result = _broadcast.execute_distribution_broadcast(
             func=shift,
             values=values,
             stochastic_plan=plan,
@@ -341,7 +335,7 @@ class TestExecuteDistributionBroadcast:
             return x + y
 
         plan = _stochastic_plan(values, 10)
-        result = _workflow_distribution_broadcast.execute_distribution_broadcast(
+        result = _broadcast.execute_distribution_broadcast(
             func=add,
             values=values,
             stochastic_plan=plan,
@@ -382,7 +376,7 @@ class TestExecuteDistributionBroadcast:
         empirical._samples = np.asarray([1.0, 2.0], dtype=object)
 
         with pytest.raises(RuntimeError, match="exact empirical size changed after planning"):
-            _workflow_distribution_broadcast.execute_distribution_broadcast(
+            _broadcast.execute_distribution_broadcast(
                 func=lambda x: x,
                 values=values,
                 stochastic_plan=plan,
@@ -408,7 +402,7 @@ class TestExecuteDistributionBroadcast:
             seen["required"] = True
 
         plan = _stochastic_plan(values, 6)
-        result = _workflow_distribution_broadcast.execute_distribution_broadcast(
+        result = _broadcast.execute_distribution_broadcast(
             func=double,
             values=values,
             stochastic_plan=plan,
@@ -429,15 +423,15 @@ class TestExecuteDistributionBroadcast:
 
     def test_jax_prefect_path_requires_prefect(self, monkeypatch):
         values = {"x": Normal(loc=1.0, scale=0.5, name="x")}
-        monkeypatch.setattr(_workflow_distribution_broadcast, "task", None)
-        monkeypatch.setattr(_workflow_distribution_broadcast, "flow", None)
+        monkeypatch.setattr(_broadcast, "task", None)
+        monkeypatch.setattr(_broadcast, "flow", None)
         plan = _stochastic_plan(values, 6)
 
         with pytest.raises(
             RuntimeError,
             match="Prefect task or flow execution was requested",
         ):
-            _workflow_distribution_broadcast.execute_distribution_broadcast(
+            _broadcast.execute_distribution_broadcast(
                 func=lambda x: x,
                 values=values,
                 stochastic_plan=plan,
@@ -455,8 +449,8 @@ class TestExecuteDistributionBroadcast:
     @pytest.mark.parametrize(
         ("dispatch", "workflow_kind", "route_module"),
         [
-            pytest.param("sequential", WorkflowKind.TASK, _workflow_execution, id="row-wise"),
-            pytest.param("jax", WorkflowKind.FLOW, _workflow_distribution_broadcast, id="jax"),
+            pytest.param("sequential", WorkflowKind.TASK, _execution, id="row-wise"),
+            pytest.param("jax", WorkflowKind.FLOW, _broadcast, id="jax"),
         ],
     )
     def test_prefect_route_failure_precedes_sampling_and_commit(
@@ -476,7 +470,7 @@ class TestExecuteDistributionBroadcast:
             workflow_kind=workflow_kind,
             n_broadcast_samples=5,
         )
-        commit_invocation = _workflow_context._commit_stochastic_invocation
+        commit_invocation = _context._commit_stochastic_invocation
 
         def record_commit(occurrence_kind="invocation"):
             commits.append(occurrence_kind)
@@ -485,7 +479,7 @@ class TestExecuteDistributionBroadcast:
         def reject_route(*args, **kwargs):
             raise ValueError("invalid Prefect route")
 
-        monkeypatch.setattr(_workflow_context, "_commit_stochastic_invocation", record_commit)
+        monkeypatch.setattr(_context, "_commit_stochastic_invocation", record_commit)
         monkeypatch.setattr(route_module, "flow", reject_route)
 
         with workflow_run(seed=7), pytest.raises(ValueError, match="invalid Prefect route"):
@@ -503,7 +497,7 @@ class TestExecuteDistributionBroadcast:
         values = {"a": view_x, "b": view_x}
 
         plan = _stochastic_plan(values, 8)
-        sampled = _workflow_distribution_broadcast._sample_planned_source_groups(
+        sampled = _broadcast._sample_planned_source_groups(
             plan,
             plan.source_groups,
             (8,),
@@ -524,7 +518,7 @@ class TestExecuteDistributionBroadcast:
         assert plan.sample_shape is not None
         events = []
 
-        sampled = _workflow_distribution_broadcast._sample_planned_source_groups(
+        sampled = _broadcast._sample_planned_source_groups(
             plan,
             plan.source_groups,
             plan.sample_shape,
@@ -549,7 +543,7 @@ class TestExecuteDistributionBroadcast:
         plan = _stochastic_plan(values, 5)
         events = []
 
-        result = _workflow_distribution_broadcast.execute_distribution_broadcast(
+        result = _broadcast.execute_distribution_broadcast(
             func=lambda exact, sampled: exact + sampled,
             values=values,
             stochastic_plan=plan,
@@ -592,7 +586,7 @@ class TestExecuteDistributionBroadcast:
         )
 
         with pytest.raises(error_type, match=message):
-            _workflow_distribution_broadcast.execute_distribution_broadcast(
+            _broadcast.execute_distribution_broadcast(
                 func=lambda x: x,
                 values=values,
                 stochastic_plan=invalid_plan,
@@ -611,7 +605,7 @@ class TestExecuteDistributionBroadcast:
         values = {"x": Normal(loc=0.0, scale=1.0, name="x")}
         plan = _stochastic_plan(values, 3)
         with pytest.warns(UserWarning, match="n_broadcast_samples=3 is too low"):
-            result = _workflow_distribution_broadcast.execute_distribution_broadcast(
+            result = _broadcast.execute_distribution_broadcast(
                 func=lambda x: x,
                 values=values,
                 stochastic_plan=plan,
@@ -630,7 +624,7 @@ class TestExecuteDistributionBroadcast:
         assert result.num_atoms == 3
 
     def test_executor_has_no_empirical_replanning_helper(self):
-        assert not hasattr(_workflow_distribution_broadcast, "_split_empirical_args")
+        assert not hasattr(_broadcast, "_split_empirical_args")
 
 
 class TestCoSamplingGroups:
@@ -655,7 +649,7 @@ class TestCoSamplingGroups:
         plan = _stochastic_plan(selected, n)
         assert plan is not None
         assert plan.sample_shape is not None
-        return _workflow_distribution_broadcast._sample_planned_source_groups(
+        return _broadcast._sample_planned_source_groups(
             plan,
             plan.source_groups,
             plan.sample_shape,
@@ -705,7 +699,7 @@ class TestCoSamplingGroups:
         assert plan is not None
         assert plan.sample_shape is not None
         events = []
-        sampled = _workflow_distribution_broadcast._sample_planned_source_groups(
+        sampled = _broadcast._sample_planned_source_groups(
             plan,
             plan.source_groups,
             plan.sample_shape,
@@ -923,7 +917,7 @@ class TestCoSamplingThroughACall:
         pin died with the class that refused."""
         rows = [Record("r", x=jnp.array(1.0), tag="a"), Record("r", x=jnp.array(2.0), tag="b")]
 
-        stacked = _workflow_distribution_broadcast._stack_rows(rows, arg_name="a")
+        stacked = _broadcast._stack_rows(rows, arg_name="a")
 
         np.testing.assert_allclose(np.asarray(stacked["x"]), [1.0, 2.0])
         assert list(stacked._raw_column("tag")) == ["a", "b"]
@@ -1030,14 +1024,14 @@ class TestIndexSampleHelper:
         s = jnp.arange(20.0).reshape(5, 4)
         for i in range(5):
             np.testing.assert_array_equal(
-                _workflow_distribution_broadcast._index_sample(s, i),
+                _broadcast._index_sample(s, i),
                 s[i],
             )
 
     def test_bare_array_1d(self):
         s = jnp.arange(10.0)
 
-        assert float(_workflow_distribution_broadcast._index_sample(s, 3)) == 3.0
+        assert float(_broadcast._index_sample(s, 3)) == 3.0
 
     def test_single_field_record_unwraps(self):
         from probpipe import Record
@@ -1045,7 +1039,7 @@ class TestIndexSampleHelper:
         s = Record("r", x=jnp.arange(15.0).reshape(5, 3))
 
         for i in range(5):
-            row = _workflow_distribution_broadcast._index_sample(s, i)
+            row = _broadcast._index_sample(s, i)
             assert not hasattr(row, "fields")
             np.testing.assert_array_equal(row, s["x"][i])
 
@@ -1058,7 +1052,7 @@ class TestIndexSampleHelper:
             sigma=jnp.arange(5.0) + 100.0,
         )
 
-        row = _workflow_distribution_broadcast._index_sample(s, 2)
+        row = _broadcast._index_sample(s, 2)
 
         assert isinstance(row, NumericRecord)
         assert row.fields == ("mu", "sigma")
@@ -1074,7 +1068,7 @@ class TestIndexSampleHelper:
             vec=jnp.arange(12.0).reshape(4, 3),
         )
 
-        row = _workflow_distribution_broadcast._index_sample(s, 1)
+        row = _broadcast._index_sample(s, 1)
 
         assert isinstance(row, NumericRecord)
         assert float(row["scalar"]) == 1.0

@@ -30,12 +30,9 @@ from probpipe import (
     sample,
     workflow_run,
 )
-from probpipe.functions import _broker as _workflow_broker
-from probpipe.functions import _callable as _workflow_callable
-from probpipe.functions import _recipe as _workflow_recipe
-from probpipe.functions import _replay as _workflow_replay
+from probpipe.functions import _broker, _callable, _recipe, _replay
 from probpipe.functions._managed import ManagedEffectClaim, sweep_unit_segment
-from tests.functions import _replay_fixtures as _workflow_replay_fixtures
+from tests.functions import _replay_fixtures
 from tests.functions._replay_fixtures import (
     replayable_affine,
     replayable_canonical_defaults,
@@ -92,7 +89,7 @@ def _randomness(result):
     return result.provenance.controls["randomness"]
 
 
-def _replay(result):
+def _replay_controls(result):
     assert result.provenance is not None
     return result.provenance.controls["replay"]
 
@@ -108,7 +105,7 @@ class TestWorkflowRecipeRecording:
     def test_structural_identity_json_roundtrips_the_rng_abi(self):
         identity = ("source", b"\x00\xff", 2**64 - 1, ("nested", 0))
 
-        encoded = _workflow_recipe._structural_json_value(identity)
+        encoded = _recipe._structural_json_value(identity)
 
         assert encoded == [
             "source",
@@ -116,7 +113,7 @@ class TestWorkflowRecipeRecording:
             2**64 - 1,
             ["nested", 0],
         ]
-        assert _workflow_replay._structural_tuple(encoded, field_name="test.identity") == identity
+        assert _replay._structural_tuple(encoded, field_name="test.identity") == identity
 
     @pytest.mark.parametrize(
         ("value", "error"),
@@ -131,7 +128,7 @@ class TestWorkflowRecipeRecording:
     )
     def test_structural_identity_json_rejects_non_rng_values(self, value, error):
         with pytest.raises(error, match="identity"):
-            _workflow_recipe._structural_json_value(("source", value))
+            _recipe._structural_json_value(("source", value))
 
     @pytest.mark.parametrize(
         "marker",
@@ -144,7 +141,7 @@ class TestWorkflowRecipeRecording:
     )
     def test_structural_identity_json_rejects_malformed_byte_markers(self, marker):
         with pytest.raises(ReplayCompatibilityError, match="structural value"):
-            _workflow_replay._structural_tuple(
+            _replay._structural_tuple(
                 ["source", marker],
                 field_name="test.identity",
             )
@@ -165,7 +162,7 @@ class TestWorkflowRecipeRecording:
         assert recipe["occurrence_path"] == [["invocation", 0]]
         assert recipe["expected_event_count"] == 1
         assert len(recipe["events"]) == 1
-        replay = _replay(result)
+        replay = _replay_controls(result)
         assert replay["plan"]["schema"] == "probpipe.stochastic_plan/v1"
         assert replay["plan"]["canonical_fields"]["n_evaluations"] == 11
         assert replay["plan"]["expected_effects"][0]["sample_shape"] == [11]
@@ -223,7 +220,7 @@ class TestWorkflowRecipeRecording:
         with workflow_run(seed=4):
             result = sample(Normal(loc=0.0, scale=1.0, name="x"))
 
-        replay = _replay(result)
+        replay = _replay_controls(result)
         assert replay["plan"]["canonical_fields"]["kind"] == "direct_operation"
         assert replay["plan"]["expected_effects"][0]["operation_kind"] == "sample"
         assert replay["standalone"]["eligibility"] == "supported"
@@ -238,7 +235,7 @@ class TestWorkflowRecipeRecording:
         with workflow_run(seed=4):
             result = sample(transformed)
 
-        replay = _replay(result)
+        replay = _replay_controls(result)
         effect = replay["plan"]["expected_effects"][0]
         assert effect["record_path"] == []
         assert effect["descendant_descriptor"][0] == "transformed-descendant"
@@ -262,7 +259,7 @@ class TestWorkflowRecipeRecording:
         assert recipe["expected_event_count"] == 1
         assert [
             group["execution_mode"]
-            for group in _replay(result)["plan"]["canonical_fields"]["source_groups"]
+            for group in _replay_controls(result)["plan"]["canonical_fields"]["source_groups"]
         ] == ["exact", "sampled"]
 
     def test_alias_and_supported_descendant_share_one_recipe_source(self):
@@ -273,13 +270,13 @@ class TestWorkflowRecipeRecording:
         with workflow_run(seed=3):
             result = workflow(left=root, right=descendant)
 
-        plan = _replay(result)["plan"]["canonical_fields"]
+        plan = _replay_controls(result)["plan"]["canonical_fields"]
         assert len(plan["source_groups"]) == 1
         assert len(plan["source_groups"][0]["consumers"]) == 2
         descriptor = plan["source_groups"][0]["consumers"][1]["descendant_descriptor"]
         assert descriptor[0] == "stochastic-descendant"
         assert "transformed-descendant" in json.dumps(descriptor)
-        compatibility = _replay(result)["compatibility"]
+        compatibility = _replay_controls(result)["compatibility"]
         assert compatibility["descendant_adapter_abi"] == ["probpipe.transformed_descendant/v1"]
         assert compatibility["provider_abi"] == [
             "probpipe.distribution/v1",
@@ -321,7 +318,7 @@ class TestWorkflowRecipeRecording:
                 provider_abi="probpipe.distribution/v1",
             )
 
-        snapshot = _workflow_broker._BrokerRecipeSnapshot(
+        snapshot = _broker._BrokerRecipeSnapshot(
             root_words=(0, 17),
             occurrence_path=occurrence_path,
             rng_origin={
@@ -333,17 +330,17 @@ class TestWorkflowRecipeRecording:
             execution_contracts=(),
             requested_dispatch="thread",
             requested_workflow_kind="off",
-            callable_anchor=_workflow_callable.capture_function_anchor(
+            callable_anchor=_callable.capture_function_anchor(
                 Function(name="_identity", fn=_identity)
             ),
         )
 
         with patch.object(
-            _workflow_broker,
+            _broker,
             "_snapshot_active_recipe_state",
             return_value=snapshot,
         ):
-            controls, _ = _workflow_recipe.provenance_recipe_fields(None)
+            controls, _ = _recipe.provenance_recipe_fields(None)
 
         assert [event["occurrence_path"][1][3] for event in controls["randomness"]["events"]] == [
             0,
@@ -363,7 +360,7 @@ class TestWorkflowRecipeRecording:
             sampling_abi="probpipe.distribution_sampling/v1",
             provider_abi="probpipe.distribution/v1",
         )
-        snapshot = _workflow_broker._BrokerRecipeSnapshot(
+        snapshot = _broker._BrokerRecipeSnapshot(
             root_words=(0, 17),
             occurrence_path=occurrence_path,
             rng_origin={
@@ -380,20 +377,20 @@ class TestWorkflowRecipeRecording:
 
         with (
             patch.object(
-                _workflow_broker,
+                _broker,
                 "_snapshot_active_recipe_state",
                 return_value=snapshot,
             ),
             pytest.raises(RuntimeError, match="missing its callable anchor"),
         ):
-            _workflow_recipe.provenance_recipe_fields(None)
+            _recipe.provenance_recipe_fields(None)
 
     def test_nested_automatic_function_is_marked_non_standalone(self):
         workflow = Function(name="_nested_automatic", fn=_nested_automatic, dispatch="thread")
         with workflow_run(seed=21):
             result = workflow(value=1.0)
 
-        replay = _replay(result)
+        replay = _replay_controls(result)
         assert replay["standalone"]["eligibility"] == "nested_workflow_rng_execution"
         assert replay["standalone"]["restriction"] == "nested_automatic_function"
         assert _randomness(result)["events"] == []
@@ -410,7 +407,7 @@ class TestWorkflowRecipeRecording:
         with workflow_run(seed=21):
             result = workflow(value=Normal(loc=0.0, scale=1.0, name="value"))
 
-        replay = _replay(result)
+        replay = _replay_controls(result)
         randomness = _randomness(result)
         assert replay["standalone"]["eligibility"] == "nested_workflow_rng_execution"
         assert randomness["expected_event_count"] == 1
@@ -506,14 +503,14 @@ class TestWorkflowRecipeRecording:
 class TestWorkflowCallableAnchor:
     def test_callable_canonical_json_rejects_non_finite_values(self):
         with pytest.raises(ValueError, match="Out of range float values"):
-            _workflow_callable._canonical_json({"value": float("nan")})
+            _callable._canonical_json({"value": float("nan")})
 
     def test_provenance_off_skips_callable_anchor_capture(self):
         probpipe.provenance_config.mode = ProvenanceMode.OFF
         workflow = Function(name="replayable_identity", fn=replayable_identity)
 
         with patch.object(
-            _workflow_callable,
+            _callable,
             "capture_function_anchor",
             side_effect=AssertionError("captured callable anchor"),
         ) as capture:
@@ -532,9 +529,9 @@ class TestWorkflowCallableAnchor:
         probpipe.provenance_config.mode = ProvenanceMode.OFF
         with (
             patch.object(
-                _workflow_callable,
+                _callable,
                 "capture_function_anchor",
-                wraps=_workflow_callable.capture_function_anchor,
+                wraps=_callable.capture_function_anchor,
             ) as capture,
             replay_run(original.provenance),
         ):
@@ -562,11 +559,11 @@ class TestWorkflowCallableAnchor:
         workflow = Function(name="function", fn=factory())
 
         with patch.object(
-            _workflow_callable,
+            _callable,
             "_source_artifact",
             side_effect=AssertionError("read source artifact"),
         ) as source_artifact:
-            anchor = _workflow_callable.capture_function_anchor(workflow)
+            anchor = _callable.capture_function_anchor(workflow)
 
         assert anchor.supported is False
         source_artifact.assert_not_called()
@@ -575,11 +572,11 @@ class TestWorkflowCallableAnchor:
         workflow = Function(name="replayable_identity", fn=replayable_identity)
 
         with patch.object(
-            _workflow_callable,
+            _callable,
             "_source_artifact",
-            wraps=_workflow_callable._source_artifact,
+            wraps=_callable._source_artifact,
         ) as source_artifact:
-            anchor = _workflow_callable.capture_function_anchor(workflow)
+            anchor = _callable.capture_function_anchor(workflow)
 
         assert anchor.supported is True
         assert anchor.source_artifact_digest is not None
@@ -600,7 +597,7 @@ class TestWorkflowCallableAnchor:
                 reads[path] += 1
             return read_bytes(path)
 
-        _workflow_callable._source_artifact_digest.cache_clear()
+        _callable._source_artifact_digest.cache_clear()
         with patch.object(Path, "read_bytes", recording_read_bytes):
             for _ in range(5):
                 workflow(value=1.0)
@@ -622,12 +619,12 @@ class TestWorkflowCallableAnchor:
             return read_bytes(path)
 
         monkeypatch.setattr(inspect, "getsourcefile", lambda candidate: str(source_path))
-        _workflow_callable._source_artifact_digest.cache_clear()
+        _callable._source_artifact_digest.cache_clear()
         with patch.object(Path, "read_bytes", recording_read_bytes):
-            first = _workflow_callable._source_artifact(object())
-            unchanged = _workflow_callable._source_artifact(object())
+            first = _callable._source_artifact(object())
+            unchanged = _callable._source_artifact(object())
             source_path.write_bytes(b"second version")
-            changed = _workflow_callable._source_artifact(object())
+            changed = _callable._source_artifact(object())
 
         assert unchanged == first
         assert changed[0] == first[0]
@@ -639,17 +636,17 @@ class TestWorkflowCallableAnchor:
 
         with (
             patch.object(
-                _workflow_callable,
+                _callable,
                 "_signature_and_templates",
-                side_effect=_workflow_callable._UnsupportedDefinition("unsupported"),
+                side_effect=_callable._UnsupportedDefinition("unsupported"),
             ),
             patch.object(
-                _workflow_callable,
+                _callable,
                 "_source_artifact",
                 side_effect=AssertionError("read source artifact"),
             ) as source_artifact,
         ):
-            anchor = _workflow_callable.capture_function_anchor(workflow)
+            anchor = _callable.capture_function_anchor(workflow)
 
         assert anchor.supported is False
         assert anchor.form == "unsupported_definition_state"
@@ -664,7 +661,7 @@ class TestWorkflowCallableAnchor:
                 offset=1.25,
             )
 
-        callable_anchor = _replay(result)["callable"]
+        callable_anchor = _replay_controls(result)["callable"]
         python_replay_abi = (
             f"{sys.implementation.name}-{sys.version_info.major}.{sys.version_info.minor}"
         )
@@ -718,8 +715,8 @@ class TestWorkflowCallableAnchor:
             declared_result = declared(value=Normal(loc=0.0, scale=1.0, name="value"))
 
         assert (
-            _replay(plain_result)["callable"]["sha256"]
-            != _replay(declared_result)["callable"]["sha256"]
+            _replay_controls(plain_result)["callable"]["sha256"]
+            != _replay_controls(declared_result)["callable"]["sha256"]
         )
 
     @pytest.mark.parametrize(
@@ -745,21 +742,21 @@ class TestWorkflowCallableAnchor:
         with workflow_run(seed=6):
             result = workflow(value=Normal(loc=0.0, scale=1.0, name="value"))
 
-        callable_anchor = _replay(result)["callable"]
+        callable_anchor = _replay_controls(result)["callable"]
         assert callable_anchor["supported"] is False
         assert callable_anchor["form"] == "unsupported_definition_state"
         assert "sha256" not in callable_anchor
 
     def test_runtime_global_values_are_outside_the_definition_anchor(self, monkeypatch):
         workflow = Function(name="replayable_optional_nested", fn=replayable_optional_nested)
-        original = _workflow_callable.capture_function_anchor(workflow)
+        original = _callable.capture_function_anchor(workflow)
 
         monkeypatch.setattr(
-            _workflow_replay_fixtures,
+            _replay_fixtures,
             "ENABLE_EXTRA_AUTOMATIC",
-            not _workflow_replay_fixtures.ENABLE_EXTRA_AUTOMATIC,
+            not _replay_fixtures.ENABLE_EXTRA_AUTOMATIC,
         )
-        changed = _workflow_callable.capture_function_anchor(workflow)
+        changed = _callable.capture_function_anchor(workflow)
 
         assert changed.controls() == original.controls()
 
@@ -769,7 +766,7 @@ class TestWorkflowCallableAnchor:
         with workflow_run(seed=6):
             result = workflow(value=Normal(loc=0.0, scale=1.0, name="value"))
 
-        callable_anchor = _replay(result)["callable"]
+        callable_anchor = _replay_controls(result)["callable"]
         assert callable_anchor["supported"] is False
         assert callable_anchor["form"] == "lambda"
         assert "sha256" not in callable_anchor
@@ -782,13 +779,13 @@ class TestWorkflowCallableAnchor:
         with workflow_run(seed=6):
             result = workflow(value=Normal(loc=0.0, scale=1.0, name="value"))
 
-        callable_anchor = _replay(result)["callable"]
+        callable_anchor = _replay_controls(result)["callable"]
         assert callable_anchor["supported"] is False
         assert callable_anchor["form"] == "unsupported_definition_state"
         assert "sha256" not in callable_anchor
 
     def test_plain_numeric_array_default_remains_strongly_encoded(self):
-        anchor = _workflow_callable.capture_function_anchor(
+        anchor = _callable.capture_function_anchor(
             Function(name="replayable_numeric_array_default", fn=replayable_numeric_array_default)
         )
 
@@ -796,7 +793,7 @@ class TestWorkflowCallableAnchor:
         assert len(anchor.controls()["sha256"]) == 64
 
     def test_supported_structured_defaults_have_canonical_inspectable_controls(self):
-        anchor = _workflow_callable.capture_function_anchor(
+        anchor = _callable.capture_function_anchor(
             Function(name="replayable_canonical_defaults", fn=replayable_canonical_defaults)
         )
 
@@ -922,7 +919,7 @@ class TestWorkflowCallableAnchor:
         ],
     )
     def test_nonportable_numpy_defaults_are_closed_unsupported(self, callable_fixture):
-        anchor = _workflow_callable.capture_function_anchor(
+        anchor = _callable.capture_function_anchor(
             Function(name="callable_fixture", fn=callable_fixture)
         )
 
@@ -943,7 +940,7 @@ class TestWorkflowCallableAnchor:
         ],
     )
     def test_other_unsupported_forms_have_no_digest(self, factory, form):
-        anchor = _workflow_callable.capture_function_anchor(Function(name="function", fn=factory()))
+        anchor = _callable.capture_function_anchor(Function(name="function", fn=factory()))
 
         assert anchor.controls()["supported"] is False
         assert anchor.controls()["form"] == form
@@ -956,7 +953,7 @@ class TestWorkflowCallableAnchor:
             name="private",
         )
 
-        anchor = _workflow_callable.capture_function_anchor(workflow)
+        anchor = _callable.capture_function_anchor(workflow)
 
         assert anchor.controls()["form"] == "private_function_implementation"
         assert "sha256" not in anchor.controls()

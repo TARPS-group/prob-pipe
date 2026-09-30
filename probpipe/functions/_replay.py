@@ -17,8 +17,7 @@ from types import TracebackType
 from typing import Any
 
 from ..core.provenance import Provenance
-from . import _context as _workflow_context
-from . import _execution_contract as _workflow_execution_contract
+from . import _context, _execution_contract
 from ._callable import CallableAnchor
 from ._errors import ReplayCompatibilityError, ReplayUnsupportedCallableError
 from ._managed import _MANAGED_WORK_ITEM_ABI, ManagedAttemptState, ManagedEffectClaim
@@ -739,12 +738,12 @@ class _ReplayRunScope:
             raise RuntimeError("replay_run context is already active")
         if _ACTIVE_REPLAY_STATE.get() is not None:
             raise ReplayCompatibilityError("replay_run contexts cannot be nested")
-        if _workflow_context._capture_active_workflow_frame() is not None:
+        if _context._capture_active_workflow_frame() is not None:
             raise ReplayCompatibilityError(
                 "replay_run must be entered outside an active workflow_run"
             )
         state = _validate_provenance(self._provenance)
-        frame_scope = _workflow_context._replay_workflow_frame(state.root_words)
+        frame_scope = _context._replay_workflow_frame(state.root_words)
         frame_scope.__enter__()
         try:
             token = _ACTIVE_REPLAY_STATE.set(state)
@@ -1041,7 +1040,7 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
 
     compatibility = _mapping(replay.get("compatibility"), "replay.compatibility")
     execution_contract_abi = compatibility.get("execution_contract")
-    if execution_contract_abi != _workflow_execution_contract.execution_contract_abi():
+    if execution_contract_abi != _execution_contract.execution_contract_abi():
         raise ReplayCompatibilityError("recorded workflow RNG execution contract is incompatible")
     sampling_abis = _abi_sequence(compatibility.get("sampling_abi"), "sampling ABI")
     provider_abis = _abi_sequence(compatibility.get("provider_abi"), "provider ABI")
@@ -1050,7 +1049,7 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
         "descendant-adapter ABI",
     )
     key_adapter_abi = compatibility.get("key_adapter_abi")
-    if key_adapter_abi != _workflow_execution_contract.key_adapter_abi():
+    if key_adapter_abi != _execution_contract.key_adapter_abi():
         raise ReplayCompatibilityError("recorded workflow key-adapter ABI is incompatible")
 
     compatibility_material = (canonical_plan, [event.effect for event in expected_events])

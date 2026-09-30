@@ -29,13 +29,16 @@ from ..core.provenance import Provenance
 from ..core.tracked import TrackedTerm
 from ..custom_types import Array, PRNGKey
 from ..distributions._distribution import Distribution
-from . import _broker as _workflow_broker
-from . import _call as _workflow_call
-from . import _context as _workflow_context
-from . import _execution as _workflow_execution
-from . import _execution_contract as _workflow_execution_contract
-from . import _plan as _workflow_plan
-from . import _recipe as _workflow_recipe
+from . import _execution, _plan, _recipe
+from ._broker import _record_active_execution_contract
+from ._call import WorkflowInputRef, input_ref_value, replace_input_refs
+from ._context import _workflow_jax_runtime_guard
+from ._execution_contract import (
+    make_execution_contract,
+    supports_execution_contract,
+    transport_for_execution_mode,
+    transport_for_workflow_kind,
+)
 from ._result import _aggregate_output_spec, _output_record_spec
 
 MIN_BROADCAST_SAMPLES = 5
@@ -45,17 +48,17 @@ def execute_distribution_broadcast(
     *,
     func: Callable[..., Any],
     values: dict[str, Any],
-    stochastic_plan: _workflow_plan.StochasticPlan,
-    logical_unit: _workflow_plan.LogicalUnit,
+    stochastic_plan: _plan.StochasticPlan,
+    logical_unit: _plan.LogicalUnit,
     include_inputs: bool,
-    get_key: Callable[[_workflow_plan.PlannedRandomEvent], PRNGKey],
+    get_key: Callable[[_plan.PlannedRandomEvent], PRNGKey],
     make_execution_config: Callable[
         [],
-        _workflow_execution.WorkflowExecutionConfig,
+        _execution.WorkflowExecutionConfig,
     ],
     requested_dispatch: str,
     resolve_dispatch: Callable[..., str],
-    require_jax_traceable: Callable[[dict[str, Any], list[_workflow_call.WorkflowInputRef]], None],
+    require_jax_traceable: Callable[[dict[str, Any], list[WorkflowInputRef]], None],
     workflow_name: str,
     output_name: str | None = None,
     output_spec: OutputSpec | None = None,
@@ -128,12 +131,12 @@ def execute_distribution_broadcast(
     n_broadcast_samples = stochastic_plan.n_broadcast_samples
     _validate_n_broadcast_samples(n_broadcast_samples)
 
-    jax_contract = _workflow_execution_contract.make_execution_contract(
+    jax_contract = make_execution_contract(
         evaluator="jax_vmap",
-        transport=_workflow_execution_contract.transport_for_workflow_kind(workflow_kind),
+        transport=transport_for_workflow_kind(workflow_kind),
         stochastic_plan=stochastic_plan,
     )
-    jax_supported = _workflow_execution_contract.supports_execution_contract(
+    jax_supported = supports_execution_contract(
         jax_contract,
         stochastic_plan,
     )
@@ -161,7 +164,7 @@ def execute_distribution_broadcast(
             output_template=output_template,
         )
     elif dispatch == "jax":
-        _workflow_broker._record_active_execution_contract(jax_contract)
+        _record_active_execution_contract(jax_contract)
         if requested_dispatch == "jax":
             require_jax_traceable(values, broadcast_args)
         result = _broadcast_jax(
@@ -231,7 +234,7 @@ def _validate_n_broadcast_samples(n_broadcast_samples: int) -> None:
 def _make_broadcast_provenance(
     *,
     values: dict[str, Any],
-    broadcast_args: Sequence[_workflow_call.WorkflowInputRef],
+    broadcast_args: Sequence[WorkflowInputRef],
     dispatch: str,
     workflow_kind: WorkflowKind,
     n_broadcast_samples: int,
@@ -239,11 +242,11 @@ def _make_broadcast_provenance(
     func: Callable[..., Any],
     provenance_parents: Sequence[TrackedTerm],
     provenance_inputs: Mapping[str, Any] | None,
-    stochastic_plan: _workflow_plan.StochasticPlan | None,
+    stochastic_plan: _plan.StochasticPlan | None,
     record_recipe: bool,
 ) -> Provenance | None:
     controls, diagnostics = (
-        _workflow_recipe.provenance_recipe_fields(stochastic_plan) if record_recipe else ({}, {})
+        _recipe.provenance_recipe_fields(stochastic_plan) if record_recipe else ({}, {})
     )
     return Provenance.create(
         "broadcast",
@@ -262,22 +265,22 @@ def _make_broadcast_provenance(
 
 
 def _sample_planned_source_groups(
-    stochastic_plan: _workflow_plan.StochasticPlan,
-    source_groups: Sequence[_workflow_plan.StochasticSourceGroup],
+    stochastic_plan: _plan.StochasticPlan,
+    source_groups: Sequence[_plan.StochasticSourceGroup],
     sample_shape: tuple[int, ...],
-    logical_unit: _workflow_plan.LogicalUnit,
-    get_key: Callable[[_workflow_plan.PlannedRandomEvent], PRNGKey],
-) -> dict[_workflow_call.WorkflowInputRef, Array]:
+    logical_unit: _plan.LogicalUnit,
+    get_key: Callable[[_plan.PlannedRandomEvent], PRNGKey],
+) -> dict[WorkflowInputRef, Array]:
     """Claim and sample each planned source once in one logical unit.
 
     Every group uses the root and consumer evaluators captured during
     preflight, so aliases and record projections share one root draw.
     """
-    sampled: dict[_workflow_call.WorkflowInputRef, Array] = {}
+    sampled: dict[WorkflowInputRef, Array] = {}
     for group in source_groups:
         if group.execution_mode != "sampled":
             continue
-        event = _workflow_plan.PlannedRandomEvent(
+        event = _plan.PlannedRandomEvent(
             stochastic_source_id=group.stochastic_source_id,
             logical_unit_id=logical_unit.logical_unit_id,
         )
@@ -293,9 +296,9 @@ def _broadcast_jax(
     *,
     func: Callable[..., Any],
     values: dict[str, Any],
-    stochastic_plan: _workflow_plan.StochasticPlan,
-    logical_unit: _workflow_plan.LogicalUnit,
-    get_key: Callable[[_workflow_plan.PlannedRandomEvent], PRNGKey],
+    stochastic_plan: _plan.StochasticPlan,
+    logical_unit: _plan.LogicalUnit,
+    get_key: Callable[[_plan.PlannedRandomEvent], PRNGKey],
     workflow_name: str,
     workflow_kind: WorkflowKind,
     output_template: RecordSpec | None,
@@ -315,7 +318,7 @@ def _broadcast_jax(
     batch: tuple[Any, ...] = ()
 
     def run_vmap():
-        with _workflow_context._workflow_jax_runtime_guard():
+        with _workflow_jax_runtime_guard():
             return jax.vmap(single_call)(batch)
 
     if workflow_kind in (WorkflowKind.TASK, WorkflowKind.FLOW):
@@ -350,21 +353,21 @@ def _broadcast_enumerate(
     *,
     func: Callable[..., Any],
     values: dict[str, Any],
-    stochastic_plan: _workflow_plan.StochasticPlan,
-    logical_unit: _workflow_plan.LogicalUnit,
-    get_key: Callable[[_workflow_plan.PlannedRandomEvent], PRNGKey],
+    stochastic_plan: _plan.StochasticPlan,
+    logical_unit: _plan.LogicalUnit,
+    get_key: Callable[[_plan.PlannedRandomEvent], PRNGKey],
     make_execution_config: Callable[
         [],
-        _workflow_execution.WorkflowExecutionConfig,
+        _execution.WorkflowExecutionConfig,
     ],
     output_template: RecordSpec | None,
 ) -> BroadcastDistribution:
     """Execute the plan's exact combinations and sampled repetitions."""
     execution = make_execution_config()
-    _workflow_execution._preflight_execution_config(execution)
+    _execution._preflight_execution_config(execution)
     exact_entries: list[
         tuple[
-            _workflow_plan.StochasticSourceGroup,
+            _plan.StochasticSourceGroup,
             EmpiricalDistribution,
             tuple[Any, ...],
         ]
@@ -417,7 +420,7 @@ def _broadcast_enumerate(
             emp_weight *= float(dist.weights[i])
 
         for _ in range(stochastic_plan.repetitions_per_combination):
-            replacements: dict[_workflow_call.WorkflowInputRef, Any] = {}
+            replacements: dict[WorkflowInputRef, Any] = {}
 
             for (group, _dist, consumer_batches), i in zip(exact_entries, combo):
                 for consumer, consumer_batch in zip(group.consumers, consumer_batches):
@@ -427,15 +430,15 @@ def _broadcast_enumerate(
                 replacements[ref] = _index_sample(sampled[ref], sample_idx)
 
             weights.append(emp_weight / stochastic_plan.repetitions_per_combination)
-            call_value_list.append(_workflow_call.replace_input_refs(values, replacements))
+            call_value_list.append(replace_input_refs(values, replacements))
             sample_idx += 1
 
-    request = _workflow_execution.WorkflowExecutionRequest(
+    request = _execution.WorkflowExecutionRequest(
         func=func,
-        work_items=_workflow_execution.make_managed_work_items(
+        work_items=_execution.make_managed_work_items(
             call_value_list,
             unit_segments=tuple(
-                _workflow_execution.lifted_evaluation_unit_segment(
+                _execution.lifted_evaluation_unit_segment(
                     logical_unit.logical_unit_id,
                     index,
                 )
@@ -443,18 +446,18 @@ def _broadcast_enumerate(
             ),
         ),
         execution=execution,
-        contract=_workflow_execution_contract.make_execution_contract(
+        contract=make_execution_contract(
             evaluator="rowwise",
-            transport=_workflow_execution_contract.transport_for_execution_mode(execution.mode),
+            transport=transport_for_execution_mode(execution.mode),
             stochastic_plan=stochastic_plan,
         ),
         stochastic_plan=stochastic_plan,
     )
-    results = _workflow_execution.execute_many(request)
+    results = _execution.execute_many(request)
 
     all_input_samples = {
         ref.label: _stack_rows(
-            [_workflow_call.input_ref_value(call_values, ref) for call_values in call_value_list],
+            [input_ref_value(call_values, ref) for call_values in call_value_list],
             arg_name=ref.label,
         )
         for ref in all_broadcast_args
@@ -473,18 +476,18 @@ def _broadcast_sample(
     *,
     func: Callable[..., Any],
     values: dict[str, Any],
-    stochastic_plan: _workflow_plan.StochasticPlan,
-    logical_unit: _workflow_plan.LogicalUnit,
-    get_key: Callable[[_workflow_plan.PlannedRandomEvent], PRNGKey],
+    stochastic_plan: _plan.StochasticPlan,
+    logical_unit: _plan.LogicalUnit,
+    get_key: Callable[[_plan.PlannedRandomEvent], PRNGKey],
     make_execution_config: Callable[
         [],
-        _workflow_execution.WorkflowExecutionConfig,
+        _execution.WorkflowExecutionConfig,
     ],
     output_template: RecordSpec | None,
 ) -> BroadcastDistribution:
     """Sample distribution arguments and execute one function call per sample."""
     execution = make_execution_config()
-    _workflow_execution._preflight_execution_config(execution)
+    _execution._preflight_execution_config(execution)
     sample_shape = stochastic_plan.sample_shape
     if sample_shape is None:  # pragma: no cover - planner contract guard
         raise RuntimeError("sampled stochastic plan is missing sample_shape")
@@ -500,14 +503,14 @@ def _broadcast_sample(
     call_value_list = []
     for i in range(stochastic_plan.n_evaluations):
         replacements = {ref: _index_sample(samples_per_arg[ref], i) for ref in broadcast_args}
-        call_value_list.append(_workflow_call.replace_input_refs(values, replacements))
+        call_value_list.append(replace_input_refs(values, replacements))
 
-    request = _workflow_execution.WorkflowExecutionRequest(
+    request = _execution.WorkflowExecutionRequest(
         func=func,
-        work_items=_workflow_execution.make_managed_work_items(
+        work_items=_execution.make_managed_work_items(
             call_value_list,
             unit_segments=tuple(
-                _workflow_execution.lifted_evaluation_unit_segment(
+                _execution.lifted_evaluation_unit_segment(
                     logical_unit.logical_unit_id,
                     index,
                 )
@@ -515,14 +518,14 @@ def _broadcast_sample(
             ),
         ),
         execution=execution,
-        contract=_workflow_execution_contract.make_execution_contract(
+        contract=make_execution_contract(
             evaluator="rowwise",
-            transport=_workflow_execution_contract.transport_for_execution_mode(execution.mode),
+            transport=transport_for_execution_mode(execution.mode),
             stochastic_plan=stochastic_plan,
         ),
         stochastic_plan=stochastic_plan,
     )
-    results = _workflow_execution.execute_many(request)
+    results = _execution.execute_many(request)
 
     return BroadcastDistribution(
         input_samples={ref.label: samples_per_arg[ref] for ref in broadcast_args},
@@ -597,7 +600,7 @@ def mapped_draw_body(
     *,
     func: Callable[..., Any],
     values: dict[str, Any],
-    broadcast_args: Sequence[_workflow_call.WorkflowInputRef],
+    broadcast_args: Sequence[WorkflowInputRef],
 ) -> Callable[[Any], Any]:
     """The body ``jax.vmap`` runs for one draw, and the probe traces.
 
@@ -611,6 +614,6 @@ def mapped_draw_body(
         replacements = {
             ref: _present_draw(drawn) for ref, drawn in zip(broadcast_args, broadcast_slice)
         }
-        return func(**_workflow_call.replace_input_refs(values, replacements))
+        return func(**replace_input_refs(values, replacements))
 
     return one_draw

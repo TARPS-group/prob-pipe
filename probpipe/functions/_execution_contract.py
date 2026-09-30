@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from ..core.config import WorkflowKind
-from . import _plan as _workflow_plan
+from ._plan import StochasticPlan
 
 _EXECUTION_CONTRACT_ABI = "probpipe.workflow_rng_execution/v1"
 _RNG_ABI = "ProbPipe-RNG-v1"
@@ -56,7 +56,7 @@ def make_execution_contract(
     *,
     evaluator: WorkflowEvaluator,
     transport: WorkflowTransport,
-    stochastic_plan: _workflow_plan.StochasticPlan | None,
+    stochastic_plan: StochasticPlan | None,
 ) -> WorkflowRngExecutionContract:
     """Build the exact execution contract for one planned route."""
     provider_abis, descendant_adapter_abis = _stochastic_plan_abis(stochastic_plan)
@@ -75,7 +75,7 @@ def make_execution_contract(
 
 def supports_execution_contract(
     contract: WorkflowRngExecutionContract,
-    stochastic_plan: _workflow_plan.StochasticPlan | None,
+    stochastic_plan: StochasticPlan | None,
     *,
     jax_structure_supported: bool = True,
 ) -> bool:
@@ -168,7 +168,7 @@ def transport_for_workflow_kind(kind: WorkflowKind) -> WorkflowTransport:
 
 
 def _stochastic_plan_abis(
-    stochastic_plan: _workflow_plan.StochasticPlan | None,
+    stochastic_plan: StochasticPlan | None,
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     provider_abis = {_PROVIDER_ABI}
     descendant_adapter_abis: set[str] = set()

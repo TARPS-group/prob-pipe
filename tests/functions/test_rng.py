@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-import probpipe.functions._rng as workflow_rng
+import probpipe.functions._rng as _rng
 from probpipe.functions._rng import (
     RandomEventIdentity,
     derive_event_key_words,
@@ -88,9 +88,9 @@ class TestEventKeyDerivation:
     @pytest.fixture(autouse=True)
     def _reset_jax_key_adapter_state(self, monkeypatch):
         monkeypatch.setattr(
-            workflow_rng,
+            _rng,
             "_JAX_KEY_ADAPTER_STATE",
-            workflow_rng._JAXKeyAdapterState(),
+            _rng._JAXKeyAdapterState(),
         )
 
     @pytest.mark.parametrize(
@@ -169,14 +169,14 @@ class TestEventKeyDerivation:
 
     def test_jax_adapter_certifies_only_once_per_thread(self, monkeypatch):
         certifications = []
-        original_certify = workflow_rng._certify_jax_key_adapter
+        original_certify = _rng._certify_jax_key_adapter
 
         def record_certification(key, expected_words):
             certifications.append(expected_words)
             original_certify(key, expected_words)
 
         monkeypatch.setattr(
-            workflow_rng,
+            _rng,
             "_certify_jax_key_adapter",
             record_certification,
         )
@@ -192,7 +192,7 @@ class TestEventKeyDerivation:
         barrier = threading.Barrier(2)
         lock = threading.Lock()
         certification_threads = []
-        original_certify = workflow_rng._certify_jax_key_adapter
+        original_certify = _rng._certify_jax_key_adapter
 
         def record_certification(key, expected_words):
             with lock:
@@ -200,7 +200,7 @@ class TestEventKeyDerivation:
             original_certify(key, expected_words)
 
         monkeypatch.setattr(
-            workflow_rng,
+            _rng,
             "_certify_jax_key_adapter",
             record_certification,
         )
@@ -238,9 +238,9 @@ class TestEventKeyDerivation:
         with pytest.raises(RuntimeError, match="raw key word values"):
             jax_key_from_words((1, 2))
 
-        assert not workflow_rng._JAX_KEY_ADAPTER_STATE.certified
+        assert not _rng._JAX_KEY_ADAPTER_STATE.certified
         key = jax_key_from_words((1, 2))
-        assert workflow_rng._JAX_KEY_ADAPTER_STATE.certified
+        assert _rng._JAX_KEY_ADAPTER_STATE.certified
         assert tuple(int(word) for word in jax.random.key_data(key)) == (1, 2)
 
     def test_jax_adapter_rejects_a_non_threefry_typed_key(self, monkeypatch):
@@ -279,4 +279,4 @@ class TestEventKeyDerivation:
         with pytest.raises(RuntimeError, match=message):
             jax_key_from_words((1, 2))
 
-        assert not workflow_rng._JAX_KEY_ADAPTER_STATE.certified
+        assert not _rng._JAX_KEY_ADAPTER_STATE.certified

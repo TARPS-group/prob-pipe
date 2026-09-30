@@ -12,7 +12,7 @@ import tensorflow_probability.substrates.jax.glm as tfp_glm
 
 from probpipe import GLMLikelihood, workflow_run
 from probpipe.diagnostics._ppc_spc import _ppc_op, add_ppc
-from probpipe.functions import _context as _workflow_context
+from probpipe.functions import _context
 
 
 def _mean(values):
@@ -60,7 +60,7 @@ class TestPpcDiagnosticBroker:
     def test_seeded_multi_test_ppc_claims_stable_ordered_events(self, posterior):
         claims = []
         key_words = []
-        original_key_for = _workflow_context._WorkflowInvocation.key_for
+        original_key_for = _context._WorkflowInvocation.key_for
 
         def recording_key_for(invocation, *, stochastic_source_id, logical_unit_id):
             claims.append((stochastic_source_id, logical_unit_id))
@@ -76,7 +76,7 @@ class TestPpcDiagnosticBroker:
 
         with (
             patch.object(
-                _workflow_context._WorkflowInvocation,
+                _context._WorkflowInvocation,
                 "key_for",
                 new=recording_key_for,
             ),
@@ -86,7 +86,7 @@ class TestPpcDiagnosticBroker:
             ),
             patch(
                 "probpipe.functions._context._commit_stochastic_invocation",
-                wraps=_workflow_context._commit_stochastic_invocation,
+                wraps=_context._commit_stochastic_invocation,
             ) as commit,
             workflow_run(seed=17),
         ):
@@ -114,13 +114,13 @@ class TestPpcDiagnosticBroker:
                 ),
                 patch(
                     "probpipe.functions._context._commit_stochastic_invocation",
-                    wraps=_workflow_context._commit_stochastic_invocation,
+                    wraps=_context._commit_stochastic_invocation,
                 ) as commit,
                 patch.object(
-                    _workflow_context._WorkflowInvocation,
+                    _context._WorkflowInvocation,
                     "key_for",
                     autospec=True,
-                    wraps=_workflow_context._WorkflowInvocation.key_for,
+                    wraps=_context._WorkflowInvocation.key_for,
                 ) as key_for,
                 workflow_run(seed=17),
             ):

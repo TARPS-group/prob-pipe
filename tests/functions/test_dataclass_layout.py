@@ -10,42 +10,44 @@ from types import ModuleType
 
 import pytest
 
-from probpipe.functions import _broker as _workflow_broker
-from probpipe.functions import _call as _workflow_call
-from probpipe.functions import _callable as _workflow_callable
-from probpipe.functions import _context as _workflow_context
-from probpipe.functions import _descendants as _workflow_descendants
-from probpipe.functions import _execution as _workflow_execution
-from probpipe.functions import _execution_contract as _workflow_execution_contract
-from probpipe.functions import _managed as _workflow_managed
-from probpipe.functions import _plan as _workflow_plan
-from probpipe.functions import _replay as _workflow_replay
-from probpipe.functions import _rng as _workflow_rng
+from probpipe.functions import (
+    _broker,
+    _call,
+    _callable,
+    _context,
+    _descendants,
+    _execution,
+    _execution_contract,
+    _managed,
+    _plan,
+    _replay,
+    _rng,
+)
 
 _WORKFLOW_MODULES = (
-    _workflow_broker,
-    _workflow_call,
-    _workflow_callable,
-    _workflow_context,
-    _workflow_descendants,
-    _workflow_execution,
-    _workflow_execution_contract,
-    _workflow_managed,
-    _workflow_plan,
-    _workflow_replay,
-    _workflow_rng,
+    _broker,
+    _call,
+    _callable,
+    _context,
+    _descendants,
+    _execution,
+    _execution_contract,
+    _managed,
+    _plan,
+    _replay,
+    _rng,
 )
 
 
 @pytest.fixture(
     params=[
-        _workflow_call.WorkflowInputRef("x"),
-        _workflow_callable.CallableAnchor(False, "local_function", None, None),
-        _workflow_execution_contract.make_execution_contract(
+        _call.WorkflowInputRef("x"),
+        _callable.CallableAnchor(False, "local_function", None, None),
+        _execution_contract.make_execution_contract(
             evaluator="rowwise", transport="local_inline", stochastic_plan=None
         ),
-        _workflow_rng.RandomEventIdentity(("invocation", 0), ("source", 0), ("singleton",)),
-        _workflow_managed.ManagedWorkItemToken(bytes(range(16))),
+        _rng.RandomEventIdentity(("invocation", 0), ("source", 0), ("singleton",)),
+        _managed.ManagedWorkItemToken(bytes(range(16))),
     ],
     ids=["input-ref", "callable-anchor", "execution-contract", "random-event", "managed-token"],
 )

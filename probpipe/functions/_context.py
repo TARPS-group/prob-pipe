@@ -181,9 +181,9 @@ class _WorkflowRunScope:
     def __enter__(self) -> None:
         if self._token is not None:
             raise RuntimeError("workflow_run context is already active")
-        from . import _replay as _workflow_replay
+        from . import _replay
 
-        if _workflow_replay._replay_is_active():
+        if _replay._replay_is_active():
             from ._errors import ReplayCompatibilityError
 
             raise ReplayCompatibilityError("workflow_run cannot be nested inside replay_run")
@@ -331,7 +331,13 @@ def _guard_automatic_key_request() -> None:
 def _commit_stochastic_invocation(
     occurrence_kind: Literal["invocation", "operation"] = "invocation",
 ) -> _WorkflowInvocation:
-    """Commit one stochastic invocation in the active workflow frame."""
+    """Check admission and commit an invocation in the active workflow frame.
+
+    Signal workflow-owned randomness during JAX probing before committing any
+    state. Otherwise require the active frame to be open and owned by the
+    current process, thread, and asyncio task, then delegate the commit to
+    ``_commit_stochastic_invocation_in_frame``.
+    """
     probe_state = _STOCHASTIC_PROBE_STATE.get()
     if probe_state is not None:
         probe_state.effect_observed = True
@@ -349,7 +355,14 @@ def _commit_stochastic_invocation_in_frame(
     frame: _WorkflowFrame,
     occurrence_kind: Literal["invocation", "operation"],
 ) -> _WorkflowInvocation:
-    """Commit against a previously admitted frame for a managed child."""
+    """Commit in an explicit frame whose admission the caller already established.
+
+    Used after active-frame admission and by managed execution when a worker
+    lazily commits its parent broker's invocation. That parent frame can belong
+    to another thread, so this helper does not repeat owner or JAX-probe checks.
+    Path materialization still requires the frame to be open. Callers entering
+    through the active context must use ``_commit_stochastic_invocation``.
+    """
     path_prefix = _materialize_path(frame)
     ordinal = frame.ledger.commit()
     return _WorkflowInvocation(

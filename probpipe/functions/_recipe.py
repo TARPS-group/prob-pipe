@@ -7,10 +7,7 @@ import json
 from typing import Any
 
 from ..core.config import ProvenanceMode
-from . import _broker as _workflow_broker
-from . import _context as _workflow_context
-from . import _execution_contract as _workflow_execution_contract
-from . import _plan as _workflow_plan
+from . import _broker, _context, _execution_contract, _plan
 from ._managed import ManagedEffectClaim
 from ._rng import RandomEventIdentity, encode_random_event
 
@@ -21,12 +18,12 @@ _MANAGED_CHILD_POLICY_ABI = "probpipe.managed_child/v1"
 
 
 def provenance_recipe_fields(
-    stochastic_plan: _workflow_plan.StochasticPlan | None,
+    stochastic_plan: _plan.StochasticPlan | None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return exact controls/diagnostics for one successful active invocation."""
-    if _workflow_context._active_provenance_mode() is ProvenanceMode.OFF:
+    if _context._active_provenance_mode() is ProvenanceMode.OFF:
         return {}, {}
-    snapshot = _workflow_broker._snapshot_active_recipe_state()
+    snapshot = _broker._snapshot_active_recipe_state()
     if snapshot is None:
         return {}, {}
 
@@ -90,11 +87,11 @@ def provenance_recipe_fields(
             "expected_effects": effect_anchors,
         },
         "compatibility": {
-            "execution_contract": _workflow_execution_contract.execution_contract_abi(),
+            "execution_contract": _execution_contract.execution_contract_abi(),
             "sampling_abi": sampling_abis,
             "provider_abi": provider_abis,
             "descendant_adapter_abi": descendant_adapter_abis,
-            "key_adapter_abi": _workflow_execution_contract.key_adapter_abi(),
+            "key_adapter_abi": _execution_contract.key_adapter_abi(),
         },
     }
     diagnostics = {
@@ -102,9 +99,9 @@ def provenance_recipe_fields(
         "callable_source": anchor.diagnostics() if anchor is not None else {},
         "execution": execution_diagnostics,
     }
-    from . import _replay as _workflow_replay
+    from . import _replay
 
-    replay_diagnostics = _workflow_replay._active_replay_diagnostics()
+    replay_diagnostics = _replay._active_replay_diagnostics()
     if replay_diagnostics is not None:
         diagnostics["replay"] = replay_diagnostics
     return (
@@ -114,7 +111,7 @@ def provenance_recipe_fields(
 
 
 def serialize_stochastic_plan(
-    plan: _workflow_plan.StochasticPlan | None,
+    plan: _plan.StochasticPlan | None,
 ) -> dict[str, Any]:
     """Serialize only canonical plan fields under the version-1 plan ABI."""
     if plan is None:
@@ -206,7 +203,7 @@ def _serialize_effect_anchor(effect: ManagedEffectClaim) -> dict[str, Any]:
 
 def _sort_effects(
     effects: tuple[ManagedEffectClaim, ...],
-    plan: _workflow_plan.StochasticPlan | None,
+    plan: _plan.StochasticPlan | None,
 ) -> tuple[ManagedEffectClaim, ...]:
     plan_order = (
         {

@@ -18,10 +18,8 @@ try:
 except ImportError:
     task = flow = None
 
-from . import _broker as _workflow_broker
-from . import _context as _workflow_context
-from . import _execution_contract as _workflow_execution_contract
-from . import _plan as _workflow_plan
+from . import _broker, _context, _execution_contract
+from ._plan import StochasticPlan
 from ._managed import (
     ManagedAttemptState,
     ManagedClaimReport,
@@ -69,8 +67,8 @@ class WorkflowExecutionRequest:
     func: Callable[..., Any]
     work_items: tuple[ManagedWorkItem, ...]
     execution: WorkflowExecutionConfig
-    contract: _workflow_execution_contract.WorkflowRngExecutionContract | None = None
-    stochastic_plan: _workflow_plan.StochasticPlan | None = None
+    contract: _execution_contract.WorkflowRngExecutionContract | None = None
+    stochastic_plan: StochasticPlan | None = None
 
 
 def _preflight_execution_config(execution: WorkflowExecutionConfig) -> None:
@@ -108,21 +106,21 @@ def execute_many(request: WorkflowExecutionRequest) -> list[Any]:
             _validated_managed_work_item_snapshot(item) for item in request.work_items
         ),
     )
-    contract = request.contract or _workflow_execution_contract.make_execution_contract(
+    contract = request.contract or _execution_contract.make_execution_contract(
         evaluator="rowwise",
-        transport=_workflow_execution_contract.transport_for_execution_mode(request.execution.mode),
+        transport=_execution_contract.transport_for_execution_mode(request.execution.mode),
         stochastic_plan=request.stochastic_plan,
     )
-    if not _workflow_execution_contract.supports_execution_contract(
+    if not _execution_contract.supports_execution_contract(
         contract,
         request.stochastic_plan,
     ):
         raise RuntimeError("workflow execution route does not satisfy the RNG contract")
-    if _workflow_context._workflow_side_effects_forbidden():
+    if _context._workflow_side_effects_forbidden():
         return [request.func(**item.call_values()) for item in request.work_items]
-    _workflow_broker._record_active_execution_contract(contract)
-    parent_frame = _workflow_context._capture_active_workflow_frame()
-    parent_broker = _workflow_broker._capture_active_broker()
+    _broker._record_active_execution_contract(contract)
+    parent_frame = _context._capture_active_workflow_frame()
+    parent_broker = _broker._capture_active_broker()
     if parent_broker is not None:
         parent_broker.register_managed_work_items(request.work_items)
 
@@ -165,19 +163,19 @@ def execute_many(request: WorkflowExecutionRequest) -> list[Any]:
 def execute_many_threaded(
     request: WorkflowExecutionRequest,
     *,
-    parent_frame: _workflow_context._WorkflowFrame | None = None,
-    parent_broker: _workflow_broker._AutomaticKeyBroker | None = None,
+    parent_frame: _context._WorkflowFrame | None = None,
+    parent_broker: _broker._AutomaticKeyBroker | None = None,
 ) -> list[Any]:
     """Execute call dictionaries through ``ThreadPoolExecutor``."""
     if not request.work_items:
         return []
 
-    _workflow_context._guard_managed_submission()
+    _context._guard_managed_submission()
     max_workers = _validate_max_workers(request.execution.max_workers)
     if parent_frame is None:
-        parent_frame = _workflow_context._capture_active_workflow_frame()
+        parent_frame = _context._capture_active_workflow_frame()
     if parent_broker is None:
-        parent_broker = _workflow_broker._capture_active_broker()
+        parent_broker = _broker._capture_active_broker()
         if parent_broker is not None:
             parent_broker.register_managed_work_items(request.work_items)
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
@@ -198,13 +196,13 @@ def map_task(
     request: WorkflowExecutionRequest,
     *,
     task_name: str | None = None,
-    parent_broker: _workflow_broker._AutomaticKeyBroker | None = None,
+    parent_broker: _broker._AutomaticKeyBroker | None = None,
 ) -> list[Any]:
     """Create a Prefect task, map keyword arguments over calls, and resolve futures."""
     if not request.work_items:
         return []
 
-    _workflow_context._guard_managed_submission()
+    _context._guard_managed_submission()
     _ensure_prefect_available()
 
     func = request.func
@@ -249,7 +247,7 @@ def _run_prefect_payloads(
     payloads: list[ManagedPrefectPayload],
 ) -> list[ManagedExecutionOutcome]:
     """Submit one attempt for each payload and collect its managed outcome."""
-    _workflow_context._guard_managed_submission()
+    _context._guard_managed_submission()
     validated_payloads = [
         _validated_managed_prefect_payload_snapshot(payload) for payload in payloads
     ]
@@ -314,7 +312,7 @@ def _validate_prefect_outcome_for_payload(
 def _make_prefect_payload(
     item: ManagedWorkItem,
     *,
-    parent_broker: _workflow_broker._AutomaticKeyBroker | None,
+    parent_broker: _broker._AutomaticKeyBroker | None,
     parent_authority: bool,
 ) -> ManagedPrefectPayload:
     """Create and parent-reserve one fresh remote execution attempt."""
@@ -331,7 +329,7 @@ def _make_prefect_payload(
     return ManagedPrefectPayload(
         item=item,
         attempt=attempt,
-        provenance_mode=_workflow_context._active_provenance_mode(),
+        provenance_mode=_context._active_provenance_mode(),
         parent=parent,
     )
 
@@ -339,7 +337,7 @@ def _make_prefect_payload(
 def _abort_prefect_payloads(
     payloads: tuple[ManagedPrefectPayload, ...],
     *,
-    parent_broker: _workflow_broker._AutomaticKeyBroker | None,
+    parent_broker: _broker._AutomaticKeyBroker | None,
 ) -> None:
     """Release every current parent reservation after a transport failure."""
     if parent_broker is None:
@@ -353,7 +351,7 @@ def _coordinate_prefect_randomness(
     outcomes: list[ManagedExecutionOutcome],
     *,
     payloads_by_index: dict[int, ManagedPrefectPayload],
-    parent_broker: _workflow_broker._AutomaticKeyBroker | None,
+    parent_broker: _broker._AutomaticKeyBroker | None,
 ) -> list[ManagedExecutionOutcome]:
     """Re-submit remote units that lazily request parent RNG authority."""
     coordination = [outcome for outcome in outcomes if outcome.coordination_required]
@@ -387,7 +385,7 @@ def _retry_prefect_failures(
     outcomes: list[ManagedExecutionOutcome],
     *,
     payloads_by_index: dict[int, ManagedPrefectPayload],
-    parent_broker: _workflow_broker._AutomaticKeyBroker | None,
+    parent_broker: _broker._AutomaticKeyBroker | None,
 ) -> list[ManagedExecutionOutcome]:
     """Coordinate configured retries while preserving work-item ownership."""
     max_retries, retry_delays = _prefect_retry_policy()
@@ -444,7 +442,7 @@ def _replace_prefect_outcomes(
 def _accept_prefect_claim_report(
     outcome: ManagedExecutionOutcome,
     *,
-    parent_broker: _workflow_broker._AutomaticKeyBroker | None,
+    parent_broker: _broker._AutomaticKeyBroker | None,
 ) -> None:
     """Join one completed remote attempt before it is retried."""
     if parent_broker is None:
@@ -502,13 +500,13 @@ def _retry_delay_for_ordinal(delays: tuple[float, ...], ordinal: int) -> float:
 def execute_many_prefect_task(
     request: WorkflowExecutionRequest,
     *,
-    parent_broker: _workflow_broker._AutomaticKeyBroker | None = None,
+    parent_broker: _broker._AutomaticKeyBroker | None = None,
 ) -> list[Any]:
     """Use Prefect ``task.map()`` inside a lightweight flow."""
     if not request.work_items:
         return []
 
-    _workflow_context._guard_managed_submission()
+    _context._guard_managed_submission()
     _ensure_prefect_available()
     runner = request.execution.prefect_task_runner
 
@@ -525,13 +523,13 @@ def execute_many_prefect_task(
 def execute_many_prefect_flow(
     request: WorkflowExecutionRequest,
     *,
-    parent_broker: _workflow_broker._AutomaticKeyBroker | None = None,
+    parent_broker: _broker._AutomaticKeyBroker | None = None,
 ) -> list[Any]:
     """Wrap a mapped task inside a named Prefect flow."""
     if not request.work_items:
         return []
 
-    _workflow_context._guard_managed_submission()
+    _context._guard_managed_submission()
     _ensure_prefect_available()
     runner = request.execution.prefect_task_runner
 
@@ -563,19 +561,19 @@ def _validate_max_workers(max_workers: int | None) -> int | None:
 def _execute_work_item(
     func: Callable[..., Any],
     item: ManagedWorkItem,
-    parent_frame: _workflow_context._WorkflowFrame | None = None,
-    parent_broker: _workflow_broker._AutomaticKeyBroker | None = None,
+    parent_frame: _context._WorkflowFrame | None = None,
+    parent_broker: _broker._AutomaticKeyBroker | None = None,
 ) -> Any:
     """Execute one frozen work item without changing its canonical identity."""
     if parent_frame is None:
         return func(**item.call_values())
-    with _workflow_context._managed_work_item_scope(
+    with _context._managed_work_item_scope(
         parent_frame,
         item.frame.unit_segment,
     ):
         if parent_broker is None:
             return func(**item.call_values())
-        with _workflow_broker._managed_work_item_stochastic_scope(
+        with _broker._managed_work_item_stochastic_scope(
             parent_broker,
             item.frame,
         ):
@@ -592,11 +590,11 @@ def _execute_prefect_payload(
     attempt = payload.attempt
     if payload.parent is None:
         with (
-            _workflow_context._transported_workflow_frame(
+            _context._transported_workflow_frame(
                 None,
                 payload.provenance_mode,
             ),
-            _workflow_broker._remote_coordination_probe_scope() as observation,
+            _broker._remote_coordination_probe_scope() as observation,
         ):
             value = None
             execution_error = None
@@ -622,13 +620,13 @@ def _execute_prefect_payload(
             report=ManagedClaimReport(item.frame, attempt, 0),
         )
 
-    with _workflow_context._transported_workflow_frame(
+    with _context._transported_workflow_frame(
         payload.parent.root_words,
         payload.provenance_mode,
     ):
         remote_parent = None
         try:
-            with _workflow_broker._remote_managed_work_item_stochastic_scope(
+            with _broker._remote_managed_work_item_stochastic_scope(
                 payload.parent,
                 attempt,
             ) as remote_parent:
@@ -651,7 +649,7 @@ def _execute_prefect_payload(
 def _resolve_prefect_outcomes(
     outcomes: list[ManagedExecutionOutcome],
     *,
-    parent_broker: _workflow_broker._AutomaticKeyBroker | None,
+    parent_broker: _broker._AutomaticKeyBroker | None,
 ) -> list[Any]:
     """Join remote claims, restore canonical order, then raise the first error."""
     ordered = sorted(outcomes, key=lambda outcome: outcome.index)

@@ -31,7 +31,7 @@ from probpipe import (
 from probpipe.converters import ConverterRegistry, _probpipe, _scipy, _tfp
 from probpipe.converters._probpipe import ProbPipeConverter
 from probpipe.converters._tfp import TFPConverter
-from probpipe.functions import _context as _workflow_context
+from probpipe.functions import _context
 
 
 class _RecordingNormal(Normal):
@@ -139,7 +139,7 @@ class TestBuiltInConversionPlanning:
             with (
                 patch(
                     "probpipe.functions._context._commit_stochastic_invocation",
-                    wraps=_workflow_context._commit_stochastic_invocation,
+                    wraps=_context._commit_stochastic_invocation,
                 ) as commit,
                 workflow_run(seed=7),
             ):
@@ -217,7 +217,7 @@ class TestBuiltInConversionPlanning:
         with (
             patch(
                 "probpipe.functions._context.derive_event_key_words_from_encoded",
-                wraps=_workflow_context.derive_event_key_words_from_encoded,
+                wraps=_context.derive_event_key_words_from_encoded,
             ) as derive,
             workflow_run(seed=7),
         ):
@@ -235,7 +235,7 @@ class TestBuiltInConversionPlanning:
         with (
             patch(
                 "probpipe.functions._context.derive_event_key_words_from_encoded",
-                wraps=_workflow_context.derive_event_key_words_from_encoded,
+                wraps=_context.derive_event_key_words_from_encoded,
             ) as derive,
             workflow_run(seed=7),
         ):
@@ -346,7 +346,7 @@ class TestBuiltInConversionPlanning:
         with (
             patch(
                 "probpipe.functions._context._commit_stochastic_invocation",
-                wraps=_workflow_context._commit_stochastic_invocation,
+                wraps=_context._commit_stochastic_invocation,
             ) as commit,
             patch.object(
                 _probpipe,
@@ -354,10 +354,10 @@ class TestBuiltInConversionPlanning:
                 wraps=_probpipe._sampled_moment_plan,
             ) as planner,
             patch.object(
-                _workflow_context._WorkflowInvocation,
+                _context._WorkflowInvocation,
                 "key_for",
                 autospec=True,
-                wraps=_workflow_context._WorkflowInvocation.key_for,
+                wraps=_context._WorkflowInvocation.key_for,
             ) as key_for,
             workflow_run(seed=41),
         ):

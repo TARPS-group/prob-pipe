@@ -18,9 +18,7 @@ from ..core._batch import Batch
 from ..core._distribution_array import DistributionArray
 from ..core._empirical import EmpiricalDistribution
 from ..distributions._distribution import Distribution
-from . import _call as _workflow_call
-from . import _descendants as _workflow_descendants
-from . import _normalization as _workflow_distribution_normalization
+from . import _call, _descendants, _normalization
 
 BroadcastRegime = Literal["none", "distribution", "sweep", "nested"]
 StochasticExecutionMode = Literal["exact", "sampled"]
@@ -39,7 +37,7 @@ class ArrayBroadcastGroup:
     law have no level names to align on.
     """
 
-    arg_refs: tuple[_workflow_call.WorkflowInputRef, ...]
+    arg_refs: tuple[_call.WorkflowInputRef, ...]
     batch_shape: tuple[int, ...]
     size: int
     # What the group's axes range over, for the aggregate to mint its levels
@@ -56,8 +54,8 @@ class BroadcastPlan:
     """Pure broadcast classification for one resolved workflow call."""
 
     regime: BroadcastRegime
-    dist_args: tuple[_workflow_call.WorkflowInputRef, ...]
-    array_args: tuple[_workflow_call.WorkflowInputRef, ...]
+    dist_args: tuple[_call.WorkflowInputRef, ...]
+    array_args: tuple[_call.WorkflowInputRef, ...]
     array_groups: tuple[ArrayBroadcastGroup, ...]
     sweep_batch_shape: tuple[int, ...]
     sweep_level_names: tuple[str, ...]
@@ -69,10 +67,10 @@ class BroadcastPlan:
 class StochasticConsumerPlan:
     """Canonical projection of one argument from a co-sampled root."""
 
-    arg_ref: _workflow_call.WorkflowInputRef
+    arg_ref: _call.WorkflowInputRef
     record_path: tuple[str, ...]
     descendant_descriptor: tuple[Any, ...] | None
-    _descriptor_abi_summary: _workflow_descendants._DescriptorAbiSummary = field(
+    _descriptor_abi_summary: _descendants._DescriptorAbiSummary = field(
         init=False,
         compare=False,
         hash=False,
@@ -84,7 +82,7 @@ class StochasticConsumerPlan:
         object.__setattr__(
             self,
             "_descriptor_abi_summary",
-            _workflow_descendants._summarize_descriptor_abis(self.descendant_descriptor),
+            _descendants._summarize_descriptor_abis(self.descendant_descriptor),
         )
 
 
@@ -98,7 +96,7 @@ class StochasticSourceGroup:
     exact_size: int | None
 
     @property
-    def arg_refs(self) -> tuple[_workflow_call.WorkflowInputRef, ...]:
+    def arg_refs(self) -> tuple[_call.WorkflowInputRef, ...]:
         """Return consumer references in canonical argument order."""
         return tuple(consumer.arg_ref for consumer in self.consumers)
 
@@ -154,7 +152,7 @@ class StochasticPlan:
     """Immutable stochastic lifting decisions for one normalized call."""
 
     evaluation_mode: StochasticEvaluationMode
-    arg_refs: tuple[_workflow_call.WorkflowInputRef, ...]
+    arg_refs: tuple[_call.WorkflowInputRef, ...]
     source_groups: tuple[StochasticSourceGroup, ...]
     logical_units: tuple[LogicalUnit, ...]
     n_broadcast_samples: int
@@ -186,15 +184,15 @@ class StochasticPlan:
 def build_broadcast_plan(
     *,
     values: Mapping[str, Any],
-    signature_info: _workflow_call.WorkflowSignatureInfo,
+    signature_info: _call.WorkflowSignatureInfo,
 ) -> BroadcastPlan:
     """Classify normalized values into a broadcast execution plan."""
-    dist_args: list[_workflow_call.WorkflowInputRef] = []
-    array_args: list[_workflow_call.WorkflowInputRef] = []
+    dist_args: list[_call.WorkflowInputRef] = []
+    array_args: list[_call.WorkflowInputRef] = []
 
-    for ref in _workflow_call.iter_input_refs(signature_info, values):
-        value = _workflow_call.input_ref_value(values, ref)
-        expected = _workflow_call.input_ref_hint(signature_info, ref)
+    for ref in _call.iter_input_refs(signature_info, values):
+        value = _call.input_ref_value(values, ref)
+        expected = _call.input_ref_hint(signature_info, ref)
 
         # Any Batch is an operand: what makes a value sweepable is that it holds
         # a multiplicity on named levels, which is the Batch contract rather than
@@ -209,7 +207,7 @@ def build_broadcast_plan(
             continue
 
         if isinstance(value, Distribution):
-            if _workflow_distribution_normalization.is_distribution_hint(expected):
+            if _normalization.is_distribution_hint(expected):
                 continue
             dist_args.append(ref)
 
@@ -324,7 +322,7 @@ def build_stochastic_plan(
 def _group_stochastic_sources(
     *,
     values: Mapping[str, Any],
-    refs: Sequence[_workflow_call.WorkflowInputRef],
+    refs: Sequence[_call.WorkflowInputRef],
 ) -> tuple[
     list[list[StochasticConsumerPlan]],
     list[Distribution],
@@ -338,8 +336,8 @@ def _group_stochastic_sources(
     runtime_evaluators: list[list[Callable[[Any], Any]]] = []
     group_index_by_root_id: dict[int, int] = {}
 
-    source_entries = tuple((ref, _workflow_call.input_ref_value(values, ref)) for ref in refs)
-    captured_consumers = _workflow_descendants.capture_stochastic_consumers(
+    source_entries = tuple((ref, _call.input_ref_value(values, ref)) for ref in refs)
+    captured_consumers = _descendants.capture_stochastic_consumers(
         tuple(value for _ref, value in source_entries)
     )
 
@@ -402,8 +400,8 @@ def _validate_stochastic_sample_count(n_broadcast_samples: int) -> None:
 def group_by_alignment(
     *,
     values: Mapping[str, Any],
-    refs: Sequence[_workflow_call.WorkflowInputRef],
-) -> list[tuple[Any, tuple[_workflow_call.WorkflowInputRef, ...]]]:
+    refs: Sequence[_call.WorkflowInputRef],
+) -> list[tuple[Any, tuple[_call.WorkflowInputRef, ...]]]:
     """Group input references by what aligns them, with each group's root.
 
     A value with no parent is its own root, so one group holds every reference
@@ -425,9 +423,9 @@ def group_by_alignment(
     level in common are independent and form a product. Sibling views from one
     batch's ``select_all`` therefore zip, as do a batch and a view of it.
     """
-    groups: dict[Any, tuple[Any, list[_workflow_call.WorkflowInputRef]]] = {}
+    groups: dict[Any, tuple[Any, list[_call.WorkflowInputRef]]] = {}
     for ref in refs:
-        value = _workflow_call.input_ref_value(values, ref)
+        value = _call.input_ref_value(values, ref)
         parent = getattr(value, "parent", None)
         if parent is not None:
             key: Any = id(parent)
@@ -445,7 +443,7 @@ def group_by_alignment(
 def build_array_zip_groups(
     *,
     values: Mapping[str, Any],
-    refs: Sequence[_workflow_call.WorkflowInputRef],
+    refs: Sequence[_call.WorkflowInputRef],
 ) -> tuple[ArrayBroadcastGroup, ...]:
     """Build the zip groups for array-valued sweep arguments.
 
@@ -455,7 +453,7 @@ def build_array_zip_groups(
     """
     groups: list[ArrayBroadcastGroup] = []
     for _root, arg_refs in group_by_alignment(values=values, refs=refs):
-        first = _workflow_call.input_ref_value(values, arg_refs[0])
+        first = _call.input_ref_value(values, arg_refs[0])
         batch_shape = tuple(first.batch_shape)
         if isinstance(first, Batch):
             level_names = tuple(first.level_names)
@@ -464,7 +462,7 @@ def build_array_zip_groups(
             level_names = (arg_refs[0].label,)
             group_axes = (batch_shape,)
         for ref in arg_refs[1:]:
-            other = _workflow_call.input_ref_value(values, ref)
+            other = _call.input_ref_value(values, ref)
             if isinstance(first, Batch):
                 # Two operands naming the same levels claim the same axes, group
                 # by group: agreeing on the flat shape alone would zip a
@@ -501,7 +499,7 @@ def build_array_zip_groups(
     # same level twice.
     owners: dict[str, tuple[str, tuple[str, ...]]] = {}
     for group in groups:
-        first = _workflow_call.input_ref_value(values, group.arg_refs[0])
+        first = _call.input_ref_value(values, group.arg_refs[0])
         if not isinstance(first, Batch):
             # An operand carrying no levels of its own cannot share one: its
             # multiplicity is anonymous, so it aligns with nothing by name and
@@ -525,8 +523,8 @@ def build_array_zip_groups(
 
 def _broadcast_regime(
     *,
-    dist_args: Sequence[_workflow_call.WorkflowInputRef],
-    array_args: Sequence[_workflow_call.WorkflowInputRef],
+    dist_args: Sequence[_call.WorkflowInputRef],
+    array_args: Sequence[_call.WorkflowInputRef],
 ) -> BroadcastRegime:
     if dist_args and array_args:
         return "nested"

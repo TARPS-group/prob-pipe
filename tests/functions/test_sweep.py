@@ -28,9 +28,7 @@ from probpipe import (
 )
 from probpipe.core._record_batch import _MappedBatchColumns
 from probpipe.core.constraints import positive
-from probpipe.functions import _call as _workflow_call
-from probpipe.functions import _execution as _workflow_execution
-from probpipe.functions import _sweep as _workflow_sweep
+from probpipe.functions import _call, _execution, _sweep
 from probpipe.functions._plan import build_broadcast_plan, build_stochastic_plan
 
 
@@ -43,15 +41,15 @@ def _numeric_record_batch(
     )
 
 
-def _ref(name: str) -> _workflow_call.WorkflowInputRef:
-    return _workflow_call.WorkflowInputRef(name)
+def _ref(name: str) -> _call.WorkflowInputRef:
+    return _call.WorkflowInputRef(name)
 
 
 def _plan(values):
     signature = inspect.Signature(
         [inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in values]
     )
-    signature_info = _workflow_call.make_signature_info_from_signature(signature)
+    signature_info = _call.make_signature_info_from_signature(signature)
     return build_broadcast_plan(values=values, signature_info=signature_info)
 
 
@@ -77,7 +75,7 @@ class TestSliceSweepValues:
         plan = _plan(values)
 
         observed = [
-            _workflow_sweep.slice_sweep_values(
+            _sweep.slice_sweep_values(
                 values=values,
                 index=i,
                 array_groups=plan.array_groups,
@@ -99,7 +97,7 @@ class TestSliceSweepValues:
         plan = _plan(values)
 
         observed = [
-            _workflow_sweep.slice_sweep_values(
+            _sweep.slice_sweep_values(
                 values=values,
                 index=i,
                 array_groups=plan.array_groups,
@@ -127,12 +125,12 @@ class TestSliceSweepValues:
         values = {"d": da}
         plan = _plan(values)
 
-        first = _workflow_sweep.slice_sweep_values(
+        first = _sweep.slice_sweep_values(
             values=values,
             index=0,
             array_groups=plan.array_groups,
         )
-        second = _workflow_sweep.slice_sweep_values(
+        second = _sweep.slice_sweep_values(
             values=values,
             index=1,
             array_groups=plan.array_groups,
@@ -148,7 +146,7 @@ class TestExecuteSweep:
     def test_row_wise_sweep_uses_execution_request(self, monkeypatch):
         values = {"p": _numeric_record_batch("x", range(3))}
         plan = _plan(values)
-        execution = _workflow_execution.WorkflowExecutionConfig(
+        execution = _execution.WorkflowExecutionConfig(
             mode="thread",
             max_workers=2,
             name="double",
@@ -166,12 +164,12 @@ class TestExecuteSweep:
             return [request.func(**item.call_values()) for item in request.work_items]
 
         monkeypatch.setattr(
-            _workflow_sweep._workflow_execution,
+            _sweep._execution,
             "execute_many",
             fake_execute_many,
         )
 
-        result = _workflow_sweep.execute_sweep(
+        result = _sweep.execute_sweep(
             func=double,
             values=values,
             plan=plan,
@@ -197,13 +195,13 @@ class TestExecuteSweep:
     def test_include_inputs_is_rejected_for_sweep(self):
         values = {"p": _numeric_record_batch("x", range(1))}
         plan = _plan(values)
-        execution = _workflow_execution.WorkflowExecutionConfig(
+        execution = _execution.WorkflowExecutionConfig(
             mode="sequential",
             name="identity",
         )
 
         with pytest.raises(NotImplementedError, match="include_inputs=True"):
-            _workflow_sweep.execute_sweep(
+            _sweep.execute_sweep(
                 func=lambda p: p["x"],
                 values=values,
                 plan=plan,
@@ -224,7 +222,7 @@ class TestExecuteSweep:
         }
         plan = _plan(values)
         stochastic_plan = _stochastic_plan(values, 7)
-        execution = _workflow_execution.WorkflowExecutionConfig(
+        execution = _execution.WorkflowExecutionConfig(
             mode="sequential",
             name="nested",
         )
@@ -253,7 +251,7 @@ class TestExecuteSweep:
                 broadcast_args=["noise"],
             )
 
-        result = _workflow_sweep.execute_sweep(
+        result = _sweep.execute_sweep(
             func=lambda p, noise: p["x"] + noise,
             values=values,
             plan=plan,
@@ -321,13 +319,13 @@ class TestASweptBodyThatReturnsABatch:
         agreeing with the oracle.
         """
         reached = []
-        real = _workflow_sweep.execute_sweep_rows_jax
+        real = _sweep.execute_sweep_rows_jax
 
         def spy(**kwargs):
             reached.append(1)
             return real(**kwargs)
 
-        monkeypatch.setattr(_workflow_sweep, "execute_sweep_rows_jax", spy)
+        monkeypatch.setattr(_sweep, "execute_sweep_rows_jax", spy)
         Function(fn=self._body, name="swept")(self._rows(4))
 
         assert reached == [1]
@@ -366,13 +364,13 @@ class TestASweptBodyThatReturnsABatch:
         row-wise dispatch instead.
         """
         reached = []
-        real = _workflow_sweep.execute_sweep_rows_jax
+        real = _sweep.execute_sweep_rows_jax
 
         def spy(**kwargs):
             reached.append(1)
             return real(**kwargs)
 
-        monkeypatch.setattr(_workflow_sweep, "execute_sweep_rows_jax", spy)
+        monkeypatch.setattr(_sweep, "execute_sweep_rows_jax", spy)
 
         grid = RecordBatch(
             "batch",

@@ -19,7 +19,7 @@ from probpipe import (
     predictive_check,
     workflow_run,
 )
-from probpipe.functions import _context as _workflow_context
+from probpipe.functions import _context
 from probpipe.validation import (
     Reference,
     score_posterior,
@@ -58,7 +58,7 @@ class TestPredictiveCheckBroker:
             with (
                 patch(
                     "probpipe.functions._context.derive_event_key_words_from_encoded",
-                    wraps=_workflow_context.derive_event_key_words_from_encoded,
+                    wraps=_context.derive_event_key_words_from_encoded,
                 ) as derive,
                 workflow_run(seed=7),
             ):
@@ -273,7 +273,7 @@ class TestSimulationBasedCalibrationBroker:
             with (
                 patch(
                     "probpipe.functions._context._commit_stochastic_invocation",
-                    wraps=_workflow_context._commit_stochastic_invocation,
+                    wraps=_context._commit_stochastic_invocation,
                 ) as commit,
                 workflow_run(seed=7),
             ):
@@ -328,7 +328,7 @@ class TestSimulationBasedCalibrationBroker:
         with (
             patch(
                 "probpipe.functions._context._commit_stochastic_invocation",
-                wraps=_workflow_context._commit_stochastic_invocation,
+                wraps=_context._commit_stochastic_invocation,
             ) as commit,
             workflow_run(seed=11),
         ):
@@ -403,7 +403,7 @@ class TestPosteriorScoreBroker:
             with (
                 patch(
                     "probpipe.functions._context._commit_stochastic_invocation",
-                    wraps=_workflow_context._commit_stochastic_invocation,
+                    wraps=_context._commit_stochastic_invocation,
                 ) as commit,
                 workflow_run(seed=7),
             ):

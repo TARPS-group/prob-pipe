@@ -50,7 +50,7 @@ from .._weights import Weights
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..distributions import _distribution as _base
 from ..distributions._distribution import Distribution
-from ..functions import _broker as _workflow_broker
+from ..functions import _broker
 from ._numeric_record import NumericRecord
 from ._numeric_record_distribution import (
     BootstrapDistribution,
@@ -434,9 +434,9 @@ class EmpiricalDistribution(
                 raise ValueError(f"num_evaluations must be positive; got {num_evaluations!r}")
         if num_evaluations is not None and num_evaluations < self.num_atoms:
             if key is None:
-                key = _workflow_broker._resolve_automatic_key(
+                key = _broker._resolve_automatic_key(
                     None,
-                    _workflow_broker._singleton_effect_plan(
+                    _broker._singleton_effect_plan(
                         operation_kind="expectation",
                         execution_mode="subsample",
                         sample_shape=(num_evaluations,),
@@ -796,9 +796,9 @@ class RecordEmpiricalDistribution(
                 raise ValueError(f"num_evaluations must be positive; got {num_evaluations!r}")
         if num_evaluations is not None and num_evaluations < self._num_atoms:
             if key is None:
-                key = _workflow_broker._resolve_automatic_key(
+                key = _broker._resolve_automatic_key(
                     None,
-                    _workflow_broker._singleton_effect_plan(
+                    _broker._singleton_effect_plan(
                         operation_kind="expectation",
                         execution_mode="subsample",
                         sample_shape=(num_evaluations,),
@@ -1078,9 +1078,9 @@ class BootstrapReplicateDistribution(
         if num_evaluations <= 0:
             raise ValueError(f"num_evaluations must be positive; got {num_evaluations!r}")
         if key is None:
-            key = _workflow_broker._resolve_automatic_key(
+            key = _broker._resolve_automatic_key(
                 None,
-                _workflow_broker._singleton_effect_plan(
+                _broker._singleton_effect_plan(
                     operation_kind="expectation",
                     execution_mode="bootstrap",
                     sample_shape=(num_evaluations,),

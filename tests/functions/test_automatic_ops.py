@@ -18,7 +18,7 @@ from probpipe import (
     sample,
     workflow_run,
 )
-from probpipe.functions import _context as _workflow_context
+from probpipe.functions import _context
 
 
 class _RecordingNormal(Normal):
@@ -72,7 +72,7 @@ class TestAutomaticSample:
 
     def test_sample_shape_does_not_multiply_events(self):
         claims = []
-        original = _workflow_context._WorkflowInvocation.key_for
+        original = _context._WorkflowInvocation.key_for
 
         def record(invocation, *, stochastic_source_id, logical_unit_id):
             claims.append((stochastic_source_id, logical_unit_id))
@@ -83,7 +83,7 @@ class TestAutomaticSample:
             )
 
         with (
-            patch.object(_workflow_context._WorkflowInvocation, "key_for", new=record),
+            patch.object(_context._WorkflowInvocation, "key_for", new=record),
             workflow_run(seed=7),
         ):
             result = sample(Normal(loc=0.0, scale=1.0, name="x"), sample_shape=(4, 5))
@@ -210,7 +210,7 @@ class TestAutomaticExpectation:
         with (
             patch(
                 "probpipe.functions._context.derive_event_key_words_from_encoded",
-                wraps=_workflow_context.derive_event_key_words_from_encoded,
+                wraps=_context.derive_event_key_words_from_encoded,
             ) as derive,
             workflow_run(seed=7),
         ):

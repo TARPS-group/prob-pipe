@@ -43,8 +43,7 @@ import xarray as xr
 
 from ..custom_types import PRNGKey
 from ..distributions._distribution import Distribution
-from ..functions import _broker as _workflow_broker
-from ..functions import _context as _workflow_context
+from ..functions import _broker, _context
 from ..validation._predictive_check import (
     _predictive_check_batched,
     _predictive_check_loop,
@@ -249,7 +248,7 @@ def _ppc_op(
         Diagnostic payload dict containing scalar results, xarray datasets, and
         plotting metadata.
     """
-    _workflow_context._assert_workflow_admission()
+    _context._assert_workflow_admission()
     if callable(test_fns):
         planned_test_fns = (test_fns,)
     else:
@@ -295,9 +294,7 @@ def _ppc_op(
     results: dict[str, dict[str, Any]] = {}
     replicated_stats_by_fn: dict[str, np.ndarray | None] = {}
 
-    stochastic_scope = (
-        _workflow_broker._managed_stochastic_scope() if key is None else nullcontext()
-    )
+    stochastic_scope = _broker._managed_stochastic_scope() if key is None else nullcontext()
     with stochastic_scope:
         for source_index, (fn, name) in enumerate(planned_tests):
             effect_key = _resolve_ppc_key(

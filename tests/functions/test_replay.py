@@ -31,12 +31,12 @@ from probpipe import (
     sample,
     workflow_run,
 )
-from probpipe.functions import _replay as _workflow_replay
+from probpipe.functions import _replay
 from probpipe.functions._managed import (
     ManagedAttemptState,
     ManagedWorkItemToken,
 )
-from tests.functions import _replay_fixtures as _workflow_replay_fixtures
+from tests.functions import _replay_fixtures
 from tests.functions._replay_fixtures import (
     replayable_affine,
     replayable_difference,
@@ -979,10 +979,10 @@ class TestReplayPreflight:
         def changed_identity(value):
             return value + 1
 
-        changed_identity.__module__ = _workflow_replay_fixtures.__name__
+        changed_identity.__module__ = _replay_fixtures.__name__
         changed_identity.__qualname__ = "replayable_identity"
         monkeypatch.setattr(
-            _workflow_replay_fixtures,
+            _replay_fixtures,
             "replayable_identity",
             changed_identity,
         )
@@ -1267,7 +1267,7 @@ class TestReplayEventRegistry:
             pass
 
     def test_same_token_retry_is_idempotent_but_other_claims_fail(self):
-        state = _workflow_replay._validate_provenance(_draw().provenance)
+        state = _replay._validate_provenance(_draw().provenance)
         effect = state.expected_events[0].managed_effect()
         token = ManagedWorkItemToken.create()
         first = ManagedAttemptState.create(token)
@@ -1296,7 +1296,7 @@ class TestReplayEventRegistry:
                 attempt=ManagedAttemptState.create(ManagedWorkItemToken.create()),
             )
 
-        direct_state = _workflow_replay._validate_provenance(_draw().provenance)
+        direct_state = _replay._validate_provenance(_draw().provenance)
         direct_state.claim_effect(effect, attempt=None)
         with pytest.raises(ReplayCompatibilityError, match="directly claimed"):
             direct_state.mark_successful_effects((effect,), attempt=first)
@@ -1308,7 +1308,7 @@ class TestReplayEventRegistry:
             direct_state.claim_effect(effect, attempt=None)
 
     def test_replay_claim_batch_is_atomic(self):
-        state = _workflow_replay._validate_provenance(_draw().provenance)
+        state = _replay._validate_provenance(_draw().provenance)
         effect = state.expected_events[0].managed_effect()
         unexpected = copy.deepcopy(effect)
         object.__setattr__(unexpected, "stochastic_source_id", ("source-group", 99))
@@ -1327,35 +1327,35 @@ class TestReplayEventRegistry:
         assert claim.successful_attempt_token is None
 
     def test_remote_replay_scope_requires_its_complete_namespace(self):
-        state = _workflow_replay._validate_provenance(_draw().provenance)
+        state = _replay._validate_provenance(_draw().provenance)
         effect = state.expected_events[0].managed_effect()
         attempt = ManagedAttemptState.create(ManagedWorkItemToken.create())
 
         with (
             pytest.raises(ReplayCompatibilityError, match="missing expected"),
-            _workflow_replay._remote_replay_claim_scope((effect,), attempt),
+            _replay._remote_replay_claim_scope((effect,), attempt),
         ):
             pass
 
-        with _workflow_replay._remote_replay_claim_scope((effect,), attempt):
-            _workflow_replay._claim_effect_before_derivation(
+        with _replay._remote_replay_claim_scope((effect,), attempt):
+            _replay._claim_effect_before_derivation(
                 effect,
                 attempt=attempt,
             )
 
     def test_remote_replay_scope_does_not_mask_worker_errors(self):
-        state = _workflow_replay._validate_provenance(_draw().provenance)
+        state = _replay._validate_provenance(_draw().provenance)
         effect = state.expected_events[0].managed_effect()
         attempt = ManagedAttemptState.create(ManagedWorkItemToken.create())
 
         with (
             pytest.raises(ValueError, match="worker failed"),
-            _workflow_replay._remote_replay_claim_scope((effect,), attempt),
+            _replay._remote_replay_claim_scope((effect,), attempt),
         ):
             raise ValueError("worker failed")
 
     def test_plan_validation_uses_the_admission_index(self):
-        state = _workflow_replay._validate_provenance(_draw().provenance)
+        state = _replay._validate_provenance(_draw().provenance)
         effect = state.expected_events[0].managed_effect()
 
         class IterationTrap(tuple):
@@ -1367,7 +1367,7 @@ class TestReplayEventRegistry:
             state.validate_effect_plan(_plan_for_effect(effect))
 
     def test_managed_namespace_index_handles_nested_prefixes(self):
-        state = _workflow_replay._validate_provenance(_draw().provenance)
+        state = _replay._validate_provenance(_draw().provenance)
         original = state.expected_events[0]
         outer_path = original.occurrence_path
         outer_unit = (
@@ -1388,7 +1388,7 @@ class TestReplayEventRegistry:
         expected = replace(
             original,
             occurrence_path=occurrence_path,
-            encoded_identity=_workflow_replay._encoded_effect_identity(effect),
+            encoded_identity=_replay._encoded_effect_identity(effect),
         )
         indexed = replace(state, expected_events=(expected,))
 
@@ -1401,11 +1401,11 @@ class TestReplayEventRegistry:
         assert indexed.expected_effects_for_unit(nested_parent, nested_unit) == (effect,)
 
     def test_remote_plan_validation_uses_its_namespace_index(self):
-        state = _workflow_replay._validate_provenance(_draw().provenance)
+        state = _replay._validate_provenance(_draw().provenance)
         effect = state.expected_events[0].managed_effect()
         attempt = ManagedAttemptState.create(ManagedWorkItemToken.create())
-        encoded = _workflow_replay._encoded_effect_identity(effect)
-        registry = _workflow_replay._RemoteReplayClaims(
+        encoded = _replay._encoded_effect_identity(effect)
+        registry = _replay._RemoteReplayClaims(
             expected_by_identity={encoded: effect},
             attempt=attempt,
         )
@@ -1432,7 +1432,7 @@ class TestReplayEventRegistry:
         with workflow_run(seed=71):
             original = workflow(value=Normal(loc=0.0, scale=1.0, name="value"))
         monkeypatch.setattr(
-            _workflow_replay_fixtures,
+            _replay_fixtures,
             "ENABLE_EXTRA_AUTOMATIC",
             True,
         )

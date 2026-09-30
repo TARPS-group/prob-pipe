@@ -271,20 +271,17 @@ class TestLiftedNames:
         assert result.name == "doubled"
         assert result.fields == ("value",)
         assert result.num_atoms == 8
-    
+
     @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax", "auto"])
     @pytest.mark.parametrize("renamed", [None, "renamed", "M.pair"])
     def test_list_sweep_levels_use_output_name(self, dispatch, renamed):
         rows = NumericRecordBatch(
-            "inputs",
-            {"x": jnp.arange(3.0)},
-            "rows",
-            element_spec=RecordSpec(x=())
+            "inputs", {"x": jnp.arange(3.0)}, "rows", element_spec=RecordSpec(x=())
         )
         wrapped = Function(
             "pair",
             lambda x: [x["x"], x["x"] + 1.0],
-            output_name = "outs",
+            output_name="outs",
         )
         if renamed is not None:
             wrapped = wrapped.with_name(renamed)

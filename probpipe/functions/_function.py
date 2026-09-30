@@ -34,19 +34,21 @@ from ..values._function_base import (
     _validate_function_output,
     install_call_engine,
 )
-from . import _broadcast as _workflow_distribution_broadcast
-from . import _broker as _workflow_broker
-from . import _call as _workflow_call
-from . import _callable as _workflow_callable
-from . import _context as _workflow_context
-from . import _execution as _workflow_execution
-from . import _execution_contract as _workflow_execution_contract
-from . import _normalization as _workflow_distribution_normalization
-from . import _plan as _workflow_plan
-from . import _recipe as _workflow_recipe
-from . import _replay as _workflow_replay
-from . import _result as _workflow_result
-from . import _sweep as _workflow_sweep
+from . import (
+    _broadcast,
+    _broker,
+    _call,
+    _callable,
+    _context,
+    _execution,
+    _execution_contract,
+    _normalization,
+    _plan,
+    _recipe,
+    _replay,
+    _result,
+    _sweep,
+)
 from ._contract import _bind_planned_function_inputs
 from ._result import _output_record_spec, _wrap_declared_function_output
 
@@ -159,8 +161,8 @@ def effective_workflow_kind(function: Function) -> WorkflowKind:
 def _make_execution_config(
     function: Function,
     *,
-    mode: _workflow_execution.WorkflowExecutionMode | None = None,
-) -> _workflow_execution.WorkflowExecutionConfig:
+    mode: _execution.WorkflowExecutionMode | None = None,
+) -> _execution.WorkflowExecutionConfig:
     """Build resolved execution metadata for row-wise call dispatch."""
     if mode is None:
         match effective_workflow_kind(function):
@@ -185,7 +187,7 @@ def _make_execution_config(
             stacklevel=2,
         )
 
-    return _workflow_execution.WorkflowExecutionConfig(
+    return _execution.WorkflowExecutionConfig(
         mode=mode,
         max_workers=function.options["max_workers"] if mode == "thread" else None,
         name=function._name,
@@ -197,20 +199,20 @@ def _call_with_options(
     function: Function,
     args: tuple[Any, ...],
     call_inputs: dict[str, Any],
-    options: _workflow_call.WorkflowCallOptions,
+    options: _call.WorkflowCallOptions,
 ) -> Any:
-    _workflow_context._assert_workflow_admission()
-    with _workflow_replay._function_replay_scope() as replay_call:
+    _context._assert_workflow_admission()
+    with _replay._function_replay_scope() as replay_call:
         occurrence_path = None if replay_call is None else replay_call.occurrence_path
         with (
-            _workflow_context._ephemeral_workflow_run(),
-            _workflow_broker._function_stochastic_scope(occurrence_path=occurrence_path) as broker,
+            _context._ephemeral_workflow_run(),
+            _broker._function_stochastic_scope(occurrence_path=occurrence_path) as broker,
         ):
             if (
                 replay_call is not None
-                or _workflow_context._active_provenance_mode() is not ProvenanceMode.OFF
+                or _context._active_provenance_mode() is not ProvenanceMode.OFF
             ):
-                anchor = _workflow_callable.capture_function_anchor(function)
+                anchor = _callable.capture_function_anchor(function)
                 broker.set_callable_anchor(anchor)
                 if replay_call is not None:
                     replay_call.validate_callable(anchor)
@@ -221,9 +223,9 @@ def _call_with_options_in_context(
     function: Function,
     args: tuple[Any, ...],
     call_inputs: dict[str, Any],
-    options: _workflow_call.WorkflowCallOptions,
+    options: _call.WorkflowCallOptions,
 ) -> Any:
-    call = _workflow_call.resolve_workflow_call(
+    call = _call.resolve_workflow_call(
         function._signature_info,
         args,
         call_inputs,
@@ -236,25 +238,25 @@ def _call_with_options_in_context(
         options=options,
     )
 
-    values = _workflow_distribution_normalization.normalize_distribution_values(
+    values = _normalization.normalize_distribution_values(
         values=call.values,
         signature_info=function._signature_info,
     )
-    broadcast_plan = _workflow_plan.build_broadcast_plan(
+    broadcast_plan = _plan.build_broadcast_plan(
         values=values,
         signature_info=function._signature_info,
     )
-    stochastic_plan = _workflow_plan.build_stochastic_plan(
+    stochastic_plan = _plan.build_stochastic_plan(
         values,
         broadcast_plan,
         call.overrides.n_broadcast_samples,
     )
     stochastic_sample_shape = None if stochastic_plan is None else stochastic_plan.sample_shape
 
-    def get_key(event: _workflow_plan.PlannedRandomEvent):
-        return _workflow_broker._resolve_automatic_key(
+    def get_key(event: _plan.PlannedRandomEvent):
+        return _broker._resolve_automatic_key(
             None,
-            _workflow_broker.StochasticEffectPlan(
+            _broker.StochasticEffectPlan(
                 operation_kind="function_lifting",
                 execution_mode="sampled",
                 event=event,
@@ -265,13 +267,11 @@ def _call_with_options_in_context(
         )
 
     workflow_kind = effective_workflow_kind(function)
-    _workflow_broker._record_active_requested_execution(
+    _broker._record_active_requested_execution(
         function.options["dispatch"],
         workflow_kind.value,
     )
-    _workflow_replay._validate_active_plan(
-        _workflow_recipe.serialize_stochastic_plan(stochastic_plan)
-    )
+    _replay._validate_active_plan(_recipe.serialize_stochastic_plan(stochastic_plan))
     _, invocation_bindings = _bind_planned_function_inputs(
         function_name=function._name,
         input_spec=function.input_spec,
@@ -291,8 +291,8 @@ def _call_with_options_in_context(
     provenance_parents: list[TrackedTerm] = [function]
     provenance_inputs: dict[str, Any] = {}
     seen_parent_ids = {id(function)}
-    for ref in _workflow_call.iter_input_refs(function._signature_info, values):
-        value = _workflow_call.input_ref_value(values, ref)
+    for ref in _call.iter_input_refs(function._signature_info, values):
+        value = _call.input_ref_value(values, ref)
         if isinstance(value, TrackedTerm) and id(value) not in seen_parent_ids:
             seen_parent_ids.add(id(value))
             provenance_parents.append(value)
@@ -326,7 +326,7 @@ def _call_with_options_in_context(
 
     def resolve_dispatch(
         dispatch_values: dict[str, Any],
-        broadcast_args: list[_workflow_call.WorkflowInputRef],
+        broadcast_args: list[_call.WorkflowInputRef],
         *,
         jax_supported: bool = True,
     ) -> str:
@@ -353,7 +353,7 @@ def _call_with_options_in_context(
 
     def require_jax_traceable(
         dispatch_values: dict[str, Any],
-        broadcast_args: list[_workflow_call.WorkflowInputRef],
+        broadcast_args: list[_call.WorkflowInputRef],
     ) -> None:
         _require_jax_traceable(
             function,
@@ -366,12 +366,12 @@ def _call_with_options_in_context(
     def execute_distribution_broadcast(
         *,
         row_values: dict[str, Any],
-        plan: _workflow_plan.StochasticPlan,
-        logical_unit: _workflow_plan.LogicalUnit,
+        plan: _plan.StochasticPlan,
+        logical_unit: _plan.LogicalUnit,
         include_inputs: bool = call.overrides.include_inputs,
         record_recipe: bool = True,
     ):
-        return _workflow_distribution_broadcast.execute_distribution_broadcast(
+        return _broadcast.execute_distribution_broadcast(
             func=invoke_point,
             values=row_values,
             stochastic_plan=plan,
@@ -404,8 +404,8 @@ def _call_with_options_in_context(
 
         def distribution_broadcast(
             row_values: dict[str, Any],
-            plan: _workflow_plan.StochasticPlan,
-            logical_unit: _workflow_plan.LogicalUnit,
+            plan: _plan.StochasticPlan,
+            logical_unit: _plan.LogicalUnit,
             include_inputs: bool,
         ):
             return execute_distribution_broadcast(
@@ -416,7 +416,7 @@ def _call_with_options_in_context(
                 record_recipe=False,
             )
 
-        return _workflow_sweep.execute_sweep(
+        return _sweep.execute_sweep(
             func=invoke_point,
             values=values,
             plan=broadcast_plan,
@@ -443,22 +443,22 @@ def _call_with_options_in_context(
     # the same request shape. A later execution cleanup can centralize this
     # without reintroducing private facade wrappers.
     execution = _make_execution_config(function)
-    request = _workflow_execution.WorkflowExecutionRequest(
+    request = _execution.WorkflowExecutionRequest(
         func=invoke_point,
-        work_items=_workflow_execution.make_managed_work_items(
+        work_items=_execution.make_managed_work_items(
             [values],
-            unit_segments=(_workflow_execution.point_unit_segment(),),
+            unit_segments=(_execution.point_unit_segment(),),
         ),
         execution=execution,
-        contract=_workflow_execution_contract.make_execution_contract(
+        contract=_execution_contract.make_execution_contract(
             evaluator="rowwise",
-            transport=_workflow_execution_contract.transport_for_execution_mode(execution.mode),
+            transport=_execution_contract.transport_for_execution_mode(execution.mode),
             stochastic_plan=None,
         ),
     )
-    result = _workflow_execution.execute_many(request)[0]
+    result = _execution.execute_many(request)[0]
     name = function._name
-    controls, diagnostics = _workflow_recipe.provenance_recipe_fields(None)
+    controls, diagnostics = _recipe.provenance_recipe_fields(None)
     provenance = Provenance.create(
         f"workflow.{name}",
         parents=provenance_parents,
@@ -467,9 +467,9 @@ def _call_with_options_in_context(
         controls=controls,
         diagnostics=diagnostics,
     )
-    return _workflow_result._coerce_output(
+    return _result._coerce_output(
         result,
-        broadcast_mode=_workflow_result.BROADCAST_WRAP,
+        broadcast_mode=_result.BROADCAST_WRAP,
         provenance=provenance,
         field_name=function.output_name,
     )
@@ -478,10 +478,10 @@ def _call_with_options_in_context(
 def _jax_traceability_error(
     function: Function,
     values: dict[str, Any],
-    broadcast_args: list[_workflow_call.WorkflowInputRef],
+    broadcast_args: list[_call.WorkflowInputRef],
     *,
     func: Callable[..., Any],
-    stochastic_plan: _workflow_plan.StochasticPlan | None,
+    stochastic_plan: _plan.StochasticPlan | None,
 ) -> Exception | None:
     """Return the JAX trace-probe error for the current call, if any.
 
@@ -498,18 +498,18 @@ def _jax_traceability_error(
     try:
         dummy_kw = dict(values)
         broadcast_refs = set(broadcast_args)
-        batched_sources: dict[_workflow_call.WorkflowInputRef, Any] = {}
+        batched_sources: dict[_call.WorkflowInputRef, Any] = {}
         unvectorized_batches: dict[Any, Any] = {}
-        drawn_refs: list[_workflow_call.WorkflowInputRef] = []
-        for ref in _workflow_call.iter_input_refs(function._signature_info, values):
-            v = _workflow_call.input_ref_value(values, ref)
+        drawn_refs: list[_call.WorkflowInputRef] = []
+        for ref in _call.iter_input_refs(function._signature_info, values):
+            v = _call.input_ref_value(values, ref)
             if ref in broadcast_refs:
                 # Batched-record input: take row 0 so the dummy call
                 # sees what an inner sweep iteration will actually
                 # receive.
                 if isinstance(v, RecordBatch):
                     batched_sources[ref] = v
-                    dummy_kw = _workflow_call.replace_input_ref(dummy_kw, ref, v[0])
+                    dummy_kw = _call.replace_input_ref(dummy_kw, ref, v[0])
                 elif isinstance(v, Batch):
                     # A batch that is not a batch of records is still a swept
                     # source, not a draw. The probe's synthesis below builds a
@@ -532,8 +532,8 @@ def _jax_traceability_error(
                     replacement = jnp.asarray(v)
                 else:
                     replacement = v
-                dummy_kw = _workflow_call.replace_input_ref(dummy_kw, ref, replacement)
-        with _workflow_context._workflow_probe():
+                dummy_kw = _call.replace_input_ref(dummy_kw, ref, replacement)
+        with _context._workflow_probe():
             if unvectorized_batches:
                 raise _UnvectorizableBatchSignal(
                     sorted({type(b).__name__ for b in unvectorized_batches.values()})
@@ -542,12 +542,14 @@ def _jax_traceability_error(
                 refs = list(batched_sources)
                 # The executor's own body, not a copy maintained in the
                 # probe. ``dummy_kw`` already carries non-batched inputs.
-                _row_call = _workflow_sweep.mapped_row_body(
+                _row_call = _sweep.mapped_row_body(
                     func=func,
                     values=dummy_kw,
                     array_args=refs,
                     field_name=function.output_name,
-                    output_is_declared=(function.output_spec is not None and function.output_spec.spec is not None),
+                    output_is_declared=(
+                        function.output_spec is not None and function.output_spec.spec is not None
+                    ),
                 )
 
                 probe_leaves = []
@@ -571,7 +573,7 @@ def _jax_traceability_error(
                 if stochastic_plan is None:  # pragma: no cover - planner contract guard
                     raise RuntimeError("distribution probe is missing its stochastic plan")
                 refs = drawn_refs
-                _draw_call = _workflow_distribution_broadcast.mapped_draw_body(
+                _draw_call = _broadcast.mapped_draw_body(
                     func=func, values=dummy_kw, broadcast_args=refs
                 )
                 sampled_groups = tuple(
@@ -656,10 +658,10 @@ def _has_output_support(spec: Any) -> bool:
 def _require_jax_traceable(
     function: Function,
     values: dict[str, Any],
-    broadcast_args: list[_workflow_call.WorkflowInputRef],
+    broadcast_args: list[_call.WorkflowInputRef],
     *,
     func: Callable[..., Any],
-    stochastic_plan: _workflow_plan.StochasticPlan | None,
+    stochastic_plan: _plan.StochasticPlan | None,
 ) -> None:
     """Raise a clear error if explicit JAX dispatch cannot trace."""
     output = function.output_spec.spec if function.output_spec is not None else None
@@ -679,7 +681,7 @@ def _require_jax_traceable(
             f"mapped row body is built from one leaf per field, which a single-store batch "
             f"does not have. Use dispatch='auto' or 'sequential', which sweep it correctly."
         ) from trace_error
-    if isinstance(trace_error, _workflow_context._StochasticProbeSignal):
+    if isinstance(trace_error, _context._StochasticProbeSignal):
         raise TypeError(
             "dispatch='jax' cannot execute a wrapped function that requests "
             "workflow-owned randomness with key=None. Pass an explicit key, "
@@ -695,11 +697,11 @@ def _require_jax_traceable(
 def _resolve_dispatch(
     function: Function,
     values: dict[str, Any],
-    broadcast_args: list[_workflow_call.WorkflowInputRef],
+    broadcast_args: list[_call.WorkflowInputRef],
     *,
     jax_supported: bool = True,
     func: Callable[..., Any],
-    stochastic_plan: _workflow_plan.StochasticPlan | None,
+    stochastic_plan: _plan.StochasticPlan | None,
 ) -> str:
     """Resolve the dispatch strategy, caching JAX traceability detection.
 
@@ -729,17 +731,17 @@ def _resolve_dispatch(
 
 
 def _call_engine(function: Function, *args: Any, **kwargs: Any) -> Any:
-    return _call_with_options(function, args, kwargs, _workflow_call.WorkflowCallOptions())
+    return _call_with_options(function, args, kwargs, _call.WorkflowCallOptions())
 
 
 @contextmanager
 def _apply_scope() -> Generator[None, None, None]:
     """Preserve workflow admission and RNG ownership around raw evaluation."""
-    _workflow_context._assert_workflow_admission()
-    _workflow_replay._reject_function_apply()
+    _context._assert_workflow_admission()
+    _replay._reject_function_apply()
     with (
-        _workflow_context._ephemeral_workflow_run(),
-        _workflow_broker._function_stochastic_scope(),
+        _context._ephemeral_workflow_run(),
+        _broker._function_stochastic_scope(),
     ):
         yield
 

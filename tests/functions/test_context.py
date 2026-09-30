@@ -16,7 +16,7 @@ import jax
 import pytest
 
 import probpipe
-import probpipe.functions._rng as workflow_rng
+import probpipe.functions._rng as _rng
 from probpipe import (
     Function,
     Normal,
@@ -25,7 +25,7 @@ from probpipe import (
     sample,
     workflow_run,
 )
-from probpipe.functions import _context as _workflow_context
+from probpipe.functions import _context
 from probpipe.functions._context import (
     _commit_stochastic_invocation,
     _ephemeral_workflow_run,
@@ -94,12 +94,12 @@ class TestWorkflowRunBoundary:
                 "probpipe.functions._context._os_urandom",
                 return_value=bytes.fromhex("0123456789abcdef"),
             ) as urandom,
-            _workflow_context._transported_workflow_frame(None, ProvenanceMode.FULL),
+            _context._transported_workflow_frame(None, ProvenanceMode.FULL),
         ):
-            frame = _workflow_context._capture_active_workflow_frame()
+            frame = _context._capture_active_workflow_frame()
             assert frame is not None
             with pytest.raises(RuntimeError, match="parent RNG authority"):
-                _workflow_context._resolve_root_words(frame)
+                _context._resolve_root_words(frame)
 
         urandom.assert_not_called()
 
@@ -117,15 +117,15 @@ class TestWorkflowRunBoundary:
         assert urandom.call_count == 2
 
     def test_cache_miss_encodes_an_event_identity_once(self):
-        original_encode = workflow_rng.encode_random_event
+        original_encode = _rng.encode_random_event
         with (
             patch.object(
-                _workflow_context,
+                _context,
                 "encode_random_event",
                 wraps=original_encode,
             ) as callsite_encode,
             patch.object(
-                workflow_rng,
+                _rng,
                 "encode_random_event",
                 wraps=original_encode,
             ) as derivation_encode,
@@ -139,14 +139,14 @@ class TestWorkflowRunBoundary:
 
 class TestWorkflowAdmission:
     def test_owner_records_process_and_object_identities(self):
-        owner = _workflow_context._current_workflow_owner()
+        owner = _context._current_workflow_owner()
 
         assert owner.process_id == os.getpid()
         assert owner.thread_ref() is threading.current_thread()
         assert owner.task_ref is None
 
         async def assert_task_identity():
-            task_owner = _workflow_context._current_workflow_owner()
+            task_owner = _context._current_workflow_owner()
             assert task_owner.task_ref is not None
             assert task_owner.task_ref() is asyncio.current_task()
 
@@ -161,10 +161,10 @@ class TestWorkflowAdmission:
             import threading
 
             from probpipe import UnmanagedConcurrentWorkflowEntryError, workflow_run
-            from probpipe.functions import _context as _workflow_context
+            from probpipe.functions import _context
 
             with workflow_run(seed=7):
-                frame = _workflow_context._capture_active_workflow_frame()
+                frame = _context._capture_active_workflow_frame()
                 lock_held = threading.Event()
                 release_lock = threading.Event()
 
@@ -182,7 +182,7 @@ class TestWorkflowAdmission:
                 if child_pid == 0:
                     signal.alarm(5)
                     try:
-                        _workflow_context._assert_workflow_admission()
+                        _context._assert_workflow_admission()
                     except UnmanagedConcurrentWorkflowEntryError:
                         os._exit(0)
                     except BaseException:
@@ -272,15 +272,15 @@ class TestWorkflowAdmission:
             workflow_run(seed=7),
             ThreadPoolExecutor(max_workers=1) as pool,
         ):
-            parent_frame = _workflow_context._capture_active_workflow_frame()
+            parent_frame = _context._capture_active_workflow_frame()
             assert parent_frame is not None
-            parent_root = _workflow_context._resolve_root_words(parent_frame)
+            parent_root = _context._resolve_root_words(parent_frame)
 
             def claim_in_fresh_context():
                 with _ephemeral_workflow_run():
-                    child_frame = _workflow_context._capture_active_workflow_frame()
+                    child_frame = _context._capture_active_workflow_frame()
                     assert child_frame is not None
-                    return _workflow_context._resolve_root_words(child_frame)
+                    return _context._resolve_root_words(child_frame)
 
             child_root = pool.submit(claim_in_fresh_context).result()
 
@@ -303,10 +303,10 @@ class TestWorkflowAdmission:
         assert "UnmanagedConcurrentWorkflowEntryError" in probpipe.__all__
 
     def test_transported_root_is_not_reported_as_a_user_seed(self):
-        with _workflow_context._transported_workflow_frame((1, 2), ProvenanceMode.FULL):
-            frame = _workflow_context._capture_active_workflow_frame()
+        with _context._transported_workflow_frame((1, 2), ProvenanceMode.FULL):
+            frame = _context._capture_active_workflow_frame()
             assert frame is not None
-            origin = _workflow_context._describe_rng_origin(frame)
+            origin = _context._describe_rng_origin(frame)
 
         assert origin == {
             "context_kind": "transported_run",
@@ -390,7 +390,7 @@ class TestWorkflowOccurrences:
     ):
         workflow = Function(name="_nested_seeded_draw", fn=_nested_seeded_draw, dispatch=dispatch)
         occurrence_paths = []
-        original_key_for = _workflow_context._WorkflowInvocation.key_for
+        original_key_for = _context._WorkflowInvocation.key_for
 
         def recording_key_for(
             invocation,
@@ -407,7 +407,7 @@ class TestWorkflowOccurrences:
 
         values = []
         with patch.object(
-            _workflow_context._WorkflowInvocation,
+            _context._WorkflowInvocation,
             "key_for",
             new=recording_key_for,
         ):

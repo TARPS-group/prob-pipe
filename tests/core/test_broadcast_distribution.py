@@ -1082,11 +1082,11 @@ class TestCoerceOutput:
     arithmetic / attribute access)."""
 
     def test_wrap_mode_with_no_provenance_wraps_scalar(self):
-        from probpipe.functions import _result as _workflow_result
+        from probpipe.functions import _result
 
-        out = _workflow_result._coerce_output(
+        out = _result._coerce_output(
             3.14,
-            broadcast_mode=_workflow_result.BROADCAST_WRAP,
+            broadcast_mode=_result.BROADCAST_WRAP,
             provenance=None,
             field_name="f",
         )
