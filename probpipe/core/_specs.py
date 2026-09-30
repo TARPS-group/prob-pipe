@@ -22,6 +22,7 @@ from ._spec_base import (
     _require_hashable,
     _unify_specs,
 )
+from .named_tree import _PATH_SEP
 
 __all__ = [
     "FunctionSpec",
@@ -36,9 +37,23 @@ __all__ = [
 ]
 
 
-def _check_component(name: str, spec: TermSpec | None, *, allow_hole: bool = False) -> None:
+def _check_slot(name: str, spec: TermSpec) -> None:
+    # An input slot is a Python parameter, so its name is an identifier.
     if not isinstance(name, str) or not name.isidentifier() or keyword.iskeyword(name):
-        raise ValueError(f"component names must be Python identifiers, got {name!r}")
+        raise ValueError(f"input slot names must be Python identifiers, got {name!r}")
+    _check_term(name, spec, allow_hole=False)
+
+
+def _check_component(name: str, spec: TermSpec | None, *, allow_hole: bool = False) -> None:
+    # A component follows the rule for a record's field names.
+    if not isinstance(name, str) or not name or _PATH_SEP in name:
+        raise ValueError(
+            f"component names must be non-empty and contain no {_PATH_SEP!r}, got {name!r}"
+        )
+    _check_term(name, spec, allow_hole=allow_hole)
+
+
+def _check_term(name: str, spec: TermSpec | None, *, allow_hole: bool) -> None:
     if not isinstance(spec, TermSpec) and not (allow_hole and spec is None):
         raise TypeError(f"component {name!r} must have a TermSpec, got {type(spec).__name__}")
     _require_hashable(spec, context=f"Component {name!r} spec")
@@ -78,7 +93,7 @@ class InputSpec(Mapping[str, TermSpec]):
         else:
             slots = components
         for name, spec in slots.items():
-            _check_component(name, spec)
+            _check_slot(name, spec)
         object.__setattr__(self, "_slots", dict(slots))
 
     def __getitem__(self, key: str) -> TermSpec:
@@ -161,7 +176,7 @@ class OutputSpec:
         If the positional form is not exactly one RecordSpec, forms are mixed,
         or a component lacks a spec outside the single-keyword hole form.
     ValueError
-        If no declaration is given or a component name is not an identifier.
+        If no declaration is given, or a component name is empty or contains ``/``.
 
     Notes
     -----

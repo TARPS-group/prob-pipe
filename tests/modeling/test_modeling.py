@@ -203,6 +203,37 @@ class TestIncrementalConditioner:
         # Internal state unchanged because we bypassed update().
         assert conditioner.curr_posterior is prior
 
+    def test_a_nested_posterior_becomes_a_nested_prior(self):
+        """The KDE that stands in for a posterior over a nested prior keeps the nesting."""
+        from probpipe import KDEDistribution, Normal, ProductDistribution
+        from probpipe.inference._approximate_distribution import make_posterior
+
+        prior = ProductDistribution(
+            params=ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)),
+            s=Normal("s", 0.0, 1.0),
+        )
+        priors = []
+
+        def condition_fn(model, data):
+            priors.append(model.prior)
+            chain = jax.random.normal(jax.random.PRNGKey(len(priors)), (50, 3))
+            return make_posterior(
+                [chain],
+                parents=(model.prior,),
+                algorithm="test",
+                event_template=model.prior.event_template,
+            )
+
+        class _Flat:
+            def log_likelihood(self, params, data):
+                return jnp.asarray(0.0)
+
+        conditioner = IncrementalConditioner(prior, _Flat(), condition_fn=condition_fn)
+        conditioner.update(data=jnp.zeros(3))
+        conditioner.update(data=jnp.zeros(3))
+        assert isinstance(priors[1], KDEDistribution)
+        assert priors[1].event_spec == prior.event_spec
+
     def test_multi_batch_preserves_named_record_fields(self):
         """Multi-batch IncrementalConditioner over a named ProductDistribution
         prior preserves field names on every batch.

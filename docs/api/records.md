@@ -61,9 +61,9 @@ inside records, input slots, or batches.
 These shared declarations do not yet replace the legacy live `Function`
 input/output-template or distribution event-template constructor APIs.
 
-`DistributionSpec` carries a record draw schema. Concrete value validation
-requires an exact schema match; dimension binding can learn sizes from a
-distribution's schema or another distribution declaration. `FunctionSpec`
+`DistributionSpec` carries the `OutputSpec` of a law's draw and matches a
+`Distribution` whose own declaration unifies with it. Dimension binding learns
+sizes from a law's declaration or from another `DistributionSpec`. `FunctionSpec`
 optionally declares the input and output of a callable. Its validity check is
 callability alone, while binding reads available declarations without running
 the callable. An undeclared callable side leaves its dimensions symbolic.

@@ -300,6 +300,28 @@ class TestRecordSpec:
         assert tpl["intercept"] == NumericArraySpec(())
         assert tpl["slope"] == NumericArraySpec((3,))
 
+    def test_the_declaration_is_the_free_rv_record(self):
+        """The model declares one field per free RV; an unknown size is symbolic."""
+        from probpipe import OutputSpec, RecordSpec
+
+        def model_fn(y=None):
+            with pm.Model() as m:
+                pm.Normal("intercept", 0, 1)
+                pm.Normal("slope", 0, 1, shape=3)
+                # A size read from data is unknown when the model is built.
+                pm.Normal("z", 0, 1, shape=(pm.Data("n", np.int64(2)),))
+                pm.Normal("y", 0, 1, observed=y)
+            return m
+
+        model = PyMCModel("model", model_fn)
+        assert model.event_spec == OutputSpec(
+            RecordSpec(
+                intercept=NumericArraySpec(()),
+                slope=NumericArraySpec((3,)),
+                z=NumericArraySpec(("z_0",)),
+            )
+        )
+
     def test_observed_rvs_excluded(self):
         """Observed variables are not part of the parameter template."""
 

@@ -11,7 +11,7 @@ import jax.numpy as jnp
 
 from .._dtype import _promote_floats
 from ..core._numeric_record_distribution import NumericRecordDistribution, _mc_expectation
-from ..core._record_distribution import _build_event_template
+from ..core._record_distribution import _build_event_template, _joint_event_spec
 from ..core.protocols import (
     SupportsCovariance,
     SupportsExactConditioning,
@@ -95,7 +95,6 @@ class JointGaussian(
         self._mean_vec = mean
         self._cov_mat = cov
         name = auto_name(name, "joint_gaussian(" + ",".join(component_shapes.keys()) + ")")
-        super().__init__(name=name)
         self._component_shapes = dict(component_shapes)
 
         # Build slices and component MultivariateNormal distributions
@@ -116,6 +115,7 @@ class JointGaussian(
 
         self._components = components
         self._component_slices = slices  # still needed for Gaussian conditioning
+        super().__init__(name, _joint_event_spec(components))
         self._event_template = _build_event_template(self._components)
         self._total_dim = total_dim  # still needed for Gaussian conditioning
 
@@ -128,27 +128,6 @@ class JointGaussian(
     def covariance(self) -> Array:
         """Full covariance matrix."""
         return self._cov_mat
-
-    @property
-    def fields(self) -> tuple[str, ...]:
-        """Component names in insertion order."""
-        return tuple(self._component_shapes.keys())
-
-    @property
-    def event_shapes(self) -> dict[str, tuple[int, ...]]:
-        """Per-component event shapes."""
-        return {k: (v,) for k, v in self._component_shapes.items()}
-
-    @property
-    def dtypes(self) -> dict[str, jnp.dtype]:
-        """Per-field dtype, aligned with ``event_template.fields``.
-
-        Every field shares the (float) dtype of the mean / covariance
-        arrays — ``_promote_floats`` in ``__init__`` casts both to a
-        single common float dtype.
-        """
-        dt = self._mean_vec.dtype
-        return {field: dt for field in self.fields}
 
     # flatten_value / unflatten_value inherited from NumericRecordDistribution
 

@@ -252,8 +252,8 @@ One surface is a documented exception, pending its own follow-up:
 - Record-based **distributions** (`RecordDistribution`,
   `RecordEmpiricalDistribution`, …): their `fields` / `keys()` / `in` /
   `[]` surface is still **top-level** pending the distribution
-  value-model work. Use `dist.event_template.keys()` for the leaf paths
-  of one draw.
+  value-model work. Use `dist.event_spec.spec.keys()` for the leaf
+  paths of one draw.
 
 **Mappings are never leaves.** A `Mapping` value denotes tree
 structure: a dict field value is always materialised into a nested
@@ -294,7 +294,8 @@ views like an array, and its fields are read from `event_template`.
 `DistributionArray` is positional and follows numpy/jax conventions:
 `len(da)` is the leading-axis dim and `da.size` is the total cell
 count (`prod(da.batch_shape)`); elements are accessed via `da[i]`.
-Its read-only `event_template` is an explicitly supplied authoritative
+Its `event_spec` declares the term every cell draws. Its read-only
+`event_template`, an interim view, is an explicitly supplied authoritative
 Function aggregate template, a common template derived from compatible literal
 components, or `None` when no common declaration exists.
 Iteration walks the leading axis — for a 1-D `DistributionArray`

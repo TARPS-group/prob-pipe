@@ -82,7 +82,7 @@ OutputSpec(parameters=RecordSpec(beta=beta_spec, sigma=sigma_spec))
 # record out; parameters is the whole record, exposed as one component
 ```
 
-The keyword form requires at least one entry. The positional form accepts exactly one `RecordSpec` and no keywords. Component names are identifiers; `name`, `spec`, and `components` are legal names, since no constructor keyword is reserved for metadata. A caller constructing a record declaration from a variable number of fields uses the positional form to keep the result record-valued regardless of field count. A nested record stays nested: exposure never recursively flattens it. An empty record, where admitted by the record contract, is declared explicitly.
+The keyword form requires at least one entry. The positional form accepts exactly one `RecordSpec` and no keywords. A component name is any non-empty string without `/`, which is the rule for a record's field names, so an exposed record's components are its fields. A component that binds a Python parameter must also be an identifier, which binding checks. `name`, `spec`, and `components` are legal names, since no constructor keyword is reserved for metadata. A caller constructing a record declaration from a variable number of fields uses the positional form to keep the result record-valued regardless of field count. A nested record stays nested: exposure never recursively flattens it. An empty record, where admitted by the record contract, is declared explicitly.
 
 **Packaging.** The declaration stores either one named whole term or an exposed record schema; `spec` and `components` are derived views of it, and the extraction and reconstruction of a produced value read it (IV.2).
 

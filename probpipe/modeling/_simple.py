@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
-from ..core._specs import RecordSpec
+from ..core._specs import OutputSpec, RecordSpec
 from ..core.protocols import SupportsLogProb
 from ..core.record import Record
 from ..core.tracked import auto_name
 from ..custom_types import Array
-from ..distributions._distribution import Distribution
+from ..distributions._distribution import Distribution, _whole_term_component
 from ._base import ProbabilisticModel
 from ._likelihood import Likelihood
 
@@ -55,8 +55,8 @@ class SimpleModel[P, D](ProbabilisticModel, SupportsLogProb):
         # runtime checks remain as a backstop for callers who bypass
         # the type system: the prior must be both ``SupportsLogProb``
         # (so the joint log-density is computable) and a
-        # ``RecordDistribution`` (so its ``event_template`` is a
-        # required, non-``None`` ``RecordSpec``).
+        # ``RecordDistribution`` (so it presents its parameters as a record,
+        # ``event_template``).
         from ..core._record_distribution import RecordDistribution
 
         if not isinstance(prior, SupportsLogProb):
@@ -82,10 +82,9 @@ class SimpleModel[P, D](ProbabilisticModel, SupportsLogProb):
         # so condition_on can use component names as the sole signal for
         # splitting data kwargs from inference kwargs.
         #
-        # ``prior_tpl`` is contractually non-``None`` (the
-        # ``isinstance(prior, RecordDistribution)`` guard above implies
-        # the metaclass invariant); ``data_tpl`` may be ``None`` for
-        # likelihoods that don't declare a data template.
+        # ``prior_tpl`` is always a record, since a ``RecordDistribution``
+        # presents its template or its declaration read as one; ``data_tpl``
+        # may be ``None`` for likelihoods that don't declare a data template.
         prior_tpl: RecordSpec = prior.event_template
         data_tpl = getattr(likelihood, "data_template", None)
         # Convert legacy ``Record``-typed data templates to
@@ -105,6 +104,20 @@ class SimpleModel[P, D](ProbabilisticModel, SupportsLogProb):
             self._event_template: RecordSpec = RecordSpec(merged)
         else:
             self._event_template = prior_tpl
+        # The model is a law over its parameters and data: the prior's declared
+        # record, which keeps each parameter's dtype and support, with the data
+        # fields merged in.
+        declared = prior.event_spec
+        component = _whole_term_component(declared)
+        parameters = (
+            cast(RecordSpec, declared.spec)
+            if component is None
+            else RecordSpec({component: declared.spec})
+        )
+        fields = dict(parameters.children)
+        if data_tpl is not None:
+            fields.update(data_tpl.children)
+        self._init_declaration(OutputSpec(RecordSpec(fields)))
 
     # -- Distribution interface ---------------------------------------------
 
@@ -125,9 +138,9 @@ class SimpleModel[P, D](ProbabilisticModel, SupportsLogProb):
         ``SimpleModel`` is not itself a :class:`RecordDistribution`, but
         it carries a template so :attr:`fields`, conditioning, and
         inference kwarg splitting can address parameters and data
-        uniformly. The template is always set — the prior's template
-        is guaranteed non-``None`` by the ``RecordDistribution``
-        invariant, and the prior's fields are the floor.
+        uniformly. The template is always set, since a
+        ``RecordDistribution`` prior presents one, and the prior's fields are
+        the floor.
         """
         return self._event_template
 

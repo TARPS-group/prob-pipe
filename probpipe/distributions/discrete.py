@@ -71,8 +71,7 @@ class Bernoulli(TFPDistribution):
 
     # -- support ------------------------------------------------------------
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return boolean
 
     # -- expectation (exact over {0, 1}) ------------------------------------
@@ -145,8 +144,7 @@ class Binomial(TFPDistribution):
 
     # -- support ------------------------------------------------------------
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return integer_interval(0, self._total_count)
 
     # -- expectation (exact over {0, ..., total_count}) ---------------------
@@ -197,8 +195,7 @@ class Poisson(TFPDistribution):
 
     # -- support ------------------------------------------------------------
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return non_negative_integer
 
 
@@ -244,9 +241,13 @@ class Categorical(TFPDistribution):
 
     # -- support ------------------------------------------------------------
 
-    @property
-    def support(self) -> Constraint:
-        return integer_interval(0, int(self._tfp_dist.num_categories) - 1)
+    def _num_categories(self) -> int:
+        """Return the number of categories, the size of the parameters' last axis."""
+        params = self._probs if self._probs is not None else self._logits
+        return int(params.shape[-1])
+
+    def _event_support(self) -> Constraint:
+        return integer_interval(0, self._num_categories() - 1)
 
     # -- expectation (exact over {0, ..., k-1}) ------------------------------
 
@@ -260,8 +261,7 @@ class Categorical(TFPDistribution):
     ) -> Array:
         """Exact expectation over the categorical support {0, ..., k-1}."""
         probs = self._tfp_dist.probs_parameter()
-        k = probs.shape[-1]
-        support = jnp.arange(k, dtype=self.dtype)
+        support = jnp.arange(self._num_categories(), dtype=self.dtype)
         f_vals = jax.vmap(f)(support)
         return jnp.einsum("n,n...->...", probs, f_vals)
 
@@ -321,6 +321,5 @@ class NegativeBinomial(TFPDistribution):
 
     # -- support ------------------------------------------------------------
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return non_negative_integer

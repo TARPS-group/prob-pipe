@@ -50,7 +50,7 @@ bayesflow = ["bayesflow>=2.0,<3"]
 pyabc = ["pyabc>=0.12"]
 dev = [
   "probpipe-core[prefect,viz,docs]",
-  "pytest>=7",
+  "pytest>=8.4",
   "pytest-cov",
   "pytest-xdist",
   "ruff",
