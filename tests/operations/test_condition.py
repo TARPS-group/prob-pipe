@@ -99,11 +99,11 @@ class _SuiteMethod(InferenceMethod):
     def supported_types(self) -> tuple[type, ...]:
         return (Distribution,)
 
-    def check(self, target: Any, observed: Any, /, **options: Any) -> Feasibility:
+    def check(self, target: Any, /, **options: Any) -> Feasibility:
         read = target.joint if isinstance(target, _UnnormalizedConditional) else target
         return Feasibility(isinstance(read, self._types), f"{self._name} does not apply")
 
-    def execute(self, target: Any, observed: Any, /, **options: Any) -> Any:
+    def execute(self, target: Any, /, **options: Any) -> Any:
         self.targets.append(target)
         self.options.append(options)
         return _SuitePosterior(target.event_spec, self._loc)

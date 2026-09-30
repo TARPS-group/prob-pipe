@@ -75,6 +75,13 @@ __all__ = [
 # Register built-in inference methods
 # ---------------------------------------------------------------------------
 
+# ``probpipe.condition_on`` passes a model and its observed data to the registry,
+# whose methods take the target this package forms from them.
+from ..operations._condition import _install_observed_target
+from ._inference_utils import observed_target
+
+_install_observed_target(observed_target)
+
 # TFP-backed MCMC — registered with ``priority=None`` (opt-in only); BlackJAX
 # methods below win auto-dispatch.
 from ._tfp_mcmc import TFPHmcMethod, TFPNutsMethod

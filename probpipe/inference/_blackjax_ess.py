@@ -44,6 +44,7 @@ from ._inference_utils import (
     get_prior,
     is_jax_traceable,
     is_simple_model,
+    observed_parts,
     parallel_chain_map,
 )
 
@@ -297,7 +298,9 @@ class BlackJAXESSMethod(InferenceMethod):
     def priority(self) -> int:
         return 75
 
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:
+    def check(self, target: Any, /, **kwargs: Any) -> Feasibility:
+        """Whether the target is a Gaussian-prior model at data, with a traceable likelihood."""
+        dist, observed = observed_parts(target)
         if not is_simple_model(dist):
             return Feasibility(
                 feasible=False,
@@ -343,7 +346,9 @@ class BlackJAXESSMethod(InferenceMethod):
             )
         return Feasibility(feasible=True)
 
-    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
+    def execute(self, target: Any, /, **kwargs: Any) -> ApproximateDistribution:
+        """Elliptical slice chains on the model the target conditions, at its data."""
+        dist, observed = observed_parts(target)
         return elliptical_slice(
             dist,
             observed,

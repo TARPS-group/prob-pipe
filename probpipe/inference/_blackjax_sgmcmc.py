@@ -37,7 +37,7 @@ from ..core._random_measures import RandomMeasure
 from ..custom_types import PRNGKey
 from ..operations._condition import InferenceMethod
 from ._approximate_distribution import ApproximateDistribution, make_posterior
-from ._inference_utils import as_prng_key, get_init_state, is_simple_model
+from ._inference_utils import as_prng_key, get_init_state, is_simple_model, observed_parts
 from ._minibatch import MinibatchedDistribution
 
 __all__ = ["BlackJAXSGHMCMethod", "BlackJAXSGLDMethod"]
@@ -104,10 +104,11 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
 
     # -- feasibility checks --------------------------------------------------
 
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:
+    def check(self, target: Any, /, **kwargs: Any) -> Feasibility:
         """Require SimpleModel + ConditionallyIndependentLikelihood + batch_size."""
         from ..core.protocols import ConditionallyIndependentLikelihood
 
+        dist, _ = observed_parts(target)
         if not is_simple_model(dist):
             return Feasibility(
                 feasible=False,
@@ -134,8 +135,9 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
 
     # -- execution -----------------------------------------------------------
 
-    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
+    def execute(self, target: Any, /, **kwargs: Any) -> ApproximateDistribution:
         """Run the SGMCMC kernel; return an :class:`ApproximateDistribution`."""
+        dist, observed = observed_parts(target)
         batch_size: int = kwargs["batch_size"]
         num_results: int = kwargs.get("num_results", 1000)
         num_warmup: int = kwargs.get("num_warmup", 0)

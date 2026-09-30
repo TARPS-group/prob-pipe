@@ -20,10 +20,13 @@ from ._inference_utils import (
     as_prng_key,
     build_mcmc_datatree,
     build_target_log_prob,
+    build_target_log_prob_flat,
     extract_event_spec,
+    flat_record,
     get_init_state,
     get_prior,
     is_jax_traceable,
+    observed_parts,
 )
 
 
@@ -113,6 +116,24 @@ def _extract_sample_stats(traces: Any, num_chains: int) -> dict[str, np.ndarray]
     return stats
 
 
+def _chain_target(
+    model: Any, observed: Any, *, init: Any, random_seed: int
+) -> tuple[Callable[[Array], Array], Array, Any]:
+    """The log-density at a chain state, the initial state, and the posterior's declaration.
+
+    TFP runs on the flat state :func:`get_init_state` gives. A target that
+    declares a numeric record it has no flat view of is scored at that state
+    unflattened, and any other at the state as it is.
+    """
+    if flat_record(get_prior(model)) is not None:
+        return build_target_log_prob_flat(model, observed, init=init, random_seed=random_seed)
+    return (
+        build_target_log_prob(model, observed),
+        get_init_state(model, init, random_seed=random_seed),
+        extract_event_spec(model),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Inference methods
 # ---------------------------------------------------------------------------
@@ -137,23 +158,25 @@ class _TFPGradientMethod(InferenceMethod):
     def priority(self) -> int | None:
         return self._method_priority
 
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:
+    def check(self, target: Any, /, **kwargs: Any) -> Feasibility:
+        """Whether the target has an unnormalized density that JAX traces at its initial state."""
         # Intentionally probes JAX traceability (via jax.make_jaxpr) to avoid
         # selecting a gradient-based method that would fail at execute() time.
         # The cost is ~one JAX trace, cached by JAX on subsequent calls.
-        if not isinstance(dist, SupportsUnnormalizedLogProb):
+        model, observed = observed_parts(target)
+        if not isinstance(model, SupportsUnnormalizedLogProb):
             return Feasibility(
                 feasible=False,
                 description="Requires SupportsUnnormalizedLogProb",
             )
         try:
-            target = build_target_log_prob(dist, observed)
-            init = get_init_state(
-                dist,
-                kwargs.get("init"),
+            density, init, _ = _chain_target(
+                model,
+                observed,
+                init=kwargs.get("init"),
                 random_seed=kwargs.get("random_seed", 0),
             )
-            if not is_jax_traceable(target, init):
+            if not is_jax_traceable(density, init):
                 return Feasibility(
                     feasible=False,
                     description="Log-prob is not JAX-traceable",
@@ -162,23 +185,20 @@ class _TFPGradientMethod(InferenceMethod):
             return Feasibility(feasible=False, description=str(e))
         return Feasibility(feasible=True)
 
-    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
+    def execute(self, target: Any, /, **kwargs: Any) -> ApproximateDistribution:
+        """Chains of the TFP kernel on the target's unnormalized density."""
         random_seed = kwargs.get("random_seed", 0)
-        target = build_target_log_prob(dist, observed)
-        prior = get_prior(dist)
-        init = get_init_state(
-            dist,
-            kwargs.get("init"),
-            random_seed=random_seed,
+        model, observed = observed_parts(target)
+        density, init, event_spec = _chain_target(
+            model, observed, init=kwargs.get("init"), random_seed=random_seed
         )
-        event_spec = extract_event_spec(dist)
 
         num_results = kwargs.get("num_results", 1000)
         num_warmup = kwargs.get("num_warmup", 500)
         num_chains = kwargs.get("num_chains", 1)
 
         chains, sample_stats = _run_tfp_chains(
-            target,
+            density,
             init,
             algorithm=self._algorithm,
             num_results=num_results,
@@ -190,7 +210,7 @@ class _TFPGradientMethod(InferenceMethod):
         annotations = build_mcmc_datatree(chains, sample_stats)
         return make_posterior(
             chains,
-            parents=(prior,),
+            parents=(target,),
             algorithm=self._method_name,
             annotations=annotations,
             event_spec=event_spec,

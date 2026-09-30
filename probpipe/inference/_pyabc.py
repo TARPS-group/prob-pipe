@@ -14,8 +14,9 @@ from pyabc.sampler import SingleCoreSampler
 from ..core._dispatch import Feasibility
 from ..core.ops import log_prob, sample
 from ..custom_types import PRNGKey
-from ..operations._condition import InferenceMethod
+from ..operations._condition import InferenceMethod, _UnnormalizedConditional
 from ._approximate_distribution import ApproximateDistribution, make_posterior
+from ._inference_utils import joint_and_given
 
 if TYPE_CHECKING:
     from xarray import DataTree
@@ -132,19 +133,18 @@ class PyABCSMCMethod(InferenceMethod):
         return "pyabc_smcabc"
 
     def supported_types(self) -> tuple[type, ...]:
-        # lazy: avoid an inference->modeling import cycle
-        from ..modeling._simple_generative import SimpleGenerativeModel
-
-        return (SimpleGenerativeModel,)
+        return (_UnnormalizedConditional,)
 
     @property
     def priority(self) -> int:
         return 6
 
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:
+    def check(self, target: Any, /, **kwargs: Any) -> Feasibility:
+        """Whether the target conditions a generative model whose prior flattens, samples, and scores."""
         # lazy: avoid an inference->modeling import cycle
         from ..modeling._simple_generative import SimpleGenerativeModel
 
+        dist, _ = joint_and_given(target)
         if not isinstance(dist, SimpleGenerativeModel):
             return Feasibility(feasible=False, description="Requires SimpleGenerativeModel")
         prior = dist["parameters"]
@@ -164,16 +164,17 @@ class PyABCSMCMethod(InferenceMethod):
             )
         return Feasibility(feasible=True)
 
-    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
+    def execute(self, target: Any, /, **kwargs: Any) -> ApproximateDistribution:
         """Run SMC-ABC and return a weighted posterior.
 
         Parameters
         ----------
-        dist : SimpleGenerativeModel
-            Prior (any distribution that flattens to a parameter vector and
-            carries a joint density) plus a ``GenerativeLikelihood`` simulator.
-        observed : array-like
-            Observed data; flattened (after ``summary_fn``) to the target vector.
+        target : Distribution
+            The unnormalized conditional of a ``SimpleGenerativeModel`` at its
+            observed data: the joint, a prior that flattens to a parameter
+            vector and carries a joint density with a ``GenerativeLikelihood``
+            simulator, and the data, flattened (after ``summary_fn``) to the
+            target vector.
         n_particles : int, default 100
             SMC population size.
         max_populations : int, default 4
@@ -220,6 +221,7 @@ class PyABCSMCMethod(InferenceMethod):
             acceptance rate) is attached as a ``smc_diagnostics`` group on
             ``arviz_data``.
         """
+        dist, observed = joint_and_given(target)
         prior = dist["parameters"]
         simulator = dist["data"]
 
@@ -292,7 +294,7 @@ class PyABCSMCMethod(InferenceMethod):
         # Lift the flat columns back to name-keyed Records via the prior's declaration.
         return make_posterior(
             [jnp.asarray(flat)],
-            parents=(dist,),
+            parents=(target,),
             algorithm="pyabc_smcabc",
             weights=jnp.asarray(weights / weights.sum()),
             event_spec=prior.event_spec,

@@ -57,8 +57,8 @@ from ._inference_utils import (
     as_prng_key,
     build_mcmc_datatree,
     build_target_log_prob_flat,
-    get_prior,
     is_jax_traceable,
+    observed_parts,
     parallel_chain_map,
     run_chain_scan,
 )
@@ -306,14 +306,16 @@ class _BlackJAXMCMCMethod(InferenceMethod):
     def priority(self) -> int | None:
         return self._method_priority
 
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:
-        if not isinstance(dist, SupportsUnnormalizedLogProb):
+    def check(self, target: Any, /, **kwargs: Any) -> Feasibility:
+        """Whether the target has an unnormalized density that JAX traces at its initial state."""
+        model, observed = observed_parts(target)
+        if not isinstance(model, SupportsUnnormalizedLogProb):
             return Feasibility(
                 feasible=False,
                 description="Requires SupportsUnnormalizedLogProb",
             )
         try:
-            target_flat, flat_init, _ = build_target_log_prob_flat(dist, observed)
+            target_flat, flat_init, _ = build_target_log_prob_flat(model, observed)
             if not is_jax_traceable(target_flat, flat_init):
                 return Feasibility(
                     feasible=False,
@@ -326,10 +328,12 @@ class _BlackJAXMCMCMethod(InferenceMethod):
             )
         return Feasibility(feasible=True)
 
-    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
+    def execute(self, target: Any, /, **kwargs: Any) -> ApproximateDistribution:
+        """Chains of the BlackJAX kernel on the flat form of the target's unnormalized density."""
         random_seed: int = kwargs.get("random_seed", 0)
+        model, observed = observed_parts(target)
         target_flat, flat_init, event_spec = build_target_log_prob_flat(
-            dist,
+            model,
             observed,
             init=kwargs.get("init"),
             random_seed=random_seed,
@@ -352,10 +356,9 @@ class _BlackJAXMCMCMethod(InferenceMethod):
             num_integration_steps=num_integration_steps,
         )
         annotations = build_mcmc_datatree(chains, sample_stats)
-        prior = get_prior(dist)
         return make_posterior(
             chains,
-            parents=(prior,),
+            parents=(target,),
             algorithm=self._method_name,
             annotations=annotations,
             event_spec=event_spec,

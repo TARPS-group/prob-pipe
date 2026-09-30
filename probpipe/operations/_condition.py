@@ -130,9 +130,57 @@ class InferenceMethod(UnaryDispatchMethod):
         return False
 
 
+#: The builder of the target of a model and its observed data, which
+#: ``probpipe.inference`` installs, since the way each model binds its data is
+#: that package's.
+_observed_target: Callable[[Any, Any], Any] | None = None
+
+
+def _install_observed_target(builder: Callable[[Any, Any], Any]) -> None:
+    """Install the builder of the target of a model and the data it is conditioned on."""
+    global _observed_target
+    _observed_target = builder
+
+
+class _InferenceMethodRegistry(UnaryDispatchRegistry[UnaryDispatchMethod]):
+    """The inference-method registry, whose methods take the target of the normalization stage.
+
+    A call with a second positional argument passes a model and the data it is
+    conditioned on, as ``probpipe.condition_on`` does, and dispatches on the
+    target the installed builder forms from them.
+    """
+
+    def check(
+        self, *args: Any, method: str | None = None, exact_only: bool = False, **kwargs: Any
+    ) -> MethodInfo:
+        """The report of the method a call would run; see :meth:`UnaryDispatchRegistry.check`."""
+        return super().check(*self._targets(args), method=method, exact_only=exact_only, **kwargs)
+
+    def execute(
+        self, *args: Any, method: str | None = None, exact_only: bool = False, **kwargs: Any
+    ) -> Any:
+        """The selected method's result; see :meth:`UnaryDispatchRegistry.execute`."""
+        return super().execute(*self._targets(args), method=method, exact_only=exact_only, **kwargs)
+
+    @staticmethod
+    def _targets(args: tuple[Any, ...]) -> tuple[Any, ...]:
+        """*args* with a model and its observed data replaced by their target.
+
+        Raises
+        ------
+        TypeError
+            If a model and its data are passed before a builder is installed.
+        """
+        if len(args) != 2:
+            return args
+        if _observed_target is None:
+            raise TypeError("the target of a model and its data needs probpipe.inference")
+        return (_observed_target(*args),)
+
+
 #: The registry of the normalization stage, keyed on the target's type; the
 #: methods of ``probpipe.inference`` register here.
-inference_method_registry: UnaryDispatchRegistry[UnaryDispatchMethod] = UnaryDispatchRegistry()
+inference_method_registry: UnaryDispatchRegistry[UnaryDispatchMethod] = _InferenceMethodRegistry()
 
 
 _MCMC_CONTROLS = ("init", "num_chains", "num_results", "num_warmup", "random_seed", "step_size")
@@ -255,8 +303,15 @@ def _joint_value(value: Any, given: Record) -> Record:
 
 
 def _conditional_density(self: _UnnormalizedConditional, value: Any) -> Any:
-    """The joint's unnormalized log-density at *value* and the given values."""
-    return self.joint._unnormalized_log_prob(_joint_value(value, self.given))
+    """The joint's unnormalized log-density at *value* and the given values.
+
+    Field-keyed given values join *value* into one record of the joint's fields.
+    Data the joint does not declare as fields pair with *value* as
+    ``(value, data)``, the form a density over parameters and data takes.
+    """
+    given = self.given
+    joint_value = _joint_value(value, given) if self.keyed else (value, given)
+    return self.joint._unnormalized_log_prob(joint_value)
 
 
 class _UnnormalizedConditional(Distribution):
@@ -274,31 +329,38 @@ class _UnnormalizedConditional(Distribution):
     ----------
     joint : Distribution
         The law conditioned.
-    given : Record
-        The values of the conditioned fields, keyed by their components.
+    given : Record or Any
+        The values of the conditioned fields, keyed by their components; or,
+        when *keyed* is false, the data of a joint that does not declare them
+        as fields, such as a model conditioned through ``probpipe.condition_on``.
     event_spec : OutputSpec
-        The declaration of the unconditioned fields, an exposed record.
+        The declaration of the unconditioned fields.
+    keyed : bool
+        Whether *given* is keyed by the joint's fields.
     """
 
     _capability_table: ClassVar = {
         SupportsUnnormalizedLogProb: {"_unnormalized_log_prob": _conditional_density},
     }
 
-    def __new__(cls, joint: Distribution, given: Record, event_spec: OutputSpec) -> Any:
+    def __new__(
+        cls, joint: Distribution, given: Any, event_spec: OutputSpec, *, keyed: bool = True
+    ) -> Any:
         claimed = (
             (SupportsUnnormalizedLogProb,) if isinstance(joint, SupportsUnnormalizedLogProb) else ()
         )
         return object.__new__(_capability_subclass(_UnnormalizedConditional, claimed))
 
-    def __init__(self, joint: Distribution, given: Record, event_spec: OutputSpec) -> None:
+    def __init__(
+        self, joint: Distribution, given: Any, event_spec: OutputSpec, *, keyed: bool = True
+    ) -> None:
         super().__init__(joint.name, event_spec)
         self._joint = joint
         self._given = given
+        self._keyed = keyed
         self.with_provenance(
             Provenance.create(
-                "condition_on",
-                parents=[joint],
-                metadata={"stage": "exact", "route": "bayes", "given": tuple(given.fields)},
+                "condition_on", parents=[joint], metadata={"stage": "exact", "route": "bayes"}
             )
         )
 
@@ -308,9 +370,14 @@ class _UnnormalizedConditional(Distribution):
         return self._joint
 
     @property
-    def given(self) -> Record:
-        """The values of the conditioned fields."""
+    def given(self) -> Any:
+        """The values of the conditioned fields, or the data of a joint without such fields."""
         return self._given
+
+    @property
+    def keyed(self) -> bool:
+        """Whether the given values are keyed by the joint's fields."""
+        return self._keyed
 
 
 def _conditional_kernel_density(
@@ -422,10 +489,8 @@ class _Normalization:
         A report that no method applies names ``method="unnormalized"`` when
         ``exact_only`` excluded the approximate methods.
         """
-        # The methods registered today take the target with the observed data
-        # left out, which the target has already bound.
         report = self.registry.check(
-            target, None, method=self.method, exact_only=self.exact_only, **self.options
+            target, method=self.method, exact_only=self.exact_only, **self.options
         )
         if report.feasible is False and self.exact_only:
             return replace(report, description=f"{_NO_EXACT_METHOD}: {report.description}")
@@ -436,7 +501,7 @@ class _Normalization:
         if _is_normalized(law):
             return law
         return self.registry.execute(
-            law, None, method=self.method, exact_only=self.exact_only, **self.options
+            law, method=self.method, exact_only=self.exact_only, **self.options
         )
 
 

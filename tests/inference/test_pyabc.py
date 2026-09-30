@@ -27,6 +27,7 @@ from probpipe import (
     mean,
 )
 from probpipe.inference import inference_method_registry
+from probpipe.inference._inference_utils import observed_target
 from probpipe.inference._pyabc import PyABCDistribution, PyABCSMCMethod
 from probpipe.modeling import GenerativeLikelihood, Likelihood
 from probpipe.modeling._simple_generative import SimpleGenerativeModel
@@ -67,20 +68,22 @@ class TestPyABCCheck:
         assert "pyabc_smcabc" in inference_method_registry.list_methods()
 
     def test_rejects_non_generative_model(self):
-        info = PyABCSMCMethod().check(Normal(loc=0.0, scale=1.0, name="x"), jnp.array([0.0]))
+        info = PyABCSMCMethod().check(
+            observed_target(Normal(loc=0.0, scale=1.0, name="x"), jnp.array([0.0]))
+        )
         assert not info.feasible
 
     def test_accepts_bare_marginal(self):
         """A bare (non-product) marginal flattens to a length-1 vector, so it's
         feasible — check() and execute() agree (no feasible-then-crash)."""
         model = _model(Normal(loc=0.0, scale=3.0, name="theta"))
-        assert PyABCSMCMethod().check(model, jnp.array([2.0])).feasible
+        assert PyABCSMCMethod().check(observed_target(model, jnp.array([2.0]))).feasible
 
     def test_accepts_multivariate_prior(self):
         """A correlated/multivariate prior is feasible — the joint design isn't
         restricted to products of independent scalar marginals."""
         model = _model(MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 9.0, name="m"))
-        assert PyABCSMCMethod().check(model, jnp.array([2.0, -1.0])).feasible
+        assert PyABCSMCMethod().check(observed_target(model, jnp.array([2.0, -1.0]))).feasible
 
     def test_rejects_prior_without_usable_density(self, monkeypatch):
         """check() scores one in-support draw, so a prior that samples/flattens
@@ -90,7 +93,7 @@ class TestPyABCCheck:
 
         monkeypatch.setattr(_pyabc.PyABCDistribution, "pdf", lambda self, x: float("nan"))
         model = _model(_product("theta"))
-        assert not PyABCSMCMethod().check(model, jnp.array([2.0])).feasible
+        assert not PyABCSMCMethod().check(observed_target(model, jnp.array([2.0]))).feasible
 
 
 class TestPyABCRecovery:
@@ -410,4 +413,4 @@ class TestPyABCDistributionBacking:
         """Any sampleable marginal with a density works (no fixed family list):
         StudentT, which has no scipy-converter mapping, is feasible."""
         model = _model(ProductDistribution(C.StudentT(df=5.0, loc=0.0, scale=3.0, name="t")))
-        assert PyABCSMCMethod().check(model, jnp.array([2.0])).feasible
+        assert PyABCSMCMethod().check(observed_target(model, jnp.array([2.0]))).feasible

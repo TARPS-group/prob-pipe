@@ -17,7 +17,10 @@ from probpipe import (
     mean,
 )
 from probpipe.core._dispatch import ResolutionError
+from probpipe.distributions import Distribution
+from probpipe.distributions._capabilities import SupportsSampling
 from probpipe.inference import inference_method_registry
+from probpipe.inference._inference_utils import observed_target
 from probpipe.modeling._likelihood import Likelihood
 
 # ---------------------------------------------------------------------------
@@ -367,7 +370,7 @@ class TestUnnormalizedLogProbInference:
         dist = NoDensityDist()
         for method in ("tfp_nuts", "tfp_hmc", "blackjax_rwmh"):
             m = inference_method_registry.get_method(method)
-            info = m.check(dist, None)
+            info = m.check(dist)
             assert not info.feasible
             assert "SupportsUnnormalizedLogProb" in info.description, (
                 f"{method}: description {info.description!r} should mention "
@@ -414,8 +417,8 @@ class TestNutsEssDispatch:
         # were NUTS absent. Confirm both pass check() in isolation.
         nuts = inference_method_registry.get_method("blackjax_nuts")
         ess = inference_method_registry.get_method("blackjax_elliptical_slice")
-        assert nuts.check(gaussian_model, gaussian_data).feasible
-        assert ess.check(gaussian_model, gaussian_data).feasible
+        assert nuts.check(observed_target(gaussian_model, gaussian_data)).feasible
+        assert ess.check(observed_target(gaussian_model, gaussian_data)).feasible
 
     def test_nuts_wins_auto_dispatch(self, gaussian_model, gaussian_data):
         # Task 6: NUTS@85 outranks ESS@75 for a Gaussian-prior traceable
@@ -445,3 +448,105 @@ class TestNutsEssDispatch:
             assert info.method_name == "blackjax_elliptical_slice"
         finally:
             inference_method_registry.set_priorities(blackjax_nuts=original)
+
+
+# ---------------------------------------------------------------------------
+# Targets: the methods take the target of condition_on's normalization stage
+# ---------------------------------------------------------------------------
+
+
+def _logistic_target():
+    """The unnormalized conditional of a logistic regression's coefficients at its responses.
+
+    It is built as condition_on's exact stage builds it, so it carries the
+    record that stage attaches.
+    """
+    from probpipe import Record
+    from probpipe.families import BernoulliFamily, glm_likelihood
+    from probpipe.operations._condition import _unnormalized_conditional
+
+    X = jnp.array([[1.0, 0.5], [1.0, -0.3], [1.0, 1.2], [1.0, -1.1]])
+    joint = glm_likelihood("y", BernoulliFamily(), X=X) * MultivariateNormal(
+        "beta", jnp.zeros(2), jnp.eye(2)
+    )
+    return _unnormalized_conditional(joint, Record("given", {"y": jnp.array([1, 0, 1, 0])}))
+
+
+class TestTargets:
+    def test_a_model_and_its_data_dispatch_on_their_target(self, simple_model, data):
+        two_argument = inference_method_registry.check(simple_model, data)
+        target = inference_method_registry.check(observed_target(simple_model, data))
+        assert two_argument.method_name == target.method_name == "blackjax_nuts"
+
+    def test_the_target_of_a_model_and_its_data_reads_back_as_them(self, simple_model, data):
+        from probpipe.inference._inference_utils import joint_and_given, observed_parts
+
+        target = observed_target(simple_model, data)
+        assert observed_parts(target) == (simple_model, data)
+        assert joint_and_given(target) == (simple_model, data)
+        assert observed_target(simple_model, None) is simple_model
+
+    def test_a_keyed_target_is_its_own_model(self):
+        from probpipe.inference._inference_utils import joint_and_given, observed_parts
+
+        target = _logistic_target()
+        assert observed_parts(target) == (target, None)
+        joint, given = joint_and_given(target)
+        assert set(joint.event_spec.components) == {"y", "beta"}
+        assert set(given.fields) == {"y"}
+
+    def test_the_gradient_method_normalizes_a_keyed_target(self):
+        target = _logistic_target()
+        info = inference_method_registry.check(target)
+        assert (info.feasible, info.method_name) == (True, "blackjax_nuts")
+        posterior = inference_method_registry.execute(
+            target, num_results=30, num_warmup=30, random_seed=0
+        )
+        assert set(posterior.event_spec.components) == {"beta"}
+        assert posterior.draws()["beta"].shape == (30, 2)
+
+    def test_the_random_walk_normalizes_a_keyed_target(self):
+        posterior = inference_method_registry.execute(
+            _logistic_target(), method="blackjax_rwmh", num_results=20, num_warmup=30
+        )
+        assert set(posterior.event_spec.components) == {"beta"}
+        assert posterior.draws()["beta"].shape == (20, 2)
+
+    def test_a_keyed_target_starts_at_a_draw_of_its_joint(self):
+        from probpipe.inference._inference_utils import get_init_state
+
+        init = get_init_state(_logistic_target(), None, random_seed=0)
+        assert init.shape == (2,)
+        assert bool(jnp.all(jnp.isfinite(init)))
+
+    def test_a_target_without_a_density_is_refused_by_the_gradient_method(self):
+        from probpipe.operations._condition import condition_on as condition_on_operation
+
+        simulator = ProductDistribution(theta=Normal("theta", 0.0, 1.0), y=Normal("y", 0.0, 1.0))
+        target = condition_on_operation.with_options(method="unnormalized")(
+            _WithoutDensity(simulator), {"y": 0.3}
+        )
+        info = inference_method_registry.get_method("blackjax_nuts").check(target)
+        assert info.feasible is False
+        assert "SupportsUnnormalizedLogProb" in info.description
+
+    def test_a_method_records_its_target(self, full_provenance_mode):
+        target = _logistic_target()
+        posterior = inference_method_registry.execute(
+            target, num_results=10, num_warmup=10, random_seed=0
+        )
+        assert posterior.provenance.operation == "blackjax_nuts"
+        (parent,) = posterior.provenance.parents
+        assert parent.parent is target
+        assert target.provenance.metadata == {"stage": "exact", "route": "bayes"}
+
+
+class _WithoutDensity(Distribution, SupportsSampling):
+    """A record law that only samples, as a simulator does."""
+
+    def __init__(self, law) -> None:
+        super().__init__("simulator", law.event_spec)
+        self._law = law
+
+    def _sample(self, key, sample_shape=()):
+        return self._law._sample(key, sample_shape)

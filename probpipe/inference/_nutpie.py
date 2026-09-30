@@ -9,9 +9,9 @@ from ..core._dispatch import Feasibility
 from ..core._specs import OutputSpec
 from ..custom_types import ArrayLike
 from ..functions import function
-from ..operations._condition import InferenceMethod
+from ..operations._condition import InferenceMethod, _UnnormalizedConditional
 from ._approximate_distribution import ApproximateDistribution, make_posterior
-from ._inference_utils import extract_chain_columns, posterior_var_order
+from ._inference_utils import extract_chain_columns, joint_and_given, posterior_var_order
 
 logger = logging.getLogger(__name__)
 
@@ -201,13 +201,15 @@ class NutpieNutsMethod(InferenceMethod):
         return "nutpie_nuts"
 
     def supported_types(self) -> tuple[type, ...]:
-        return self._supported
+        return (*self._supported, _UnnormalizedConditional)
 
     @property
     def priority(self) -> int:
         return 88
 
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:
+    def check(self, target: Any, /, **kwargs: Any) -> Feasibility:
+        """Whether the target is a Stan or PyMC program, or one at its observed values."""
+        dist, _ = joint_and_given(target)
         if not isinstance(dist, self._supported):
             return Feasibility(feasible=False, description="Requires StanModel or PyMCModel")
         try:
@@ -216,5 +218,7 @@ class NutpieNutsMethod(InferenceMethod):
             return Feasibility(feasible=False, description="nutpie not installed")
         return Feasibility(feasible=True)
 
-    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
+    def execute(self, target: Any, /, **kwargs: Any) -> ApproximateDistribution:
+        """nutpie's NUTS on the program the target carries, at the observed values it binds."""
+        dist, observed = joint_and_given(target)
         return condition_on_nutpie.apply(dist, observed, **kwargs)

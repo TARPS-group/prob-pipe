@@ -35,11 +35,15 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from ..core._numeric_record import _reconstruct_from_vector
+from ..core._record_spec import NumericRecordSpec
 from ..core._specs import OutputSpec
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike
 from ..distributions._capabilities import SupportsSampling
+from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution
+from ..operations._condition import _UnnormalizedConditional
 
 logger = logging.getLogger(__name__)
 
@@ -51,10 +55,15 @@ __all__ = [
     "build_target_log_prob_flat",
     "extract_chain_columns",
     "extract_event_spec",
+    "flat_density",
+    "flat_record",
     "get_init_state",
     "get_prior",
     "is_jax_traceable",
     "is_simple_model",
+    "joint_and_given",
+    "observed_parts",
+    "observed_target",
     "parallel_chain_map",
     "posterior_var_order",
     "run_chain_scan",
@@ -171,6 +180,101 @@ def as_prng_key(seed: int | Array) -> Array:
 
 
 # ---------------------------------------------------------------------------
+# Targets
+# ---------------------------------------------------------------------------
+
+
+def observed_target(model: Any, observed: Any) -> Any:
+    """The target of normalizing *model* at *observed*, as ``probpipe.condition_on`` passes them.
+
+    A model with no data, and an object that is not a law, is its own target.
+    Otherwise the target is the unnormalized conditional of the model at the
+    data, over the parameters :func:`get_prior` declares, from which
+    :func:`observed_parts` reads the model and the data back.
+    """
+    if observed is None or not isinstance(model, (Distribution, ConditionalDistribution)):
+        return model
+    return _UnnormalizedConditional(model, observed, get_prior(model).event_spec, keyed=False)
+
+
+def observed_parts(target: Any) -> tuple[Any, Any]:
+    """The model and the observed data *target* binds, as the model-and-data helpers take them.
+
+    An unnormalized conditional at data its joint does not declare as fields
+    is that joint and those data, and so is one of a ``SimpleModel`` at exactly
+    its likelihood's data fields. Any other target is its own model, with its
+    data already bound.
+    """
+    if isinstance(target, _UnnormalizedConditional):
+        joint, given = target.joint, target.given
+        if not target.keyed:
+            return joint, given
+        if is_simple_model(joint) and set(given.fields) == set(joint._data_fields):
+            return joint, given
+    return target, None
+
+
+def joint_and_given(target: Any) -> tuple[Any, Any]:
+    """The joint and the given values an unnormalized conditional carries, else *target* and None.
+
+    A method backed by a program reads the program from the joint and its
+    observed values from the given values.
+    """
+    if isinstance(target, _UnnormalizedConditional):
+        return target.joint, target.given
+    return target, None
+
+
+def flat_record(prior: Any) -> NumericRecordSpec | None:
+    """The numeric record a flat chain over *prior* unflattens to, when it has no flat view.
+
+    ``None`` for a prior with a flat view of its own, and for one that draws
+    no exposed numeric record, such as a law over one array.
+    """
+    if getattr(prior, "as_flat_distribution", None) is not None:
+        return None
+    declaration = getattr(prior, "event_spec", None)
+    if not isinstance(declaration, OutputSpec) or not declaration.exposes_record:
+        return None
+    spec = declaration.spec
+    return spec if isinstance(spec, NumericRecordSpec) else None
+
+
+def flat_density(dist: Any) -> Callable[[Array], Array]:
+    """*dist*'s unnormalized log-density at a flat vector.
+
+    The vector is unflattened to the numeric record :func:`flat_record` names,
+    and taken as it is for any other law.
+    """
+    record = flat_record(dist)
+    if record is None:
+        return dist._unnormalized_log_prob
+
+    def density(theta: Array) -> Array:
+        return dist._unnormalized_log_prob(_reconstruct_from_vector(dist.name, record, theta))
+
+    return density
+
+
+def _joint_draw(target: Any, key: Array, record: NumericRecordSpec) -> Array | None:
+    """A flat draw of *target*'s fields from the joint it conditions, or None when it cannot sample.
+
+    The draw is the joint's, restricted to the fields *record* declares, so it
+    lies in the support of the unnormalized conditional.
+    """
+    joint = target.joint if isinstance(target, _UnnormalizedConditional) else None
+    if not isinstance(joint, SupportsSampling):
+        return None
+    try:
+        draw = joint._sample(key, sample_shape=())
+        fields = Record("init", {name: draw.children[name] for name in record.fields})
+        return fields.to_numeric().to_vector()
+    except Exception:
+        logger.debug("get_init_state: the joint's draw failed for %r", target, exc_info=True)
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Initial-state heuristics
 # ---------------------------------------------------------------------------
 
@@ -196,13 +300,16 @@ def get_init_state(
        draw a single sample with the supplied ``random_seed``. For a
        ``RecordDistribution`` the sample is flattened to a numeric
        vector via ``NumericRecord``.
-    3. **Stan default** — if the prior has no sampling path but
-       exposes ``event_shape``, return a coordinate-wise
-       ``Uniform(-2, 2)`` draw, matching Stan's default init for
-       unconstrained parameters. The gradient-based MCMC methods this
-       helper feeds all assume an unconstrained parameter space, so
-       the box is guaranteed to be inside the support.
-    4. Raise — no init heuristic applies.
+    3. **Joint draw** — if the prior is an unnormalized conditional
+       over a numeric record whose joint samples, the joint's draw
+       restricted to the unconditioned fields, flattened.
+    4. **Stan default** — if the prior has no sampling path but
+       exposes ``event_shape`` or a numeric record, return a
+       coordinate-wise ``Uniform(-2, 2)`` draw, matching Stan's default
+       init for unconstrained parameters. The gradient-based MCMC
+       methods this helper feeds all assume an unconstrained parameter
+       space, so the box is guaranteed to be inside the support.
+    5. Raise — no init heuristic applies.
 
     Observed data is deliberately not consulted: a ``mean(observed)``
     heuristic would live in the *data* space while the chain state
@@ -240,11 +347,19 @@ def get_init_state(
                 exc_info=True,
             )
 
+    record = flat_record(prior)
+    if record is not None:
+        draw = _joint_draw(prior, key, record)
+        if draw is not None:
+            return jnp.atleast_1d(jnp.asarray(draw, dtype=target_dtype))
+
     try:
         shape = prior.event_shape
     except (AttributeError, ValueError):
         # A prior that draws no single concrete array has no box to draw from.
         shape = None
+    if shape is None and record is not None:
+        shape = (record.vector_size,)
     if shape is not None:
         return jax.random.uniform(
             key,
@@ -279,16 +394,17 @@ def get_prior(dist: Distribution) -> Distribution:
 
 
 def extract_event_spec(dist: Distribution) -> OutputSpec | None:
-    """Return the declaration of *dist*'s prior, or ``None`` for a prior with no flat view.
+    """Return the declaration of *dist*'s prior, or ``None`` for a prior with no flat vector.
 
     A ``SimpleModel``'s prior is read through :func:`get_prior`; any other
-    target is its own prior. A prior without ``as_flat_distribution``, such as a
-    bare ``SupportsLogProb`` target over a flat array, gives ``None``.
-    :func:`build_target_log_prob_flat` uses the same condition, so every method
-    names and shapes the posterior of such a target alike.
+    target is its own prior. A prior with neither ``as_flat_distribution`` nor
+    an exposed numeric record, such as a bare ``SupportsLogProb`` target over a
+    flat array, gives ``None``. :func:`build_target_log_prob_flat` uses the
+    same condition, so every method names and shapes the posterior of such a
+    target alike.
     """
     prior = get_prior(dist)
-    if getattr(prior, "as_flat_distribution", None) is None:
+    if getattr(prior, "as_flat_distribution", None) is None and flat_record(prior) is None:
         return None
     return prior.event_spec
 
@@ -364,14 +480,18 @@ def build_target_log_prob_flat(
       :func:`~probpipe.inference._approximate_distribution.make_posterior`
       so the posterior names its fields by the prior's components.
 
-    Two cases:
+    Three cases:
 
     1. **Record-shaped prior** (a :class:`~probpipe.core._numeric_record_distribution.NumericRecordDistribution`
        — every ``SimpleModel`` prior is one). ``target_flat_fn``
        composes :func:`build_target_log_prob` with the prior's
        :meth:`~probpipe.core._numeric_record_distribution.FlatNumericRecordDistribution.unflatten_sample`,
        and the prior's declaration is returned for downstream lift-back.
-    2. **Bare ``SupportsLogProb`` target** with no Record-shaped prior
+    2. **Record-shaped target without a flat view**, such as the
+       unnormalized conditional of a factored joint: ``target_flat_fn``
+       unflattens the vector to the numeric record the target declares,
+       whose declaration is returned.
+    3. **Bare ``SupportsLogProb`` target** with no Record-shaped prior
        (e.g., a hand-rolled ``Distribution`` subclass implementing
        ``_unnormalized_log_prob`` over a flat ``Array``). The target
        already takes a flat input; no flattening is needed.
@@ -391,6 +511,14 @@ def build_target_log_prob_flat(
             return target_record(flat_prior.unflatten_sample(theta_flat))
 
         return target_flat, flat_init, prior.event_spec
+
+    record = flat_record(prior)
+    if record is not None:
+
+        def target_unflattened(theta_flat: Array) -> Array:
+            return target_record(_reconstruct_from_vector(prior.name, record, theta_flat))
+
+        return target_unflattened, flat_init, prior.event_spec
 
     # Bare array-shaped target: ``target_record`` already accepts a
     # flat array and no template is available to lift the chain.
