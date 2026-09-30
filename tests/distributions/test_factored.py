@@ -18,6 +18,7 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 from jax.scipy.stats import norm
 
@@ -326,6 +327,45 @@ class OneFieldNormal(Law, SupportsSampling, SupportsLogProb):
 
     def _log_prob(self, value):
         return norm.logpdf(value["beta"], 0.0, 2.0)
+
+
+#: The labels of :class:`LabelLaw`, whose lengths locate :class:`LengthKernel`.
+_LABELS = ("a", "bb", "ccc")
+
+
+class LabelLaw(Law, SupportsSampling, SupportsLogProb):
+    """A uniform law over three labels, an opaque event, drawn as an object array in a batch."""
+
+    def _sample(self, key, sample_shape=()):
+        choices = np.asarray(jax.random.randint(key, sample_shape, 0, len(_LABELS)))
+        if not sample_shape:
+            return _LABELS[int(choices)]
+        labels = np.empty(choices.shape, dtype=object)
+        for position, choice in np.ndenumerate(choices):
+            labels[position] = _LABELS[choice]
+        return labels
+
+    def _log_prob(self, value):
+        return jnp.full(np.shape(value), -jnp.log(3.0))
+
+
+class LengthKernel(NormalKernel, SupportsConditionalSampling, SupportsConditionalLogProb):
+    """``y | label ~ Normal(len(label), 1)``, which reads one label per call.
+
+    A draw is the location itself, so a draw shows which label it was given.
+    """
+
+    def _conditional_sample(self, given, key, sample_shape=()):
+        return jnp.full(sample_shape, float(len(given["label"])))
+
+    def _conditional_log_prob(self, given, value):
+        return norm.logpdf(value, float(len(given["label"])), 1.0)
+
+
+def _labeled_joint() -> FactoredDistribution:
+    """``y | label`` composed with the law of ``label``, an opaque component."""
+    kernel = LengthKernel("lik", {"label": OpaqueSpec()}, OutputSpec(y=SCALAR))
+    return kernel * LabelLaw("labels", OutputSpec(label=OpaqueSpec()))
 
 
 class UndecidedSamplingKernel(SamplingKernel):
@@ -1198,6 +1238,14 @@ class TestJointSampling:
         assert jnp.shape(draws["y"]) == jnp.shape(draws["beta"]) == (5,)
         assert jnp.allclose(draws["y"], draws["beta"] + 10.0, atol=1e-4)
 
+    def test_a_kernel_on_an_opaque_component_draws_once_per_draw(self):
+        joint = _labeled_joint()
+        assert _capability_guard(joint, "_sample").feasible is True
+        draws = joint._sample(jax.random.PRNGKey(9), (2, 3))
+        assert draws["label"].dtype == object and draws["label"].shape == (2, 3)
+        lengths = np.vectorize(len, otypes=[float])(draws["label"])
+        np.testing.assert_array_equal(np.asarray(draws["y"]), lengths)
+
 
 class TestJointDensity:
     """Scoring reconstructs each factor's event and sums the factors' log-densities."""
@@ -1276,6 +1324,14 @@ class TestJointDensity:
         for index in range(2):
             one = {name: column[index] for name, column in values.items()}
             assert jnp.allclose(scores[index], joint._conditional_log_prob({"sigma": 1.5}, one))
+
+    def test_a_kernel_on_an_opaque_component_scores_value_by_value(self):
+        y = jnp.array([1.0, 2.0, 0.0])
+        values = {"y": y, "label": np.array(["a", "bb", "ccc"], dtype=object)}
+        scores = _labeled_joint()._log_prob(values)
+        # log N(y_i; len(label_i), 1) + log(1/3), with the lengths 1, 2, and 3.
+        expected = -0.5 * (y - jnp.array([1.0, 2.0, 3.0])) ** 2 - 0.5 * jnp.log(2 * jnp.pi)
+        assert jnp.allclose(scores, expected - jnp.log(3.0))
 
     def test_an_edge_free_density_is_the_sum_of_the_factor_densities(self):
         first, second = Normal("a", 0.0, 1.0), Normal("b", 1.0, 2.0)

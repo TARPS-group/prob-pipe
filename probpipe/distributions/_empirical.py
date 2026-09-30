@@ -45,6 +45,7 @@ from ._capabilities import (
     _capability_subclass,
 )
 from ._distribution import Distribution, _whole_term_component
+from ._factored import _stacked
 from ._views import _node_at
 
 if TYPE_CHECKING:
@@ -172,11 +173,6 @@ def _taken(column: Any, index: Any) -> Any:
     if _is_object_array(column):
         return column[np.asarray(index)]
     return column[index]
-
-
-def _stacked(values: list[Any]) -> Any:
-    """The pytrees in *values*, stacked leaf by leaf along a new leading axis."""
-    return jax.tree.map(lambda *leaves: jnp.stack([jnp.asarray(leaf) for leaf in leaves]), *values)
 
 
 def _ranks(atoms: Batch) -> tuple[int, ...]:

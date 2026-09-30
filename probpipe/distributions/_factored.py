@@ -20,9 +20,10 @@ import jax.numpy as jnp
 from jax.scipy.linalg import block_diag
 
 from ..core._dispatch import Feasibility, ResolutionError
+from ..core._object_batch import _is_object_array
 from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
-from ..core._spec_base import NumericArraySpec, TermSpec, _unify_specs
+from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import InputSpec, OutputSpec
 from ..core.named_tree import _unflatten_paths
 from ..core.provenance import Provenance
@@ -402,14 +403,71 @@ def _leading_axes(value: Any, spec: TermSpec) -> tuple[int, ...] | None:
 
 
 def _flatten_draws(tree: Any, batch_shape: tuple[int, ...]) -> Any:
-    """*tree* with the leading *batch_shape* axes of each leaf merged into one axis."""
+    """*tree* with the leading *batch_shape* axes of each leaf merged into one axis.
+
+    An object array holds a column of values that are not arrays, and it is
+    merged too.
+    """
     rank, count = len(batch_shape), math.prod(batch_shape)
-    return jax.tree.map(lambda leaf: jnp.reshape(leaf, (count, *jnp.shape(leaf)[rank:])), tree)
+
+    def merged(leaf: Any) -> Any:
+        if _is_object_array(leaf):
+            return leaf.reshape((count, *leaf.shape[rank:]))
+        return jnp.reshape(leaf, (count, *jnp.shape(leaf)[rank:]))
+
+    return jax.tree.map(merged, tree)
 
 
 def _unflatten_draws(tree: Any, batch_shape: tuple[int, ...]) -> Any:
     """*tree* with the leading axis of each leaf split into *batch_shape*."""
     return jax.tree.map(lambda leaf: jnp.reshape(leaf, (*batch_shape, *jnp.shape(leaf)[1:])), tree)
+
+
+def _stacked(values: Sequence[Any]) -> Any:
+    """The pytrees in *values*, stacked leaf by leaf along a new leading axis."""
+    return jax.tree.map(lambda *leaves: jnp.stack([jnp.asarray(leaf) for leaf in leaves]), *values)
+
+
+def _numeric_givens(factor: ConditionalDistribution, values: Mapping[str, Any]) -> bool:
+    """Whether every given slot of *factor* that *values* binds is numeric, so a call traces."""
+    return all(isinstance(factor.given_spec[slot], NumericSpec) for slot in values)
+
+
+def _each_value(function: Callable[..., Any], count: int, *trees: Any, traceable: bool) -> Any:
+    """*function* at each of the *count* values along the leading axis of *trees*, stacked.
+
+    A traceable call is vectorized with ``jax.vmap``. Otherwise *function* is
+    called on one value at a time, since a value that is not an array cannot be
+    traced, and the results are stacked leaf by leaf.
+    """
+    if traceable:
+        return jax.vmap(function)(*trees)
+    return _stacked(
+        [
+            function(*(jax.tree.map(lambda leaf, at=index: leaf[at], tree) for tree in trees))
+            for index in range(count)
+        ]
+    )
+
+
+def _batch_axes(
+    factor: ConditionalDistribution, inner: Mapping[str, Any], event: Any
+) -> tuple[int, ...]:
+    """The batch axes of *factor*'s part of a joint's value, or ``()`` for one value.
+
+    They are read at the first array leaf of the components that *inner* binds
+    and, when no bound component has one, at the factor's own event. With no
+    bound component the factor scores its part in one call.
+    """
+    for slot, value in inner.items():
+        axes = _leading_axes(value, factor.given_spec[slot])
+        if axes is not None:
+            return axes
+    if inner:
+        axes = _leading_axes(event, factor.event_spec.spec)
+        if axes is not None:
+            return axes
+    return ()
 
 
 # ---------------------------------------------------------------------------
@@ -446,7 +504,11 @@ def _conditional_draw(
     key: PRNGKey,
     sample_shape: tuple[int, ...],
 ) -> Any:
-    """A draw of *factor* at the components in *drawn* it names and its unmet givens in *fixed*."""
+    """A draw of *factor* at the components in *drawn* it names and its unmet givens in *fixed*.
+
+    Under a non-empty *sample_shape* the factor is mapped over the draws of
+    those components, one given value per call, each call with its own key.
+    """
     inner = {slot: drawn[slot] for slot in factor.given_spec if slot in drawn}
 
     def given(values: Mapping[str, Any]) -> dict[str, Any]:
@@ -454,8 +516,13 @@ def _conditional_draw(
 
     if not inner or not sample_shape:
         return factor._conditional_sample(given(inner), key, sample_shape)
-    draws = jax.vmap(lambda values, subkey: factor._conditional_sample(given(values), subkey, ()))(
-        _flatten_draws(inner, sample_shape), jax.random.split(key, math.prod(sample_shape))
+    count = math.prod(sample_shape)
+    draws = _each_value(
+        lambda values, subkey: factor._conditional_sample(given(values), subkey, ()),
+        count,
+        _flatten_draws(inner, sample_shape),
+        jax.random.split(key, count),
+        traceable=_numeric_givens(factor, inner),
     )
     return _unflatten_draws(draws, sample_shape)
 
@@ -491,18 +558,14 @@ def _conditional_score(
         return {slot: values[slot] if slot in values else fixed[slot] for slot in factor.given_spec}
 
     density = getattr(factor, method)
-    batch = next(
-        (
-            axes
-            for slot, value in inner.items()
-            if (axes := _leading_axes(value, factor.given_spec[slot])) is not None
-        ),
-        (),
-    )
+    batch = _batch_axes(factor, inner, event)
     if not batch:
         return density(given(inner), event)
-    scores = jax.vmap(lambda values, one: density(given(values), one))(
-        *_flatten_draws((inner, event), batch)
+    scores = _each_value(
+        lambda values, one: density(given(values), one),
+        math.prod(batch),
+        *_flatten_draws((inner, event), batch),
+        traceable=_numeric_givens(factor, inner),
     )
     return _unflatten_draws(scores, batch)
 
