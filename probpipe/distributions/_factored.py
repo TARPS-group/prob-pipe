@@ -232,6 +232,7 @@ def _stub(name: str) -> Callable[..., Any]:
 
     method.__name__ = name.rsplit(".", 1)[-1]
     method.__qualname__ = name
+    method._is_stub = True
     return method
 
 

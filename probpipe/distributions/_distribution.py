@@ -477,7 +477,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         )
         if not fields_kept:
             raise NotImplementedError(
-                f"{type(self).__name__}.with_path_names: renaming the fields of a record draw"
+                "Distribution.with_path_names: renaming the fields of a record draw"
             )
         return self._with_declaration(renamed, "with_path_names", {**dict(mapping or {}), **kwargs})
 

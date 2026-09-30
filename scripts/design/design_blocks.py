@@ -313,6 +313,16 @@ def _compare_signature(
     actual = list(signature.parameters.values())
     if skip_first and actual and actual[0].name in ("self", "cls"):
         actual = actual[1:]
+    # A private keyword with a default is reconstruction state, not interface.
+    actual = [
+        parameter
+        for parameter in actual
+        if not (
+            parameter.name.startswith("_")
+            and parameter.kind is inspect.Parameter.KEYWORD_ONLY
+            and parameter.default is not inspect.Parameter.empty
+        )
+    ]
     findings: list[Finding] = []
     declared_names = [parameter.name for parameter in declared]
     actual_names = [parameter.name for parameter in actual]
