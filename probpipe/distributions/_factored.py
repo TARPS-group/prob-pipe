@@ -31,6 +31,7 @@ from ._capabilities import (
     SupportsVariance,
     _capability_guard,
     _capability_subclass,
+    _conjunction,
 )
 from ._conditional import (
     ConditionalDistribution,
@@ -361,17 +362,44 @@ _JOINT_METHODS: dict[type, str] = {
 }
 
 
+def _factors_guard(owner: str, joint_method: str, method: str) -> Callable[[Any], Feasibility]:
+    """The guard of a joint's *joint_method*, which calls each factor's *method*.
+
+    A conditional factor is called through its twin, ``_conditional`` followed by
+    *method*, and the joint's call is feasible when every factor's is.
+    """
+
+    def guard(self: Any) -> Feasibility:
+        return _conjunction(
+            _capability_guard(
+                factor,
+                f"_conditional{method}" if isinstance(factor, ConditionalDistribution) else method,
+            )
+            for factor in self._graph.factors
+        )
+
+    guard.__name__ = f"{joint_method}_guard"
+    guard.__qualname__ = f"{owner}.{joint_method}_guard"
+    guard.__doc__ = f"Every factor's guard of the ``{method}`` the joint calls on it."
+    return guard
+
+
 def _joint_table(owner: str, *, conditional: bool) -> dict[type, Mapping[str, Callable[..., Any]]]:
-    """Each capability a joint of the *owner* kind may claim, with its methods.
+    """Each capability a joint of the *owner* kind may claim, with its methods and guards.
 
     A conditional joint claims each capability's conditional twin, whose method
-    is ``_conditional`` followed by the unconditional method's name.
+    is ``_conditional`` followed by the unconditional method's name. Each derived
+    method carries the conjunction of the factors' guards.
     """
     table: dict[type, Mapping[str, Callable[..., Any]]] = {}
     for protocol, method in _JOINT_METHODS.items():
+        joint_protocol, joint_method = protocol, method
         if conditional:
-            protocol, method = _CONDITIONAL_TWINS[protocol], f"_conditional{method}"
-        table[protocol] = {method: _stub(f"{owner}.{method}")}
+            joint_protocol, joint_method = _CONDITIONAL_TWINS[protocol], f"_conditional{method}"
+        table[joint_protocol] = {
+            joint_method: _stub(f"{owner}.{joint_method}"),
+            f"{joint_method}_guard": _factors_guard(owner, joint_method, method),
+        }
     if not conditional:
         table[SupportsMarginals] = {
             "_marginal": _stub(f"{owner}._marginal"),

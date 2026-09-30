@@ -632,18 +632,10 @@ class TestGuards:
         view = FieldView(parent, "model/theta")
         assert _capability_guard(view, "_marginal", ("theta/mu", "theta/tau")) == declined
 
-    @pytest.mark.pending(
-        reason="a derived capability carries the parent's guard for the call it makes",
-        raises=AssertionError,
-    )
     def test_a_projected_capability_carries_the_parent_guard(self):
         view = FieldView(_GuardedMeanLaw("parent", _EVENT), "y")
         assert _capability_guard(view, "_mean") == _GuardedMeanLaw.DECLINED
 
-    @pytest.mark.pending(
-        reason="conditioning a view is guarded by the parent's guard at the given paths",
-        raises=AssertionError,
-    )
     def test_the_conditioning_guard_is_the_parent_guard_at_the_given_paths(self):
         parent = _ConditioningLaw("parent", _EVENT)
         view = FieldView(parent, "model/theta")

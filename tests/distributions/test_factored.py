@@ -59,6 +59,7 @@ from probpipe.distributions import (
     SupportsFactors,
     SupportsMarginals,
 )
+from probpipe.distributions._capabilities import _capability_guard
 from probpipe.linalg import DenseLinOp
 
 SCALAR = NumericArraySpec(())
@@ -280,6 +281,22 @@ class PointLaw(Law, SupportsSampling):
 
     def _sample(self, key, sample_shape=()):
         return self.draw
+
+
+class DecliningPointLaw(PointLaw):
+    """A point mass whose sampling guard declines."""
+
+    def _sample_guard(self) -> bool:
+        """Draws only from a finite point."""
+        return False
+
+
+class UndecidedSamplingKernel(SamplingKernel):
+    """A sampling kernel whose guard cannot decide before its values are known."""
+
+    def _conditional_sample_guard(self) -> None:
+        """Draws once its scale is known."""
+        return None
 
 
 class NumericJoint(FactoredNumericDistribution):
@@ -679,6 +696,37 @@ class TestMarginalGuard:
     def test_a_sibling_of_a_dependent_field_integrates_out_within_its_kernel(self):
         lik = MarginalKernel("lik", {"beta": SCALAR}, OutputSpec(RecordSpec(y1=SCALAR, y2=SCALAR)))
         assert (lik * _prior())._marginal_guard(("y1", "beta")).feasible is True
+
+
+class TestFactorGuards:
+    """A joint's derived capability takes every factor's guard of the call it makes."""
+
+    def test_a_joint_of_unguarded_factors_is_feasible(self):
+        joint = _likelihood(SamplingKernel) * _prior()
+        assert _capability_guard(joint, "_sample") == Feasibility(True)
+
+    def test_a_conditional_factor_is_guarded_through_its_twin(self):
+        joint = _likelihood(UndecidedSamplingKernel) * _prior()
+        assert _capability_guard(joint, "_sample") == Feasibility(
+            None,
+            pending=(
+                "UndecidedSamplingKernel._conditional_sample_guard() needs values not yet "
+                "known: Draws once its scale is known.",
+            ),
+        )
+
+    def test_a_declining_factor_declines_the_joint_whatever_the_others_report(self):
+        point = DecliningPointLaw("point", OutputSpec(beta=SCALAR), jnp.zeros(()))
+        joint = _likelihood(UndecidedSamplingKernel) * point
+        assert _capability_guard(joint, "_sample") == Feasibility(
+            False, "DecliningPointLaw._sample_guard() declined: Draws only from a finite point."
+        )
+
+    def test_a_conditional_joint_takes_its_factors_guards(self):
+        kernel = UndecidedSamplingKernel("k", {"s": SCALAR}, OutputSpec(a=SCALAR))
+        joint = kernel * PointLaw("p", OutputSpec(b=SCALAR), jnp.zeros(()))
+        assert isinstance(joint, FactoredConditionalDistribution)
+        assert _capability_guard(joint, "_conditional_sample").unresolved
 
 
 class TestMarginalValues:

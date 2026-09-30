@@ -3,12 +3,16 @@
 A **capability** is a protocol that names one underscore implementation, such as
 ``_sample`` for :class:`SupportsSampling`, which the matching operation calls
 through its route on raw forms. Protocol membership establishes that the
-implementation exists. Where support is partial, the capability carries a
-**guard**: a companion method ``_<method>_guard`` that takes the call's
-arguments other than raw values and returns a
-:class:`~probpipe.core._dispatch.Feasibility` for that call. A capability with
-no guard is total on its declared domain, and :func:`_capability_guard` reads a
-guard in either case.
+implementation exists. Where support depends on the call's arguments, the
+capability carries a **guard**: a companion method ``_<method>_guard`` that
+takes the call's arguments other than raw values. It returns ``True`` or
+``False``, or ``None`` when the answer depends on values not yet known, and a
+:class:`~probpipe.core._dispatch.Feasibility` only to give its own reason. The
+first paragraph of the guard's docstring is its condition, which the reports
+quote. A capability with no guard is total on its declared domain, and
+:func:`_capability_guard` reads a guard in either case. Support that depends
+only on the instance needs no guard, since the class claims the capability for
+those instances alone (:func:`_capability_subclass`).
 
 Provides:
   - the unconditional capabilities of a ``Distribution``, including
@@ -22,6 +26,9 @@ Provides:
 
 from __future__ import annotations
 
+import difflib
+import inspect
+import reprlib
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
@@ -363,6 +370,15 @@ _CONDITIONAL_TWINS: dict[type, type] = {
 # ---------------------------------------------------------------------------
 
 
+#: The protocol defaults that call another capability, whose guard applies to them.
+_DELEGATING_DEFAULTS: dict[Callable[..., Any], str] = {
+    SupportsLogProb._unnormalized_log_prob: "_log_prob",
+    SupportsConditionalLogProb._conditional_unnormalized_log_prob: "_conditional_log_prob",
+}
+
+_GUARD_SUFFIX = "_guard"
+
+
 def _capability_guard(term: Any, method: str, *arguments: Any, **keywords: Any) -> Feasibility:
     """The guard of *term*'s capability *method* for one call.
 
@@ -378,21 +394,125 @@ def _capability_guard(term: Any, method: str, *arguments: Any, **keywords: Any) 
     Returns
     -------
     Feasibility
-        The report of ``term._<method>_guard(*arguments, **keywords)`` when the
-        class defines that guard, and a feasible report otherwise, since a
-        capability with no guard is total on its declared domain.
+        The report of ``term._<method>_guard(*arguments, **keywords)``. A
+        ``Feasibility`` is returned as the guard gave it, and a ``bool`` or
+        ``None`` becomes a report whose reason names the guard, its arguments,
+        and its condition. Without a guard the report is feasible, since the
+        capability is total on its declared domain, unless *method* is a
+        protocol default that calls another capability, whose guard then applies.
 
     Raises
     ------
     AttributeError
         If *term* does not implement *method*.
+    TypeError
+        If the guard returns anything but a ``bool``, ``None``, or a ``Feasibility``.
     """
     if not callable(getattr(term, method, None)):
         raise AttributeError(f"{type(term).__name__} does not implement {method}")
-    guard = getattr(term, f"{method}_guard", None)
+    guard = getattr(term, f"{method}{_GUARD_SUFFIX}", None)
     if guard is None:
+        delegate = _DELEGATING_DEFAULTS.get(getattr(type(term), method, None))
+        if delegate is not None:
+            return _capability_guard(term, delegate, *arguments, **keywords)
         return Feasibility(True)
-    return guard(*arguments, **keywords)
+    report = guard(*arguments, **keywords)
+    if isinstance(report, Feasibility):
+        return report
+    if report is True:
+        return Feasibility(True)
+    rendered = ", ".join(
+        [reprlib.repr(argument) for argument in arguments]
+        + [f"{name}={reprlib.repr(value)}" for name, value in keywords.items()]
+    )
+    call = f"{type(term).__name__}.{method}{_GUARD_SUFFIX}({rendered})"
+    condition = _guard_condition(guard)
+    suffix = f": {condition}" if condition else ""
+    if report is False:
+        return Feasibility(False, f"{call} declined{suffix}")
+    if report is None:
+        return Feasibility(None, pending=(f"{call} needs values not yet known{suffix}",))
+    raise TypeError(f"{call} returned {report!r}; a guard returns a bool, None, or a Feasibility")
+
+
+def _guard_condition(guard: Callable[..., Any]) -> str:
+    """The condition *guard* states: its docstring's first paragraph on one line, or ``""``."""
+    doc = inspect.getdoc(guard)
+    if not doc:
+        return ""
+    return " ".join(doc.split("\n\n", 1)[0].split())
+
+
+def _conjunction(reports: Iterable[Feasibility]) -> Feasibility:
+    """The report of a call that needs every one of *reports* to be feasible.
+
+    The first infeasible report is returned. Otherwise the result is unresolved
+    with every pending entry when any report is unresolved, and feasible when
+    none is.
+    """
+    pending: list[str] = []
+    for report in reports:
+        if report.feasible is False:
+            return report
+        pending.extend(report.pending)
+    return Feasibility(None, pending=tuple(pending)) if pending else Feasibility(True)
+
+
+def _implements(cls: type, method: str) -> bool:
+    """Whether *cls* implements *method*, not only declares it.
+
+    The first class in the MRO that defines *method* decides. A protocol's
+    declaration and an abstract method are not implementations, while a
+    protocol default that calls another capability is.
+    """
+    for klass in cls.__mro__:
+        value = vars(klass).get(method)
+        if value is None:
+            continue
+        if getattr(value, "__isabstractmethod__", False):
+            return False
+        if vars(klass).get("_is_protocol", False) and value not in _DELEGATING_DEFAULTS:
+            return False
+        return callable(value) or isinstance(value, (staticmethod, classmethod))
+    return False
+
+
+def _check_guards(cls: type) -> None:
+    """Check that each guard in the body of *cls* guards a method *cls* implements.
+
+    The metaclasses of ``Distribution`` and ``ConditionalDistribution`` run this
+    check on each class they create, so a misspelled guard raises rather than
+    going unread. A guard set to ``None`` removes an inherited one.
+
+    Raises
+    ------
+    TypeError
+        If a ``_<method>_guard`` in the class body is not callable, or *cls*
+        does not implement ``_<method>``.
+    """
+    for name, guard in vars(cls).items():
+        method = name.removesuffix(_GUARD_SUFFIX)
+        if method == name or len(method) < 2 or not method.startswith("_"):
+            continue
+        if method.startswith("__") or guard is None:
+            continue
+        if not callable(guard) and not isinstance(guard, (staticmethod, classmethod)):
+            raise TypeError(f"{cls.__name__}.{name} must be a method that guards {method}")
+        if _implements(cls, method):
+            continue
+        implemented = [
+            member
+            for member in dir(cls)
+            if member.startswith("_")
+            and not member.startswith("__")
+            and not member.endswith(_GUARD_SUFFIX)
+            and _implements(cls, member)
+        ]
+        close = difflib.get_close_matches(method, implemented, n=1)
+        hint = f"; did you mean {close[0]}{_GUARD_SUFFIX}?" if close else ""
+        raise TypeError(
+            f"{cls.__name__}.{name} guards {method}, which {cls.__name__} does not implement{hint}"
+        )
 
 
 _CAPABILITY_SUBCLASSES: dict[tuple[type, frozenset[type]], type] = {}

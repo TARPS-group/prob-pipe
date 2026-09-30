@@ -4,9 +4,10 @@ Every unconditional capability has a conditional twin whose methods are named
 ``_conditional`` followed by the unconditional name, with ``given`` prepended to
 the unconditional signature. ``_capability_guard`` returns the report of a
 capability's guard for one call, and a feasible report when the capability
-defines no guard. ``_capability_subclass`` builds one cached subclass of a base
-per set of capabilities, which keeps the base's name and pickles and copies by
-reference to the base and the set.
+defines no guard. A guard returns a ``bool``, ``None``, or a ``Feasibility``, and
+a misspelled guard raises when its class is created. ``_capability_subclass``
+builds one cached subclass of a base per set of capabilities, which keeps the
+base's name and pickles and copies by reference to the base and the set.
 """
 
 from __future__ import annotations
@@ -21,9 +22,9 @@ from typing import Any
 import pytest
 
 import probpipe.distributions as distributions
-from probpipe import Normal, NumericArraySpec
+from probpipe import Normal, NumericArraySpec, OutputSpec
 from probpipe.core._dispatch import Feasibility
-from probpipe.distributions import Distribution
+from probpipe.distributions import ConditionalDistribution, Distribution
 from probpipe.distributions._capabilities import (
     _CONDITIONAL_TWINS,
     SupportsConditionalLogProb,
@@ -41,6 +42,7 @@ from probpipe.distributions._capabilities import (
     SupportsVariance,
     _capability_guard,
     _capability_subclass,
+    _conjunction,
 )
 
 #: The unconditional capabilities the design declares as protocols. The two
@@ -184,6 +186,75 @@ class _Host(Distribution):
 
 class _OtherHost(_Host):
     """A second base with the same table."""
+
+
+class _TruncatedLaw(Distribution, SupportsMarginals):
+    """A law whose marginal guard returns the answer it holds, at every path."""
+
+    def __init__(self, name: str, answer: Any = True) -> None:
+        super().__init__(name, NumericArraySpec(()))
+        self.answer = answer
+
+    def _marginal(self, path: str) -> Any:
+        return self
+
+    def _marginal_guard(self, path: str) -> Any:
+        """Exact for a path outside the truncated block.
+
+        A second paragraph, which the reports leave out.
+        """
+        return self.answer
+
+
+class _BareGuardLaw(Distribution, SupportsMarginals):
+    """A law whose marginal guard declines and has no docstring."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name, NumericArraySpec(()))
+
+    def _marginal(self, path: str) -> Any:
+        return self
+
+    def _marginal_guard(self, path: str) -> bool:
+        return False
+
+
+class _GuardedDensityLaw(Distribution, SupportsLogProb):
+    """A law whose density guard declines."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name, NumericArraySpec(()))
+
+    def _log_prob(self, value: Any) -> float:
+        return 0.0
+
+    def _log_prob_guard(self) -> bool:
+        """Scores only once fitted."""
+        return False
+
+
+class _OwnUnnormalizedLaw(_GuardedDensityLaw):
+    """A law that computes its unnormalized density itself, with no guard on it."""
+
+    def _unnormalized_log_prob(self, value: Any) -> float:
+        return 0.0
+
+
+class _GuardedDensityKernel(ConditionalDistribution, SupportsConditionalLogProb):
+    """A kernel whose conditional density guard declines."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name, {"s": NumericArraySpec(())}, OutputSpec(y=NumericArraySpec(())))
+
+    def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+    def _conditional_log_prob(self, given: Any, value: Any) -> float:
+        return 0.0
+
+    def _conditional_log_prob_guard(self) -> bool:
+        """Scores only once fitted."""
+        return False
 
 
 # -- Tests --------------------------------------------------------------------
@@ -333,6 +404,155 @@ class TestCapabilityGuard:
     @pytest.mark.parametrize("method", ["_sample", "_log_prob", "_mean"])
     def test_a_family_capability_without_a_guard_is_feasible(self, method):
         assert _capability_guard(Normal("x", 0.0, 1.0), method) == Feasibility(True)
+
+
+class TestGuardReports:
+    """A guard's ``bool`` or ``None`` becomes a report naming the call and quoting the condition."""
+
+    def test_a_guard_returning_true_is_feasible(self):
+        assert _capability_guard(_TruncatedLaw("t", True), "_marginal", "a") == Feasibility(True)
+
+    def test_a_guard_returning_false_declines_and_quotes_its_condition(self):
+        report = _capability_guard(_TruncatedLaw("t", False), "_marginal", "block/x")
+        assert report == Feasibility(
+            False,
+            "_TruncatedLaw._marginal_guard('block/x') declined: "
+            "Exact for a path outside the truncated block.",
+        )
+
+    def test_a_guard_returning_none_is_unresolved_and_quotes_its_condition(self):
+        report = _capability_guard(_TruncatedLaw("t", None), "_marginal", "block/x")
+        assert report == Feasibility(
+            None,
+            pending=(
+                "_TruncatedLaw._marginal_guard('block/x') needs values not yet known: "
+                "Exact for a path outside the truncated block.",
+            ),
+        )
+
+    def test_the_report_names_the_keyword_arguments(self):
+        report = _capability_guard(_TruncatedLaw("t", False), "_marginal", path="a")
+        assert report.description.startswith("_TruncatedLaw._marginal_guard(path='a') declined")
+
+    def test_a_guard_without_a_docstring_is_named_without_a_condition(self):
+        report = _capability_guard(_BareGuardLaw("b"), "_marginal", "a")
+        assert report == Feasibility(False, "_BareGuardLaw._marginal_guard('a') declined")
+
+    def test_a_feasibility_is_returned_as_the_guard_gave_it(self):
+        custom = Feasibility(False, "the block is truncated")
+        assert _capability_guard(_TruncatedLaw("t", custom), "_marginal", "a") is custom
+
+    @pytest.mark.parametrize("answer", [1, 0, "", "yes"])
+    def test_a_guard_returning_another_value_raises(self, answer):
+        with pytest.raises(TypeError, match="a guard returns a bool, None, or a Feasibility"):
+            _capability_guard(_TruncatedLaw("t", answer), "_marginal", "a")
+
+    def test_the_default_unnormalized_density_takes_the_density_guard(self):
+        law = _GuardedDensityLaw("d")
+        report = _capability_guard(law, "_unnormalized_log_prob")
+        assert report == _capability_guard(law, "_log_prob")
+        assert report.feasible is False
+
+    def test_an_unnormalized_density_of_its_own_is_total_without_a_guard(self):
+        law = _OwnUnnormalizedLaw("d")
+        assert _capability_guard(law, "_unnormalized_log_prob") == Feasibility(True)
+
+    def test_the_default_conditional_unnormalized_density_takes_the_density_guard(self):
+        kernel = _GuardedDensityKernel("k")
+        report = _capability_guard(kernel, "_conditional_unnormalized_log_prob")
+        assert report == _capability_guard(kernel, "_conditional_log_prob")
+        assert report.feasible is False
+
+
+class TestGuardNames:
+    """Each guard a class body defines must guard a method the class implements."""
+
+    def test_a_misspelled_guard_raises_when_its_class_is_created(self):
+        with pytest.raises(TypeError, match=r"did you mean _marginal_guard\?"):
+
+            class _Misspelled(Distribution, SupportsMarginals):
+                def _marginal(self, path: str) -> Any: ...
+
+                def _marginals_guard(self, path: str) -> bool:
+                    return True
+
+    def test_a_class_refused_for_its_guard_leaves_the_class_checks_intact(self):
+        # The refused class stays alive through the traceback, and a protocol
+        # check walks the protocol's subclasses, which include it.
+        with pytest.raises(TypeError) as refused:
+
+            class _Refused(Distribution, SupportsMarginals):
+                def _marginal(self, path: str) -> Any: ...
+
+                def _marginals_guard(self, path: str) -> bool:
+                    return True
+
+        law = Normal("x", 0.0, 1.0)
+        assert not isinstance(law, SupportsMarginals)
+        assert isinstance(law, Distribution)
+        assert refused.value is not None
+
+    def test_a_guard_of_a_method_the_class_lacks_raises(self):
+        with pytest.raises(TypeError, match="guards _mean, which _NoMean does not implement"):
+
+            class _NoMean(Distribution):
+                def _mean_guard(self) -> bool:
+                    return True
+
+    def test_a_kernel_guard_is_checked_when_its_class_is_created(self):
+        with pytest.raises(TypeError, match=r"did you mean _conditional_sample_guard\?"):
+
+            class _Kernel(ConditionalDistribution):
+                def _condition_on(self, given: Any, /, **kwargs: Any) -> Any: ...
+
+                def _conditional_sample(self, given: Any, key: Any, sample_shape=()) -> Any: ...
+
+                def _conditional_sampel_guard(self) -> bool:
+                    return True
+
+    def test_a_guard_that_is_not_a_method_raises(self):
+        with pytest.raises(TypeError, match="must be a method that guards _mean"):
+
+            class _DataGuard(Distribution, SupportsMean):
+                _mean_guard = True
+
+                def _mean(self) -> float:
+                    return 0.0
+
+    def test_a_guard_set_to_none_removes_the_inherited_guard(self):
+        class _Total(_TruncatedLaw):
+            _marginal_guard = None
+
+        assert _capability_guard(_Total("t", False), "_marginal", "a") == Feasibility(True)
+
+    def test_a_table_guard_is_checked_when_its_subclass_is_built(self):
+        class _BadTable(Distribution):
+            _capability_table: typing.ClassVar = {SupportsMean: {"_mean_guard": lambda self: True}}
+
+        with pytest.raises(TypeError, match="guards _mean"):
+            _capability_subclass(_BadTable, [SupportsMean])
+
+
+class TestConjunction:
+    """A call that needs several capabilities is feasible when each one is."""
+
+    def test_no_report_is_feasible(self):
+        assert _conjunction([]) == Feasibility(True)
+
+    def test_the_first_decline_is_the_report(self):
+        first, second = Feasibility(False, "first"), Feasibility(False, "second")
+        unresolved = Feasibility(None, pending=("the size of n",))
+        assert _conjunction([Feasibility(True), unresolved, first, second]) is first
+
+    def test_every_pending_entry_is_kept_when_none_declines(self):
+        reports = [
+            Feasibility(None, pending=("the size of n",)),
+            Feasibility(True),
+            Feasibility(None, pending=("the size of m",)),
+        ]
+        assert _conjunction(reports) == Feasibility(
+            None, pending=("the size of n", "the size of m")
+        )
 
 
 class TestCapabilitySubclass:

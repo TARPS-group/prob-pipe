@@ -138,22 +138,52 @@ def _view_condition_on(self: FieldView, given: Any, /, **kwargs: Any) -> Distrib
     raise NotImplementedError("FieldView._condition_on")
 
 
-#: Each capability a view may derive, with the methods that realize it.
+def _view_condition_on_guard(self: FieldView, paths: tuple[str, ...]) -> Feasibility:
+    """The parent's conditioning guard at the given paths, each joined to the view's path."""
+    parent_paths = []
+    for path in paths:
+        parent_path = self._parent_path(path)
+        if parent_path is None:
+            return Feasibility(False, f"{path!r} is not an event path of the view")
+        parent_paths.append(parent_path)
+    return _capability_guard(self._parent, "_condition_on", tuple(parent_paths))
+
+
+def _parent_guard(method: str) -> Callable[[FieldView], Feasibility]:
+    """The guard of a view's *method*, which calls the parent's *method* and takes its guard."""
+
+    def guard(self: FieldView) -> Feasibility:
+        return _capability_guard(self._parent, method)
+
+    guard.__name__ = f"{method}_guard"
+    guard.__qualname__ = f"FieldView.{method}_guard"
+    guard.__doc__ = f"The parent's guard of ``{method}``."
+    return guard
+
+
+#: Each capability a view may derive, with the methods that realize it and their
+#: guards. The density's protocol default ``_unnormalized_log_prob`` takes the
+#: guard of ``_log_prob``.
 _VIEW_CAPABILITIES: dict[type, Mapping[str, Callable[..., Any]]] = {
-    SupportsSampling: {"_sample": _view_sample},
-    SupportsMean: {"_mean": _view_mean},
-    SupportsVariance: {"_variance": _view_variance},
-    SupportsCovariance: {"_cov": _view_cov},
-    SupportsQuantile: {"_quantile": _view_quantile},
-    SupportsExpectation: {"_expectation": _view_expectation},
-    SupportsLogProb: {
-        "_log_prob": _view_log_prob,
-        "_log_prob_guard": _view_log_prob_guard,
-        "_unnormalized_log_prob_guard": _view_log_prob_guard,
+    SupportsSampling: {"_sample": _view_sample, "_sample_guard": _parent_guard("_sample")},
+    SupportsMean: {"_mean": _view_mean, "_mean_guard": _parent_guard("_mean")},
+    SupportsVariance: {"_variance": _view_variance, "_variance_guard": _parent_guard("_variance")},
+    SupportsCovariance: {"_cov": _view_cov, "_cov_guard": _parent_guard("_cov")},
+    SupportsQuantile: {"_quantile": _view_quantile, "_quantile_guard": _parent_guard("_quantile")},
+    SupportsExpectation: {
+        "_expectation": _view_expectation,
+        "_expectation_guard": _parent_guard("_expectation"),
     },
+    SupportsLogProb: {"_log_prob": _view_log_prob, "_log_prob_guard": _view_log_prob_guard},
     SupportsMarginals: {"_marginal": _view_marginal, "_marginal_guard": _view_marginal_guard},
-    SupportsExactConditioning: {"_condition_on": _view_condition_on},
-    SupportsApproximateConditioning: {"_condition_on": _view_condition_on},
+    SupportsExactConditioning: {
+        "_condition_on": _view_condition_on,
+        "_condition_on_guard": _view_condition_on_guard,
+    },
+    SupportsApproximateConditioning: {
+        "_condition_on": _view_condition_on,
+        "_condition_on_guard": _view_condition_on_guard,
+    },
 }
 
 

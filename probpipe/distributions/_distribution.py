@@ -27,6 +27,7 @@ from ..core._specs import OutputSpec
 from ..core.constraints import _known_equal
 from ..core.provenance import Provenance
 from ..core.tracked import Annotated, TrackedTerm, _TrackedTermMeta
+from ._capabilities import _check_guards
 
 # ---------------------------------------------------------------------------
 # Global defaults
@@ -180,8 +181,16 @@ class _DistributionMeta(_TrackedTermMeta):
     instance's declaration whatever its class, so ``isinstance(d,
     NumericDistribution)`` holds if and only if ``d`` declares a numeric event,
     and every other class check is the ordinary one. A class may claim a marker by
-    inheriting it, and construction checks the claim.
+    inheriting it, and construction checks the claim. Creating a class checks
+    each capability guard it defines (:func:`._capabilities._check_guards`).
     """
+
+    def __init__(cls, *args: Any, **kwargs: Any) -> None:
+        # The check runs once the class is complete, since a class that fails
+        # while type.__new__ builds it has no ABC caches of its own and would
+        # write into its base's.
+        super().__init__(*args, **kwargs)
+        _check_guards(cls)
 
     def __instancecheck__(cls, instance: Any) -> bool:
         marker = _DECLARATION_MARKERS.get(cls)

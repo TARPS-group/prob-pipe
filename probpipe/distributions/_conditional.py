@@ -21,6 +21,7 @@ from ..core._spec_base import NumericSpec, TermSpec, _unify_specs
 from ..core._specs import InputSpec, OutputSpec
 from ..core.provenance import Provenance
 from ..core.tracked import Annotated, TrackedTerm, _TrackedTermMeta
+from ._capabilities import _check_guards
 from ._distribution import (
     _DECLARATION_MARKERS,
     _check_marker_claims,
@@ -211,8 +212,16 @@ class _ConditionalDistributionMeta(_TrackedTermMeta):
 
     Construction checks that the instance holds its declarations, and a numeric
     marker's membership is read from the declarations whatever the class, as
-    for ``NumericDistribution``.
+    for ``NumericDistribution``. Creating a class checks each capability guard
+    it defines, as for ``Distribution``.
     """
+
+    def __init__(cls, *args: Any, **kwargs: Any) -> None:
+        # The check runs once the class is complete, since a class that fails
+        # while type.__new__ builds it has no ABC caches of its own and would
+        # write into its base's.
+        super().__init__(*args, **kwargs)
+        _check_guards(cls)
 
     def __instancecheck__(cls, instance: Any) -> bool:
         marker = _DECLARATION_MARKERS.get(cls)
