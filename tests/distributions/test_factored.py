@@ -25,6 +25,7 @@ from probpipe import (
     MultivariateNormal,
     Normal,
     NumericArraySpec,
+    NumericRecordBatch,
     OpaqueSpec,
     OutputSpec,
     Record,
@@ -63,6 +64,8 @@ from probpipe.distributions import (
     SupportsMarginals,
 )
 from probpipe.distributions._capabilities import _capability_guard
+from probpipe.distributions._empirical import EmpiricalDistribution
+from probpipe.distributions._factored import _SoleField
 from probpipe.linalg import DenseLinOp
 
 SCALAR = NumericArraySpec(())
@@ -657,6 +660,33 @@ class TestMomentCapabilities:
         assert list(quantiles) == ["a", "b"]
         assert jnp.allclose(quantiles["a"], levels + 1.0)
         assert jnp.allclose(quantiles["b"], levels + 10.0)
+
+    def test_the_quantiles_of_a_joint_of_empirical_laws_keep_each_leaf(self):
+        atoms = NumericRecordBatch(
+            "rows",
+            {"b": jnp.array([[0.0, 1.0], [1.0, 0.0], [2.0, 2.0]]), "a": jnp.array([1.0, 2.0, 3.0])},
+            "row",
+            element_spec=RecordSpec(b=(2,), a=()),
+        )
+        record = EmpiricalDistribution("post", atoms, jnp.array([0.5, 0.25, 0.25]))
+        theta = EmpiricalDistribution("theta", jnp.array([4.0, 5.0, 6.0]))
+        levels = jnp.array([0.25, 0.75])
+        quantiles = FactoredDistribution("j", [record, theta])._quantile(levels)
+        assert list(quantiles) == ["b", "a", "theta"]
+        assert quantiles["b"].shape == (2, 2)
+        expected = record._quantile(levels)
+        assert jnp.allclose(quantiles["b"], expected["b"])
+        assert jnp.allclose(quantiles["a"], expected["a"])
+        assert jnp.allclose(quantiles["theta"], theta._quantile(levels))
+
+    def test_the_law_of_the_one_field_of_an_empirical_record_has_its_quantiles(self):
+        column = jnp.array([3.0, 1.0, 2.0, 4.0])
+        atoms = NumericRecordBatch("rows", {"x": column}, "row", element_spec=RecordSpec(x=()))
+        field = _SoleField(EmpiricalDistribution("one", atoms))
+        levels = jnp.array([0.25, 0.5])
+        expected = EmpiricalDistribution("x", column)._quantile(levels)
+        assert jnp.allclose(field._quantile(levels), expected)
+        assert jnp.shape(field._quantile(0.5)) == ()
 
     def test_an_edge_free_conditional_joint_has_its_moments_at_its_given(self):
         joint = MomentKernel("k", {"x": SCALAR}, OutputSpec(a=SCALAR)) * Normal("b", 1.0, 2.0)

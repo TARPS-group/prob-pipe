@@ -13,6 +13,7 @@ from probpipe import (
     NumericArray,
     NumericArrayBatch,
     NumericArraySpec,
+    NumericRecordBatch,
     Record,
     RecordSpec,
     workflow_run,
@@ -27,6 +28,7 @@ from probpipe.core._specs import OutputSpec
 from probpipe.core.constraints import non_negative, real, unit_interval
 from probpipe.distributions._capabilities import SupportsConditionalSampling
 from probpipe.distributions._conditional import ConditionalDistribution
+from probpipe.distributions._empirical import EmpiricalDistribution
 from probpipe.linalg import LinOp
 from probpipe.operations import RouteSource
 from probpipe.operations._moments import (
@@ -73,6 +75,17 @@ class _Shift(ConditionalDistribution, SupportsConditionalSampling):
 def _dependent_joint() -> Any:
     """``y = mu + 1`` with ``mu ~ Normal(2, 1)``: a joint that samples and has no moment."""
     return _Shift() * Gaussian("mu", 2.0)
+
+
+def _record_empirical() -> EmpiricalDistribution:
+    """Three equally weighted record atoms, whose leaves ``b`` and ``a`` each rank the atoms alike."""
+    atoms = NumericRecordBatch(
+        "rows",
+        {"b": jnp.array([[1.0, 2.0], [0.0, 1.0], [2.0, 3.0]]), "a": jnp.array([2.0, 1.0, 3.0])},
+        "row",
+        element_spec=RecordSpec(b=(2,), a=()),
+    )
+    return EmpiricalDistribution("post", atoms)
 
 
 class _QuadratureStandIn(ExpectationMethod):
@@ -235,6 +248,24 @@ class TestQuantile:
             estimate = quantile.with_options(n_broadcast_samples=_DRAWS)(Sampler("s"), 0.5)
         assert abs(_value(estimate)) < 0.1
 
+    def test_one_level_of_a_record_law_is_a_record_of_its_quantiles(self):
+        result = quantile(_record_empirical(), 0.5)
+        assert isinstance(result, Record) and result.fields == ("b", "a")
+        np.testing.assert_allclose(np.asarray(result["b"]), [1.0, 2.0])
+        assert _value(result["a"]) == 2.0
+
+    def test_several_levels_of_a_record_law_are_a_batch_of_records(self):
+        result = quantile(_record_empirical(), jnp.array([0.0, 0.5, 1.0]))
+        assert isinstance(result, NumericRecordBatch)
+        assert (result.level_names, result.batch_shape) == (("quantile",), (3,))
+        np.testing.assert_allclose(np.asarray(result["a"]), [1.0, 2.0, 3.0])
+        np.testing.assert_allclose(np.asarray(result["b"]), [[0.0, 1.0], [1.0, 2.0], [2.0, 3.0]])
+
+    def test_a_raw_record_law_s_levels_are_the_mapping_of_their_columns(self):
+        result = quantile.with_options(raw=True)(_record_empirical(), jnp.array([0.0, 1.0]))
+        assert isinstance(result, dict) and list(result) == ["b", "a"]
+        assert jnp.shape(result["b"]) == (2, 2)
+
     def test_quantiles_require_a_numeric_event(self):
         with pytest.raises(ApplicabilityError, match="numeric value"):
             quantile(Measure("m"), 0.5)
@@ -265,6 +296,14 @@ class TestTheFallbacksOfAJoint:
         with workflow_run(seed=9):
             estimate = cov.with_options(n_broadcast_samples=_DRAWS)(_dependent_joint())
         np.testing.assert_allclose(np.asarray(estimate), np.ones((2, 2)), atol=0.15)
+
+    def test_several_quantile_levels_give_a_batch_of_records(self):
+        levels = jnp.array([0.25, 0.5])
+        with workflow_run(seed=10):
+            estimate = quantile.with_options(n_broadcast_samples=_DRAWS)(_dependent_joint(), levels)
+        assert (estimate.level_names, estimate.batch_shape) == (("quantile",), (2,))
+        assert abs(float(estimate["mu"][1]) - 2.0) < 0.1
+        assert abs(float(estimate["y"][1]) - 3.0) < 0.1
 
 
 class TestExpectation:

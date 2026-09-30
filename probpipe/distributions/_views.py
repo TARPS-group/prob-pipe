@@ -274,18 +274,15 @@ def _view_cov(self: FieldView) -> LinOp:
     return selection @ cov @ selection.T
 
 
-def _view_quantile(self: FieldView, q: ArrayLike) -> Array:
-    """Restriction of the parent's per-coordinate quantiles to the path.
+def _view_quantile(self: FieldView, q: ArrayLike) -> Any:
+    """Restriction of the parent's per-coordinate quantiles to the view's node.
 
-    The parent's quantiles carry the level axes first and the parent's flat
-    coordinates last, and the view keeps its own coordinates of the last axis.
-
-    Raises
-    ------
-    TypeError
-        If the parent's declaration is not numeric.
+    The parent's quantiles are its event's raw form with the level axes
+    leading in each leaf, so the view's quantiles are the parent's at the
+    view's node, projected as a draw is, with the level axes leading in each
+    leaf.
     """
-    return jnp.asarray(self._parent._quantile(q))[..., jnp.asarray(self._coordinates())]
+    return self._project(self._parent._quantile(q))
 
 
 def _view_expectation(self: FieldView, f: Callable[[Any], Array]) -> Array:

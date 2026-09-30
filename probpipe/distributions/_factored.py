@@ -856,7 +856,9 @@ def _joint_quantile(self: Any, q: ArrayLike) -> dict[str, Any]:
     """The quantiles of an edge-free joint at the levels *q*, assembled per component.
 
     A whole-term factor's quantiles are its component's, and an exposed record's
-    are the children of the factor's result.
+    are the children of the factor's result. Each factor's result is its
+    event's raw form with the level axes leading in each leaf, so the joint's is
+    the same form of its own event.
 
     Returns
     -------

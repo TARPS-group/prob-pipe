@@ -75,6 +75,7 @@ from ..distributions._factored import _raw_record
 from ..functions import _broker, _descendants, function
 from ..values import Function, FunctionSpec
 from ._operation import ApplicabilityError, BoundCall, _workflow_draws, operation
+from ._sample import _record_batch
 
 __all__ = [
     "ExpectationMethod",
@@ -496,13 +497,17 @@ def _check_levels(q: Any) -> Any:
 
 
 def _mc_quantile(call: BoundCall, result: OutputSpec | None) -> Any:
-    """The per-coordinate empirical quantiles of the draws, the level axes leading."""
+    """The per-coordinate empirical quantiles of the draws, the level axes leading.
+
+    A record event's quantiles at several levels are the declared batch of
+    records.
+    """
     levels = _check_levels(call.operands["q"])
     event = call.operands["d"].event_spec.spec
     draws = _monte_carlo_draws(call, "quantile")
     if isinstance(event, NumericArraySpec):
         return jnp.quantile(jnp.asarray(draws), levels, axis=0)
-    return _empirical_of(call, draws)._quantile(levels)
+    return _record_batch(_empirical_of(call, draws)._quantile(levels), call, result)
 
 
 # ---------------------------------------------------------------------------
@@ -622,8 +627,13 @@ def quantile(d: Distribution, q: Any):
 
 
 def _closed_form_quantile(call: BoundCall, result: OutputSpec | None) -> Any:
-    """``d._quantile(q)`` at levels in ``[0, 1]``."""
-    return call.operands["d"]._quantile(_check_levels(call.operands["q"]))
+    """``d._quantile(q)`` at levels in ``[0, 1]``.
+
+    A record event's quantiles at several levels are the declared batch of
+    records.
+    """
+    quantiles = call.operands["d"]._quantile(_check_levels(call.operands["q"]))
+    return _record_batch(quantiles, call, result)
 
 
 quantile.capability_route(

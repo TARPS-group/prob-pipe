@@ -186,15 +186,8 @@ def _drawn_at_its_batch_form(
         if not _is_stacked_columns(raw, sample_shape):
             # Not the raw form of a batch of draws, so there is no batch to build.
             return drawn
-        if declared is None:
-            stacked = Record(name, raw).event_template
-            declared = _reshaped_template(stacked, lambda shape: shape[len(sample_shape) :])
-        return _batch_class_for(declared)(
-            name,
-            raw,
-            SAMPLE_LEVEL,
-            element_spec=declared,
-            axes_per_level=(len(sample_shape),),
+        return _columns_at_a_level(
+            raw, sample_shape, name=name, level=SAMPLE_LEVEL, element_spec=declared
         )
 
     if not sample_shape:
@@ -255,6 +248,38 @@ def _drawn_at_its_batch_form(
             shape=shape[len(sample_shape) :], dtype=_numpy_dtype_of(drawn)
         ),
         axes_per_level=(len(sample_shape),),
+    )
+
+
+def _columns_at_a_level(
+    columns: Any,
+    leading_shape: tuple[int, ...],
+    *,
+    name: str,
+    level: str,
+    element_spec: Any = None,
+) -> Any:
+    """The batch of records whose raw columns are *columns*, on the one level *level*.
+
+    The columns are a nested mapping whose leaves are led by *leading_shape*,
+    which the level holds. The element is the record declaration
+    *element_spec*, or else the structure the columns imply without those
+    axes, and the batch is the ``RecordBatch`` or ``NumericRecordBatch`` the
+    element calls for.
+    """
+    from ._record_batch import _batch_class_for
+    from ._record_spec import _reshaped_template
+    from .record import Record
+
+    if element_spec is None:
+        stacked = Record(name, columns).event_template
+        element_spec = _reshaped_template(stacked, lambda shape: shape[len(leading_shape) :])
+    return _batch_class_for(element_spec)(
+        name,
+        columns,
+        level,
+        element_spec=element_spec,
+        axes_per_level=(len(leading_shape),),
     )
 
 
@@ -474,13 +499,20 @@ def cov(dist: SupportsCovariance) -> Array:
     return dist._cov().to_dense()
 
 
+#: The level that the levels of an array of quantile levels are on.
+_QUANTILE_LEVEL = "quantile"
+
+
 @function
 def quantile(dist: SupportsQuantile, q: Any) -> Any:
     """Compute quantile(s) of ``X ~ dist`` at probability level(s) ``q``.
 
-    ``q`` is a scalar or array of probabilities in ``[0, 1]``; the return is
-    shaped like one draw per field (finite-sample distributions return the
-    weight-aware empirical quantile via ``_quantile``).
+    ``q`` is a scalar or array of probabilities in ``[0, 1]``, and the
+    quantiles are computed per coordinate. The law's ``_quantile`` returns the
+    event's raw form with the level axes leading in each leaf. One level is
+    returned as a value of the event's kind, and an array of levels as the batch
+    of those values on a level named ``quantile``. A law whose ``_quantile``
+    returns a tracked term keeps that form.
 
     Requires the distribution to implement :class:`SupportsQuantile`. A concrete
     ``q`` outside ``[0, 1]`` raises ``ValueError`` (the check is skipped when
@@ -493,7 +525,48 @@ def quantile(dist: SupportsQuantile, q: Any) -> Any:
     qa = jnp.asarray(q)
     if not isinstance(qa, jax.core.Tracer) and bool(jnp.any((qa < 0) | (qa > 1) | jnp.isnan(qa))):
         raise ValueError(f"quantile probabilities must lie in [0, 1]; got {q!r}")
-    return dist._quantile(q)
+    return _quantiles_at_their_levels(
+        dist._quantile(q), tuple(qa.shape), name=getattr(dist, "name", _QUANTILE_LEVEL)
+    )
+
+
+def _quantiles_at_their_levels(computed: Any, level_shape: tuple[int, ...], *, name: str) -> Any:
+    """Raw quantiles at *level_shape* levels, as the batch of values on the level ``quantile``.
+
+    *computed* is the event's raw form with the level axes leading in each
+    leaf. One level is returned as it is, and the function boundary wraps it at
+    its kind. So is a tracked term, and so is a value whose leaves are not led by
+    the level axes.
+    """
+    from collections.abc import Mapping
+
+    from ..distributions._factored import _raw_record
+    from ._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
+    from ._numeric_array_batch import NumericArrayBatch
+    from ._specs import NumericArraySpec
+    from .tracked import TrackedTerm
+
+    if not level_shape or isinstance(computed, TrackedTerm):
+        return computed
+    if isinstance(computed, Mapping):
+        raw = _raw_record(computed)
+        if not _is_stacked_columns(raw, level_shape):
+            return computed
+        return _columns_at_a_level(raw, level_shape, name=name, level=_QUANTILE_LEVEL)
+    if not _is_numeric_leaf(computed):
+        return computed
+    shape = tuple(_event_shape_of(computed))
+    if shape[: len(level_shape)] != level_shape:
+        return computed
+    return NumericArrayBatch(
+        name,
+        computed,
+        _QUANTILE_LEVEL,
+        element_spec=NumericArraySpec(
+            shape=shape[len(level_shape) :], dtype=_numpy_dtype_of(computed)
+        ),
+        axes_per_level=(len(level_shape),),
+    )
 
 
 @function

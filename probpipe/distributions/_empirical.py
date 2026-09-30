@@ -228,24 +228,28 @@ def _empirical_cov(self: EmpiricalDistribution) -> LinOp:
     return DenseLinOp(weighted_covariance(self._p, _coordinates(self)))
 
 
-def _empirical_quantile(self: EmpiricalDistribution, q: ArrayLike) -> Array:
+def _empirical_quantile(self: EmpiricalDistribution, q: ArrayLike) -> Array | dict[str, Any]:
     """The weighted quantiles of each coordinate at the levels *q* in ``[0, 1]``.
 
     Each coordinate's sorted atoms sit at their cumulative weight less half
     their own weight, and a level between two positions interpolates linearly,
-    which is the midpoint (Hazen) rule. The level axes come first. An array
-    event's shape follows them, and a record event's flat coordinates follow
-    them, so a record event's result has shape ``(*q.shape, d)``.
+    which is the midpoint (Hazen) rule.
+
+    Returns
+    -------
+    Array or dict
+        The event's raw form with the level axes leading in each leaf: an
+        array of shape ``(*q.shape, *event_shape)`` for an array event, and the
+        nested mapping of such arrays for a record event.
     """
     levels = jnp.asarray(q)
-    spec = self.event_spec.spec
-    if isinstance(spec, NumericArraySpec):
-        values, per_level = self._rows, tuple(spec.shape)
-    else:
-        values = _coordinates(self)
-        per_level = (values.shape[1],)
-    quantiles = _weighted_quantile(values, self.weights, jnp.reshape(levels, (-1,)))
-    return jnp.reshape(quantiles, (*levels.shape, *per_level))
+    weights = self.weights
+
+    def per_leaf(_: Array | None, column: Array) -> Array:
+        quantiles = _weighted_quantile(column, weights, jnp.reshape(levels, (-1,)))
+        return jnp.reshape(quantiles, (*levels.shape, *column.shape[1:]))
+
+    return _leafwise(self, per_leaf)
 
 
 #: The capabilities an instance claims when its event is numeric, with their methods.

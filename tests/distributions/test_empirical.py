@@ -440,16 +440,21 @@ class TestMoments:
         assert law._quantile(jnp.array([0.25, 0.75])).shape == (2, 3)
         assert law._quantile(jnp.full((2, 2), 0.5)).shape == (2, 2, 3)
 
-    def test_the_quantile_of_record_atoms_is_over_the_flat_coordinates(self):
+    def test_the_quantile_of_record_atoms_is_the_mapping_of_each_leaf_s_quantiles(self):
         levels = jnp.array([0.25, 0.5])
         quantiles = _record_law()._quantile(levels)
-        assert quantiles.shape == (2, 3)
-        coordinates = _flat_record_atoms()
-        for coordinate in range(3):
-            law = EmpiricalDistribution(
-                "c", jnp.asarray(coordinates[:, coordinate]), _RECORD_WEIGHTS
-            )
-            assert jnp.allclose(quantiles[:, coordinate], law._quantile(levels))
+        assert isinstance(quantiles, dict) and list(quantiles) == ["b", "a"]
+        assert quantiles["b"].shape == (2, 2) and quantiles["a"].shape == (2,)
+        for coordinate in range(2):
+            law = EmpiricalDistribution("c", _B[:, coordinate], _RECORD_WEIGHTS)
+            assert jnp.allclose(quantiles["b"][:, coordinate], law._quantile(levels))
+        a_law = EmpiricalDistribution("c", _A, _RECORD_WEIGHTS)
+        assert jnp.allclose(quantiles["a"], a_law._quantile(levels))
+
+    def test_one_level_of_record_atoms_is_shaped_like_a_draw(self):
+        quantiles = _record_law()._quantile(0.5)
+        assert _RECORD_SPEC.is_valid(quantiles)
+        assert (jnp.shape(quantiles["b"]), jnp.shape(quantiles["a"])) == ((2,), ())
 
     @pytest.mark.parametrize(
         "make",
