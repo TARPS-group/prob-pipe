@@ -308,6 +308,31 @@ class TestQuantile:
             quantile(Gaussian("g"), "median")
 
 
+class TestTheFallbacksOnFewDraws:
+    """A fallback reports the moments of the empirical law of its draws, whatever the packaging."""
+
+    @pytest.mark.parametrize("record", [False, True], ids=["array", "record"])
+    def test_the_covariance_divides_by_the_number_of_draws(self, record):
+        # The three draws (0, 0), (1, 2), and (2, 4) deviate from their mean (1, 2)
+        # by (-1, -2), (0, 0), and (1, 2).
+        estimate = cov.with_options(n_broadcast_samples=3)(_Ramp("ramp", record=record))
+        expected = np.array([[2.0, 4.0], [4.0, 8.0]]) / 3.0
+        np.testing.assert_allclose(np.asarray(estimate), expected, rtol=1e-6)
+
+    @pytest.mark.parametrize("record", [False, True], ids=["array", "record"])
+    def test_the_variance_is_the_diagonal_of_the_covariance(self, record):
+        law = _Ramp("ramp", record=record)
+        spread = variance.with_options(n_broadcast_samples=7)(law)
+        covariance = cov.with_options(n_broadcast_samples=7)(law)
+        values = [_value(spread["x"]), _value(spread["y"])] if record else np.asarray(spread)
+        np.testing.assert_allclose(values, np.diag(np.asarray(covariance)), rtol=1e-6)
+
+    @pytest.mark.parametrize("record", [False, True], ids=["array", "record"])
+    def test_one_draw_has_no_covariance(self, record):
+        estimate = cov.with_options(n_broadcast_samples=1)(_Ramp("ramp", record=record))
+        np.testing.assert_array_equal(np.asarray(estimate), np.zeros((2, 2)))
+
+
 class TestTheFallbacksOfAJoint:
     """A joint's draws are a mapping of columns, which each fallback reads per component."""
 

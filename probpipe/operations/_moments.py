@@ -3,9 +3,10 @@
 Each summarizes a distribution by a deterministic value. ``mean``, ``variance``,
 ``cov``, and ``quantile`` carry a capability route on their matching protocol,
 ``closed_form``, and a Monte Carlo fallback, ``monte_carlo``, on the event kinds
-where the required averaging is defined. A moment of the event's kind keeps the
-event's components and packaging and derives only its term specs, support
-included.
+where the required averaging is defined. A capability returns the law's own
+moment, and a numeric fallback returns that moment of the empirical law of its
+draws. A moment of the event's kind keeps the event's components and packaging
+and derives only its term specs, support included.
 
 ``expectation(d, f)`` returns ``E[f(X)]`` for ``X ~ d``. The methods that can
 compute it form a dispatch registry keyed on the distribution's type, and the
@@ -443,21 +444,19 @@ def _empirical_of(call: BoundCall, draws: Any) -> EmpiricalDistribution:
 
 
 def _mc_mean(call: BoundCall, result: OutputSpec | None) -> Any:
-    """The coordinatewise average of the draws."""
-    event = call.operands["d"].event_spec.spec
-    if isinstance(event, NumericArraySpec):
-        return jnp.mean(jnp.asarray(_monte_carlo_draws(call, "mean")), axis=0)
-    if isinstance(event, NumericSpec):
+    """The mean of the empirical law of the draws, their coordinatewise average."""
+    if isinstance(call.operands["d"].event_spec.spec, NumericSpec):
         return _empirical_of(call, _monte_carlo_draws(call, "mean"))._mean()
     raise NotImplementedError("mean.monte_carlo: the average of function- and measure-valued draws")
 
 
 def _mc_variance(call: BoundCall, result: OutputSpec | None) -> Any:
-    """The coordinatewise sample variance of the draws."""
-    event = call.operands["d"].event_spec.spec
-    if isinstance(event, NumericArraySpec):
-        return jnp.var(jnp.asarray(_monte_carlo_draws(call, "variance")), axis=0)
-    if isinstance(event, NumericSpec):
+    """The variance of the empirical law of the draws.
+
+    Each coordinate's variance is the mean squared deviation of the draws from
+    their mean, dividing by the number of draws.
+    """
+    if isinstance(call.operands["d"].event_spec.spec, NumericSpec):
         return _empirical_of(call, _monte_carlo_draws(call, "variance"))._variance()
     raise NotImplementedError("variance.monte_carlo: the pointwise variance of function draws")
 
@@ -469,13 +468,12 @@ def _dense(covariance: Any) -> Any:
 
 
 def _mc_cov(call: BoundCall, result: OutputSpec | None) -> Any:
-    """The sample covariance of the flattened draws."""
-    event = call.operands["d"].event_spec.spec
-    draws = _monte_carlo_draws(call, "cov")
-    if isinstance(event, NumericArraySpec):
-        flat = jnp.asarray(draws).reshape((call.controls["n_broadcast_samples"], -1))
-        return jnp.atleast_2d(jnp.cov(flat, rowvar=False))
-    return _dense(_empirical_of(call, draws)._cov())
+    """The covariance of the empirical law of the draws, over their flat coordinates.
+
+    It divides by the number of draws, as the variance does, so its diagonal
+    is the variance and one draw has none.
+    """
+    return _dense(_empirical_of(call, _monte_carlo_draws(call, "cov"))._cov())
 
 
 def _check_levels(q: Any) -> Any:
