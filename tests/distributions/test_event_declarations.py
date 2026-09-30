@@ -131,6 +131,7 @@ from probpipe.linalg import DenseLinOp
 from probpipe.modeling import PyMCModel, StanModel
 from probpipe.modeling._likelihood import GenerativeLikelihood
 from probpipe.modeling._stan import _UnconstrainedStanView
+from probpipe.operations._condition import _unnormalized_conditional, _UnnormalizedConditional
 
 # -- Constructions ------------------------------------------------------------
 
@@ -314,6 +315,9 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
         ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)), "a"
     ),
     FactoredDistribution: lambda: Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0),
+    _UnnormalizedConditional: lambda: _unnormalized_conditional(
+        Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0), Record("given", {"a": 0.0})
+    ),
     _IndependentObservations: lambda: GaussianFamily().build("y", jnp.zeros(3), 1.0),
     MixtureDistribution: lambda: MixtureDistribution(
         "m",

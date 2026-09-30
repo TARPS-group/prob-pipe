@@ -8,8 +8,8 @@ import arviz_base as azb
 import jax.numpy as jnp
 
 from ..core._dispatch import Feasibility
+from ..operations._condition import InferenceMethod
 from ._approximate_distribution import ApproximateDistribution, make_posterior
-from ._registry import InferenceMethod
 
 
 def _import_cmdstanpy():

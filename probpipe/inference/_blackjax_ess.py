@@ -34,6 +34,7 @@ import numpy as np
 from ..core._dispatch import Feasibility
 from ..custom_types import Array, ArrayLike
 from ..distributions._distribution import Distribution
+from ..operations._condition import InferenceMethod
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._inference_utils import (
     build_likelihood_flat,
@@ -45,7 +46,6 @@ from ._inference_utils import (
     is_simple_model,
     parallel_chain_map,
 )
-from ._registry import InferenceMethod
 
 logger = logging.getLogger(__name__)
 

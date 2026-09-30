@@ -2,8 +2,9 @@
 
 Provides MCMC sampling (gradient-based NUTS/HMC + gradient-free RWMH and
 elliptical slice sampling — all BlackJAX-backed), chain-structured
-empirical distributions, and the inference method registry for
-``condition_on`` dispatch.
+empirical distributions, and the inference methods that normalize the targets
+of ``condition_on``. The methods register into the inference-method registry,
+which is defined with ``condition_on`` and re-exported here.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from ..core._dispatch import (
     UnaryDispatchRegistry,
     UnarySupportedTypes,
 )
+from ..operations._condition import InferenceMethod, inference_method_registry
 from ._approximate_distribution import ApproximateDistribution
 from ._bayesflow_likelihoods import (
     BayesFlowLikelihood,
@@ -39,10 +41,6 @@ from ._blackjax_ess import elliptical_slice
 from ._blackjax_rwmh import rwmh
 from ._minibatch import MinibatchedDistribution
 from ._nutpie import condition_on_nutpie
-from ._registry import (
-    InferenceMethod,
-    inference_method_registry,
-)
 
 __all__ = [
     "ApproximateDistribution",

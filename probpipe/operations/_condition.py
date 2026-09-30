@@ -1,58 +1,139 @@
-"""The condition_on operation and the inference-method registry behind Bayes' rule.
+"""The condition_on operation, its two stages, and the inference-method registry.
 
 ``condition_on(d, given)`` fixes fields of a distribution or of a conditional
-distribution. ``given`` is field-keyed, a ``Record`` or a mapping of field
-paths. Binding a given slot applies the kernel, and binding a produced field
-conditions the law. The routes, in selection order:
+distribution and returns the resulting law, normalized. ``given`` is
+field-keyed, a ``Record`` or a mapping of field paths. Binding a given slot
+applies the kernel, and binding a produced field conditions the law.
 
-1. ``curry`` binds given slots of a ``ConditionalDistribution`` through its
-   ``_condition_on``, exactly.
+A call resolves in two stages. The **exact stage** computes the conditional: it
+curries given slots, calls a conditioning capability, or, where no exact route
+conditions a produced field, forms the **unnormalized conditional**, the law of
+the unconditioned fields whose unnormalized log-density is the joint's at the
+given values. The **normalization stage** returns a normalized result as it is,
+and otherwise passes the result as the target to the inference-method registry,
+whose selected method returns a normalized law. A kernel result is normalized
+per value: it normalizes each law it yields once its last given is bound.
+
+The routes, in selection order:
+
+1. ``curry`` binds given slots of a kernel through its ``_condition_on``, which
+   is exact unless the kernel claims ``SupportsApproximateConditioning``, and
+   normalizes the result.
 2. ``slice`` assembles the conditional from a factored law's normalized factors
    when the conditioned fields admit an exact slice.
 3. ``exact_conditioning`` calls ``_condition_on`` on a law claiming
    ``SupportsExactConditioning``.
-4. ``bayes`` with an exact method of the inference-method registry.
+4. ``bayes`` curries any given slots the given names, forms the unnormalized
+   conditional of the produced fields, and normalizes it.
 5. ``approximate_conditioning`` calls ``_condition_on`` on a law claiming
    ``SupportsApproximateConditioning``.
-6. ``bayes`` with an approximate method of the registry.
+6. ``unnormalized`` returns the exact stage's result, normalized or not; a caller
+   selects it only by name, as ``method="unnormalized"``.
 
-So no approximate route runs while an exact one applies, and ``exact_only``
-excludes the approximate capability and the approximate methods alike.
+A route that normalizes through the registry is exact when its exact stage and
+the selected method both are, so its exact methods rank with the exact routes
+and its approximate methods with the approximate ones. No approximate route
+therefore runs while an exact one applies, and ``exact_only`` excludes the
+approximate conditioning capability and the approximate methods alike, which
+raises ``ResolutionError`` for a call whose exact stage leaves an unnormalized
+result. ``check`` reports both stages: its route is the exact stage's, and its
+method the normalization's, which is ``None`` for a result that needs none.
 
-The inference methods' own parameters, such as warmup lengths, are controls
-set through ``with_options``. Each route declares the controls it reads:
-``bayes`` passes the parameters of the registered inference methods to the
+The inference methods' own parameters, such as warmup lengths, are controls set
+through ``with_options``. Each route declares the controls it reads: the routes
+that normalize pass the parameters of the registered inference methods to the
 selected method, ``approximate_conditioning`` passes an amortized posterior's
-sample count and seed to its ``_condition_on`` as keyword options, and the
-exact routes read none. A control that no route declares raises ``TypeError``
-at ``with_options``.
+sample count and seed to its ``_condition_on`` as keyword options, and the other
+routes read none. A control that no route declares raises ``TypeError`` at
+``with_options``.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import Any
+from typing import Any, ClassVar
 
-from ..core._dispatch import Feasibility
+from ..core._dispatch import (
+    BaseDispatchRegistry,
+    Feasibility,
+    MethodInfo,
+    UnaryDispatchMethod,
+    UnaryDispatchRegistry,
+)
 from ..core._record_spec import RecordSpec
 from ..core._spec_base import TermSpec
-from ..core._specs import InputSpec, OutputSpec
+from ..core._specs import InputSpec, OutputSpec, _components_record
+from ..core.provenance import Provenance
 from ..core.record import Record
 from ..distributions._capabilities import (
     SupportsApproximateConditioning,
+    SupportsConditionalUnnormalizedLogProb,
     SupportsExactConditioning,
+    SupportsUnnormalizedLogProb,
     _capability_guard,
+    _capability_subclass,
+    _guard_condition,
+    _is_normalized,
+    _kernel_is_normalized,
 )
 from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
 from ..distributions._distribution import Distribution, DistributionSpec
 from ..distributions._factored import SupportsFactors
-from ..inference._registry import InferenceMethod, inference_method_registry
-from ._operation import BoundCall, operation
+from ._operation import (
+    BoundCall,
+    CallCheck,
+    Operation,
+    RouteSource,
+    _Candidate,
+    _CheckedRoute,
+    _RegistryRoute,
+    operation_registry,
+)
 
 __all__ = ["InferenceMethod", "condition_on", "inference_method_registry"]
 
 _PATH_SEP = "/"
+
+#: The name of the route that returns the exact stage's result.
+_UNNORMALIZED = "unnormalized"
+
+
+# ---------------------------------------------------------------------------
+# The inference-method registry
+# ---------------------------------------------------------------------------
+
+
+class InferenceMethod(UnaryDispatchMethod):
+    """Base class for registered inference methods; declares ``exact = False``.
+
+    A method normalizes the target of ``condition_on``'s normalization stage: it
+    takes the target alone, a law whose data are already bound, and returns a
+    normalized law over the target's event. A subclass declares ``name``,
+    ``supported_types``, ``check``, and ``execute``, and overrides ``priority``
+    to take part in automatic selection. Its ``check`` reads the interface it
+    requires of the target, such as an unnormalized density, a backend program,
+    or the joint and the given values to simulate from.
+
+    Notes
+    -----
+    Every inference method is approximate: a finite MCMC, SG-MCMC, slice,
+    ABC, or variational output stands in for the conditional law, whatever
+    its invariant target or asymptotic guarantee. Those guarantees are the
+    method's own documentation, not its exactness. A method that returns a
+    representation of the conditional law itself overrides ``exact``.
+    """
+
+    @property
+    def exact(self) -> bool:
+        return False
+
+
+#: The registry of the normalization stage, keyed on the target's type; the
+#: methods of ``probpipe.inference`` register here.
+inference_method_registry: UnaryDispatchRegistry[UnaryDispatchMethod] = UnaryDispatchRegistry()
+
 
 _MCMC_CONTROLS = ("init", "num_chains", "num_results", "num_warmup", "random_seed", "step_size")
 _SGMCMC_CONTROLS = (
@@ -67,7 +148,7 @@ _SGMCMC_CONTROLS = (
 _BACKEND_NUTS_CONTROLS = ("num_chains", "num_results", "num_warmup", "random_seed")
 
 #: The parameters each inference method registered by :mod:`probpipe.inference`
-#: reads, by method name; the ``bayes`` route declares every one of them.
+#: reads, by method name; the routes that normalize declare every one of them.
 _INFERENCE_METHOD_CONTROLS: Mapping[str, tuple[str, ...]] = MappingProxyType(
     {
         "blackjax_nuts": (*_MCMC_CONTROLS, "num_integration_steps"),
@@ -106,9 +187,19 @@ _INFERENCE_METHOD_CONTROLS: Mapping[str, tuple[str, ...]] = MappingProxyType(
     }
 )
 
+#: Every parameter of the registered inference methods.
+_NORMALIZATION_CONTROLS = frozenset(
+    name for names in _INFERENCE_METHOD_CONTROLS.values() for name in names
+)
+
 #: The parameters an amortized posterior's ``_condition_on`` reads, as
 #: :class:`~probpipe.inference.BayesFlowModel` does.
 _AMORTIZED_CONDITIONING_CONTROLS = ("num_results", "random_seed")
+
+
+# ---------------------------------------------------------------------------
+# The given
+# ---------------------------------------------------------------------------
 
 
 def _given_keys(given: Any) -> tuple[str, ...] | None:
@@ -118,6 +209,562 @@ def _given_keys(given: Any) -> tuple[str, ...] | None:
     if isinstance(given, Mapping):
         return tuple(given)
     return None
+
+
+def _given_values(given: Any) -> dict[str, Any]:
+    """The values *given* holds, keyed by the paths :func:`_given_keys` names."""
+    if isinstance(given, Record):
+        return dict(given.children)
+    return dict(given)
+
+
+def _head(path: str) -> str:
+    """The first segment of *path*: a given slot or an event component."""
+    return path.split(_PATH_SEP, 1)[0]
+
+
+def _slots_of(d: Any) -> frozenset[str]:
+    """The given slots of *d*, none for a law."""
+    return frozenset(d.given_spec) if isinstance(d, ConditionalDistribution) else frozenset()
+
+
+# ---------------------------------------------------------------------------
+# The targets of the normalization stage
+# ---------------------------------------------------------------------------
+
+
+def _unconditioned_event(law: Any, produced: Iterable[str]) -> OutputSpec:
+    """The declaration of *law*'s components that *produced* leaves unconditioned.
+
+    It is an exposed record of those components, in the order *law* declares
+    them.
+    """
+    record = _components_record(law.event_spec)
+    conditioned = set(produced)
+    return OutputSpec(
+        RecordSpec(
+            {name: spec for name, spec in record.children.items() if name not in conditioned}
+        )
+    )
+
+
+def _joint_value(value: Any, given: Record) -> Record:
+    """The joint's value at *value*, a draw of the unconditioned fields, and at *given*."""
+    fields = value.children if isinstance(value, Record) else value
+    return Record("value", {**dict(fields), **dict(given.children)})
+
+
+def _conditional_density(self: _UnnormalizedConditional, value: Any) -> Any:
+    """The joint's unnormalized log-density at *value* and the given values."""
+    return self.joint._unnormalized_log_prob(_joint_value(value, self.given))
+
+
+class _UnnormalizedConditional(Distribution):
+    """The unnormalized conditional: the law of a joint's unconditioned fields at given values.
+
+    Its unnormalized log-density at a value of the unconditioned fields is the
+    joint's at that value and the given values. It carries the joint and the
+    given values, so a method that simulates rather than evaluates a density
+    reads them. It claims ``SupportsUnnormalizedLogProb`` when the joint claims
+    an unnormalized density, and no normalized capability, so it is
+    unnormalized, and ``condition_on`` passes it to the inference-method
+    registry as the target.
+
+    Parameters
+    ----------
+    joint : Distribution
+        The law conditioned.
+    given : Record
+        The values of the conditioned fields, keyed by their components.
+    event_spec : OutputSpec
+        The declaration of the unconditioned fields, an exposed record.
+    """
+
+    _capability_table: ClassVar = {
+        SupportsUnnormalizedLogProb: {"_unnormalized_log_prob": _conditional_density},
+    }
+
+    def __new__(cls, joint: Distribution, given: Record, event_spec: OutputSpec) -> Any:
+        claimed = (
+            (SupportsUnnormalizedLogProb,) if isinstance(joint, SupportsUnnormalizedLogProb) else ()
+        )
+        return object.__new__(_capability_subclass(_UnnormalizedConditional, claimed))
+
+    def __init__(self, joint: Distribution, given: Record, event_spec: OutputSpec) -> None:
+        super().__init__(joint.name, event_spec)
+        self._joint = joint
+        self._given = given
+        self.with_provenance(
+            Provenance.create(
+                "condition_on",
+                parents=[joint],
+                metadata={"stage": "exact", "route": "bayes", "given": tuple(given.fields)},
+            )
+        )
+
+    @property
+    def joint(self) -> Distribution:
+        """The law conditioned."""
+        return self._joint
+
+    @property
+    def given(self) -> Record:
+        """The values of the conditioned fields."""
+        return self._given
+
+
+def _conditional_kernel_density(
+    self: _UnnormalizedConditionalKernel, given: Record | Mapping[str, Any], value: Any
+) -> Any:
+    """The kernel's unnormalized log-density at *given*, *value*, and the conditioned values."""
+    return self.kernel._conditional_unnormalized_log_prob(given, _joint_value(value, self.given))
+
+
+class _UnnormalizedConditionalKernel(ConditionalDistribution):
+    """The unnormalized conditional within each slice of a kernel's unmet givens.
+
+    Binding the given slots yields the unnormalized conditional of the law the
+    kernel yields there, at the values of the conditioned fields, or a kernel
+    over the slots left. It claims ``SupportsConditionalUnnormalizedLogProb``
+    when the kernel does.
+
+    Parameters
+    ----------
+    kernel : ConditionalDistribution
+        The kernel conditioned.
+    given : Record
+        The values of the conditioned fields, keyed by their components.
+    event_spec : OutputSpec
+        The declaration of the unconditioned fields, an exposed record.
+    """
+
+    _capability_table: ClassVar = {
+        SupportsConditionalUnnormalizedLogProb: {
+            "_conditional_unnormalized_log_prob": _conditional_kernel_density
+        },
+    }
+
+    def __new__(cls, kernel: ConditionalDistribution, given: Record, event_spec: OutputSpec) -> Any:
+        claimed = (
+            (SupportsConditionalUnnormalizedLogProb,)
+            if isinstance(kernel, SupportsConditionalUnnormalizedLogProb)
+            else ()
+        )
+        return object.__new__(_capability_subclass(_UnnormalizedConditionalKernel, claimed))
+
+    def __init__(
+        self, kernel: ConditionalDistribution, given: Record, event_spec: OutputSpec
+    ) -> None:
+        super().__init__(kernel.name, kernel.given_spec, event_spec)
+        self._kernel = kernel
+        self._given = given
+
+    @property
+    def kernel(self) -> ConditionalDistribution:
+        """The kernel conditioned."""
+        return self._kernel
+
+    @property
+    def given(self) -> Record:
+        """The values of the conditioned fields."""
+        return self._given
+
+    def _condition_on(
+        self, given: Record | Mapping[str, Any], /, **kwargs: Any
+    ) -> Distribution | ConditionalDistribution:
+        """The unnormalized conditional at a value of every given slot, or a kernel over the rest."""
+        return _unnormalized_conditional(self._kernel._condition_on(given, **kwargs), self._given)
+
+
+def _unnormalized_conditional(law: Any, given: Record) -> Any:
+    """The unnormalized conditional of *law* at *given*, a kernel's within each slice."""
+    event_spec = _unconditioned_event(law, given.fields)
+    if isinstance(law, ConditionalDistribution):
+        return _UnnormalizedConditionalKernel(law, given, event_spec)
+    return _UnnormalizedConditional(law, given, event_spec)
+
+
+# ---------------------------------------------------------------------------
+# The normalization stage
+# ---------------------------------------------------------------------------
+
+
+_NO_EXACT_METHOD = (
+    "the exact stage's result is unnormalized, and no exact method normalizes it; "
+    'method="unnormalized" returns that result'
+)
+
+
+@dataclass(frozen=True)
+class _Normalization:
+    """How the normalization stage normalizes a target: the registry, the method, and its budgets.
+
+    Attributes
+    ----------
+    registry : BaseDispatchRegistry
+        The inference-method registry.
+    method : str or None
+        The method the caller named, or ``None`` for automatic selection.
+    exact_only : bool
+        Whether only exact methods may run.
+    options : Mapping[str, Any]
+        The method parameters the call sets.
+    """
+
+    registry: BaseDispatchRegistry[Any]
+    method: str | None
+    exact_only: bool
+    options: Mapping[str, Any]
+
+    def report(self, target: Any) -> Feasibility:
+        """The registry's report for normalizing the law *target*.
+
+        A report that no method applies names ``method="unnormalized"`` when
+        ``exact_only`` excluded the approximate methods.
+        """
+        # The methods registered today take the target with the observed data
+        # left out, which the target has already bound.
+        report = self.registry.check(
+            target, None, method=self.method, exact_only=self.exact_only, **self.options
+        )
+        if report.feasible is False and self.exact_only:
+            return replace(report, description=f"{_NO_EXACT_METHOD}: {report.description}")
+        return report
+
+    def normalize(self, law: Any) -> Any:
+        """*law* as it is when it is normalized, and the selected method's result otherwise."""
+        if _is_normalized(law):
+            return law
+        return self.registry.execute(
+            law, None, method=self.method, exact_only=self.exact_only, **self.options
+        )
+
+
+def _per_value_sample(
+    self: _PerValueNormalization,
+    given: Record | Mapping[str, Any],
+    key: Any,
+    sample_shape: tuple[int, ...] = (),
+) -> Any:
+    """Draws of the normalized law at a value of every given slot."""
+    return self._condition_on(given)._sample(key, sample_shape)
+
+
+class _PerValueNormalization(ConditionalDistribution):
+    """A kernel whose laws are another kernel's, each normalized once its last given is bound.
+
+    It is the normalization stage's result for a kernel whose laws are
+    unnormalized: binding every given slot yields the law the kernel yields
+    there, normalized by the inference-method registry, and binding some yields
+    another such kernel. Its laws sample, so it claims
+    ``SupportsConditionalSampling``, and it claims
+    ``SupportsApproximateConditioning`` unless only exact methods normalize it,
+    since evaluating it then runs an approximate method.
+
+    Parameters
+    ----------
+    kernel : ConditionalDistribution
+        The kernel whose laws are normalized.
+    normalization : _Normalization
+        The registry, method, and budgets that normalize each law.
+    """
+
+    _capability_table: ClassVar = {SupportsApproximateConditioning: {}}
+
+    def __new__(cls, kernel: ConditionalDistribution, normalization: _Normalization) -> Any:
+        claimed = () if normalization.exact_only else (SupportsApproximateConditioning,)
+        return object.__new__(_capability_subclass(_PerValueNormalization, claimed))
+
+    def __init__(self, kernel: ConditionalDistribution, normalization: _Normalization) -> None:
+        super().__init__(kernel.name, kernel.given_spec, kernel.event_spec)
+        self._kernel = kernel
+        self._normalization = normalization
+
+    @property
+    def kernel(self) -> ConditionalDistribution:
+        """The kernel whose laws are normalized."""
+        return self._kernel
+
+    def _condition_on(
+        self, given: Record | Mapping[str, Any], /, **kwargs: Any
+    ) -> Distribution | ConditionalDistribution:
+        """The normalized law at a value of every given slot, or a kernel over the rest."""
+        return _normalized(self._kernel._condition_on(given, **kwargs), self._normalization)
+
+    _conditional_sample = _per_value_sample
+
+
+def _normalized(result: Any, normalization: _Normalization) -> Any:
+    """*result* normalized: a law by the registry, and a kernel per value."""
+    if isinstance(result, ConditionalDistribution):
+        if _kernel_is_normalized(result):
+            return result
+        return _PerValueNormalization(result, normalization)
+    return normalization.normalize(result)
+
+
+# ---------------------------------------------------------------------------
+# The exact stage
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _ExactStage:
+    """One way the exact stage computes the conditional.
+
+    Attributes
+    ----------
+    check : callable
+        ``check(call)``, whether the stage applies, read from the declarations.
+    compute : callable
+        ``compute(call)``, the stage's result.
+    exact : callable
+        ``exact(call)``, whether the result is the conditional itself rather
+        than a stand-in for it.
+    normalized : callable
+        ``normalized(call)``, whether the result is normalized, read from the
+        declarations.
+    """
+
+    check: Callable[[BoundCall], Feasibility]
+    compute: Callable[[BoundCall], Any]
+    exact: Callable[[BoundCall], bool]
+    normalized: Callable[[BoundCall], bool]
+
+
+def _can_curry(call: BoundCall) -> Feasibility:
+    """Every key of the given names a given slot of a conditional distribution.
+
+    Raises
+    ------
+    NotImplementedError
+        If a key names part of a structured slot.
+    """
+    d, keys = call.operands["d"], _given_keys(call.operands["given"])
+    if not isinstance(d, ConditionalDistribution):
+        return Feasibility(False, "route 'curry' declined: the conditioned object is not a kernel")
+    if not keys:
+        return Feasibility(False, "route 'curry' declined: the given names no field")
+    if not {_head(key) for key in keys} <= _slots_of(d):
+        return Feasibility(False, "route 'curry' declined: the given names a produced field")
+    if any(_PATH_SEP in key for key in keys):
+        raise NotImplementedError("condition_on.curry: binding part of a structured slot")
+    return Feasibility(True)
+
+
+def _curry(call: BoundCall) -> Any:
+    """The kernel's ``_condition_on`` at the given slots."""
+    return call.operands["d"]._condition_on(call.operands["given"])
+
+
+def _evaluation_is_exact(call: BoundCall) -> bool:
+    """Evaluating the kernel is exact unless it claims ``SupportsApproximateConditioning``."""
+    return not isinstance(call.operands["d"], SupportsApproximateConditioning)
+
+
+def _curried_is_normalized(call: BoundCall) -> bool:
+    """The kernel's laws are normalized, as its conditional capabilities declare."""
+    return _kernel_is_normalized(call.operands["d"])
+
+
+def _can_form_the_unnormalized_conditional(call: BoundCall) -> Feasibility:
+    """The given names produced fields, each a component, and every other key is a given slot.
+
+    At least one component must stay unconditioned, as the law of the
+    unconditioned fields.
+    """
+    d, keys = call.operands["d"], _given_keys(call.operands["given"])
+    if not keys:
+        return Feasibility(False, "route 'bayes' declined: the given is not field-keyed")
+    slots = _slots_of(d)
+    produced = [key for key in keys if _head(key) not in slots]
+    if not produced:
+        return Feasibility(False, "route 'bayes' declined: the given names no produced field")
+    components = set(d.event_spec.components)
+    for key in produced:
+        if _head(key) not in components:
+            return Feasibility(
+                False, f"route 'bayes' declined: {key!r} is neither a given slot nor an event path"
+            )
+        if key not in components:
+            return Feasibility(
+                False,
+                f"route 'bayes' declined: conditioning the interior path {key!r} is not implemented",
+            )
+    if any(_PATH_SEP in key for key in keys if _head(key) in slots):
+        return Feasibility(
+            False, "route 'bayes' declined: binding part of a structured slot is not implemented"
+        )
+    if components <= set(produced):
+        return Feasibility(
+            False, "route 'bayes' declined: the given names every produced field, leaving no law"
+        )
+    return Feasibility(True)
+
+
+def _bayes(call: BoundCall) -> Any:
+    """The unnormalized conditional of the produced fields, the given slots curried first."""
+    d, values = call.operands["d"], _given_values(call.operands["given"])
+    slots = _slots_of(d)
+    bound = {key: value for key, value in values.items() if _head(key) in slots}
+    law = d._condition_on(bound) if bound else d
+    produced = {key: value for key, value in values.items() if key not in bound}
+    return _unnormalized_conditional(law, Record("given", produced))
+
+
+def _always(call: BoundCall) -> bool:
+    return True
+
+
+def _never(call: BoundCall) -> bool:
+    return False
+
+
+_CURRY = _ExactStage(
+    check=_can_curry,
+    compute=_curry,
+    exact=_evaluation_is_exact,
+    normalized=_curried_is_normalized,
+)
+_BAYES = _ExactStage(
+    check=_can_form_the_unnormalized_conditional,
+    compute=_bayes,
+    exact=_always,
+    normalized=_never,
+)
+
+
+# ---------------------------------------------------------------------------
+# The routes that normalize
+# ---------------------------------------------------------------------------
+
+
+class _NormalizingRoute(_RegistryRoute):
+    """A route that runs one exact stage and normalizes its result through the registry.
+
+    A result that is normalized is returned as it is, a law that is not is the
+    target of the registry's selected method, and a kernel is normalized per
+    value. The route's exactness is that of its exact stage combined with the
+    selected method's, so it is ranked twice, as every registry route is: its
+    exact candidate applies when the result needs no approximate step, and its
+    approximate candidate otherwise. The report of a normalized result names no
+    method, and that of a normalized target names the method that normalizes it.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        *,
+        source: RouteSource,
+        stage: _ExactStage,
+        registry: BaseDispatchRegistry[Any],
+    ) -> None:
+        super().__init__(name, registry=registry, controls=_NORMALIZATION_CONTROLS)
+        self.source = source
+        self._stage = stage
+
+    @property
+    def condition(self) -> str:
+        """The exact stage's condition, and the normalization's."""
+        stage = _guard_condition(self._stage.check)
+        return (
+            f"{stage}; a result that is not normalized is the target of a method the "
+            f"registry selects among {', '.join(self.registry.list_methods()) or 'none'}"
+        )
+
+    def _normalization(self, call: BoundCall, method: str | None, exact_only: bool) -> Any:
+        return _Normalization(
+            self.registry, method, exact_only, MappingProxyType(self.budgets(call))
+        )
+
+    def probe(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Feasibility:
+        """The exact stage's report, then the normalization's, under the controls."""
+        report = self._stage.check(call)
+        if report.feasible is not True:
+            return report
+        exact = self._stage.exact(call)
+        if exact_only and not exact:
+            return Feasibility(
+                False,
+                f"route {self.name!r} declined: the kernel claims "
+                f"SupportsApproximateConditioning, so evaluating it is approximate",
+            )
+        if self._stage.normalized(call):
+            if method is not None:
+                return Feasibility(
+                    False,
+                    f"route {self.name!r} declined: the exact stage's result is normalized, "
+                    f"so no inference method runs on it",
+                )
+            return CallCheck(True, exact=exact)
+        target = self._stage.compute(call)
+        normalization = self._normalization(call, method, exact_only)
+        if isinstance(target, ConditionalDistribution):
+            return self._per_value_report(call, target, normalization, exact)
+        info = normalization.report(target)
+        if info.feasible is not True or exact or not isinstance(info, MethodInfo):
+            return info
+        return replace(info, exact=False)
+
+    def _per_value_report(
+        self,
+        call: BoundCall,
+        target: ConditionalDistribution,
+        normalization: _Normalization,
+        exact: bool,
+    ) -> Feasibility:
+        """The report of normalizing a kernel per value, whose method is selected once bound.
+
+        Its laws are exact only when the caller requires exact methods, which
+        then normalize each law.
+        """
+        if _kernel_is_normalized(target):
+            return CallCheck(True, exact=exact)
+        if normalization.exact_only and not call.controls["exact_only"]:
+            return Feasibility(
+                False,
+                f"route {self.name!r} declined: the kernel's laws are normalized once its "
+                f"last given is bound, by a method that may be approximate",
+            )
+        exact = exact and normalization.exact_only
+        if normalization.method is not None:
+            method = self.registry.get_method(normalization.method)
+            return MethodInfo(True, method_name=normalization.method, exact=exact and method.exact)
+        return CallCheck(True, exact=exact)
+
+    def run(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Any:
+        """The exact stage's result, normalized."""
+        result = self._stage.compute(call)
+        if self._stage.normalized(call):
+            return result
+        return _normalized(result, self._normalization(call, method, exact_only))
+
+
+# ---------------------------------------------------------------------------
+# The operation
+# ---------------------------------------------------------------------------
+
+
+class _Conditioning(Operation):
+    """``condition_on``'s operation: a named method selects among the routes that normalize.
+
+    The routes that normalize share the inference-method registry, so a
+    ``method=`` control naming one of its methods selects each of those routes
+    with that method, in selection order, and the first whose exact stage
+    applies runs. Every other control selects as for any operation.
+    """
+
+    def _candidates(self, controls: Mapping[str, Any]) -> list[_Candidate]:
+        method = controls["method"]
+        routes = list(self._route_table.routes)
+        if method is None or any(route.name == method for route in routes):
+            return super()._candidates(controls)
+        holders = [
+            _Candidate(route, None, index, method)
+            for index, route in enumerate(routes)
+            if isinstance(route, _RegistryRoute) and method in route.registry.list_methods()
+        ]
+        return holders or super()._candidates(controls)
 
 
 def _condition_on_result(d: TermSpec, given: TermSpec) -> OutputSpec:
@@ -138,12 +785,27 @@ def _condition_on_result(d: TermSpec, given: TermSpec) -> OutputSpec:
     return OutputSpec(condition_on=None)
 
 
-@operation(
-    result=_condition_on_result,
-    roles={"d": (DistributionSpec, ConditionalDistributionSpec), "given": (TermSpec,)},
-)
+def _conditioning_operation(declaration: Callable[..., Any]) -> _Conditioning:
+    """Declare ``condition_on`` as a :class:`_Conditioning` and register it."""
+    op = _Conditioning(
+        declaration,
+        result=_condition_on_result,
+        roles={"d": (DistributionSpec, ConditionalDistributionSpec), "given": (TermSpec,)},
+    )
+    operation_registry.register(op)
+    return op
+
+
+@_conditioning_operation
 def condition_on(d: Distribution, given: Any):
-    """Fix fields of *d* at the values *given* holds, and return the resulting distribution.
+    """Fix fields of *d* at the values *given* holds, and return the resulting law, normalized.
+
+    The exact stage curries given slots, calls a conditioning capability, or
+    forms the unnormalized conditional of the produced fields, and the
+    normalization stage passes an unnormalized result to the inference-method
+    registry. ``with_options(method="unnormalized")`` returns the exact stage's
+    result as it is, and ``with_options(exact_only=True)`` raises rather than
+    normalize by an approximate method.
 
     Parameters
     ----------
@@ -156,43 +818,21 @@ def condition_on(d: Distribution, given: Any):
     Returns
     -------
     Distribution or ConditionalDistribution
-        The conditional, as the selected route represents it: an ordinary law
-        once every given slot is bound, and a kernel over the slots left
-        otherwise.
+        The conditional, normalized: an ordinary law once every given slot is
+        bound, and otherwise a kernel over the slots left whose laws are
+        normalized.
 
     Raises
     ------
     ApplicabilityError
         If *d* is neither distribution kind.
     ResolutionError
-        If no route applies under the controls.
+        If no route applies under the controls, including an exact stage whose
+        result is unnormalized under ``exact_only``.
     """
 
 
-def _can_curry(call: BoundCall, result: OutputSpec | None) -> Any:
-    """Every key of the given names a given slot of a conditional distribution."""
-    d, keys = call.operands["d"], _given_keys(call.operands["given"])
-    if not isinstance(d, ConditionalDistribution):
-        return False
-    if not keys:
-        return False
-    slots = set(d.given_spec)
-    heads = {key.split(_PATH_SEP, 1)[0] for key in keys}
-    if not heads <= slots:
-        if heads & slots:
-            raise NotImplementedError("condition_on.curry: given slots bound with produced fields")
-        return False
-    if any(_PATH_SEP in key for key in keys):
-        raise NotImplementedError("condition_on.curry: binding part of a structured slot")
-    return True
-
-
-def _curry(call: BoundCall, result: OutputSpec | None) -> Any:
-    """The kernel's ``_condition_on`` at the given slots."""
-    return call.operands["d"]._condition_on(call.operands["given"])
-
-
-def _can_slice(call: BoundCall, result: OutputSpec | None) -> Any:
+def _slice_check(call: BoundCall, result: OutputSpec | None) -> Any:
     """The conditioned fields leave a conditional assembled from normalized factors.
 
     A field's slice is exact when the conditional is a product of available
@@ -225,9 +865,40 @@ def _conditioning_guard(call: BoundCall, result: OutputSpec | None) -> Any:
     return _capability_guard(d, "_condition_on", _given_paths(d, call.operands["given"]))
 
 
-condition_on.structural_route("curry", check=_can_curry, execute=_curry, exact=True)
-condition_on.structural_route("slice", check=_can_slice, execute=_slice, exact=True)
-condition_on.capability_route(
+def _exact_stage_by_name(call: BoundCall, result: OutputSpec | None) -> Any:
+    """Selected only by name, as ``method="unnormalized"``; the exact stage alone then runs.
+
+    The exact stage is the first of currying, exact conditioning, and the
+    unnormalized conditional that applies.
+    """
+    if call.controls["method"] != _UNNORMALIZED:
+        return Feasibility(
+            False, f'route {_UNNORMALIZED!r} declined: it is selected only by method="unnormalized"'
+        )
+    reports = []
+    for stage in (_CURRY, _EXACT_CONDITIONING, _BAYES):
+        report = stage.check(call)
+        if report.feasible is not False:
+            return report if report.feasible is None else CallCheck(True, exact=stage.exact(call))
+        reports.append(report.description)
+    return Feasibility(False, f"route {_UNNORMALIZED!r} declined: {'; '.join(reports)}")
+
+
+def _exact_stage_result(call: BoundCall, result: OutputSpec | None) -> Any:
+    """The result of the exact stage that applies, normalized or not."""
+    for stage in (_CURRY, _EXACT_CONDITIONING, _BAYES):
+        if stage.check(call).feasible is True:
+            return stage.compute(call)
+    raise AssertionError("the exact stage ran with no stage that applies")
+
+
+condition_on.register_route(
+    _NormalizingRoute(
+        "curry", source=RouteSource.STRUCTURAL, stage=_CURRY, registry=inference_method_registry
+    )
+)
+condition_on.structural_route("slice", check=_slice_check, execute=_slice, exact=True)
+_exact_conditioning_route = condition_on.capability_route(
     "exact_conditioning",
     operand="d",
     protocol=SupportsExactConditioning,
@@ -244,8 +915,37 @@ condition_on.capability_route(
     check=_conditioning_guard,
     controls=_AMORTIZED_CONDITIONING_CONTROLS,
 )
-condition_on.registry_route(
-    "bayes",
-    registry=inference_method_registry,
-    controls={name for names in _INFERENCE_METHOD_CONTROLS.values() for name in names},
+condition_on.register_route(
+    _NormalizingRoute(
+        "bayes", source=RouteSource.REGISTRY, stage=_BAYES, registry=inference_method_registry
+    )
+)
+condition_on.register_route(
+    _CheckedRoute(
+        _UNNORMALIZED,
+        source=RouteSource.STRUCTURAL,
+        check=_exact_stage_by_name,
+        execute=_exact_stage_result,
+        exact=None,
+    )
+)
+
+
+def _can_condition_exactly(call: BoundCall) -> Feasibility:
+    """The law claims ``SupportsExactConditioning``, and its guard admits the given's paths."""
+    return _exact_conditioning_route.check(call, None)
+
+
+def _condition_exactly(call: BoundCall) -> Any:
+    """The law's ``_condition_on`` at the given, which returns the conditional law."""
+    return call.operands["d"]._condition_on(call.operands["given"])
+
+
+#: Exact conditioning as a way the exact stage computes the conditional; its
+#: result is the conditional law, which is normalized.
+_EXACT_CONDITIONING = _ExactStage(
+    check=_can_condition_exactly,
+    compute=_condition_exactly,
+    exact=_always,
+    normalized=_always,
 )

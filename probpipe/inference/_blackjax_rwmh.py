@@ -42,6 +42,7 @@ from ..core._dispatch import Feasibility
 from ..custom_types import Array, ArrayLike
 from ..distributions._capabilities import SupportsUnnormalizedLogProb
 from ..distributions._distribution import Distribution
+from ..operations._condition import InferenceMethod
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._inference_utils import (
     build_mcmc_datatree,
@@ -53,7 +54,6 @@ from ._inference_utils import (
     parallel_chain_map,
     run_chain_scan,
 )
-from ._registry import InferenceMethod
 
 logger = logging.getLogger(__name__)
 

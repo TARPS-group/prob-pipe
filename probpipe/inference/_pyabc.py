@@ -11,10 +11,11 @@ import numpy as np
 import pyabc
 from pyabc.sampler import SingleCoreSampler
 
+from ..core._dispatch import Feasibility
 from ..core.ops import log_prob, sample
 from ..custom_types import PRNGKey
+from ..operations._condition import InferenceMethod
 from ._approximate_distribution import ApproximateDistribution, make_posterior
-from ._registry import Feasibility, InferenceMethod
 
 if TYPE_CHECKING:
     from xarray import DataTree

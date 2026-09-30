@@ -35,10 +35,10 @@ import jax.numpy as jnp
 from ..core._dispatch import Feasibility
 from ..core._random_measures import RandomMeasure
 from ..custom_types import PRNGKey
+from ..operations._condition import InferenceMethod
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._inference_utils import as_prng_key, get_init_state, is_simple_model
 from ._minibatch import MinibatchedDistribution
-from ._registry import InferenceMethod
 
 __all__ = ["BlackJAXSGHMCMethod", "BlackJAXSGLDMethod"]
 
