@@ -350,7 +350,6 @@ _DRAW_FAILURES = {
     SimpleGenerativeModel: pytest.mark.xfail(
         raises=ValueError, strict=True, reason="sample stacks a tuple draw as rows"
     ),
-    FieldView: pytest.mark.pending(reason="a view samples by co-sampling its parent"),
     FactoredDistribution: pytest.mark.pending(reason="a joint samples through its factors"),
 }
 
