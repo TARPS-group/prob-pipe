@@ -1,4 +1,12 @@
-"""Wrap, label, and attach provenance to Function results at their own kind."""
+"""Wrap, label, and attach provenance to Function results at their own kind.
+
+This is the return step of the call stack: it validates the produced terms
+against the completed declaration, wraps a raw host into the kind its spec
+names, labels the result, and attaches its provenance, or detaches the result
+when the call asks for its raw form. A result that violates its declaration is
+a defect of the function, reported as :class:`ResultKindError` or
+:class:`ResultSchemaError`.
+"""
 
 from __future__ import annotations
 
@@ -17,6 +25,37 @@ BroadcastMode = Literal["wrap", "stack", "nested"]
 BROADCAST_WRAP: BroadcastMode = "wrap"
 BROADCAST_STACK: BroadcastMode = "stack"
 BROADCAST_NESTED: BroadcastMode = "nested"
+
+
+class ResultKindError(TypeError):
+    """A function returned a term of another kind than its declaration names.
+
+    This is a defect of the function's return contract, not a failure to admit
+    the caller's arguments.
+    """
+
+
+class ResultSchemaError(ValueError):
+    """A function's result is incompatible with its completed declaration.
+
+    Raised for incompatible structure, dimensions, dtype, or support, and for a
+    violated declared output interface. This is a defect of the function's
+    return contract, not a failure to admit the caller's arguments.
+    """
+
+
+def _detach(result: Any) -> Any:
+    """The result detached from the workflow, as its ``raw()`` returns it.
+
+    Raises
+    ------
+    NotImplementedError
+        If the result's kind does not provide ``raw()`` yet.
+    """
+    raw = getattr(result, "raw", None)
+    if not callable(raw):
+        raise NotImplementedError("TrackedTerm.raw")
+    return raw()
 
 
 def _wrap_declared_function_output(
@@ -52,6 +91,11 @@ def _aggregate_output_spec(output_spec: OutputSpec, outputs: Any) -> OutputSpec:
     Mapped outputs carry the row's spec as static metadata, independently of
     the leading axis JAX added. Empty outputs leave the declaration unchanged.
     Row-wise results share dimension bindings so incompatible rows are refused.
+
+    Raises
+    ------
+    ResultSchemaError
+        If a row does not unify with the declaration or with the other rows.
     """
     from ..core._batch import BatchSpec
     from ..core._numeric_array_batch import _MappedBatchStore
@@ -72,7 +116,10 @@ def _aggregate_output_spec(output_spec: OutputSpec, outputs: Any) -> OutputSpec:
             actual = RecordSpec.infer_from({"result": row}).children["result"]
         if spec is None:
             spec = actual
-        _unify_specs(spec, actual, bindings, "Function aggregate output")
+        try:
+            _unify_specs(spec, actual, bindings, "Function aggregate output")
+        except ValueError as error:
+            raise ResultSchemaError(str(error)) from error
     return output_spec._with_spec(None if spec is None else spec._substitute_dims(bindings))
 
 
