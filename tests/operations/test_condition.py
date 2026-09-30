@@ -15,7 +15,9 @@ from probpipe.distributions._conditional import (
     ConditionalDistributionSpec,
 )
 from probpipe.distributions._distribution import Distribution, DistributionSpec
+from probpipe.distributions._factored import FactoredDistribution
 from probpipe.operations._condition import (
+    _INFERENCE_METHOD_CONTROLS,
     InferenceMethod,
     condition_on,
     inference_method_registry,
@@ -92,6 +94,41 @@ def suite_methods(monkeypatch):
     return exact, approximate
 
 
+@pytest.fixture
+def factored_method(monkeypatch):
+    """The bayes route, delegating for one test to an approximate method for factored joints."""
+    method = _SuiteMethod("operations_suite_factored", False, (FactoredDistribution,), 4.0)
+    registry: UnaryDispatchRegistry = UnaryDispatchRegistry()
+    registry.register(method)
+    (route,) = [route for route in condition_on.routes if route.name == "bayes"]
+    monkeypatch.setattr(route, "registry", registry)
+    return method
+
+
+class _RecordingPosterior(ExactPosterior):
+    """A law with exact conditioning that records the options its ``_condition_on`` receives."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name)
+        self.options: list[dict[str, Any]] = []
+
+    def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
+        self.options.append(kwargs)
+        return super()._condition_on(given)
+
+
+class _RecordingAmortized(Amortized):
+    """An amortized law that records the options its ``_condition_on`` receives."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name)
+        self.options: list[dict[str, Any]] = []
+
+    def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
+        self.options.append(kwargs)
+        return super()._condition_on(given)
+
+
 class _StructuredKernel(ConditionalDistribution):
     """A kernel conditioning on one record-valued slot ``theta``."""
 
@@ -134,6 +171,21 @@ class TestCurry:
         assert isinstance(condition_on(Kernel(), {"mu": 1.0, "y": 0.0}), Distribution)
 
 
+class TestSlice:
+    def test_the_slice_route_declines_a_factored_law_with_a_reason(self):
+        joint = Kernel("y", ("mu",)) * Gaussian("mu")
+        declined = dict(condition_on.check(joint, {"y": 0.3}).routes)["slice"]
+        assert declined.feasible is False
+        assert "factors" in declined.description
+
+    def test_fixing_a_produced_field_of_a_factored_joint_reaches_bayes_rule(self, factored_method):
+        joint = Kernel("y", ("mu",)) * Gaussian("mu")
+        report = condition_on.check(joint, {"y": 0.3})
+        assert (report.route, report.method) == ("bayes", "operations_suite_factored")
+        assert condition_on(joint, {"y": 0.3}).loc == 4.0
+        assert factored_method.options == [{}]
+
+
 class TestConditioningCapabilities:
     def test_exact_conditioning_returns_the_conditional_law(self):
         model = ExactPosterior("model")
@@ -151,6 +203,38 @@ class TestConditioningCapabilities:
     def test_exact_only_excludes_the_approximate_capability(self):
         with pytest.raises(ResolutionError, match="exact_only"):
             condition_on.with_options(exact_only=True)(Amortized("model"), {"y": 0.3})
+
+    def test_the_approximate_capability_receives_the_budgets_it_declares(self):
+        model = _RecordingAmortized("model")
+        view = condition_on.with_options(num_results=500, random_seed=3)
+        assert view(model, {"y": 0.3}).loc == 2.0
+        assert model.options == [{"num_results": 500, "random_seed": 3}]
+
+    def test_a_budget_the_approximate_capability_does_not_read_stays_out_of_its_options(self):
+        model = _RecordingAmortized("model")
+        condition_on.with_options(num_warmup=10)(model, {"y": 0.3})
+        assert model.options == [{}]
+
+    def test_exact_conditioning_reads_no_budget(self):
+        model = _RecordingPosterior("model")
+        condition_on.with_options(num_results=500)(model, {"y": 0.3})
+        assert model.options == [{}]
+
+
+class TestBudgets:
+    def test_a_misspelled_budget_raises_type_error(self):
+        with pytest.raises(TypeError, match="num_resluts"):
+            condition_on.with_options(num_resluts=500)
+
+    def test_every_registered_inference_method_declares_the_controls_it_reads(self):
+        undeclared = set(inference_method_registry.list_methods()) - set(_INFERENCE_METHOD_CONTROLS)
+        assert not undeclared, sorted(undeclared)
+
+    def test_the_bayes_route_declares_every_inference_method_control(self):
+        (route,) = [route for route in condition_on.routes if route.name == "bayes"]
+        declared = {name for names in _INFERENCE_METHOD_CONTROLS.values() for name in names}
+        assert route.controls == declared
+        condition_on.with_options(num_warmup=3, step_size=0.1, init={"theta": 0.0})
 
 
 class TestBayes:
@@ -211,7 +295,10 @@ class TestTheOperation:
         ):
             condition_on(jnp.zeros(2), {"x": 1.0})
 
-    @pytest.mark.pending(reason="an exact slice assembles the conditional from normalized factors")
+    @pytest.mark.pending(
+        reason="an exact slice assembles the conditional from normalized factors",
+        raises=ResolutionError,
+    )
     def test_fixing_an_upstream_field_leaves_the_existing_kernel(self):
         joint = Kernel("y", ("beta",)) * Gaussian("beta")
         conditional = condition_on(joint, {"beta": 0.5})

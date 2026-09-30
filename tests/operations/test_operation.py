@@ -10,7 +10,14 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import NumericArraySpec, Record, RecordSpec, TrackedTerm, workflow_run
+from probpipe import (
+    NumericArrayBatch,
+    NumericArraySpec,
+    Record,
+    RecordSpec,
+    TrackedTerm,
+    workflow_run,
+)
 from probpipe.core._dispatch import (
     Feasibility,
     ResolutionError,
@@ -19,6 +26,7 @@ from probpipe.core._dispatch import (
 )
 from probpipe.core._spec_base import TermSpec
 from probpipe.core._specs import OutputSpec
+from probpipe.distributions._batches import DistributionBatch
 from probpipe.distributions._capabilities import SupportsMean, SupportsSampling
 from probpipe.distributions._distribution import Distribution, DistributionSpec
 from probpipe.operations import (
@@ -31,10 +39,12 @@ from probpipe.operations import (
     RouteSummary,
     operation,
 )
+from probpipe.operations._moments import mean
 from probpipe.operations._operation import ApplicabilityError, _workflow_draws
+from probpipe.operations._sample import sample
 from probpipe.values import Function
 
-from ._laws import Bare, Gaussian, GuardedMean, Sampler
+from ._laws import REAL, Bare, Gaussian, GuardedMean, Pair, Sampler
 
 # ---------------------------------------------------------------------------
 # A toy operation with a capability route and a Monte Carlo fallback
@@ -179,6 +189,30 @@ class TestDeclaration:
             None,
         )
         assert float(jnp.asarray(doubled(Gaussian("g", 1.5)))) == 3.0
+
+    def test_the_identity_route_is_feasible_where_the_identity_check_is(self):
+        def center_applies(d: Any) -> Any:
+            """The center has a route for the law."""
+            return center.check(d)
+
+        @operation(result=_event, identity_check=center_applies, registry=OperationRegistry())
+        def doubled(d: Distribution):
+            """Twice the center."""
+            return center.with_options(raw=True)(d) * 2
+
+        declined = doubled.check(Bare("b"))
+        assert declined.feasible is False
+        assert "does not claim SupportsMean" in declined.description
+        with pytest.raises(ResolutionError, match="does not claim SupportsMean"):
+            doubled(Bare("b"))
+        report = doubled.check(Gaussian("g"))
+        assert (report.route, report.exact) == ("identity", True)
+        (identity,) = doubled.summary().routes
+        assert identity.condition == "The center has a route for the law."
+
+    def test_a_primitive_takes_no_identity_check(self):
+        with pytest.raises(TypeError, match="derived"):
+            _toy(identity_check=lambda d: True)
 
     def test_a_result_rule_reading_an_undeclared_name_raises(self):
         def rule(d: Any, missing: Any) -> None:
@@ -450,7 +484,7 @@ class TestRegistryRoutes:
     def _operation(self, registry: UnaryDispatchRegistry, stand_in: Any = True) -> Any:
         toy = _toy()
         toy.structural_route("stand_in", exact=False, **_route(stand_in, 1.0))
-        toy.registry_route("methods", registry=registry)
+        toy.registry_route("methods", registry=registry, controls=("num_warmup",))
         return toy
 
     def test_an_exact_registered_method_outranks_an_approximate_route(self):
@@ -489,6 +523,12 @@ class TestRegistryRoutes:
         toy = self._operation(registry).with_options(num_warmup=7)
         toy(Gaussian("g"))
         assert registry.get_method("precise").options == [{"num_warmup": 7}]
+
+    def test_a_registry_route_admits_only_the_budgets_it_declares(self):
+        toy = _toy()
+        toy.registry_route("methods", registry=_registry(precise=(True, True, 2.0)))
+        with pytest.raises(TypeError, match="Unknown controls"):
+            toy.with_options(num_warmup=7)
 
     def test_a_registry_route_is_listed_with_its_exactness_delegated(self):
         registry = _registry(precise=(True, True, 2.0), rough=(False, True, 3.0))
@@ -558,6 +598,32 @@ class TestControls:
         with pytest.raises(TypeError, match="Unknown controls"):
             toy.with_options(patience=3)
 
+    def test_a_capability_route_passes_its_budgets_to_the_capability_as_options(self):
+        class Tolerant(Gaussian):
+            """A normal law whose closed-form mean records the options it receives."""
+
+            def __init__(self, name: str) -> None:
+                super().__init__(name, 1.5)
+                self.options: list[dict[str, Any]] = []
+
+            def _mean(self, **options: Any) -> Any:
+                self.options.append(options)
+                return super()._mean()
+
+        toy = _toy(result=_event)
+        toy.capability_route(
+            "closed_form",
+            operand="d",
+            protocol=SupportsMean,
+            method="_mean",
+            exact=True,
+            controls=("tolerance",),
+        )
+        law = Tolerant("g")
+        assert float(jnp.asarray(toy.with_options(tolerance=0.5)(law))) == 1.5
+        toy(law)
+        assert law.options == [{"tolerance": 0.5}, {}]
+
     def test_a_route_registered_after_a_view_is_seen_by_the_view(self):
         toy = _toy()
         view = toy.with_options(exact_only=True)
@@ -573,6 +639,134 @@ class TestControls:
         law = Sampler("s")
         center.with_options(n_broadcast_samples=17)(law)
         assert law.shapes == [(17,)]
+
+
+# ---------------------------------------------------------------------------
+# Checks of lifted calls
+# ---------------------------------------------------------------------------
+
+
+def _laws(*laws: Distribution) -> DistributionBatch:
+    return DistributionBatch("laws", list(laws), "laws")
+
+
+class TestLiftedChecks:
+    def test_a_swept_batch_is_admitted_and_planned_at_its_element_kind(self):
+        batch = _laws(Gaussian("g", 1.0), Gaussian("g", 2.0))
+        report = center.check(batch)
+        assert (report.feasible, report.route, report.exact) == (True, "closed_form", True)
+        assert report.lifted == (("d", "sweep"),)
+        assert report.result == Gaussian("g").event_spec
+        np.testing.assert_array_equal(np.asarray(center(batch).values), [1.0, 2.0])
+
+    def test_an_element_no_route_applies_to_makes_the_check_infeasible(self):
+        batch = _laws(Gaussian("g"), Bare("g"))
+        report = center.check(batch)
+        assert report.feasible is False
+        assert "sweep cell (1,)" in report.description
+        assert "Bare does not claim SupportsMean" in report.description
+        with pytest.raises(ResolutionError, match="Bare does not claim SupportsMean"):
+            center(batch)
+
+    def test_elements_that_select_different_routes_leave_the_route_undecided(self):
+        report = center.check(_laws(Gaussian("g", 1.0), Sampler("g", 2.0)))
+        assert (report.feasible, report.route, report.exact) == (True, None, False)
+
+    def test_an_element_kind_the_role_refuses_raises_as_the_call_does(self):
+        values = NumericArrayBatch("values", jnp.zeros(3), "values", element_spec=REAL)
+        with pytest.raises(ApplicabilityError, match="received a NumericArray"):
+            center.check(values)
+        with pytest.raises(ApplicabilityError, match="received a NumericArray"):
+            center(values)
+
+    def test_an_empty_sweep_is_planned_at_its_element_kind_and_selects_no_route(self):
+        empty = DistributionBatch(
+            "laws", np.empty(0, object), "laws", element_spec=Gaussian("g").spec
+        )
+        report = center.check(empty)
+        assert (report.feasible, report.route, report.lifted) == (True, None, (("d", "sweep"),))
+
+    def test_a_plain_call_lifts_nothing(self):
+        assert center.check(Gaussian("g")).lifted == ()
+
+    def test_a_raw_call_lifts_as_the_tracked_call_does(self):
+        means = center.with_options(raw=True)(_laws(Gaussian("g", 1.0), Gaussian("g", 2.0)))
+        assert not isinstance(means, TrackedTerm)
+        np.testing.assert_array_equal(np.asarray(means), [1.0, 2.0])
+
+
+# ---------------------------------------------------------------------------
+# Raw results
+# ---------------------------------------------------------------------------
+
+
+def _untracked(tree: Any) -> bool:
+    """Whether *tree* is a nested dict whose leaves are raw values rather than terms."""
+    if type(tree) is dict:
+        return all(_untracked(child) for child in tree.values())
+    return not isinstance(tree, TrackedTerm)
+
+
+class TestRawResults:
+    def test_a_raw_record_is_the_nested_mapping_of_its_raw_leaves(self):
+        result = center.with_options(raw=True)(Pair("p"))
+        assert type(result) is dict and set(result) == {"a", "b"}
+        assert _untracked(result)
+        assert float(result["a"]) == 1.0
+        np.testing.assert_array_equal(np.asarray(result["b"]), [-1.0, -1.0])
+
+    def test_a_raw_record_keeps_its_nesting(self):
+        def rule(d: Any) -> OutputSpec:
+            """A record with a nested group."""
+            return OutputSpec(
+                RecordSpec(a=NumericArraySpec(()), g=RecordSpec(b=NumericArraySpec(())))
+            )
+
+        toy = _toy(result=rule)
+        toy.structural_route(
+            "nested",
+            check=lambda call, result: True,
+            execute=lambda call, result: {"a": jnp.float32(1.0), "g": {"b": jnp.float32(2.0)}},
+            exact=True,
+        )
+        result = toy.with_options(raw=True)(Gaussian("g"))
+        assert type(result) is dict and type(result["g"]) is dict
+        assert _untracked(result)
+        assert float(result["g"]["b"]) == 2.0
+
+    def test_a_raw_batch_of_records_is_the_nested_mapping_of_its_raw_columns(self):
+        draws = sample.with_options(raw=True)(Pair("p"), (3,))
+        assert type(draws) is dict and set(draws) == {"a", "b"}
+        assert _untracked(draws)
+        assert (jnp.shape(draws["a"]), jnp.shape(draws["b"])) == ((3,), (3, 2))
+
+    def test_a_raw_moment_of_a_record_law_is_a_mapping(self):
+        result = mean.with_options(raw=True)(Pair("p"))
+        assert type(result) is dict and _untracked(result)
+
+    def test_the_raw_evaluator_returns_the_raw_array(self):
+        result = mean.raw()(Gaussian("g", 2.0))
+        assert not isinstance(result, TrackedTerm)
+        assert float(result) == 2.0
+
+    def test_apply_returns_the_raw_form(self):
+        result = center.apply(Pair("p"))
+        assert type(result) is dict and _untracked(result)
+
+    def test_a_raw_result_is_validated_against_the_declaration(self):
+        def rule(d: Any) -> OutputSpec:
+            """Three coordinates."""
+            return OutputSpec(toy=NumericArraySpec((3,)))
+
+        toy = _toy(result=rule)
+        toy.structural_route(
+            "short",
+            check=lambda call, result: True,
+            execute=lambda call, result: jnp.zeros(2),
+            exact=True,
+        )
+        with pytest.raises(ValueError, match="shape"):
+            toy.with_options(raw=True)(Gaussian("g"))
 
 
 # ---------------------------------------------------------------------------

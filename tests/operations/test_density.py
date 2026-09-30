@@ -11,7 +11,9 @@ import pytest
 
 from probpipe import NumericArray, NumericArrayBatch, NumericArraySpec, Record
 from probpipe.core._dispatch import ResolutionError
+from probpipe.core._specs import OutputSpec
 from probpipe.core.constraints import non_negative
+from probpipe.distributions._batches import DistributionBatch
 from probpipe.distributions._distribution import Distribution
 from probpipe.operations import RouteSource
 from probpipe.operations._density import (
@@ -100,6 +102,34 @@ class TestTheScoredValue:
         )
 
 
+class TestLiftedScores:
+    def test_a_law_at_the_value_is_admitted_and_planned_at_its_event_kind(self):
+        report = log_prob.check(Gaussian("g"), Gaussian("v"))
+        assert (report.feasible, report.route, report.exact) == (True, "exact", True)
+        assert report.lifted == (("value", "broadcast"),)
+        assert report.result == OutputSpec(log_prob=NumericArraySpec(()))
+        assert isinstance(log_prob(Gaussian("g"), Gaussian("v")), Distribution)
+
+    def test_a_law_whose_draws_do_not_conform_raises_applicability_error(self):
+        with pytest.raises(ApplicabilityError, match="does not conform"):
+            log_prob.check(Gaussian("g"), OneField("v"))
+
+    def test_a_swept_batch_of_laws_and_a_law_at_the_value_lift_together(self):
+        laws = DistributionBatch("laws", [Gaussian("g", 1.0), Gaussian("g", 2.0)], "laws")
+        report = log_prob.check(laws, Gaussian("v"))
+        assert report.feasible is True
+        assert report.lifted == (("d", "sweep"), ("value", "broadcast"))
+
+    def test_the_identity_of_prob_is_checked_at_the_points_of_a_lift(self):
+        report = prob.check(Gaussian("g"), Gaussian("v"))
+        assert (report.feasible, report.route, report.lifted) == (
+            True,
+            "identity",
+            (("value", "broadcast"),),
+        )
+        assert prob.check(Bare("b"), Gaussian("v")).feasible is False
+
+
 class TestDerivedDensities:
     def test_prob_is_derived_from_log_prob(self):
         assert prob.is_derived
@@ -125,6 +155,27 @@ class TestDerivedDensities:
     def test_prob_of_a_law_without_a_normalized_density_raises_resolution_error(self):
         with pytest.raises(ResolutionError):
             prob(Unnormalized("u"), 0.0)
+
+    def test_the_identity_is_infeasible_where_log_prob_has_no_route(self):
+        report = prob.check(Bare("b"), 0.0)
+        assert report.feasible is False
+        assert "does not claim SupportsLogProb" in report.description
+        with pytest.raises(ResolutionError, match="does not claim SupportsLogProb"):
+            prob(Bare("b"), 0.0)
+
+    def test_the_unnormalized_identity_is_infeasible_where_its_constituent_has_no_route(self):
+        report = unnormalized_prob.check(Bare("b"), 0.0)
+        assert report.feasible is False
+        assert "does not claim SupportsUnnormalizedLogProb" in report.description
+
+    def test_the_identity_takes_the_exactness_of_the_route_log_prob_selects(self):
+        report = prob.check(Gaussian("g"), 0.5)
+        assert (report.feasible, report.route, report.exact) == (True, "identity", True)
+        assert dict(report.routes)["identity"].route == "exact"
+
+    def test_the_identity_route_states_its_constituent_as_its_condition(self):
+        (route,) = prob.summary().routes
+        assert route.condition == "``log_prob`` has a route for the law and the value."
 
 
 class TestRandomLogDensities:
