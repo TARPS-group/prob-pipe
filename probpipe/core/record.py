@@ -830,33 +830,25 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     # -- Field renaming -------------------------------------------------------
 
     def with_path_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Record:
-        """Return a Record with the given fields renamed, ``old -> new``.
+        """Return a Record with the given nodes renamed or moved, ``old -> new``.
 
         The structural contract is :meth:`NamedTree.with_path_names`: each key
-        is the exact path of a node; values are the new single-segment names;
-        renames apply simultaneously. The authoritative :attr:`event_template`
-        renames in lockstep, so the subtree invariant holds on the result. The
-        record keeps its name; ``with_name`` renames the record itself. The
-        result carries no provenance.
+        is the exact path of a node and each target its new exact path. The
+        authoritative :attr:`event_template` is renamed by the same rule, so the
+        subtree invariant holds on the result. The record keeps its name, since
+        ``with_name`` renames the record itself, and the result carries no
+        provenance.
 
         Raises
         ------
         KeyError
             If a key is not the path of a node.
         ValueError
-            If a new name is empty or contains ``/``, two keys rename the same
-            node, no renames are given, or a rename collides with an existing
-            sibling name.
+            As :meth:`NamedTree.with_path_names` raises it.
         """
         renames = self._resolve_path_renames(mapping, kwargs)
-        renamed = self._renamed_leaf_map(renames)
-        if len(renamed) != len(self):
-            raise ValueError(
-                "with_path_names() produced colliding field keys; a rename "
-                "must not collide with an existing sibling name"
-            )
-        renamed_template = self.event_template.with_path_names(mapping, **kwargs)
-        return self._rebuild_root(renamed, renamed_template)
+        tree, _ = self._renamed_tree(renames)
+        return self._rebuild_root(tree, self.event_template.with_path_names(renames))
 
     # -- Backend conversion -------------------------------------------------
 

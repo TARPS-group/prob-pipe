@@ -268,47 +268,48 @@ class OutputSpec:
     def with_path_names(
         self, mapping: Mapping[str, str] | None = None, /, **kwargs: str
     ) -> OutputSpec:
-        """Rename nodes of the declaration by their paths, ``old -> new``.
+        """Rename or move nodes of the declaration by their paths, ``old -> new``.
 
         A path starts with a component: an exposed record's paths are the paths
         of its record, and a whole term's are its component followed by the
-        paths within its term. Each key is the exact path of a node, as for
-        :meth:`~probpipe.core.named_tree.NamedTree.with_path_names`, and the
-        result keeps the packaging, so a whole term's component is renamed in
-        place.
+        paths within its term. Each key is the exact path of a node and each
+        target its new exact path, under the rule of
+        :meth:`~probpipe.core.named_tree.NamedTree.with_path_names`. The result
+        keeps the packaging. An exposed record stays exposed, so a move may
+        create or remove a component. A whole term's component is renamed in
+        place, and the term's fields stay under it, so a field moves only within
+        the component.
 
         Raises
         ------
         KeyError
             If a key is not a path of the declaration.
         ValueError
-            If a new name is empty or contains ``/``, two keys rename the same
-            node, no renames are given, or a rename collides with a sibling.
+            As :meth:`~probpipe.core.named_tree.NamedTree.with_path_names` raises
+            it, or if a whole term's component moves into a group or one of its
+            fields moves out of it.
         """
         spec = self._term_spec
-        if self._component_name is None:
+        component = self._component_name
+        if component is None:
             return OutputSpec(cast(RecordSpec, spec).with_path_names(mapping, **kwargs))
-        name: str | None = None
-        fields: dict[str, str] = {}
-        for source in (mapping or {}), kwargs:
-            for old, new in source.items():
-                head, *rest = RecordSpec._split_path((old,))
-                if head != self._component_name or (rest and not isinstance(spec, RecordSpec)):
-                    raise KeyError(old)
-                if rest:
-                    path = _PATH_SEP.join(rest)
-                    if path in fields:
-                        raise ValueError(f"node {old!r} is renamed more than once")
-                    fields[path] = new
-                elif name is not None:
-                    raise ValueError(f"node {old!r} is renamed more than once")
-                else:
-                    name = new
-        if name is None and not fields:
-            raise ValueError("with_path_names() requires at least one rename")
-        if fields:
-            spec = cast(RecordSpec, spec).with_path_names(fields)
-        return OutputSpec(**{self._component_name if name is None else name: spec})
+        # A whole term's paths are those of the record of its one component.
+        components = RecordSpec({component: OpaqueSpec() if spec is None else spec})
+        renames = components._resolve_path_renames(mapping, kwargs)
+        renamed_component = renames.get(component, component)
+        if _PATH_SEP in renamed_component:
+            raise ValueError(
+                f"with_path_names() keeps the packaging, so the whole term's component "
+                f"{component!r} is renamed in place, not moved to {renamed_component!r}"
+            )
+        for source, target in renames.items():
+            if source != component and not target.startswith(renamed_component + _PATH_SEP):
+                raise ValueError(
+                    f"with_path_names() keeps the packaging, so the fields of the whole term "
+                    f"{renamed_component!r} stay under it; {source!r} cannot move to {target!r}"
+                )
+        ((name, term),) = components.with_path_names(renames).children.items()
+        return OutputSpec(**{name: None if spec is None else term})
 
     def _with_spec(self, spec: TermSpec | None) -> OutputSpec:
         if self._component_name is not None:

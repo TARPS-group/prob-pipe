@@ -466,7 +466,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         Parameters
         ----------
         mapping : Mapping[str, str], optional
-            New names keyed by the exact paths of the nodes they rename.
+            The new exact path of each node, keyed by the node's exact path.
         **kwargs : str
             Further renames, keyed by paths that are identifiers.
 
@@ -480,8 +480,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         KeyError
             If a key is not a path of the declaration.
         ValueError
-            If a new name is empty or contains ``/``, a node is renamed twice, no
-            renames are given, or a rename collides with a sibling.
+            As :meth:`OutputSpec.with_path_names` raises it.
         NotImplementedError
             If this law is factored and a rename reaches a field of its record
             draw, since a joint renames through its factors.

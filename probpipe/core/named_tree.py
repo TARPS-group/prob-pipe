@@ -91,6 +91,178 @@ def _unflatten_paths(source: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
+# -- Moving nodes to new exact paths ---------------------------------------------
+#
+# ``with_path_names`` rebuilds a plain nested-dict copy of a tree, in which the
+# dicts are the interior nodes, since a mapping is never a leaf. Each node of the
+# copy records its original path, so the rebuild reports where every node went.
+
+
+class _Moving:
+    """A node of the tree that a rename rebuilds, with its path in the original tree.
+
+    *origin* is ``None`` for a group that a move creates. *held* records whether
+    an original group held a node, since only such a group can be vacated.
+    """
+
+    __slots__ = ("children", "held", "leaf", "origin")
+
+    def __init__(
+        self,
+        origin: tuple[str, ...] | None,
+        *,
+        leaf: Any = None,
+        children: dict[str, _Moving] | None = None,
+        held: bool = False,
+    ) -> None:
+        self.origin = origin
+        self.leaf = leaf
+        self.children = children
+        self.held = held
+
+
+def _moving(tree: Mapping[str, Any], prefix: tuple[str, ...]) -> dict[str, _Moving]:
+    """The nodes of the nested dict *tree*, found at *prefix*, as nodes to rebuild."""
+    nodes: dict[str, _Moving] = {}
+    for name, value in tree.items():
+        path = (*prefix, name)
+        if isinstance(value, dict):
+            nodes[name] = _Moving(path, children=_moving(value, path), held=bool(value))
+        else:
+            nodes[name] = _Moving(path, leaf=value)
+    return nodes
+
+
+def _is_vacant(node: _Moving) -> bool:
+    """Whether *node* is a group left without a field by the moves.
+
+    A group that was empty in the original tree is not vacant, so it stays.
+    """
+    if node.children is None or (node.origin is not None and not node.held):
+        return False
+    return all(_is_vacant(child) for child in node.children.values())
+
+
+def _collision(path: tuple[str, ...], name: str, *, prefix_clash: bool) -> ValueError:
+    message = f"with_path_names() target {_PATH_SEP.join(path)!r} collides with an existing node"
+    if prefix_clash:
+        message += f"; the name {name!r} would be used both as a field and as a path prefix"
+    return ValueError(message)
+
+
+def _place(group: dict[str, _Moving], name: str, node: _Moving, path: tuple[str, ...]) -> None:
+    """Put *node* under *name* at the end of *group*, where a vacant node gives way.
+
+    Raises
+    ------
+    ValueError
+        If a node that is not vacant holds *name*.
+    """
+    held = group.get(name)
+    if held is not None:
+        if _is_vacant(held):
+            del group[name]
+        elif _is_vacant(node):
+            return
+        else:
+            raise _collision(
+                path, name, prefix_clash=(held.children is None) != (node.children is None)
+            )
+    group[name] = node
+
+
+def _kept(
+    nodes: dict[str, _Moving],
+    moves: Mapping[tuple[str, ...], tuple[str, ...]],
+    in_place: set[tuple[str, ...]],
+    detached: dict[tuple[str, ...], _Moving],
+) -> dict[str, _Moving]:
+    """*nodes* with each moved node detached into *detached* and each in-place rename applied.
+
+    The children of every node are treated first, so a node below a moved node
+    that moves itself is detached from it.
+    """
+    kept: dict[str, _Moving] = {}
+    for name, node in nodes.items():
+        if node.children is not None:
+            node.children = _kept(node.children, moves, in_place, detached)
+        origin = cast(tuple[str, ...], node.origin)
+        target = moves.get(origin)
+        if target is None:
+            _place(kept, name, node, origin)
+        elif origin in in_place:
+            _place(kept, target[-1], node, target)
+        else:
+            detached[origin] = node
+    return kept
+
+
+def _stripped(
+    nodes: dict[str, _Moving], prefix: tuple[str, ...], origins: dict[str, str]
+) -> dict[str, Any]:
+    """The nested dict of *nodes* without vacant groups, recording each node's origin."""
+    tree: dict[str, Any] = {}
+    for name, node in nodes.items():
+        if _is_vacant(node):
+            continue
+        path = (*prefix, name)
+        if node.origin is not None:
+            origins[_PATH_SEP.join(path)] = _PATH_SEP.join(node.origin)
+        tree[name] = node.leaf if node.children is None else _stripped(node.children, path, origins)
+    return tree
+
+
+def _moved_tree(
+    tree: Mapping[str, Any], moves: Mapping[str, str]
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """The nested dict *tree* with the node at each key of *moves* moved to its target.
+
+    *moves* maps the exact paths of nodes to their new exact paths, as
+    :meth:`NamedTree._resolve_path_renames` validates them. A node whose target
+    has the parent of its source, and none of whose ancestors moves, is renamed
+    in place; every other node is appended to its target's parent, in the order
+    of *moves*, and a missing parent is created the same way. A group that the
+    moves leave without a field is removed.
+
+    Returns
+    -------
+    tuple of dict and dict
+        The rebuilt nested dict, and the original path of each of its nodes that
+        is a node of *tree*, keyed by the node's new path.
+
+    Raises
+    ------
+    ValueError
+        If a target collides with a node that remains.
+    """
+    split = {
+        tuple(source.split(_PATH_SEP)): tuple(target.split(_PATH_SEP))
+        for source, target in moves.items()
+    }
+    in_place = {
+        source
+        for source, target in split.items()
+        if source[:-1] == target[:-1]
+        and not any(source[:end] in split for end in range(1, len(source)))
+    }
+    detached: dict[tuple[str, ...], _Moving] = {}
+    root = _kept(_moving(tree, ()), split, in_place, detached)
+    for source, target in split.items():
+        if source in in_place:
+            continue
+        group = root
+        for segment in target[:-1]:
+            parent = group.get(segment)
+            if parent is None:
+                parent = group[segment] = _Moving(None, children={})
+            elif parent.children is None:
+                raise _collision(target, segment, prefix_clash=True)
+            group = parent.children
+        _place(group, target[-1], detached[source], target)
+    origins: dict[str, str] = {}
+    return _stripped(root, (), origins), origins
+
+
 class NamedTree[L]:
     """The named, ordered tree addressed by path — the shared collection substrate.
 
@@ -625,24 +797,30 @@ class NamedTree[L]:
     def _resolve_path_renames(
         self, mapping: Mapping[str, str] | None, kwargs: Mapping[str, str]
     ) -> dict[str, str]:
-        """Resolve :meth:`with_path_names` inputs to ``{node_path: new_name}``.
+        """Resolve :meth:`with_path_names` inputs to ``{source path: target path}``.
 
-        Each key is the exact path of a node, so a single name addresses a
-        top-level node. New names must be non-empty, ``/``-free single segments.
+        Each key is the exact path of a node, and each target is the node's new
+        exact path.
 
         Raises
         ------
         KeyError
             If a key is not the path of a node.
         ValueError
-            If a new name is malformed, or two keys resolve to the same node.
+            If a target is empty or has an empty segment, two keys resolve to the
+            same node, no renames are given, a target lies inside its own node,
+            or two targets are equal or one lies inside the other.
         """
         pairs: dict[str, str] = {}
         for source in (mapping or {}), kwargs:
             for old, new in source.items():
                 if not isinstance(new, str) or not new:
-                    raise ValueError(f"new name for {old!r} must be a non-empty string")
-                _check_no_path_sep(new)
+                    raise ValueError(f"new path for {old!r} must be a non-empty string")
+                if "" in new.split(_PATH_SEP):
+                    raise ValueError(
+                        f"new path {new!r} for {old!r} has an empty segment "
+                        f"(no leading, trailing, or doubled {_PATH_SEP!r})"
+                    )
                 segments = self._split_path((old,))
                 self.at_path(segments)  # KeyError if absent
                 resolved = _PATH_SEP.join(segments)
@@ -651,62 +829,80 @@ class NamedTree[L]:
                 pairs[resolved] = new
         if not pairs:
             raise ValueError("with_path_names() requires at least one rename")
+        for resolved, new in pairs.items():
+            if new.startswith(resolved + _PATH_SEP):
+                raise ValueError(f"{resolved!r} cannot move into its own subtree, to {new!r}")
+        targets = list(pairs.values())
+        for index, target in enumerate(targets):
+            for other in targets[index + 1 :]:
+                if target == other:
+                    raise ValueError(f"two nodes move to {target!r}, so they collide")
+                if other.startswith(target + _PATH_SEP) or target.startswith(other + _PATH_SEP):
+                    raise ValueError(f"the targets {target!r} and {other!r} overlap")
         return pairs
 
-    def _renamed_leaf_map(self, renames: Mapping[str, str]) -> dict[str, Any]:
-        """The flat ``path -> leaf`` map with *renames* applied simultaneously.
+    def _renamed_tree(self, renames: Mapping[str, str]) -> tuple[dict[str, Any], dict[str, str]]:
+        """This tree as a nested dict with *renames* applied, and each node's original path.
 
-        *renames* maps resolved node paths (in the **original** tree) to new
-        last-segment names. Renames apply simultaneously, so sibling name
-        swaps are legal; a rename that collides with an unrenamed sibling
-        surfaces as a duplicate-key error at reconstruction.
+        *renames* is the output of :meth:`_resolve_path_renames`. The second
+        result maps the new path of each node that the tree held to its
+        original path; a group that a move creates has none.
+
+        Raises
+        ------
+        ValueError
+            If a target collides with a node that remains.
         """
-        rename_by_segments = {tuple(p.split(_PATH_SEP)): new for p, new in renames.items()}
-        out: dict[str, Any] = {}
-        for key, leaf in self._walk_leaves():
-            segments = list(key.split(_PATH_SEP))
-            for i in range(len(segments)):
-                new = rename_by_segments.get(tuple(key.split(_PATH_SEP)[: i + 1]))
-                if new is not None:
-                    segments[i] = new
-            out[_PATH_SEP.join(segments)] = leaf
-        return out
+        return _moved_tree(self.to_nested_dict(), renames)
+
+    def _moved_leaf_paths(self, renames: Mapping[str, str]) -> dict[str, str]:
+        """The new key of each field under *renames*, keyed by its key in canonical order.
+
+        Raises
+        ------
+        ValueError
+            If a target collides with a node that remains.
+        """
+        _, origins = self._renamed_tree(renames)
+        moved = {origin: path for path, origin in origins.items()}
+        return {key: moved[key] for key in self.keys()}
 
     def with_path_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Self:
-        """Return a same-family tree with the given nodes renamed, ``old -> new``.
+        """Return a same-family tree with the given nodes renamed or moved, ``old -> new``.
 
-        Renames **fields within** the tree (leaves or whole subtrees); it does
-        not rename the object itself — that is ``with_name`` on the tracked
-        value types. Each key is the exact path of a node, so a single name
-        addresses a top-level node and a nested node takes its full path.
-        Values are the new (single-segment) names. Renames apply
-        simultaneously, so sibling swaps are legal. Everything else about the
-        tree — field order, leaf objects, nesting — is unchanged, and the
-        mapping interface (``[]`` / ``keys()``) stays keyed by full path. ::
+        Acts on the nodes *within* the tree, leaves or whole subtrees; the object
+        itself is renamed by ``with_name`` on the tracked value types. Each key is
+        the exact path of a node, so a keyword addresses a top-level node and the
+        positional mapping any node. Each target is the node's new exact path,
+        so a bare name is a top-level path::
 
-            t.with_path_names(mu="loc")                  # top-level node
-            t.with_path_names({"group1/mu": "loc"})      # nested node
+            t.with_path_names(mu="loc")                  # rename a top-level node
+            t.with_path_names({"g/mu": "g/loc"})         # rename a node within g
+            t.with_path_names({"g/mu": "mu"})            # move it out of g
+            t.with_path_names({"mu": "g/mu"})            # move it into g
+
+        The renames apply simultaneously: every key is resolved against the
+        original tree, so swaps are well-defined, and a node below a moved node
+        moves with it unless it has a target of its own. A node whose target has
+        its source's parent, and none of whose ancestors moves, is renamed in
+        place and keeps its position. Every other node is moved: it is appended
+        at the end of its new parent's children, in the order the renames are
+        given, and a missing parent is created and appended the same way. A group
+        that the moves leave without a field is removed. The leaf objects are
+        unchanged, and the mapping interface stays keyed by full path.
 
         Raises
         ------
         KeyError
             If a key is not the path of a node.
         ValueError
-            If a new name is empty or contains ``/``, two keys rename the same
-            node, no renames are given, or a rename collides with an existing
-            sibling name.
+            If a target is empty or has an empty segment, two keys rename the
+            same node, no renames are given, a node moves into its own subtree,
+            two targets are equal or one lies inside the other, or a target
+            collides with a node that remains.
         """
-        renames = self._resolve_path_renames(mapping, kwargs)
-        renamed = self._renamed_leaf_map(renames)
-        if len(renamed) != len(self):
-            raise ValueError(
-                "with_path_names() produced colliding field keys; a rename "
-                "must not collide with an existing sibling name"
-            )
-        try:
-            return self._rebuild_node(renamed, node_name=None)
-        except ValueError as error:  # field-vs-prefix collisions from construction
-            raise ValueError(f"with_path_names() produced an invalid tree: {error}") from None
+        tree, _ = self._renamed_tree(self._resolve_path_renames(mapping, kwargs))
+        return self._rebuild_node(tree, node_name=None)
 
     # -- Internal utilities -------------------------------------------------
 

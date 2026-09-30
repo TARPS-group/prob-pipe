@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
@@ -21,7 +22,8 @@ from ..core._dispatch import Feasibility
 from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
 from ..core._spec_base import NumericSpec, TermSpec
-from ..core._specs import InputSpec, OutputSpec
+from ..core._specs import InputSpec, OutputSpec, _components_record
+from ..core.named_tree import _unflatten_paths
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..linalg import DenseLinOp, LinOp
@@ -722,135 +724,369 @@ def _has_path(declaration: OutputSpec, path: Any) -> bool:
     return True
 
 
-def _renamed_path(path: str, renames: Mapping[str, str]) -> str:
-    """*path* with each of its prefixes that *renames* keys renamed to the name given."""
-    segments = path.split(_PATH_SEP)
-    return _PATH_SEP.join(
-        renames.get(_PATH_SEP.join(segments[: end + 1]), segment)
-        for end, segment in enumerate(segments)
-    )
+def _draw_path(declaration: OutputSpec, path: str) -> str:
+    """*path*, a path of *declaration*, as the path of its node within a draw."""
+    return _PATH_SEP.join(_draw_segments(declaration, path))
 
 
-def _inverse_renames(renames: Mapping[str, str]) -> dict[str, str]:
-    """The original name of each node that *renames* renames, keyed by the node's new path."""
-    return {_renamed_path(path, renames): _final_segment(path) for path in renames}
+def _leaves_at(declaration: OutputSpec, path: str) -> list[str]:
+    """The paths of the leaves of *declaration* at or below *path*, in canonical order."""
+    return [leaf for leaf in _leaf_paths(declaration) if _is_within(leaf, path)]
 
 
-def _renames_below(renames: Mapping[str, str], path: str) -> dict[str, str]:
-    """The entries of *renames* strictly below *path*, keyed relative to it."""
-    prefix = path + _PATH_SEP
-    return {key[len(prefix) :]: name for key, name in renames.items() if key.startswith(prefix)}
+def _below(path: str, node: str) -> str:
+    """*path*, a path at or below *node*, relative to *node*."""
+    return path[len(node) + 1 :]
 
 
-def _renamed_keys(
-    value: Mapping[str, Any], renames: Mapping[str, str], prefix: tuple[str, ...]
-) -> dict[str, Any]:
-    """The mapping *value*, found at *prefix*, with its keys renamed by *renames*.
+def _shared_final_segment(paths: Sequence[str]) -> bool:
+    """Whether two of *paths* share their final segment, so that their components collide."""
+    components = [_final_segment(path) for path in paths]
+    return len(set(components)) < len(components)
 
-    A key may itself be a path, and a nested mapping is renamed in turn.
+
+def _field_moves(
+    pairs: Sequence[tuple[str, str]], source_order: Sequence[str]
+) -> dict[str, str] | None:
+    """The source field that each target field takes, keyed by the target field in its order.
+
+    *pairs* lists each target field with its source field, in the target's
+    order, and *source_order* lists the source fields in the source's order. The
+    result is None when every field keeps its path and its position.
     """
-    result: dict[str, Any] = {}
+    moves = dict(pairs)
+    if list(moves) == list(moves.values()) == list(source_order):
+        return None
+    return moves
+
+
+def _fields_of(value: Mapping[str, Any], prefix: str = "") -> dict[str, Any]:
+    """The fields of the nested mapping *value*, keyed by their paths below it.
+
+    A key may itself be a path, and a record within the mapping gives its fields.
+    """
+    fields: dict[str, Any] = {}
     for key, entry in value.items():
-        path = (*prefix, *key.split(_PATH_SEP))
-        new = [
-            renames.get(_PATH_SEP.join(path[: end + 1]), segment)
-            for end, segment in enumerate(path)
-        ]
-        result[_PATH_SEP.join(new[len(prefix) :])] = (
-            _renamed_keys(entry, renames, path) if isinstance(entry, Mapping) else entry
-        )
-    return result
+        path = f"{prefix}{key}"
+        if isinstance(entry, Mapping):
+            fields.update(_fields_of(entry, path + _PATH_SEP))
+        elif isinstance(entry, Record):
+            fields.update({f"{path}{_PATH_SEP}{leaf}": field for leaf, field in entry.items()})
+        else:
+            fields[path] = entry
+    return fields
 
 
-def _renamed_value(value: Any, renames: Mapping[str, str]) -> Any:
-    """*value* with the node at each key of *renames* renamed in place.
+def _moved_value(value: Any, moves: Mapping[str, str] | None) -> Any:
+    """*value* with the field at each value of *moves* placed at its key, in the order of *moves*.
 
-    A record or a batch of records renames its fields and a mapping its keys;
-    a value of any other kind has no paths and is returned as it is.
+    A record or a batch of records is rebuilt with its fields' specs, and a
+    mapping as a nested mapping, in which a field that *moves* does not name
+    keeps its path. A value of any other kind has no fields and is returned as
+    it is, as is every value when *moves* is None.
     """
-    if not renames:
+    if moves is None:
         return value
-    if isinstance(value, (Record, RecordBatch)):
-        return value.with_path_names(dict(renames))
+    if isinstance(value, RecordBatch):
+        columns, template = value._raw_columns(), value.element_spec
+        return value._rebuilt(
+            {new: columns[old] for new, old in moves.items()},
+            RecordSpec({new: template[old] for new, old in moves.items()}),
+        )
+    if isinstance(value, Record):
+        template = value.event_template
+        return Record(
+            value.name,
+            {new: value[old] for new, old in moves.items()},
+            event_template=RecordSpec({new: template[old] for new, old in moves.items()}),
+        )
     if isinstance(value, Mapping):
-        return _renamed_keys(value, renames, ())
+        fields = _fields_of(value)
+        moved = {new: fields[old] for new, old in moves.items() if old in fields}
+        taken = set(moves.values())
+        moved.update({path: field for path, field in fields.items() if path not in taken})
+        return _unflatten_paths(moved)
     return value
+
+
+def _node_leaves(declaration: OutputSpec) -> dict[str, frozenset[str]]:
+    """The leaves at or below each node of *declaration*, keyed by the node's path.
+
+    The nodes come in canonical order, so a group comes before the nodes below it.
+    """
+    held: dict[str, set[str]] = {}
+    for leaf in _leaf_paths(declaration):
+        segments = leaf.split(_PATH_SEP)
+        for end in range(1, len(segments) + 1):
+            held.setdefault(_PATH_SEP.join(segments[:end]), set()).add(leaf)
+    return {node: frozenset(leaves) for node, leaves in held.items()}
+
+
+def _held_nodes(
+    source: OutputSpec, target: OutputSpec, leaves: Mapping[str, str]
+) -> dict[str, str]:
+    """The node of *source* that each node of *target* holds, keyed by the target node's path.
+
+    A target node holds a source node when its fields are the images under
+    *leaves* of exactly that node's fields. Nodes that hold the same fields form
+    a chain of only children, and the two chains pair up from their deepest
+    nodes, so that a field holds a field.
+    """
+    chains: dict[frozenset[str], list[str]] = {}
+    for node, held in _node_leaves(source).items():
+        if all(leaf in leaves for leaf in held):
+            chains.setdefault(frozenset(leaves[leaf] for leaf in held), []).append(node)
+    targets: dict[frozenset[str], list[str]] = {}
+    for node, held in _node_leaves(target).items():
+        targets.setdefault(held, []).append(node)
+    nodes: dict[str, str] = {}
+    for held, chain in targets.items():
+        nodes.update(zip(reversed(chain), reversed(chains.get(held, [])), strict=False))
+    return nodes
+
+
+def _declared_like(like: OutputSpec, specs: Mapping[str, TermSpec]) -> OutputSpec:
+    """The declaration of the leaves *specs*, keyed by their paths, packaged as *like* allows.
+
+    An exposed record stays exposed, and a whole term stays whole while its
+    leaves lie under one component.
+    """
+    record = RecordSpec(dict(specs))
+    if like.exposes_record or len(record.children) != 1:
+        return OutputSpec(record)
+    ((component, term),) = record.children.items()
+    return OutputSpec(**{component: term})
 
 
 @dataclass(frozen=True)
 class _EventRenames:
-    """In-place renames of nodes of an event declaration, keyed by their exact paths.
+    """The renames and moves that take an event declaration to a renamed one.
 
-    A draw of an exposed record carries the paths of its record, and a draw of
-    a whole term the paths below its component, so renaming the component alone
-    renames nothing a draw carries.
+    The renamed declaration holds each field of the original at a new path, and
+    maybe in a new order, so the values of a law over the original translate to
+    it field by field: a draw of an exposed record carries the paths of its
+    record, and a draw of a whole term the paths below its component. A node of
+    the renamed declaration holds a node of the original when its fields are
+    exactly that node's, and a path of the renamed law addresses the original's
+    marginals and conditioning through the node it holds.
 
     Attributes
     ----------
     declaration : OutputSpec
         The original declaration.
-    renames : Mapping[str, str]
-        The new name of each renamed node, keyed by its original path.
+    renamed : OutputSpec
+        The renamed declaration.
+    leaves : Mapping[str, str]
+        The path in *renamed* of each leaf of *declaration*, keyed by its path in
+        *declaration*.
     """
 
     declaration: OutputSpec
-    renames: Mapping[str, str]
+    renamed: OutputSpec
+    leaves: Mapping[str, str]
 
-    @property
-    def _draw_renames(self) -> dict[str, str]:
-        component = _whole_term_component(self.declaration)
-        if component is None:
-            return dict(self.renames)
-        return _renames_below(self.renames, component)
+    @classmethod
+    def of(
+        cls, declaration: OutputSpec, renamed: OutputSpec, renames: Mapping[str, str]
+    ) -> _EventRenames:
+        """The renames that take *declaration* to *renamed*, which *renames* gives."""
+        if not renames:
+            return cls(declaration, renamed, {leaf: leaf for leaf in _leaf_paths(declaration)})
+        paths = _components_record(declaration)
+        moved = paths._moved_leaf_paths(paths._resolve_path_renames(renames, {}))
+        return cls(declaration, renamed, moved)
+
+    def followed_by(self, then: _EventRenames) -> _EventRenames:
+        """These renames followed by *then*, which starts from this renamed declaration."""
+        leaves = {old: then.leaves[new] for old, new in self.leaves.items() if new in then.leaves}
+        return _EventRenames(self.declaration, then.renamed, leaves)
+
+    @cached_property
+    def _draw_moves(self) -> dict[str, str] | None:
+        inverse = {new: old for old, new in self.leaves.items()}
+        return _field_moves(
+            [
+                (_draw_path(self.renamed, new), _draw_path(self.declaration, inverse[new]))
+                for new in _leaf_paths(self.renamed)
+                if new in inverse
+            ],
+            [
+                _draw_path(self.declaration, old)
+                for old in _leaf_paths(self.declaration)
+                if old in self.leaves
+            ],
+        )
+
+    @cached_property
+    def _undraw_moves(self) -> dict[str, str] | None:
+        images = set(self.leaves.values())
+        return _field_moves(
+            [
+                (_draw_path(self.declaration, old), _draw_path(self.renamed, self.leaves[old]))
+                for old in _leaf_paths(self.declaration)
+                if old in self.leaves
+            ],
+            [_draw_path(self.renamed, new) for new in _leaf_paths(self.renamed) if new in images],
+        )
+
+    @cached_property
+    def _nodes(self) -> dict[str, str]:
+        return _held_nodes(self.declaration, self.renamed, self.leaves)
+
+    @cached_property
+    def _coordinate_order(self) -> list[int] | None:
+        """The original flat coordinate at each coordinate of a renamed draw, or None if equal."""
+        inverse = {new: old for old, new in self.leaves.items()}
+        order = [
+            index
+            for new in _leaf_paths(self.renamed)
+            for index in _coordinate_range(self.declaration, inverse[new])
+        ]
+        return None if order == list(range(len(order))) else order
 
     def draw(self, value: Any) -> Any:
-        """*value*, a raw value of the original declaration, under the new names."""
-        return _renamed_value(value, self._draw_renames)
+        """*value*, a raw value of the original declaration, under the new paths."""
+        return _moved_value(value, self._draw_moves)
 
     def undraw(self, value: Any) -> Any:
-        """*value*, a raw value of the renamed declaration, under the original names."""
-        return _renamed_value(value, _inverse_renames(self._draw_renames))
+        """*value*, a raw value of the renamed declaration, under the original paths."""
+        return _moved_value(value, self._undraw_moves)
 
-    def original(self, path: str) -> str:
-        """The original path of *path*, a path of the renamed declaration."""
-        return _renamed_path(path, _inverse_renames(self.renames))
+    def covariance(self, cov: LinOp) -> LinOp:
+        """*cov*, the original's covariance, over the flat coordinates in the renamed order.
+
+        A move reorders the flat coordinates, and the product ``P Σ Pᵀ``, with
+        ``P`` permuting them, stays lazy.
+        """
+        order = self._coordinate_order
+        if order is None:
+            return cov
+        permutation = DenseLinOp(jnp.eye(cov.shape[1], dtype=cov.dtype)[jnp.asarray(order)])
+        return permutation @ cov @ permutation.T
+
+    def quantiles(self, quantiles: Any) -> Any:
+        """*quantiles*, the original's, under the new paths.
+
+        Quantiles in the event's raw form, per-field arrays with the level axes
+        leading, move with their fields, and quantiles over the flat
+        coordinates, which follow the level axes, are permuted into the renamed
+        order.
+        """
+        if isinstance(quantiles, (Record, RecordBatch, Mapping)):
+            return self.draw(quantiles)
+        order = self._coordinate_order
+        return quantiles if order is None else jnp.asarray(quantiles)[..., jnp.asarray(order)]
+
+    def original(self, path: str) -> str | None:
+        """The original node that *path*, a path of the renamed declaration, holds, or None."""
+        return self._nodes.get(path)
 
     def undraw_at(self, path: str, value: Any) -> Any:
-        """*value*, the node at *path* of the renamed declaration, under the original names."""
-        return _renamed_value(value, _renames_below(_inverse_renames(self.renames), path))
+        """*value*, the node at *path* of the renamed declaration, as the original node it holds."""
+        original = self._nodes[path]
+        moves = _field_moves(
+            [
+                (_below(old, original), _below(self.leaves[old], path))
+                for old in _leaves_at(self.declaration, original)
+            ],
+            [_below(new, path) for new in _leaves_at(self.renamed, path)],
+        )
+        return _moved_value(value, moves)
 
     def law(self, law: Distribution) -> Distribution:
         """*law*, over the original declaration or the part of it that remains, renamed.
 
-        Each rename of a node that *law* still declares applies, so a law
-        conditioned on some fields takes the renames of the fields that remain.
+        Each field that *law* still declares takes its new path, in the renamed
+        declaration's order, so a law conditioned on some fields keeps the paths
+        of the fields that remain.
         """
-        present = {
-            path: name for path, name in self.renames.items() if _has_path(law.event_spec, path)
-        }
-        return law.with_path_names(present) if present else law
+        fields = _leaf_paths(law.event_spec)
+        if not any(field in self.leaves for field in fields):
+            return law
+        moved = {field: self.leaves.get(field, field) for field in fields}
+        rank = {new: index for index, new in enumerate(_leaf_paths(self.renamed))}
+        order = sorted(fields, key=lambda field: rank.get(moved[field], len(rank)))
+        specs = {moved[field]: _node_at(law.event_spec, field) for field in order}
+        return _renamed_by_leaves(law, _declared_like(law.event_spec, specs), moved)
 
     def marginal(
         self, law: Distribution, paths: Sequence[str], originals: Sequence[str]
     ) -> Distribution:
-        """*law*, the marginal at *originals*, under the names of *paths*, the renamed paths.
+        """*law*, the marginal at the original nodes *originals*, as the marginal at *paths*.
 
-        The marginal names each node by the final segment of its original path,
-        which takes the final segment of the renamed path and the renames below
-        the node.
+        A marginal names each node by the final segment of its path, so each
+        field of an original node takes the final segment of the renamed path
+        followed by the field's path below the renamed node, in the renamed
+        order.
         """
-        renames: dict[str, str] = {}
-        for path, original in zip(paths, originals):
-            component = _final_segment(original)
-            if _final_segment(path) != component:
-                renames[component] = _final_segment(path)
-            renames.update(
-                {
-                    f"{component}{_PATH_SEP}{key}": name
-                    for key, name in _renames_below(self.renames, original).items()
-                }
+        moved: dict[str, str] = {}
+        specs: dict[str, TermSpec] = {}
+        for path, original in zip(paths, originals, strict=True):
+            held = {self.leaves[old]: old for old in _leaves_at(self.declaration, original)}
+            for new in _leaves_at(self.renamed, path):
+                field = _final_segment(original) + held[new][len(original) :]
+                moved[field] = _final_segment(path) + new[len(path) :]
+                specs[moved[field]] = _node_at(law.event_spec, field)
+        return _renamed_by_leaves(law, _declared_like(law.event_spec, specs), moved)
+
+
+def _original_nodes(
+    event: _EventRenames, declaration: OutputSpec, paths: Sequence[str], parent: str
+) -> list[str]:
+    """The node of the parent *parent* that each of *paths*, paths of *declaration*, holds.
+
+    Raises
+    ------
+    KeyError
+        If a path is not an event path of *declaration*.
+    ValueError
+        If a path holds no single node of the parent, since a move gathered or
+        regrouped its fields.
+    """
+    originals = []
+    for path in paths:
+        if not _has_path(declaration, path):
+            raise KeyError(path)
+        original = event.original(path)
+        if original is None:
+            raise ValueError(
+                f"{path!r} holds no single node of {parent!r}, since a move gathered or "
+                f"regrouped its fields"
             )
-        return law.with_path_names(renames) if renames else law
+        originals.append(original)
+    return originals
+
+
+def _unreached(
+    event: _EventRenames, declaration: OutputSpec, paths: Sequence[str], owner: str
+) -> Feasibility | None:
+    """Why *paths*, of the law *owner* declared by *declaration*, miss the parent, or None."""
+    for path in paths:
+        if not _has_path(declaration, path):
+            return Feasibility(False, f"{path!r} is not an event path of {owner!r}")
+        if event.original(path) is None:
+            return Feasibility(
+                False, f"{path!r} holds no single node of the parent, since a move regrouped it"
+            )
+    return None
+
+
+def _renamed_by_leaves(
+    law: Distribution, target: OutputSpec, leaves: Mapping[str, str]
+) -> Distribution:
+    """*law* declared by *target*, each of its leaves at the path that *leaves* gives it.
+
+    A whole term whose draws keep their fields is renamed by its component,
+    which keeps the law's class.
+    """
+    source = law.event_spec
+    if target == source:
+        return law
+    event = _EventRenames(source, target, dict(leaves))
+    if event._draw_moves is None and not (source.exposes_record or target.exposes_record):
+        (component,), (renamed,) = source.components, target.components
+        return law.with_path_names({component: renamed})
+    return _renamed(law, event, leaves)
 
 
 # ---------------------------------------------------------------------------
@@ -876,13 +1112,13 @@ def _renamed_variance(self: _RenamedDistribution) -> Any:
 
 
 def _renamed_cov(self: _RenamedDistribution) -> LinOp:
-    """The parent's covariance, since an in-place rename keeps the flat coordinates' order."""
-    return self._parent._cov()
+    """The parent's covariance, over the flat coordinates in the renamed declaration's order."""
+    return self._event.covariance(self._parent._cov())
 
 
-def _renamed_quantile(self: _RenamedDistribution, q: ArrayLike) -> Array:
-    """The parent's quantiles, since an in-place rename keeps the flat coordinates' order."""
-    return self._parent._quantile(q)
+def _renamed_quantile(self: _RenamedDistribution, q: ArrayLike) -> Any:
+    """The parent's quantiles at the levels *q*, under the new paths."""
+    return self._event.quantiles(self._parent._quantile(q))
 
 
 def _renamed_expectation(self: _RenamedDistribution, f: Callable[[Any], Array]) -> Array:
@@ -901,26 +1137,40 @@ def _renamed_unnormalized_log_prob(self: _RenamedDistribution, value: Any) -> Ar
 
 
 def _renamed_marginal(self: _RenamedDistribution, path: str | tuple[str, ...]) -> Distribution:
-    """The parent's marginal at the original paths for *path*, named by *path*.
+    """The parent's marginal at the original nodes for *path*, named and arranged by *path*.
 
     Raises
     ------
     KeyError
         If a path is not an event path of this law.
+    ValueError
+        If a path holds no single node of the parent, or two selected paths
+        share their final segment.
     """
     paths = (path,) if isinstance(path, str) else tuple(path)
     originals = self._originals(paths)
+    if _shared_final_segment(paths):
+        raise ValueError(
+            f"the selected paths {list(paths)} share a final segment, so their components "
+            f"would collide"
+        )
     marginal = self._parent._marginal(originals[0] if isinstance(path, str) else tuple(originals))
     return self._event.marginal(marginal, paths, originals)
 
 
 def _renamed_marginal_guard(self: _RenamedDistribution, path: str | tuple[str, ...]) -> Feasibility:
-    """The parent's marginal guard at the original paths for *path*, paths of this law."""
+    """The parent's marginal guard at the original nodes for *path*, paths of this law.
+
+    Each path must hold one node of the parent, and a tuple of paths selects
+    several nodes, whose final segments must differ.
+    """
     paths = (path,) if isinstance(path, str) else tuple(path)
-    for each in paths:
-        if not _has_path(self.event_spec, each):
-            return Feasibility(False, f"{each!r} is not an event path of {self.name!r}")
-    originals = [self._event.original(each) for each in paths]
+    unreached = _unreached(self._event, self.event_spec, paths, self.name)
+    if unreached is not None:
+        return unreached
+    if _shared_final_segment(paths):
+        return Feasibility(False, f"the paths {list(paths)} share a final segment")
+    originals = self._originals(paths)
     return _capability_guard(
         self._parent, "_marginal", originals[0] if isinstance(path, str) else tuple(originals)
     )
@@ -933,24 +1183,24 @@ def _renamed_condition_on(self: _RenamedDistribution, given: Any, /, **kwargs: A
     ------
     KeyError
         If a key of *given* is not an event path of this law.
+    ValueError
+        If a key holds no single node of the parent.
     """
     items = list(given.items())
     originals = self._originals([path for path, _ in items])
     translated = {
         original: self._event.undraw_at(path, value)
-        for original, (path, value) in zip(originals, items)
+        for original, (path, value) in zip(originals, items, strict=True)
     }
     return self._event.law(self._parent._condition_on(translated, **kwargs))
 
 
 def _renamed_condition_on_guard(self: _RenamedDistribution, paths: tuple[str, ...]) -> Feasibility:
-    """The parent's conditioning guard at the original paths for *paths*, paths of this law."""
-    for path in paths:
-        if not _has_path(self.event_spec, path):
-            return Feasibility(False, f"{path!r} is not an event path of {self.name!r}")
-    return _capability_guard(
-        self._parent, "_condition_on", tuple(self._event.original(path) for path in paths)
-    )
+    """The parent's conditioning guard at the original nodes for *paths*, paths of this law."""
+    unreached = _unreached(self._event, self.event_spec, paths, self.name)
+    if unreached is not None:
+        return unreached
+    return _capability_guard(self._parent, "_condition_on", tuple(self._originals(paths)))
 
 
 _RENAMED = "_RenamedDistribution"
@@ -996,63 +1246,89 @@ _RENAMED_CAPABILITIES: dict[type, Mapping[str, Callable[..., Any]]] = {
 
 
 class _RenamedDistribution(Distribution):
-    """A parent law under renamed event paths, which renames values at its boundary.
+    """A parent law under renamed or moved event paths, which translates values at its boundary.
 
     ``Distribution.with_path_names`` returns it for a rename that reaches a field
-    of a record draw, whose values must then carry the new names. It claims each
+    of a record draw, whose values must then carry the new paths. It claims each
     of the parent's capabilities that a rename carries over: a draw, a moment,
-    or a marginal is renamed on the way out, and a scored value, a given, or a
-    path on the way in. The renames are in place, so the flat coordinates keep
-    their order and the covariance and quantiles are the parent's. Each
-    capability carries the parent's guard at the original paths.
+    a quantile, or a marginal is translated on the way out, and a scored value,
+    a given, or a path on the way in. A move reorders the flat coordinates, so
+    the covariance, and quantiles over the flat coordinates, are permuted into
+    the renamed declaration's order. Each capability carries the parent's
+    guard at the original nodes. A further rename of this law renames its
+    parent by both renames at once.
 
     Parameters
     ----------
     parent : Distribution
-        The law whose values are renamed.
-    event_spec : OutputSpec
-        The renamed declaration.
-    renames : Mapping[str, str]
-        The new name of each renamed node, keyed by its path in the parent's
-        declaration.
+        The law whose values are translated.
+    event : _EventRenames
+        The renames from the parent's declaration to this law's.
     """
 
     _capability_table = _RENAMED_CAPABILITIES
 
-    def __new__(
-        cls, parent: Distribution, event_spec: OutputSpec, renames: Mapping[str, str]
-    ) -> _RenamedDistribution:
+    def __new__(cls, parent: Distribution, event: _EventRenames) -> _RenamedDistribution:
         return object.__new__(
             _capability_subclass(_RenamedDistribution, _claimed(parent, _RENAMED_CAPABILITIES))
         )
 
-    def __init__(
-        self, parent: Distribution, event_spec: OutputSpec, renames: Mapping[str, str]
-    ) -> None:
+    def __init__(self, parent: Distribution, event: _EventRenames) -> None:
         self._init_tracked(parent.name)
         self._init_annotations(None)
         object.__setattr__(self, "_parent", parent)
-        object.__setattr__(self, "_event", _EventRenames(parent.event_spec, dict(renames)))
-        self._init_declaration(event_spec)
-        self.with_provenance(
-            Provenance.create("with_path_names", parents=[parent], metadata=dict(renames))
-        )
+        object.__setattr__(self, "_event", event)
+        self._init_declaration(event.renamed)
+
+    def with_path_names(
+        self, mapping: Mapping[str, str] | None = None, /, **kwargs: str
+    ) -> Distribution:
+        """Rename or move nodes of the event declaration, as :meth:`Distribution.with_path_names`.
+
+        The result renames this law's parent by this law's renames followed by
+        the new ones, so a rename of the component alone keeps the renames of
+        the fields below it.
+        """
+        renamed = self.event_spec.with_path_names(mapping, **kwargs)
+        renames = {**dict(mapping or {}), **kwargs}
+        return _renamed(self, _EventRenames.of(self.event_spec, renamed, renames), renames)
 
     def _originals(self, paths: Sequence[str]) -> list[str]:
-        """The parent's path for each of *paths*, event paths of this law.
+        """The parent's node for each of *paths*, event paths of this law.
 
         Raises
         ------
         KeyError
             If a path is not an event path of this law.
+        ValueError
+            If a path holds no single node of the parent.
         """
-        for path in paths:
-            if not _has_path(self.event_spec, path):
-                raise KeyError(path)
-        return [self._event.original(path) for path in paths]
+        return _original_nodes(self._event, self.event_spec, paths, self._parent.name)
 
     def __repr__(self) -> str:
         return f"_RenamedDistribution(name={self.name!r}, parent={self._parent.name!r})"
+
+
+def _renamed(law: Distribution, event: _EventRenames, arguments: Mapping[str, str]) -> Distribution:
+    """The law that translates the values of *law* by *event*, with the rename's provenance.
+
+    A renamed law's parent is translated by both renames at once.
+
+    Raises
+    ------
+    NotImplementedError
+        If *law* is factored, since a joint renames through its factors.
+    """
+    if isinstance(law, SupportsFactors):
+        raise NotImplementedError("FactoredDistribution.with_path_names")
+    if isinstance(law, _RenamedDistribution):
+        renamed = _RenamedDistribution(law._parent, law._event.followed_by(event))
+    else:
+        renamed = _RenamedDistribution(law, event)
+    renamed.with_provenance(
+        Provenance.create("with_path_names", parents=[law], metadata=dict(arguments))
+    )
+    return renamed
 
 
 def _renamed_law(
@@ -1065,9 +1341,7 @@ def _renamed_law(
     NotImplementedError
         If *parent* is factored, since a joint renames through its factors.
     """
-    if isinstance(parent, SupportsFactors):
-        raise NotImplementedError("FactoredDistribution.with_path_names")
-    return _RenamedDistribution(parent, event_spec, renames)
+    return _renamed(parent, _EventRenames.of(parent.event_spec, event_spec, renames), renames)
 
 
 # ---------------------------------------------------------------------------
@@ -1159,15 +1433,15 @@ def _renamed_conditional_variance(self: _RenamedConditionalDistribution, given: 
 
 
 def _renamed_conditional_cov(self: _RenamedConditionalDistribution, given: Any) -> LinOp:
-    """The parent's covariance at the translated given."""
-    return self._parent._conditional_cov(self._parent_given(given))
+    """The parent's covariance at the translated given, over the coordinates in the renamed order."""
+    return self._event.covariance(self._parent._conditional_cov(self._parent_given(given)))
 
 
 def _renamed_conditional_quantile(
     self: _RenamedConditionalDistribution, given: Any, q: ArrayLike
-) -> Array:
-    """The parent's quantiles at the translated given."""
-    return self._parent._conditional_quantile(self._parent_given(given), q)
+) -> Any:
+    """The parent's quantiles at the translated given, under the new paths."""
+    return self._event.quantiles(self._parent._conditional_quantile(self._parent_given(given), q))
 
 
 def _renamed_conditional_expectation(
@@ -1182,18 +1456,23 @@ def _renamed_conditional_expectation(
 def _renamed_conditional_marginal(
     self: _RenamedConditionalDistribution, given: Any, path: str | tuple[str, ...]
 ) -> Distribution:
-    """The parent's marginal at the translated given and the original paths, named by *path*.
+    """The parent's marginal at the translated given and the original nodes, arranged by *path*.
 
     Raises
     ------
     KeyError
         If a path is not an event path of this kernel.
+    ValueError
+        If a path holds no single node of the parent, or two selected paths
+        share their final segment.
     """
     paths = (path,) if isinstance(path, str) else tuple(path)
-    for each in paths:
-        if not _has_path(self.event_spec, each):
-            raise KeyError(each)
-    originals = [self._event.original(each) for each in paths]
+    originals = _original_nodes(self._event, self.event_spec, paths, self._parent.name)
+    if _shared_final_segment(paths):
+        raise ValueError(
+            f"the selected paths {list(paths)} share a final segment, so their components "
+            f"would collide"
+        )
     marginal = self._parent._conditional_marginal(
         self._parent_given(given), originals[0] if isinstance(path, str) else tuple(originals)
     )
@@ -1203,12 +1482,18 @@ def _renamed_conditional_marginal(
 def _renamed_conditional_marginal_guard(
     self: _RenamedConditionalDistribution, path: str | tuple[str, ...]
 ) -> Feasibility:
-    """The parent's conditional marginal guard at the original paths for *path*."""
+    """The parent's conditional marginal guard at the original nodes for *path*.
+
+    Each path must hold one node of the parent, and a tuple of paths selects
+    several nodes, whose final segments must differ.
+    """
     paths = (path,) if isinstance(path, str) else tuple(path)
-    for each in paths:
-        if not _has_path(self.event_spec, each):
-            return Feasibility(False, f"{each!r} is not an event path of {self.name!r}")
-    originals = [self._event.original(each) for each in paths]
+    unreached = _unreached(self._event, self.event_spec, paths, self.name)
+    if unreached is not None:
+        return unreached
+    if _shared_final_segment(paths):
+        return Feasibility(False, f"the paths {list(paths)} share a final segment")
+    originals = _original_nodes(self._event, self.event_spec, paths, self._parent.name)
     return _capability_guard(
         self._parent,
         "_conditional_marginal",
@@ -1271,9 +1556,8 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
         The renamed event declaration.
     origins : Mapping[str, str]
         The parent's leaf for each leaf of the renamed slots, keyed by its path.
-    renames : Mapping[str, str]
-        The new name of each renamed event node, keyed by its path in the
-        parent's event declaration.
+    event : _EventRenames
+        The renames from the parent's event declaration to this kernel's.
     pending : Mapping[str, Any], optional
         The values already bound at leaves of parent slots that are not yet
         complete, keyed by the parent's leaf paths.
@@ -1287,7 +1571,7 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
         given_spec: InputSpec,
         event_spec: OutputSpec,
         origins: Mapping[str, str],
-        renames: Mapping[str, str],
+        event: _EventRenames,
         *,
         pending: Mapping[str, Any] | None = None,
     ) -> _RenamedConditionalDistribution:
@@ -1303,7 +1587,7 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
         given_spec: InputSpec,
         event_spec: OutputSpec,
         origins: Mapping[str, str],
-        renames: Mapping[str, str],
+        event: _EventRenames,
         *,
         pending: Mapping[str, Any] | None = None,
     ) -> None:
@@ -1312,7 +1596,7 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
         object.__setattr__(self, "_parent", parent)
         object.__setattr__(self, "_origins", dict(origins))
         object.__setattr__(self, "_pending", dict(pending or {}))
-        object.__setattr__(self, "_event", _EventRenames(parent.event_spec, dict(renames)))
+        object.__setattr__(self, "_event", event)
         self._init_declaration(given_spec, event_spec)
 
     def _translated(self, given: Any) -> tuple[dict[str, Any], dict[str, Any], set[str]]:
@@ -1403,7 +1687,7 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
             if path.partition(_PATH_SEP)[0] not in slots
         }
         return _RenamedConditionalDistribution(
-            result, remaining, self.event_spec, origins, self._event.renames, pending=pending
+            result, remaining, self.event_spec, origins, self._event, pending=pending
         )
 
 
@@ -1424,7 +1708,8 @@ def _renamed_kernel(
     """
     if isinstance(parent, SupportsFactors):
         raise NotImplementedError("FactoredConditionalDistribution.with_path_names")
-    kernel = _RenamedConditionalDistribution(parent, given_spec, event_spec, origins, renames)
+    event = _EventRenames.of(parent.event_spec, event_spec, renames)
+    kernel = _RenamedConditionalDistribution(parent, given_spec, event_spec, origins, event)
     kernel.with_provenance(
         Provenance.create("with_path_names", parents=[parent], metadata=dict(pairs))
     )
