@@ -52,6 +52,7 @@ from probpipe.distributions import (
     FactoredFullyNumericConditionalDistribution,
     FactoredNumericConditionalDistribution,
     FactoredNumericDistribution,
+    FieldView,
     NumericConditionalDistribution,
     NumericDistribution,
     SupportsConditionalCovariance,
@@ -824,6 +825,20 @@ class TestMarginalGuard:
         joint = _pair(law=TotalMarginalLaw) * _law("other", "c")
         assert joint._marginal_guard("a").feasible is True
 
+    @pytest.mark.parametrize(
+        "path",
+        [
+            pytest.param("gamma", id="unknown-component"),
+            pytest.param("a/zzz", id="below-a-leaf"),
+            pytest.param(("a", "gamma"), id="in-a-selection"),
+        ],
+    )
+    def test_a_path_that_is_not_an_event_path_is_declined_with_a_reason(self, path):
+        joint = _pair(law=TotalMarginalLaw) * _law("other", "c")
+        report = joint._marginal_guard(path)
+        assert report.feasible is False
+        assert "not an event path" in report.description
+
     def test_a_path_inside_a_factor_without_marginals_is_declined(self):
         report = (_pair() * _law("other", "c"))._marginal_guard("a")
         assert report.feasible is False
@@ -904,9 +919,25 @@ class TestMarginalValues:
         assert pair.marginalized == ["a"]
         assert marginal.event_spec == OutputSpec(a=SCALAR)
 
-    def test_the_marginal_of_a_group_is_labeled_by_its_factors(self):
+    def test_the_marginal_of_a_group_is_labeled_by_its_paths(self):
         joint = _law("u", "a") * _law("v", "b") * _law("w", "c")
-        assert joint._marginal(("a", "c")).name == "u·w"
+        assert joint._marginal(("a", "c")).name == "a, c"
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            pytest.param("beta", id="kept-factor"),
+            pytest.param(("y", "beta"), id="sub-joint"),
+            pytest.param(("beta",), id="selection-of-one"),
+            pytest.param("record", id="field-of-a-record"),
+            pytest.param("params/u", id="reduced-factor"),
+        ],
+    )
+    def test_a_marginal_is_labeled_by_its_path_as_the_view_there_is(self, path):
+        record = OneFieldNormal("one", OutputSpec(RecordSpec(record=SCALAR)))
+        params = MarginalLaw("p", OutputSpec(params=RecordSpec(u=SCALAR)), exact=("params/u",))
+        joint = _likelihood() * _prior() * record * params
+        assert joint._marginal(path).name == FieldView(joint, path).name
 
     def test_a_selection_of_one_whole_term_is_an_exposed_record(self):
         prior = _prior()
@@ -914,9 +945,25 @@ class TestMarginalValues:
         assert marginal.event_spec == OutputSpec(RecordSpec(beta=prior.event_spec.spec))
         assert marginal.factors == (prior,)
 
-    def test_a_selection_of_a_record_factor_components_is_that_factor(self):
+    def test_a_selection_of_a_record_factor_components_is_that_factor_under_the_paths(self):
         pair = _pair()
-        assert (pair * _law("other", "c"))._marginal(("a", "b")) is pair
+        marginal = (pair * _law("other", "c"))._marginal(("a", "b"))
+        assert type(marginal) is type(pair) and marginal.spec == pair.spec
+        assert (marginal.name, pair.name) == ("a, b", "pair")
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            pytest.param("gamma", id="unknown-component"),
+            pytest.param("beta/zzz", id="below-a-leaf"),
+            pytest.param(("beta", "gamma"), id="in-a-selection"),
+            pytest.param("", id="empty"),
+        ],
+    )
+    def test_a_path_that_is_not_an_event_path_raises_key_error(self, path):
+        joint = _likelihood() * _prior()
+        with pytest.raises(KeyError, match="not an event path"):
+            joint._marginal(path)
 
     def test_a_projection_onto_a_one_field_record_is_the_law_of_its_field(self):
         record = OneFieldNormal("record", OutputSpec(RecordSpec(beta=SCALAR)))

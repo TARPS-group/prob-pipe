@@ -760,23 +760,60 @@ class _SoleField(Distribution):
         object.__setattr__(self, "_component", component)
 
 
+def _requested_paths(joint: Any, path: str | tuple[str, ...]) -> tuple[str, ...]:
+    """The event paths of *joint* that *path* requests: one path, or a selection of several.
+
+    Raises
+    ------
+    KeyError
+        If a path is not an event path of the joint.
+    TypeError
+        If a path is not a string.
+    ValueError
+        If a selection names no path, or two of its paths share a final
+        segment.
+    """
+    paths = (path,) if isinstance(path, str) else tuple(path)
+    if not paths:
+        raise ValueError("a selection of event paths names at least one path")
+    record = joint._graph.event_spec.spec
+    for requested in paths:
+        if not isinstance(requested, str):
+            raise TypeError(f"an event path is a string, got {type(requested).__name__}")
+        try:
+            record.at_path(*requested.split(_PATH_SEP))
+        except KeyError:
+            raise KeyError(
+                f"{requested!r} is not an event path of {joint.name!r}, whose components are "
+                f"{list(joint.event_spec.components)}"
+            ) from None
+    finals = [requested.rsplit(_PATH_SEP, 1)[-1] for requested in paths]
+    shared = sorted({final for final in finals if finals.count(final) > 1})
+    if shared:
+        raise ValueError(
+            f"the selected paths {list(paths)} share the final segments {shared}, which would "
+            f"name two fields of the selected record alike"
+        )
+    return paths
+
+
 def _marginal_guard(self: Any, path: str | tuple[str, ...]) -> Feasibility:
     """Whether the marginal at *path* is exact, by the factor graph.
 
-    The target's ancestor closure must add no factor, since integrating out a
-    field that a kept factor conditions on has no closed form here. Within the
-    target, a factor requested whole is kept whole, and a factor requested in
-    part delegates to its own marginal guard, provided no other requested factor
-    conditions on what that reduction integrates out.
+    A path must be an event path of the joint, and the paths of a selection
+    must end in distinct segments. The target's ancestor closure must add no
+    factor, since integrating out a field that a kept factor conditions on has
+    no closed form here. Within the target, a factor requested whole is kept
+    whole, and a factor requested in part delegates to its own marginal guard,
+    provided no other requested factor conditions on what that reduction
+    integrates out.
     """
     graph: _FactorGraph = self._graph
-    paths = (path,) if isinstance(path, str) else tuple(path)
-    if not paths:
-        return Feasibility(False, "no path was requested")
+    try:
+        paths = _requested_paths(self, path)
+    except (KeyError, TypeError, ValueError) as error:
+        return Feasibility(False, str(error.args[0]) if error.args else repr(error))
     heads = {p.split(_PATH_SEP, 1)[0] for p in paths}
-    unknown = heads - set(graph.producers)
-    if unknown:
-        return Feasibility(False, f"the joint has no component {sorted(unknown)}")
     targets = {graph.producers[head] for head in heads}
     ancestors = graph.ancestors(targets) - targets
     if ancestors:
@@ -1037,8 +1074,9 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
     whole term: a kept factor that exposes a record of that one component is
     returned as the law of its field. A selection of several paths returns an
     exposed record: the one factor itself when it exposes a record, and
-    otherwise the joint of the kept factors in factor order, labeled by their
-    labels joined with ``·``.
+    otherwise the joint of the kept factors in factor order. The marginal is
+    labeled as the view at *path* is: by the path, or by the paths of a
+    selection joined with ``", "``.
 
     Parameters
     ----------
@@ -1052,18 +1090,27 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
 
     Raises
     ------
+    KeyError
+        If a path is not an event path of the joint.
+    TypeError
+        If a path is not a string.
+    ValueError
+        If a selection names no path, or two of its paths share a final
+        segment.
     ResolutionError
         If the marginal guard does not accept *path*, so no exact marginal is
         available there.
     """
+    paths = _requested_paths(self, path)
     report = _marginal_guard(self, path)
     if report.feasible is not True:
         reason = report.description or "; ".join(report.pending)
         raise ResolutionError(f"{self.name!r} has no exact marginal at {path!r}: {reason}")
     graph: _FactorGraph = self._graph
     projection = isinstance(path, str)
+    label = path if projection else ", ".join(paths)
     kept: list[Distribution] = []
-    for index, requested in _requests(graph, (path,) if projection else tuple(path)).items():
+    for index, requested in _requests(graph, paths).items():
         factor = graph.factors[index]
         if not _kept_whole(factor, requested):
             kept.append(factor._marginal(_factor_request(requested)))
@@ -1072,8 +1119,9 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
         else:
             kept.append(factor)
     if len(kept) == 1 and (projection or kept[0].event_spec.exposes_record):
-        return kept[0]
-    return FactoredDistribution(_LABEL_SEP.join(factor.name for factor in kept), kept)
+        (marginal,) = kept
+        return marginal if marginal.name == label else marginal.with_name(label)
+    return FactoredDistribution(label, kept)
 
 
 def _all_claim(factors: Sequence[Factor], protocol: type) -> bool:
