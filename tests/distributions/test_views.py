@@ -41,7 +41,6 @@ from probpipe import (
     OutputSpec,
     ProductDistribution,
     Record,
-    RecordBatch,
     RecordSpec,
 )
 from probpipe.core._dispatch import Feasibility
@@ -866,23 +865,36 @@ class TestDerivedBehavior:
         assert [set(given) for given in parent.given_calls] == [{"model/theta/tau"}]
         assert conditioned.event_spec == OutputSpec(theta=RecordSpec(mu=_REAL))
 
-    def test_a_group_view_draws_the_sub_record_of_the_parent_draw(self, key):
+    def test_a_group_view_draws_the_nested_mapping_of_the_parent_draw_at_its_node(self, key):
         parent = _NumericLaw("parent")
         draw = FieldView(parent, "model/theta")._sample(key)
-        assert isinstance(draw, Record)
+        assert isinstance(draw, dict)
         assert list(draw.keys()) == ["mu", "tau"]
         assert jnp.array_equal(draw["tau"], parent._sample(key)["model/theta/tau"])
 
-    def test_a_batched_group_draw_is_the_sub_batch_of_the_parent_draws(self, key):
+    def test_a_batched_group_draw_is_the_mapping_of_the_parent_columns_at_its_node(self, key):
         parent = _NumericLaw("parent")
         draws = FieldView(parent, "model/theta")._sample(key, (4,))
-        assert isinstance(draws, RecordBatch)
-        assert draws.batch_shape == (4,)
+        assert isinstance(draws, dict)
+        assert jnp.shape(draws["mu"]) == (4,)
         assert jnp.array_equal(draws["tau"], parent._sample(key, (4,))["model/theta/tau"])
+
+    def test_a_view_of_a_mapping_parent_draws_its_node_of_the_mapping(self, key):
+        parent = ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 2.0, 3.0)) * Normal(
+            "c", 0.0, 1.0
+        )
+        draws = FieldView(parent, ("c", "b"))._sample(key, (3,))
+        parent_draws = parent._sample(key, (3,))
+        assert isinstance(draws, dict) and list(draws) == ["c", "b"]
+        assert jnp.array_equal(draws["c"], parent_draws["c"])
+        assert jnp.array_equal(draws["b"], parent_draws["b"])
 
     def test_a_view_of_a_whole_record_at_its_component_draws_the_term(self, key):
         parent = _WholeLaw("parent")
-        assert FieldView(parent, "parameters")._sample(key) == parent._sample(key)
+        draw = FieldView(parent, "parameters")._sample(key)
+        assert isinstance(draw, dict) and list(draw) == ["beta", "sigma"]
+        term = parent._sample(key)
+        assert all(jnp.array_equal(draw[name], term[name]) for name in draw)
 
     def test_a_view_of_a_whole_record_field_draws_the_field_of_the_term(self, key):
         parent = _WholeLaw("parent")
@@ -972,35 +984,35 @@ class TestSelections:
 
     _PATHS = ("y", "model/theta")
 
-    def test_a_selection_co_samples_the_record_of_its_nodes(self, key):
+    def test_a_selection_co_samples_the_mapping_of_its_nodes(self, key):
         parent = _NumericLaw("parent")
         draw = parent._sample(key)
         selected = FieldView(parent, self._PATHS)._sample(key)
-        assert isinstance(selected, Record)
-        assert list(selected.children) == ["y", "theta"]
+        assert isinstance(selected, dict) and isinstance(selected["theta"], dict)
+        assert list(selected) == ["y", "theta"]
         assert jnp.array_equal(selected["y"], draw["y"])
-        assert jnp.array_equal(selected["theta/tau"], draw["model/theta/tau"])
+        assert jnp.array_equal(selected["theta"]["tau"], draw["model/theta/tau"])
 
     def test_the_declaration_admits_a_selection_draw(self, key):
         selection = FieldView(_NumericLaw("parent"), self._PATHS)
         assert selection.event_spec.spec.is_valid(selection._sample(key))
 
-    def test_a_batched_selection_draw_is_a_record_batch_at_the_parent_levels(self, key):
+    def test_a_batched_selection_draw_is_the_mapping_of_the_parent_columns(self, key):
         parent = _NumericLaw("parent")
         draws = FieldView(parent, self._PATHS)._sample(key, (4,))
         parent_draws = parent._sample(key, (4,))
-        assert isinstance(draws, RecordBatch)
-        assert (draws.batch_shape, draws.level_names) == ((4,), parent_draws.level_names)
-        assert list(draws.element_spec.children) == ["y", "theta"]
-        assert jnp.array_equal(draws["theta/mu"], parent_draws["model/theta/mu"])
+        assert isinstance(draws, dict)
+        assert list(draws) == ["y", "theta"] and list(draws["theta"]) == ["mu", "tau"]
+        assert jnp.array_equal(draws["theta"]["mu"], parent_draws["model/theta/mu"])
         assert jnp.array_equal(draws["y"], parent_draws["y"])
 
-    def test_the_moments_of_a_selection_are_records_of_the_parent_moments(self):
+    def test_the_moments_of_a_selection_are_mappings_of_the_parent_moments(self):
         selection = FieldView(_NumericLaw("parent"), self._PATHS)
         mean, variance = selection._mean(), selection._variance()
+        assert isinstance(mean, dict) and isinstance(variance, dict)
         assert jnp.allclose(mean["y"], jnp.array([3.0, 4.0, 5.0]))
-        assert jnp.allclose(mean["theta/tau"], jnp.array([1.0, 2.0]))
-        assert jnp.allclose(variance["theta/mu"], _FLAT_COV[0, 0])
+        assert jnp.allclose(mean["theta"]["tau"], jnp.array([1.0, 2.0]))
+        assert jnp.allclose(variance["theta"]["mu"], _FLAT_COV[0, 0])
 
     def test_the_covariance_of_a_selection_keeps_the_selection_order(self):
         cov = FieldView(_NumericLaw("parent"), ("y", "model/theta/mu"))._cov()

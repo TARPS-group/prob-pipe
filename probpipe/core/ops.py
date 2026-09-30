@@ -100,6 +100,8 @@ def sample(
         raise TypeError("sample_shape must be an integer or tuple of integers") from None
     if any(axis < 0 for axis in sample_shape):
         raise ValueError(f"sample_shape dimensions must be non-negative; got {sample_shape!r}")
+    declaration = getattr(dist, "event_spec", None)
+    event_spec = getattr(declaration, "spec", None)
     if key is None:
         captured = _descendants.capture_stochastic_consumer(dist)
         key = _broker._resolve_automatic_key(
@@ -116,15 +118,23 @@ def sample(
             _descendants.sample_captured_consumer(captured, key, sample_shape),
             sample_shape,
             name=getattr(dist, "name", "sample"),
+            event_spec=event_spec,
         )
     return _drawn_at_its_batch_form(
         dist._sample(key, sample_shape),
         sample_shape,
         name=getattr(dist, "name", "sample"),
+        event_spec=event_spec,
     )
 
 
-def _drawn_at_its_batch_form(drawn: Any, sample_shape: tuple[int, ...], *, name: str) -> Any:
+def _drawn_at_its_batch_form(
+    drawn: Any,
+    sample_shape: tuple[int, ...],
+    *,
+    name: str,
+    event_spec: Any = None,
+) -> Any:
     """Wrap draws at their kind, retaining the law's naming metadata.
 
     A non-empty ``sample_shape`` puts those leading dimensions on one level named
@@ -134,27 +144,58 @@ def _drawn_at_its_batch_form(drawn: Any, sample_shape: tuple[int, ...], *, name:
     not name what its leading axes range over, and reading them as event shape
     says the draws were one wide value.
 
-    The event shape is read off the draw, which stays exact for a law whose event
-    shape is symbolic until a draw binds it. The batch takes the law's own *name*,
-    since the draws are that law's. A single raw draw takes the same name
-    when wrapped.
+    A record-valued draw in raw form is the nested mapping of its raw leaves,
+    stacked with the draw axes leading under a non-empty ``sample_shape``, and a
+    record held inside the mapping is read as its own nested mapping. It is
+    wrapped by the law's record declaration *event_spec*: one draw as a
+    ``Record`` and a batch of draws as the ``RecordBatch`` or
+    ``NumericRecordBatch`` that declaration calls for. Without a record
+    declaration the structure is inferred from the mapping. For any other draw
+    the event shape is read off the draw, which stays exact for a law whose
+    event shape is symbolic until a draw binds it. The batch takes the law's own
+    *name*, since the draws are that law's. A single raw draw takes the same
+    name when wrapped.
 
     A law that built its own batch already named the level, and a term of some
-    other kind is left as it is.
+    other kind is left as it is. So is a mapping whose leaves are not arrays led
+    by the draw axes, since it is not the raw form of a batch of draws.
     """
+    from collections.abc import Mapping
+
     from ._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
     from ._batch import Batch
     from ._broadcast_distributions import SAMPLE_LEVEL, _make_stack
     from ._numeric_array_batch import NumericArrayBatch
     from ._object_batch import _is_object_array
     from ._record_batch import _batch_class_for
-    from ._record_spec import _reshaped_template
+    from ._record_spec import RecordSpec, _reshaped_template
     from ._specs import NumericArraySpec
     from .record import Record
     from .tracked import TrackedTerm
 
     if isinstance(drawn, Batch):
         return drawn
+
+    declared = event_spec if isinstance(event_spec, RecordSpec) else None
+    if isinstance(drawn, Mapping) and not isinstance(drawn, TrackedTerm):
+        from ..distributions._factored import _raw_record
+
+        raw = _raw_record(drawn)
+        if not sample_shape:
+            return Record(name, raw, event_template=declared)
+        if not _is_stacked_columns(raw, sample_shape):
+            # Not the raw form of a batch of draws, so there is no batch to build.
+            return drawn
+        if declared is None:
+            stacked = Record(name, raw).event_template
+            declared = _reshaped_template(stacked, lambda shape: shape[len(sample_shape) :])
+        return _batch_class_for(declared)(
+            name,
+            raw,
+            SAMPLE_LEVEL,
+            element_spec=declared,
+            axes_per_level=(len(sample_shape),),
+        )
 
     if not sample_shape:
         if isinstance(drawn, TrackedTerm):
@@ -215,6 +256,19 @@ def _drawn_at_its_batch_form(drawn: Any, sample_shape: tuple[int, ...], *, name:
         ),
         axes_per_level=(len(sample_shape),),
     )
+
+
+def _is_stacked_columns(columns: Any, sample_shape: tuple[int, ...]) -> bool:
+    """Whether every leaf of the nested mapping *columns* is an array led by *sample_shape*.
+
+    An object array is the column of a field that is not an array, so it counts.
+    """
+    from collections.abc import Mapping
+
+    if isinstance(columns, Mapping):
+        return all(_is_stacked_columns(column, sample_shape) for column in columns.values())
+    shape = getattr(columns, "shape", None)
+    return shape is not None and tuple(shape[: len(sample_shape)]) == tuple(sample_shape)
 
 
 def _at_the_operands_levels(computed: Any, operand: Any) -> Any:

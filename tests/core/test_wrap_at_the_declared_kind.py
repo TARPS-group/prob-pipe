@@ -194,6 +194,26 @@ class TestASampleShapeGetsADrawLevel:
 
         assert isinstance(drawn, NumericRecordBatch)
 
+    def test_a_joint_draws_a_batch_of_records_under_its_declaration(self):
+        """A law whose draws are a mapping of columns draws the batch its declaration names."""
+        from probpipe import NumericRecordBatch
+
+        law = Normal(loc=0.0, scale=1.0, name="a") * Normal(loc=0.0, scale=1.0, name="b")
+
+        drawn = sample(law, sample_shape=(4,), key=jax.random.PRNGKey(0))
+
+        assert isinstance(drawn, NumericRecordBatch)
+        assert (drawn.batch_shape, drawn.level_names) == ((4,), ("sample",))
+        assert drawn.element_spec == law.event_spec.spec
+
+    def test_one_draw_of_a_joint_is_a_record_under_its_declaration(self):
+        law = Normal(loc=0.0, scale=1.0, name="a") * Normal(loc=0.0, scale=1.0, name="b")
+
+        drawn = sample(law, key=jax.random.PRNGKey(0))
+
+        assert isinstance(drawn, Record)
+        assert drawn.spec == law.event_spec.spec
+
     @pytest.mark.parametrize("kind", ["numeric", "record", "object"])
     @pytest.mark.parametrize(
         "shape, sample_shape",

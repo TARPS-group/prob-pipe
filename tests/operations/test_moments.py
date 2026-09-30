@@ -25,6 +25,8 @@ from probpipe.core._dispatch import (
 )
 from probpipe.core._specs import OutputSpec
 from probpipe.core.constraints import non_negative, real, unit_interval
+from probpipe.distributions._capabilities import SupportsConditionalSampling
+from probpipe.distributions._conditional import ConditionalDistribution
 from probpipe.linalg import LinOp
 from probpipe.operations import RouteSource
 from probpipe.operations._moments import (
@@ -39,9 +41,38 @@ from probpipe.operations._moments import (
 from probpipe.operations._operation import ApplicabilityError
 from probpipe.values import Function
 
-from ._laws import Bare, Coin, ExactPosterior, Gaussian, GuardedMean, Measure, Pair, Sampler, Vector
+from ._laws import (
+    REAL,
+    Bare,
+    Coin,
+    ExactPosterior,
+    Gaussian,
+    GuardedMean,
+    Measure,
+    Pair,
+    Sampler,
+    Vector,
+)
 
 _DRAWS = 4000
+
+
+class _Shift(ConditionalDistribution, SupportsConditionalSampling):
+    """The kernel ``y | mu``, a point mass one above its given, which only samples."""
+
+    def __init__(self) -> None:
+        super().__init__("y", {"mu": REAL}, OutputSpec(y=REAL))
+
+    def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
+        raise NotImplementedError("the moment tests bind no given of the kernel")
+
+    def _conditional_sample(self, given: Any, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
+        return jnp.asarray(given["mu"], jnp.float32) + jnp.ones(sample_shape, jnp.float32)
+
+
+def _dependent_joint() -> Any:
+    """``y = mu + 1`` with ``mu ~ Normal(2, 1)``: a joint that samples and has no moment."""
+    return _Shift() * Gaussian("mu", 2.0)
 
 
 class _QuadratureStandIn(ExpectationMethod):
@@ -211,6 +242,29 @@ class TestQuantile:
     def test_the_levels_are_numeric(self):
         with pytest.raises(ApplicabilityError, match="levels"):
             quantile(Gaussian("g"), "median")
+
+
+class TestTheFallbacksOfAJoint:
+    """A joint's draws are a mapping of columns, which each fallback reads per component."""
+
+    def test_the_mean_is_the_average_of_each_component(self):
+        with workflow_run(seed=7):
+            estimate = mean.with_options(n_broadcast_samples=_DRAWS)(_dependent_joint())
+        assert isinstance(estimate, Record) and estimate.fields == ("y", "mu")
+        assert abs(_value(estimate["mu"]) - 2.0) < 0.1
+        assert abs(_value(estimate["y"]) - 3.0) < 0.1
+
+    def test_the_variance_is_the_sample_variance_of_each_component(self):
+        with workflow_run(seed=8):
+            estimate = variance.with_options(n_broadcast_samples=_DRAWS)(_dependent_joint())
+        assert isinstance(estimate, Record)
+        assert abs(_value(estimate["mu"]) - 1.0) < 0.15
+        assert abs(_value(estimate["y"]) - 1.0) < 0.15
+
+    def test_the_covariance_couples_the_components(self):
+        with workflow_run(seed=9):
+            estimate = cov.with_options(n_broadcast_samples=_DRAWS)(_dependent_joint())
+        np.testing.assert_allclose(np.asarray(estimate), np.ones((2, 2)), atol=0.15)
 
 
 class TestExpectation:

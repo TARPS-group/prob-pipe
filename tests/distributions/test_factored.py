@@ -845,6 +845,14 @@ class TestMarginalValues:
         draws = marginal._sample(jax.random.PRNGKey(0), (3,))
         assert jnp.allclose(draws, record._sample(jax.random.PRNGKey(0), (3,))["beta"])
 
+    def test_the_law_of_a_record_field_draws_the_nested_mapping_of_its_leaves(self):
+        fields = OutputSpec(RecordSpec(params=RecordSpec(u=SCALAR, v=SCALAR)))
+        draw = Record("draw", {"params": {"u": jnp.asarray(1.0), "v": jnp.asarray(2.0)}})
+        joint = PointLaw("record", fields, draw) * _law("other", "c")
+        value = joint._marginal("params")._sample(jax.random.PRNGKey(0))
+        assert isinstance(value, dict) and list(value) == ["u", "v"]
+        assert (float(value["u"]), float(value["v"])) == (1.0, 2.0)
+
     def test_a_marginal_the_guard_declines_raises(self):
         with pytest.raises(ResolutionError, match=_mentions("'y'", "'prior'")):
             (_likelihood() * _prior())._marginal("y")

@@ -30,10 +30,10 @@ from ..core._numeric_array_batch import NumericArrayBatch
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._object_batch import _is_object_array, _ObjectBatch
 from ..core._record_batch import RecordBatch
-from ..core._record_spec import NumericRecordSpec, RecordSpec, _reshaped_template
+from ..core._record_spec import NumericRecordSpec, RecordSpec
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec
 from ..core._specs import OutputSpec
-from ..core.record import Record
+from ..core.named_tree import _unflatten_paths
 from ..linalg import DenseLinOp
 from ._capabilities import (
     SupportsCovariance,
@@ -191,10 +191,13 @@ def _ranks(atoms: Batch) -> tuple[int, ...]:
 
 
 def _leafwise(law: EmpiricalDistribution, reduce: Callable[[Array | None, Array], Array]) -> Any:
-    """*reduce* of the weights and each leaf's atoms, which gives a value shaped like one draw."""
+    """*reduce* of the weights and each leaf's atoms, in the raw form of one draw.
+
+    A record event gives the nested mapping of each leaf's result.
+    """
     rows, weights = law._rows, law._p
     if isinstance(rows, dict):
-        return Record(law.name, {path: reduce(weights, column) for path, column in rows.items()})
+        return _unflatten_paths({path: reduce(weights, column) for path, column in rows.items()})
     return reduce(weights, rows)
 
 
@@ -292,7 +295,9 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
     ==========================  ===================================================
 
     An instance whose event is not numeric claims no moment. The law claims no
-    density, since an empirical measure has none in general.
+    density, since an empirical measure has none in general. Every result that
+    is shaped like a draw is in the draw's raw form, so a record event's draw,
+    moment, or quantiles are a nested mapping of raw leaves.
 
     Parameters
     ----------
@@ -412,22 +417,14 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
     def _atoms_at(self, index: Any) -> Any:
         """The atoms at *index*, an integer array, in their raw form with its axes leading.
 
-        A record atom is a ``Record`` carrying the event's record spec; with
-        leading axes it is a record of stacked columns, which keeps the spec's
-        dtypes and supports when the record is numeric.
+        A record atom is the nested mapping of its raw leaves. With leading axes
+        each leaf is the stacked column of the indexed atoms, which is an object
+        array for a leaf that is not numeric.
         """
-        spec = self.event_spec.spec
         rows = self._rows
-        if not isinstance(spec, RecordSpec):
+        if not isinstance(self.event_spec.spec, RecordSpec):
             return _taken(rows, index)
-        columns = {path: _taken(column, index) for path, column in rows.items()}
-        axes = tuple(jnp.shape(index))
-        if not axes:
-            return Record(self.name, columns, event_template=spec)
-        if isinstance(spec, NumericRecordSpec):
-            stacked = _reshaped_template(spec, lambda shape: (*axes, *shape))
-            return Record(self.name, columns, event_template=stacked)
-        return Record(self.name, columns)
+        return _unflatten_paths({path: _taken(column, index) for path, column in rows.items()})
 
     # -- sampling ---------------------------------------------------------------
 
@@ -438,9 +435,9 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         -------
         Any
             One atom in its raw form for ``sample_shape=()``: an array for array
-            atoms, a ``Record`` for record atoms, and the stored object
-            otherwise. A non-empty shape prepends its axes to the array, to each
-            column of the record, or as the axes of an object array.
+            atoms, the nested mapping of raw leaves for record atoms, and the
+            stored object otherwise. A non-empty shape prepends its axes to the
+            array, to each leaf of the mapping, or as the axes of an object array.
         """
         index = weighted_choice(key, self.num_atoms, weights=self._p, shape=tuple(sample_shape))
         return self._atoms_at(index)
@@ -450,10 +447,11 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
     def _expectation(self, f: Callable[[Any], Array]) -> Array:
         """The exact ``E[f(X)]``: the weighted mean of ``f`` over the atoms.
 
-        ``f`` receives each atom in its raw form, as a draw is returned, and
-        returns an array or a pytree of arrays. Over a numeric event ``f`` is
-        evaluated at every atom at once with ``jax.vmap``, so it must be
-        traceable; over any other event it is called on each atom in turn.
+        ``f`` receives each atom in its raw form, as a draw is returned, so a
+        record atom is the nested mapping of its raw leaves, and returns an
+        array or a pytree of arrays. Over a numeric event ``f`` is evaluated at
+        every atom at once with ``jax.vmap``, so it must be traceable; over any
+        other event it is called on each atom in turn.
 
         Returns
         -------
@@ -465,11 +463,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         if isinstance(spec, NumericArraySpec):
             values = jax.vmap(f)(rows)
         elif isinstance(spec, NumericRecordSpec):
-
-            def at_atom(columns: dict[str, Array]) -> Any:
-                return f(Record(self.name, columns, event_template=spec))
-
-            values = jax.vmap(at_atom)(rows)
+            values = jax.vmap(f)(_unflatten_paths(rows))
         else:
             values = _stacked([f(self._atoms_at(index)) for index in range(self.num_atoms)])
         return jax.tree.map(lambda value: weighted_mean(self._p, value), values)

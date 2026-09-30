@@ -20,10 +20,13 @@ import jax.numpy as jnp
 from jax.scipy.linalg import block_diag
 
 from ..core._dispatch import Feasibility, ResolutionError
+from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
 from ..core._spec_base import NumericArraySpec, TermSpec, _unify_specs
 from ..core._specs import InputSpec, OutputSpec
+from ..core.named_tree import _unflatten_paths
 from ..core.provenance import Provenance
+from ..core.record import Record
 from ..linalg import DenseLinOp, to_dense
 from ._capabilities import (
     _CONDITIONAL_TWINS,
@@ -55,7 +58,6 @@ from ._distribution import (
 )
 
 if TYPE_CHECKING:
-    from ..core.record import Record
     from ..custom_types import Array, ArrayLike, PRNGKey
 
 __all__ = [
@@ -300,19 +302,37 @@ def _factor_graph(
 # extraction, so every factor receives a value of the kind it declares.
 
 
+def _raw_record(value: Any) -> Any:
+    """*value* in the raw form of a record-valued result: the nested mapping of its raw leaves.
+
+    A ``Record`` gives the nested mapping of its leaves, and a batch of records
+    the nested mapping of its columns with the batch axes leading. A mapping is
+    converted value by value, and any other value is returned as it is.
+    """
+    if isinstance(value, RecordBatch):
+        return _unflatten_paths(value._raw_columns())
+    if isinstance(value, Record):
+        return value.to_nested_dict()
+    if isinstance(value, Mapping):
+        return {key: _raw_record(entry) for key, entry in value.items()}
+    return value
+
+
 def _children(value: Any) -> Mapping[str, Any]:
     """The immediate children of *value*, the raw form of a record, keyed by name.
 
-    A raw record is a mapping of its fields, and a ``Record`` is read through
-    its one-level view.
+    A raw record is a mapping of its fields. A ``Record`` is read through its
+    one-level view, and a batch of records through its raw columns.
 
     Raises
     ------
     TypeError
-        If *value* is neither a mapping nor a ``Record``.
+        If *value* is none of these.
     """
     if isinstance(value, Mapping):
         return value
+    if isinstance(value, RecordBatch):
+        return _raw_record(value)
     children = getattr(value, "children", None)
     if isinstance(children, Mapping):
         return children
@@ -403,7 +423,9 @@ def _ancestral_sample(
     """The draw of the joint of *graph*, each unmet given set by *fixed*.
 
     Conditional-first order makes right to left an ancestral order, so every
-    component a factor conditions on is drawn before the factor draws.
+    component a factor conditions on is drawn before the factor draws. Each
+    factor's draw is read in its raw form, so the joint's draw is the nested
+    mapping of raw leaves whatever form a factor returns.
     """
     keys = jax.random.split(key, len(graph.factors))
     drawn: dict[str, Any] = {}
@@ -413,7 +435,7 @@ def _ancestral_sample(
             draw = _conditional_draw(factor, drawn, fixed, keys[index], sample_shape)
         else:
             draw = factor._sample(keys[index], sample_shape)
-        drawn.update(_components_of(factor.event_spec, draw))
+        drawn.update(_components_of(factor.event_spec, _raw_record(draw)))
     return {component: drawn[component] for component in graph.event_spec.components}
 
 
@@ -508,10 +530,10 @@ def _factor_results(
 def _componentwise(
     graph: _FactorGraph, fixed: Mapping[str, Any], method: str, *arguments: Any
 ) -> dict[str, Any]:
-    """Each factor's event-typed *method* result, assembled per component in canonical order."""
+    """Each factor's event-typed *method* result in its raw form, assembled per component."""
     assembled: dict[str, Any] = {}
     for factor, result in _factor_results(graph, fixed, method, *arguments):
-        assembled.update(_components_of(factor.event_spec, result))
+        assembled.update(_components_of(factor.event_spec, _raw_record(result)))
     return {component: assembled[component] for component in graph.event_spec.components}
 
 
@@ -553,11 +575,11 @@ def _sole_field_projection(method: str) -> Callable[..., Any]:
     """The capability of a :class:`_SoleField` that takes the one field of the law's *method*."""
 
     def projected(self: _SoleField, *arguments: Any) -> Any:
-        return _children(getattr(self._law, method)(*arguments))[self._component]
+        return _children(_raw_record(getattr(self._law, method)(*arguments)))[self._component]
 
     projected.__name__ = method
     projected.__qualname__ = f"_SoleField.{method}"
-    projected.__doc__ = f"The one field of the record law's ``{method}``."
+    projected.__doc__ = f"The one field of the record law's ``{method}``, in its raw form."
     return projected
 
 
@@ -591,8 +613,8 @@ def _sole_field_cov(self: _SoleField) -> Any:
 
 
 def _sole_field_expectation(self: _SoleField, f: Callable[[Any], Array]) -> Array:
-    """The record law's expectation of *f* at the one field of each draw."""
-    return self._law._expectation(lambda record: f(_children(record)[self._component]))
+    """The record law's expectation of *f* at the one field of each draw, in its raw form."""
+    return self._law._expectation(lambda record: f(_children(_raw_record(record))[self._component]))
 
 
 def _sole_field_marginal(self: _SoleField, path: str | tuple[str, ...]) -> Distribution:

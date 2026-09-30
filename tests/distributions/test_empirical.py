@@ -322,10 +322,25 @@ class TestSampling:
 
     def test_a_record_draw_is_one_atom_whole(self):
         draw = _record_law()._sample(jax.random.PRNGKey(0))
-        assert isinstance(draw, Record)
-        assert draw.event_template == _RECORD_SPEC
+        assert isinstance(draw, dict)
+        assert _RECORD_SPEC.is_valid(draw)
         rows = {(*np.asarray(b), float(a)) for b, a in zip(_B, _A)}
         assert (*np.asarray(draw["b"]), float(draw["a"])) in rows
+
+    @pytest.mark.parametrize("sample_shape", [(), (5,)])
+    def test_a_record_draw_is_the_nested_mapping_of_its_raw_leaves(self, sample_shape):
+        draws = EmpiricalDistribution("m", _mixed_atoms())._sample(
+            jax.random.PRNGKey(0), sample_shape
+        )
+        assert isinstance(draws, dict) and isinstance(draws["g"], dict)
+        assert list(draws) == ["label", "g"] and list(draws["g"]) == ["u", "v"]
+        assert jnp.shape(draws["g"]["v"]) == (*sample_shape, 2)
+        if sample_shape:
+            assert draws["label"].dtype == object and draws["label"].shape == sample_shape
+            rows = {(label, float(u)) for label, u in zip(_LABELS, _U)}
+            assert {(label, float(u)) for label, u in zip(draws["label"], draws["g"]["u"])} <= rows
+        else:
+            assert draws["label"] in set(_LABELS)
 
     def test_record_draws_resample_whole_rows(self):
         draws = _record_law()._sample(jax.random.PRNGKey(0), (200,))
@@ -348,6 +363,13 @@ class TestSampling:
         assert isinstance(sample(_record_law(), key=key, sample_shape=(4,)), NumericRecordBatch)
         for law in (_array_law(), _record_law(), _opaque_law()):
             assert law.event_spec.spec.is_valid(sample(law, key=key))
+
+    def test_the_sample_operation_draws_a_batch_of_mixed_records(self):
+        law = EmpiricalDistribution("m", _mixed_atoms())
+        draws = sample(law, key=jax.random.PRNGKey(0), sample_shape=(4,))
+        assert type(draws) is RecordBatch
+        assert (draws.batch_shape, draws.level_names) == ((4,), ("sample",))
+        assert draws.element_spec == law.event_spec.spec
 
 
 # -- Moments --------------------------------------------------------------------
@@ -387,7 +409,8 @@ class TestMoments:
     def test_the_moments_of_record_atoms_are_shaped_like_a_draw(self):
         law = _record_law()
         mean = law._mean()
-        assert isinstance(mean, Record)
+        assert isinstance(mean, dict) and list(mean) == ["b", "a"]
+        assert _RECORD_SPEC.is_valid(mean)
         assert jnp.allclose(mean["a"], 1.75)
         assert jnp.allclose(mean["b"], jnp.array([0.75, 1.0]))
         variance = law._variance()
@@ -450,15 +473,18 @@ class TestExpectation:
         expected = _weighted_sum(_NORMALIZED, np.asarray(_VALUES) ** 2)
         assert jnp.allclose(_array_law()._expectation(lambda x: x**2), expected)
 
-    def test_a_record_integrand_reads_each_atom_as_a_record(self):
+    def test_a_record_integrand_reads_each_atom_as_its_raw_mapping(self):
         expected = _weighted_sum(
             _RECORD_WEIGHTS, [float(a) * float(np.sum(b)) for b, a in zip(_B, _A)]
         )
+        received: list[type] = []
 
-        def integrand(record: Record) -> jax.Array:
-            return record["a"] * jnp.sum(record["b"])
+        def integrand(atom: dict) -> jax.Array:
+            received.append(type(atom))
+            return atom["a"] * jnp.sum(atom["b"])
 
         assert jnp.allclose(_record_law()._expectation(integrand), expected)
+        assert received and all(kind is dict for kind in received)
 
     def test_the_identity_integrates_to_the_mean(self):
         law = _record_law()
@@ -478,7 +504,7 @@ class TestExpectation:
 
     def test_a_mixed_record_is_integrated_one_atom_at_a_time(self):
         law = EmpiricalDistribution("m", _mixed_atoms())
-        integrated = law._expectation(lambda record: len(record["label"]) * record["g/u"])
+        integrated = law._expectation(lambda atom: len(atom["label"]) * atom["g"]["u"])
         assert jnp.allclose(integrated, (5 * 1.0 + 5 * 2.0 + 4 * 3.0) / 3)
 
     def test_callable_atoms_are_integrated_at_a_point(self):
@@ -514,7 +540,7 @@ class TestMarginals:
         assert isinstance(marginal, SupportsMean)
         assert jnp.allclose(marginal._mean()["u"], jnp.mean(_U))
         draw = marginal._sample(jax.random.PRNGKey(0))
-        assert isinstance(draw, Record)
+        assert isinstance(draw, dict)
         assert list(draw.keys()) == ["u", "v"]
 
     def test_the_marginal_of_a_nested_leaf_takes_its_final_segment(self):

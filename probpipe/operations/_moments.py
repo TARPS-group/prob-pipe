@@ -37,14 +37,15 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..core._batch import BatchSpec
+from ..core._batch import Batch, BatchSpec
+from ..core._broadcast_distributions import SAMPLE_LEVEL
 from ..core._dispatch import (
     Feasibility,
     MathematicalDomainError,
     UnaryDispatchMethod,
     UnaryDispatchRegistry,
 )
-from ..core._empirical import EmpiricalDistribution
+from ..core._record_batch import _batch_class_for
 from ..core._record_spec import RecordSpec
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec
 from ..core._specs import OutputSpec
@@ -69,6 +70,8 @@ from ..distributions._capabilities import (
     _capability_guard,
 )
 from ..distributions._distribution import Distribution, DistributionSpec
+from ..distributions._empirical import EmpiricalDistribution
+from ..distributions._factored import _raw_record
 from ..functions import _broker, _descendants, function
 from ..values import Function, FunctionSpec
 from ._operation import ApplicabilityError, BoundCall, _workflow_draws, operation
@@ -420,9 +423,22 @@ def _monte_carlo_draws(call: BoundCall, operation_kind: str) -> Any:
     )
 
 
-def _empirical_of(call: BoundCall, draws: Any) -> Any:
-    """The empirical law of record-valued draws, which computes their moments per field."""
-    return EmpiricalDistribution(call.operation.name, draws)
+def _empirical_of(call: BoundCall, draws: Any) -> EmpiricalDistribution:
+    """The empirical law of the draws, whose moments the fallbacks report.
+
+    Draws of an array event are its atoms along their leading axis. Draws of a
+    record event are its atoms as the batch of records the law's event
+    declaration calls for, whether they arrive as a nested mapping of raw
+    columns or as a record of columns. A batch of records is taken as it is.
+    """
+    name = call.operation.name
+    event = call.operands["d"].event_spec.spec
+    if isinstance(draws, Batch) or not isinstance(event, RecordSpec):
+        return EmpiricalDistribution(
+            name, draws if isinstance(draws, Batch) else jnp.asarray(draws)
+        )
+    atoms = _batch_class_for(event)(name, _raw_record(draws), SAMPLE_LEVEL, element_spec=event)
+    return EmpiricalDistribution(name, atoms)
 
 
 def _mc_mean(call: BoundCall, result: OutputSpec | None) -> Any:

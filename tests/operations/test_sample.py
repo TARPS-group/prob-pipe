@@ -8,7 +8,14 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import NumericArray, NumericArrayBatch, Record, RecordBatch, workflow_run
+from probpipe import (
+    NumericArray,
+    NumericArrayBatch,
+    NumericRecordBatch,
+    Record,
+    RecordBatch,
+    workflow_run,
+)
 from probpipe.core._dispatch import ResolutionError
 from probpipe.distributions._batches import DistributionBatch
 from probpipe.distributions._distribution import Distribution
@@ -57,6 +64,14 @@ class TestBatches:
         assert draws.batch_shape == (6,)
         assert draws.level_names == ("sample",)
 
+    def test_a_joint_draws_a_batch_of_records_under_its_declaration(self):
+        joint = Gaussian("a") * Gaussian("b", 5.0)
+        draws = sample(joint, sample_shape=(4,))
+        assert isinstance(draws, NumericRecordBatch)
+        assert (draws.batch_shape, draws.level_names) == ((4,), ("sample",))
+        assert draws.element_spec == joint.event_spec.spec
+        assert jnp.shape(draws["b"]) == (4,)
+
     def test_a_measure_draws_a_batch_of_laws(self):
         draws = sample(Measure("m"), sample_shape=(3,))
         assert isinstance(draws, DistributionBatch)
@@ -89,6 +104,11 @@ class TestRawDraws:
     def test_a_raw_batch_of_laws_is_an_object_array(self):
         draws = sample.with_options(raw=True)(Measure("m"), sample_shape=(2,))
         assert isinstance(draws, np.ndarray) and draws.dtype == object
+
+    def test_a_raw_batch_of_a_joint_is_the_mapping_of_its_columns(self):
+        draws = sample.with_options(raw=True)(Gaussian("a") * Gaussian("b"), sample_shape=(3,))
+        assert isinstance(draws, dict) and list(draws) == ["a", "b"]
+        assert all(jnp.shape(column) == (3,) for column in draws.values())
 
 
 class TestRequirements:
