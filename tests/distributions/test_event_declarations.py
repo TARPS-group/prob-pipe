@@ -98,6 +98,7 @@ from probpipe.distributions import (
     _empirical,
 )
 from probpipe.distributions._capabilities import SupportsSampling
+from probpipe.distributions._factored import _SoleField
 from probpipe.distributions._joint_empirical import NumericJointEmpirical
 from probpipe.distributions._product import TFPProductDistribution
 from probpipe.distributions.gaussian_random_function import (
@@ -334,6 +335,7 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     _empirical.EmpiricalDistribution: lambda: _empirical.EmpiricalDistribution(
         "e", jnp.zeros((5, 2))
     ),
+    _SoleField: lambda: _SoleField(FactoredDistribution("record", [Normal("beta", 0.0, 1.0)])),
 }
 
 # The catalog's families whose implementation has not merged construct by raising.
@@ -413,7 +415,6 @@ _DRAW_FAILURES = {
         raises=ValueError, strict=True, reason="sample stacks a tuple draw as rows"
     ),
     FieldView: pytest.mark.pending(reason="a view samples by co-sampling its parent"),
-    FactoredDistribution: pytest.mark.pending(reason="a joint samples through its factors"),
 }
 
 # Laws that do not pickle, by the exception each raises.

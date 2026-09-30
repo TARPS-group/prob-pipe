@@ -395,7 +395,6 @@ class TestComposition:
         assert isinstance(bound, FactoredDistribution)
         assert bound.event_spec.components["y"].shape == (4,)
 
-    @pytest.mark.pending(reason="the joint of a likelihood and its prior samples")
     def test_the_joint_samples(self, X):
         likelihood = glm_likelihood("y", PoissonFamily(), X=X)
         joint = likelihood * MultivariateNormal("beta", jnp.zeros(2), cov=jnp.eye(2))
