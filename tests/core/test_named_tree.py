@@ -107,7 +107,8 @@ class TestWithPathNames:
             record.with_path_names(mu="loc")
 
     def test_full_path(self, record):
-        renamed = record.with_path_names({"g/mu": "loc"})
+        # A rename within a group spells the full new path.
+        renamed = record.with_path_names({"g/mu": "g/loc"})
         assert tuple(renamed.keys()) == ("x", "g/loc", "g/sigma")
 
     def test_interior_node_rename(self, record):
@@ -116,7 +117,7 @@ class TestWithPathNames:
         assert tuple(renamed.event_template.keys()) == ("x", "group/mu", "group/sigma")
 
     def test_values_and_order_unchanged(self, record):
-        renamed = record.with_path_names({"g/mu": "loc"})
+        renamed = record.with_path_names({"g/mu": "g/loc"})
         assert renamed["g/loc"] == record["g/mu"]
         assert tuple(renamed.children) == tuple(record.children)
 
@@ -129,7 +130,7 @@ class TestWithPathNames:
     def test_a_name_shared_across_levels_addresses_each_node_by_its_path(self):
         r = Record("r", beta=Record("beta", beta=1.0), s=2.0)
         assert tuple(r.with_path_names(beta="b").keys()) == ("b/beta", "s")
-        assert tuple(r.with_path_names({"beta/beta": "b"}).keys()) == ("beta/b", "s")
+        assert tuple(r.with_path_names({"beta/beta": "beta/b"}).keys()) == ("beta/b", "s")
 
     def test_missing_key_raises(self, record):
         with pytest.raises(KeyError):
@@ -137,13 +138,15 @@ class TestWithPathNames:
 
     def test_sibling_collision_raises(self, record):
         with pytest.raises(ValueError, match="collide"):
-            record.with_path_names({"g/mu": "sigma"})
+            record.with_path_names({"g/mu": "g/sigma"})
 
     def test_malformed_new_name_raises(self, record):
         with pytest.raises(ValueError, match="non-empty"):
             record.with_path_names(x="")
-        with pytest.raises(ValueError, match="/"):
-            record.with_path_names(x="a/b")
+        # A target is a path, so only an empty segment malforms it.
+        for target in ("a//b", "/a", "a/"):
+            with pytest.raises(ValueError, match="empty segment"):
+                record.with_path_names(x=target)
 
     def test_no_renames_raises(self, record):
         with pytest.raises(ValueError):
@@ -191,6 +194,96 @@ class TestWithPathNames:
         )
         renamed = ra.with_path_names(a="b")
         assert list(renamed.event_template) == ["b"]
+
+
+class TestPathMoves:
+    """A target is the node's new exact path, so a rename may move a node (design II.6)."""
+
+    @pytest.fixture
+    def record(self):
+        return Record("r", x=1.0, g=Record("g", mu=2.0, sigma=3.0))
+
+    def test_a_bare_target_moves_a_nested_field_to_the_top_level(self, record):
+        moved = record.with_path_names({"g/mu": "mu"})
+        assert tuple(moved.keys()) == ("x", "g/sigma", "mu")
+        assert moved["mu"] == 2.0
+        assert tuple(moved.event_template.keys()) == tuple(moved.keys())
+
+    def test_a_path_target_moves_a_top_level_field_into_a_group(self, record):
+        moved = record.with_path_names({"x": "g/x"})
+        assert tuple(moved.keys()) == ("g/mu", "g/sigma", "g/x")
+        assert moved["g/x"] == 1.0
+
+    def test_a_move_into_a_missing_group_creates_it(self, record):
+        moved = record.with_path_names({"x": "h/k/x"})
+        assert tuple(moved.keys()) == ("g/mu", "g/sigma", "h/k/x")
+        assert tuple(moved.event_template.keys()) == tuple(moved.keys())
+
+    def test_a_group_a_move_empties_is_removed(self):
+        record = Record("r", x=1.0, g=Record("g", mu=2.0))
+        moved = record.with_path_names({"g/mu": "mu"})
+        assert tuple(moved.children) == ("x", "mu")
+        assert tuple(moved.event_template.children) == ("x", "mu")
+
+    def test_a_field_can_replace_the_group_it_empties(self):
+        record = Record("r", g=Record("g", mu=2.0), x=1.0)
+        moved = record.with_path_names({"g/mu": "g"})
+        assert tuple(moved.keys()) == ("x", "g")
+        assert moved["g"] == 2.0
+
+    def test_a_group_a_move_refills_keeps_its_position(self):
+        record = Record("r", g=Record("g", mu=2.0), x=1.0)
+        moved = record.with_path_names({"g/mu": "mu", "x": "g/x"})
+        assert tuple(moved.keys()) == ("g/x", "mu")
+
+    def test_moved_nodes_append_in_the_order_the_renames_are_given(self, record):
+        forward = record.with_path_names({"x": "h/x", "g/sigma": "h/sigma"})
+        backward = record.with_path_names({"g/sigma": "h/sigma", "x": "h/x"})
+        assert tuple(forward.keys()) == ("g/mu", "h/x", "h/sigma")
+        assert tuple(backward.keys()) == ("g/mu", "h/sigma", "h/x")
+
+    def test_a_descendant_with_its_own_target_leaves_its_moved_ancestor(self, record):
+        moved = record.with_path_names({"g": "h", "g/mu": "mu"})
+        assert tuple(moved.keys()) == ("x", "h/sigma", "mu")
+
+    def test_moves_apply_simultaneously(self, record):
+        moved = record.with_path_names({"x": "g/x", "g/mu": "x"})
+        assert tuple(moved.keys()) == ("g/sigma", "g/x", "x")
+        assert (moved["g/x"], moved["x"]) == (1.0, 2.0)
+
+    def test_a_schema_moves_as_its_record_does(self, record):
+        moved = record.event_template.with_path_names({"g/mu": "mu"})
+        assert moved == record.with_path_names({"g/mu": "mu"}).event_template
+        assert isinstance(moved, NumericRecordSpec)
+
+    def test_a_moved_numeric_record_keeps_its_family_and_its_leaves(self):
+        nr = NumericRecord("nr", a=jnp.array(1.0), g=NumericRecord("g", b=jnp.array([2.0, 3.0])))
+        moved = nr.with_path_names({"a": "g/a"})
+        assert isinstance(moved, NumericRecord)
+        assert tuple(moved.keys()) == ("g/b", "g/a")
+        assert jnp.array_equal(moved.to_vector(), jnp.array([2.0, 3.0, 1.0]))
+
+    @pytest.mark.parametrize(
+        ("renames", "match"),
+        [
+            pytest.param({"g/mu": "g/sigma"}, "collides", id="onto-a-sibling"),
+            pytest.param({"x": "g/mu"}, "collides", id="onto-a-node-that-stays"),
+            pytest.param({"g/mu": "x/mu"}, "field and as a path prefix", id="through-a-field"),
+            pytest.param({"g": "g/h"}, "own subtree", id="into-its-own-subtree"),
+            pytest.param({"x": "h", "g/mu": "h"}, "collide", id="two-onto-one-path"),
+            pytest.param({"x": "h", "g/mu": "h/mu"}, "overlap", id="one-target-inside-another"),
+            pytest.param({"x": "a//b"}, "empty segment", id="empty-segment"),
+        ],
+    )
+    def test_a_move_the_tree_cannot_take_raises(self, record, renames, match):
+        with pytest.raises(ValueError, match=match):
+            record.with_path_names(renames)
+        with pytest.raises(ValueError, match=match):
+            record.event_template.with_path_names(renames)
+
+    def test_renaming_a_node_twice_raises_before_its_targets_are_read(self, record):
+        with pytest.raises(ValueError, match="more than once"):
+            record.with_path_names({"g/mu": "mu"}, **{"g/mu": "g/m"})
 
 
 # ===========================================================================

@@ -642,7 +642,7 @@ class TestStructuralTransforms:
 
     def test_with_path_names_renames_within_every_element(self):
         batch = nested_batch(name="post")
-        renamed = batch.with_path_names({"outer/a": "alpha"})
+        renamed = batch.with_path_names({"outer/a": "outer/alpha"})
         assert tuple(renamed.event_template.keys()) == ("outer/alpha", "outer/b", "m")
         np.testing.assert_array_equal(
             np.asarray(renamed["outer/alpha"]), np.asarray(batch["outer/a"])
@@ -654,6 +654,30 @@ class TestStructuralTransforms:
         assert "mass" in nested_batch().with_path_names(m="mass").event_template
         with pytest.raises(KeyError):
             nested_batch().with_path_names(a="alpha")
+
+    def test_with_path_names_moves_a_column_out_of_its_group(self):
+        batch = nested_batch()
+        moved = batch.with_path_names({"outer/a": "a"})
+        assert tuple(moved.event_template.keys()) == ("outer/b", "m", "a")
+        np.testing.assert_array_equal(np.asarray(moved["a"]), np.asarray(batch["outer/a"]))
+        np.testing.assert_array_equal(np.asarray(moved["outer/b"]), np.asarray(batch["outer/b"]))
+        assert (moved.level_names, moved.batch_shape) == (batch.level_names, batch.batch_shape)
+
+    def test_with_path_names_moves_a_column_into_a_group(self):
+        batch = nested_batch()
+        moved = batch.with_path_names({"m": "outer/m"})
+        assert tuple(moved.event_template.keys()) == ("outer/a", "outer/b", "outer/m")
+        np.testing.assert_array_equal(np.asarray(moved["outer/m"]), np.asarray(batch["m"]))
+        # Each element is the element of the batch moved the same way.
+        assert moved[1] == batch[1].with_path_names({"m": "outer/m"})
+
+    def test_with_path_names_removes_a_group_its_moves_empty(self):
+        moved = nested_batch().with_path_names({"outer/a": "a", "outer/b": "b"})
+        assert tuple(moved.event_template.children) == ("m", "a", "b")
+
+    def test_with_path_names_refuses_a_move_onto_a_field(self):
+        with pytest.raises(ValueError, match="collides"):
+            nested_batch().with_path_names({"m": "outer/a"})
 
     def test_the_two_name_spaces_are_independent(self):
         # Renaming a field never touches a level, or the reverse.

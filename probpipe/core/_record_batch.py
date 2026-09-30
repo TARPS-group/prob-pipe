@@ -486,32 +486,33 @@ class RecordBatch(Batch[Record]):
     # untouched throughout, and the levels come through unchanged.
 
     def with_path_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Self:
-        """Rename fields ``old -> new`` within every element.
+        """Rename or move nodes ``old -> new`` within every element.
 
         The element counterpart of :meth:`~probpipe.core._batch.Batch.with_level_names`,
         which renames the *levels*: the two namespaces are independent, and
-        renaming one leaves the other unchanged. Each key is the exact path of
-        a node of the elements, as on a record, and no stored value moves.
+        renaming one leaves the other unchanged. Each key is the exact path of a
+        node of the elements and each target its new exact path, under the rule
+        of :meth:`~probpipe.core.named_tree.NamedTree.with_path_names`. Each
+        column is stored under its field's new key, so no stored value changes.
 
         Returns
         -------
         Self
-            A batch over the same values and levels, its elements' fields renamed.
+            A batch over the same values and levels, its elements' nodes renamed.
 
         Raises
         ------
         KeyError
             If a key is not the path of a node of the elements.
         ValueError
-            If a new name is empty or contains ``/``, two renames target the
-            same node, or a rename collides with a sibling.
+            As :meth:`~probpipe.core.named_tree.NamedTree.with_path_names` raises it.
         """
-        renamed = self.event_template.with_path_names(mapping, **kwargs)
-        # ``with_path_names`` leaves field order untouched, so the old and new
-        # key sequences correspond position by position.
-        moved = dict(zip(self.event_template.keys(), renamed.keys(), strict=True))
+        template = self.event_template
+        renames = template._resolve_path_renames(mapping, kwargs)
+        moved = template._moved_leaf_paths(renames)
         return self._rebuilt(
-            {moved[path]: column for path, column in self._columns.items()}, renamed
+            {moved[path]: column for path, column in self._columns.items()},
+            template.with_path_names(renames),
         )
 
     def without(self, *paths: str) -> Self:

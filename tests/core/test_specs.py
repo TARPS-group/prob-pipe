@@ -162,27 +162,38 @@ class TestOutputSpecCompletion:
             OutputSpec(prior=array).with_path_names(sigma="s")
         with pytest.raises(KeyError):
             OutputSpec(prior=array).with_path_names({"prior/x": "y"})
-        # The component is renamed in place, so a path target raises.
-        with pytest.raises(ValueError, match="contain no '/'"):
+        # The component is renamed in place: moving it into a group would
+        # change the packaging, so a path target raises.
+        with pytest.raises(ValueError, match="keeps the packaging"):
             OutputSpec(prior=array).with_path_names(prior="group/beta")
 
     def test_a_whole_record_renames_its_fields_through_its_component(self):
         record = RecordSpec(beta=NumericArraySpec(()), sigma=NumericArraySpec(()))
-        renamed = OutputSpec(parameters=record).with_path_names(
-            {"parameters": "theta", "parameters/beta": "b"}
+        renamed = OutputSpec(parameters=record).with_path_names({"parameters/beta": "parameters/b"})
+        assert renamed == OutputSpec(parameters=record.with_path_names(beta="b"))
+        assert renamed.with_path_names(parameters="theta") == OutputSpec(
+            theta=record.with_path_names(beta="b")
         )
-        assert renamed == OutputSpec(theta=record.with_path_names(beta="b"))
         with pytest.raises(KeyError):
             OutputSpec(parameters=record).with_path_names(beta="b")
 
+    def test_a_component_and_a_field_below_it_are_renamed_in_two_calls(self):
+        # Each target is a new exact path, so renaming the component to theta
+        # and its field to theta/b in one call gives one target inside another.
+        record = RecordSpec(beta=NumericArraySpec(()), sigma=NumericArraySpec(()))
+        with pytest.raises(ValueError, match="overlap"):
+            OutputSpec(parameters=record).with_path_names(
+                {"parameters": "theta", "parameters/beta": "theta/b"}
+            )
+
     def test_both_packagings_of_one_interface_take_the_same_paths(self):
         inner = RecordSpec(beta=NumericArraySpec(()))
-        renames = {"parameters": "theta", "parameters/beta": "b"}
+        renames = {"parameters/beta": "parameters/b"}
         renamed_inner = RecordSpec(b=NumericArraySpec(()))
-        assert OutputSpec(parameters=inner).with_path_names(renames) == OutputSpec(
-            theta=renamed_inner
-        )
-        assert OutputSpec(RecordSpec(parameters=inner)).with_path_names(renames) == OutputSpec(
+        whole = OutputSpec(parameters=inner).with_path_names(renames)
+        exposed = OutputSpec(RecordSpec(parameters=inner)).with_path_names(renames)
+        assert whole.with_path_names(parameters="theta") == OutputSpec(theta=renamed_inner)
+        assert exposed.with_path_names(parameters="theta") == OutputSpec(
             RecordSpec(theta=renamed_inner)
         )
 
@@ -190,9 +201,29 @@ class TestOutputSpecCompletion:
         record = RecordSpec(beta=NumericArraySpec(()), sigma=NumericArraySpec(()))
         declaration = OutputSpec(beta=record)
         assert declaration.with_path_names(beta="b") == OutputSpec(b=record)
-        assert declaration.with_path_names({"beta/beta": "b"}) == OutputSpec(
+        assert declaration.with_path_names({"beta/beta": "beta/b"}) == OutputSpec(
             beta=record.with_path_names(beta="b")
         )
+
+    def test_a_whole_record_moves_a_field_within_its_component(self):
+        record = RecordSpec(a=NumericArraySpec(()), g=RecordSpec(b=NumericArraySpec(())))
+        moved = OutputSpec(p=record).with_path_names({"p/a": "p/g/a"})
+        assert moved == OutputSpec(
+            p=RecordSpec(g=RecordSpec(b=NumericArraySpec(()), a=NumericArraySpec(())))
+        )
+
+    @pytest.mark.parametrize(
+        "renames",
+        [
+            pytest.param({"p/a": "a"}, id="a-field-out-of-the-component"),
+            pytest.param({"p/a": "p"}, id="a-field-onto-the-component"),
+            pytest.param({"p": "q", "p/a": "p/a2"}, id="a-field-under-the-old-component"),
+        ],
+    )
+    def test_a_whole_record_keeps_its_fields_under_its_component(self, renames):
+        record = RecordSpec(a=NumericArraySpec(()), b=NumericArraySpec(()))
+        with pytest.raises(ValueError, match="keeps the packaging"):
+            OutputSpec(p=record).with_path_names(renames)
 
     def test_a_whole_term_refuses_a_repeated_or_an_empty_rename(self):
         record = RecordSpec(beta=NumericArraySpec(()))
@@ -209,9 +240,21 @@ class TestOutputSpecCompletion:
         assert renamed == OutputSpec(record.with_path_names(beta="b"))
         assert renamed.exposes_record
         nested = OutputSpec(RecordSpec(g=RecordSpec(mu=NumericArraySpec(()))))
-        assert tuple(nested.with_path_names({"g/mu": "m"}).components) == ("g",)
+        assert tuple(nested.with_path_names({"g/mu": "g/m"}).components) == ("g",)
         with pytest.raises(KeyError):
             nested.with_path_names(mu="m")
+
+    def test_an_exposed_record_moves_fields_across_its_components(self):
+        scalar = NumericArraySpec(())
+        declaration = OutputSpec(RecordSpec(g=RecordSpec(mu=scalar, sigma=scalar), y=scalar))
+        out = declaration.with_path_names({"g/mu": "mu"})
+        assert out == OutputSpec(RecordSpec(g=RecordSpec(sigma=scalar), y=scalar, mu=scalar))
+        into = declaration.with_path_names({"y": "g/y"})
+        assert into == OutputSpec(RecordSpec(g=RecordSpec(mu=scalar, sigma=scalar, y=scalar)))
+        assert into.exposes_record
+        # A component the moves empty is removed.
+        emptied = OutputSpec(RecordSpec(g=RecordSpec(mu=scalar))).with_path_names({"g/mu": "m"})
+        assert tuple(emptied.components) == ("m",)
 
 
 class TestDeclarationConstruction:
