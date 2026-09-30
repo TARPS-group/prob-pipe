@@ -61,6 +61,8 @@ def _validate_to_log_weights(
         weights = _as_float_array(weights)
         if weights.shape != (n,):
             raise ValueError(f"weights shape {weights.shape} does not match number of items {n}.")
+        if not jnp.all(jnp.isfinite(weights)):
+            raise ValueError("weights must be finite.")
         if jnp.any(weights < 0):
             raise ValueError("weights must be non-negative.")
         total = jnp.sum(weights)
@@ -415,12 +417,19 @@ class Weights:
 
     @property
     def normalized(self) -> Array:
-        """Normalized weights, shape ``(n,)``.  Cached after first access."""
+        """Normalized weights, shape ``(n,)``.
+
+        Cached after the first access outside a trace. A value computed while
+        tracing belongs to that trace, so it is returned without being cached.
+        """
         if self._is_uniform:
             return uniform_weights(self._n)
-        if self._cache is None:
-            self._cache = normalize_weights(self._log_weights)
-        return self._cache
+        if self._cache is not None:
+            return self._cache
+        normalized = normalize_weights(self._log_weights)
+        if not isinstance(normalized, jax.core.Tracer):
+            self._cache = normalized
+        return normalized
 
     @property
     def log_normalized(self) -> Array:

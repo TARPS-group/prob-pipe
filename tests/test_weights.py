@@ -66,6 +66,11 @@ class TestValidation:
         with pytest.raises(ValueError, match="positive"):
             _validate_to_log_weights(3, weights=jnp.zeros(3))
 
+    @pytest.mark.parametrize("bad", [jnp.nan, jnp.inf])
+    def test_non_finite_weights_rejected(self, bad):
+        with pytest.raises(ValueError, match="finite"):
+            _validate_to_log_weights(3, weights=jnp.array([1.0, bad, 1.0]))
+
     def test_log_weights_shape_mismatch(self):
         with pytest.raises(ValueError, match="shape"):
             _validate_to_log_weights(3, log_weights=jnp.zeros(5))
@@ -174,6 +179,12 @@ class TestWeightedChoice:
 
 
 class TestWeightsConstruction:
+    def test_normalized_weights_read_under_jit_are_not_kept(self):
+        w = Weights(weights=jnp.array([1.0, 2.0, 1.0]))
+        traced = jax.jit(lambda x: x * w.normalized)(jnp.ones(3))
+        npt.assert_allclose(traced, jnp.array([0.25, 0.5, 0.25]), atol=1e-6)
+        npt.assert_allclose(w.normalized, jnp.array([0.25, 0.5, 0.25]), atol=1e-6)
+
     def test_uniform_via_n(self):
         w = Weights(n=5)
         assert w.n == 5
