@@ -1,18 +1,19 @@
-"""Amortized neural likelihood (NLE) and ratio (NRE) surrogates via BayesFlow.
+"""Amortized neural likelihood (NLE) and ratio (NRE) kernels via BayesFlow.
 
 Trains a BayesFlow estimator of the conditional density ``p(y | theta)`` (NLE: a
 conditional coupling flow) or of the likelihood-to-evidence ratio (NRE: an NRE-C
-classifier) and wraps it as a :class:`~probpipe.core.protocols.Likelihood`
-component whose ``log_likelihood`` is **jax.grad-transparent** -- so
-``SimpleModel(prior, learned)`` + ``condition_on(model, data)`` runs ProbPipe's
-existing BlackJAX/TFP NUTS machinery with no new samplers and no PyTorch.
+classifier) and returns it as a ``ConditionalDistribution`` from the parameters
+to datasets of observation rows: NLE's kernel has the network's density and
+NRE's an unnormalized one. The scores are **jax.grad-transparent**, so
+``condition_on(learned * prior, {"observation": y})`` runs ProbPipe's registered
+BlackJAX/TFP NUTS methods with no new samplers and no PyTorch.
 
-Both wrappers are :class:`~probpipe.ConditionallyIndependentLikelihood`: the
-estimator is trained on single ``(theta, y_i)`` pairs and a dataset's
-log-likelihood is the sum of per-row scores, so datasets of any size work
-natively (NPE, by contrast, conditions on a shape fixed at training time). The
-networks condition on (NLE) or classify (NRE) the *raw constrained* ``theta``,
-matching what the MCMC log-density assembly passes at sampling time.
+Both kernels treat a dataset's rows as conditionally independent: the estimator
+is trained on single ``(theta, y_i)`` pairs and a dataset's score is the sum of
+per-row scores, so datasets of any size work natively (NPE, by contrast,
+conditions on a shape fixed at training time). The networks condition on (NLE)
+or classify (NRE) the *raw constrained* ``theta``, matching what the MCMC
+log-density assembly passes at sampling time.
 
 BayesFlow / keras load lazily on first use, so ``import probpipe`` does not pull
 keras.
@@ -21,14 +22,25 @@ keras.
 from __future__ import annotations
 
 from abc import abstractmethod
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..core.protocols import ConditionallyIndependentLikelihood, GenerativeLikelihood
-from ..custom_types import Array, ArrayLike, PRNGKey
+from ..core._spec_base import NumericArraySpec
+from ..core._specs import OutputSpec
+from ..core.protocols import GenerativeLikelihood
+from ..core.record import Record
+from ..custom_types import Array, ArrayLike
+from ..distributions._capabilities import (
+    SupportsConditionalLogProb,
+    SupportsConditionalUnnormalizedLogProb,
+    SupportsLogProb,
+    SupportsUnnormalizedLogProb,
+)
+from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
 from ..distributions._distribution import Distribution
 from ._bayesflow_common import (
     _OBSERVATION_KEY,
@@ -36,6 +48,7 @@ from ._bayesflow_common import (
     _adapter_field_keys,
     _import_bayesflow,
     _isolated_keras_seeding,
+    _observation_slot,
     _simulate_offline,
     _validate_learn_inputs,
 )
@@ -53,19 +66,49 @@ else:
 
 
 # ---------------------------------------------------------------------------
-# Likelihood wrappers
+# Learned kernels from the parameters to the observations
 # ---------------------------------------------------------------------------
 
 
-class _BayesFlowLikelihoodBase(ConditionallyIndependentLikelihood, GenerativeLikelihood):
-    """Shared surface of the learned-likelihood wrappers.
+class _LearnedLaw(Distribution):
+    """The law a learned kernel yields at a value of every parameter, over datasets of rows."""
 
-    Subclasses implement :meth:`_row_scores` -- the jax-traceable per-row score
-    (a log-density for NLE, a log-ratio for NRE). Everything else is common:
-    coercing ``params``/``data`` to the row layout the trained network expects,
-    the conditionally-independent sum over rows, and the ``generate_data``
-    passthrough to the training simulator (so the wrapper can also drive
-    predictive checks).
+    def __init__(self, kernel: _BayesFlowLikelihoodBase, values: Mapping[str, Any]) -> None:
+        super().__init__(kernel.name, kernel.event_spec)
+        self._kernel = kernel
+        self._values = dict(values)
+
+    def _score(self, value: Any) -> Array:
+        """The kernel's score of the dataset *value* at this law's parameters."""
+        return self._kernel._score(self._values, value)
+
+
+class _LearnedDensity(_LearnedLaw, SupportsLogProb):
+    """A learned likelihood's law at a parameter value, whose density is the network's."""
+
+    def _log_prob(self, value: Any) -> Array:
+        """The sum of the network's log-densities of the dataset's rows."""
+        return self._score(value)
+
+
+class _LearnedRatioLaw(_LearnedLaw, SupportsUnnormalizedLogProb):
+    """A learned ratio's law at a parameter value, whose density is known up to a constant."""
+
+    def _unnormalized_log_prob(self, value: Any) -> Array:
+        """The sum of the classifier's log-ratios of the dataset's rows."""
+        return self._score(value)
+
+
+class _BayesFlowLikelihoodBase(ConditionalDistribution):
+    """A learned kernel from the parameters to conditionally independent observation rows.
+
+    Its given slots are the prior's components, so composing it with the prior
+    it was trained against, as ``learned * prior``, gives the joint law, and
+    conditioning that joint on an observation is Bayes' rule, which the
+    normalization stage completes by inference. Its event is a dataset of
+    observation rows, of any number, whose score is the sum of per-row scores
+    under conditional independence. Subclasses implement :meth:`_row_scores`,
+    the jax-traceable per-row score, and :meth:`_law`.
 
     Parameters
     ----------
@@ -74,12 +117,14 @@ class _BayesFlowLikelihoodBase(ConditionallyIndependentLikelihood, GenerativeLik
         ``_row_scores`` calls.
     prior : Distribution
         The prior the estimator was trained against; its ``event_size`` fixes
-        the expected ``theta`` width.
+        the expected ``theta`` width, and its components are the given slots.
     simulator : GenerativeLikelihood
-        The training simulator, kept for the ``generate_data`` passthrough.
+        The training simulator.
     data_dim : int
         Flattened per-row observation width the network was trained on (fixed
         by the simulator's per-draw output at training time).
+    name : str
+        The kernel's label.
     """
 
     def __init__(
@@ -89,12 +134,23 @@ class _BayesFlowLikelihoodBase(ConditionallyIndependentLikelihood, GenerativeLik
         simulator: GenerativeLikelihood,
         *,
         data_dim: int,
+        name: str,
     ):
-        self._approximator = approximator
-        self._prior = prior
-        self._simulator = simulator
-        self._theta_dim = int(prior.event_size)
-        self._data_dim = data_dim
+        super().__init__(
+            name,
+            dict(prior.event_spec.components),
+            OutputSpec(**{_observation_slot(prior): NumericArraySpec(("observations", data_dim))}),
+        )
+        attributes = {
+            "_approximator": approximator,
+            "_prior": prior,
+            "_simulator": simulator,
+            "_theta_dim": int(prior.event_size),
+            "_data_dim": data_dim,
+            "_bound": {},
+        }
+        for attribute, value in attributes.items():
+            object.__setattr__(self, attribute, value)
 
     @property
     def prior(self) -> Distribution:
@@ -103,7 +159,7 @@ class _BayesFlowLikelihoodBase(ConditionallyIndependentLikelihood, GenerativeLik
 
     @property
     def simulator(self) -> GenerativeLikelihood:
-        """The training simulator (provides ``generate_data``)."""
+        """The training simulator."""
         return self._simulator
 
     @property
@@ -111,29 +167,15 @@ class _BayesFlowLikelihoodBase(ConditionallyIndependentLikelihood, GenerativeLik
         """The trained BayesFlow approximator (for direct/advanced use)."""
         return self._approximator
 
-    def _theta_row(self, params: Any) -> Array:
-        """Coerce ``params`` to a ``(d_theta,)`` row in canonical flat order.
+    def _theta_row(self, values: Mapping[str, Any]) -> Array:
+        """The parameters, keyed by the prior's components, as a ``(d_theta,)`` row.
 
-        Accepts the two shapes that reach a likelihood in practice -- the
-        structured per-draw record of predictive/checking paths (serialized via
-        its own canonical 1-D vector layout, which matches the training layout)
-        and the flat vector the gradient-MCMC log-density assembly passes --
-        plus plain array-likes. Width is validated against the prior's
+        The row is the record's canonical 1-D vector layout, which matches the
+        training layout. Its width is validated against the prior's
         ``event_size`` (static under jit: shapes are concrete at trace time).
         """
-        from ..core._numeric_record import NumericRecord
-        from ..core._numeric_record_batch import NumericRecordBatch
-        from ..core.record import Record
-
-        # ``Record`` now carries the JAX-pytree ``flatten`` (returns
-        # ``(leaves, aux)``), so dispatch on type rather than ``hasattr`` to get
-        # the canonical 1-D ``vec`` via ``to_vector``.
-        if isinstance(params, (NumericRecord, NumericRecordBatch)):
-            t = params.to_vector()
-        elif isinstance(params, Record):
-            t = params.to_numeric().to_vector()
-        else:
-            t = params
+        components = tuple(self._prior.event_spec.components)
+        t = Record("params", {name: values[name] for name in components}).to_numeric().to_vector()
         t = jnp.ravel(jnp.asarray(t))
         if t.shape[0] != self._theta_dim:
             raise ValueError(
@@ -165,39 +207,52 @@ class _BayesFlowLikelihoodBase(ConditionallyIndependentLikelihood, GenerativeLik
             )
         return rows.reshape(-1, self._data_dim)
 
-    def log_likelihood(self, params: Any, data: ArrayLike | np.ndarray) -> Array:
-        """Joint score of ``data`` under ``params``: the sum of per-row scores.
+    def _values(self, given: Any, kwargs: Mapping[str, Any]) -> dict[str, Any]:
+        """The parameter values bound so far and those *given* binds, by slot.
+
+        Raises
+        ------
+        KeyError
+            If a name is not a given slot.
+        """
+        values = {**dict(given.children if isinstance(given, Record) else given), **kwargs}
+        unknown = sorted(set(values) - set(self.given_spec))
+        if unknown:
+            raise KeyError(f"{unknown} are not given slots of {self.name!r}")
+        return {**self._bound, **values}
+
+    def _score(self, values: Mapping[str, Any], data: Any) -> Array:
+        """The dataset's score at the parameters: the sum of per-row scores.
 
         The sum is the conditionally-independent joint (rows are iid given
         ``theta``), evaluated in **one batched network call** -- ``theta`` is
         tiled across rows rather than looped -- so a NUTS step costs a single
         forward pass regardless of dataset size.
         """
+        if isinstance(data, Record):
+            data = data[_observation_slot(self._prior)]
         rows = self._data_rows(data)
-        theta = self._theta_row(params)
+        theta = self._theta_row(values)
         theta_rows = jnp.tile(theta[None, :], (rows.shape[0], 1))
         return jnp.sum(self._row_scores(theta_rows, rows))
 
-    def per_datum_log_likelihood(self, params: Any, datum: Any) -> Array:
-        """Score of a single ``(d_y,)`` observation row (scalar)."""
-        theta = self._theta_row(params)
-        row = jnp.reshape(jnp.asarray(datum), (1, -1))
-        if row.shape[-1] != self._data_dim:
-            raise ValueError(
-                f"datum has {row.shape[-1]} values but the estimator was trained "
-                f"on observations of size {self._data_dim}."
-            )
-        return self._row_scores(theta[None, :], row)[0]
+    def _condition_on(
+        self, given: Record | Mapping[str, Any], /, **kwargs: Any
+    ) -> Distribution | ConditionalDistribution:
+        """The law of the observations at a value of every parameter, or the kernel over the rest."""
+        values = self._values(given, kwargs)
+        left = {slot: spec for slot, spec in self.given_spec.items() if slot not in values}
+        if not left:
+            return self._law(values)
+        curried = self._shallow_copy()
+        object.__setattr__(curried, "_provenance", None)
+        object.__setattr__(curried, "_bound", values)
+        object.__setattr__(curried, "_spec", ConditionalDistributionSpec(left, self.event_spec))
+        return curried
 
-    def generate_data(
-        self,
-        params: Any,
-        num_observations: int,
-        *,
-        key: PRNGKey | None = None,
-    ) -> Any:
-        """Delegate to the training simulator (``GenerativeLikelihood`` passthrough)."""
-        return self._simulator.generate_data(params, num_observations, key=key)
+    @abstractmethod
+    def _law(self, values: Mapping[str, Any]) -> _LearnedLaw:
+        """The law of the observations at the parameter *values*."""
 
     @abstractmethod
     def _row_scores(self, theta_rows: Array, data_rows: Array) -> Array:
@@ -207,16 +262,14 @@ class _BayesFlowLikelihoodBase(ConditionallyIndependentLikelihood, GenerativeLik
         hot path."""
 
 
-class BayesFlowLikelihood(_BayesFlowLikelihoodBase):
-    """A learned amortized likelihood: ``log_likelihood(theta, data)`` evaluates the
-    trained conditional density ``sum_i log p_net(y_i | theta)``.
+class BayesFlowLikelihood(_BayesFlowLikelihoodBase, SupportsConditionalLogProb):
+    """A learned amortized likelihood ``p̂(y | theta)``: a kernel with the network's density.
 
+    The density of a dataset at ``theta`` is ``sum_i log p_net(y_i | theta)``.
     The score path is pure keras-jax ops (standardize, conditional-flow
     ``log_prob``, plus the standardization log-det-jacobian), so it is
-    ``jax.grad``-transparent and jit-stable -- a drop-in
-    :class:`~probpipe.core.protocols.Likelihood` /
-    :class:`~probpipe.ConditionallyIndependentLikelihood` for
-    ``SimpleModel`` + ``condition_on`` gradient-based MCMC. Values are faithful
+    ``jax.grad``-transparent and jit-stable, and gradient-based MCMC normalizes
+    ``condition_on(learned * prior, {"observation": y})``. Values are faithful
     to the public ``approximator.log_prob`` (same standardization and
     log-det-jacobian); the only difference is staying on-device.
 
@@ -227,7 +280,7 @@ class BayesFlowLikelihood(_BayesFlowLikelihoodBase):
     evaluated at ``y + 1/2``, a one-point approximation of the implied pmf
     ``P(y | theta) = integral over [y, y+1)^d of p(u | theta) du``
     (Theis et al., 2016, arXiv:1511.01844). Pass raw integer-valued
-    observations; the wrapper owns the cell convention.
+    observations; the kernel owns the cell convention.
     """
 
     def __init__(
@@ -239,8 +292,15 @@ class BayesFlowLikelihood(_BayesFlowLikelihoodBase):
         data_dim: int,
         dequantized: bool = False,
     ):
-        super().__init__(approximator, prior, simulator, data_dim=data_dim)
-        self._dequantized = dequantized
+        super().__init__(approximator, prior, simulator, data_dim=data_dim, name="likelihood")
+        object.__setattr__(self, "_dequantized", dequantized)
+
+    def _law(self, values: Mapping[str, Any]) -> _LearnedDensity:
+        return _LearnedDensity(self, values)
+
+    def _conditional_log_prob(self, given: Record | Mapping[str, Any], value: Any) -> Array:
+        """The network's log-density of the dataset *value* at the parameters *given* binds."""
+        return self._score(self._values(given, {}), value)
 
     def _row_scores(self, theta_rows: Array, data_rows: Array) -> Array:
         # The public approximator.log_prob is host-bound at both edges (adapter
@@ -266,16 +326,17 @@ class BayesFlowLikelihood(_BayesFlowLikelihoodBase):
         return f"BayesFlowLikelihood(theta_dim={self._theta_dim}, data_dim={self._data_dim}{dq})"
 
 
-class BayesFlowRatio(_BayesFlowLikelihoodBase):
-    """A learned likelihood-to-evidence ratio: per-row scores are the NRE-C
-    classifier logits, which converge to ``log[p(y_i | theta) / p(y_i)]``.
+class BayesFlowRatio(_BayesFlowLikelihoodBase, SupportsConditionalUnnormalizedLogProb):
+    """A learned likelihood-to-evidence ratio: a kernel with an unnormalized density.
 
-    ``log_likelihood`` sums the per-row log-ratios, which equals the true joint
+    The per-row scores are the NRE-C classifier logits, which converge to
+    ``log[p(y_i | theta) / p(y_i)]``, so a dataset's score equals its joint
     log-likelihood **up to a theta-independent constant** (``sum_i log p(y_i)``).
-    That makes it a valid drop-in for conditioning / MCMC -- the constant cancels
-    -- but the values are *not* normalized log-likelihoods: do not use them for
-    model comparison, information criteria (LOO / WAIC), or any reading of
-    absolute likelihood magnitudes.
+    The kernel therefore claims ``SupportsConditionalUnnormalizedLogProb``
+    alone: conditioning ``learned * prior`` on an observation cancels the
+    constant, but the values are not normalized log-likelihoods, so do not use
+    them for model comparison, information criteria (LOO / WAIC), or any
+    reading of absolute likelihood magnitudes.
 
     Because the estimator is a classifier (an MLP over ``concat(theta, y)``), it
     has no continuous-density machinery: it handles **discrete-valued
@@ -284,6 +345,25 @@ class BayesFlowRatio(_BayesFlowLikelihoodBase):
     dimension -- the two cases where :class:`BayesFlowLikelihood`'s coupling
     flow needs, respectively, dequantization or a custom network.
     """
+
+    def __init__(
+        self,
+        approximator: RatioApproximator,
+        prior: Distribution,
+        simulator: GenerativeLikelihood,
+        *,
+        data_dim: int,
+    ):
+        super().__init__(approximator, prior, simulator, data_dim=data_dim, name="ratio")
+
+    def _law(self, values: Mapping[str, Any]) -> _LearnedRatioLaw:
+        return _LearnedRatioLaw(self, values)
+
+    def _conditional_unnormalized_log_prob(
+        self, given: Record | Mapping[str, Any], value: Any
+    ) -> Array:
+        """The classifier's log-ratios of the dataset *value* at the parameters, summed."""
+        return self._score(self._values(given, {}), value)
 
     def _row_scores(self, theta_rows: Array, data_rows: Array) -> Array:
         # NRE swaps the adapter roles relative to NLE: theta is the *classified*
@@ -306,9 +386,8 @@ class BayesFlowRatio(_BayesFlowLikelihoodBase):
 
 
 # ---------------------------------------------------------------------------
-# Learner entry points. Deliberately plain functions, NOT @function:
-# the workflow result boundary coerces returns into Record/Distribution, which
-# would wrap (and break) these Likelihood components. See STYLE_GUIDE 1.4.
+# Learner entry points. Plain functions, as they were for the likelihood
+# components these kernels replace; see STYLE_GUIDE 1.4.
 # ---------------------------------------------------------------------------
 
 
@@ -419,13 +498,12 @@ def learn_amortized_likelihood(
     """Learn an amortized likelihood ``p(y | theta)`` (NLE) with BayesFlow.
 
     Trains a conditional coupling flow on offline ``(theta, y)`` simulations and
-    returns a :class:`BayesFlowLikelihood` -- a
-    :class:`~probpipe.ConditionallyIndependentLikelihood` whose jax-traceable
-    ``log_likelihood`` plugs into ``SimpleModel(prior, learned)`` +
-    :func:`~probpipe.condition_on`, so the existing gradient-based MCMC machinery
-    (BlackJAX/TFP NUTS) samples the posterior -- for datasets of any size
-    (per-row scores sum under conditional independence). The network conditions
-    on the raw constrained ``theta``.
+    returns a :class:`BayesFlowLikelihood`, the kernel ``p̂(y | theta)`` from the
+    prior's components to datasets of observation rows, with the network's
+    jax-traceable density. ``condition_on(learned * prior, {"observation": y})``
+    then runs a registered gradient-based MCMC method (BlackJAX/TFP NUTS) for
+    datasets of any size, since per-row scores sum under conditional
+    independence. The network conditions on the raw constrained ``theta``.
 
     Parameters
     ----------
@@ -551,11 +629,13 @@ def learn_amortized_ratio(
     Trains an NRE-C classifier (``RatioApproximator``; contrastive pairs are
     built internally by shuffling theta within each batch, so the training data
     are the same offline ``(theta, y)`` simulations as NLE) and returns a
-    :class:`BayesFlowRatio` whose summed per-row log-ratios stand in for the
-    log-likelihood **up to a theta-independent constant** -- valid for
-    ``SimpleModel`` + ``condition_on`` MCMC, invalid for absolute-likelihood
-    uses (model comparison, LOO/WAIC); see the class docstring. The classifier
-    handles discrete-valued observations and one-dimensional data natively.
+    :class:`BayesFlowRatio`, the kernel from the prior's components to datasets
+    of observation rows whose summed per-row log-ratios are its unnormalized
+    density: the log-likelihood **up to a theta-independent constant** -- valid
+    for ``condition_on(learned * prior, {"observation": y})``, invalid for
+    absolute-likelihood uses (model comparison, LOO/WAIC); see the class
+    docstring. The classifier handles discrete-valued observations and
+    one-dimensional data natively.
 
     Parameters
     ----------

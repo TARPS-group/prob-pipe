@@ -26,8 +26,16 @@ from probpipe import (
     condition_on,
     learn_amortized_posterior,
 )
-from probpipe.distributions._capabilities import SupportsSampling
+from probpipe.core._dispatch import ResolutionError
+from probpipe.distributions import ConditionalDistribution
+from probpipe.distributions._capabilities import (
+    SupportsApproximateConditioning,
+    SupportsConditionalSampling,
+    SupportsSampling,
+    _is_normalized,
+)
 from probpipe.modeling import GenerativeLikelihood, Likelihood
+from probpipe.operations._condition import condition_on as condition_on_operation
 
 from ._bayesflow_helpers import theta_vec
 
@@ -307,13 +315,53 @@ class TestBayesFlowNPE:
             condition_on(npe_model, _observe(0.0, 0.0, 2), num_results=bad)
 
     def test_the_model_claims_no_direct_sampling(self, npe_model):
-        """BayesFlowModel does not sample directly, so it does not claim
-        SupportsSampling; posterior draws come from condition_on, and the prior
-        and simulator properties pass the training inputs through for forward
-        simulation."""
+        """The amortized posterior is a kernel, so it claims SupportsSampling only
+        at an observation; its prior and simulator properties are the joint it
+        was trained on."""
         assert not isinstance(npe_model, SupportsSampling)
         assert tuple(npe_model.prior.event_spec.components) == ("a", "b")
         assert isinstance(npe_model.simulator, _ToyLikelihood)
+
+    def test_it_is_a_kernel_from_the_observation_to_the_parameters(self, npe_model):
+        assert isinstance(npe_model, ConditionalDistribution)
+        assert isinstance(npe_model, SupportsApproximateConditioning)
+        assert isinstance(npe_model, SupportsConditionalSampling)
+        assert list(npe_model.given_spec) == ["observation"]
+        assert npe_model.event_spec == npe_model.prior.event_spec
+
+    def test_conditioning_evaluates_it_with_no_inference(self, npe_model):
+        """Conditioning on an observation curries the kernel, which is approximate,
+        and returns a law that samples, so no inference method runs."""
+        observation = {"observation": _observe(0.5, 0.0, 0)}
+        report = condition_on_operation.check(npe_model, observation)
+        assert (report.route, report.method, report.exact) == ("curry", None, False)
+        law = condition_on_operation(npe_model, observation)
+        assert isinstance(law, SupportsSampling)
+        assert _is_normalized(law)
+        assert tuple(law.event_spec.components) == ("a", "b")
+
+    def test_exact_only_refuses_it(self, npe_model):
+        view = condition_on_operation.with_options(exact_only=True)
+        with pytest.raises(ResolutionError, match="SupportsApproximateConditioning"):
+            view(npe_model, {"observation": _observe(0.5, 0.0, 0)})
+
+    def test_the_operation_passes_the_draw_count_and_seed(self, npe_model):
+        view = condition_on_operation.with_options(num_results=300, random_seed=11)
+        observation = {"observation": _observe(0.3, 0.1, 4)}
+        first = np.asarray(view(npe_model, observation).draws()["a"]).reshape(-1)
+        second = np.asarray(view(npe_model, observation).draws()["a"]).reshape(-1)
+        assert first.shape == (300,)
+        np.testing.assert_array_equal(first, second)
+
+    def test_a_draw_at_an_observation_has_the_parameters_kind(self, npe_model):
+        given = {"observation": _observe(0.5, 0.0, 0)}
+        draws = npe_model._conditional_sample(given, jax.random.PRNGKey(0), (3,))
+        assert {name: np.shape(draws[name]) for name in ("a", "b")} == {"a": (3,), "b": (3,)}
+
+    def test_provenance_names_the_joint_it_was_trained_on(self, npe_model):
+        record = npe_model.provenance
+        assert npe_model.prior.name in [parent.name for parent in record.parents]
+        assert record.inputs["simulator"].type_name == "_ToyLikelihood"
 
     def test_condition_random_seed_reproducible(self, npe_model):
         """The amortized path honours ``random_seed`` at condition time: the same

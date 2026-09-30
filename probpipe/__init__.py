@@ -198,7 +198,6 @@ from probpipe.functions._result import ResultKindError, ResultSchemaError
 from probpipe.inference import (
     ApproximateDistribution,
     BayesFlowLikelihood,
-    BayesFlowModel,
     BayesFlowRatio,
     MinibatchedDistribution,
     condition_on_nutpie,
@@ -241,7 +240,6 @@ __all__ = [
     "Batch",
     "BatchSpec",
     "BayesFlowLikelihood",
-    "BayesFlowModel",
     "BayesFlowRatio",
     "Bernoulli",
     "Beta",

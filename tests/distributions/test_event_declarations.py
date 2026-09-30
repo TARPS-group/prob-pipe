@@ -128,7 +128,13 @@ from probpipe.inference._approximate_distribution import (
     ApproximateDistribution,
     make_posterior,
 )
-from probpipe.inference._bayesflow_posteriors import BayesFlowModel
+from probpipe.inference._bayesflow_likelihoods import (
+    BayesFlowLikelihood,
+    BayesFlowRatio,
+    _LearnedDensity,
+    _LearnedLaw,
+    _LearnedRatioLaw,
+)
 from probpipe.inference._minibatch import (
     _FixedMinibatchDistribution,
     _MinibatchLogProbAtPoint,
@@ -318,9 +324,12 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     ),
     SimpleModel: lambda: SimpleModel(Normal("theta", 0.0, 1.0), _Likelihood()),
     SimpleGenerativeModel: lambda: SimpleGenerativeModel(Normal("theta", 0.0, 1.0), _Simulator()),
-    BayesFlowModel: lambda: BayesFlowModel(
-        None, Normal("theta", 0.0, 1.0), _Simulator(), method="npe", data_dim=1
-    ),
+    _LearnedDensity: lambda: BayesFlowLikelihood(
+        None, Normal("theta", 0.0, 1.0), _Simulator(), data_dim=2
+    )._condition_on({"theta": 0.0}),
+    _LearnedRatioLaw: lambda: BayesFlowRatio(
+        None, Normal("theta", 0.0, 1.0), _Simulator(), data_dim=2
+    )._condition_on({"theta": 0.0}),
     PyMCModel: _pymc_model,
     _StanPosterior: _stan_model,
     _UnconstrainedStanView: _stan_view,
@@ -383,6 +392,7 @@ _BASES = frozenset(
         RecordDistribution,
         NumericRecordDistribution,
         FlatNumericRecordDistribution,
+        _LearnedLaw,
     }
 )
 

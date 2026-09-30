@@ -516,7 +516,6 @@ def _public_distribution_classes() -> list[type]:
 # The classes the design retires keep a keyword name until they are removed.
 _RETIRING = {
     "ApproximateDistribution",
-    "BayesFlowModel",
     "BroadcastDistribution",
     "DistributionArray",
     "FlattenedDistributionView",

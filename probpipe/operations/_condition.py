@@ -245,8 +245,8 @@ _NORMALIZATION_CONTROLS = frozenset(
     name for names in _INFERENCE_METHOD_CONTROLS.values() for name in names
 )
 
-#: The parameters an amortized posterior's ``_condition_on`` reads, as
-#: :class:`~probpipe.inference.BayesFlowModel` does.
+#: The parameters an amortized posterior's ``_condition_on`` reads, as the
+#: kernel :func:`~probpipe.inference.learn_amortized_posterior` returns does.
 _AMORTIZED_CONDITIONING_CONTROLS = ("num_results", "random_seed")
 
 
@@ -623,8 +623,20 @@ def _can_curry(call: BoundCall) -> Feasibility:
 
 
 def _curry(call: BoundCall) -> Any:
-    """The kernel's ``_condition_on`` at the given slots."""
-    return call.operands["d"]._condition_on(call.operands["given"])
+    """The kernel's ``_condition_on`` at the given slots.
+
+    A kernel that claims ``SupportsApproximateConditioning`` also receives the
+    budgets an amortized posterior reads that the call sets.
+    """
+    kernel = call.operands["d"]
+    options: dict[str, Any] = {}
+    if isinstance(kernel, SupportsApproximateConditioning):
+        options = {
+            name: call.controls[name]
+            for name in _AMORTIZED_CONDITIONING_CONTROLS
+            if name in call.controls
+        }
+    return kernel._condition_on(call.operands["given"], **options)
 
 
 def _evaluation_is_exact(call: BoundCall) -> bool:

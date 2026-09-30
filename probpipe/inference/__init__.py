@@ -33,10 +33,11 @@ from ._bayesflow_likelihoods import (
 )
 
 # Amortized SBI (optional ``[bayesflow]`` extra). keras/bayesflow load lazily on
-# first call, so these eager imports stay cheap; the trained artifacts dispatch
-# via ``SupportsApproximateConditioning`` (NPE) or plug into ``SimpleModel`` as
-# ``Likelihood`` components (NLE/NRE) -- no inference-registry methods needed.
-from ._bayesflow_posteriors import BayesFlowModel, learn_amortized_posterior
+# first call, so these eager imports stay cheap. The trained artifacts are
+# kernels: an amortized posterior claims ``SupportsApproximateConditioning``, and
+# a learned likelihood or ratio composes with a prior into a joint whose
+# conditional the registered methods normalize.
+from ._bayesflow_posteriors import learn_amortized_posterior
 from ._blackjax_ess import elliptical_slice
 from ._blackjax_rwmh import rwmh
 from ._minibatch import MinibatchedDistribution
@@ -47,7 +48,6 @@ __all__ = [
     "BaseDispatchMethod",
     "BaseDispatchRegistry",
     "BayesFlowLikelihood",
-    "BayesFlowModel",
     "BayesFlowRatio",
     "BinaryDispatchMethod",
     "BinaryDispatchRegistry",

@@ -1,9 +1,9 @@
-"""Tests for the jax-native NLE / NRE surrogates (BayesFlow backend).
+"""Tests for the jax-native NLE / NRE kernels (BayesFlow backend).
 
 Requires the ``[bayesflow]`` extra (Python 3.12-3.13); skipped otherwise. The
-learned components are exercised end to end through ``SimpleModel`` +
-``condition_on`` (BlackJAX NUTS), judged against analytic conjugate posteriors
-and, for the constrained-prior case, against NUTS run with the exact
+learned kernels are exercised end to end through ``condition_on(learned * prior,
+{"observation": y})`` (BlackJAX NUTS), judged against analytic conjugate
+posteriors and, for the constrained-prior case, against NUTS run with the exact
 likelihood on the same model.
 """
 
@@ -23,7 +23,7 @@ import numpy as np
 import probpipe as pp
 from probpipe import (
     BayesFlowLikelihood,
-    ConditionallyIndependentLikelihood,
+    BayesFlowRatio,
     Normal,
     NumericRecord,
     ProductDistribution,
@@ -32,8 +32,13 @@ from probpipe import (
     learn_amortized_likelihood,
     learn_amortized_ratio,
 )
+from probpipe.distributions._capabilities import (
+    SupportsConditionalLogProb,
+    SupportsConditionalUnnormalizedLogProb,
+)
 from probpipe.inference._bayesflow_common import _adapter_field_keys
 from probpipe.modeling import GenerativeLikelihood, Likelihood
+from probpipe.operations._condition import condition_on as condition_on_operation
 
 from ._bayesflow_helpers import theta_vec
 
@@ -86,6 +91,24 @@ def _analytic_posterior(y_rows: np.ndarray) -> tuple[np.ndarray, float]:
     return mean, std
 
 
+def _score(lik, theta, rows):
+    """The learned kernel's score of the dataset *rows* at the flat parameters *theta*."""
+    declaration = lik.prior.event_spec
+    theta = jnp.asarray(theta)
+    if declaration.exposes_record:
+        given = NumericRecord.from_vector("theta", declaration.spec, theta)
+    else:
+        (component,) = declaration.components
+        given = {component: jnp.reshape(theta, declaration.spec.shape)}
+    return lik._conditional_unnormalized_log_prob(given, rows)
+
+
+def _posterior(lik, prior, y):
+    """The posterior of ``lik * prior`` at the observation rows *y*, by the registry's method."""
+    view = condition_on_operation.with_options(num_results=1500, num_warmup=500, random_seed=0)
+    return view(lik * prior, {"observation": jnp.asarray(y)})
+
+
 @pytest.fixture(scope="module")
 def nle():
     """A briefly-trained NLE, shared across the NLE tests."""
@@ -120,7 +143,7 @@ class TestSurrogateContract:
         ``approximator.log_prob`` (same standardization + log-det-jacobian)."""
         theta = jnp.array([0.4, -0.3])
         y_row = np.array([[0.6, -0.1]], dtype="float32")
-        ours = float(nle.log_likelihood(theta, y_row))
+        ours = float(_score(nle, theta, y_row))
         keys = _adapter_field_keys(("a", "b"))
         data = {
             keys[0]: np.array([[0.4]], "float32"),
@@ -136,7 +159,7 @@ class TestSurrogateContract:
         """The traceable logits path matches the public ``log_ratio``."""
         theta = jnp.array([0.4, -0.3])
         y_row = np.array([[0.6, -0.1]], dtype="float32")
-        ours = float(nre.log_likelihood(theta, y_row))
+        ours = float(_score(nre, theta, y_row))
         keys = _adapter_field_keys(("a", "b"))
         data = {
             keys[0]: np.array([[0.4]], "float32"),
@@ -155,7 +178,7 @@ class TestSurrogateContract:
         y_row = jnp.array([0.6, -0.1])
 
         def f(th):
-            return lik.log_likelihood(th, y_row)
+            return _score(lik, th, y_row)
 
         th0 = jnp.array([0.3, -0.2])
         g = jax.grad(f)(th0)
@@ -174,37 +197,45 @@ class TestSurrogateContract:
         v, gj = jax.jit(jax.value_and_grad(f))(th0)
         assert jnp.isfinite(v) and jnp.isfinite(gj).all()
 
+    def test_the_kernels_run_from_the_priors_components_to_the_rows(self, nle, nre):
+        """A learned kernel's given slots are the prior's components and its event
+        the observation rows; NLE has the network's density and NRE one known up to
+        a constant."""
+        for lik in (nle, nre):
+            assert list(lik.given_spec) == ["a", "b"]
+            assert tuple(lik.event_spec.components) == ("observation",)
+        assert isinstance(nle, SupportsConditionalLogProb)
+        assert isinstance(nre, SupportsConditionalUnnormalizedLogProb)
+        assert not isinstance(nre, SupportsConditionalLogProb)
+        assert isinstance(nre, BayesFlowRatio)
+
     @pytest.mark.parametrize("which", ["nle", "nre"])
-    def test_cil_membership_and_row_sum(self, which, request):
-        """Both wrappers are ConditionallyIndependentLikelihoods, and the dataset
-        log-likelihood is exactly the sum of per-datum scores."""
+    def test_a_dataset_scores_as_the_sum_of_its_rows(self, which, request):
+        """A dataset's score is the sum of its per-row scores."""
         lik = request.getfixturevalue(which)
-        assert isinstance(lik, ConditionallyIndependentLikelihood)
         theta = jnp.array([0.2, 0.1])
         rows = jnp.array([[0.5, 0.0], [-0.2, 0.3], [0.1, 0.1]])
-        total = float(lik.log_likelihood(theta, rows))
-        per = sum(float(lik.per_datum_log_likelihood(theta, rows[i])) for i in range(3))
+        total = float(_score(lik, theta, rows))
+        per = sum(float(_score(lik, theta, rows[i])) for i in range(3))
         np.testing.assert_allclose(total, per, rtol=1e-5)
 
-    def test_params_coercion_record_and_flat(self, nle):
-        """Structured per-draw records and flat vectors give identical scores
-        (the MCMC helper passes flat vectors; predictive paths pass records)."""
-        flat = jnp.array([0.4, -0.3])
-        record = NumericRecord.from_vector("nr", _prior().event_spec.spec, flat)
+    def test_a_record_and_a_mapping_given_score_alike(self, nle):
+        """A record of the parameters and a mapping of them give identical scores."""
+        record = NumericRecord.from_vector("nr", _prior().event_spec.spec, jnp.array([0.4, -0.3]))
         y_row = jnp.array([0.6, -0.1])
         np.testing.assert_allclose(
-            float(nle.log_likelihood(flat, y_row)),
-            float(nle.log_likelihood(record, y_row)),
+            float(nle._conditional_log_prob(record, y_row)),
+            float(nle._conditional_log_prob({"a": 0.4, "b": -0.3}, y_row)),
             rtol=1e-6,
         )
 
-    def test_generate_data_passthrough(self, nle):
-        """The wrapper delegates generate_data to the training simulator."""
-        params = jnp.array([0.3, 0.2])
-        key = jax.random.PRNGKey(9)
+    def test_the_law_at_the_parameters_has_the_density(self, nle):
+        law = condition_on_operation(nle, {"a": 0.4, "b": -0.3})
+        y_row = jnp.array([0.6, -0.1])
         np.testing.assert_allclose(
-            np.asarray(nle.generate_data(params, 3, key=key)),
-            np.asarray(_SIM.generate_data(params, 3, key=key)),
+            float(law._log_prob(y_row)),
+            float(_score(nle, jnp.array([0.4, -0.3]), y_row)),
+            rtol=1e-6,
         )
 
     def test_repr(self, nle, nre):
@@ -214,11 +245,11 @@ class TestSurrogateContract:
     def test_data_width_guard(self, nle):
         """Wrong-width data fails fast with an actionable message."""
         with pytest.raises(ValueError, match="trained on observations of size"):
-            nle.log_likelihood(jnp.array([0.0, 0.0]), jnp.zeros(5))
+            _score(nle, jnp.array([0.0, 0.0]), jnp.zeros(5))
 
     def test_params_width_guard(self, nle):
         with pytest.raises(ValueError, match="trained on"):
-            nle.log_likelihood(jnp.zeros(3), jnp.zeros(2))
+            nle._conditional_log_prob({"a": jnp.zeros(2), "b": 0.0}, jnp.zeros(2))
 
     def test_scalar_observations_accept_one_dimensional_dataset(self):
         """d_y == 1: a 1-D array is n scalar observations, not one n-wide row
@@ -245,17 +276,15 @@ class TestSurrogateContract:
         )
         theta = jnp.array([0.3, -0.2])
         y3 = jnp.array([0.1, 0.4, -0.3])
-        total = float(lik.log_likelihood(theta, y3))
-        per = sum(
-            float(lik.per_datum_log_likelihood(theta, jnp.array([v]))) for v in [0.1, 0.4, -0.3]
-        )
+        total = float(_score(lik, theta, y3))
+        per = sum(float(_score(lik, theta, jnp.array([v]))) for v in [0.1, 0.4, -0.3])
         np.testing.assert_allclose(total, per, rtol=1e-5)
         # A (n, 1) column is the same dataset.
-        np.testing.assert_allclose(total, float(lik.log_likelihood(theta, y3[:, None])), rtol=1e-6)
+        np.testing.assert_allclose(total, float(_score(lik, theta, y3[:, None])), rtol=1e-6)
 
 
 class TestConditioning:
-    """End-to-end: SimpleModel(prior, learned) + condition_on -> NUTS, against
+    """End-to-end: condition_on(learned * prior, observation) -> NUTS, against
     the analytic conjugate posterior (mean AND spread).
 
     Bounds are measured: each test's config was run across 3-4 training seeds
@@ -264,10 +293,8 @@ class TestConditioning:
     drift (training is seeded, so a given environment is reproducible).
     """
 
-    def _check_posterior(self, model, y_rows, mean_tol, ratio_band):
-        post = condition_on(
-            model, jnp.asarray(y_rows), num_results=1500, num_warmup=500, random_seed=0
-        )
+    def _check_posterior(self, lik, prior, y_rows, mean_tol, ratio_band):
+        post = _posterior(lik, prior, y_rows)
         draws = np.stack([np.asarray(post.draws()[f]).reshape(-1) for f in ("a", "b")], axis=-1)
         an_mean, an_std = _analytic_posterior(np.asarray(y_rows))
         mean_err = np.abs(draws.mean(0) - an_mean).max() / an_std
@@ -278,9 +305,11 @@ class TestConditioning:
     def test_nle_single_observation(self, nle):
         # Observed across seeds: mean err 0.05-0.10 post-std, ratios 0.99-1.11.
         y = np.array([[0.8, -0.4]], dtype="float32")
-        self._check_posterior(
-            SimpleModel(prior=_prior(), likelihood=nle), y, mean_tol=0.3, ratio_band=(0.85, 1.25)
-        )
+        self._check_posterior(nle, _prior(), y, mean_tol=0.3, ratio_band=(0.85, 1.25))
+
+    def test_a_learned_likelihood_times_a_prior_runs_a_registered_method(self, nle):
+        report = condition_on_operation.check(nle * _prior(), {"observation": jnp.zeros((1, 2))})
+        assert (report.route, report.method, report.exact) == ("bayes", "blackjax_nuts", False)
 
     def test_nle_multi_observation_sharpens(self, nle):
         """n=8 i.i.d. rows: the posterior matches the analytic n-observation
@@ -292,22 +321,18 @@ class TestConditioning:
         # Observed across seeds: mean err 0.03-0.34 post-std, ratios 0.99-1.10
         # (the per-row score errors accumulate over n rows, hence the wider
         # mean bound than n=1).
-        self._check_posterior(
-            SimpleModel(prior=_prior(), likelihood=nle), y, mean_tol=0.6, ratio_band=(0.85, 1.25)
-        )
+        self._check_posterior(nle, _prior(), y, mean_tol=0.6, ratio_band=(0.85, 1.25))
 
     def test_nre_single_observation(self, nre):
         # Observed across seeds: mean err 0.02-0.09 post-std, ratios 0.95-1.08.
         y = np.array([[0.8, -0.4]], dtype="float32")
-        self._check_posterior(
-            SimpleModel(prior=_prior(), likelihood=nre), y, mean_tol=0.3, ratio_band=(0.8, 1.25)
-        )
+        self._check_posterior(nre, _prior(), y, mean_tol=0.3, ratio_band=(0.8, 1.25))
 
-    def _check_nested_posterior(self, model, y, mean_tol, ratio_band):
+    def _check_nested_posterior(self, lik, prior, y, mean_tol, ratio_band):
         """Like ``_check_posterior`` but over the three *nested* leaves
         (``outer/a``, ``outer/b``, ``m``) -- in ``flatten`` order, so leaf j of
         the analytic posterior lines up with observation column j."""
-        post = condition_on(model, jnp.asarray(y), num_results=1500, num_warmup=500, random_seed=0)
+        post = _posterior(lik, prior, y)
         draws = np.stack(
             [np.asarray(post.draws()[f]).reshape(-1) for f in ("outer/a", "outer/b", "m")], axis=-1
         )
@@ -333,9 +358,7 @@ class TestConditioning:
             verbose=0,
         )
         y = np.array([[0.8, -0.4, 0.3]], dtype="float32")
-        self._check_nested_posterior(
-            SimpleModel(prior=prior, likelihood=nle), y, mean_tol=0.3, ratio_band=(0.85, 1.25)
-        )
+        self._check_nested_posterior(nle, prior, y, mean_tol=0.3, ratio_band=(0.85, 1.25))
 
     def test_nre_nested_prior_end_to_end(self):
         """NRE lifts a nested prior: the same nested conjugate
@@ -351,9 +374,7 @@ class TestConditioning:
             verbose=0,
         )
         y = np.array([[0.8, -0.4, 0.3]], dtype="float32")
-        self._check_nested_posterior(
-            SimpleModel(prior=prior, likelihood=nre), y, mean_tol=0.3, ratio_band=(0.8, 1.25)
-        )
+        self._check_nested_posterior(nre, prior, y, mean_tol=0.3, ratio_band=(0.8, 1.25))
 
     def test_nle_constrained_prior_matches_true_likelihood(self):
         """A constrained (Gamma) prior end to end, judged against NUTS run with
@@ -377,17 +398,14 @@ class TestConditioning:
 
         y = np.asarray(_SIM.generate_data(jnp.array([5.0, 0.5]), 4, key=jax.random.PRNGKey(5)))
 
-        def _lam_draws(likelihood):
-            post = condition_on(
-                SimpleModel(prior=_gamma_prior(), likelihood=likelihood),
-                jnp.asarray(y),
-                num_results=1500,
-                num_warmup=500,
-                random_seed=0,
-            )
-            return np.asarray(post.draws()["lam"]).reshape(-1)
-
-        ref = _lam_draws(_TrueGaussianLik())
+        ref_post = condition_on(
+            SimpleModel(prior=_gamma_prior(), likelihood=_TrueGaussianLik()),
+            jnp.asarray(y),
+            num_results=1500,
+            num_warmup=500,
+            random_seed=0,
+        )
+        ref = np.asarray(ref_post.draws()["lam"]).reshape(-1)
         lik = learn_amortized_likelihood(
             _gamma_prior(),
             _SIM,
@@ -397,7 +415,7 @@ class TestConditioning:
             random_seed=0,
             verbose=0,
         )
-        lam = _lam_draws(lik)
+        lam = np.asarray(_posterior(lik, _gamma_prior(), y).draws()["lam"]).reshape(-1)
         assert (lam > 0).all()
         # Observed across seeds: |mean diff| 0.00-0.26 reference-std units,
         # std ratio 1.02-1.10.
@@ -438,17 +456,11 @@ class TestConditioning:
             lik.approximator, lik.prior, lik.simulator, data_dim=2, dequantized=False
         )
         np.testing.assert_allclose(
-            float(lik.log_likelihood(jnp.array([1.3]), y_obs)),
-            float(twin.log_likelihood(jnp.array([1.3]), y_obs + 0.5)),
+            float(_score(lik, jnp.array([1.3]), y_obs)),
+            float(_score(twin, jnp.array([1.3]), y_obs + 0.5)),
             rtol=1e-6,
         )
-        post = condition_on(
-            SimpleModel(prior=pp.Gamma("lam", 2.0, 2.0), likelihood=lik),
-            y_obs,
-            num_results=1500,
-            num_warmup=500,
-            random_seed=0,
-        )
+        post = _posterior(lik, pp.Gamma("lam", 2.0, 2.0), y_obs)
         lam = np.asarray(post.draws()["lam"]).reshape(-1)
         assert (lam > 0).all()
         # Observed across seeds 0-2: mean err 0.03-0.17 posterior-std units,
@@ -537,6 +549,6 @@ class TestDeterminism:
             )
 
         theta, y = jnp.array([0.3, -0.1]), jnp.array([0.5, 0.0])
-        v1 = float(_fit().log_likelihood(theta, y))
-        v2 = float(_fit().log_likelihood(theta, y))
+        v1 = float(_score(_fit(), theta, y))
+        v2 = float(_score(_fit(), theta, y))
         assert v1 == v2

@@ -269,17 +269,36 @@ def flat_density(dist: Any) -> Callable[[Array], Array]:
 
 
 def _joint_draw(target: Any, key: Array, record: NumericRecordSpec) -> Array | None:
-    """A flat draw of *target*'s fields from the joint it conditions, or None when it cannot sample.
+    """A flat draw of *target*'s fields from the joint it conditions, or None when there is none.
 
     The draw is the joint's, restricted to the fields *record* declares, so it
-    lies in the support of the unnormalized conditional.
+    lies in the support of the unnormalized conditional. A factored joint that
+    does not sample draws each field from the factor producing it, when that
+    factor is a law that samples, as a prior is.
     """
     joint = target.joint if isinstance(target, _UnnormalizedConditional) else None
-    if not isinstance(joint, SupportsSampling):
+    if joint is None:
         return None
     try:
-        draw = joint._sample(key, sample_shape=())
-        fields = Record("init", {name: draw.children[name] for name in record.fields})
+        if isinstance(joint, SupportsSampling):
+            children = joint._sample(key, sample_shape=()).children
+        else:
+            children = {}
+            laws = [
+                factor
+                for factor in getattr(joint, "factors", ())
+                if isinstance(factor, Distribution) and isinstance(factor, SupportsSampling)
+            ]
+            for law, subkey in zip(laws, jax.random.split(key, max(len(laws), 1))):
+                draw = law._sample(subkey, sample_shape=())
+                if isinstance(draw, Record):
+                    children.update(draw.children)
+                else:
+                    (component,) = law.event_spec.components
+                    children[component] = draw
+        if not set(record.fields) <= set(children):
+            return None
+        fields = Record("init", {name: children[name] for name in record.fields})
         return fields.to_numeric().to_vector()
     except Exception:
         logger.debug("get_init_state: the joint's draw failed for %r", target, exc_info=True)
@@ -313,8 +332,9 @@ def get_init_state(
        ``RecordDistribution`` the sample is flattened to a numeric
        vector via ``NumericRecord``.
     3. **Joint draw** — if the prior is an unnormalized conditional
-       over a numeric record whose joint samples, the joint's draw
-       restricted to the unconditioned fields, flattened.
+       over a numeric record, return the draw of its joint restricted
+       to the unconditioned fields, flattened. A factored joint that
+       does not sample draws each field from the factor producing it.
     4. **Stan default** — if the prior has no sampling path but
        exposes ``event_shape`` or a numeric record, return a
        coordinate-wise ``Uniform(-2, 2)`` draw, matching Stan's default

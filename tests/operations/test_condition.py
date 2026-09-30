@@ -230,6 +230,7 @@ class _AmortizedKernel(
         super().__init__(name, {"y": REAL}, REAL)
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
+        object.__setattr__(self, "options", kwargs)
         return Gaussian(self.name, 3.0)
 
     def _conditional_sample(self, given: Any, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
@@ -517,6 +518,11 @@ class TestApproximateKernels:
     def test_exact_only_excludes_currying_an_approximate_kernel(self):
         with pytest.raises(ResolutionError, match="SupportsApproximateConditioning"):
             condition_on.with_options(exact_only=True)(_AmortizedKernel(), {"y": 0.3})
+
+    def test_an_approximate_kernel_receives_the_budgets_it_reads(self):
+        kernel = _AmortizedKernel()
+        condition_on.with_options(num_results=7, random_seed=3)(kernel, {"y": 0.3})
+        assert kernel.options == {"num_results": 7, "random_seed": 3}
 
 
 class TestTheOperation:
