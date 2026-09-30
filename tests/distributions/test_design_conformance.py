@@ -62,7 +62,9 @@ _OTHER_PACKAGES = frozenset(
 )
 
 #: Declarations the implementation does not match yet, with the change each awaits.
-_PENDING: dict[str, str] = {}
+_PENDING: dict[str, str] = {
+    "EmpiricalDistribution": "a plain array's atoms lie on level, which defaults to the law's component",
+}
 
 
 def _tool():
