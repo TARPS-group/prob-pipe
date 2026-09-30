@@ -158,6 +158,21 @@ def _install_composition(engine: Callable[[Any, Any], Any]) -> None:
     _composition_engine = engine
 
 
+#: The law that ``with_path_names`` returns for a rename that reaches a field of a
+#: record draw, installed by the views module at import.
+_renamed_law_factory: Callable[[Any, OutputSpec, Mapping[str, str]], Any] | None = None
+
+
+def _install_renamed_law(factory: Callable[[Any, OutputSpec, Mapping[str, str]], Any]) -> None:
+    """Install the factory of the law whose draws carry the names ``with_path_names`` gives.
+
+    Called once, by the views module at import, so this module never imports the
+    module that imports it.
+    """
+    global _renamed_law_factory
+    _renamed_law_factory = factory
+
+
 def _compose_operands(left: Any, right: Any) -> Any:
     """*left* ``*`` *right* through the installed engine.
 
@@ -432,14 +447,21 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
             self.event_spec.with_dim_names(**names), "with_dim_names", names
         )
 
-    def with_path_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Self:
+    def with_path_names(
+        self, mapping: Mapping[str, str] | None = None, /, **kwargs: str
+    ) -> Distribution:
         """Rename or move nodes of the event declaration by their paths, ``old -> new``.
 
         The result is this law with :meth:`OutputSpec.with_path_names` applied to
         its declaration. A path starts with a component, and the packaging is
         kept, so a whole term's component is renamed in place with the term's
         fields under it. The law is unchanged: a draw of the result is a draw of
-        this law carrying the new names.
+        this law carrying the new names. Renaming a whole term's component alone
+        changes only the declaration, so the result is a copy of the same class.
+        A rename that reaches a field of a record draw returns a law that holds
+        this one and renames values at its boundary: draws, moments, and
+        marginals on the way out, and scored values, givens, and paths on the way
+        in.
 
         Parameters
         ----------
@@ -450,9 +472,8 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
 
         Returns
         -------
-        Self
-            A copy of the same class and name holding the renamed declaration;
-            the original is unchanged.
+        Distribution
+            The renamed law under the same name; the original is unchanged.
 
         Raises
         ------
@@ -462,21 +483,16 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
             If a new name is empty or contains ``/``, a node is renamed twice, no
             renames are given, or a rename collides with a sibling.
         NotImplementedError
-            If a rename reaches a field of a record-valued draw, whose values
-            must carry the new names.
+            If this law is factored and a rename reaches a field of its record
+            draw, since a joint renames through its factors.
         """
         renamed = self.event_spec.with_path_names(mapping, **kwargs)
-        component = _whole_term_component(self.event_spec)
-        fields_kept = (
-            component is not None
-            and _whole_term_component(renamed) is not None
-            and renamed.spec == self.event_spec.spec
-        )
-        if not fields_kept:
-            raise NotImplementedError(
-                "Distribution.with_path_names: renaming the fields of a record draw"
-            )
-        return self._with_declaration(renamed, "with_path_names", {**dict(mapping or {}), **kwargs})
+        renames = {**dict(mapping or {}), **kwargs}
+        if renamed.spec == self.event_spec.spec:
+            return self._with_declaration(renamed, "with_path_names", renames)
+        if _renamed_law_factory is None:
+            raise RuntimeError("the renamed law is not installed; import probpipe")
+        return _renamed_law_factory(self, renamed, renames)
 
     def _with_declaration(
         self, event_spec: OutputSpec, operation: str, arguments: Mapping[str, Any]

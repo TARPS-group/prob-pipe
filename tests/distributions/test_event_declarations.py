@@ -94,6 +94,7 @@ from probpipe.distributions import FactoredDistribution, FactoredNumericDistribu
 from probpipe.distributions._capabilities import SupportsSampling
 from probpipe.distributions._joint_empirical import NumericJointEmpirical
 from probpipe.distributions._product import TFPProductDistribution
+from probpipe.distributions._views import _RenamedDistribution
 from probpipe.distributions.gaussian_random_function import (
     _IndependentSumGRF,
     _LinearMapGRF,
@@ -284,6 +285,9 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
         ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)), "a"
     ),
     FactoredDistribution: lambda: Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0),
+    _RenamedDistribution: lambda: ProductDistribution(
+        a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)
+    ).with_path_names(a="x"),
 }
 
 # Bases a concrete class specializes, constructed only through one.
