@@ -9,9 +9,9 @@ from ..core._dispatch import Feasibility
 from ..core._specs import OutputSpec
 from ..custom_types import ArrayLike
 from ..functions import function
+from ..operations._condition import InferenceMethod, _UnnormalizedConditional
 from ._approximate_distribution import ApproximateDistribution, make_posterior
-from ._inference_utils import extract_chain_columns, posterior_var_order
-from ._registry import InferenceMethod
+from ._inference_utils import extract_chain_columns, joint_and_given, posterior_var_order
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +36,9 @@ def condition_on_nutpie(
 ) -> ApproximateDistribution:
     """MCMC sampling via nutpie (Rust-based NUTS).
 
-    Accepts a :class:`~probpipe.modeling.StanModel` or
-    :class:`~probpipe.modeling.PyMCModel`.
+    Accepts a :class:`~probpipe.families.StanModel` or its posterior, bound
+    to *data* when it is a kernel, or a :class:`~probpipe.families.PyMCModel`
+    at the observed values *data*.
     """
     try:
         import nutpie
@@ -103,17 +104,15 @@ def _compile_for_nutpie(model: Any, data: Any) -> tuple[Any, Any | None]:
     can derive a matching parameter record), and ``None`` for Stan
     targets.
     """
+    from ..families._programs import StanModel
+
+    if isinstance(model, StanModel) and isinstance(data, dict):
+        # Binding a Stan program's data curries it to the posterior.
+        model, data = model._condition_on(data), None
     if hasattr(model, "_bridgestan_model"):
         import nutpie
 
-        if isinstance(data, dict):
-            # Keep the data the model was built with — StanModel(name, file, data=...)
-            # stores it on ``_stan_data`` — and let the conditioning data
-            # override key-by-key, mirroring the CmdStan method. Without this
-            # the rebuilt BridgeStan model would see only the conditioning data
-            # and fail on (or silently misuse) the construction-time variables.
-            data = {**(model._stan_data or {}), **data} or None
-        return nutpie.compile_stan_model(model._bridgestan_model(data=data)), None
+        return nutpie.compile_stan_model(model._bridgestan_model()), None
 
     if hasattr(model, "_pymc_model"):
         import nutpie
@@ -170,8 +169,8 @@ def _extract_chains(
 class NutpieNutsMethod(InferenceMethod):
     """nutpie-backed NUTS, registered as ``nutpie_nuts`` at priority 88.
 
-    Applies to a ``StanModel`` or ``PyMCModel`` whose modeling backend is
-    installed; infeasible while nutpie is not installed.
+    Applies to a Stan program's posterior at its data, and to a ``PyMCModel``
+    target at its observed values; infeasible while nutpie is not installed.
 
     Notes
     -----
@@ -181,33 +180,24 @@ class NutpieNutsMethod(InferenceMethod):
     """
 
     def __init__(self) -> None:
-        types: list[type] = []
-        try:
-            from ..modeling._stan import StanModel
+        from ..families._programs import PyMCModel, _StanPosterior
 
-            types.append(StanModel)
-        except ImportError:
-            pass
-        try:
-            from ..modeling._pymc import PyMCModel
-
-            types.append(PyMCModel)
-        except ImportError:
-            pass
-        self._supported = tuple(types)
+        self._supported = (_StanPosterior, PyMCModel)
 
     @property
     def name(self) -> str:
         return "nutpie_nuts"
 
     def supported_types(self) -> tuple[type, ...]:
-        return self._supported
+        return (*self._supported, _UnnormalizedConditional)
 
     @property
     def priority(self) -> int:
         return 88
 
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:
+    def check(self, target: Any, /, **kwargs: Any) -> Feasibility:
+        """Whether the target is a Stan or PyMC program, or one at its observed values."""
+        dist, _ = joint_and_given(target)
         if not isinstance(dist, self._supported):
             return Feasibility(feasible=False, description="Requires StanModel or PyMCModel")
         try:
@@ -216,5 +206,7 @@ class NutpieNutsMethod(InferenceMethod):
             return Feasibility(feasible=False, description="nutpie not installed")
         return Feasibility(feasible=True)
 
-    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
+    def execute(self, target: Any, /, **kwargs: Any) -> ApproximateDistribution:
+        """nutpie's NUTS on the program the target carries, at the observed values it binds."""
+        dist, observed = joint_and_given(target)
         return condition_on_nutpie.apply(dist, observed, **kwargs)

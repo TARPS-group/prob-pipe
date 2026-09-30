@@ -178,6 +178,7 @@ from probpipe.distributions._distribution import (
     NumericDistribution,
     set_default_num_evaluations,
 )
+from probpipe.families import UnnormalizedDistribution
 from probpipe.functions import (
     AbstractModule,
     Module,
@@ -197,7 +198,6 @@ from probpipe.functions._result import ResultKindError, ResultSchemaError
 from probpipe.inference import (
     ApproximateDistribution,
     BayesFlowLikelihood,
-    BayesFlowModel,
     BayesFlowRatio,
     MinibatchedDistribution,
     condition_on_nutpie,
@@ -240,7 +240,6 @@ __all__ = [
     "Batch",
     "BatchSpec",
     "BayesFlowLikelihood",
-    "BayesFlowModel",
     "BayesFlowRatio",
     "Bernoulli",
     "Beta",
@@ -356,6 +355,7 @@ __all__ = [
     "TruncatedNormal",
     "Uniform",
     "UnmanagedConcurrentWorkflowEntryError",
+    "UnnormalizedDistribution",
     "VonMisesFisher",
     "Weights",
     "Wishart",

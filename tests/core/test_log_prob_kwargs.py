@@ -153,13 +153,12 @@ class TestKwargFormSimpleModel:
 
 
 class TestStanViewsPackValue:
-    """StanModel / _UnconstrainedStanView: the keyword form takes one array per
-    Stan parameter *block* and assembles BridgeStan's flat vector.
+    """A Stan posterior and its unconstrained view: the keyword form takes one
+    array per Stan parameter *block* and assembles BridgeStan's flat vector.
 
-    bridgestan is not installed in CI, so the model is built via
-    ``object.__new__`` with a fake backend supplying the flattened parameter
-    names (per STYLE_GUIDE §8.4). Comprehensive block / shape / error coverage
-    lives in tests/modeling/test_stan_model.py.
+    bridgestan is not installed in CI, so the posterior's BridgeStan model is
+    a fake backend supplying the flattened parameter names (per STYLE_GUIDE
+    §8.4), placed where the posterior keeps the model it builds.
     """
 
     class _FakeBS:
@@ -172,21 +171,23 @@ class TestStanViewsPackValue:
         def param_unc_names(self):
             return self._names
 
-    @pytest.fixture(params=["StanModel", "_UnconstrainedStanView"])
-    def stan_view(self, request):
-        from probpipe.modeling import _stan
+    @pytest.fixture(params=["posterior", "unconstrained"])
+    def stan_view(self, request, tmp_path):
+        from probpipe.core._immutable import transient_memo
+        from probpipe.families import StanModel
 
-        names = ["mu", "theta.1", "theta.2", "theta.3"]
-        base = object.__new__(_stan.StanModel)
-        base._bs_model = self._FakeBS(names)
-        base._name = "m"
-        base._num_params = len(names)
-        if request.param == "StanModel":
-            return base
-        return base.as_unconstrained_distribution()
+        program = tmp_path / "blocks.stan"
+        program.write_text("parameters { real mu; vector[3] theta; } model { }")
+        posterior = StanModel("m", str(program))
+        transient_memo(posterior)["bridgestan"] = self._FakeBS(
+            ["mu", "theta.1", "theta.2", "theta.3"]
+        )
+        if request.param == "posterior":
+            return posterior
+        return posterior.as_unconstrained_distribution()
 
-    def test_fields_are_blocks(self, stan_view):
-        assert stan_view.fields == ("mu", "theta")
+    def test_the_components_are_the_blocks(self, stan_view):
+        assert tuple(stan_view.event_spec.components) == ("mu", "theta")
 
     def test_pack_value_assembles_blocks(self, stan_view):
         flat = stan_view._pack_value(mu=0.5, theta=jnp.array([1.0, 2.0, 3.0]))

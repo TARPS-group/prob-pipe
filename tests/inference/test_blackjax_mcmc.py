@@ -15,6 +15,7 @@ from probpipe import (
     variance,
 )
 from probpipe.inference import inference_method_registry
+from probpipe.inference._inference_utils import observed_target
 from probpipe.modeling._likelihood import Likelihood
 
 # TFP/JAX emit a deprecation warning during random-key construction
@@ -408,11 +409,11 @@ class TestCheckFeasibility:
 
     def test_check_rejects_non_logprob_target(self):
         method = inference_method_registry.get_method("blackjax_nuts")
-        info = method.check("not a distribution", observed=None)
+        info = method.check("not a distribution")
         assert info.feasible is False
         assert "SupportsUnnormalizedLogProb" in info.description
 
     def test_check_passes_on_simple_model(self, small_model):
         method = inference_method_registry.get_method("blackjax_nuts")
-        info = method.check(small_model, observed=jnp.zeros((4,)))
+        info = method.check(observed_target(small_model, jnp.zeros((4,))))
         assert info.feasible is True

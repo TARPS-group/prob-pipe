@@ -79,6 +79,19 @@ def _import_bayesflow() -> ModuleType:
     return bf
 
 
+def _observation_slot(prior: Any) -> str:
+    """The name of a learned kernel's observation field: ``observation``, unless the prior declares it.
+
+    A kernel's given slots and event components are disjoint, and the prior's
+    components name the parameters, so the observation takes the first of
+    ``observation``, ``observation_``, and so on that the prior leaves free.
+    """
+    slot = _OBSERVATION_KEY
+    while slot in prior.event_spec.components:
+        slot += "_"
+    return slot
+
+
 def _adapter_field_keys(keys: tuple[str, ...]) -> tuple[str, ...]:
     """Positional internal keys (``theta_0``, ``theta_1``, ...) for the adapter.
 

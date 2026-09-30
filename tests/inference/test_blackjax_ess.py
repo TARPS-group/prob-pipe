@@ -42,6 +42,7 @@ from probpipe.inference._blackjax_ess import (
     BlackJAXESSMethod,
     _gaussian_prior_params,
 )
+from probpipe.inference._inference_utils import observed_target
 from probpipe.modeling._likelihood import Likelihood
 
 pytestmark = pytest.mark.filterwarnings(
@@ -276,7 +277,7 @@ class TestFeasibilityCheck:
 
     def test_rejects_bare_distribution(self):
         m = BlackJAXESSMethod()
-        info = m.check(Normal(loc=0.0, scale=1.0, name="x"), jnp.zeros(5))
+        info = m.check(observed_target(Normal(loc=0.0, scale=1.0, name="x"), jnp.zeros(5)))
         assert not info.feasible
         assert "SimpleModel" in info.description
 
@@ -288,7 +289,7 @@ class TestFeasibilityCheck:
                 return jnp.asarray(0.0)
 
         model = SimpleModel(prior, _Lik(), name="m")
-        info = BlackJAXESSMethod().check(model, jnp.zeros(5))
+        info = BlackJAXESSMethod().check(observed_target(model, jnp.zeros(5)))
         assert not info.feasible
         assert "Gaussian" in info.description
 
@@ -300,7 +301,7 @@ class TestFeasibilityCheck:
                 return jnp.asarray(0.0)
 
         model = SimpleModel(prior, _Lik(), name="m")
-        info = BlackJAXESSMethod().check(model, None)
+        info = BlackJAXESSMethod().check(model)
         assert not info.feasible
         assert "observed data" in info.description
 
@@ -312,7 +313,7 @@ class TestFeasibilityCheck:
                 return jnp.asarray(0.0)
 
         model = SimpleModel(prior, _Lik(), name="m")
-        info = BlackJAXESSMethod().check(model, {"y": jnp.zeros(5)})
+        info = BlackJAXESSMethod().check(observed_target(model, {"y": jnp.zeros(5)}))
         assert not info.feasible
         assert "dict" in info.description
 
@@ -324,7 +325,7 @@ class TestFeasibilityCheck:
                 return jnp.asarray(0.0)
 
         model = SimpleModel(prior, _Lik(), name="m")
-        info = BlackJAXESSMethod().check(model, jnp.zeros((5, 2)))
+        info = BlackJAXESSMethod().check(observed_target(model, jnp.zeros((5, 2))))
         assert info.feasible
 
     def test_accepts_joint_gaussian_prior(self):
@@ -342,7 +343,7 @@ class TestFeasibilityCheck:
                 return jnp.asarray(0.0)
 
         model = SimpleModel(prior, _Lik(), name="m")
-        info = BlackJAXESSMethod().check(model, jnp.zeros((5, 3)))
+        info = BlackJAXESSMethod().check(observed_target(model, jnp.zeros((5, 3))))
         assert info.feasible
 
 
@@ -376,7 +377,7 @@ class TestDeclinesToRWMH:
 
     def test_ess_check_infeasible_on_non_traceable_likelihood(self):
         model = self._model()
-        info = BlackJAXESSMethod().check(model, np.zeros((5, 2)))
+        info = BlackJAXESSMethod().check(observed_target(model, np.zeros((5, 2))))
         assert not info.feasible
         assert "traceable" in info.description.lower()
 

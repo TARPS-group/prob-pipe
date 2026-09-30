@@ -1,8 +1,8 @@
 """Modeling interfaces for ProbPipe.
 
-Provides likelihood protocols, incremental conditioning, and
-concrete probabilistic model classes that wrap external PPL backends
-(Stan, PyMC) as first-class ProbPipe distributions.
+Provides likelihood protocols, incremental conditioning, and concrete
+probabilistic model classes. ``StanModel`` and ``PyMCModel``, the program-defined
+families of ``probpipe.families``, are available here as well.
 """
 
 from ._base import ProbabilisticModel
@@ -31,12 +31,8 @@ __all__ = [
 
 
 def __getattr__(name: str):
-    if name == "StanModel":
-        from ._stan import StanModel
+    if name in ("PyMCModel", "StanModel"):
+        from ..families import _programs
 
-        return StanModel
-    if name == "PyMCModel":
-        from ._pymc import PyMCModel
-
-        return PyMCModel
+        return getattr(_programs, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

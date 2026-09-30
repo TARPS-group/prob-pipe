@@ -28,6 +28,7 @@ from probpipe.inference._blackjax_sgmcmc import (
     BlackJAXSGLDMethod,
     _build_grad_estimator,
 )
+from probpipe.inference._inference_utils import observed_target
 from probpipe.inference._minibatch import MinibatchedDistribution
 
 # -- Fixtures ------------------------------------------------------------------
@@ -153,13 +154,11 @@ class TestReproducibility:
             random_seed=123,
         )
         post1 = BlackJAXSGLDMethod().execute(
-            logistic_problem["model"],
-            logistic_problem["data"],
+            observed_target(logistic_problem["model"], logistic_problem["data"]),
             **kwargs,
         )
         post2 = BlackJAXSGLDMethod().execute(
-            logistic_problem["model"],
-            logistic_problem["data"],
+            observed_target(logistic_problem["model"], logistic_problem["data"]),
             **kwargs,
         )
         np.testing.assert_array_equal(post1.flat_samples, post2.flat_samples)
@@ -172,14 +171,12 @@ class TestReproducibility:
             step_size=1e-3,
         )
         post1 = BlackJAXSGLDMethod().execute(
-            logistic_problem["model"],
-            logistic_problem["data"],
+            observed_target(logistic_problem["model"], logistic_problem["data"]),
             random_seed=1,
             **kwargs,
         )
         post2 = BlackJAXSGLDMethod().execute(
-            logistic_problem["model"],
-            logistic_problem["data"],
+            observed_target(logistic_problem["model"], logistic_problem["data"]),
             random_seed=2,
             **kwargs,
         )
@@ -194,7 +191,7 @@ class TestCheck:
     def test_rejects_bare_supports_log_prob(self):
         """A non-SimpleModel target returns ``feasible=False`` with hint."""
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="x")
-        info = BlackJAXSGLDMethod().check(prior, None, batch_size=10)
+        info = BlackJAXSGLDMethod().check(prior, batch_size=10)
         assert not info.feasible
         assert "SimpleModel" in info.description
 
@@ -207,23 +204,21 @@ class TestCheck:
 
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="x")
         model = SimpleModel(prior=prior, likelihood=_BareLikelihood())
-        info = BlackJAXSGLDMethod().check(model, None, batch_size=10)
+        info = BlackJAXSGLDMethod().check(model, batch_size=10)
         assert not info.feasible
         assert "ConditionallyIndependentLikelihood" in info.description
 
     def test_requires_batch_size_kwarg(self, logistic_problem):
         """Missing ``batch_size=`` returns ``feasible=False`` with hint."""
         info = BlackJAXSGLDMethod().check(
-            logistic_problem["model"],
-            logistic_problem["data"],
+            observed_target(logistic_problem["model"], logistic_problem["data"]),
         )
         assert not info.feasible
         assert "batch_size" in info.description
 
     def test_feasible_for_well_formed_input(self, logistic_problem):
         info = BlackJAXSGLDMethod().check(
-            logistic_problem["model"],
-            logistic_problem["data"],
+            observed_target(logistic_problem["model"], logistic_problem["data"]),
             batch_size=20,
         )
         assert info.feasible
@@ -244,8 +239,7 @@ class TestConvergence:
 
     def test_sgld_recovers_logistic_coefficients(self, logistic_problem):
         post = BlackJAXSGLDMethod().execute(
-            logistic_problem["model"],
-            logistic_problem["data"],
+            observed_target(logistic_problem["model"], logistic_problem["data"]),
             batch_size=40,
             num_results=5000,
             num_warmup=1000,
@@ -263,8 +257,7 @@ class TestConvergence:
 
     def test_sghmc_recovers_logistic_coefficients(self, logistic_problem):
         post = BlackJAXSGHMCMethod().execute(
-            logistic_problem["model"],
-            logistic_problem["data"],
+            observed_target(logistic_problem["model"], logistic_problem["data"]),
             batch_size=40,
             num_results=5000,
             num_warmup=1000,
@@ -304,8 +297,7 @@ class TestConditionOnDispatch:
     def test_chain_shape_is_num_results_by_event_shape(self, logistic_problem):
         """`post.flat_samples` is `(num_results, *event_shape)` for a single chain."""
         post = BlackJAXSGLDMethod().execute(
-            logistic_problem["model"],
-            logistic_problem["data"],
+            observed_target(logistic_problem["model"], logistic_problem["data"]),
             batch_size=20,
             num_results=100,
             num_warmup=0,
@@ -317,8 +309,7 @@ class TestConditionOnDispatch:
     def test_warmup_discards_initial_samples(self, logistic_problem):
         """``num_warmup=N`` drops the first N samples; ``num_results`` retained."""
         post = BlackJAXSGLDMethod().execute(
-            logistic_problem["model"],
-            logistic_problem["data"],
+            observed_target(logistic_problem["model"], logistic_problem["data"]),
             batch_size=20,
             num_results=300,
             num_warmup=700,
@@ -331,8 +322,7 @@ class TestConditionOnDispatch:
         """``init=`` overrides the prior-sampled default."""
         init = jnp.array([2.5, -1.5])
         post = BlackJAXSGLDMethod().execute(
-            logistic_problem["model"],
-            logistic_problem["data"],
+            observed_target(logistic_problem["model"], logistic_problem["data"]),
             batch_size=20,
             num_results=50,
             num_warmup=0,

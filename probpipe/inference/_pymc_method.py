@@ -7,9 +7,9 @@ from typing import Any
 
 from ..core._dispatch import Feasibility
 from ..core._specs import OutputSpec
+from ..operations._condition import InferenceMethod, _UnnormalizedConditional
 from ._approximate_distribution import ApproximateDistribution, make_posterior
-from ._inference_utils import extract_chain_columns, posterior_var_order
-from ._registry import InferenceMethod
+from ._inference_utils import extract_chain_columns, joint_and_given, posterior_var_order
 
 
 class PyMCNutsMethod(InferenceMethod):
@@ -26,7 +26,7 @@ class PyMCNutsMethod(InferenceMethod):
     """
 
     def __init__(self) -> None:
-        from ..modeling._pymc import PyMCModel
+        from ..families._programs import PyMCModel
 
         self._model_type = PyMCModel
 
@@ -35,19 +35,24 @@ class PyMCNutsMethod(InferenceMethod):
         return "pymc_nuts"
 
     def supported_types(self) -> tuple[type, ...]:
-        return (self._model_type,)
+        return (self._model_type, _UnnormalizedConditional)
 
     @property
     def priority(self) -> int:
         return 82
 
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:
+    def check(self, target: Any, /, **kwargs: Any) -> Feasibility:
+        """Whether the target is a PyMC model, or one at its observed values."""
+        dist, _ = joint_and_given(target)
         if not isinstance(dist, self._model_type):
             return Feasibility(feasible=False, description="Requires PyMCModel")
         return Feasibility(feasible=True)
 
-    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
+    def execute(self, target: Any, /, **kwargs: Any) -> ApproximateDistribution:
+        """PyMC inference on the model the target carries, at the observed values it binds."""
         import pymc as pm
+
+        dist, observed = joint_and_given(target)
 
         num_results = kwargs.get("num_results", 1000)
         num_warmup = kwargs.get("num_warmup", 500)
@@ -84,7 +89,7 @@ class PyMCNutsMethod(InferenceMethod):
 
         return make_posterior(
             chains,
-            parents=(dist,),
+            parents=(target,),
             algorithm="pymc_nuts",
             annotations=trace,
             event_spec=event_spec,
@@ -110,7 +115,7 @@ class PyMCADVIMethod(InferenceMethod):
     """
 
     def __init__(self) -> None:
-        from ..modeling._pymc import PyMCModel
+        from ..families._programs import PyMCModel
 
         self._model_type = PyMCModel
 
@@ -119,19 +124,24 @@ class PyMCADVIMethod(InferenceMethod):
         return "pymc_advi"
 
     def supported_types(self) -> tuple[type, ...]:
-        return (self._model_type,)
+        return (self._model_type, _UnnormalizedConditional)
 
     @property
     def priority(self) -> int | None:
         return None
 
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:
+    def check(self, target: Any, /, **kwargs: Any) -> Feasibility:
+        """Whether the target is a PyMC model, or one at its observed values."""
+        dist, _ = joint_and_given(target)
         if not isinstance(dist, self._model_type):
             return Feasibility(feasible=False, description="Requires PyMCModel")
         return Feasibility(feasible=True)
 
-    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
+    def execute(self, target: Any, /, **kwargs: Any) -> ApproximateDistribution:
+        """PyMC inference on the model the target carries, at the observed values it binds."""
         import pymc as pm
+
+        dist, observed = joint_and_given(target)
 
         num_iterations = kwargs.get("num_iterations", 30000)
         num_results = kwargs.get("num_results", 1000)
@@ -155,7 +165,7 @@ class PyMCADVIMethod(InferenceMethod):
 
         return make_posterior(
             chains,
-            parents=(dist,),
+            parents=(target,),
             algorithm=algorithm,
             annotations=trace,
             event_spec=event_spec,

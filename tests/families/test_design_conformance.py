@@ -58,8 +58,6 @@ _CURRENT_MODULES = {
     "RandomMeasure": "probpipe.core._random_measures",
     "GaussianRandomFunction": "probpipe.distributions.gaussian_random_function",
     "LinearBasisFunction": "probpipe.distributions.gaussian_random_function",
-    "StanModel": "probpipe.modeling._stan",
-    "PyMCModel": "probpipe.modeling._pymc",
 }
 
 #: Declarations of these sections that the distribution layer owns and checks.
@@ -83,12 +81,10 @@ _PENDING = {
     "LinearBasisFunction": (
         "the basis-function model takes basis and weights, with output_spec and event_spec"
     ),
-    "StanModel": "StanModel is a ConditionalDistribution over its data-block entries",
-    "UnnormalizedDistribution": "the law of a user-supplied unnormalized log-density",
 }
 
 #: New declarations the catalog does not define yet; each has a pending case above.
-_UNBUILT = frozenset({"UnnormalizedDistribution"})
+_UNBUILT: frozenset[str] = frozenset()
 
 
 def _tool():
@@ -158,9 +154,6 @@ class TestDeclarationsAreImplemented:
         findings = _tool().check([declaration], _resolver(declaration.section))
         assert not findings, "; ".join(f"{f.name} {f.problem}" for f in findings)
 
-    @pytest.mark.pending(
-        reason="UnnormalizedDistribution is defined in families/_programs.py", raises=AssertionError
-    )
     def test_each_unbuilt_declaration_is_defined(self):
         programs = importlib.import_module("probpipe.families._programs")
         for name in _UNBUILT:
@@ -260,4 +253,9 @@ class TestThePackage:
         assert set(_new_declarations()) == set(families.__all__)
 
     def test_no_export_clashes_with_the_top_level_namespace(self):
-        assert not set(families.__all__) & set(probpipe.__all__)
+        """A name both namespaces export is one object, which the top level re-exports."""
+        shared = set(families.__all__) & set(probpipe.__all__)
+        clashes = {
+            name for name in shared if getattr(families, name) is not getattr(probpipe, name)
+        }
+        assert not clashes, sorted(clashes)

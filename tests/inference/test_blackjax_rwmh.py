@@ -803,5 +803,5 @@ class TestFastEagerEquivalence:
 class TestClassesExpose:
     def test_blackjax_rwmh_method_has_expected_check(self, iso_gaussian):
         m = BlackJAXRWMHMethod()
-        info = m.check(iso_gaussian, None)
+        info = m.check(iso_gaussian)
         assert info.feasible

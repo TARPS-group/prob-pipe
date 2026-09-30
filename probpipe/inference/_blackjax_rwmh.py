@@ -42,18 +42,20 @@ from ..core._dispatch import Feasibility
 from ..custom_types import Array, ArrayLike
 from ..distributions._capabilities import SupportsUnnormalizedLogProb
 from ..distributions._distribution import Distribution
+from ..operations._condition import InferenceMethod
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._inference_utils import (
     build_mcmc_datatree,
     extract_event_spec,
+    flat_density,
     get_init_state,
     get_prior,
     is_jax_traceable,
     is_simple_model,
+    observed_parts,
     parallel_chain_map,
     run_chain_scan,
 )
-from ._registry import InferenceMethod
 
 logger = logging.getLogger(__name__)
 
@@ -697,9 +699,7 @@ def rwmh(
         def target_log_prob(params):
             return dist._unnormalized_log_prob(params) + log_prob_fn(params, data)
     else:
-
-        def target_log_prob(params):
-            return dist._unnormalized_log_prob(params)
+        target_log_prob = flat_density(dist)
 
     init_state = get_init_state(dist, init, random_seed=random_seed)
     proposal_sigma_override = None
@@ -774,7 +774,9 @@ class BlackJAXRWMHMethod(InferenceMethod):
     def priority(self) -> int:
         return 55
 
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:
+    def check(self, target: Any, /, **kwargs: Any) -> Feasibility:
+        """Whether the target's parameters have an unnormalized density, from data not in a dict."""
+        dist, observed = observed_parts(target)
         prior = get_prior(dist)
         if not isinstance(prior, SupportsUnnormalizedLogProb):
             return Feasibility(
@@ -788,7 +790,9 @@ class BlackJAXRWMHMethod(InferenceMethod):
             )
         return Feasibility(feasible=True)
 
-    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
+    def execute(self, target: Any, /, **kwargs: Any) -> ApproximateDistribution:
+        """Random-walk chains on the target's parameters, scored by its prior and likelihood."""
+        dist, observed = observed_parts(target)
         prior = get_prior(dist)
         log_prob_fn = None
         if is_simple_model(dist):

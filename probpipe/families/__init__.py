@@ -14,7 +14,9 @@ Provides:
     ``GaussianProcess``;
   - the conditional families: ``LinearGaussianConditional``, the response
     families ``GLMFamily``, ``GaussianFamily``, ``BernoulliFamily``, and
-    ``PoissonFamily``, and ``glm_likelihood``.
+    ``PoissonFamily``, and ``glm_likelihood``;
+  - the program-defined families ``StanModel``, ``PyMCModel``, and
+    ``UnnormalizedDistribution``.
 """
 
 from ._conditional import (
@@ -27,6 +29,7 @@ from ._conditional import (
 )
 from ._gaussian import FactoredMultivariateGaussian, GaussianProcess
 from ._mixture import MixtureDistribution
+from ._programs import PyMCModel, StanModel, UnnormalizedDistribution
 from ._resampling import EpanechnikovKernel, GaussianKernel, SmoothingKernel
 from ._transformed import BijectorTransformedDistribution, LinearPushforwardDistribution
 
@@ -43,6 +46,9 @@ __all__ = [
     "LinearPushforwardDistribution",
     "MixtureDistribution",
     "PoissonFamily",
+    "PyMCModel",
     "SmoothingKernel",
+    "StanModel",
+    "UnnormalizedDistribution",
     "glm_likelihood",
 ]

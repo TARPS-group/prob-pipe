@@ -73,20 +73,8 @@ class TestPyMCModel:
         assert isinstance(model, PyMCModel)
         assert model.name == "test_pymc"
 
-    def test_parameter_names(self, model):
-        names = model.parameter_names
-        assert "mu" in names
-        assert "sigma" in names
-
-    def test_fields(self, model):
-        names = model.fields
-        assert "mu" in names
-        assert "sigma" in names
-        assert "y" in names
-
-    def test_supports_named_components(self, model):
-        assert hasattr(model, "fields")
-        assert len(model.fields) > 0
+    def test_the_components_are_the_free_variables(self, model):
+        assert tuple(model.event_spec.components) == ("mu", "sigma", "y")
 
     def test_repr(self, model):
         r = repr(model)
@@ -94,21 +82,9 @@ class TestPyMCModel:
         assert "mu" in r
         assert "sigma" in r
 
-    def test_getitem_returns_name_placeholder(self, model):
-        """PyMCModel['mu'] returns the name — PyMC doesn't expose
-        sub-distributions, so __getitem__ only validates the key. See the
-        comment in PyMCModel.__getitem__.
-        """
-        assert model["mu"] == "mu"
-        assert model["sigma"] == "sigma"
-
     def test_getitem_unknown_key_raises(self, model):
         with pytest.raises(KeyError):
             model["nonexistent"]
-
-    def test_event_shape_values(self, model):
-        """mu (scalar) + sigma (scalar) -> event_shape == (2,)."""
-        assert model.event_shape == (2,)
 
     def test_a_draw_is_a_record_of_the_declared_parameters(self, model):
         draw = model._sample(jax.random.PRNGKey(0), sample_shape=())
@@ -300,7 +276,7 @@ class TestRecordSpec:
             return m
 
         tpl = PyMCModel("model", model_fn).event_spec.spec
-        assert tpl.fields == ("intercept", "slope")
+        assert tpl.fields == ("intercept", "slope", "y")
         assert tpl["intercept"] == NumericArraySpec(())
         assert tpl["slope"] == NumericArraySpec((3,))
 
@@ -323,11 +299,12 @@ class TestRecordSpec:
                 intercept=NumericArraySpec(()),
                 slope=NumericArraySpec((3,)),
                 z=NumericArraySpec(("z_0",)),
+                y=NumericArraySpec(()),
             )
         )
 
-    def test_observed_rvs_excluded(self):
-        """Observed variables are not part of the parameter template."""
+    def test_observed_variables_are_event_fields(self):
+        """An observed variable is a field of the joint law, drawn as the build without data draws it."""
 
         def model_fn(y=None):
             with pm.Model() as m:
@@ -336,8 +313,8 @@ class TestRecordSpec:
             return m
 
         tpl = PyMCModel("model", model_fn).event_spec.spec
-        assert tpl.fields == ("mu",)
-        assert "y" not in tpl.fields
+        assert tpl.fields == ("mu", "y")
+        assert tpl["y"] == NumericArraySpec(())
 
     def test_data_dependent_shape_reflects_conditioned_build(self):
         """``_parameter_record_for(model)`` reports the data-conditioned
@@ -351,30 +328,22 @@ class TestRecordSpec:
         per-call mutable state, so concurrent inference on one instance
         can't race.
         """
-        model = PyMCModel("model", per_observation_effect_model_fn)
-        # Declared (no-data) property: sentinel (1,) for alpha.
-        tpl = model.event_spec.spec
-        assert tpl.fields == ("intercept", "alpha")
-        assert tpl["intercept"] == NumericArraySpec(())
-        assert tpl["alpha"] == NumericArraySpec((1,))
-        assert model.event_shape == (1 + 1,)
+        kernel = PyMCModel("model", per_observation_effect_model_fn)
+        # X is a covariate, a given slot, so the event's shapes are symbolic.
+        tpl = kernel.event_spec.spec
+        assert tpl.fields == ("intercept", "alpha", "y")
+        assert tpl["alpha"] == NumericArraySpec(("alpha_0",))
 
-        # Template built from a data-conditioned build picks up the real
-        # shape — and the instance carries no cached state afterward.
+        # Binding X, then building at the data, picks up the real shape.
         N = 50
-        conditioned = model._pymc_model(
-            data={
-                "X": np.zeros(N, dtype=np.float32),
-                "y": np.zeros(N, dtype=np.float32),
-            }
-        )
+        model = kernel._condition_on({"X": np.zeros(N, dtype=np.float32)})
+        assert model.event_spec.spec["alpha"] == NumericArraySpec((N,))
+        conditioned = model._pymc_model(data={"y": np.zeros(N, dtype=np.float32)})
         names = model._conditioned_param_names(conditioned)
         tpl_c = model._parameter_record_for(conditioned, names)
         assert tpl_c.fields == ("intercept", "alpha")
         assert tpl_c["alpha"] == NumericArraySpec((N,))
         assert not hasattr(model, "_last_conditioned_model")
-        # Property still reports the declared shape (no hidden mutation).
-        assert model.event_spec.spec["alpha"] == NumericArraySpec((1,))
 
     def test_data_dependent_shape_inference_recovers_correct_layout(self):
         """End-to-end: NUTS with a per-observation effect produces a
@@ -458,7 +427,7 @@ class TestRecordSpec:
             return m
 
         model = PyMCModel("model", model_fn)
-        assert "ghost" in model.parameter_names
+        assert "ghost" in model.event_spec.components
         conditioned = model._pymc_model(data={"y": np.zeros(5, dtype=np.float32)})
         with pytest.raises(ValueError, match="dynamic random variables"):
             model._conditioned_param_names(conditioned)
@@ -482,7 +451,7 @@ class TestRecordSpec:
             return m
 
         model = PyMCModel("model", model_fn)
-        assert model.parameter_names == ("mu",)  # extra absent at construction
+        assert tuple(model.event_spec.components) == ("mu", "y")  # extra absent at construction
         conditioned = model._pymc_model(data={"y": np.zeros(5, dtype=np.float32)})
         with pytest.raises(ValueError, match="dynamic random variables"):
             model._conditioned_param_names(conditioned)
@@ -505,8 +474,8 @@ class TestRecordSpec:
             return m
 
         model = PyMCModel("model", model_fn)
-        # Declared template excludes observed names entirely.
-        assert tuple(model.event_spec.components) == ("mu",)
+        # Both observed variables are fields of the joint law.
+        assert tuple(model.event_spec.components) == ("mu", "X", "y")
 
         # Condition on y only — X is left free and should be inferred.
         conditioned = model._pymc_model(data={"y": np.zeros(5, dtype=np.float32)})
@@ -660,28 +629,9 @@ class TestRecordSpec:
                 pm.Normal("y", 0, 1, observed=y)
             return m
 
-        # The declaration holds a symbolic dimension, and the flat parameter
-        # count refuses to guess its size.
+        # The declaration holds a symbolic dimension.
         model = PyMCModel("model", model_fn)
         assert model.event_spec.spec["z"].shape == ("z_0",)
-        with pytest.raises(ValueError, match="non-concrete shape"):
-            _ = model.event_shape
-
-    def test_event_shape_rejects_non_concrete_shape(self):
-        """``event_shape`` counts the elements of the parameter record, so it rejects
-        a non-concrete free-RV shape rather than silently under-counting.
-        """
-        import pytensor.tensor as pt
-
-        def model_fn(y=None):
-            with pm.Model() as m:
-                mu = pt.vector("mu_data")
-                pm.Normal("z", mu=mu, sigma=1.0)
-                pm.Normal("y", 0, 1, observed=y)
-            return m
-
-        with pytest.raises(ValueError, match="non-concrete shape"):
-            _ = PyMCModel("model", model_fn).event_shape
 
 
 class TestRecordDataUnpacking:
@@ -715,10 +665,11 @@ class TestRecordDataUnpacking:
         y = rng.poisson(2.0, size=N).astype(np.float32)
         data = Record("r", X=jnp.asarray(X), y=jnp.asarray(y))
 
-        model = PyMCModel("model", self._xy_model)
-        # _pymc_model unpacks and coerces. Result is a PyMC model built
-        # against the *real* X and y (not the unconditioned-build sentinel).
-        built = model._pymc_model(data=data)
+        # X is a covariate: binding it curries the kernel, and the law's
+        # _pymc_model unpacks y from a Record. The build uses the *real* X
+        # and y, not the sentinel of the build without data.
+        model = PyMCModel("model", self._xy_model)._condition_on(Record("r", X=data["X"]))
+        built = model._pymc_model(data=Record("r", y=data["y"]))
         # The 'y' observed RV should have N observations.
         y_rv = next(rv for rv in built.observed_RVs if rv.name == "y")
         assert y_rv.eval().shape == (N,)
@@ -729,8 +680,8 @@ class TestRecordDataUnpacking:
         N = 15
         X = np.asarray(rng.randn(N))[:, None].astype(np.float32)
         y = rng.poisson(2.0, size=N).astype(np.float32)
-        model = PyMCModel("model", self._xy_model)
-        built = model._pymc_model(data={"X": X, "y": y})
+        model = PyMCModel("model", self._xy_model)._condition_on({"X": X})
+        built = model._pymc_model(data={"y": y})
         y_rv = next(rv for rv in built.observed_RVs if rv.name == "y")
         assert y_rv.eval().shape == (N,)
 
@@ -745,9 +696,9 @@ class TestRecordDataUnpacking:
 
         X = jnp.ones((5, 2), dtype=jnp.float32)  # JAX array
         y = jnp.zeros(5, dtype=jnp.float32)
-        model = PyMCModel("model", self._xy_model)
+        model = PyMCModel("model", self._xy_model)._condition_on(Record("r", X=X))
         # Just confirm this doesn't raise the
         # "unsupported operand type(s) for *: 'TensorVariable' and
         #  'jaxlib._jax.ArrayImpl'" error from the un-coerced path.
-        built = model._pymc_model(data=Record("r", X=X, y=y))
+        built = model._pymc_model(data=Record("r", y=y))
         assert "y" in {rv.name for rv in built.observed_RVs}

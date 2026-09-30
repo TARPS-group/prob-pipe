@@ -30,41 +30,52 @@ class TestCompileForNutpie:
     which nutpie function is called, not that it produces a runnable model."""
 
     def test_bridgestan_path(self):
-        """Stan targets use nutpie.compile_stan_model, with the conditioning
-        data merged on top of the construction-time data (``_stan_data``)."""
+        """A Stan posterior compiles through nutpie.compile_stan_model from its
+        own BridgeStan model, which holds its data."""
         model = MagicMock()
-        model._stan_data = {"N": 10, "x": [1, 2, 3]}
         model._bridgestan_model.return_value = "bs_model"
         with patch.object(nutpie, "compile_stan_model", return_value="compiled") as compile_stan:
-            compiled, pymc_build = _compile_for_nutpie(model, data={"y": [4, 5, 6]})
+            compiled, pymc_build = _compile_for_nutpie(model, data=None)
         compile_stan.assert_called_once_with("bs_model")
-        # Construction data (N, x) is preserved, not dropped for the observed y.
-        model._bridgestan_model.assert_called_once_with(
-            data={"N": 10, "x": [1, 2, 3], "y": [4, 5, 6]}
-        )
+        model._bridgestan_model.assert_called_once_with()
         assert compiled == "compiled"
         assert pymc_build is None  # Stan target — no PyMC build to thread
 
-    def test_bridgestan_observed_overrides_construction_data(self):
-        """A conditioning value wins over a construction-time value of the
-        same name (matches the CmdStan method's merge order)."""
-        model = MagicMock()
-        model._stan_data = {"N": 10, "y": [0.0, 0.0]}
-        model._bridgestan_model.return_value = "bs_model"
-        with patch.object(nutpie, "compile_stan_model", return_value="compiled"):
-            _compile_for_nutpie(model, data={"y": [1.0, 2.0]})
-        model._bridgestan_model.assert_called_once_with(data={"N": 10, "y": [1.0, 2.0]})
+    def test_a_stan_kernel_curries_to_its_posterior_at_the_data(self, tmp_path):
+        """A StanModel given its remaining data curries to the posterior first,
+        whose data are the construction data and the conditioning data together."""
+        from probpipe.families import StanModel
+        from probpipe.families._programs import _StanPosterior
 
-    def test_bridgestan_no_observed_reuses_cached_model(self):
-        """With no conditioning data, ``_bridgestan_model`` is called with
-        ``data=None`` so the model built at construction is reused, not
-        rebuilt."""
-        model = MagicMock()
-        model._stan_data = {"N": 10}
-        model._bridgestan_model.return_value = "bs_model"
-        with patch.object(nutpie, "compile_stan_model", return_value="compiled"):
-            _compile_for_nutpie(model, data=None)
-        model._bridgestan_model.assert_called_once_with(data=None)
+        program = tmp_path / "program.stan"
+        program.write_text("data { int N; vector[N] y; } parameters { real mu; } model { }")
+        kernel = StanModel("program", str(program), data={"N": 2})
+        seen = []
+
+        def bridgestan_model(posterior):
+            seen.append(dict(posterior.data))
+            return "bs_model"
+
+        with (
+            patch.object(_StanPosterior, "_bridgestan_model", bridgestan_model),
+            patch.object(nutpie, "compile_stan_model", return_value="compiled"),
+        ):
+            _compile_for_nutpie(kernel, data={"y": [1.0, 2.0]})
+        assert seen == [{"N": 2, "y": [1.0, 2.0]}]
+
+    def test_a_posterior_builds_its_bridgestan_model_once(self, tmp_path):
+        """The posterior's BridgeStan model is built at its data on first use and reused."""
+        from probpipe.families import StanModel
+
+        program = tmp_path / "program.stan"
+        program.write_text("data { int N; } parameters { real mu; } model { }")
+        posterior = StanModel("program", str(program), data={"N": 3})
+        bridgestan = MagicMock()
+        with patch.dict("sys.modules", {"bridgestan": bridgestan}):
+            first = posterior._bridgestan_model()
+            second = posterior._bridgestan_model()
+        assert first is second
+        bridgestan.StanModel.assert_called_once_with(str(program), data={"N": 3})
 
     def test_pymc_path(self):
         """Models with _pymc_model use nutpie.compile_pymc_model and
