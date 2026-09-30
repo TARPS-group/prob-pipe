@@ -285,7 +285,6 @@ class TestSameNamedGivens:
         left, right = polymorphic * concrete, concrete * polymorphic
         assert left.given_spec["x"] == right.given_spec["x"] == VECTOR
 
-    @pytest.mark.pending(reason="a kernel renames its given slots with with_path_names")
     def test_givens_that_are_different_quantities_are_renamed_apart_first(self):
         second = _kernel("k2", {"x": SCALAR}, "b").with_path_names(x="w")
         joint = _kernel("k1", {"x": SCALAR}, "a") * second

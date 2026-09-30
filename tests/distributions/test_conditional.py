@@ -598,7 +598,6 @@ _REFUSED_RENAMES = [
 class TestWithPathNames:
     """``with_path_names`` renames or moves names on either side and keeps the kernel."""
 
-    @pytest.mark.pending(reason="a kernel renames its given slots and event paths")
     def test_a_renamed_given_slot_keeps_its_position(self):
         kernel = _kernel(given={"a": SCALAR, "b": _array(2), "c": SCALAR})
         renamed = kernel.with_path_names(b="beta")
@@ -607,27 +606,23 @@ class TestWithPathNames:
         assert renamed.event_spec == kernel.event_spec
         assert renamed.name == kernel.name
 
-    @pytest.mark.pending(reason="a kernel renames its given slots and event paths")
     def test_a_renamed_event_component_renames_the_draws(self):
         kernel = _kernel(event=OutputSpec(y=_array(2)))
         renamed = kernel.with_path_names(y="obs")
         assert renamed.event_spec == OutputSpec(obs=_array(2))
         assert renamed.given_spec == kernel.given_spec
 
-    @pytest.mark.pending(reason="a kernel renames its given slots and event paths")
     def test_renames_on_both_sides_apply_together(self):
         renamed = _kernel().with_path_names(mu="loc", y="obs")
         assert list(renamed.given_spec) == ["loc"]
         assert list(renamed.event_spec.components) == ["obs"]
 
-    @pytest.mark.pending(reason="a kernel renames its given slots and event paths")
     def test_the_renamed_kernel_conditions_on_the_renamed_slot(self):
         renamed = LocationKernel().with_path_names(mu="loc", y="obs")
         law = renamed._condition_on({"loc": 2.0})
         assert list(law.event_spec.components) == ["obs"]
         np.testing.assert_allclose(_mean_of(law), 2.0)
 
-    @pytest.mark.pending(reason="a kernel groups and splits its given slots by path")
     def test_path_targets_group_given_slots_into_a_structured_slot(self):
         kernel = _kernel(given={"a": SCALAR, "b": _array(2)})
         grouped = kernel.with_path_names({"a": "theta/a", "b": "theta/b"})
@@ -635,7 +630,6 @@ class TestWithPathNames:
         assert grouped.given_spec["theta"] == RecordSpec(a=SCALAR, b=_array(2))
         assert grouped.event_spec == kernel.event_spec
 
-    @pytest.mark.pending(reason="a kernel groups and splits its given slots by path")
     def test_a_path_key_splits_a_field_out_of_a_structured_slot(self):
         kernel = _kernel(given={"theta": RecordSpec(a=SCALAR, b=_array(2))})
         split = kernel.with_path_names({"theta/a": "a"})
@@ -643,7 +637,6 @@ class TestWithPathNames:
         assert split.given_spec["theta"] == RecordSpec(b=_array(2))
         assert split.given_spec["a"] == SCALAR
 
-    @pytest.mark.pending(reason="a kernel renames its given slots and event paths")
     @pytest.mark.parametrize(("rename", "error"), _REFUSED_RENAMES)
     def test_a_rename_the_kernel_cannot_take_raises(self, rename, error):
         with pytest.raises(error):

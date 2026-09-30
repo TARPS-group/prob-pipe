@@ -12,7 +12,7 @@ Provides:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Self
 
@@ -88,6 +88,130 @@ def _check_disjoint_sides(given_spec: InputSpec, event_spec: OutputSpec, owner: 
 def _given_is_numeric(given_spec: InputSpec) -> bool:
     """Whether every given slot declares a numeric term."""
     return all(isinstance(spec, NumericSpec) for spec in given_spec.values())
+
+
+# ---------------------------------------------------------------------------
+# Renaming the given side
+# ---------------------------------------------------------------------------
+
+_PATH_SEP = "/"
+
+
+def _given_leaf_specs(given_spec: InputSpec) -> dict[str, TermSpec]:
+    """The spec of each leaf of the given side, keyed by its path, in canonical order.
+
+    A leaf is a slot, or a field of a structured slot, whose path starts with
+    the slot.
+    """
+    leaves: dict[str, TermSpec] = {}
+    for slot, spec in given_spec.items():
+        if isinstance(spec, RecordSpec):
+            leaves.update({f"{slot}{_PATH_SEP}{key}": spec[key] for key in spec})
+        else:
+            leaves[slot] = spec
+    return leaves
+
+
+def _moved_slots(
+    given_spec: InputSpec, moves: Mapping[str, str]
+) -> tuple[InputSpec, dict[str, str]]:
+    """The given side with each node at a key of *moves* moved to its new exact path.
+
+    A key is the path of a slot or of a node within a structured slot, and its
+    target is the node's new path, so a move may split a field out of a slot or
+    group slots into a structured one. The moves apply simultaneously, a node
+    below a moved node moves with it unless it is moved itself, a node renamed
+    within its parent keeps its position, a moved node is appended to its new
+    parent, and a structured slot that the moves empty dissolves.
+
+    Returns
+    -------
+    tuple of InputSpec and dict
+        The moved slots, and the path of each of their leaves' original leaf,
+        keyed by the leaf's new path.
+
+    Raises
+    ------
+    KeyError
+        If a key is not the path of a node of the given side.
+    ValueError
+        If a target is empty or has an empty segment, lies inside its own node,
+        or equals or contains another target, two nodes land on one path, or a
+        new slot name is not an identifier.
+    """
+    leaves = _given_leaf_specs(given_spec)
+    nodes = {
+        _PATH_SEP.join(segments[:end])
+        for segments in (path.split(_PATH_SEP) for path in leaves)
+        for end in range(1, len(segments) + 1)
+    }
+    for old, new in moves.items():
+        if old not in nodes:
+            raise KeyError(old)
+        if not isinstance(new, str) or not new or not all(new.split(_PATH_SEP)):
+            raise ValueError(f"the new path of {old!r} has an empty segment: {new!r}")
+        if new.startswith(old + _PATH_SEP):
+            raise ValueError(f"{old!r} cannot move into its own node, to {new!r}")
+    targets = list(moves.values())
+    for first, target in enumerate(targets):
+        for other in targets[first + 1 :]:
+            if (
+                target == other
+                or other.startswith(target + _PATH_SEP)
+                or target.startswith(other + _PATH_SEP)
+            ):
+                raise ValueError(f"the targets {target!r} and {other!r} overlap")
+
+    def parent(path: str) -> str:
+        return path.rpartition(_PATH_SEP)[0]
+
+    kept: list[tuple[str, str]] = []
+    moved: dict[str, list[tuple[str, str]]] = {old: [] for old in moves}
+    for path in leaves:
+        sources = [old for old in moves if path == old or path.startswith(old + _PATH_SEP)]
+        if not sources:
+            kept.append((path, path))
+            continue
+        source = max(sources, key=len)
+        target = moves[source] + path[len(source) :]
+        if parent(source) == parent(moves[source]):
+            kept.append((target, path))
+        else:
+            moved[source].append((target, path))
+    tree: dict[str, Any] = {}
+    origins: dict[str, str] = {}
+    for target, path in [*kept, *(entry for old in moves for entry in moved[old])]:
+        *groups, name = target.split(_PATH_SEP)
+        node = tree
+        for group in groups:
+            node = node.setdefault(group, {})
+            if not isinstance(node, dict):
+                raise ValueError(f"{target!r} lands inside the field {group!r}")
+        if name in node:
+            raise ValueError(f"two nodes land on {target!r}")
+        node[name] = leaves[path]
+        origins[target] = path
+
+    def spec_of(node: Any) -> TermSpec:
+        if isinstance(node, dict):
+            return RecordSpec({name: spec_of(child) for name, child in node.items()})
+        return node
+
+    return InputSpec({slot: spec_of(node) for slot, node in tree.items()}), origins
+
+
+#: The kernel that ``with_path_names`` returns, installed by the views module at import.
+_renamed_kernel_factory: Callable[..., Any] | None = None
+
+
+def _install_renamed_kernel(factory: Callable[..., Any]) -> None:
+    """Install the factory of the kernel that renames at its boundary for ``with_path_names``.
+
+    Called once, by the views module at import, so this module never imports the
+    module that imports it.
+    """
+    global _renamed_kernel_factory
+    _renamed_kernel_factory = factory
 
 
 # ---------------------------------------------------------------------------
@@ -393,26 +517,71 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
             names,
         )
 
-    def with_path_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Self:
+    def with_path_names(
+        self, mapping: Mapping[str, str] | None = None, /, **kwargs: str
+    ) -> ConditionalDistribution:
         """Rename or move given slots and event paths, ``old -> new``.
 
-        The event side behaves as :meth:`Distribution.with_path_names`. On the
-        given side a path-valued target may split or group slots, since a kernel
-        has no signature that fixes its top level. The kernel is unchanged: the
-        result conditions on the renamed slots and produces the renamed draws.
+        A key that starts with a given slot addresses the given side, and one
+        that starts with a produced component the event side, which behaves as
+        :meth:`Distribution.with_path_names`. On the given side a target is the
+        node's new exact path, so it may split or group slots, since a kernel has
+        no signature that fixes its top level: ``{"a": "theta/a"}`` moves the
+        slot ``a`` into a structured slot ``theta``, and ``{"theta/a": "a"}``
+        moves the field back out as a slot. A node renamed within its parent
+        keeps its position, a moved node is appended to its new parent, and a
+        structured slot that the moves empty dissolves. The kernel is unchanged:
+        the result translates a given value to this kernel's slots before
+        binding it, and renames what the binding returns.
+
+        Parameters
+        ----------
+        mapping : Mapping[str, str], optional
+            New names or paths keyed by the exact paths of the nodes they rename.
+        **kwargs : str
+            Further renames, keyed by paths that are identifiers.
+
+        Returns
+        -------
+        ConditionalDistribution
+            The renamed kernel under the same name; the original is unchanged.
 
         Raises
         ------
         KeyError
-            If a key is neither a given slot nor an event path.
+            If a key is neither a path of the given side nor an event path.
         ValueError
-            If a new name is empty or contains ``/`` where a slot is meant, a
-            node is renamed twice, no renames are given, or the renamed sides
-            share a name.
+            If a target is empty or malformed, a node is renamed twice, no
+            renames are given, a given target lies inside its own node or
+            overlaps another, two nodes land on one path, a slot name is not an
+            identifier, or the renamed sides share a name.
         NotImplementedError
-            Always, until renaming reaches the subclass's primitive.
+            If this kernel is factored, since a joint renames through its factors.
         """
-        raise NotImplementedError("ConditionalDistribution.with_path_names")
+        pairs: dict[str, str] = {}
+        for source in (mapping or {}), kwargs:
+            for old, new in source.items():
+                if old in pairs:
+                    raise ValueError(f"node {old!r} is renamed more than once")
+                pairs[old] = new
+        if not pairs:
+            raise ValueError("with_path_names() requires at least one rename")
+        moves: dict[str, str] = {}
+        renames: dict[str, str] = {}
+        for old, new in pairs.items():
+            head = old.split(_PATH_SEP, 1)[0]
+            if head in self.given_spec:
+                moves[old] = new
+            elif head in self.event_spec.components:
+                renames[old] = new
+            else:
+                raise KeyError(old)
+        given_spec, origins = _moved_slots(self.given_spec, moves)
+        event_spec = self.event_spec.with_path_names(renames) if renames else self.event_spec
+        _check_disjoint_sides(given_spec, event_spec, type(self).__name__)
+        if _renamed_kernel_factory is None:
+            raise RuntimeError("the renamed kernel is not installed; import probpipe")
+        return _renamed_kernel_factory(self, given_spec, event_spec, origins, renames, pairs)
 
     def _with_declarations(
         self,

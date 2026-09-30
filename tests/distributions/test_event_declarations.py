@@ -101,6 +101,7 @@ from probpipe.distributions._capabilities import SupportsSampling
 from probpipe.distributions._factored import _SoleField
 from probpipe.distributions._joint_empirical import NumericJointEmpirical
 from probpipe.distributions._product import TFPProductDistribution
+from probpipe.distributions._views import _RenamedDistribution
 from probpipe.distributions.gaussian_random_function import (
     _IndependentSumGRF,
     _LinearMapGRF,
@@ -336,6 +337,9 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
         "e", jnp.zeros((5, 2))
     ),
     _SoleField: lambda: _SoleField(FactoredDistribution("record", [Normal("beta", 0.0, 1.0)])),
+    _RenamedDistribution: lambda: ProductDistribution(
+        a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)
+    ).with_path_names(a="x"),
 }
 
 # The catalog's families whose implementation has not merged construct by raising.
@@ -414,7 +418,6 @@ _DRAW_FAILURES = {
     SimpleGenerativeModel: pytest.mark.xfail(
         raises=ValueError, strict=True, reason="sample stacks a tuple draw as rows"
     ),
-    FieldView: pytest.mark.pending(reason="a view samples by co-sampling its parent"),
 }
 
 # Laws that do not pickle, by the exception each raises.

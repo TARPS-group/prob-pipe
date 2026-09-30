@@ -2,11 +2,16 @@
 
 ``FieldView(parent, path)`` declares the node at ``path`` whole, under a
 component named by the path's final segment, is labeled by the path, and holds a
-reference to its parent. Indexing a view joins the view's path to the key after
-the view's component. A view claims each capability its parent's can derive: a
-projection when the parent has it, covariance and quantiles only at a numeric
-node, and the densities and marginals when the parent has marginals. The density
-guard is the parent's marginal guard at the view's path.
+reference to its parent. A tuple of paths selects several nodes as an exposed
+record of them. Indexing a view joins the view's path to the key after the view's
+component. A view claims each capability its parent's can derive: a projection
+when the parent has it, covariance and quantiles only at a numeric node, and the
+densities and marginals when the parent has marginals. Each derived capability
+carries the parent's guard for the call it makes, and computes from the parent's
+answer: a draw, a moment, or an expectation is projected onto the view's nodes,
+a covariance or quantiles are restricted to the view's coordinates of the
+parent's flat vector, and the density, marginals, and conditioning read the
+parent at the parent's paths.
 """
 
 from __future__ import annotations
@@ -21,6 +26,7 @@ import textwrap
 from pathlib import Path
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 import pytest
 
@@ -29,11 +35,13 @@ from probpipe import (
     JointGaussian,
     Normal,
     NumericArraySpec,
+    NumericRecordBatch,
     NumericSpec,
     OpaqueSpec,
     OutputSpec,
     ProductDistribution,
     Record,
+    RecordBatch,
     RecordSpec,
 )
 from probpipe.core._dispatch import Feasibility
@@ -126,8 +134,10 @@ def _parent(*protocols: type, event_spec: OutputSpec = _EVENT) -> Distribution:
 class _UnguardedMarginalLaw(_Law, SupportsMarginals):
     """A law whose marginal at any path is a standard normal and has no guard.
 
-    Each path whose marginal is requested is recorded in ``marginal_calls``. With
-    ``scores=False`` the marginal is a law with no density instead.
+    The marginal at a tuple of paths is the product of standard normals named by
+    their final segments. Each path whose marginal is requested is recorded in
+    ``marginal_calls``. With ``scores=False`` the marginal at a path is a law
+    with no density instead.
     """
 
     def __init__(self, name: str, event_spec: OutputSpec, *, scores: bool = True) -> None:
@@ -137,6 +147,9 @@ class _UnguardedMarginalLaw(_Law, SupportsMarginals):
 
     def _marginal(self, path: str | tuple[str, ...]) -> Distribution:
         self.marginal_calls.append(path)
+        if not isinstance(path, str):
+            components = [each.rsplit("/", 1)[-1] for each in path]
+            return ProductDistribution(**{c: Normal(c, 0.0, 1.0) for c in components})
         component = path.rsplit("/", 1)[-1]
         if self.scores:
             return Normal(component, 0.0, 1.0)
@@ -233,6 +246,77 @@ class _FiniteLaw(_Law, SupportsExpectation):
             weight * f(Record("atom", a=jnp.asarray(a), b=jnp.asarray(b)))
             for a, b, weight in self.ATOMS
         )
+
+
+#: The covariance of the flat vector ``(mu, tau, y)`` of a draw of the default event.
+_FLAT_COV = jnp.eye(6) + 0.1 * jnp.outer(jnp.arange(6.0), jnp.arange(6.0))
+
+
+class _NumericLaw(
+    _Law, SupportsSampling, SupportsMean, SupportsVariance, SupportsCovariance, SupportsQuantile
+):
+    """A numeric law over the default event whose flat vector is ``(mu, tau, y)``, of size 6.
+
+    A draw is a standard normal flat vector split into the leaves, a batch of
+    draws is a record batch on the level ``sample``, and the mean is ``(0, ..., 5)``.
+    The quantile at a level is the level plus the coordinate's index.
+    """
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name, _EVENT)
+
+    def _record(self, flat: Any, sample_shape: tuple[int, ...] = ()) -> Any:
+        fields = {
+            "model": {"theta": {"mu": flat[..., 0], "tau": flat[..., 1:3]}},
+            "y": flat[..., 3:],
+        }
+        if sample_shape:
+            return NumericRecordBatch(
+                self.name,
+                fields,
+                "sample",
+                element_spec=self.event_spec.spec,
+                axes_per_level=(len(sample_shape),),
+            )
+        return Record(self.name, fields, event_template=self.event_spec.spec)
+
+    def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
+        return self._record(jax.random.normal(key, (*sample_shape, 6)), sample_shape)
+
+    def _mean(self) -> Any:
+        return self._record(jnp.arange(6.0))
+
+    def _variance(self) -> Any:
+        return self._record(jnp.diag(_FLAT_COV))
+
+    def _cov(self) -> LinOp:
+        return DenseLinOp(_FLAT_COV)
+
+    def _quantile(self, q: Any) -> Any:
+        return jnp.asarray(q)[..., None] + jnp.arange(6.0)
+
+
+class _WholeLaw(_Law, SupportsSampling, SupportsCovariance):
+    """A law over the whole record ``parameters``, whose flat vector is ``(beta, sigma)``."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name, _WHOLE)
+
+    def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
+        flat = jax.random.normal(key, (*sample_shape, 3))
+        return Record("parameters", beta=flat[..., :2], sigma=flat[..., 2])
+
+    def _cov(self) -> LinOp:
+        return DenseLinOp(_COV)
+
+
+class _LevelGuardedQuantileLaw(_QuantileLaw):
+    """A quantile law whose guard declines levels outside the unit interval."""
+
+    def _quantile_guard(self, q: Any) -> bool:
+        """Every level lies in the unit interval."""
+        levels = jnp.asarray(q)
+        return bool(jnp.all((levels >= 0) & (levels <= 1)))
 
 
 class _Kernel(ConditionalDistribution):
@@ -490,7 +574,6 @@ class TestIndexing:
         with pytest.raises(KeyError):
             view["y"]
 
-    @pytest.mark.pending(reason="a view selects several paths as an exposed record")
     def test_a_selection_of_several_paths_exposes_a_record_of_them_in_order(self):
         view = FieldView(_Law("parent", _EVENT), "model/theta")
         selection = view[("theta/tau", "theta/mu")]
@@ -498,12 +581,51 @@ class TestIndexing:
         assert list(selection.event_spec.components) == ["tau", "mu"]
         assert selection.event_spec.spec == RecordSpec(tau=(2,), mu=_REAL)
 
-    @pytest.mark.pending(reason="a view selects several paths as an exposed record")
     def test_a_selection_whose_final_segments_collide_raises_value_error(self):
         twins = RecordSpec(g=RecordSpec(a=RecordSpec(x=()), b=RecordSpec(x=())))
         view = FieldView(_Law("parent", OutputSpec(twins)), "g")
         with pytest.raises(ValueError):
             view[("g/a/x", "g/b/x")]
+
+    def test_a_selection_is_labeled_by_its_paths_and_reads_its_parent_at_them(self):
+        parent = _Law("parent", _EVENT)
+        selection = FieldView(parent, "model/theta")[("theta/tau", "theta/mu")]
+        assert selection.parent is parent
+        assert selection.path == ("model/theta/tau", "model/theta/mu")
+        assert selection.name == "model/theta/tau, model/theta/mu"
+
+    def test_a_selection_of_one_path_exposes_a_record_of_one_field(self):
+        selection = FieldView(_Law("parent", _EVENT), ("model/theta",))
+        assert selection.event_spec == OutputSpec(RecordSpec(theta=RecordSpec(mu=_REAL, tau=(2,))))
+
+    @pytest.mark.parametrize(
+        ("key", "path"),
+        [
+            ("theta/mu", "model/theta/mu"),
+            ("theta", "model/theta"),
+            (("theta/tau", "y"), ("model/theta/tau", "y")),
+        ],
+    )
+    def test_a_key_of_a_selection_is_the_parent_view_at_the_node_path(self, key, path):
+        parent = _Law("parent", _EVENT)
+        view = FieldView(parent, ("model/theta", "y"))[key]
+        assert view.parent is parent
+        assert view.path == path
+
+    @pytest.mark.parametrize("key", [(), ("theta/mu", 3), ("theta/phi",), 3])
+    def test_a_key_that_is_not_a_selection_of_view_paths_raises_key_error(self, key):
+        view = FieldView(_Law("parent", _EVENT), "model/theta")
+        with pytest.raises(KeyError):
+            view[key]
+
+    def test_an_empty_selection_raises_key_error(self):
+        with pytest.raises(KeyError):
+            FieldView(_Law("parent", _EVENT), ())
+
+    @pytest.mark.parametrize("path", [["y"], ("y", 0), 0])
+    def test_a_path_that_is_neither_a_string_nor_a_tuple_of_them_raises_type_error(self, path):
+        with pytest.raises((TypeError, AttributeError)):
+            FieldView(_Law("parent", _EVENT), path)
 
     @pytest.mark.pending(reason="indexing a law returns a field view", raises=AssertionError)
     def test_indexing_an_exposed_record_returns_a_field_view(self):
@@ -577,6 +699,16 @@ class TestCapabilityDerivation:
         numeric = isinstance(view.event_spec.spec, NumericSpec)
         assert _claimed(view) == _derived(_claimed(parent), numeric=numeric)
 
+    @pytest.mark.parametrize(
+        ("paths", "numeric"), [(("x", "group/w"), True), (("x", "label"), False)]
+    )
+    def test_a_selection_claims_covariance_and_quantiles_when_every_node_is_numeric(
+        self, paths, numeric
+    ):
+        parent = _parent(SupportsMean, SupportsCovariance, SupportsQuantile, event_spec=_MIXED)
+        expected = {SupportsMean} | ({SupportsCovariance, SupportsQuantile} if numeric else set())
+        assert _claimed(FieldView(parent, paths)) == expected
+
 
 class TestGuards:
     @pytest.mark.parametrize("method", ["_log_prob", "_unnormalized_log_prob"])
@@ -625,7 +757,6 @@ class TestGuards:
         assert _capability_guard(view, "_marginal", "theta/mu") == declined
         assert _capability_guard(view, "_marginal", "theta") == Feasibility(True)
 
-    @pytest.mark.pending(reason="a view's marginal of several paths")
     def test_the_marginal_guard_of_several_view_paths_is_the_parent_guard_at_theirs(self):
         declined = Feasibility(False, "the pair has no closed form")
         parent = _MarginalLaw("parent", _EVENT, {("model/theta/mu", "model/theta/tau"): declined})
@@ -643,50 +774,78 @@ class TestGuards:
         assert _capability_guard(view, "_condition_on", ("theta/mu",)) == declined
         assert _capability_guard(view, "_condition_on", ("theta/tau",)) == Feasibility(True)
 
+    @pytest.mark.parametrize("path", ["theta/phi", "model/theta", ("theta/mu", "phi")])
+    def test_the_marginal_guard_declines_a_path_that_is_not_a_view_path(self, path):
+        view = FieldView(_MarginalLaw("parent", _EVENT), "model/theta")
+        report = _capability_guard(view, "_marginal", path)
+        assert report.feasible is False
+        assert "not an event path of the view" in report.description
+
+    def test_the_marginal_guard_declines_paths_that_share_a_final_segment(self):
+        twins = RecordSpec(g=RecordSpec(a=RecordSpec(x=()), b=RecordSpec(x=())))
+        view = FieldView(_MarginalLaw("parent", OutputSpec(twins)), "g")
+        assert _capability_guard(view, "_marginal", ("g/a/x", "g/b/x")).feasible is False
+        assert _capability_guard(view, "_marginal", ()).feasible is False
+
+    def test_the_density_guard_of_a_selection_is_the_parent_marginal_guard_at_its_paths(self):
+        declined = Feasibility(False, "the pair has no closed form")
+        parent = _MarginalLaw("parent", _EVENT, {("model/theta/mu", "y"): declined})
+        assert (
+            _capability_guard(FieldView(parent, ("model/theta/mu", "y")), "_log_prob") == declined
+        )
+
+    @pytest.mark.parametrize("paths", [("theta",), ("theta/mu", "theta/tau")])
+    def test_the_conditioning_guard_declines_a_given_that_covers_the_view(self, paths):
+        view = FieldView(_ConditioningLaw("parent", _EVENT), "model/theta")
+        report = _capability_guard(view, "_condition_on", paths)
+        assert report.feasible is False
+        assert "cover every field" in report.description
+
+    def test_the_conditioning_guard_declines_a_path_that_is_not_a_view_path(self):
+        view = FieldView(_ConditioningLaw("parent", _EVENT), "model/theta")
+        assert _capability_guard(view, "_condition_on", ("y",)).feasible is False
+
+    def test_the_quantile_guard_is_the_parent_guard_at_the_levels(self):
+        view = FieldView(_LevelGuardedQuantileLaw("parent"), "y")
+        assert _capability_guard(view, "_quantile", jnp.array([0.25, 0.5])) == Feasibility(True)
+        assert _capability_guard(view, "_quantile", jnp.array([1.5])).feasible is False
+
 
 class TestDerivedBehavior:
-    @pytest.mark.pending(reason="a view samples by co-sampling its parent")
     def test_sibling_views_drawn_with_one_key_project_one_parent_draw(self, key):
         parent = _product()
         draw = parent._sample(key)
         assert jnp.array_equal(FieldView(parent, "a")._sample(key), draw["a"])
         assert jnp.array_equal(FieldView(parent, "b")._sample(key), draw["b"])
 
-    @pytest.mark.pending(reason="a view samples by co-sampling its parent")
     def test_a_batched_draw_prepends_the_sample_shape(self, key):
         parent = _joint_gaussian()
         draws = FieldView(parent, "y")._sample(key, (4,))
         assert draws.shape == (4, 2)
         assert jnp.array_equal(draws, parent._sample(key, (4,))["y"])
 
-    @pytest.mark.pending(reason="a view projects its parent's mean")
     def test_the_view_mean_is_the_parent_mean_at_the_path(self):
         assert jnp.allclose(FieldView(_joint_gaussian(), "y")._mean(), _MEAN[1:])
 
-    @pytest.mark.pending(reason="a view restricts its parent's variance")
     def test_the_view_variance_is_the_parent_variance_at_its_coordinates(self):
         assert jnp.allclose(FieldView(_joint_gaussian(), "y")._variance(), jnp.diag(_COV)[1:])
 
-    @pytest.mark.pending(reason="a view restricts its parent's covariance")
     def test_the_view_covariance_is_the_sub_block_of_the_parent_covariance(self):
         cov = FieldView(_CovarianceLaw("parent"), "y")._cov()
         assert isinstance(cov, LinOp)
         assert cov.shape == (2, 2)
         assert jnp.allclose(cov.to_dense(), _COV[1:, 1:])
 
-    @pytest.mark.pending(reason="a view restricts its parent's quantiles")
     def test_the_view_quantiles_are_the_parent_quantiles_at_its_coordinates(self):
         levels = jnp.array([0.25, 0.5])
         quantiles = FieldView(_QuantileLaw("parent"), "y")._quantile(levels)
         assert quantiles.shape == (2, 2)
         assert jnp.allclose(quantiles, levels[:, None] + jnp.array([1.0, 2.0]))
 
-    @pytest.mark.pending(reason="a view composes its parent's expectation with the projection")
     def test_the_view_expectation_composes_with_the_projection(self):
         expectation = FieldView(_FiniteLaw("parent"), "b")._expectation(lambda b: b**2)
         assert jnp.allclose(expectation, 0.25 * 1.0 + 0.75 * 9.0)
 
-    @pytest.mark.pending(reason="a view scores through its parent's marginal")
     @pytest.mark.parametrize("method", ["_log_prob", "_unnormalized_log_prob"])
     def test_the_view_density_is_the_density_of_the_parent_marginal(self, method):
         parent = _UnguardedMarginalLaw("parent", _EVENT)
@@ -694,7 +853,6 @@ class TestDerivedBehavior:
         assert jnp.allclose(density, Normal("mu", 0.0, 1.0)._log_prob(0.5))
         assert parent.marginal_calls == ["model/theta/mu"]
 
-    @pytest.mark.pending(reason="a view's marginal is its parent's marginal at the joined path")
     def test_the_view_marginal_is_the_parent_marginal_at_the_joined_path(self):
         parent = _UnguardedMarginalLaw("parent", _EVENT)
         marginal = FieldView(parent, "model/theta")._marginal("theta/mu")
@@ -702,12 +860,100 @@ class TestDerivedBehavior:
         assert not isinstance(marginal, FieldView)
         assert list(marginal.event_spec.components) == ["mu"]
 
-    @pytest.mark.pending(reason="a view conditions its parent and views the result")
     def test_conditioning_a_view_conditions_its_parent_at_the_given_paths(self):
         parent = _ConditioningLaw("parent", _EVENT)
         conditioned = FieldView(parent, "model/theta")._condition_on({"theta/tau": jnp.zeros(2)})
         assert [set(given) for given in parent.given_calls] == [{"model/theta/tau"}]
         assert conditioned.event_spec == OutputSpec(theta=RecordSpec(mu=_REAL))
+
+    def test_a_group_view_draws_the_sub_record_of_the_parent_draw(self, key):
+        parent = _NumericLaw("parent")
+        draw = FieldView(parent, "model/theta")._sample(key)
+        assert isinstance(draw, Record)
+        assert list(draw.keys()) == ["mu", "tau"]
+        assert jnp.array_equal(draw["tau"], parent._sample(key)["model/theta/tau"])
+
+    def test_a_batched_group_draw_is_the_sub_batch_of_the_parent_draws(self, key):
+        parent = _NumericLaw("parent")
+        draws = FieldView(parent, "model/theta")._sample(key, (4,))
+        assert isinstance(draws, RecordBatch)
+        assert draws.batch_shape == (4,)
+        assert jnp.array_equal(draws["tau"], parent._sample(key, (4,))["model/theta/tau"])
+
+    def test_a_view_of_a_whole_record_at_its_component_draws_the_term(self, key):
+        parent = _WholeLaw("parent")
+        assert FieldView(parent, "parameters")._sample(key) == parent._sample(key)
+
+    def test_a_view_of_a_whole_record_field_draws_the_field_of_the_term(self, key):
+        parent = _WholeLaw("parent")
+        draw = FieldView(parent, "parameters/beta")._sample(key)
+        assert jnp.array_equal(draw, parent._sample(key)["beta"])
+
+    def test_the_mean_of_a_group_view_is_the_sub_record_of_the_parent_mean(self):
+        mean = FieldView(_NumericLaw("parent"), "model/theta")._mean()
+        assert jnp.allclose(mean["mu"], 0.0)
+        assert jnp.allclose(mean["tau"], jnp.array([1.0, 2.0]))
+
+    @pytest.mark.parametrize(
+        ("path", "coordinates"),
+        [
+            ("model/theta/mu", [0]),
+            ("model/theta/tau", [1, 2]),
+            ("model/theta", [0, 1, 2]),
+            ("model", [0, 1, 2]),
+            ("y", [3, 4, 5]),
+        ],
+    )
+    def test_the_covariance_of_a_node_is_the_parent_block_at_its_coordinates(
+        self, path, coordinates
+    ):
+        cov = FieldView(_NumericLaw("parent"), path)._cov()
+        index = jnp.asarray(coordinates)
+        assert isinstance(cov, LinOp)
+        assert jnp.allclose(cov.to_dense(), _FLAT_COV[index][:, index])
+
+    @pytest.mark.parametrize(
+        ("path", "coordinates"), [("parameters", [0, 1, 2]), ("parameters/sigma", [2])]
+    )
+    def test_the_covariance_of_a_whole_record_node_follows_the_term_coordinates(
+        self, path, coordinates
+    ):
+        index = jnp.asarray(coordinates)
+        cov = FieldView(_WholeLaw("parent"), path)._cov()
+        assert jnp.allclose(cov.to_dense(), _COV[index][:, index])
+
+    def test_the_quantiles_of_a_nested_node_are_the_parent_quantiles_at_its_coordinates(self):
+        quantiles = FieldView(_NumericLaw("parent"), "model/theta/tau")._quantile(0.5)
+        assert jnp.allclose(quantiles, jnp.array([1.5, 2.5]))
+
+    def test_the_density_raises_when_the_marginal_does_not_score(self):
+        view = FieldView(_UnguardedMarginalLaw("parent", _EVENT, scores=False), "model/theta/mu")
+        with pytest.raises(TypeError, match="no normalized density"):
+            view._log_prob(0.5)
+
+    def test_the_marginal_at_a_renamed_component_is_named_by_it(self):
+        parent = _UnguardedMarginalLaw("parent", _EVENT)
+        view = FieldView(parent, "model/theta/mu").with_path_names(mu="location")
+        marginal = view._marginal("location")
+        assert parent.marginal_calls == ["model/theta/mu"]
+        assert list(marginal.event_spec.components) == ["location"]
+
+    def test_the_marginal_at_a_path_that_is_not_a_view_path_raises_key_error(self):
+        view = FieldView(_UnguardedMarginalLaw("parent", _EVENT), "model/theta")
+        with pytest.raises(KeyError):
+            view._marginal("theta/phi")
+
+    def test_conditioning_on_a_path_that_is_not_a_view_path_raises_key_error(self):
+        parent = _ConditioningLaw("parent", _EVENT)
+        with pytest.raises(KeyError):
+            FieldView(parent, "model/theta")._condition_on({"y": jnp.zeros(3)})
+        assert parent.given_calls == []
+
+    def test_conditioning_on_every_field_of_the_view_raises_value_error(self):
+        parent = _ConditioningLaw("parent", _EVENT)
+        with pytest.raises(ValueError, match="covers every field"):
+            FieldView(parent, "model/theta/tau")._condition_on({"tau": jnp.zeros(2)})
+        assert parent.given_calls == []
 
     @pytest.mark.pending(
         reason="a view's raw form is its parent's detached marginal", raises=AttributeError
@@ -719,6 +965,97 @@ class TestDerivedBehavior:
         assert parent.marginal_calls == ["model/theta/mu"]
         assert not isinstance(raw, FieldView)
         assert (raw.name, raw.spec, raw.provenance) == (view.name, view.spec, None)
+
+
+class TestSelections:
+    """A selection's capabilities read the parent at every selected node, in order."""
+
+    _PATHS = ("y", "model/theta")
+
+    def test_a_selection_co_samples_the_record_of_its_nodes(self, key):
+        parent = _NumericLaw("parent")
+        draw = parent._sample(key)
+        selected = FieldView(parent, self._PATHS)._sample(key)
+        assert isinstance(selected, Record)
+        assert list(selected.children) == ["y", "theta"]
+        assert jnp.array_equal(selected["y"], draw["y"])
+        assert jnp.array_equal(selected["theta/tau"], draw["model/theta/tau"])
+
+    def test_the_declaration_admits_a_selection_draw(self, key):
+        selection = FieldView(_NumericLaw("parent"), self._PATHS)
+        assert selection.event_spec.spec.is_valid(selection._sample(key))
+
+    def test_a_batched_selection_draw_is_a_record_batch_at_the_parent_levels(self, key):
+        parent = _NumericLaw("parent")
+        draws = FieldView(parent, self._PATHS)._sample(key, (4,))
+        parent_draws = parent._sample(key, (4,))
+        assert isinstance(draws, RecordBatch)
+        assert (draws.batch_shape, draws.level_names) == ((4,), parent_draws.level_names)
+        assert list(draws.element_spec.children) == ["y", "theta"]
+        assert jnp.array_equal(draws["theta/mu"], parent_draws["model/theta/mu"])
+        assert jnp.array_equal(draws["y"], parent_draws["y"])
+
+    def test_the_moments_of_a_selection_are_records_of_the_parent_moments(self):
+        selection = FieldView(_NumericLaw("parent"), self._PATHS)
+        mean, variance = selection._mean(), selection._variance()
+        assert jnp.allclose(mean["y"], jnp.array([3.0, 4.0, 5.0]))
+        assert jnp.allclose(mean["theta/tau"], jnp.array([1.0, 2.0]))
+        assert jnp.allclose(variance["theta/mu"], _FLAT_COV[0, 0])
+
+    def test_the_covariance_of_a_selection_keeps_the_selection_order(self):
+        cov = FieldView(_NumericLaw("parent"), ("y", "model/theta/mu"))._cov()
+        index = jnp.array([3, 4, 5, 0])
+        assert cov.shape == (4, 4)
+        assert jnp.allclose(cov.to_dense(), _FLAT_COV[index][:, index])
+
+    def test_the_quantiles_of_a_selection_keep_the_selection_order(self):
+        levels = jnp.array([0.25, 0.5])
+        quantiles = FieldView(_NumericLaw("parent"), ("y", "model/theta/mu"))._quantile(levels)
+        assert jnp.allclose(quantiles, levels[:, None] + jnp.array([3.0, 4.0, 5.0, 0.0]))
+
+    def test_the_expectation_of_a_selection_integrates_the_record_of_its_nodes(self):
+        selection = FieldView(_FiniteLaw("parent"), ("b", "a"))
+        expectation = selection._expectation(lambda record: record["b"] - record["a"])
+        assert jnp.allclose(expectation, 0.25 * (1.0 - 0.0) + 0.75 * (3.0 - 1.0))
+
+    def test_the_density_of_a_selection_is_the_parent_marginal_density_at_its_paths(self):
+        parent = _UnguardedMarginalLaw("parent", OutputSpec(RecordSpec(a=_REAL, b=_REAL)))
+        density = FieldView(parent, ("b", "a"))._log_prob({"b": 0.5, "a": -1.0})
+        standard = Normal("x", 0.0, 1.0)
+        assert parent.marginal_calls == [("b", "a")]
+        assert jnp.allclose(density, standard._log_prob(0.5) + standard._log_prob(-1.0))
+
+    def test_the_marginal_at_a_selection_path_is_the_parent_marginal_at_the_node_path(self):
+        parent = _UnguardedMarginalLaw("parent", _EVENT)
+        marginal = FieldView(parent, self._PATHS)._marginal("theta/mu")
+        assert parent.marginal_calls == ["model/theta/mu"]
+        assert list(marginal.event_spec.components) == ["mu"]
+
+    def test_the_marginal_at_several_selection_paths_is_the_parent_marginal_at_theirs(self):
+        parent = _UnguardedMarginalLaw("parent", _EVENT)
+        marginal = FieldView(parent, self._PATHS)._marginal(("theta/mu", "y"))
+        assert parent.marginal_calls == [("model/theta/mu", "y")]
+        assert list(marginal.event_spec.components) == ["mu", "y"]
+
+    def test_conditioning_a_selection_drops_a_node_the_given_covers(self):
+        parent = _ConditioningLaw("parent", _EVENT)
+        conditioned = FieldView(parent, ("model/theta/tau", "y"))._condition_on(
+            {"tau": jnp.zeros(2)}
+        )
+        assert [set(given) for given in parent.given_calls] == [{"model/theta/tau"}]
+        assert isinstance(conditioned, FieldView)
+        assert conditioned.path == ("y",)
+        assert conditioned.event_spec == OutputSpec(RecordSpec(y=(3,)))
+
+    def test_a_selection_round_trips_through_pickle(self):
+        selection = FieldView(_product(), ("b", "a"))
+        restored = pickle.loads(pickle.dumps(selection))
+        assert type(restored) is type(selection)
+        assert (restored.name, restored.path, restored.spec) == (
+            selection.name,
+            selection.path,
+            selection.spec,
+        )
 
 
 _ROUND_TRIP_PARENTS = [
