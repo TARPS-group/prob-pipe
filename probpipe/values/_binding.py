@@ -101,15 +101,24 @@ def iter_input_refs(
     return tuple(refs)
 
 
-def input_ref_hint(info: WorkflowSignatureInfo, ref: WorkflowInputRef) -> Any:
-    """Return the informative annotation governing one planner input.
+def parameter_lifting_hint(info: WorkflowSignatureInfo, name: str) -> Any:
+    """Return the annotation that governs lifting at parameter *name*.
 
-    ``Any`` on an expanded variadic slot must not suppress lifting or sweeps.
+    ``Any`` on a variadic parameter governs none, so the arguments it collects
+    lift and sweep as they would at an unannotated parameter.
     """
-    hint = info.hints.get(ref.parameter_name)
-    if ref.subscript is not None and hint is Any:
-        return None
-    return hint
+    hint = info.hints.get(name)
+    parameter = info.signature.parameters.get(name)
+    variadic = parameter is not None and parameter.kind in (
+        inspect.Parameter.VAR_POSITIONAL,
+        inspect.Parameter.VAR_KEYWORD,
+    )
+    return None if variadic and hint is Any else hint
+
+
+def input_ref_hint(info: WorkflowSignatureInfo, ref: WorkflowInputRef) -> Any:
+    """Return the annotation that governs lifting at one planner input."""
+    return parameter_lifting_hint(info, ref.parameter_name)
 
 
 def input_ref_value(values: Mapping[str, Any], ref: WorkflowInputRef) -> Any:
