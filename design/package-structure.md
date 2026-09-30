@@ -106,7 +106,7 @@ probpipe/
 │   ├── _random_functions.py   #   RandomFunction, RandomMeasure (VII.5)
 │   ├── _gaussian.py           #   the Gaussian algebra (VII.6)
 │   ├── _conditional.py        #   LinearGaussianConditional, the GLM assembly (VII.8)
-│   ├── _programs.py           #   StanModel, PyMCModel: backend models with explicit given/event contracts (VII.9)
+│   ├── _programs.py           #   StanModel, PyMCModel, UnnormalizedDistribution: program-defined laws (VII.9)
 │   └── _converters.py         #   the shipped converters (IV.3)
 ├── designs/                   # designs: batches materialized from per-field candidate sets, over any element spec
 ├── inference/                 # the registered inference methods (VI.6)

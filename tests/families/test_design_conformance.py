@@ -86,7 +86,12 @@ _PENDING = {
     "LinearBasisFunction": (
         "the basis-function model takes basis and weights, with output_spec and event_spec"
     ),
+    "StanModel": "StanModel is a ConditionalDistribution over its data-block entries",
+    "UnnormalizedDistribution": "the law of a user-supplied unnormalized log-density",
 }
+
+#: New declarations the catalog does not define yet; each has a pending case above.
+_UNBUILT = frozenset({"UnnormalizedDistribution"})
 
 
 def _tool():
@@ -146,6 +151,7 @@ def _new_declarations() -> dict[str, str]:
         for declaration in _tool().declarations(_SECTIONS)
         if _declared_name(declaration) not in _CURRENT_MODULES
         and _declared_name(declaration) not in _OTHER_PACKAGES
+        and _declared_name(declaration) not in _UNBUILT
     }
 
 
@@ -154,6 +160,14 @@ class TestDeclarationsAreImplemented:
     def test_the_declaration_matches_the_implementation(self, declaration):
         findings = _tool().check([declaration], _resolver(declaration.section))
         assert not findings, "; ".join(f"{f.name} {f.problem}" for f in findings)
+
+    @pytest.mark.pending(
+        reason="UnnormalizedDistribution is defined in families/_programs.py", raises=AssertionError
+    )
+    def test_each_unbuilt_declaration_is_defined(self):
+        programs = importlib.import_module("probpipe.families._programs")
+        for name in _UNBUILT:
+            assert name in programs.__all__, name
 
     def test_each_new_declaration_is_defined_in_its_sections_module(self):
         for name, section in _new_declarations().items():

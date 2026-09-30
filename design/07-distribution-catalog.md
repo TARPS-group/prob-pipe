@@ -246,20 +246,28 @@ Assembling conditional families from uniform pieces is `D2 – Generality first`
 
 ### Contract
 
-A **program-defined model** exposes what its backend provides. A program with a joint law over modeled variables, including modeled observations, may expose a `Distribution`. A program supplying a parameter target for given data exposes a `ConditionalDistribution` over those data inputs, or the data-bound `Distribution`. Data sizes, covariates, and arbitrary data-block entries are not automatically random event components.
+A **program-defined model** exposes the law its program defines, in the kind that law has. A program that models its observations as well as its parameters defines a joint law and exposes a `Distribution`, or a `ConditionalDistribution` over the inputs it does not model. A program that supplies a parameter target for given data exposes a `ConditionalDistribution` whose given slots are its data and whose laws are the targets. In both kinds, conditioning on data is `condition_on`, which returns a normalized law (VI.6).
 
-`StanModel` uses BridgeStan and `PyMCModel` uses a PyMC model-building function. Each adapter declares its data inputs separately from the event variables, whose program names determine the output components. A model named `regression_model` may have the one-field event `OutputSpec(RecordSpec(beta=beta_spec))`; its draws remain records, and composition matches `beta`, not the model label. The existing Stan adapter's parameter-only event and separately supplied data follow the data-bound form; exposing an unbound or generative model requires the corresponding explicit declaration, not merely moving data into its event.
+- `StanModel` is a `ConditionalDistribution` through BridgeStan. Its given slots are the program's data-block entries, which the program does not divide into sizes, covariates, and observations. Its event is the parameter record. It claims `SupportsConditionalUnnormalizedLogProb` alone, from BridgeStan's log density in the constrained parameterization without the Jacobian, so binding the data curries it to the unnormalized posterior, which `condition_on` normalizes with a method such as Stan's NUTS. Data given at construction curry the program early, and a construction that binds every entry returns the unnormalized posterior as a `Distribution`.
+- `PyMCModel` is the joint law that a PyMC model-building function defines over its free variables, the parameters and the observed variables alike. An argument that the function passes as an observed variable's `observed` value is an event field, and any other argument is a given slot, so a model with covariates is a `ConditionalDistribution` over them. It claims sampling, which draws from the prior predictive, and a normalized density; an instance containing a potential or an improper prior claims the unnormalized density instead. Conditioning on observed values is Bayes' rule (VI.6).
+- `UnnormalizedDistribution` is the law of a user-supplied unnormalized log-density over a declared event. It claims `SupportsUnnormalizedLogProb` alone, and `sample`, `convert`, and `condition_on` normalize it through the inference-method registry (VI.3, VI.6, VI.10).
 
-The adapter claims the density and sampling capabilities the program supplies. It declares unnormalized density unless normalization is established. Inference methods register against the backend interface they require; they do not require a public factor graph unless they use one (VI.6). A method records which data were bound, its target, controls, and local fidelity, and its result preserves the target event declaration (VII.7). An unconstrained parameterization is an explicit invertible map of that event (III.7, V.12).
+A program's variable names determine its output components: a model named `regression_model` may have the one-field event `OutputSpec(RecordSpec(beta=beta_spec))`, whose draws remain records, and composition matches `beta`, not the model label. Inference methods register against the backend interface they require (VI.6). A method records which data were bound, its target, its controls, and its local fidelity, and its result preserves the target event declaration (VII.7). An unconstrained parameterization is an explicit invertible map of that event (III.7, V.12), and the unconstrained view of a Stan target claims BridgeStan's log density with the Jacobian.
 
 ```python
-# Adapter contracts; constructors bind backend data separately from event variables.
-class StanModel(Distribution): ...  # data-bound parameter target through BridgeStan
-class PyMCModel(Distribution): ...  # data-bound target from a PyMC model-building function
-# An adapter exposing unbound data implements ConditionalDistribution instead;
-# a joint-law form requires an explicit generative contract over its modeled events.
+class StanModel(ConditionalDistribution):
+    def __init__(self, name: str, stan_file: str, *, data: Mapping[str, Any] | None = None) -> None: ...
+    # given: the data-block entries that data leaves unbound; event: the parameter record
+
+class PyMCModel(Distribution):
+    def __init__(self, name: str, model_fn: Callable[..., Any]) -> None: ...
+    # event: the free variables; the conditional form when model_fn takes an argument that no observed variable receives
+
+class UnnormalizedDistribution(Distribution):
+    def __init__(self, name: str, log_density: Callable[[Any], Array], event_spec: OutputSpec) -> None: ...
+    # claims SupportsUnnormalizedLogProb alone
 ```
 
 ### Rationale
 
-A backend program participates through the interface it supplies (`D1 – Mathematical fidelity`). Registering its inference method by capability rather than requiring an exposed factor graph extends the same conditioning operation to opaque backend representations (`C1 – Uniform interface to functions, distributions, and values`, `D3 – Capability-based operations`).
+A backend program participates through the interface it supplies (`D1 – Mathematical fidelity`). A Stan program's data block makes no distinction between covariates and observations, so exposing the program as the kernel from its data to its posterior target needs no declaration beyond the program. Normalization by `condition_on` then returns the posterior from one call (`C3 – Computational detail hidden by default, available on demand`). Registering its inference method by capability rather than requiring an exposed factor graph extends the same conditioning operation to opaque backend representations (`C1 – Uniform interface to functions, distributions, and values`, `D3 – Capability-based operations`).

@@ -502,6 +502,14 @@ class SupportsMarginals(Protocol):
 
 Here `Key` is a PRNG key and `ArrayLike` an array-or-scalar input. `_expectation` must integrate an *arbitrary* function exactly, which in practice means finite support: its argument is an opaque callable, so a per-call feasibility check has nothing to inspect, and a law that is exact only for special maps must not advertise the capability. Exact moments of structured maps are instead computed by `evaluate`, which dispatches on the map's type.
 
+**Normalization.** A law is **normalized** when it claims a capability whose answer presupposes a probability law:
+
+- `SupportsLogProb`: a density that integrates to one;
+- `SupportsSampling`: draws, which determine the law;
+- a moment, quantile, or expectation capability: an integral against the law.
+
+A law that claims `SupportsUnnormalizedLogProb` and none of these is **unnormalized**, since it determines its law only up to a positive constant. A kernel's laws are normalized when the kernel claims the conditional twin of one of these (III.9). The classification reads protocol membership alone, so a route decides it without evaluating a body (VI.0), and `condition_on` uses it to return a normalized law (VI.6).
+
 **View derivation.** A `FieldView` derives each capability from its parent's, so what a view supports is read off the parent. For a parent `d` and a view `v = d[p]`, with π the extraction of field `p` from an event:
 
 | capability on `v` | derivation | available when |
