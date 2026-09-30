@@ -15,7 +15,8 @@ and this module supplies the operation's side of four of its steps:
    rank before approximate ones, a fallback ranks below every other route of
    the same exactness, and registration order breaks the remaining ties. The
    ``method`` and ``exact_only`` controls restrict the choice.
-4. **Return** wraps the selected route's raw result at the declared kind.
+4. **Return** wraps the selected route's raw result at the declared kind, and
+   under ``raw`` returns that term's raw form.
 
 An operation takes no key: each draw a route causes is a workflow-owned random
 event, whose key :func:`_workflow_draws` derives from the workflow scope.
@@ -43,12 +44,15 @@ from ..core._batch import Batch, BatchSpec, _ranks_of
 from ..core._broadcast_distributions import _make_stack
 from ..core._dispatch import BaseDispatchRegistry, Feasibility, MethodInfo, ResolutionError
 from ..core._kinds import _KINDS, batch_class_for_spec
+from ..core._numeric_array import NumericArray
 from ..core._numeric_array_batch import NumericArrayBatch
-from ..core._object_batch import _is_object_array
-from ..core._record_batch import _batch_class_for
+from ..core._object_batch import _is_object_array, _ObjectBatch
+from ..core._opaque import Opaque
+from ..core._record_batch import RecordBatch, _batch_class_for
 from ..core._record_spec import RecordSpec, _reshaped_template
 from ..core._spec_base import NumericArraySpec, TermSpec, _unify_specs
 from ..core._specs import OutputSpec
+from ..core.named_tree import _unflatten_paths
 from ..core.node import Node
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
@@ -1163,12 +1167,38 @@ class Operation(Function):
             return self.apply(*args, **kwargs)
         return super().__call__(*args, **kwargs)
 
+    def apply(self, *args: Any, **kwargs: Any) -> Any:
+        """Realize one call with no lifting, tracking, or provenance, and return its raw form.
+
+        The result is validated against the call's declaration, and its raw form
+        is that of the term the declaration names: an array for an array, the
+        nested mapping of raw leaves for a record, the storage view for a
+        batch, and the law itself for a law.
+
+        Raises
+        ------
+        TypeError
+            If the arguments do not bind to the signature.
+        ApplicabilityError
+            If an argument's kind is not accepted or a condition fails.
+        ResolutionError
+            If no route applies under the controls.
+        """
+        view = self if self._controls.get("raw", False) else self.with_options(raw=True)
+        return Function.apply(view, *args, **kwargs)
+
     def raw(self) -> Callable[..., Any]:
-        """The evaluator that realizes one call with no lifting, tracking, or provenance."""
+        """The evaluator that realizes one call with no lifting, tracking, or provenance.
+
+        It is :meth:`apply`, so it returns the result's raw form.
+        """
         return self.apply
 
     def _invoke_resolved(self, values: Mapping[str, Any], *, context: Any) -> Any:
-        """Admit, plan, resolve, and execute one point of the call, then wrap its result."""
+        """Admit, plan, resolve, and execute one point of the call, then wrap its result.
+
+        Under ``raw`` the wrapped result's raw form is returned.
+        """
         call = BoundCall(self, MappingProxyType(dict(values)), self._resolved_controls())
         self._admit(call)
         result, _ = self._plan(call)
@@ -1189,9 +1219,8 @@ class Operation(Function):
             )
         else:
             value = route.execute(call, result)
-        if call.controls["raw"]:
-            return value
-        return _wrap_result(value, result, self.output_name)
+        wrapped = _wrap_result(value, result, self.output_name)
+        return _raw_form(wrapped) if call.controls["raw"] else wrapped
 
     def check(self, *args: Any, **kwargs: Any) -> CallCheck:
         """Report how a call would resolve, without executing any route.
@@ -1494,6 +1523,37 @@ def _wrap_result(value: Any, declared: OutputSpec | None, label: str) -> Any:
         function_name=label, output_spec=declared, result=value, bindings={}
     )
     return _wrap_declared_function_output(value, function_name=label, output_spec=completed)
+
+
+def _raw_form(term: Any) -> Any:
+    """*term*'s representation, detached from the workflow.
+
+    An array is its stored array, a record the nested mapping of its raw
+    leaves, and a batch its storage view: the stacked array, the nested
+    mapping of raw columns, or the object array of the stored elements. An
+    opaque value is the object it wraps, a function its wrapped callable, and
+    a law or a kernel is its own representation.
+    """
+    if isinstance(term, (NumericArray, Opaque)):
+        return term.value
+    if isinstance(term, Record):
+        return _raw_leaves(term.to_nested_dict())
+    if isinstance(term, NumericArrayBatch):
+        return term.values
+    if isinstance(term, RecordBatch):
+        return _unflatten_paths(term._raw_columns())
+    if isinstance(term, _ObjectBatch):
+        return term._store
+    if isinstance(term, Function):
+        return term.raw()
+    return term
+
+
+def _raw_leaves(node: Any) -> Any:
+    """A record's nested mapping, each leaf at its raw form."""
+    if isinstance(node, dict):
+        return {name: _raw_leaves(child) for name, child in node.items()}
+    return _raw_form(node)
 
 
 def _batch_at(value: Any, spec: BatchSpec, label: str) -> Any:

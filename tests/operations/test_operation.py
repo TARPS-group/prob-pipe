@@ -31,10 +31,12 @@ from probpipe.operations import (
     RouteSummary,
     operation,
 )
+from probpipe.operations._moments import mean
 from probpipe.operations._operation import ApplicabilityError, _workflow_draws
+from probpipe.operations._sample import sample
 from probpipe.values import Function
 
-from ._laws import Bare, Gaussian, GuardedMean, Sampler
+from ._laws import Bare, Gaussian, GuardedMean, Pair, Sampler
 
 # ---------------------------------------------------------------------------
 # A toy operation with a capability route and a Monte Carlo fallback
@@ -629,6 +631,80 @@ class TestControls:
         law = Sampler("s")
         center.with_options(n_broadcast_samples=17)(law)
         assert law.shapes == [(17,)]
+
+
+# ---------------------------------------------------------------------------
+# Raw results
+# ---------------------------------------------------------------------------
+
+
+def _untracked(tree: Any) -> bool:
+    """Whether *tree* is a nested dict whose leaves are raw values rather than terms."""
+    if type(tree) is dict:
+        return all(_untracked(child) for child in tree.values())
+    return not isinstance(tree, TrackedTerm)
+
+
+class TestRawResults:
+    def test_a_raw_record_is_the_nested_mapping_of_its_raw_leaves(self):
+        result = center.with_options(raw=True)(Pair("p"))
+        assert type(result) is dict and set(result) == {"a", "b"}
+        assert _untracked(result)
+        assert float(result["a"]) == 1.0
+        np.testing.assert_array_equal(np.asarray(result["b"]), [-1.0, -1.0])
+
+    def test_a_raw_record_keeps_its_nesting(self):
+        def rule(d: Any) -> OutputSpec:
+            """A record with a nested group."""
+            return OutputSpec(
+                RecordSpec(a=NumericArraySpec(()), g=RecordSpec(b=NumericArraySpec(())))
+            )
+
+        toy = _toy(result=rule)
+        toy.structural_route(
+            "nested",
+            check=lambda call, result: True,
+            execute=lambda call, result: {"a": jnp.float32(1.0), "g": {"b": jnp.float32(2.0)}},
+            exact=True,
+        )
+        result = toy.with_options(raw=True)(Gaussian("g"))
+        assert type(result) is dict and type(result["g"]) is dict
+        assert _untracked(result)
+        assert float(result["g"]["b"]) == 2.0
+
+    def test_a_raw_batch_of_records_is_the_nested_mapping_of_its_raw_columns(self):
+        draws = sample.with_options(raw=True)(Pair("p"), (3,))
+        assert type(draws) is dict and set(draws) == {"a", "b"}
+        assert _untracked(draws)
+        assert (jnp.shape(draws["a"]), jnp.shape(draws["b"])) == ((3,), (3, 2))
+
+    def test_a_raw_moment_of_a_record_law_is_a_mapping(self):
+        result = mean.with_options(raw=True)(Pair("p"))
+        assert type(result) is dict and _untracked(result)
+
+    def test_the_raw_evaluator_returns_the_raw_array(self):
+        result = mean.raw()(Gaussian("g", 2.0))
+        assert not isinstance(result, TrackedTerm)
+        assert float(result) == 2.0
+
+    def test_apply_returns_the_raw_form(self):
+        result = center.apply(Pair("p"))
+        assert type(result) is dict and _untracked(result)
+
+    def test_a_raw_result_is_validated_against_the_declaration(self):
+        def rule(d: Any) -> OutputSpec:
+            """Three coordinates."""
+            return OutputSpec(toy=NumericArraySpec((3,)))
+
+        toy = _toy(result=rule)
+        toy.structural_route(
+            "short",
+            check=lambda call, result: True,
+            execute=lambda call, result: jnp.zeros(2),
+            exact=True,
+        )
+        with pytest.raises(ValueError, match="shape"):
+            toy.with_options(raw=True)(Gaussian("g"))
 
 
 # ---------------------------------------------------------------------------
