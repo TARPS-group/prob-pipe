@@ -117,6 +117,13 @@ from probpipe.families import (
     MixtureDistribution,
 )
 from probpipe.families._conditional import _IndependentObservations
+from probpipe.families._programs import (
+    PyMCModel,
+    StanModel,
+    UnnormalizedDistribution,
+    _StanPosterior,
+    _UnconstrainedStanView,
+)
 from probpipe.inference._approximate_distribution import (
     ApproximateDistribution,
     make_posterior,
@@ -128,9 +135,7 @@ from probpipe.inference._minibatch import (
     _RandomMinibatchLogProb,
 )
 from probpipe.linalg import DenseLinOp
-from probpipe.modeling import PyMCModel, StanModel
 from probpipe.modeling._likelihood import GenerativeLikelihood
-from probpipe.modeling._stan import _UnconstrainedStanView
 from probpipe.operations._condition import _unnormalized_conditional, _UnnormalizedConditional
 
 # -- Constructions ------------------------------------------------------------
@@ -194,11 +199,19 @@ def _pymc_model() -> PyMCModel:
     return PyMCModel("model", _pymc_model_fn)
 
 
-def _stan_model() -> StanModel:
-    pytest.importorskip("bridgestan")
+def _stan_model() -> _StanPosterior:
     stan_file = pathlib.Path(tempfile.mkdtemp()) / "declared.stan"
     stan_file.write_text("parameters { real mu; } model { mu ~ normal(0, 1); }")
     return StanModel("model", str(stan_file))
+
+
+def _stan_view() -> _UnconstrainedStanView:
+    pytest.importorskip("bridgestan")
+    return _stan_model().as_unconstrained_distribution()
+
+
+def _standard_normal_density(x):
+    return -0.5 * jnp.sum(jnp.asarray(x) ** 2)
 
 
 def _conditional(z):
@@ -309,8 +322,11 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
         None, Normal("theta", 0.0, 1.0), _Simulator(), method="npe", data_dim=1
     ),
     PyMCModel: _pymc_model,
-    StanModel: _stan_model,
-    _UnconstrainedStanView: lambda: _stan_model().as_unconstrained_distribution(),
+    _StanPosterior: _stan_model,
+    _UnconstrainedStanView: _stan_view,
+    UnnormalizedDistribution: lambda: UnnormalizedDistribution(
+        "u", _standard_normal_density, OutputSpec(x=probpipe.NumericArraySpec((2,)))
+    ),
     FieldView: lambda: FieldView(
         ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)), "a"
     ),
@@ -435,13 +451,7 @@ _RUNTIME_CLASS = pytest.mark.xfail(
     strict=True,
     reason="a class made at runtime does not pickle (#417)",
 )
-_BACKEND_MODEL = pytest.mark.xfail(
-    raises=AttributeError, strict=True, reason="the backend's model object does not pickle"
-)
 _PICKLE_FAILURES = {
-    PyMCModel: _BACKEND_MODEL,
-    StanModel: _BACKEND_MODEL,
-    _UnconstrainedStanView: _BACKEND_MODEL,
     MultivariateNormal: _TFP_BACKEND,
     KDEDistribution: _TFP_BACKEND,
     JointGaussian: _TFP_BACKEND,
@@ -465,13 +475,10 @@ _PICKLE_FAILURES = {
 
 
 # The interim ``event_shape`` overrides: an empirical law over an array still
-# draws a one-field record, and the Stan and PyMC models count flat parameters.
+# draws a one-field record.
 _EVENT_SHAPE_OVERRIDES = {
     "RecordEmpiricalDistribution",
     "RecordBootstrapReplicateDistribution",
-    "PyMCModel",
-    "StanModel",
-    "_UnconstrainedStanView",
 }
 
 

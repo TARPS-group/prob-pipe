@@ -8,9 +8,9 @@ import arviz_base as azb
 import jax.numpy as jnp
 
 from ..core._dispatch import Feasibility
-from ..operations._condition import InferenceMethod, _UnnormalizedConditional
+from ..families._programs import _StanPosterior
+from ..operations._condition import InferenceMethod
 from ._approximate_distribution import ApproximateDistribution, make_posterior
-from ._inference_utils import joint_and_given
 
 
 def _import_cmdstanpy():
@@ -29,7 +29,8 @@ def _import_cmdstanpy():
 class CmdStanNutsMethod(InferenceMethod):
     """CmdStanPy-backed NUTS, registered as ``cmdstan_nuts`` at priority 82.
 
-    Applies to a ``StanModel``; cmdstanpy is imported at execution.
+    Applies to a Stan program's posterior at its data, the target a
+    ``StanModel`` curries to; cmdstanpy is imported at execution.
 
     Notes
     -----
@@ -39,47 +40,35 @@ class CmdStanNutsMethod(InferenceMethod):
     applies to a disjoint model class.
     """
 
-    def __init__(self) -> None:
-        from ..modeling._stan import StanModel
-
-        self._model_type = StanModel
-
     @property
     def name(self) -> str:
         return "cmdstan_nuts"
 
     def supported_types(self) -> tuple[type, ...]:
-        return (self._model_type, _UnnormalizedConditional)
+        return (_StanPosterior,)
 
     @property
     def priority(self) -> int:
         return 82
 
     def check(self, target: Any, /, **kwargs: Any) -> Feasibility:
-        """Whether the target is a Stan program, or a Stan program at data."""
-        dist, _ = joint_and_given(target)
-        if not isinstance(dist, self._model_type):
-            return Feasibility(feasible=False, description="Requires StanModel")
+        """Whether the target is a Stan program's posterior at its data."""
+        if not isinstance(target, _StanPosterior):
+            return Feasibility(feasible=False, description="Requires a StanModel's posterior")
         return Feasibility(feasible=True)
 
     def execute(self, target: Any, /, **kwargs: Any) -> ApproximateDistribution:
-        """Stan's NUTS on the program at its data, through cmdstanpy."""
+        """Stan's NUTS on the target's program at its data, through cmdstanpy."""
         cmdstanpy = _import_cmdstanpy()
-        dist, observed = joint_and_given(target)
 
         num_results = kwargs.get("num_results", 1000)
         num_warmup = kwargs.get("num_warmup", 1000)
         num_chains = kwargs.get("num_chains", 4)
         random_seed = kwargs.get("random_seed", 0)
 
-        # Merge model's fixed data with observed values
-        data = {**(dist._stan_data or {})}
-        if isinstance(observed, dict):
-            data.update(observed)
-
-        model = cmdstanpy.CmdStanModel(stan_file=dist._stan_file)
+        model = cmdstanpy.CmdStanModel(stan_file=target.stan_file)
         fit = model.sample(
-            data=data,
+            data=dict(target.data),
             chains=num_chains,
             iter_sampling=num_results,
             iter_warmup=num_warmup,

@@ -178,6 +178,7 @@ from probpipe.distributions._distribution import (
     NumericDistribution,
     set_default_num_evaluations,
 )
+from probpipe.families import UnnormalizedDistribution
 from probpipe.functions import (
     AbstractModule,
     Module,
@@ -356,6 +357,7 @@ __all__ = [
     "TruncatedNormal",
     "Uniform",
     "UnmanagedConcurrentWorkflowEntryError",
+    "UnnormalizedDistribution",
     "VonMisesFisher",
     "Weights",
     "Wishart",

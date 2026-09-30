@@ -40,7 +40,7 @@ from ..core._record_spec import NumericRecordSpec
 from ..core._specs import OutputSpec
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike
-from ..distributions._capabilities import SupportsSampling
+from ..distributions._capabilities import SupportsSampling, _is_normalized
 from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution
 from ..operations._condition import _UnnormalizedConditional
@@ -188,12 +188,24 @@ def observed_target(model: Any, observed: Any) -> Any:
     """The target of normalizing *model* at *observed*, as ``probpipe.condition_on`` passes them.
 
     A model with no data, and an object that is not a law, is its own target.
-    Otherwise the target is the unnormalized conditional of the model at the
-    data, over the parameters :func:`get_prior` declares, from which
-    :func:`observed_parts` reads the model and the data back.
+    A kernel binds the data its given slots name first, as currying does, when
+    the law it yields needs normalizing or observed data remain. Otherwise the
+    target is the unnormalized conditional of the model at the data, over the
+    parameters :func:`get_prior` declares, from which :func:`observed_parts`
+    reads the model and the data back.
     """
     if observed is None or not isinstance(model, (Distribution, ConditionalDistribution)):
         return model
+    if isinstance(model, ConditionalDistribution) and isinstance(observed, (Record, dict)):
+        values = dict(observed.children if isinstance(observed, Record) else observed)
+        slots = {key: value for key, value in values.items() if key in model.given_spec}
+        rest = {key: value for key, value in values.items() if key not in slots}
+        if slots:
+            law = model._condition_on(slots)
+            if rest:
+                return _UnnormalizedConditional(law, rest, get_prior(law).event_spec, keyed=False)
+            if isinstance(law, Distribution) and not _is_normalized(law):
+                return law
     return _UnnormalizedConditional(model, observed, get_prior(model).event_spec, keyed=False)
 
 

@@ -26,7 +26,7 @@ class PyMCNutsMethod(InferenceMethod):
     """
 
     def __init__(self) -> None:
-        from ..modeling._pymc import PyMCModel
+        from ..families._programs import PyMCModel
 
         self._model_type = PyMCModel
 
@@ -115,7 +115,7 @@ class PyMCADVIMethod(InferenceMethod):
     """
 
     def __init__(self) -> None:
-        from ..modeling._pymc import PyMCModel
+        from ..families._programs import PyMCModel
 
         self._model_type = PyMCModel
 
