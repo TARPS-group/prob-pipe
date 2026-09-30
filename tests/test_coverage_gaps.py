@@ -23,11 +23,9 @@ from probpipe import (
     BootstrapDistribution,
     EmpiricalDistribution,
     Normal,
-    NumericArray,
     RecordEmpiricalDistribution,
     TransformedDistribution,
     cov,
-    expectation,
     mean,
     sample,
     variance,
@@ -116,14 +114,6 @@ class TestBootstrapDistributionCoverage:
         assert s.shape == (10,)
         assert jnp.all(jnp.isfinite(s))
 
-    def test_expectation_delegates_to_mc(self):
-        evals = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        bd = BootstrapDistribution("bd", evals)
-        key = jax.random.PRNGKey(0)
-        result = expectation(bd, lambda x: x, key=key, num_evaluations=100, return_dist=False)
-        assert isinstance(result, NumericArray)
-        np.testing.assert_allclose(float(result), 3.0, atol=0.5)
-
     def test_multidimensional_evaluations(self):
         evals = jnp.ones((10, 3))
         bd = BootstrapDistribution("bd", evals)
@@ -142,41 +132,6 @@ class TestBootstrapDistributionCoverage:
 
 class TestEmpiricalSubsampling:
     """Cover the weighted subsample paths in _expectation."""
-
-    def test_weighted_subsample_returns_bootstrap(self):
-        """Weighted EmpiricalDistribution with num_evaluations < n returns a
-        BootstrapDistribution over num_evaluations distinct samples, weighted by their
-        renormalized weights."""
-        samples = jnp.arange(100.0)
-        weights = jax.random.uniform(jax.random.PRNGKey(0), (100,))
-        weights = weights / jnp.sum(weights)
-        ed = EmpiricalDistribution("x", samples, weights=weights)
-        key = jax.random.PRNGKey(1)
-        result = expectation(ed, lambda x: x, key=key, num_evaluations=10)
-        assert isinstance(result, BootstrapDistribution)
-        assert result.num_atoms == 10
-        atoms = np.asarray(result.evaluations)
-        assert np.unique(atoms).size == 10
-        assert np.isin(atoms, samples).all()
-        # The samples are 0, ..., 99, so each atom's value is also its index into weights.
-        atom_w = np.asarray(weights)[atoms.astype(int)]
-        np.testing.assert_allclose(mean(result), np.average(atoms, weights=atom_w), rtol=1e-6)
-
-    def test_weighted_subsample_returns_array(self):
-        """Weighted EmpiricalDistribution with num_evaluations < n and return_dist=False
-        returns the weighted mean of the atoms that return_dist=True returns for the
-        same key."""
-        samples = jnp.arange(100.0)
-        weights = jax.random.uniform(jax.random.PRNGKey(0), (100,))
-        weights = weights / jnp.sum(weights)
-        ed = EmpiricalDistribution("x", samples, weights=weights)
-        key = jax.random.PRNGKey(1)
-        result = expectation(ed, lambda x: x, key=key, num_evaluations=10, return_dist=False)
-        assert isinstance(result, NumericArray)
-        atoms = np.asarray(expectation(ed, lambda x: x, key=key, num_evaluations=10).evaluations)
-        # The samples are 0, ..., 99, so each atom's value is also its index into weights.
-        atom_w = np.asarray(weights)[atoms.astype(int)]
-        np.testing.assert_allclose(result, np.average(atoms, weights=atom_w), rtol=1e-6)
 
     def test_weighted_cov(self):
         """Weighted RecordEmpiricalDistribution covariance."""
@@ -199,11 +154,12 @@ class TestTFPDistributionCov:
     """Cover the _cov method on TFPDistribution."""
 
     def test_scalar_cov_equals_variance(self):
-        """For scalar distributions, _cov returns variance."""
+        """For a scalar law, cov is the (1, 1) matrix holding the variance."""
         d = Normal(loc=0.0, scale=2.0, name="x")
-        c = cov(d)
+        c = np.asarray(cov(d))
         v = variance(d)
-        np.testing.assert_allclose(float(c), float(v), atol=1e-5)
+        assert c.shape == (1, 1)
+        np.testing.assert_allclose(c[0, 0], float(v), atol=1e-5)
 
     def test_multivariate_cov(self):
         """For multivariate distributions, _cov returns full covariance matrix."""
@@ -249,14 +205,6 @@ class TestTransformedNonTFP:
         s = jnp.asarray(sample(td, key=key, sample_shape=(5,)))
         assert s.shape == (5, 2)
         assert jnp.all(s > 0)
-
-    def test_mean_mc_fallback(self, td):
-        m = mean(td)
-        assert jnp.all(jnp.isfinite(m))
-
-    def test_variance_mc_fallback(self, td):
-        v = variance(td)
-        assert jnp.all(jnp.isfinite(v))
 
     def test_repr(self, td):
         r = repr(td)

@@ -96,14 +96,14 @@ class TestSupportsSampling:
 
 
 class TestSupportsExpectation:
-    def test_normal(self, normal):
-        assert isinstance(normal, SupportsExpectation)
+    def test_a_continuous_law_claims_no_exact_expectation(self, normal):
+        assert not isinstance(normal, SupportsExpectation)
 
     def test_empirical(self, empirical):
         assert isinstance(empirical, SupportsExpectation)
 
-    def test_joint(self, joint):
-        assert isinstance(joint, SupportsExpectation)
+    def test_a_joint_of_continuous_laws_claims_no_exact_expectation(self, joint):
+        assert not isinstance(joint, SupportsExpectation)
 
 
 # ---------------------------------------------------------------------------
@@ -137,9 +137,9 @@ class TestProtocolHierarchy:
     """Verify that protocol inheritance relationships hold."""
 
     def test_sampling_and_expectation_independent(self, normal):
-        """SupportsSampling and SupportsExpectation are independent protocols."""
+        """A law samples without claiming the exact expectation, which needs finite support."""
         assert isinstance(normal, SupportsSampling)
-        assert isinstance(normal, SupportsExpectation)
+        assert not isinstance(normal, SupportsExpectation)
 
     def test_log_prob_implies_unnormalized(self, normal):
         """SupportsLogProb extends SupportsUnnormalizedLogProb."""
@@ -158,10 +158,10 @@ class TestProtocolHierarchy:
         """SupportsCovariance does NOT extend SupportsExpectation."""
         assert not issubclass(SupportsCovariance, SupportsExpectation)
 
-    def test_concrete_dist_supports_both_mean_and_expectation(self, normal):
-        """Concrete distributions like Normal support both independently."""
+    def test_a_continuous_law_has_a_mean_but_no_exact_expectation(self, normal):
+        """The mean is exact in closed form, while an arbitrary expectation is not."""
         assert isinstance(normal, SupportsMean)
-        assert isinstance(normal, SupportsExpectation)
+        assert not isinstance(normal, SupportsExpectation)
 
     def test_sampling_independent_of_expectation(self):
         """SupportsSampling does NOT extend SupportsExpectation."""
@@ -520,8 +520,8 @@ class TestTransformedDistributionDynamicProtocols:
         td = TransformedDistribution("td", Normal(loc=0.0, scale=1.0, name="x"), tfb.Exp())
         assert isinstance(td, SupportsSampling)
         assert isinstance(td, SupportsLogProb)
-        assert isinstance(td, SupportsMean)
-        assert isinstance(td, SupportsVariance)
+        assert not isinstance(td, SupportsMean)
+        assert not isinstance(td, SupportsVariance)
 
     def test_over_log_prob_only_base_no_sampling(self):
         """A base with log_prob but no sampling → transform has no SupportsSampling."""

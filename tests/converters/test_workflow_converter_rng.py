@@ -32,6 +32,7 @@ from probpipe.converters import ConverterRegistry, _probpipe, _scipy, _tfp
 from probpipe.converters._probpipe import ProbPipeConverter
 from probpipe.converters._tfp import TFPConverter
 from probpipe.functions import _context
+from probpipe.linalg.linear_operator import DenseLinOp
 
 
 class _RecordingNormal(Normal):
@@ -68,7 +69,7 @@ class _VectorSource(Distribution):
     def _cov(self):
         if not self._covariance_works:
             raise NotImplementedError
-        return jnp.eye(2)
+        return DenseLinOp(jnp.eye(2))
 
     def _sample(self, key, sample_shape=()):
         self.calls.append((key, tuple(sample_shape)))
@@ -428,7 +429,7 @@ class TestBuiltInConversionPlanning:
         expected_cov = jnp.einsum("ni,nj->ij", diff, diff) / expected.shape[0]
         expected_cov = expected_cov + 1e-6 * jnp.eye(expected_cov.shape[0])
         np.testing.assert_allclose(converted._mean(), expected_mean, rtol=1e-6, atol=1e-6)
-        np.testing.assert_allclose(converted._cov(), expected_cov, rtol=1e-6, atol=1e-6)
+        np.testing.assert_allclose(converted._cov().to_dense(), expected_cov, rtol=1e-6, atol=1e-6)
 
     def test_mc_moment_target_preflight_fails_before_randomness(self):
         calls = []

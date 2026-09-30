@@ -1010,7 +1010,7 @@ class TestKDEDistribution:
         samples = jax.random.normal(jax.random.PRNGKey(0), (200,))
         kde = KDEDistribution("kde", samples)
         cov = kde._cov()
-        assert cov.shape == ()
+        assert cov.shape == (1, 1)
 
     def test_cov_multivariate(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (200, 3))

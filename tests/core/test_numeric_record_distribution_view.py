@@ -26,7 +26,6 @@ from probpipe import (
     ProductDistribution,
     RecordSpec,
     cov,
-    expectation,
     log_prob,
     mean,
     sample,
@@ -35,7 +34,6 @@ from probpipe import (
 from probpipe.core._numeric_record_distribution import NumericRecordDistributionView
 from probpipe.distributions._capabilities import (
     SupportsCovariance,
-    SupportsExpectation,
     SupportsLogProb,
     SupportsMean,
     SupportsSampling,
@@ -219,32 +217,6 @@ class TestMoments:
         assert c_rec.shape == (4, 4)
         np.testing.assert_allclose(c_rec, c_src, rtol=1e-5)
 
-    def test_expectation_through_unflatten(self, mvn4, split_template):
-        """``expectation(rec, f)`` MC-estimates ``E[f(record)]``.
-
-        f operates on a NumericRecord drawn from the lifted view; the
-        estimate should match the analytic E[intercept^2 + sum(slope^2)]
-        = (loc^2 + var) summed across fields to MC tolerance.
-        """
-        rec = mvn4.as_record_distribution(template=split_template)
-
-        def f(r):
-            return r["intercept"] ** 2 + jnp.sum(r["slope"] ** 2)
-
-        est = expectation(
-            rec,
-            f,
-            key=jax.random.PRNGKey(0),
-            num_evaluations=5000,
-            return_dist=False,
-        )
-        # E[X^2] = loc^2 + var per coordinate. 5k samples puts MC SE
-        # around ~0.15 for these parameters; atol=0.2 stays meaningful.
-        loc = jnp.array([1.0, -1.0, 2.0, 0.5])
-        var = jnp.array([0.5, 1.0, 1.5, 2.0])
-        analytic = float(jnp.sum(loc**2 + var))
-        np.testing.assert_allclose(float(jnp.asarray(est)), analytic, atol=0.2)
-
 
 # -- Error paths + protocol passthrough ----------------------------------------
 
@@ -258,7 +230,6 @@ class TestErrors:
         assert isinstance(rec, SupportsMean)
         assert isinstance(rec, SupportsVariance)
         assert isinstance(rec, SupportsCovariance)
-        assert isinstance(rec, SupportsExpectation)
 
     def test_type_error_on_base_event_template(self, mvn4):
         """Passing a base RecordSpec (allows None leaves) is rejected."""

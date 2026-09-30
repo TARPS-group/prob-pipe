@@ -25,11 +25,10 @@ from probpipe import (
     SequentialJointDistribution,
     SupportsApproximateConditioning,
     SupportsExactConditioning,
-    SupportsExpectation,
     SupportsSampling,
+    expectation,
 )
 from probpipe.core import ops
-from probpipe.core._numeric_record_distribution import _mc_expectation
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -59,19 +58,14 @@ def joint():
 
 @pytest.fixture
 def no_moments():
-    """A distribution that samples and takes expectations but implements no moment protocol."""
+    """A distribution that samples but implements no moment protocol."""
 
-    class NoMomentsDist(NumericRecordDistribution, SupportsSampling, SupportsExpectation):
+    class NoMomentsDist(NumericRecordDistribution, SupportsSampling):
         def __init__(self, name):
             super().__init__(name, NumericArraySpec(()))
 
         def _sample(self, key, sample_shape=()):
             return jax.random.normal(key, sample_shape)
-
-        def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
-            return _mc_expectation(
-                self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist
-            )
 
     return NoMomentsDist(name="test")
 
@@ -358,29 +352,18 @@ class TestCov:
 
 class TestExpectation:
     def test_expectation_identity(self, normal):
-        result = ops.expectation(
+        result = expectation(
             normal,
             lambda x: x,
             key=jax.random.PRNGKey(0),
             num_evaluations=5000,
-            return_dist=False,
         )
         np.testing.assert_allclose(float(result), 2.0, atol=0.1)
 
-    def test_expectation_returns_bootstrap(self, normal):
-        result = ops.expectation(
-            normal,
-            lambda x: x,
-            key=jax.random.PRNGKey(0),
-            num_evaluations=500,
-            return_dist=True,
-        )
-        assert isinstance(result, BootstrapDistribution)
-
-    def test_raises_without_supports_expectation(self, no_protocols):
-        """expectation op raises TypeError for distributions without SupportsExpectation."""
-        with pytest.raises(TypeError, match="does not support expectation"):
-            ops.expectation(no_protocols, lambda x: x)
+    def test_raises_when_no_method_applies(self, no_protocols):
+        """A law with neither an exact expectation nor sampling has no method."""
+        with pytest.raises(ResolutionError, match="No feasible method"):
+            expectation(no_protocols, lambda x: x)
 
 
 # ---------------------------------------------------------------------------

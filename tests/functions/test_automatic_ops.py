@@ -199,42 +199,10 @@ class TestAutomaticExpectation:
             patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=7),
         ):
-            result = expectation(dist, lambda value: value, return_dist=False)
+            result = expectation(dist, lambda value: value)
 
         np.testing.assert_allclose(float(result), 2.0)
         commit.assert_not_called()
-
-    def test_empirical_subsample_claims_one_event(self):
-        dist = EmpiricalDistribution("x", jnp.arange(20.0))
-
-        with (
-            patch(
-                "probpipe.functions._context.derive_event_key_words_from_encoded",
-                wraps=_context.derive_event_key_words_from_encoded,
-            ) as derive,
-            workflow_run(seed=7),
-        ):
-            expectation(
-                dist,
-                lambda value: value,
-                num_evaluations=5,
-                return_dist=False,
-            )
-
-        assert derive.call_count == 1
-
-    def test_generic_empirical_subsample_uses_num_atoms(self):
-        dist = EmpiricalDistribution("dist", ["a", "bb", "ccc"])
-
-        with workflow_run(seed=7):
-            result = expectation(
-                dist,
-                len,
-                num_evaluations=2,
-                return_dist=False,
-            )
-
-        assert float(result) in (1.5, 2.0, 2.5)
 
     def test_monte_carlo_expectation_claims_one_batched_event(self):
         calls = []
@@ -245,7 +213,6 @@ class TestAutomaticExpectation:
                 dist,
                 lambda value: value,
                 num_evaluations=32,
-                return_dist=False,
             )
 
         assert jnp.asarray(result).shape == ()
@@ -283,7 +250,6 @@ class TestAutomaticExpectation:
                 descendant,
                 lambda value: value,
                 num_evaluations=16,
-                return_dist=False,
             )
 
         assert [shape for _key, shape in calls] == [(16,)]
@@ -306,7 +272,6 @@ class TestAutomaticExpectation:
                 descendant,
                 lambda value: value,
                 num_evaluations=8,
-                return_dist=False,
             )
 
         urandom.assert_not_called()
@@ -319,7 +284,6 @@ class TestAutomaticExpectation:
             lambda value: value,
             key=explicit,
             num_evaluations=8,
-            return_dist=False,
         )
         expected = jnp.mean(descendant._sample(explicit, (8,)))
         np.testing.assert_allclose(actual, expected, rtol=1e-6, atol=1e-6)

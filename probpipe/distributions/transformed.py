@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.bijectors as tfb
 import tensorflow_probability.substrates.jax.distributions as tfd
 
-from ..core._numeric_record_distribution import NumericRecordDistribution, _mc_expectation
+from ..core._numeric_record_distribution import NumericRecordDistribution
 from ..core._specs import NumericArraySpec
 from ..core.constraints import (
     Constraint,
@@ -19,7 +19,7 @@ from ..core.constraints import (
 from ..core.provenance import Provenance
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..functions import _descendants
-from ._capabilities import SupportsLogProb, SupportsMean, SupportsSampling, SupportsVariance
+from ._capabilities import SupportsLogProb, SupportsSampling
 from ._tfp_base import TFPDistribution
 
 __all__ = ["TransformedDistribution"]
@@ -49,23 +49,14 @@ def _transformed_class_for_base(base: NumericRecordDistribution) -> type:
     on the dynamic subclass (not the base class) so that ``isinstance``
     checks against the ``SupportsFoo`` protocols are accurate: an
     instance only has the method when its base actually supports the
-    corresponding protocol. ``_mean`` / ``_variance`` use a Monte Carlo
-    fallback, which requires sampling.
+    corresponding protocol. A transformed law claims no moment, since its
+    moments have no closed form in general; the moment operations estimate them.
     """
     supports_sample = isinstance(base, SupportsSampling)
     supports_log_prob = isinstance(base, SupportsLogProb)
-    supports_mean = isinstance(base, SupportsMean) or supports_sample
-    supports_variance = isinstance(base, SupportsVariance) or supports_sample
 
-    signature = (supports_sample, supports_log_prob, supports_mean, supports_variance)
-    key = frozenset(
-        name
-        for name, flag in zip(
-            ("sample", "log_prob", "mean", "variance"),
-            signature,
-        )
-        if flag
-    )
+    signature = (supports_sample, supports_log_prob)
+    key = frozenset(name for name, flag in zip(("sample", "log_prob"), signature) if flag)
     if key in _TRANSFORMED_CLASS_CACHE:
         return _TRANSFORMED_CLASS_CACHE[key]
 
@@ -100,27 +91,6 @@ def _transformed_class_for_base(base: NumericRecordDistribution) -> type:
             )
 
         extra_methods["_log_prob"] = _log_prob
-
-    if supports_mean:
-        extra_bases.append(SupportsMean)
-
-        def _mean(self) -> Array:
-            if self._tfp_transformed is not None:
-                return self._tfp_transformed.mean()
-            return self._expectation(lambda x: x, return_dist=False)
-
-        extra_methods["_mean"] = _mean
-
-    if supports_variance:
-        extra_bases.append(SupportsVariance)
-
-        def _variance(self) -> Array:
-            if self._tfp_transformed is not None:
-                return self._tfp_transformed.variance()
-            mu = self._mean()
-            return self._expectation(lambda x: (x - mu) ** 2, return_dist=False)
-
-        extra_methods["_variance"] = _variance
 
     if not extra_bases:
         _TRANSFORMED_CLASS_CACHE[key] = TransformedDistribution
@@ -223,22 +193,6 @@ class TransformedDistribution(NumericRecordDistribution):
 
     # -- sampling, density, moments are installed dynamically in
     # -- _transformed_class_for_base based on what ``base`` supports.
-
-    def _expectation(
-        self,
-        f,
-        *,
-        key=None,
-        num_evaluations=None,
-        return_dist=None,
-    ):
-        return _mc_expectation(
-            self,
-            f,
-            key=key,
-            num_evaluations=num_evaluations,
-            return_dist=return_dist,
-        )
 
     # -- repr ---------------------------------------------------------------
 

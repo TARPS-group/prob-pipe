@@ -18,7 +18,7 @@ from ..core.constraints import (
     integer_interval,
     non_negative_integer,
 )
-from ..custom_types import Array, ArrayLike, PRNGKey
+from ..custom_types import Array, ArrayLike
 from ._tfp_base import TFPDistribution
 
 __all__ = [
@@ -96,14 +96,7 @@ class Bernoulli(TFPDistribution):
 
     # -- expectation (exact over {0, 1}) ------------------------------------
 
-    def _expectation(
-        self,
-        f: Callable,
-        *,
-        key: PRNGKey | None = None,
-        num_evaluations: int | None = None,
-        return_dist: bool | None = None,
-    ) -> Array:
+    def _expectation(self, f: Callable) -> Array:
         """Exact expectation over the two-point support {0, 1}."""
         p = self._tfp_dist.probs_parameter()
         f0 = f(jnp.zeros(self.event_shape, dtype=self.dtype))
@@ -184,14 +177,7 @@ class Binomial(TFPDistribution):
 
     # -- expectation (exact over {0, ..., total_count}) ---------------------
 
-    def _expectation(
-        self,
-        f: Callable,
-        *,
-        key: PRNGKey | None = None,
-        num_evaluations: int | None = None,
-        return_dist: bool | None = None,
-    ) -> Array:
+    def _expectation(self, f: Callable) -> Array:
         """Exact expectation over the finite support {0, ..., total_count}."""
         tc = jnp.asarray(self._total_count)
         if tc.ndim != 0:
@@ -318,14 +304,7 @@ class Categorical(TFPDistribution):
 
     # -- expectation (exact over {0, ..., k-1}) ------------------------------
 
-    def _expectation(
-        self,
-        f: Callable,
-        *,
-        key: PRNGKey | None = None,
-        num_evaluations: int | None = None,
-        return_dist: bool | None = None,
-    ) -> Array:
+    def _expectation(self, f: Callable) -> Array:
         """Exact expectation over the categorical support {0, ..., k-1}."""
         probs = self._tfp_dist.probs_parameter()
         support = jnp.arange(self._num_categories(), dtype=self.dtype)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
-from collections.abc import Callable, Generator
+from collections.abc import Generator
 from typing import TYPE_CHECKING, Any
 
 import jax
@@ -13,10 +13,11 @@ import numpy as np
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from .._array_utils import _slice_leading_axes
-from ..core._numeric_record_distribution import NumericRecordDistribution, _mc_expectation
+from ..core._numeric_record_distribution import NumericRecordDistribution
 from ..core._specs import NumericArraySpec, OutputSpec
 from ..core.constraints import Constraint
 from ..custom_types import Array, ArrayLike, PRNGKey
+from ..linalg.linear_operator import DenseLinOp, LinOp
 from ._capabilities import (
     SupportsCovariance,
     SupportsLogProb,
@@ -228,27 +229,12 @@ class TFPDistribution(
     def _variance(self) -> Array:
         return self._tfp_dist.variance()
 
-    def _cov(self) -> Array:
+    def _cov(self) -> LinOp:
+        """The covariance of the flattened draw, a ``(d, d)`` dense operator."""
         # The TFP event is flat even when the declared draw is a record.
         if tuple(self._tfp_dist.event_shape) in ((), (1,)):
-            return self._tfp_dist.variance()
-        return self._tfp_dist.covariance()
-
-    def _expectation(
-        self,
-        f: Callable,
-        *,
-        key: PRNGKey | None = None,
-        num_evaluations: int | None = None,
-        return_dist: bool | None = None,
-    ) -> Any:
-        return _mc_expectation(
-            self,
-            f,
-            key=key,
-            num_evaluations=num_evaluations,
-            return_dist=return_dist,
-        )
+            return DenseLinOp(jnp.reshape(self._tfp_dist.variance(), (1, 1)))
+        return DenseLinOp(self._tfp_dist.covariance())
 
     # -- SupportsArrayBackend (fused storage for DistributionArray) ----------
 

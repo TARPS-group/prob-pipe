@@ -30,7 +30,6 @@ from ..distributions._capabilities import (
     SupportsApproximateConditioning,
     SupportsCovariance,
     SupportsExactConditioning,
-    SupportsExpectation,
     SupportsLogProb,
     SupportsMean,
     SupportsQuantile,
@@ -47,7 +46,6 @@ from ._random_functions import RandomFunction
 __all__ = [
     "condition_on",
     "cov",
-    "expectation",
     "from_distribution",
     "log_prob",
     "mean",
@@ -404,16 +402,22 @@ def variance(dist: SupportsVariance) -> Any:
 
 @function
 def cov(dist: SupportsCovariance) -> Array:
-    """Compute the covariance matrix.
+    """Compute the covariance matrix of the flattened draw, a ``(d, d)`` array.
 
-    Requires the distribution to implement :class:`SupportsCovariance`.
+    The distribution's ``_cov`` returns the covariance as a linear operator,
+    and the result is its dense array.
+
+    Raises
+    ------
+    TypeError
+        If the distribution does not implement :class:`SupportsCovariance`.
     """
     if not isinstance(dist, SupportsCovariance):
         raise TypeError(
             f"{type(dist).__name__} does not support covariance "
             f"(does not implement SupportsCovariance)"
         )
-    return dist._cov()
+    return dist._cov().to_dense()
 
 
 @function
@@ -436,26 +440,6 @@ def quantile(dist: SupportsQuantile, q: Any) -> Any:
     if not isinstance(qa, jax.core.Tracer) and bool(jnp.any((qa < 0) | (qa > 1) | jnp.isnan(qa))):
         raise ValueError(f"quantile probabilities must lie in [0, 1]; got {q!r}")
     return dist._quantile(q)
-
-
-@function
-def expectation(
-    dist: SupportsExpectation,
-    f: Any,
-    *,
-    key: PRNGKey | None = None,
-    num_evaluations: int | None = None,
-    return_dist: bool | None = None,
-) -> Any:
-    """Compute E[f(X)] where X ~ dist."""
-    if not isinstance(dist, SupportsExpectation):
-        raise TypeError(f"{type(dist).__name__} does not support expectation")
-    return dist._expectation(
-        f,
-        key=key,
-        num_evaluations=num_evaluations,
-        return_dist=return_dist,
-    )
 
 
 @function

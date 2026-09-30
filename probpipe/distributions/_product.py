@@ -21,7 +21,6 @@ import jax.numpy as jnp
 
 from ..core._numeric_record_distribution import (
     NumericRecordDistribution,
-    _mc_expectation,
 )
 from ..core._record_distribution import (
     RecordDistribution,
@@ -400,11 +399,6 @@ class ProductDistribution(
 
     def _variance(self) -> Record:
         return _map_components(self.name, self._components, lambda d: d._variance())
-
-    def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
-        return _mc_expectation(
-            self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist
-        )
 
     # -- Component access (for backward compat) ----------------------------
 

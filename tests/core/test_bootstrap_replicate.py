@@ -6,7 +6,6 @@ import numpy as np
 import pytest
 
 from probpipe import (
-    BootstrapDistribution,
     BootstrapReplicateDistribution,
     Distribution,
     EmpiricalDistribution,
@@ -75,9 +74,9 @@ class TestProtocol:
         dist = BootstrapReplicateDistribution("x", jnp.ones((5, 2)))
         assert isinstance(dist, SupportsSampling)
 
-    def test_supports_expectation(self):
+    def test_claims_no_exact_expectation(self):
         dist = BootstrapReplicateDistribution("x", jnp.ones((5, 2)))
-        assert isinstance(dist, SupportsExpectation)
+        assert not isinstance(dist, SupportsExpectation)
 
     def test_generic_numeric_dispatches_to_array(self):
         # Factory dispatch: numeric arrays → RecordBootstrapReplicateDistribution
@@ -318,25 +317,13 @@ class TestExpectation:
     def test_expectation_returns_array(self):
         data = jnp.arange(30.0).reshape(10, 3)
         dist = BootstrapReplicateDistribution("x", data)
-        result = dist._expectation(
+        result = expectation(
+            dist,
             lambda d: jnp.mean(d, axis=0),
             key=jax.random.PRNGKey(0),
             num_evaluations=50,
-            return_dist=False,
         )
         assert result.shape == (3,)
-
-    def test_expectation_returns_bootstrap_dist(self):
-        data = jnp.arange(30.0).reshape(10, 3)
-        dist = BootstrapReplicateDistribution("x", data)
-        result = dist._expectation(
-            lambda d: jnp.mean(d, axis=0),
-            key=jax.random.PRNGKey(0),
-            num_evaluations=50,
-            return_dist=True,
-        )
-        assert isinstance(result, BootstrapDistribution)
-        assert result.num_atoms == 50
 
     def test_expectation_op(self):
         data = jnp.arange(30.0).reshape(10, 3)
@@ -346,7 +333,6 @@ class TestExpectation:
             lambda d: jnp.mean(d, axis=0),
             key=jax.random.PRNGKey(0),
             num_evaluations=50,
-            return_dist=False,
         )
         assert result.shape == (3,)
 
@@ -354,11 +340,11 @@ class TestExpectation:
         """E[mean(bootstrap_dataset)] should converge to mean(data)."""
         data = jnp.arange(30.0).reshape(10, 3)
         dist = BootstrapReplicateDistribution("x", data)
-        result = dist._expectation(
+        result = expectation(
+            dist,
             lambda d: jnp.mean(d, axis=0),
             key=jax.random.PRNGKey(42),
             num_evaluations=2000,
-            return_dist=False,
         )
         expected = jnp.mean(data, axis=0)
         # Bootstrap resampling with only 10 data points has high variance

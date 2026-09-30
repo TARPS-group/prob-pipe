@@ -173,12 +173,10 @@ from probpipe.distributions._capabilities import (
 )
 from probpipe.distributions._distribution import (
     DEFAULT_NUM_EVALUATIONS,
-    RETURN_APPROX_DIST,
     Distribution,
     DistributionSpec,
     NumericDistribution,
     set_default_num_evaluations,
-    set_return_approx_dist,
 )
 from probpipe.functions import (
     AbstractModule,
@@ -391,7 +389,6 @@ __all__ = [
 from probpipe.core.ops import (
     condition_on,
     cov,
-    expectation,
     from_distribution,
     log_prob,
     mean,
@@ -404,3 +401,4 @@ from probpipe.core.ops import (
     unnormalized_prob,
     variance,
 )
+from probpipe.operations import expectation

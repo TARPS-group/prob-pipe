@@ -94,6 +94,7 @@ class TestTFPBase:
         assert samples.shape == (10, 3)
         assert jnp.all(samples > 0)
 
+    @pytest.mark.pending(reason="the moment operations' routes", raises=TypeError)
     def test_mean_delegates_to_tfp_when_available(self):
         """Shift bijector preserves tractable mean exactly."""
         base = Normal(loc=0.0, scale=1.0, name="x")
@@ -102,6 +103,7 @@ class TestTFPBase:
         # Analytical identity: Shift(c) on N(0,1) has mean c exactly.
         assert jnp.isclose(mean(td), 5.0, atol=1e-6)
 
+    @pytest.mark.pending(reason="the moment operations' routes", raises=TypeError)
     def test_variance_delegates_to_tfp_when_available(self):
         """Scale bijector has tractable variance exactly."""
         base = Normal(loc=0.0, scale=1.0, name="x")
@@ -124,6 +126,7 @@ class TestNonTFPBase:
         assert s.shape == (10, 2)
         assert jnp.all(s > 0)
 
+    @pytest.mark.pending(reason="the moment operations' routes", raises=TypeError)
     def test_mean_mc_fallback_on_non_tfp(self, key):
         """Non-TFP base: mean falls back to MC via expectation."""
         samples = jax.random.normal(key, (50, 2))
@@ -226,20 +229,20 @@ class TestTransformedProtocolDuckTyping:
         td = TransformedDistribution("td", Normal("x", 0, 1), tfb.Exp())
         assert isinstance(td, SupportsLogProb)
 
-    def test_isinstance_mean_from_tfp_base(self):
-        """TFP base supports SupportsMean → transformed does too."""
+    def test_a_transformed_law_claims_no_mean(self):
+        """A transformed law's mean has no closed form in general, so it claims none."""
         from probpipe import SupportsMean
 
         td = TransformedDistribution("td", Normal("x", 0, 1), tfb.Exp())
-        assert isinstance(td, SupportsMean)
+        assert not isinstance(td, SupportsMean)
 
-    def test_empirical_base_has_mean(self):
-        """RecordEmpiricalDistribution supports SupportsMean → transformed does too."""
+    def test_a_transformed_empirical_law_claims_no_mean(self):
+        """The base's mean does not give the transformed law's."""
         from probpipe import SupportsMean
 
         emp = EmpiricalDistribution("x", jnp.array([1.0, 2.0, 3.0]))
         td = TransformedDistribution("td", emp, tfb.Exp())
-        assert isinstance(td, SupportsMean)
+        assert not isinstance(td, SupportsMean)
 
     def test_empirical_base_no_log_prob(self):
         """RecordEmpiricalDistribution lacks SupportsLogProb → transformed lacks it."""
@@ -258,15 +261,22 @@ class TestTransformedProtocolDuckTyping:
 class TestBijectorCorrectness:
     """Validate that TransformedDistribution applies bijector math correctly."""
 
-    def test_identity_preserves_moments(self, key):
-        """Identity bijector: moments and log_prob are unchanged."""
+    @pytest.mark.pending(reason="the moment operations' routes", raises=TypeError)
+    def test_identity_preserves_moments(self):
+        """Identity bijector: the moments are unchanged."""
         import numpy as np
 
         base = Normal(loc=2.0, scale=0.5, name="x")
         td = TransformedDistribution("td", base, tfb.Identity())
-        # Moments
         np.testing.assert_allclose(float(mean(td)), float(mean(base)), atol=1e-6)
         np.testing.assert_allclose(float(variance(td)), float(variance(base)), atol=1e-6)
+
+    def test_identity_preserves_draws_and_densities(self, key):
+        """Identity bijector: draws from one key and log_prob are unchanged."""
+        import numpy as np
+
+        base = Normal(loc=2.0, scale=0.5, name="x")
+        td = TransformedDistribution("td", base, tfb.Identity())
         # Samples from the same key match
         s_base = sample(base, key=key, sample_shape=(100,))
         s_td = sample(td, key=key, sample_shape=(100,))

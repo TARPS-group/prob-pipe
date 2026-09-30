@@ -48,7 +48,6 @@ from .._array_utils import _is_numeric_array
 from .._dtype import _as_float_array
 from .._weights import Weights
 from ..custom_types import Array, ArrayLike, PRNGKey
-from ..distributions import _distribution as _base
 from ..distributions._capabilities import (
     SupportsCovariance,
     SupportsExpectation,
@@ -58,10 +57,9 @@ from ..distributions._capabilities import (
     SupportsVariance,
 )
 from ..distributions._distribution import Distribution
-from ..functions import _broker
+from ..linalg.linear_operator import DenseLinOp, LinOp
 from ._numeric_record import NumericRecord
 from ._numeric_record_distribution import (
-    BootstrapDistribution,
     NumericRecordDistribution,
 )
 from ._record_batch import RecordBatch
@@ -415,41 +413,9 @@ class EmpiricalDistribution(
             return jnp.stack([f(x) for x in samples])
         return jax.vmap(f)(samples)
 
-    def _expectation(
-        self,
-        f: Callable,
-        *,
-        key: PRNGKey | None = None,
-        num_evaluations: int | None = None,
-        return_dist: bool | None = None,
-    ) -> Any:
-        """Compute ``E[f(X)]`` over the empirical support."""
-        if num_evaluations is not None:
-            if isinstance(num_evaluations, bool) or not isinstance(num_evaluations, int):
-                raise TypeError(f"num_evaluations must be an integer; got {num_evaluations!r}")
-            if num_evaluations <= 0:
-                raise ValueError(f"num_evaluations must be positive; got {num_evaluations!r}")
-        if num_evaluations is not None and num_evaluations < self.num_atoms:
-            if key is None:
-                key = _broker._resolve_automatic_key(
-                    None,
-                    _broker._singleton_effect_plan(
-                        operation_kind="expectation",
-                        execution_mode="subsample",
-                        sample_shape=(num_evaluations,),
-                    ),
-                )
-            idx = jax.random.choice(key, self.num_atoms, shape=(num_evaluations,), replace=False)
-            f_vals = self._eval_f(f, self._samples[idx])
-            sub_w = self._w.subsample(idx)
-
-            rd = return_dist if return_dist is not None else _base.RETURN_APPROX_DIST
-            if rd:
-                return BootstrapDistribution("expectation", f_vals, weights=sub_w)
-            return sub_w.mean(f_vals)
-
-        f_vals = self._eval_f(f, self._samples)
-        return self._w.mean(f_vals)
+    def _expectation(self, f: Callable) -> Any:
+        """The exact ``E[f(X)]``: the weighted mean of ``f`` over every atom."""
+        return self._w.mean(self._eval_f(f, self._samples))
 
 
 # ---------------------------------------------------------------------------
@@ -733,14 +699,16 @@ class RecordEmpiricalDistribution(
     def _variance(self) -> NumericRecord:
         return _fieldwise_op(self._record_data, self._w.variance)
 
-    def _cov(self) -> NumericRecord:
-        """Per-field weighted covariance.
+    def _cov(self) -> LinOp:
+        """The weighted covariance of the flattened rows, a ``(d, d)`` dense operator.
 
-        For a 1-D-per-row field the result is a covariance matrix; for
-        a scalar field it collapses to a 0-D ``Record`` entry equal to
-        the variance.
+        Each row is flattened by concatenating its leaves in the canonical order.
         """
-        return _fieldwise_op(self._record_data, self._w.covariance)
+        columns = [
+            jnp.reshape(jnp.asarray(self._record_data[path]), (self._num_atoms, -1))
+            for path in self._record_data
+        ]
+        return DenseLinOp(jnp.atleast_2d(self._w.covariance(jnp.concatenate(columns, axis=1))))
 
     def _quantile(self, q: ArrayLike) -> NumericRecord:
         """Per-field quantile(s) at probability level(s) ``q`` (weight-aware).
@@ -759,21 +727,8 @@ class RecordEmpiricalDistribution(
 
     # -- expectation --------------------------------------------------------
 
-    def _expectation(
-        self,
-        f: Callable,
-        *,
-        key: PRNGKey | None = None,
-        num_evaluations: int | None = None,
-        return_dist: bool | None = None,
-    ) -> Any:
-        """Compute ``E[f(record)]`` over the empirical rows.
-
-        ``f`` is called per row; for single-field auto-wrap empiricals,
-        the row is unwrapped to the bare ``jax.Array`` (the user
-        constructed from an array, so they expect to operate on
-        arrays). Multi-field records pass the row Record as-is.
-        """
+    def _expectation(self, f: Callable) -> Any:
+        """The exact ``E[f(X)]``: the weighted mean of ``f`` over every row."""
         keys = tuple(self._record_data.keys())
         single_field = len(keys) == 1
 
@@ -783,34 +738,6 @@ class RecordEmpiricalDistribution(
                 return r
             return r[keys[0]]
 
-        if num_evaluations is not None:
-            if isinstance(num_evaluations, bool) or not isinstance(num_evaluations, int):
-                raise TypeError(f"num_evaluations must be an integer; got {num_evaluations!r}")
-            if num_evaluations <= 0:
-                raise ValueError(f"num_evaluations must be positive; got {num_evaluations!r}")
-        if num_evaluations is not None and num_evaluations < self._num_atoms:
-            if key is None:
-                key = _broker._resolve_automatic_key(
-                    None,
-                    _broker._singleton_effect_plan(
-                        operation_kind="expectation",
-                        execution_mode="subsample",
-                        sample_shape=(num_evaluations,),
-                    ),
-                )
-            idx = jax.random.choice(
-                key,
-                self._num_atoms,
-                shape=(num_evaluations,),
-                replace=False,
-            )
-            f_vals = jnp.stack([f(_row(int(i))) for i in idx])
-            sub_w = self._w.subsample(idx)
-            rd = return_dist if return_dist is not None else _base.RETURN_APPROX_DIST
-            if rd:
-                return BootstrapDistribution("expectation", f_vals, weights=sub_w)
-            return sub_w.mean(f_vals)
-        # Exact: evaluate f on every row.
         f_vals = jnp.stack([f(_row(i)) for i in range(self._num_atoms)])
         return self._w.mean(f_vals)
 
@@ -829,7 +756,6 @@ class RecordEmpiricalDistribution(
 class BootstrapReplicateDistribution(
     Distribution,
     SupportsSampling,
-    SupportsExpectation,
 ):
     """N-fold product of an empirical distribution (bootstrap resampling).
 
@@ -1055,46 +981,6 @@ class BootstrapReplicateDistribution(
         rather than single-field Records.
         """
         return dataset
-
-    def _expectation(
-        self,
-        f: Callable,
-        *,
-        key: PRNGKey | None = None,
-        num_evaluations: int | None = None,
-        return_dist: bool | None = None,
-    ) -> Array | BootstrapDistribution:
-        """Compute ``E[f(dataset)]`` via Monte Carlo over bootstrap datasets.
-
-        ``f`` receives one bootstrapped dataset per call. Subclasses
-        can override :meth:`_unwrap_dataset` to convert the dataset to
-        a bare array (e.g. the single-field Record auto-wrap case).
-        """
-        if num_evaluations is None:
-            num_evaluations = _base.DEFAULT_NUM_EVALUATIONS
-        if isinstance(num_evaluations, bool) or not isinstance(num_evaluations, int):
-            raise TypeError(f"num_evaluations must be an integer; got {num_evaluations!r}")
-        if num_evaluations <= 0:
-            raise ValueError(f"num_evaluations must be positive; got {num_evaluations!r}")
-        if key is None:
-            key = _broker._resolve_automatic_key(
-                None,
-                _broker._singleton_effect_plan(
-                    operation_kind="expectation",
-                    execution_mode="bootstrap",
-                    sample_shape=(num_evaluations,),
-                ),
-            )
-        keys = jax.random.split(key, num_evaluations)
-
-        def _ds(k):
-            return self._unwrap_dataset(self._one_bootstrap(k))
-
-        f_vals = jnp.stack([f(_ds(k)) for k in keys])
-        rd = return_dist if return_dist is not None else _base.RETURN_APPROX_DIST
-        if rd:
-            return BootstrapDistribution("expectation", f_vals)
-        return jnp.mean(f_vals, axis=0)
 
     def __repr__(self) -> str:
         if self._source_kind == "sampleable":

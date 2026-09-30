@@ -35,10 +35,6 @@ from ..core.tracked import Annotated, TrackedTerm, _TrackedTermMeta
 DEFAULT_NUM_EVALUATIONS: int = 1024
 """Default number of function evaluations for sample-based expectations."""
 
-RETURN_APPROX_DIST: bool = True
-"""When True, approximate expectations return a BootstrapDistribution
-capturing MC error instead of a plain array."""
-
 
 def set_default_num_evaluations(n: int) -> None:
     """Set the global default for ``expectation()`` on infinite-support distributions."""
@@ -46,12 +42,6 @@ def set_default_num_evaluations(n: int) -> None:
     if n < 1:
         raise ValueError("num_evaluations must be at least 1")
     DEFAULT_NUM_EVALUATIONS = n
-
-
-def set_return_approx_dist(value: bool) -> None:
-    """Set whether approximate expectations return error-tracking distributions."""
-    global RETURN_APPROX_DIST
-    RETURN_APPROX_DIST = bool(value)
 
 
 # ---------------------------------------------------------------------------

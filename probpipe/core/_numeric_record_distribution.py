@@ -39,7 +39,6 @@ express a vectorized batch of structured random variables.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from math import prod
 from typing import TYPE_CHECKING, Any
 
@@ -52,17 +51,15 @@ import jax.numpy as jnp
 from .._dtype import _as_float_array
 from .._weights import Weights
 from ..custom_types import Array, ArrayLike, PRNGKey
-from ..distributions import _distribution as _base
 from ..distributions._capabilities import (
     SupportsCovariance,
-    SupportsExpectation,
     SupportsLogProb,
     SupportsMean,
     SupportsSampling,
     SupportsVariance,
 )
 from ..distributions._distribution import Distribution, NumericDistribution
-from ..functions import _broker, _descendants
+from ..functions import _descendants
 from ._record_distribution import (
     RecordDistribution,
     _field_event_shape,
@@ -118,60 +115,6 @@ def _vmap_sample(
         lambda x: x.reshape(*sample_shape, *x.shape[1:]),
         flat_samples,
     )
-
-
-def _mc_expectation(
-    dist: NumericRecordDistribution,
-    f: Callable[[Any], Any],
-    *,
-    key: PRNGKey | None = None,
-    num_evaluations: int | None = None,
-    return_dist: bool | None = None,
-) -> Any:
-    """Estimate ``E[f(X)]`` where ``X ~ dist`` via Monte Carlo.
-
-    Parameters
-    ----------
-    dist
-        Distribution with a ``_sample(key, sample_shape)`` method.
-    f : callable
-        Function mapping a single sample to an array (or pytree of arrays).
-    key : PRNGKey, optional
-        JAX PRNG key for sampling.  Auto-generated if ``None``.
-    num_evaluations : int, optional
-        Number of samples to draw.  If ``None``, uses
-        ``DEFAULT_NUM_EVALUATIONS``.
-    return_dist : bool, optional
-        If ``True``, return a ``BootstrapDistribution`` capturing
-        estimation uncertainty.  If ``False``, return a plain array.
-        If ``None``, use the global ``RETURN_APPROX_DIST`` setting.
-    """
-    n = num_evaluations if num_evaluations is not None else _base.DEFAULT_NUM_EVALUATIONS
-    if isinstance(n, bool) or not isinstance(n, int):
-        raise TypeError(f"num_evaluations must be an integer; got {n!r}")
-    if n <= 0:
-        raise ValueError(f"num_evaluations must be positive; got {n!r}")
-    if key is None:
-        captured = _descendants.capture_stochastic_consumer(dist)
-        key = _broker._resolve_automatic_key(
-            None,
-            _broker._singleton_effect_plan(
-                operation_kind="expectation",
-                execution_mode="monte_carlo",
-                sample_shape=(n,),
-                record_path=captured.record_path,
-                descendant_descriptor=captured.descendant_descriptor,
-            ),
-        )
-        samples = _descendants.sample_captured_consumer(captured, key, (n,))
-    else:
-        samples = dist._sample(key, sample_shape=(n,))
-    evals = jax.vmap(f)(samples)
-
-    rd = return_dist if return_dist is not None else _base.RETURN_APPROX_DIST
-    if rd:
-        return BootstrapDistribution("expectation", evals)
-    return jax.tree.map(lambda v: jnp.mean(v, axis=0), evals)
 
 
 def _raw_event_shape(law: Distribution) -> tuple[int, ...]:
@@ -581,22 +524,6 @@ class BootstrapDistribution(
         results = jax.vmap(_one_resample)(keys)
         return results.reshape(sample_shape + self.event_shape)
 
-    def _expectation(
-        self,
-        f: Callable,
-        *,
-        key: PRNGKey | None = None,
-        num_evaluations: int | None = None,
-        return_dist: bool | None = None,
-    ) -> Any:
-        return _mc_expectation(
-            self,
-            f,
-            key=key,
-            num_evaluations=num_evaluations,
-            return_dist=return_dist,
-        )
-
     def __repr__(self) -> str:
         return f"BootstrapDistribution(num_atoms={self._num_atoms}, event_shape={self.event_shape})"
 
@@ -804,22 +731,6 @@ class FlattenedDistributionView(FlatNumericRecordDistribution):
             OutputSpec(to_vector=NumericArraySpec((base.event_size,), base.dtype, real))
         )
 
-    def _expectation(
-        self,
-        f: Callable,
-        *,
-        key: PRNGKey | None = None,
-        num_evaluations: int | None = None,
-        return_dist: bool | None = None,
-    ) -> Any:
-        return _mc_expectation(
-            self,
-            f,
-            key=key,
-            num_evaluations=num_evaluations,
-            return_dist=return_dist,
-        )
-
     @property
     def base_distribution(self) -> Distribution:
         """The underlying distribution."""
@@ -898,69 +809,12 @@ def _nrdvfactory_cov(self):
     return self._base._cov()
 
 
-def _nrdvfactory_expectation(
-    self,
-    f: Callable,
-    *,
-    key: PRNGKey | None = None,
-    num_evaluations: int | None = None,
-    return_dist: bool | None = None,
-) -> Any:
-    # ``f`` operates on a Record-shaped sample. We can't pass the
-    # batched ``NumericRecordBatch`` returned by ``self._sample``
-    # through ``jax.vmap(f)`` directly — vmap strips the leading
-    # axis from each leaf while preserving ``batch_shape`` aux,
-    # producing an invariant violation. Instead, sample the base
-    # in flat form (no aux-shape invariants) and run vmap over a
-    # closure that unflattens to a Record inside the loop body.
-    from ._numeric_record import _reconstruct_from_vector
-
-    n = num_evaluations if num_evaluations is not None else _base.DEFAULT_NUM_EVALUATIONS
-    if isinstance(n, bool) or not isinstance(n, int):
-        raise TypeError(f"num_evaluations must be an integer; got {n!r}")
-    if n <= 0:
-        raise ValueError(f"num_evaluations must be positive; got {n!r}")
-    sample_key = key
-    if sample_key is None:
-        captured = _descendants.capture_stochastic_consumer(self)
-        sample_key = _broker._resolve_automatic_key(
-            None,
-            _broker._singleton_effect_plan(
-                operation_kind="expectation",
-                execution_mode="monte_carlo",
-                sample_shape=(n,),
-                record_path=captured.record_path,
-                descendant_descriptor=captured.descendant_descriptor,
-            ),
-        )
-    base_samples = self._base._sample(sample_key, sample_shape=(n,))
-    flat_samples = self._base.flatten_value(
-        base_samples,
-        event_shape=self._base.event_shape,
-    )
-    evals = jax.vmap(
-        lambda flat: f(
-            _reconstruct_from_vector(
-                self.name,
-                self.event_spec.spec,
-                flat,
-            )
-        )
-    )(flat_samples)
-
-    if return_dist if return_dist is not None else _base.RETURN_APPROX_DIST:
-        return BootstrapDistribution("expectation", evals)
-
-    return jax.tree.map(lambda x: jnp.mean(x, axis=0), evals)
-
-
 _CAPABILITIES = (
     (SupportsSampling, "_sample", _nrdvfactory_sample),
     (SupportsLogProb, "_log_prob", _nrdvfactory_log_prob),
     (SupportsMean, "_mean", _nrdvfactory_mean),
     (SupportsVariance, "_variance", _nrdvfactory_variance),
     (SupportsCovariance, "_cov", _nrdvfactory_cov),
-    (SupportsExpectation, "_expectation", _nrdvfactory_expectation),
 )
 
 

@@ -114,7 +114,7 @@ def _source_variance(source: Any, kw: dict[str, Any]) -> Any:
 
 def _source_covariance(source: Any, kw: dict[str, Any]) -> Any:
     batch = _sampled_moment_batch(kw)
-    return source._cov() if batch is None else batch.covariance()
+    return source._cov().to_dense() if batch is None else batch.covariance()
 
 
 def _conditional_conversion_plan(num_samples: Any) -> _ConversionExecutionPlan:

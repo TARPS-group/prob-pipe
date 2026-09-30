@@ -10,12 +10,13 @@ from types import MappingProxyType
 import jax.numpy as jnp
 
 from .._dtype import _promote_floats
-from ..core._numeric_record_distribution import NumericRecordDistribution, _mc_expectation
+from ..core._numeric_record_distribution import NumericRecordDistribution
 from ..core._record_distribution import _joint_event_spec
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike, PRNGKey
+from ..linalg.linear_operator import DenseLinOp, LinOp
 from ._capabilities import (
     SupportsCovariance,
     SupportsExactConditioning,
@@ -191,14 +192,9 @@ class JointGaussian(
             result[cname] = diag[sl]
         return Record(self.name, result)
 
-    def _cov(self) -> Array:
+    def _cov(self) -> LinOp:
         """Full covariance matrix."""
-        return self._cov_mat
-
-    def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
-        return _mc_expectation(
-            self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist
-        )
+        return DenseLinOp(self._cov_mat)
 
     def _condition_on(self, observed=None, /, **kwargs):
         observed_leaves = _parse_condition_args(self, observed, kwargs)

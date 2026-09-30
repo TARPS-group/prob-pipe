@@ -30,7 +30,7 @@ from .._array_utils import _is_numeric_array
 from .._dtype import _as_float_array
 from .._weights import Weights
 from ..core._empirical import RecordEmpiricalDistribution
-from ..core._numeric_record_distribution import NumericRecordDistribution, _mc_expectation
+from ..core._numeric_record_distribution import NumericRecordDistribution
 from ..core._record_distribution import RecordDistribution
 from ..core._specs import NumericArraySpec, OpaqueSpec, RecordSpec
 from ..core.constraints import real
@@ -329,13 +329,4 @@ class NumericJointEmpirical(
         return Record(
             self.name,
             {cname: self._w.variance(arr) for cname, arr in self._joint_samples.items()},
-        )
-
-    def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
-        return _mc_expectation(
-            self,
-            f,
-            key=key,
-            num_evaluations=num_evaluations,
-            return_dist=return_dist,
         )
