@@ -165,9 +165,6 @@ class TestTheDraw:
 
         assert all(isinstance(draw, Record) for draw in seen)
 
-    @pytest.mark.pending(
-        reason="a one-field record draw arrives as a Record, not its leaf", raises=AssertionError
-    )
     def test_a_one_field_record_draw_arrives_as_a_record(self):
         seen = []
 

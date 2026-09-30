@@ -213,7 +213,7 @@ class TestExecuteDistributionBroadcast:
 
         plan = _stochastic_plan(values, 8)
         result = _broadcast.execute_distribution_broadcast(
-            func=lambda first, second: first - second,
+            func=lambda first, second: first["shared"] - second["shared"],
             values=values,
             stochastic_plan=plan,
             logical_unit=plan.logical_units[0],
@@ -228,8 +228,12 @@ class TestExecuteDistributionBroadcast:
         )
 
         assert result.num_atoms == 2
-        np.testing.assert_array_equal(result.input_samples["first"], jnp.asarray([1.0, 4.0]))
-        np.testing.assert_array_equal(result.input_samples["first"], result.input_samples["second"])
+        np.testing.assert_array_equal(
+            result.input_samples["first"]["shared"], jnp.asarray([1.0, 4.0])
+        )
+        np.testing.assert_array_equal(
+            result.input_samples["first"]["shared"], result.input_samples["second"]["shared"]
+        )
         np.testing.assert_allclose(result.samples, 0.0)
         np.testing.assert_allclose(result.weights, jnp.asarray([0.2, 0.8]))
 
@@ -332,7 +336,7 @@ class TestExecuteDistributionBroadcast:
         }
 
         def add(x, y):
-            return x + y
+            return x["x"] + y["y"]
 
         plan = _stochastic_plan(values, 10)
         result = _broadcast.execute_distribution_broadcast(
@@ -352,11 +356,11 @@ class TestExecuteDistributionBroadcast:
 
         assert result.num_atoms == 4
         np.testing.assert_allclose(
-            result.input_samples["x"],
+            result.input_samples["x"]["x"],
             jnp.asarray([[1.0], [1.0], [2.0], [2.0]]),
         )
         np.testing.assert_allclose(
-            result.input_samples["y"],
+            result.input_samples["y"]["y"],
             jnp.asarray([[10.0], [20.0], [10.0], [20.0]]),
         )
         np.testing.assert_allclose(
@@ -728,6 +732,17 @@ class TestCoSamplingThroughACall:
         )
 
     @staticmethod
+    def _field_difference(field, **controls):
+        """The difference of two draws of a one-field record law, which arrive as records."""
+        return Function(
+            name="function",
+            fn=lambda a, b: a[field] - b[field],
+            dispatch="sequential",
+            n_broadcast_samples=controls.pop("n_broadcast_samples", 8),
+            **controls,
+        )
+
+    @staticmethod
     def _run(workflow, *args, **kwargs):
         with workflow_run(seed=0):
             return workflow(*args, **kwargs)
@@ -797,7 +812,7 @@ class TestCoSamplingThroughACall:
         """
         empirical = EmpiricalDistribution("e", jnp.array([1.0, 2.0, 3.0]))
         result = self._run(
-            self._difference(n_broadcast_samples=n_broadcast_samples),
+            self._field_difference("e", n_broadcast_samples=n_broadcast_samples),
             empirical,
             empirical,
         )
@@ -1012,7 +1027,7 @@ class TestCoSamplingThroughACall:
     def test_an_aliased_empirical_counts_its_weight_once(self):
         """Weights are per group, so an alias does not square them."""
         empirical = EmpiricalDistribution("e", jnp.array([1.0, 2.0, 3.0]))
-        result = self._run(self._difference(include_inputs=True), empirical, empirical)
+        result = self._run(self._field_difference("e", include_inputs=True), empirical, empirical)
 
         np.testing.assert_allclose(np.asarray(result.weights), np.full(3, 1 / 3))
 
@@ -1033,15 +1048,16 @@ class TestIndexSampleHelper:
 
         assert float(_broadcast._index_sample(s, 3)) == 3.0
 
-    def test_single_field_record_unwraps(self):
-        from probpipe import Record
+    def test_single_field_record_returns_per_row_numeric_record(self):
+        from probpipe import NumericRecord, Record
 
         s = Record("r", x=jnp.arange(15.0).reshape(5, 3))
 
         for i in range(5):
             row = _broadcast._index_sample(s, i)
-            assert not hasattr(row, "fields")
-            np.testing.assert_array_equal(row, s["x"][i])
+            assert isinstance(row, NumericRecord)
+            assert row.fields == ("x",)
+            np.testing.assert_array_equal(row["x"], s["x"][i])
 
     def test_multi_field_record_returns_per_row_numeric_record(self):
         from probpipe import NumericRecord, Record
@@ -1298,18 +1314,23 @@ class TestTheProbeModelsItsExecutorsTransform:
         assert result is not None
         assert any("not JAX-traceable" in record.message for record in caplog.records)
 
-    def test_a_one_field_record_law_presents_the_same_value_to_every_dispatch(self, caplog):
-        """A one-field draw presents as its bare leaf, whichever dispatch runs.
+    def test_a_one_field_record_law_presents_a_record_to_every_dispatch(self, caplog):
+        """A one-field draw presents as a record, whichever dispatch runs.
 
-        The law draws a batch of records, so mapping it yields a record where
-        the row-wise paths hand over the column. The record shim carries no
-        arithmetic, so ``x * 2`` distinguishes the two: it used to crash under
-        the mapped executor and succeed row-wise.
+        The law draws a batch of records, so mapping it yields a record per draw,
+        and the row-wise paths index the same record. A body that reads the field
+        therefore runs under both, and the mapped executor still vectorizes it.
         """
         law = ProductDistribution(Normal(loc=0.0, scale=1.0, name="x"))
-        doubles = Function(name="function", fn=lambda x: x * 2, n_broadcast_samples=8)
+        kinds = []
+
+        def double(x):
+            kinds.append(type(x))
+            return x["x"] * 2
+
+        doubles = Function(name="function", fn=double, n_broadcast_samples=8)
         sequential = Function(
-            name="function", fn=lambda x: x * 2, dispatch="sequential", n_broadcast_samples=8
+            name="function", fn=double, dispatch="sequential", n_broadcast_samples=8
         )
 
         with caplog.at_level(logging.INFO, logger="probpipe.functions._function"):
@@ -1320,3 +1341,4 @@ class TestTheProbeModelsItsExecutorsTransform:
         np.testing.assert_array_equal(
             np.asarray(mapped.samples), np.asarray(self._run(sequential, law).samples)
         )
+        assert kinds and all(issubclass(kind, Record) for kind in kinds)

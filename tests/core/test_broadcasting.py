@@ -14,6 +14,7 @@ from probpipe import (
     EmpiricalDistribution,
     MultivariateNormal,
     Normal,
+    Record,
     workflow_run,
 )
 from probpipe.values._function_base import Function
@@ -270,8 +271,8 @@ class TestBroadcastingEnumeration:
         np.testing.assert_allclose(result.weights, weights, atol=1e-5)
 
     def test_two_empiricals_cartesian(self):
-        def add_them(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
-            return a + b
+        def add_them(a: Record, b: Record) -> jnp.ndarray:
+            return a["x"] + b["x"]
 
         ed1 = EmpiricalDistribution("x", jnp.array([[1.0], [2.0]]))
         ed2 = EmpiricalDistribution("x", jnp.array([[10.0], [20.0], [30.0]]))
@@ -283,8 +284,8 @@ class TestBroadcastingEnumeration:
     def test_greedy_cutoff(self):
         """When product exceeds budget, largest empiricals are sampled instead."""
 
-        def sum_three(a: jnp.ndarray, b: jnp.ndarray, c: jnp.ndarray) -> jnp.ndarray:
-            return a + b + c
+        def sum_three(a: Record, b: Record, c: Record) -> jnp.ndarray:
+            return a["x"] + b["x"] + c["x"]
 
         ed_small = EmpiricalDistribution("x", jnp.array([[1.0], [2.0]]))  # n=2
         ed_medium = EmpiricalDistribution(
@@ -326,10 +327,11 @@ class TestBroadcastingEnumeration:
         result = w.with_options(include_inputs=True)(x=ed)
         assert isinstance(result, BroadcastDistribution)
         assert "x" in result.input_samples
-        assert result.input_samples["x"].shape == (3, 1)
+        # Each draw of the one-field record law is a record, and stays one in the joint.
+        assert result.input_samples["x"]["x"].shape == (3, 1)
         # Output should match input (identity function)
         marginal = result.marginalize()
-        np.testing.assert_allclose(result.input_samples["x"], marginal.samples, atol=1e-5)
+        np.testing.assert_allclose(result.input_samples["x"]["x"], marginal.samples["x"], atol=1e-5)
 
 
 # ---------------------------------------------------------------------------
@@ -676,7 +678,7 @@ class TestDispatchConsistency:
         exact same samples and weights in every backend."""
 
         def add_them(a, b):
-            return a + b
+            return a["x"] + b["x"]
 
         ed1 = EmpiricalDistribution("x", jnp.array([[1.0], [2.0]]))
         ed2 = EmpiricalDistribution("x", jnp.array([[10.0], [20.0], [30.0]]))
@@ -708,7 +710,7 @@ class TestDispatchConsistency:
         """Exact empirical weights survive the product in every backend."""
 
         def add_them(a, b):
-            return a + b
+            return a["x"] + b["x"]
 
         ed1 = EmpiricalDistribution("x", jnp.array([[1.0], [2.0]]), weights=jnp.array([0.8, 0.2]))
         ed2 = EmpiricalDistribution(

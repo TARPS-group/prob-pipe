@@ -42,7 +42,6 @@ except ImportError:
 from ..core._batch import Batch
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._record_batch import RecordBatch
-from ..core._record_distribution import RecordDistribution
 from ..core._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
 from ..core.config import ProvenanceMode, WorkflowKind, prefect_config
 from ..core.node import Node
@@ -638,7 +637,9 @@ def _jax_traceability_error(
                             (1, *template[path].shape),
                             dtype,
                         )
-                    if isinstance(root, RecordDistribution):
+                    # The stand-in draw is at the kind the law's event declaration
+                    # names, as the law's own draws are.
+                    if root.event_spec.exposes_record:
                         root_probe = NumericRecordBatch(
                             root.name,
                             columns,
