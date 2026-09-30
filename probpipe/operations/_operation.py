@@ -240,31 +240,41 @@ def _as_feasibility(report: Any, source: Callable[..., Any], owner: str) -> Feas
 class _Route:
     """The name, exactness, and budget controls every constructed route declares.
 
+    The budgets are the controls the route reads, and ``with_options`` admits
+    a budget only when a route of the operation declares it.
+
     Raises
     ------
     TypeError
-        If *name* is not a non-empty string or *exact* is neither a bool nor
-        ``None``.
+        If *name* is not a non-empty string, *exact* is neither a bool nor
+        ``None``, or a budget is not a non-empty string.
     """
 
     source: RouteSource
     requires: tuple[type, ...] = ()
 
-    def __init__(
-        self, name: str, *, exact: bool | None, controls: Iterable[str] | None = ()
-    ) -> None:
+    def __init__(self, name: str, *, exact: bool | None, controls: Iterable[str] = ()) -> None:
         if not isinstance(name, str) or not name:
             raise TypeError(f"a route's name must be a non-empty string; got {name!r}")
         if exact is not None and type(exact) is not bool:
             raise TypeError(f"route {name!r} must declare exact as a bool or None; got {exact!r}")
+        budgets = frozenset(controls)
+        if not all(isinstance(budget, str) and budget for budget in budgets):
+            raise TypeError(f"route {name!r} names its budgets by non-empty strings")
         self.name = name
         self.exact = exact
-        self.controls = None if controls is None else frozenset(controls)
+        self.controls = budgets
 
     @property
     def condition(self) -> str:
         """The feasibility condition in words."""
         return ""
+
+    def budgets(self, call: BoundCall) -> dict[str, Any]:
+        """The budgets this route declares that *call* sets, by name."""
+        return {
+            name: call.controls[name] for name in sorted(self.controls) if name in call.controls
+        }
 
     def __repr__(self) -> str:
         """The route's class and name."""
@@ -321,7 +331,8 @@ class _CapabilityRoute(_Route):
     :func:`~probpipe.distributions._capabilities._capability_guard` with no
     arguments, or by a given *check*, which reads the call's arguments that
     the guard takes. The capability is called with the call's other arguments
-    in signature order, or by a given *execute*.
+    in signature order and the budgets the route declares as keyword options,
+    or by a given *execute*.
 
     Raises
     ------
@@ -394,12 +405,12 @@ class _CapabilityRoute(_Route):
         return _capability_guard(subject, self.method)
 
     def execute(self, call: BoundCall, result: OutputSpec | None) -> Any:
-        """The capability called on the call's other arguments, or the given execute."""
+        """The capability called on the call's other arguments and budgets, or the given execute."""
         if self._execute is not None:
             return self._execute(call, result)
         subject = call.operands[self.operand]
         others = [value for name, value in call.operands.items() if name != self.operand]
-        return getattr(subject, self.method)(*others)
+        return getattr(subject, self.method)(*others, **self.budgets(call))
 
 
 class _RegistryRoute(_Route):
@@ -407,9 +418,9 @@ class _RegistryRoute(_Route):
 
     The registry receives the call's arguments in signature order, or those
     *arguments* returns, with the keyword options *options* returns, or else the
-    budget controls the call sets. Its exactness is that of the method the
-    registry selects, so the route is ranked twice: its exact methods with the
-    exact routes and its approximate methods with the approximate ones.
+    budgets the route declares that the call sets. Its exactness is that of the
+    method the registry selects, so the route is ranked twice: its exact methods
+    with the exact routes and its approximate methods with the approximate ones.
 
     Raises
     ------
@@ -427,7 +438,7 @@ class _RegistryRoute(_Route):
         registry: BaseDispatchRegistry[Any],
         arguments: Callable[[BoundCall], Iterable[Any]] | None = None,
         options: Callable[[BoundCall], Mapping[str, Any]] | None = None,
-        controls: Iterable[str] | None = None,
+        controls: Iterable[str] = (),
     ) -> None:
         super().__init__(name, exact=None, controls=controls)
         if not isinstance(registry, BaseDispatchRegistry):
@@ -457,11 +468,7 @@ class _RegistryRoute(_Route):
         """The keyword options passed to the registry's methods."""
         if self._options is not None:
             return dict(self._options(call))
-        return {
-            name: value
-            for name, value in call.operation._budgets().items()
-            if self.controls is None or name in self.controls
-        }
+        return self.budgets(call)
 
     def probe(self, call: BoundCall, *, method: str | None, exact_only: bool) -> MethodInfo:
         """The registry's report for *call*, restricted as the controls ask."""
@@ -959,7 +966,8 @@ class Operation(Function):
             ``execute(call, result)``, for a capability that is not called with
             the call's other arguments in signature order.
         controls : iterable of str
-            The budget controls the route reads.
+            The budget controls the route reads, which the capability receives
+            as keyword options when the call sets them.
 
         Returns
         -------
@@ -995,7 +1003,7 @@ class Operation(Function):
         registry: BaseDispatchRegistry[Any],
         arguments: Callable[[BoundCall], Iterable[Any]] | None = None,
         options: Callable[[BoundCall], Mapping[str, Any]] | None = None,
-        controls: Iterable[str] | None = None,
+        controls: Iterable[str] = (),
     ) -> OperationRoute:
         """Register a route that delegates to a dispatch registry.
 
@@ -1014,10 +1022,9 @@ class Operation(Function):
             the call's arguments in signature order.
         options : callable, optional
             ``options(call)``, the keyword options for the registry's methods; by
-            default the budget controls the call sets.
-        controls : iterable of str, optional
-            The budget controls the registry's methods read; ``None``, the
-            default, admits and forwards any control the call sets.
+            default the budgets of *controls* that the call sets.
+        controls : iterable of str
+            The budget controls the registry's methods read.
 
         Returns
         -------
@@ -1138,20 +1145,11 @@ class Operation(Function):
         return clone
 
     def _unknown_budgets(self, budgets: Mapping[str, Any]) -> set[str]:
-        """The names in *budgets* no route declares, empty when a route admits any."""
-        declared: set[str] = set()
-        for route in self._route_table.routes:
-            names = getattr(route, "controls", ())
-            if names is None:
-                return set()
-            declared.update(names)
-        return set(budgets) - declared
-
-    def _budgets(self) -> dict[str, Any]:
-        """The budget controls this view sets."""
-        return {
-            name: value for name, value in self._controls.items() if name not in _OPERATION_CONTROLS
+        """The names in *budgets* that no route declares."""
+        declared = {
+            name for route in self._route_table.routes for name in getattr(route, "controls", ())
         }
+        return set(budgets) - declared
 
     def _resolved_controls(self) -> Mapping[str, Any]:
         """Every control's effective value for a call through this view."""

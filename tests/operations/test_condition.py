@@ -17,6 +17,7 @@ from probpipe.distributions._conditional import (
 from probpipe.distributions._distribution import Distribution, DistributionSpec
 from probpipe.distributions._factored import FactoredDistribution
 from probpipe.operations._condition import (
+    _INFERENCE_METHOD_CONTROLS,
     InferenceMethod,
     condition_on,
     inference_method_registry,
@@ -104,6 +105,30 @@ def factored_method(monkeypatch):
     return method
 
 
+class _RecordingPosterior(ExactPosterior):
+    """An exactly conditioning law that records the options its ``_condition_on`` receives."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name)
+        self.options: list[dict[str, Any]] = []
+
+    def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
+        self.options.append(kwargs)
+        return super()._condition_on(given)
+
+
+class _RecordingAmortized(Amortized):
+    """An amortized law that records the options its ``_condition_on`` receives."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name)
+        self.options: list[dict[str, Any]] = []
+
+    def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
+        self.options.append(kwargs)
+        return super()._condition_on(given)
+
+
 class _StructuredKernel(ConditionalDistribution):
     """A kernel conditioning on one record-valued slot ``theta``."""
 
@@ -178,6 +203,38 @@ class TestConditioningCapabilities:
     def test_exact_only_excludes_the_approximate_capability(self):
         with pytest.raises(ResolutionError, match="exact_only"):
             condition_on.with_options(exact_only=True)(Amortized("model"), {"y": 0.3})
+
+    def test_the_approximate_capability_receives_the_budgets_it_declares(self):
+        model = _RecordingAmortized("model")
+        view = condition_on.with_options(num_results=500, random_seed=3)
+        assert view(model, {"y": 0.3}).loc == 2.0
+        assert model.options == [{"num_results": 500, "random_seed": 3}]
+
+    def test_a_budget_the_approximate_capability_does_not_read_stays_out_of_its_options(self):
+        model = _RecordingAmortized("model")
+        condition_on.with_options(num_warmup=10)(model, {"y": 0.3})
+        assert model.options == [{}]
+
+    def test_exact_conditioning_reads_no_budget(self):
+        model = _RecordingPosterior("model")
+        condition_on.with_options(num_results=500)(model, {"y": 0.3})
+        assert model.options == [{}]
+
+
+class TestBudgets:
+    def test_a_misspelled_budget_raises_type_error(self):
+        with pytest.raises(TypeError, match="num_resluts"):
+            condition_on.with_options(num_resluts=500)
+
+    def test_every_registered_inference_method_declares_the_controls_it_reads(self):
+        undeclared = set(inference_method_registry.list_methods()) - set(_INFERENCE_METHOD_CONTROLS)
+        assert not undeclared, sorted(undeclared)
+
+    def test_the_bayes_route_declares_every_inference_method_control(self):
+        (route,) = [route for route in condition_on.routes if route.name == "bayes"]
+        declared = {name for names in _INFERENCE_METHOD_CONTROLS.values() for name in names}
+        assert route.controls == declared
+        condition_on.with_options(num_warmup=3, step_size=0.1, init={"theta": 0.0})
 
 
 class TestBayes:

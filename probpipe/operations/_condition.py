@@ -20,12 +20,18 @@ So no approximate route runs while an exact one applies, and ``exact_only``
 excludes the approximate capability and the approximate methods alike.
 
 The inference methods' own parameters, such as warmup lengths, are controls
-set through ``with_options`` and passed to the selected method.
+set through ``with_options``. Each route declares the controls it reads:
+``bayes`` passes the parameters of the registered inference methods to the
+selected method, ``approximate_conditioning`` passes an amortized posterior's
+sample count and seed to its ``_condition_on`` as keyword options, and the
+exact routes read none. A control that no route declares raises ``TypeError``
+at ``with_options``.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Any
 
 from ..core._dispatch import Feasibility
@@ -47,6 +53,62 @@ from ._operation import BoundCall, operation
 __all__ = ["InferenceMethod", "condition_on", "inference_method_registry"]
 
 _PATH_SEP = "/"
+
+_MCMC_CONTROLS = ("init", "num_chains", "num_results", "num_warmup", "random_seed", "step_size")
+_SGMCMC_CONTROLS = (
+    "batch_size",
+    "init",
+    "num_results",
+    "num_warmup",
+    "random_seed",
+    "step_size",
+    "with_replacement",
+)
+_BACKEND_NUTS_CONTROLS = ("num_chains", "num_results", "num_warmup", "random_seed")
+
+#: The parameters each inference method registered by :mod:`probpipe.inference`
+#: reads, by method name; the ``bayes`` route declares every one of them.
+_INFERENCE_METHOD_CONTROLS: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {
+        "blackjax_nuts": (*_MCMC_CONTROLS, "num_integration_steps"),
+        "blackjax_hmc": (*_MCMC_CONTROLS, "num_integration_steps"),
+        "blackjax_rwmh": (*_MCMC_CONTROLS, "adapt", "n_windows", "proposal_cov"),
+        "blackjax_elliptical_slice": (
+            "init",
+            "num_chains",
+            "num_results",
+            "num_warmup",
+            "random_seed",
+        ),
+        "blackjax_sgld": _SGMCMC_CONTROLS,
+        "blackjax_sghmc": (*_SGMCMC_CONTROLS, "alpha", "beta", "num_integration_steps"),
+        "tfp_nuts": _MCMC_CONTROLS,
+        "tfp_hmc": _MCMC_CONTROLS,
+        "nutpie_nuts": _BACKEND_NUTS_CONTROLS,
+        "cmdstan_nuts": _BACKEND_NUTS_CONTROLS,
+        "pymc_nuts": (*_BACKEND_NUTS_CONTROLS, "cores"),
+        "pymc_advi": ("num_iterations", "num_results", "random_seed", "vi_method"),
+        "pyabc_smcabc": (
+            "distance_fn",
+            "eps",
+            "eps_alpha",
+            "max_populations",
+            "max_total_nr_simulations",
+            "max_walltime",
+            "min_acceptance_rate",
+            "minimum_epsilon",
+            "n_particles",
+            "random_seed",
+            "sampler",
+            "summary_fn",
+            "transitions",
+        ),
+    }
+)
+
+#: The parameters an amortized posterior's ``_condition_on`` reads, as
+#: :class:`~probpipe.inference.BayesFlowModel` does.
+_AMORTIZED_CONDITIONING_CONTROLS = ("num_results", "random_seed")
 
 
 def _given_keys(given: Any) -> tuple[str, ...] | None:
@@ -180,5 +242,10 @@ condition_on.capability_route(
     method="_condition_on",
     exact=False,
     check=_conditioning_guard,
+    controls=_AMORTIZED_CONDITIONING_CONTROLS,
 )
-condition_on.registry_route("bayes", registry=inference_method_registry)
+condition_on.registry_route(
+    "bayes",
+    registry=inference_method_registry,
+    controls={name for names in _INFERENCE_METHOD_CONTROLS.values() for name in names},
+)

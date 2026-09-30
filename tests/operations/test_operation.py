@@ -474,7 +474,7 @@ class TestRegistryRoutes:
     def _operation(self, registry: UnaryDispatchRegistry, stand_in: Any = True) -> Any:
         toy = _toy()
         toy.structural_route("stand_in", exact=False, **_route(stand_in, 1.0))
-        toy.registry_route("methods", registry=registry)
+        toy.registry_route("methods", registry=registry, controls=("num_warmup",))
         return toy
 
     def test_an_exact_registered_method_outranks_an_approximate_route(self):
@@ -513,6 +513,12 @@ class TestRegistryRoutes:
         toy = self._operation(registry).with_options(num_warmup=7)
         toy(Gaussian("g"))
         assert registry.get_method("precise").options == [{"num_warmup": 7}]
+
+    def test_a_registry_route_admits_only_the_budgets_it_declares(self):
+        toy = _toy()
+        toy.registry_route("methods", registry=_registry(precise=(True, True, 2.0)))
+        with pytest.raises(TypeError, match="Unknown controls"):
+            toy.with_options(num_warmup=7)
 
     def test_a_registry_route_is_listed_with_its_exactness_delegated(self):
         registry = _registry(precise=(True, True, 2.0), rough=(False, True, 3.0))
@@ -581,6 +587,32 @@ class TestControls:
         assert seen == [0.5]
         with pytest.raises(TypeError, match="Unknown controls"):
             toy.with_options(patience=3)
+
+    def test_a_capability_route_passes_its_budgets_to_the_capability_as_options(self):
+        class Tolerant(Gaussian):
+            """A normal law whose closed-form mean records the options it receives."""
+
+            def __init__(self, name: str) -> None:
+                super().__init__(name, 1.5)
+                self.options: list[dict[str, Any]] = []
+
+            def _mean(self, **options: Any) -> Any:
+                self.options.append(options)
+                return super()._mean()
+
+        toy = _toy(result=_event)
+        toy.capability_route(
+            "closed_form",
+            operand="d",
+            protocol=SupportsMean,
+            method="_mean",
+            exact=True,
+            controls=("tolerance",),
+        )
+        law = Tolerant("g")
+        assert float(jnp.asarray(toy.with_options(tolerance=0.5)(law))) == 1.5
+        toy(law)
+        assert law.options == [{"tolerance": 0.5}, {}]
 
     def test_a_route_registered_after_a_view_is_seen_by_the_view(self):
         toy = _toy()
