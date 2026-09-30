@@ -180,6 +180,30 @@ class TestDeclaration:
         )
         assert float(jnp.asarray(doubled(Gaussian("g", 1.5)))) == 3.0
 
+    def test_the_identity_route_is_feasible_where_the_identity_check_is(self):
+        def center_applies(d: Any) -> Any:
+            """The center has a route for the law."""
+            return center.check(d)
+
+        @operation(result=_event, identity_check=center_applies, registry=OperationRegistry())
+        def doubled(d: Distribution):
+            """Twice the center."""
+            return center.with_options(raw=True)(d) * 2
+
+        declined = doubled.check(Bare("b"))
+        assert declined.feasible is False
+        assert "does not claim SupportsMean" in declined.description
+        with pytest.raises(ResolutionError, match="does not claim SupportsMean"):
+            doubled(Bare("b"))
+        report = doubled.check(Gaussian("g"))
+        assert (report.route, report.exact) == ("identity", True)
+        (identity,) = doubled.summary().routes
+        assert identity.condition == "The center has a route for the law."
+
+    def test_a_primitive_takes_no_identity_check(self):
+        with pytest.raises(TypeError, match="derived"):
+            _toy(identity_check=lambda d: True)
+
     def test_a_result_rule_reading_an_undeclared_name_raises(self):
         def rule(d: Any, missing: Any) -> None:
             """Reads a parameter the signature lacks."""

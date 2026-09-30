@@ -484,16 +484,29 @@ class _RegistryRoute(_Route):
         return self.run(call, method=None, exact_only=call.controls["exact_only"])
 
 
-def _identity_route(declaration: Callable[..., Any], signature: inspect.Signature) -> _CheckedRoute:
+def _identity_route(
+    declaration: Callable[..., Any],
+    signature: inspect.Signature,
+    identity_check: Callable[..., Any] | None,
+) -> _CheckedRoute:
     """The defining identity of a derived operation, as a fallback on its own domain.
 
-    Its exactness is that of the implementations its constituent operations
-    select, so it declares none.
+    The route's check calls *identity_check* with the call's arguments, as the
+    identity is called, so the route is feasible where the constituent
+    operations have routes, and its condition is the identity check's. Its
+    exactness is that of the implementations the constituents select, so it
+    declares none.
     """
 
-    def feasible(call: BoundCall, result: OutputSpec | None) -> bool:
+    def feasible(call: BoundCall, result: OutputSpec | None) -> Any:
         """The constituent operations decide the call when the identity runs."""
-        return True
+        if identity_check is None:
+            return True
+        bound = values_to_bound_arguments(signature, call.operands)
+        return identity_check(*bound.args, **bound.kwargs)
+
+    if identity_check is not None:
+        feasible.__doc__ = identity_check.__doc__
 
     def evaluate_identity(call: BoundCall, result: OutputSpec | None) -> Any:
         bound = values_to_bound_arguments(signature, call.operands)
@@ -559,8 +572,13 @@ def _probe(candidate: _Candidate, call: BoundCall, result: OutputSpec | None) ->
 
 
 def _exactness(candidate: _Candidate, report: Feasibility) -> bool | None:
-    """The exactness of the implementation *candidate* selects, as its report gives it."""
-    if isinstance(candidate.route, _RegistryRoute) and isinstance(report, MethodInfo):
+    """The exactness of the implementation *candidate* selects, as its report gives it.
+
+    A route that delegates its exactness reports that of what its probe
+    selected: a registry route's method, or the route a derived operation's
+    constituent selects.
+    """
+    if candidate.route.exact is None and isinstance(report, (MethodInfo, CallCheck)):
         return report.exact
     return candidate.route.exact
 
@@ -741,13 +759,21 @@ class Operation(Function):
     roles : mapping of str to iterable of TermSpec subclasses, optional
         The kinds a parameter accepts, overriding the kinds its annotation names.
         An empty role marks a parameter that selects rather than supplies.
+    identity_check : callable, optional
+        A derived operation's probe of its identity. It is called with the
+        call's arguments, as the identity is, and returns the report of the
+        constituent operations' checks, such as ``log_prob.check(d, value)``
+        for ``prob``; the first paragraph of its docstring is the identity
+        route's condition. Without it, the identity route admits every call
+        that planning admits.
 
     Raises
     ------
     TypeError
-        If *declaration*, *result*, or a condition is not callable, the result
-        rule or a condition reads a name the declaration does not declare, or a
-        role is malformed.
+        If *declaration*, *result*, a condition, or *identity_check* is not
+        callable, the result rule or a condition reads a name the declaration
+        does not declare, a role is malformed, or a primitive operation is
+        given an identity check.
     """
 
     def __init__(
@@ -757,6 +783,7 @@ class Operation(Function):
         result: Callable[..., OutputSpec | None],
         conditions: Iterable[Callable[..., Any]] = (),
         roles: Mapping[str, Iterable[type[TermSpec]]] | None = None,
+        identity_check: Callable[..., Any] | None = None,
     ) -> None:
         if not callable(declaration):
             raise TypeError(f"an operation is declared by a function; got {declaration!r}")
@@ -773,6 +800,13 @@ class Operation(Function):
         if unknown:
             raise TypeError(f"{owner} has a result rule or condition reading {sorted(unknown)}")
         derived = not _has_empty_body(declaration)
+        if identity_check is not None:
+            if not derived:
+                raise TypeError(
+                    f"{owner} is primitive; only a derived operation takes an identity check"
+                )
+            if not callable(identity_check):
+                raise TypeError(f"{owner} needs a callable identity check; got {identity_check!r}")
         set_attribute = object.__setattr__
         set_attribute(self, "_result_rule", result)
         set_attribute(self, "_rule_parameters", _parameter_names(result))
@@ -792,7 +826,7 @@ class Operation(Function):
         set_attribute(self, "_route_table", _RouteTable())
         set_attribute(self, "_controls", MappingProxyType({}))
         if derived:
-            self.register_route(_identity_route(declaration, self.signature))
+            self.register_route(_identity_route(declaration, self.signature, identity_check))
 
     # -- declarations ------------------------------------------------------
 
@@ -1732,6 +1766,7 @@ def operation(
     result: Callable[..., OutputSpec | None],
     conditions: Iterable[Callable[..., Any]] = (),
     roles: Mapping[str, Iterable[type[TermSpec]]] | None = None,
+    identity_check: Callable[..., Any] | None = None,
     registry: OperationRegistry | None = None,
 ) -> Callable[[Callable[..., Any]], Operation]:
     """Declare an operation from its signature and register it.
@@ -1749,6 +1784,8 @@ def operation(
         The applicability conditions; see :class:`Operation`.
     roles : mapping of str to iterable of TermSpec subclasses, optional
         Roles that override the kinds the annotations name.
+    identity_check : callable, optional
+        A derived operation's probe of its identity; see :class:`Operation`.
     registry : OperationRegistry, optional
         The registry to register in; :data:`operation_registry` by default.
 
@@ -1766,7 +1803,13 @@ def operation(
     """
 
     def decorate(declaration: Callable[..., Any]) -> Operation:
-        op = Operation(declaration, result=result, conditions=conditions, roles=roles)
+        op = Operation(
+            declaration,
+            result=result,
+            conditions=conditions,
+            roles=roles,
+            identity_check=identity_check,
+        )
         (operation_registry if registry is None else registry).register(op)
         return op
 

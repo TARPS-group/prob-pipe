@@ -28,7 +28,7 @@ from ..distributions._capabilities import (
     SupportsUnnormalizedLogProb,
 )
 from ..distributions._distribution import Distribution, DistributionSpec
-from ._operation import ApplicabilityError, operation
+from ._operation import ApplicabilityError, CallCheck, operation
 
 __all__ = [
     "log_prob",
@@ -186,7 +186,17 @@ unnormalized_log_prob.capability_route(
 )
 
 
-@operation(result=_prob_result)
+def _log_prob_applies(d: Any, value: Any) -> CallCheck:
+    """``log_prob`` has a route for the law and the value."""
+    return log_prob.check(d, value)
+
+
+def _unnormalized_log_prob_applies(d: Any, value: Any) -> CallCheck:
+    """``unnormalized_log_prob`` has a route for the law and the value."""
+    return unnormalized_log_prob.check(d, value)
+
+
+@operation(result=_prob_result, identity_check=_log_prob_applies)
 def prob(d: Distribution, value: Any):
     """The density of *value* under *d*, defined as ``exp ∘ log_prob``.
 
@@ -205,7 +215,7 @@ def prob(d: Distribution, value: Any):
     return jnp.exp(log_prob.with_options(raw=True)(d, value))
 
 
-@operation(result=_unnormalized_prob_result)
+@operation(result=_unnormalized_prob_result, identity_check=_unnormalized_log_prob_applies)
 def unnormalized_prob(d: Distribution, value: Any):
     """The density of *value* under *d* up to a factor, defined as ``exp ∘ unnormalized_log_prob``.
 

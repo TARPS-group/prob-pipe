@@ -126,6 +126,27 @@ class TestDerivedDensities:
         with pytest.raises(ResolutionError):
             prob(Unnormalized("u"), 0.0)
 
+    def test_the_identity_is_infeasible_where_log_prob_has_no_route(self):
+        report = prob.check(Bare("b"), 0.0)
+        assert report.feasible is False
+        assert "does not claim SupportsLogProb" in report.description
+        with pytest.raises(ResolutionError, match="does not claim SupportsLogProb"):
+            prob(Bare("b"), 0.0)
+
+    def test_the_unnormalized_identity_is_infeasible_where_its_constituent_has_no_route(self):
+        report = unnormalized_prob.check(Bare("b"), 0.0)
+        assert report.feasible is False
+        assert "does not claim SupportsUnnormalizedLogProb" in report.description
+
+    def test_the_identity_takes_the_exactness_of_the_route_log_prob_selects(self):
+        report = prob.check(Gaussian("g"), 0.5)
+        assert (report.feasible, report.route, report.exact) == (True, "identity", True)
+        assert dict(report.routes)["identity"].route == "exact"
+
+    def test_the_identity_route_states_its_constituent_as_its_condition(self):
+        (route,) = prob.summary().routes
+        assert route.condition == "``log_prob`` has a route for the law and the value."
+
 
 class TestRandomLogDensities:
     def test_random_log_prob_returns_the_random_function_as_a_law(self):
