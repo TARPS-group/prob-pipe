@@ -25,7 +25,6 @@ from .._weights import (
 from ..core._array_backend import _to_jax_array
 from ..core._batch import Batch
 from ..core._dispatch import Feasibility
-from ..core._empirical import _weighted_quantile
 from ..core._numeric_array_batch import NumericArrayBatch
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._object_batch import _is_object_array, _ObjectBatch
@@ -228,12 +227,56 @@ def _empirical_cov(self: EmpiricalDistribution) -> LinOp:
     return DenseLinOp(weighted_covariance(self._p, _coordinates(self)))
 
 
+def _inverse_cdf(values: Array, weights: Array | None, q: ArrayLike) -> Array:
+    """The generalized inverse ``inf{x : F(x) >= q}`` of each coordinate's weighted CDF.
+
+    For each coordinate of the atoms and each level ``q`` in ``[0, 1]``, the
+    quantile is the smallest atom at which the cumulative weight reaches ``q``
+    of the total. A zero-weight atom therefore has no effect, and the level
+    ``0`` gives the smallest atom of positive weight, the limit of the levels
+    above it. Every quantile is an atom, so it keeps the atoms' dtype.
+
+    Parameters
+    ----------
+    values : Array
+        The atoms along the leading axis, shaped ``(n, *event_shape)``.
+    weights : Array or None
+        The atoms' weights, shaped ``(n,)``; ``None`` for uniform weights.
+    q : ArrayLike
+        The levels, of any shape.
+
+    Returns
+    -------
+    Array
+        The quantiles, shaped ``(*q.shape, *event_shape)``.
+    """
+    levels = jnp.asarray(q)
+    count = values.shape[0]
+    flat = jnp.reshape(values, (count, -1))
+    order = jnp.argsort(flat, axis=0)
+    ordered = jnp.take_along_axis(flat, order, axis=0)
+    mass = jnp.ones(count) if weights is None else jnp.asarray(weights)
+    cumulative = jnp.cumsum(mass[order], axis=0)
+    targets = jnp.reshape(levels, (-1,))
+
+    def column(cdf: Array, atoms: Array) -> Array:
+        reached = jnp.searchsorted(cdf, targets * cdf[-1], side="left")
+        first_positive = jnp.searchsorted(cdf, 0.0, side="right")
+        index = jnp.where(targets > 0, reached, first_positive)
+        return atoms[jnp.minimum(index, count - 1)]
+
+    quantiles = jax.vmap(column, in_axes=1, out_axes=1)(cumulative, ordered)
+    return jnp.reshape(quantiles, (*levels.shape, *values.shape[1:]))
+
+
 def _empirical_quantile(self: EmpiricalDistribution, q: ArrayLike) -> Array | dict[str, Any]:
     """The weighted quantiles of each coordinate at the levels *q* in ``[0, 1]``.
 
-    Each coordinate's sorted atoms sit at their cumulative weight less half
-    their own weight, and a level between two positions interpolates linearly,
-    which is the midpoint (Hazen) rule.
+    The quantile at a level ``q`` is the generalized inverse of the
+    coordinate's CDF, ``inf{x : F(x) >= q}``: the smallest atom at which the
+    cumulative weight reaches ``q`` (see :func:`_inverse_cdf`). So the atoms 1,
+    2, 3, 4 with uniform weights have median 2, and a zero-weight atom has no
+    effect.
 
     Returns
     -------
@@ -242,14 +285,7 @@ def _empirical_quantile(self: EmpiricalDistribution, q: ArrayLike) -> Array | di
         array of shape ``(*q.shape, *event_shape)`` for an array event, and the
         nested mapping of such arrays for a record event.
     """
-    levels = jnp.asarray(q)
-    weights = self.weights
-
-    def per_leaf(_: Array | None, column: Array) -> Array:
-        quantiles = _weighted_quantile(column, weights, jnp.reshape(levels, (-1,)))
-        return jnp.reshape(quantiles, (*levels.shape, *column.shape[1:]))
-
-    return _leafwise(self, per_leaf)
+    return _leafwise(self, lambda weights, column: _inverse_cdf(column, weights, q))
 
 
 #: The capabilities an instance claims when its event is numeric, with their methods.
@@ -294,8 +330,8 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
     ``_mean``, ``_variance``    the weighted moments of a numeric event
     ``_cov``                    the weighted covariance of a numeric event as a
                                 ``DenseLinOp`` over its flat coordinates
-    ``_quantile``               the weighted quantiles of each coordinate of a
-                                numeric event
+    ``_quantile``               the generalized inverse ``inf{x : F(x) >= q}`` of
+                                each coordinate's weighted CDF, for a numeric event
     ==========================  ===================================================
 
     An instance whose event is not numeric claims no moment. The law claims no

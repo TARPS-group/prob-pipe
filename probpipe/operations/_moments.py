@@ -497,16 +497,15 @@ def _check_levels(q: Any) -> Any:
 
 
 def _mc_quantile(call: BoundCall, result: OutputSpec | None) -> Any:
-    """The per-coordinate empirical quantiles of the draws, the level axes leading.
+    """The quantiles of the empirical law of the draws, the level axes leading.
 
-    A record event's quantiles at several levels are the declared batch of
-    records.
+    Each coordinate's quantile at a level ``q`` is the generalized inverse
+    ``inf{x : F(x) >= q}`` of the draws' CDF, the rule of the empirical law's
+    own quantiles. A record event's quantiles at several levels are the
+    declared batch of records.
     """
     levels = _check_levels(call.operands["q"])
-    event = call.operands["d"].event_spec.spec
     draws = _monte_carlo_draws(call, "quantile")
-    if isinstance(event, NumericArraySpec):
-        return jnp.quantile(jnp.asarray(draws), levels, axis=0)
     return _record_batch(_empirical_of(call, draws)._quantile(levels), call, result)
 
 
@@ -601,6 +600,12 @@ cov.fallback_route("monte_carlo", check=_can_sample, execute=_mc_cov, exact=Fals
 @operation(result=_quantile_result, conditions=(_numeric_event,))
 def quantile(d: Distribution, q: Any):
     """The per-coordinate quantiles of ``X ~ d`` at the levels *q*.
+
+    The routes are the law's closed form, ``closed_form``, and the Monte Carlo
+    fallback, ``monte_carlo``, which ``with_options(method=...)`` selects
+    between. The fallback's quantile at a level ``q`` is the generalized
+    inverse ``inf{x : F(x) >= q}`` of each coordinate's CDF over the draws, as
+    an empirical law's is.
 
     Parameters
     ----------

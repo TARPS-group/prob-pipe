@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import math
 from typing import Any
 
 import jax.numpy as jnp
@@ -26,8 +27,9 @@ from probpipe.core._dispatch import (
 )
 from probpipe.core._specs import OutputSpec
 from probpipe.core.constraints import non_negative, real, unit_interval
-from probpipe.distributions._capabilities import SupportsConditionalSampling
+from probpipe.distributions._capabilities import SupportsConditionalSampling, SupportsSampling
 from probpipe.distributions._conditional import ConditionalDistribution
+from probpipe.distributions._distribution import Distribution
 from probpipe.distributions._empirical import EmpiricalDistribution
 from probpipe.linalg import LinOp
 from probpipe.operations import RouteSource
@@ -75,6 +77,25 @@ class _Shift(ConditionalDistribution, SupportsConditionalSampling):
 def _dependent_joint() -> Any:
     """``y = mu + 1`` with ``mu ~ Normal(2, 1)``: a joint that samples and has no moment."""
     return _Shift() * Gaussian("mu", 2.0)
+
+
+class _Ramp(Distribution, SupportsSampling):
+    """A law whose i-th of n draws is ``(i, 2i)``, whatever the key.
+
+    A draw is an array of shape (2,), or with ``record=True`` the record of the
+    scalar fields ``x`` and ``y``, returned as its mapping.
+    """
+
+    def __init__(self, name: str, *, record: bool = False) -> None:
+        pair = RecordSpec(x=REAL, y=REAL)
+        super().__init__(name, pair if record else NumericArraySpec((2,), jnp.float32, real))
+        self.record = record
+
+    def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
+        index = jnp.arange(math.prod(sample_shape), dtype=jnp.float32).reshape(sample_shape)
+        if self.record:
+            return {"x": index, "y": 2.0 * index}
+        return jnp.stack([index, 2.0 * index], axis=-1)
 
 
 def _record_empirical() -> EmpiricalDistribution:
@@ -247,6 +268,18 @@ class TestQuantile:
         with workflow_run(seed=5):
             estimate = quantile.with_options(n_broadcast_samples=_DRAWS)(Sampler("s"), 0.5)
         assert abs(_value(estimate)) < 0.1
+
+    @pytest.mark.parametrize("record", [False, True], ids=["array", "record"])
+    def test_the_fallback_is_the_inverse_cdf_of_the_draws(self, record):
+        # Four draws of x are 0, 1, 2, 3, whose CDF reaches 0.25 at 0.
+        view = quantile.with_options(n_broadcast_samples=4)
+        estimate = view(_Ramp("ramp", record=record), jnp.array([0.25, 0.5, 1.0]))
+        x = estimate["x"] if record else estimate.values[:, 0]
+        np.testing.assert_array_equal(np.asarray(x), [0.0, 1.0, 3.0])
+
+    def test_method_selects_the_fallback_over_the_closed_form(self):
+        view = quantile.with_options(method="monte_carlo")
+        assert view.check(Gaussian("g"), 0.5).route == "monte_carlo"
 
     def test_one_level_of_a_record_law_is_a_record_of_its_quantiles(self):
         result = quantile(_record_empirical(), 0.5)

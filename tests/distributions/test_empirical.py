@@ -425,14 +425,33 @@ class TestMoments:
         )
         assert jnp.allclose(_record_law()._cov().to_dense(), expected, atol=1e-6)
 
-    def test_the_quantile_interpolates_the_weighted_atoms_at_their_midpoints(self):
-        # Each sorted atom sits at its cumulative weight less half its own:
-        # 0.05, 0.2, 0.45, and 0.8 for the atoms 1, 2, 4, and 7.
+    def test_the_quantile_is_the_generalized_inverse_of_the_weighted_cdf(self):
+        # The CDF of the atoms 1, 2, 4, and 7 reaches 0.1, 0.3, 0.6, and 1 at them,
+        # and the quantile at q is the smallest atom where it reaches q.
         law = _array_law()
-        assert jnp.allclose(law._quantile(0.2), 2.0)
-        assert jnp.allclose(law._quantile(0.45), 4.0)
-        assert jnp.allclose(law._quantile(0.5), 4.0 + 3.0 * 0.05 / 0.35)
-        assert jnp.allclose(law._quantile(jnp.array([0.0, 1.0])), jnp.array([1.0, 7.0]))
+        levels = jnp.array([0.05, 0.2, 0.45, 0.5, 0.61, 0.99])
+        assert jnp.array_equal(law._quantile(levels), jnp.array([1.0, 2.0, 4.0, 4.0, 7.0, 7.0]))
+        assert jnp.array_equal(law._quantile(jnp.array([0.0, 1.0])), jnp.array([1.0, 7.0]))
+
+    def test_the_median_of_four_equally_weighted_atoms_is_the_second(self):
+        law = EmpiricalDistribution("x", jnp.array([3.0, 1.0, 4.0, 2.0]))
+        assert float(law._quantile(0.5)) == 2.0
+        assert jnp.array_equal(law._quantile(jnp.array([0.25, 0.75])), jnp.array([1.0, 3.0]))
+
+    def test_an_atom_of_zero_weight_has_no_effect_on_the_quantiles(self):
+        levels = jnp.array([0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0])
+        with_zero = EmpiricalDistribution("x", jnp.array([1.0, 2.9, 3.0]), jnp.array([0.5, 0, 0.5]))
+        without = EmpiricalDistribution("x", jnp.array([1.0, 3.0]), jnp.array([0.5, 0.5]))
+        assert jnp.array_equal(with_zero._quantile(levels), without._quantile(levels))
+
+    def test_every_quantile_is_an_atom(self):
+        atoms = jax.random.normal(jax.random.PRNGKey(0), (9, 2))
+        weights = jax.random.uniform(jax.random.PRNGKey(1), (9,))
+        quantiles = EmpiricalDistribution("x", atoms, weights)._quantile(jnp.linspace(0, 1, 11))
+        for coordinate in range(2):
+            assert set(np.asarray(quantiles[:, coordinate]).tolist()) <= set(
+                np.asarray(atoms[:, coordinate]).tolist()
+            )
 
     def test_the_quantile_of_array_atoms_puts_the_levels_before_the_event_shape(self):
         law = EmpiricalDistribution("x", jnp.arange(12.0).reshape(4, 3))
