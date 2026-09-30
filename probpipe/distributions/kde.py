@@ -9,7 +9,7 @@ that supports density evaluation.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any, cast
 
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
@@ -27,17 +27,7 @@ from ..core.record import Record
 from ..custom_types import Array, ArrayLike
 from ._tfp_base import TFPDistribution
 
-if TYPE_CHECKING:
-    from ..core._spec_base import TermSpec
-
 __all__ = ["KDEDistribution"]
-
-
-def _declared_array_shape(spec: TermSpec) -> tuple[int | str, ...] | None:
-    """The shape *spec* states for one array draw, reading a one-field record's field."""
-    if isinstance(spec, RecordSpec) and len(spec.fields) == 1:
-        (spec,) = spec.children.values()
-    return spec.shape if isinstance(spec, NumericArraySpec) else None
 
 
 class KDEDistribution(TFPDistribution):
@@ -66,24 +56,20 @@ class KDEDistribution(TFPDistribution):
         kernel), shape ``(d,)`` or scalar.  If ``None``, Silverman's
         rule is used: ``n^{-1/(d+4)} * std_j`` for each dimension *j*.
     event_spec : OutputSpec, RecordSpec, or None
-        The record one draw is. When ``None`` (the default), one draw is
-        declared as an array under ``name``. A record with several fields
-        defines how the flat ``(n, d)`` sample matrix maps back to a
-        structured ``NumericRecord`` / ``NumericRecordBatch``, and one draw is
-        declared as that record, each array leaf declaring the samples' dtype
-        and the real line as its support. The named fields therefore persist
-        when, for example, an MCMC posterior passes through KDE as the new
-        prior in :class:`~probpipe.modeling.IncrementalConditioner`. Only such
-        a record's structure is read. Any other declaration, a record with one
-        field included, must state the shape of the array one draw is, which is
-        then declared under ``name``.
+        The declaration of one draw, which the KDE completes with the term it
+        draws. When ``None`` (the default), one draw is an array under
+        ``name``. A record defines how the flat ``(n, d)`` sample matrix maps
+        back to a structured ``NumericRecord`` / ``NumericRecordBatch``, and
+        one draw is declared as that record, each array leaf declaring the
+        samples' dtype and the real line as its support. Any other declaration
+        is completed with the flat array one draw is.
 
     Raises
     ------
     ValueError
-        If *event_spec* is a record with several fields whose ``vector_size``
-        is not ``samples.shape[1]``, or any other declaration whose shape is
-        not that of one draw.
+        If *event_spec* is a record whose flat width is not ``samples.shape[1]``,
+        or any other declaration whose type does not unify with the flat array
+        one draw is.
     """
 
     def __init__(
@@ -109,10 +95,14 @@ class KDEDistribution(TFPDistribution):
         self._samples = samples
         self._d = d
 
-        # A record with more than one field is declared, after checking that
-        # its flat width matches the samples' trailing dimension.
-        record = event_spec.spec if isinstance(event_spec, OutputSpec) else event_spec
-        if isinstance(record, RecordSpec) and len(record.fields) > 1:
+        # The KDE completes its declaration with the term it draws. A record
+        # gives the draws its structure, after a check that its flat width
+        # matches the samples' trailing dimension, and any other declaration
+        # takes the flat array, which a one-column KDE draws as scalars.
+        if event_spec is not None and not isinstance(event_spec, OutputSpec):
+            event_spec = OutputSpec.default(event_spec, component=name)
+        if event_spec is not None and event_spec.exposes_record:
+            record = cast(RecordSpec, event_spec.spec)
             if isinstance(record, NumericRecordSpec):
                 expected = record.vector_size
             else:
@@ -125,16 +115,10 @@ class KDEDistribution(TFPDistribution):
                     f"event_spec vector_size ({expected}) does not match "
                     f"samples flat dimension ({d}); record fields={record.fields}"
                 )
-            declaration = _record_with_leaves(record, samples.dtype, real)
+            declaration = event_spec.with_spec(_record_with_leaves(record, samples.dtype, real))
         else:
-            # A one-column KDE mixes scalar kernels, so it draws scalars.
-            declaration = NumericArraySpec((d,) if d > 1 else (), samples.dtype, real)
-            if record is not None and _declared_array_shape(record) != declaration.shape:
-                raise ValueError(
-                    f"KDEDistribution {name!r} draws arrays of shape {declaration.shape}, "
-                    f"which event_spec {event_spec!r} does not declare; only a record with "
-                    f"several fields gives the draws a structure"
-                )
+            array = NumericArraySpec((d,) if d > 1 else (), samples.dtype, real)
+            declaration = array if event_spec is None else event_spec.with_spec(array)
 
         super().__init__(name, declaration)
 

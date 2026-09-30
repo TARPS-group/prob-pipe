@@ -146,22 +146,25 @@ def _cell_declaration(cells: tuple[Distribution, ...], name: str) -> OutputSpec:
     An interim implementation detail of the classes the design retires. The first
     cell's declaration stands when every cell shares it. Otherwise the array
     declares the term every cell draws, with the metadata the cells share, and
-    whole-term cells declare it under *name*. No cells at all leave the draw
-    opaque.
+    whole-term cells declare it under the component they share, or under *name*
+    when their components differ. No cells at all leave the draw opaque.
     """
     declarations = [cell.event_spec for cell in cells]
     if not declarations:
         return OutputSpec(**{name: OpaqueSpec()})
     first = declarations[0]
     if all(
-        d._component_name == first._component_name and _same_term(d.spec, first.spec)
+        d.exposes_record == first.exposes_record
+        and tuple(d.components) == tuple(first.components)
+        and _same_term(d.spec, first.spec)
         for d in declarations[1:]
     ):
         return first
     spec = _shared_term([d.spec for d in declarations])
-    if first._component_name is None:
+    if first.exposes_record:
         return OutputSpec(cast(RecordSpec, spec))
-    return OutputSpec(**{name: spec})
+    components = {component for d in declarations for component in d.components}
+    return OutputSpec(**{components.pop() if len(components) == 1 else name: spec})
 
 
 # ---------------------------------------------------------------------------

@@ -843,98 +843,125 @@ class TestSchemaViews:
             _ = _Raising("x", NumericArraySpec(())).broken
 
 
-# One construction per TFP family, with the event shape, dtype, and support it
-# declares. A dtype of None is the default float.
+# One construction per TFP family, which passes its keywords to the family, with
+# the event shape, dtype, and support it declares. A dtype of None is the default
+# float.
 _FAMILY_SCHEMAS = [
-    pytest.param(lambda: Normal("x", loc=0.0, scale=1.0), (), None, real, id="Normal"),
-    pytest.param(lambda: Beta("x", alpha=2.0, beta=3.0), (), None, unit_interval, id="Beta"),
-    pytest.param(lambda: Gamma("x", concentration=2.0, rate=1.0), (), None, positive, id="Gamma"),
+    pytest.param(lambda **kw: Normal("x", loc=0.0, scale=1.0, **kw), (), None, real, id="Normal"),
     pytest.param(
-        lambda: InverseGamma("x", concentration=2.0, scale=1.0),
+        lambda **kw: Beta("x", alpha=2.0, beta=3.0, **kw), (), None, unit_interval, id="Beta"
+    ),
+    pytest.param(
+        lambda **kw: Gamma("x", concentration=2.0, rate=1.0, **kw), (), None, positive, id="Gamma"
+    ),
+    pytest.param(
+        lambda **kw: InverseGamma("x", concentration=2.0, scale=1.0, **kw),
         (),
         None,
         positive,
         id="InverseGamma",
     ),
-    pytest.param(lambda: Exponential("x", rate=1.0), (), None, positive, id="Exponential"),
-    pytest.param(lambda: LogNormal("x", loc=0.0, scale=1.0), (), None, positive, id="LogNormal"),
-    pytest.param(lambda: StudentT("x", df=3.0, loc=0.0, scale=1.0), (), None, real, id="StudentT"),
     pytest.param(
-        lambda: Uniform("x", low=-1.0, high=2.0), (), None, interval(-1.0, 2.0), id="Uniform"
+        lambda **kw: Exponential("x", rate=1.0, **kw), (), None, positive, id="Exponential"
     ),
-    pytest.param(lambda: Cauchy("x", loc=0.0, scale=1.0), (), None, real, id="Cauchy"),
-    pytest.param(lambda: Laplace("x", loc=0.0, scale=1.0), (), None, real, id="Laplace"),
-    pytest.param(lambda: HalfNormal("x", scale=1.0), (), None, non_negative, id="HalfNormal"),
     pytest.param(
-        lambda: HalfCauchy("x", loc=0.5, scale=1.0),
+        lambda **kw: LogNormal("x", loc=0.0, scale=1.0, **kw), (), None, positive, id="LogNormal"
+    ),
+    pytest.param(
+        lambda **kw: StudentT("x", df=3.0, loc=0.0, scale=1.0, **kw), (), None, real, id="StudentT"
+    ),
+    pytest.param(
+        lambda **kw: Uniform("x", low=-1.0, high=2.0, **kw),
+        (),
+        None,
+        interval(-1.0, 2.0),
+        id="Uniform",
+    ),
+    pytest.param(lambda **kw: Cauchy("x", loc=0.0, scale=1.0, **kw), (), None, real, id="Cauchy"),
+    pytest.param(lambda **kw: Laplace("x", loc=0.0, scale=1.0, **kw), (), None, real, id="Laplace"),
+    pytest.param(
+        lambda **kw: HalfNormal("x", scale=1.0, **kw), (), None, non_negative, id="HalfNormal"
+    ),
+    pytest.param(
+        lambda **kw: HalfCauchy("x", loc=0.5, scale=1.0, **kw),
         (),
         None,
         greater_than(0.5),
         id="HalfCauchy",
     ),
     pytest.param(
-        lambda: Pareto("x", concentration=2.0, scale=1.5),
+        lambda **kw: Pareto("x", concentration=2.0, scale=1.5, **kw),
         (),
         None,
         greater_than(1.5),
         id="Pareto",
     ),
     pytest.param(
-        lambda: TruncatedNormal("x", loc=0.0, scale=1.0, low=-1.0, high=1.0),
+        lambda **kw: TruncatedNormal("x", loc=0.0, scale=1.0, low=-1.0, high=1.0, **kw),
         (),
         None,
         interval(-1.0, 1.0),
         id="TruncatedNormal",
     ),
-    pytest.param(lambda: Bernoulli("x", probs=0.3), (), "int32", boolean, id="Bernoulli"),
     pytest.param(
-        lambda: Binomial("x", total_count=5, probs=0.3),
+        lambda **kw: Bernoulli("x", probs=0.3, **kw), (), "int32", boolean, id="Bernoulli"
+    ),
+    pytest.param(
+        lambda **kw: Binomial("x", total_count=5, probs=0.3, **kw),
         (),
         None,
         integer_interval(0, 5),
         id="Binomial",
     ),
-    pytest.param(lambda: Poisson("x", rate=2.0), (), None, non_negative_integer, id="Poisson"),
     pytest.param(
-        lambda: Categorical("x", probs=[0.2, 0.3, 0.5]),
+        lambda **kw: Poisson("x", rate=2.0, **kw), (), None, non_negative_integer, id="Poisson"
+    ),
+    pytest.param(
+        lambda **kw: Categorical("x", probs=[0.2, 0.3, 0.5], **kw),
         (),
         "int32",
         integer_interval(0, 2),
         id="Categorical",
     ),
     pytest.param(
-        lambda: NegativeBinomial("x", total_count=5.0, probs=0.3),
+        lambda **kw: NegativeBinomial("x", total_count=5.0, probs=0.3, **kw),
         (),
         None,
         non_negative_integer,
         id="NegativeBinomial",
     ),
     pytest.param(
-        lambda: MultivariateNormal("x", loc=jnp.zeros(3), cov=jnp.eye(3)),
+        lambda **kw: MultivariateNormal("x", loc=jnp.zeros(3), cov=jnp.eye(3), **kw),
         (3,),
         None,
         real,
         id="MultivariateNormal",
     ),
     pytest.param(
-        lambda: Dirichlet("x", concentration=jnp.ones(3)), (3,), None, simplex, id="Dirichlet"
+        lambda **kw: Dirichlet("x", concentration=jnp.ones(3), **kw),
+        (3,),
+        None,
+        simplex,
+        id="Dirichlet",
     ),
     pytest.param(
-        lambda: Multinomial("x", total_count=4.0, probs=jnp.array([0.2, 0.3, 0.5])),
+        lambda **kw: Multinomial("x", total_count=4.0, probs=jnp.array([0.2, 0.3, 0.5]), **kw),
         (3,),
         None,
         non_negative_integer,
         id="Multinomial",
     ),
     pytest.param(
-        lambda: Wishart("x", df=4.0, scale_tril=jnp.eye(2)),
+        lambda **kw: Wishart("x", df=4.0, scale_tril=jnp.eye(2), **kw),
         (2, 2),
         None,
         positive_definite,
         id="Wishart",
     ),
     pytest.param(
-        lambda: VonMisesFisher("x", mean_direction=jnp.array([0.0, 1.0]), concentration=2.0),
+        lambda **kw: VonMisesFisher(
+            "x", mean_direction=jnp.array([0.0, 1.0]), concentration=2.0, **kw
+        ),
         (2,),
         None,
         sphere,
@@ -944,7 +971,7 @@ _FAMILY_SCHEMAS = [
 
 
 class TestFamilyDeclarations:
-    """A TFP family declares one draw as a whole-term array under its name."""
+    """A TFP family declares one draw as a whole-term array whose component defaults to its name."""
 
     @pytest.mark.parametrize(("make", "shape", "dtype", "support"), _FAMILY_SCHEMAS)
     def test_the_schema_views_read_the_declaration(self, make, shape, dtype, support):
@@ -963,6 +990,39 @@ class TestFamilyDeclarations:
     def test_a_batched_backend_declares_one_cell(self):
         arr = DistributionArray.from_batched_params(Normal, loc=jnp.zeros(4), scale=1.0, name="arr")
         assert arr._backend._batched_dist.event_spec.spec.shape == ()
+
+    @pytest.mark.parametrize(("make", "shape", "dtype", "support"), _FAMILY_SCHEMAS)
+    def test_event_spec_names_the_component(self, make, shape, dtype, support):
+        law = make(event_spec=OutputSpec(theta=None))
+        dtype = np.dtype(dtype) if dtype is not None else jnp.asarray(0.0).dtype
+        assert law.name == "x"
+        assert law.event_spec == OutputSpec(theta=NumericArraySpec(shape, dtype, support))
+        assert law["theta"] is law
+        with pytest.raises(KeyError):
+            law["x"]
+
+    def test_a_declared_type_is_checked_against_the_draw(self):
+        dtype = jnp.asarray(0.0).dtype
+        law = MultivariateNormal(
+            "x", jnp.zeros(3), cov=jnp.eye(3), event_spec=OutputSpec(theta=NumericArraySpec(("d",)))
+        )
+        assert law.event_spec == OutputSpec(theta=NumericArraySpec((3,), dtype, real))
+        with pytest.raises(ValueError, match="has dimension 3, expected 2"):
+            MultivariateNormal(
+                "x",
+                jnp.zeros(3),
+                cov=jnp.eye(3),
+                event_spec=OutputSpec(theta=NumericArraySpec((2,))),
+            )
+        with pytest.raises(ValueError, match="does not conform"):
+            Normal("x", 0.0, 1.0, event_spec=OutputSpec(theta=NumericArraySpec((), "int32")))
+
+    def test_event_spec_declares_a_whole_array(self):
+        record = OutputSpec(RecordSpec(theta=NumericArraySpec(())))
+        with pytest.raises(TypeError, match="needs a RecordSpec"):
+            Normal("x", 0.0, 1.0, event_spec=record)
+        with pytest.raises(TypeError, match="must be an OutputSpec"):
+            Normal("x", 0.0, 1.0, event_spec=NumericArraySpec(()))
 
 
 class TestJointDeclarations:
@@ -1331,6 +1391,12 @@ class TestViewAndWrapperDeclarations:
         assert records.event_spec == OutputSpec(
             RecordSpec(a=NumericArraySpec((), dtype), b=NumericArraySpec((), dtype, real))
         )
+
+    def test_cells_that_differ_keep_the_component_they_share(self):
+        theta = OutputSpec(theta=None)
+        cells = [Uniform("a", 0.0, 1.0, event_spec=theta), Uniform("b", 0.0, 2.0, event_spec=theta)]
+        array = DistributionArray(cells, name="u")
+        assert array.event_spec == OutputSpec(theta=NumericArraySpec((), jnp.asarray(0.0).dtype))
 
 
 class TestModelDeclarations:

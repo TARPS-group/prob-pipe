@@ -61,38 +61,54 @@ class InputSpec(Mapping[str, TermSpec]): ...   # named slots; keys are Python id
 
 class OutputSpec:
     @overload
-    def __init__(self, record_spec: RecordSpec, /) -> None: ...
+    def __init__(self, record_spec: RecordSpec, /) -> None: ...  # the record's fields are the components
     @overload
-    def __init__(self, **components: TermSpec | None) -> None: ...
+    def __init__(self, **term: TermSpec | None) -> None: ...     # exactly one keyword: the whole term's name
     @property
     def spec(self) -> TermSpec | None: ...  # the returned term's type; None only while a type hole is pending
     @property
     def components(self) -> Mapping[str, TermSpec | None]: ...  # ordered, immediate components
+    @property
+    def exposes_record(self) -> bool: ...   # whether the components are a record's fields
+
+    @classmethod
+    def default(cls, spec: TermSpec, *, component: str) -> OutputSpec: ...
+    # OutputSpec(spec) if spec is a RecordSpec, whose fields become the
+    # components, and OutputSpec(**{component: spec}) otherwise
+    def with_spec(self, spec: TermSpec) -> OutputSpec: ...
+    # this declaration with its type set to spec; a declared type must unify
+    # with spec, and a pending hole (None) accepts any spec
+    def with_path_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> OutputSpec: ...
+    # rename or move nodes by their paths, which start with a component; the packaging is kept
 ```
 
-**Construction.** One keyword names the entire returned term. Two or more keywords declare an exposed `RecordSpec` of those components, in keyword order. A positional `RecordSpec` exposes its immediate children, even when it has only one field.
+**Construction.** One keyword names the entire returned term, and a positional `RecordSpec` exposes its immediate children.
 
 ```python
 OutputSpec(beta=beta_spec)                      # array out; beta is the whole array
 OutputSpec(beta=None)                           # whole term; infer its type at completion
 OutputSpec(RecordSpec(beta=beta_spec))          # record out; beta is its field
-OutputSpec(beta=beta_spec, sigma=sigma_spec)    # same as the next line
 OutputSpec(RecordSpec(beta=beta_spec, sigma=sigma_spec))
+# record out; beta and sigma are its fields
 OutputSpec(parameters=RecordSpec(beta=beta_spec, sigma=sigma_spec))
-# record out; parameters is the whole record, exposed as one component
+# record out; parameters names the whole record, its one component
 ```
 
-The keyword form requires at least one entry. The positional form accepts exactly one `RecordSpec` and no keywords. A component name is any non-empty string without `/`, which is the rule for a record's field names, so an exposed record's components are its fields. A component that binds a Python parameter must also be an identifier, which binding checks. `name`, `spec`, and `components` are legal names, since no constructor keyword is reserved for metadata. A caller constructing a record declaration from a variable number of fields uses the positional form to keep the result record-valued regardless of field count. A nested record stays nested: exposure never recursively flattens it. An empty record, where admitted by the record contract, is declared explicitly.
+The keyword form takes exactly one entry, and the positional form exactly one `RecordSpec` and no keywords. A component name is any non-empty string without `/`, which is the rule for a record's field names, so an exposed record's components are its fields. A component that binds a Python parameter must also be an identifier, which binding checks.
 
-**Packaging.** The declaration stores either one named whole term or an exposed record schema; `spec` and `components` are derived views of it, and the extraction and reconstruction of a produced value read it (IV.2).
+**Packaging.** The declaration stores either one named whole term or an exposed record schema. `spec`, `components`, and `exposes_record` are derived views of it, and extracting a component from a produced value, or reconstructing the value from its components, reads it.
 
-**Names.** Component names are the only names a declaration carries, and an object's label never enters matching: a distribution named `regression_model` may declare `OutputSpec(beta=beta_spec)` or `OutputSpec(RecordSpec(beta=beta_spec))`, and either exports `beta`. A higher-order component such as `OutputSpec(posterior=DistributionSpec(...))` does not expose the contained law's event components. Components are renamed by `with_path_names` (III.7) and the object by `with_name` (II.4).
+**Completion.** A producer knows the type of the term it returns and completes its declaration with `with_spec`, so the stored declaration has the produced type under the declared names and packaging. A producer given no declaration uses `OutputSpec.default` with the default component its kind defines (II.5, III.3, III.7).
 
-**Type holes.** `OutputSpec(mean=None)` declares the component `mean` with its term spec pending. `None` is permitted only in this single-keyword form, so an exposed record takes a `RecordSpec` or fully specified keyword fields. A constructor fills the hole from its parameters (III.7) and the engine from the returned term (V.6).
+**Names.** Component names are the only names a declaration carries, and matching reads only them: a distribution named `regression_model` may declare `OutputSpec(beta=beta_spec)` or `OutputSpec(RecordSpec(beta=beta_spec))`, and either exports `beta`. `OutputSpec(posterior=DistributionSpec(...))` exports the single component `posterior`, whose value is a law with its own event components. The object's label is renamed separately, by `with_name` (II.4).
+
+**Paths.** A declaration's paths start with a component. An exposed record's paths are the paths of its record, and a whole term's are its component followed by the paths within its term. `OutputSpec(parameters=RecordSpec(beta=beta_spec))` and `OutputSpec(RecordSpec(parameters=RecordSpec(beta=beta_spec)))` therefore both have the paths `parameters` and `parameters/beta`, and they differ only in the term they return. `with_path_names` renames and moves nodes by these paths under the rules of II.6. Its result keeps the packaging, so a whole term's component is renamed in place and the term's fields stay under it.
+
+**Type holes.** `OutputSpec(mean=None)` declares the component `mean` with its term spec pending. `None` is permitted only in the keyword form, so an exposed record takes a complete `RecordSpec`. A producer fills the hole with `with_spec` once it knows the term's type.
 
 ### Rationale
 
-Separate object and component names serve `C5 – Naming for unambiguous meaning`: a model's label and its variables answer different questions. Retaining the returned kind alongside its interface preserves packaging (`D1 – Mathematical fidelity`), while deriving the interface and projections from one declaration is `D6 – Single source of truth`. The same interface composes every output kind without a composition rule per kind (`D2 – Generality first`).
+Separate object and component names serve `C5 – Naming for unambiguous meaning`: a model's label and its variables answer different questions. Retaining the returned kind alongside its interface preserves packaging (`D1 – Mathematical fidelity`), while deriving the interface and projections from one declaration is `D6 – Single source of truth`. The same interface composes every output kind without a composition rule per kind (`D2 – Generality first`). Deciding packaging by the form keeps a declaration's kind fixed as its fields vary (`D1 – Mathematical fidelity`), and one completion operation serves every producer (`D6 – Single source of truth`). Starting every path at a component gives both packagings of an interface the same paths, so a path addresses the same node whatever the packaging (`C5 – Naming for unambiguous meaning`).
 
 ## II.3 — Numeric values: `Numeric`, `NumericSpec`, `Constraint`
 
@@ -218,7 +234,7 @@ class BatchSpec(TermSpec):         # the batch kind's spec; is_valid accepts a m
     level_names: tuple[str, ...]
 ```
 
-Construction checks every element against `element_spec` and reports the position that failed, since the batch asserts that spec of all of them. A constructor over raw elements completes a bare element spec as any constructor does (III.7): a record exposes its fields, and any other element is a whole term under the batch's label, captured once. A batch an operation produces carries the producer's declaration, the event declaration for draws (VI.3) and the completed output declaration for a sweep (V.6).
+Construction checks every element against `element_spec` and reports the position that failed, since the batch asserts that spec of all of them. A constructor over raw elements completes a bare element spec as any constructor does (III.7): a record exposes its fields, and any other element is a whole term whose component defaults to the batch's label, captured once. A batch an operation produces carries the producer's declaration, the event declaration for draws (VI.3) and the completed output declaration for a sweep (V.6).
 
 **`[]` dispatch.** A key is either a **position** (for axes access) or a **name** (for component access). A position is thus an integer, a slice, or a tuple of those, and it addresses the batch axes, which `Batch` itself handles. A name is a string, or a tuple of strings for a path, and it addresses a component of every element, a record element's components being its fields. For an exposed record it returns the field's column as a view (II.4): a batch that keeps its container's levels, takes the field's spec as its `element_spec`, and is named from the field key. For a whole-term element it returns the batch itself under its one component, so a consumer addresses a batch by component whatever the elements' packaging. A path addresses a field within a record element. A tuple mixing the two is invalid.
 
@@ -314,7 +330,7 @@ class NamedTree[L]:
 
     # structure-preserving transforms — return the same family
     def with_path_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Self: ...
-    # rename or move nodes, old -> new; keys are paths, or bare names when unambiguous;
+    # rename or move nodes, old -> new; each key is the exact path of a node;
     # a new name may itself be a path, which moves the node there
     def map(self, f: Callable[[L], L], /, *args, **kwargs) -> Self: ...
     def map_with_keys(self, f: Callable[[str, L], L], /, *args, **kwargs) -> Self: ...
@@ -335,11 +351,11 @@ The parameter `L` declares the leaf type, which is what `values()`, `[]`, and `m
 
 `with_path_names` renames the fields *within* a tree, whereas `with_name` renames the object itself (II.4). `at_path` has a level analogue in `Batch.at_levels` (II.5), and the two are alike: a path addresses a position and returns a leaf or a subtree, and named level indexers address positions and return an element or a sub-batch.
 
-`with_path_names` renames or moves nodes by `old="new"` pairs. A key may be a bare name, resolving to the unique node so named and raising on ambiguity; keyword pairs cover the common case, and the positional mapping form addresses any path. A target may itself be a path: `with_path_names({"group/mu": "mu"})` promotes the field to the top level and `{"mu": "group/mu"}` demotes it under `group`, creating intermediate nodes as needed and dissolving an interior node a move empties, since a tree holds no empty subtrees. All substitutions apply simultaneously, so sources resolve against the original tree and swaps and simultaneous ancestor–descendant moves are well-defined. Every target is checked against the result: a collision raises, as a rename onto an existing sibling does, and so do a move into the moved node's own subtree and two targets where one is a prefix of the other. Ordering is deterministic: an in-place rename keeps its position, and a moved node appends at the end of its new parent's children.
+`with_path_names` renames or moves nodes by `old="new"` pairs. Each key is the exact path of the node it renames, so keyword pairs address top-level nodes and the positional mapping form addresses any node. A target may itself be a path: `with_path_names({"group/mu": "mu"})` promotes the field to the top level and `{"mu": "group/mu"}` demotes it under `group`, creating intermediate nodes as needed and dissolving an interior node a move empties, since a tree holds no empty subtrees. All substitutions apply simultaneously, so sources resolve against the original tree and swaps and simultaneous ancestor–descendant moves are well-defined. Every target is checked against the result: a collision raises, as a rename onto an existing sibling does, and so do a move into the moved node's own subtree and two targets where one is a prefix of the other. Ordering is deterministic: an in-place rename keeps its position, and a moved node appends at the end of its new parent's children.
 
 ### Rationale
 
-Named paths satisfy `C5 – Naming for unambiguous meaning`. Housing the collection contract in one shared class ensures the type- and value-level structures built on it cannot drift apart on how a field is named or a path is resolved (`C1 – Uniform interface to functions, distributions, and values`).
+Named paths satisfy `C5 – Naming for unambiguous meaning`, and keying a rename by exact path gives every node one address, fixed by its position in the tree. Housing the collection contract in one shared class ensures the type- and value-level structures built on it cannot drift apart on how a field is named or a path is resolved (`C1 – Uniform interface to functions, distributions, and values`).
 
 ### Notes
 

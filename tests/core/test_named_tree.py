@@ -101,10 +101,14 @@ class TestWithPathNames:
     def record(self):
         return Record("r", x=1.0, g=Record("r", mu=2.0, sigma=3.0))
 
-    def test_bare_name_unique(self, record):
-        renamed = record.with_path_names(mu="loc")
-        assert tuple(renamed.keys()) == ("x", "g/loc", "g/sigma")
-        assert tuple(renamed.event_template.keys()) == ("x", "g/loc", "g/sigma")
+    def test_a_single_name_addresses_a_top_level_node(self, record):
+        renamed = record.with_path_names(x="y")
+        assert tuple(renamed.keys()) == ("y", "g/mu", "g/sigma")
+        assert tuple(renamed.event_template.keys()) == ("y", "g/mu", "g/sigma")
+
+    def test_a_nested_node_takes_its_full_path(self, record):
+        with pytest.raises(KeyError):
+            record.with_path_names(mu="loc")
 
     def test_full_path(self, record):
         renamed = record.with_path_names({"g/mu": "loc"})
@@ -116,7 +120,7 @@ class TestWithPathNames:
         assert tuple(renamed.event_template.keys()) == ("x", "group/mu", "group/sigma")
 
     def test_values_and_order_unchanged(self, record):
-        renamed = record.with_path_names(mu="loc")
+        renamed = record.with_path_names({"g/mu": "loc"})
         assert renamed["g/loc"] == record["g/mu"]
         assert tuple(renamed.children) == tuple(record.children)
 
@@ -126,10 +130,10 @@ class TestWithPathNames:
         assert swapped["b"] == 1.0
         assert swapped["a"] == 2.0
 
-    def test_ambiguous_bare_name_raises(self):
-        r = Record("r", g=Record("r", x=1.0), h=Record("r", x=2.0))
-        with pytest.raises(ValueError, match="ambiguous"):
-            r.with_path_names(x="y")
+    def test_a_name_shared_across_levels_addresses_each_node_by_its_path(self):
+        r = Record("r", beta=Record("beta", beta=1.0), s=2.0)
+        assert tuple(r.with_path_names(beta="b").keys()) == ("b/beta", "s")
+        assert tuple(r.with_path_names({"beta/beta": "b"}).keys()) == ("beta/b", "s")
 
     def test_missing_key_raises(self, record):
         with pytest.raises(KeyError):
@@ -137,13 +141,13 @@ class TestWithPathNames:
 
     def test_sibling_collision_raises(self, record):
         with pytest.raises(ValueError, match="collide"):
-            record.with_path_names(mu="sigma")
+            record.with_path_names({"g/mu": "sigma"})
 
     def test_malformed_new_name_raises(self, record):
-        with pytest.raises(ValueError):
-            record.with_path_names(mu="")
-        with pytest.raises(ValueError):
-            record.with_path_names(mu="a/b")
+        with pytest.raises(ValueError, match="non-empty"):
+            record.with_path_names(x="")
+        with pytest.raises(ValueError, match="/"):
+            record.with_path_names(x="a/b")
 
     def test_no_renames_raises(self, record):
         with pytest.raises(ValueError):
@@ -151,7 +155,7 @@ class TestWithPathNames:
 
     def test_duplicate_rename_of_one_node_raises(self, record):
         with pytest.raises(ValueError, match="more than once"):
-            record.with_path_names({"g/mu": "a"}, mu="b")
+            record.with_path_names({"x": "a"}, x="b")
 
     def test_template_family_preserved(self):
         t = RecordSpec(a=(), b=(2,))
