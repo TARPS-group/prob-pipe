@@ -106,7 +106,7 @@ def factored_method(monkeypatch):
 
 
 class _RecordingPosterior(ExactPosterior):
-    """An exactly conditioning law that records the options its ``_condition_on`` receives."""
+    """A law with exact conditioning that records the options its ``_condition_on`` receives."""
 
     def __init__(self, name: str) -> None:
         super().__init__(name)

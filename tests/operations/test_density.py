@@ -11,7 +11,9 @@ import pytest
 
 from probpipe import NumericArray, NumericArrayBatch, NumericArraySpec, Record
 from probpipe.core._dispatch import ResolutionError
+from probpipe.core._specs import OutputSpec
 from probpipe.core.constraints import non_negative
+from probpipe.distributions._batches import DistributionBatch
 from probpipe.distributions._distribution import Distribution
 from probpipe.operations import RouteSource
 from probpipe.operations._density import (
@@ -98,6 +100,34 @@ class TestTheScoredValue:
             jax.scipy.stats.norm.logpdf(np.linspace(-1.0, 1.0, 6).reshape(2, 3)),
             rtol=1e-6,
         )
+
+
+class TestLiftedScores:
+    def test_a_law_at_the_value_is_admitted_and_planned_at_its_event_kind(self):
+        report = log_prob.check(Gaussian("g"), Gaussian("v"))
+        assert (report.feasible, report.route, report.exact) == (True, "exact", True)
+        assert report.lifted == (("value", "broadcast"),)
+        assert report.result == OutputSpec(log_prob=NumericArraySpec(()))
+        assert isinstance(log_prob(Gaussian("g"), Gaussian("v")), Distribution)
+
+    def test_a_law_whose_draws_do_not_conform_raises_applicability_error(self):
+        with pytest.raises(ApplicabilityError, match="does not conform"):
+            log_prob.check(Gaussian("g"), OneField("v"))
+
+    def test_a_swept_batch_of_laws_and_a_law_at_the_value_lift_together(self):
+        laws = DistributionBatch("laws", [Gaussian("g", 1.0), Gaussian("g", 2.0)], "laws")
+        report = log_prob.check(laws, Gaussian("v"))
+        assert report.feasible is True
+        assert report.lifted == (("d", "sweep"), ("value", "broadcast"))
+
+    def test_the_identity_of_prob_is_checked_at_the_points_of_a_lift(self):
+        report = prob.check(Gaussian("g"), Gaussian("v"))
+        assert (report.feasible, report.route, report.lifted) == (
+            True,
+            "identity",
+            (("value", "broadcast"),),
+        )
+        assert prob.check(Bare("b"), Gaussian("v")).feasible is False
 
 
 class TestDerivedDensities:

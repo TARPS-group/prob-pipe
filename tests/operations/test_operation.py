@@ -10,7 +10,14 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import NumericArraySpec, Record, RecordSpec, TrackedTerm, workflow_run
+from probpipe import (
+    NumericArrayBatch,
+    NumericArraySpec,
+    Record,
+    RecordSpec,
+    TrackedTerm,
+    workflow_run,
+)
 from probpipe.core._dispatch import (
     Feasibility,
     ResolutionError,
@@ -19,6 +26,7 @@ from probpipe.core._dispatch import (
 )
 from probpipe.core._spec_base import TermSpec
 from probpipe.core._specs import OutputSpec
+from probpipe.distributions._batches import DistributionBatch
 from probpipe.distributions._capabilities import SupportsMean, SupportsSampling
 from probpipe.distributions._distribution import Distribution, DistributionSpec
 from probpipe.operations import (
@@ -36,7 +44,7 @@ from probpipe.operations._operation import ApplicabilityError, _workflow_draws
 from probpipe.operations._sample import sample
 from probpipe.values import Function
 
-from ._laws import Bare, Gaussian, GuardedMean, Pair, Sampler
+from ._laws import REAL, Bare, Gaussian, GuardedMean, Pair, Sampler
 
 # ---------------------------------------------------------------------------
 # A toy operation with a capability route and a Monte Carlo fallback
@@ -631,6 +639,60 @@ class TestControls:
         law = Sampler("s")
         center.with_options(n_broadcast_samples=17)(law)
         assert law.shapes == [(17,)]
+
+
+# ---------------------------------------------------------------------------
+# Checks of lifted calls
+# ---------------------------------------------------------------------------
+
+
+def _laws(*laws: Distribution) -> DistributionBatch:
+    return DistributionBatch("laws", list(laws), "laws")
+
+
+class TestLiftedChecks:
+    def test_a_swept_batch_is_admitted_and_planned_at_its_element_kind(self):
+        batch = _laws(Gaussian("g", 1.0), Gaussian("g", 2.0))
+        report = center.check(batch)
+        assert (report.feasible, report.route, report.exact) == (True, "closed_form", True)
+        assert report.lifted == (("d", "sweep"),)
+        assert report.result == Gaussian("g").event_spec
+        np.testing.assert_array_equal(np.asarray(center(batch).values), [1.0, 2.0])
+
+    def test_an_element_no_route_applies_to_makes_the_check_infeasible(self):
+        batch = _laws(Gaussian("g"), Bare("g"))
+        report = center.check(batch)
+        assert report.feasible is False
+        assert "sweep cell (1,)" in report.description
+        assert "Bare does not claim SupportsMean" in report.description
+        with pytest.raises(ResolutionError, match="Bare does not claim SupportsMean"):
+            center(batch)
+
+    def test_elements_that_select_different_routes_leave_the_route_undecided(self):
+        report = center.check(_laws(Gaussian("g", 1.0), Sampler("g", 2.0)))
+        assert (report.feasible, report.route, report.exact) == (True, None, False)
+
+    def test_an_element_kind_the_role_refuses_raises_as_the_call_does(self):
+        values = NumericArrayBatch("values", jnp.zeros(3), "values", element_spec=REAL)
+        with pytest.raises(ApplicabilityError, match="received a NumericArray"):
+            center.check(values)
+        with pytest.raises(ApplicabilityError, match="received a NumericArray"):
+            center(values)
+
+    def test_an_empty_sweep_is_planned_at_its_element_kind_and_selects_no_route(self):
+        empty = DistributionBatch(
+            "laws", np.empty(0, object), "laws", element_spec=Gaussian("g").spec
+        )
+        report = center.check(empty)
+        assert (report.feasible, report.route, report.lifted) == (True, None, (("d", "sweep"),))
+
+    def test_a_plain_call_lifts_nothing(self):
+        assert center.check(Gaussian("g")).lifted == ()
+
+    def test_a_raw_call_lifts_as_the_tracked_call_does(self):
+        means = center.with_options(raw=True)(_laws(Gaussian("g", 1.0), Gaussian("g", 2.0)))
+        assert not isinstance(means, TrackedTerm)
+        np.testing.assert_array_equal(np.asarray(means), [1.0, 2.0])
 
 
 # ---------------------------------------------------------------------------
