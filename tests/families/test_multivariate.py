@@ -17,6 +17,7 @@ from probpipe import (
     sample,
     variance,
 )
+from probpipe.distributions._capabilities import SupportsVariance
 from probpipe.families import Dirichlet, Multinomial, MultivariateNormal, VonMisesFisher, Wishart
 
 # ---------------------------------------------------------------------------
@@ -195,6 +196,13 @@ class TestVonMisesFisher:
         samples = sample(d, key=key, sample_shape=(100,))
         norms = jnp.linalg.norm(samples, axis=-1)
         assert jnp.allclose(norms, 1.0, atol=1e-5)
+
+    def test_the_variance_is_the_covariance_diagonal(self, key):
+        d = VonMisesFisher("v", jnp.array([0.0, 0.6, 0.8]), 4.0)
+        assert isinstance(d, SupportsVariance)
+        np.testing.assert_allclose(variance(d), jnp.diagonal(cov(d)), rtol=1e-6)
+        draws = np.asarray(d._sample(key, (200_000,)))
+        np.testing.assert_allclose(variance(d), draws.var(axis=0), atol=5e-3)
 
 
 def _rank_three_covariance(n=10):

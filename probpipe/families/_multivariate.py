@@ -5,10 +5,11 @@
 take an ``event_spec`` declaration that names the event's component.
 
 A family's parameters describe one law over an array; a batch of separate laws
-is a ``DistributionBatch``. Each family claims the moments its backend
-computes: all but the Wishart claim the covariance, all but the von
-Mises-Fisher claim the variance, and the multivariate normal also claims the
-quantile of each coordinate, from its normal marginals.
+is a ``DistributionBatch``. Each family claims the moments it computes in
+closed form: all but the Wishart claim the covariance, and every family claims
+the variance, the von Mises-Fisher's as the diagonal of its backend's
+covariance. The multivariate normal also claims the quantile of each
+coordinate, from its normal marginals.
 """
 
 from __future__ import annotations
@@ -503,6 +504,8 @@ class VonMisesFisher(TFPDistribution):
     """
     Von Mises-Fisher distribution on the unit hypersphere.
 
+    Its variance is the diagonal of its covariance, which the backend computes.
+
     Parameters
     ----------
     name : str
@@ -526,7 +529,7 @@ class VonMisesFisher(TFPDistribution):
         a type that one draw does not conform to.
     """
 
-    _backend_capabilities = frozenset({SupportsMean, SupportsCovariance})
+    _backend_capabilities = frozenset({SupportsMean, SupportsVariance, SupportsCovariance})
 
     def __init__(
         self,
@@ -561,3 +564,7 @@ class VonMisesFisher(TFPDistribution):
 
     def _event_support(self) -> Constraint:
         return sphere
+
+    def _variance(self) -> Array:
+        """The variance of each coordinate, the diagonal of the covariance."""
+        return jnp.diagonal(self._tfp_dist.covariance(), axis1=-2, axis2=-1)

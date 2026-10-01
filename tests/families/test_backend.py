@@ -102,7 +102,7 @@ _EXPECTED = {
         )
     },
     "Wishart": {SupportsMean, SupportsVariance},
-    "VonMisesFisher": {SupportsMean, SupportsCovariance},
+    "VonMisesFisher": {SupportsMean, SupportsVariance, SupportsCovariance},
 }
 
 #: The families whose mean, variance, and covariance do not exist at any parameters.
