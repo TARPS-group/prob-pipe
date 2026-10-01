@@ -241,9 +241,6 @@ class TestGrouping:
 
         assert not np.allclose(atom_leaves(result)[0], 0.0)
 
-    @pytest.mark.pending(
-        reason="a law that cannot sample is refused with ResolutionError", raises=AssertionError
-    )
     def test_a_lifted_law_that_does_not_sample_raises_resolution_error(self):
         class Unsampled(Distribution):
             pass

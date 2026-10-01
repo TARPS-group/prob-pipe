@@ -22,6 +22,7 @@ from probpipe import (
     Normal,
     NumericArrayBatch,
     NumericArraySpec,
+    Opaque,
     ResolutionError,
     SupportsSampling,
     function,
@@ -277,9 +278,6 @@ class TestTheFloorsAgreeWithTheDirectCall:
 
 
 class TestTheDirectCall:
-    @pytest.mark.pending(
-        reason="the engine resolves a lifted call through the registry", raises=AssertionError
-    )
     def test_a_direct_call_takes_a_registered_exact_rule(self, monkeypatch):
         registry = type(evaluation_rule_registry)()
         registry.register(_rules._SamplingLift())
@@ -293,9 +291,10 @@ class TestTheDirectCall:
         with workflow_run(seed=0):
             result = identity(standard_normal())
 
-        assert result == "closed form"
+        assert isinstance(result, Opaque)
+        assert result.value == "closed form"
+        assert result.provenance.metadata["route"] == "closed_form"
 
-    @pytest.mark.pending(reason="route selection under exact_only")
     def test_exact_only_leaves_no_route_for_a_sampled_lift(self):
         @function
         def identity(x):
@@ -304,7 +303,6 @@ class TestTheDirectCall:
         with pytest.raises(ResolutionError):
             identity.with_options(exact_only=True)(standard_normal())
 
-    @pytest.mark.pending(reason="route selection by the method control")
     def test_a_method_that_names_no_route_raises_resolution_error(self):
         @function
         def identity(x):
@@ -313,10 +311,6 @@ class TestTheDirectCall:
         with pytest.raises(ResolutionError):
             identity.with_options(method="quadrature")(standard_normal())
 
-    @pytest.mark.pending(
-        reason="a lift with no feasible route raises ResolutionError naming what is missing",
-        raises=AssertionError,
-    )
     def test_a_lift_with_no_feasible_route_names_the_missing_requirement(self):
         @function
         def identity(x):
@@ -327,9 +321,6 @@ class TestTheDirectCall:
         assert isinstance(error, ResolutionError)
         assert "SupportsSampling" in str(error)
 
-    @pytest.mark.pending(
-        reason="provenance records the selected route and its fidelity", raises=AssertionError
-    )
     def test_the_selected_route_is_recorded_in_provenance(self):
         @function(n_broadcast_samples=6, dispatch="sequential")
         def identity(x):

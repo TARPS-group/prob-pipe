@@ -71,12 +71,6 @@ from probpipe import (
     Wishart,
     sample,
 )
-from probpipe.core._broadcast_distributions import (
-    BroadcastDistribution,
-    _ListMarginal,
-    _make_mixture_marginal,
-    _MixtureMarginal,
-)
 from probpipe.core._numeric_record_distribution import (
     FlattenedDistributionView,
     NumericRecordDistributionView,
@@ -264,13 +258,6 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
         z=Normal("z", 0.0, 1.0), x=_conditional
     ),
     JointGaussian: lambda: JointGaussian(mean=jnp.zeros(3), cov=jnp.eye(3), x=1, y=2),
-    BroadcastDistribution: lambda: BroadcastDistribution(
-        {"x": jnp.zeros(3)}, jnp.zeros(3), broadcast_args=["x"]
-    ),
-    _MixtureMarginal: lambda: _make_mixture_marginal(
-        [Normal("y", 0.0, 1.0), Normal("y", 1.0, 1.0)]
-    ),
-    _ListMarginal: lambda: _ListMarginal(["a", "b"]),
     FlattenedDistributionView: lambda: ProductDistribution(
         a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)
     ).as_flat_distribution(),
@@ -447,7 +434,6 @@ _PICKLE_FAILURES = {
     _IndependentSumGRF: _TFP_BACKEND,
     _LogRatePoisson: _TFP_BACKEND,
     SequentialJointDistribution: _RUNTIME_CLASS,
-    _MixtureMarginal: _RUNTIME_CLASS,
     FlattenedDistributionView: _RUNTIME_CLASS,
     NumericRecordDistributionView: _RUNTIME_CLASS,
     _RecordDistributionView: _RUNTIME_CLASS,

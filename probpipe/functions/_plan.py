@@ -249,8 +249,18 @@ def build_stochastic_plan(
     values: Mapping[str, Any],
     broadcast_plan: BroadcastPlan,
     n_broadcast_samples: int,
+    *,
+    enumerate_every_group: bool = True,
 ) -> StochasticPlan | None:
-    """Build immutable stochastic decisions without claiming random events."""
+    """Build immutable stochastic decisions without claiming random events.
+
+    A co-sampling group whose root is an empirical law is enumerated when its
+    atoms, multiplied by the other enumerated groups', number at most
+    *n_broadcast_samples*, smallest groups first. Without
+    *enumerate_every_group* a plan in which every group would enumerate samples
+    every group instead, as the sampling lift does when it is selected by name
+    over the exact enumeration.
+    """
     if broadcast_plan.regime in ("none", "sweep"):
         return None
 
@@ -279,6 +289,9 @@ def build_stochastic_plan(
             exact_group_indices.append(index)
             exact_sizes[index] = size
             exact_product *= size
+
+    if not enumerate_every_group and len(exact_group_indices) == len(source_values):
+        exact_group_indices, exact_sizes, exact_product = [], {}, 1
 
     source_groups = tuple(
         StochasticSourceGroup(

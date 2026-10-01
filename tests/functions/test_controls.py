@@ -242,7 +242,6 @@ class TestAdmissibility:
 
 
 class TestControlsThatSelectTheRoute:
-    @pytest.mark.pending(reason="route selection by the method control")
     def test_method_names_the_route_of_a_lifted_call(self):
         @function(n_broadcast_samples=8, dispatch="sequential")
         def identity(x):
@@ -253,7 +252,6 @@ class TestControlsThatSelectTheRoute:
 
         assert result.num_atoms == 8
 
-    @pytest.mark.pending(reason="route selection under exact_only")
     def test_exact_only_excludes_the_approximate_sampling_lift(self):
         @function
         def identity(x):

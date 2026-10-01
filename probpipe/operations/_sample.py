@@ -13,13 +13,13 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..core._batch import BatchSpec, _ranks_of
-from ..core._broadcast_distributions import SAMPLE_LEVEL
 from ..core._record_batch import _batch_class_for
 from ..core._record_spec import RecordSpec
 from ..core._specs import OutputSpec
 from ..distributions._capabilities import SupportsSampling
 from ..distributions._distribution import Distribution, DistributionSpec
 from ..distributions._factored import _raw_record
+from ..functions._result import SAMPLE_LEVEL
 from ._operation import ApplicabilityError, BoundCall, _workflow_draws, operation
 
 __all__ = ["sample"]

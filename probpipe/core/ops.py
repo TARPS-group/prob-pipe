@@ -162,9 +162,9 @@ def _drawn_at_its_batch_form(
     """
     from collections.abc import Mapping
 
+    from ..functions._result import SAMPLE_LEVEL, _make_stack
     from ._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
     from ._batch import Batch
-    from ._broadcast_distributions import SAMPLE_LEVEL, _make_stack
     from ._numeric_array_batch import NumericArrayBatch
     from ._object_batch import _is_object_array
     from ._record_batch import _batch_class_for

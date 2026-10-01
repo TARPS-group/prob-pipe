@@ -1,10 +1,8 @@
 """Reading a tracked term does not modify it.
 
 `design/05-operations.md` §V.1 promises an implementer's object is never
-modified. A ``BroadcastDistribution`` broke that where a caller could see it, by
-assigning its marginal on first ``marginalize()``. It now fills a memo container
-assigned at construction, so the attributes the term was built with stay
-untouched.
+modified. A term that memoises a derived value fills a memo container assigned
+at construction, so the attributes the term was built with stay untouched.
 
 The rest of the class is an invariant rather than a regression: those terms wrote
 their fields before the object reached a caller, which is construction by another
@@ -26,7 +24,6 @@ from probpipe import (
     SequentialJointDistribution,
     condition_on,
 )
-from probpipe.core._broadcast_distributions import BroadcastDistribution
 
 
 def assigned_state(term) -> dict:
@@ -97,19 +94,6 @@ class TestTheCheckItself:
 
 
 class TestAQueryLeavesTheTermUnchanged:
-    def test_marginalizing_a_broadcast_distribution(self):
-        broadcast = BroadcastDistribution(
-            input_samples={"x": jnp.ones((5, 1))},
-            output_samples=jnp.zeros((5, 2)),
-            weights=None,
-            broadcast_args=["x"],
-        )
-        before = assigned_state(broadcast)
-        first = broadcast.marginalize()
-        assert assigned_state(broadcast) == before
-        # Still memoised: the second read returns the first result.
-        assert broadcast.marginalize() is first
-
     def test_an_approximate_distribution_concatenates_at_construction(self):
         # The constructor reads the concatenation, so the memo is filled before
         # a caller holds the object and no later read assigns anything.
@@ -161,16 +145,6 @@ class TestEveryMemoHolderDropsItsMemoOnACopy:
     """
 
     @staticmethod
-    def _broadcast():
-        term = BroadcastDistribution(
-            input_samples={"x": jnp.ones((5, 1))},
-            output_samples=jnp.zeros((5, 2)),
-            weights=None,
-            broadcast_args=["x"],
-        )
-        return term, lambda d: d.marginalize()
-
-    @staticmethod
     def _approximate():
         from probpipe.inference._approximate_distribution import ApproximateDistribution
 
@@ -179,7 +153,6 @@ class TestEveryMemoHolderDropsItsMemoOnACopy:
 
     @pytest.fixture(
         params=[
-            pytest.param("_broadcast", id="broadcast-marginal"),
             pytest.param("_approximate", id="approximate-chains"),
         ]
     )
@@ -212,51 +185,3 @@ class TestEveryMemoHolderDropsItsMemoOnACopy:
 
         term, _ = case
         assert "_memo" in declared_state_names(type(term), "_transient_state")
-
-
-class TestACopyDoesNotInheritAMemo:
-    """A memo is per term, because what it holds can be per term.
-
-    ``marginalize`` stamps the distribution's own provenance onto the marginal it
-    builds, so a renamed copy sharing one memo with its original would hand
-    whichever of them asked second the other's lineage — and which that is
-    depends only on query order.
-    """
-
-    @staticmethod
-    def _broadcast() -> BroadcastDistribution:
-        return BroadcastDistribution(
-            input_samples={"x": jnp.ones((5, 1))},
-            output_samples=jnp.zeros((5, 2)),
-            weights=None,
-            broadcast_args=["x"],
-        )
-
-    def test_the_rename_does_not_share_the_original_s_memo(self):
-        original = self._broadcast()
-        renamed = original.with_name("renamed")
-        assert getattr(renamed, "_memo", None) is not getattr(original, "_memo", None)
-
-    def test_lineage_does_not_depend_on_which_is_marginalized_first(self):
-        renamed_first = self._broadcast()
-        renamed = renamed_first.with_name("renamed")
-        from_rename = renamed.marginalize()
-        from_original = renamed_first.marginalize()
-
-        original_first = self._broadcast()
-        also_from_original = original_first.marginalize()
-        also_from_rename = original_first.with_name("renamed").marginalize()
-
-        # The original's marginal carries the original's lineage in both orders,
-        # and the rename's carries the rename's.
-        assert from_original.provenance is None
-        assert also_from_original.provenance is None
-        assert from_rename.provenance.operation == "with_name"
-        assert also_from_rename.provenance.operation == "with_name"
-        assert from_original is not from_rename
-
-    def test_each_still_memoises_its_own(self):
-        original = self._broadcast()
-        renamed = original.with_name("renamed")
-        assert original.marginalize() is original.marginalize()
-        assert renamed.marginalize() is renamed.marginalize()

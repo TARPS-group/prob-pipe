@@ -607,9 +607,9 @@ class TestTheBootstrapReplicate:
             means = Function("stat", lambda b: jnp.mean(b)).with_options(n_broadcast_samples=400)(
                 b=replicate
             )
-        np.testing.assert_allclose(means._mean()["stat"], jnp.mean(data), atol=0.03)
+        np.testing.assert_allclose(means._mean(), jnp.mean(data), atol=0.03)
         np.testing.assert_allclose(
-            jnp.sqrt(means._variance()["stat"]), jnp.std(data) / jnp.sqrt(200.0), rtol=0.2
+            jnp.sqrt(means._variance()), jnp.std(data) / jnp.sqrt(200.0), rtol=0.2
         )
 
 

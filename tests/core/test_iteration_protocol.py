@@ -58,10 +58,8 @@ def _make_transformed():
 
 
 # User-constructible Distribution subclasses, parametrised here to pin
-# the non-iterable rule. WF-output classes (BroadcastDistribution and the
-# _MixtureMarginal / _ListMarginal output marginals) are produced by the
-# Function layer rather than user code; they inherit non-iterability from
-# Distribution and don't need direct parametrisation here.
+# the non-iterable rule. A lifted call's result is an EmpiricalDistribution,
+# which is parametrised with the others.
 DISTRIBUTIONS = [
     pytest.param(lambda: Normal(loc=0.0, scale=1.0, name="x"), id="Normal"),
     pytest.param(lambda: Beta(alpha=1.0, beta=1.0, name="x"), id="Beta"),

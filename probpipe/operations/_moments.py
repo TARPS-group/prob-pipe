@@ -39,7 +39,6 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..core._batch import Batch, BatchSpec
-from ..core._broadcast_distributions import SAMPLE_LEVEL
 from ..core._dispatch import (
     Feasibility,
     MathematicalDomainError,
@@ -74,6 +73,7 @@ from ..distributions._distribution import Distribution, DistributionSpec
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import _raw_record
 from ..functions import _broker, _descendants, function
+from ..functions._result import SAMPLE_LEVEL
 from ..values import Function, FunctionSpec
 from ._operation import ApplicabilityError, BoundCall, _workflow_draws, operation
 from ._sample import _record_batch

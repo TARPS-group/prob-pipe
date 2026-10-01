@@ -11,7 +11,6 @@ import numpy as np
 import pytest
 
 from probpipe import (
-    BroadcastDistribution,
     DistributionBatch,
     Function,
     Normal,
@@ -211,7 +210,7 @@ class TestExecuteSweep:
                 include_inputs=True,
             )
 
-    def test_nested_sweep_calls_distribution_broadcast_and_marginalizes(self):
+    def test_nested_sweep_stacks_the_law_each_row_lifts(self):
         values = {
             "p": _numeric_record_batch("x", range(2)),
             "noise": Normal(loc=0.0, scale=1.0, name="noise"),
@@ -238,14 +237,7 @@ class TestExecuteSweep:
                     "include_inputs": include_inputs,
                 }
             )
-            loc = float(row_values["p"]["x"])
-            return BroadcastDistribution(
-                input_samples={"noise": jnp.asarray([0.0])},
-                output_samples=jnp.asarray([loc]),
-                output_distributions=[Normal(loc=loc, scale=1.0, name="row")],
-                weights=None,
-                broadcast_args=["noise"],
-            )
+            return Normal(loc=float(row_values["p"]["x"]), scale=1.0, name="row")
 
         result = _sweep.execute_sweep(
             func=lambda p, noise: p["x"] + noise,
@@ -260,6 +252,7 @@ class TestExecuteSweep:
             workflow_name="nested",
         )
 
+        assert isinstance(result, DistributionBatch)
         assert result.batch_shape == (2,)
         assert [float(mean(component)) for component in result] == [
             0.0,
@@ -270,13 +263,13 @@ class TestExecuteSweep:
                 "x": 0.0,
                 "plan": stochastic_plan,
                 "logical_unit": stochastic_plan.logical_units[0],
-                "include_inputs": True,
+                "include_inputs": False,
             },
             {
                 "x": 1.0,
                 "plan": stochastic_plan,
                 "logical_unit": stochastic_plan.logical_units[1],
-                "include_inputs": True,
+                "include_inputs": False,
             },
         ]
         assert result.provenance.operation == "workflow.nested"

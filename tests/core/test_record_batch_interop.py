@@ -236,61 +236,6 @@ class TestDesignCoercion:
         assert _coerce_array(batch).shape == (4, 2)
 
 
-class TestBroadcastComponents:
-    """The broadcast helpers gather and unwrap a batch's rows."""
-
-    def test_taking_rows_keeps_the_batch_and_its_levels(self):
-        from probpipe.core._broadcast_distributions import _take_rows
-
-        batch = _draws(5)
-
-        taken = _take_rows(batch, jnp.array([1, 3]))
-
-        assert isinstance(taken, NumericRecordBatch)
-        assert taken.batch_shape == (2,)
-        assert taken.level_names == ("draw",)
-        assert np.allclose(taken["a"], jnp.array([1.0, 3.0]))
-
-    def test_taking_rows_keeps_a_trailing_axis_of_the_same_level(self):
-        from probpipe.core._broadcast_distributions import _take_rows
-
-        batch = NumericRecordBatch(
-            "batch",
-            {"a": jnp.zeros((5, 2))},
-            "draw",
-            element_spec=NumericRecordSpec(a=()),
-            axes_per_level=(2,),
-        )
-
-        taken = _take_rows(batch, jnp.array([1, 3]))
-
-        assert taken.batch_shape == (2, 2)
-        assert taken.level_names == ("draw",)
-
-    def test_one_row_of_a_batch_is_a_record(self):
-        from probpipe.core._broadcast_distributions import _one_row
-
-        row = _one_row(_draws(5))
-
-        assert isinstance(row, NumericRecord)
-        assert not isinstance(row, RecordBatch)
-
-    def test_the_row_count_of_a_batch_reads_its_batch_shape(self):
-        from probpipe.core._broadcast_distributions import _row_count
-
-        assert _row_count(_draws(6)) == 6
-
-    def test_a_batch_marginal_peels_the_rows_axis(self):
-        from probpipe.core._broadcast_distributions import _record_marginal
-
-        batch = _draws(4)
-
-        marginal = _record_marginal(batch)
-
-        assert marginal.event_spec.spec.leaf_shapes == batch.event_template.leaf_shapes
-        assert marginal.num_atoms == 4
-
-
 class TestDistributionBroadcastIndexing:
     """Indexing one row of a batched per-argument sample gives a record."""
 
@@ -374,14 +319,6 @@ class TestOpaqueColumnsAreRearrangedRaw:
         assert isinstance(batch._raw_column("tag"), np.ndarray)
         # An array field is its column either way.
         assert batch._raw_column("x") is batch["x"]
-
-    def test_gathering_rows_keeps_an_opaque_column(self):
-        from probpipe.core._broadcast_distributions import _take_rows
-
-        gathered = _take_rows(self._mixed(), jnp.array([2, 0]))
-
-        assert list(gathered._raw_column("tag")) == ["c", "a"]
-        np.testing.assert_array_equal(np.asarray(gathered._raw_column("x")), [2.0, 0.0])
 
     def test_indexing_a_minibatch_keeps_an_opaque_column(self):
         from probpipe.inference._minibatch import _index_along_leading
@@ -699,7 +636,7 @@ class TestOpaqueBatchesStack:
         """One row's opaque field presents as an OpaqueBatch; stacking the
         presented form hands wrappers to jnp.stack. The columns stack, through
         numpy, so the objects ride as they are."""
-        from probpipe.core._broadcast_distributions import _make_stack
+        from probpipe.functions._result import _make_stack
 
         rows = [
             RecordBatch(
@@ -720,27 +657,6 @@ class TestOpaqueBatchesStack:
         assert out.batch_shape == (3, 2)
         assert list(out._raw_column("tag")[2]) == ["2a", "2b"]
         np.testing.assert_allclose(np.asarray(out._raw_column("x")[1]), [1.0, 2.0])
-
-
-class TestObjectValuedMarginals:
-    def test_an_object_batch_takes_the_list_marginal(self):
-        """The record marginal is empirical over numeric leaves, so an object
-        batch routes to the general list marginal: atoms and weights, no
-        numeric pretence."""
-        from probpipe.core._broadcast_distributions import _ListMarginal, _make_marginal
-
-        batch = RecordBatch(
-            "batch",
-            {"tag": np.array(["a", "b", "c"], dtype=object), "x": jnp.arange(3.0)},
-            "draw",
-            element_spec=RecordSpec(tag=None, x=()),
-        )
-
-        marginal = _make_marginal(batch)
-
-        assert isinstance(marginal, _ListMarginal)
-        assert marginal.num_atoms == 3
-        assert [row["tag"] for row in marginal.items] == ["a", "b", "c"]
 
 
 class TestAnEmptySweepAnswersToItsTemplate:
@@ -791,7 +707,7 @@ class TestATransformCannotResizeTheElement:
 
 class TestAnEmptySweepIsNotAMissingOutput:
     def test_zero_expected_rows_build_the_declared_fields(self):
-        from probpipe.core._broadcast_distributions import _make_stack
+        from probpipe.functions._result import _make_stack
 
         out = _make_stack(
             [],
@@ -807,7 +723,7 @@ class TestAnEmptySweepIsNotAMissingOutput:
     def test_missing_outputs_are_an_error_not_a_fabrication(self):
         """An empty list where rows were expected reports the count mismatch;
         fabricating the declared fields would hide a swallowed failure."""
-        from probpipe.core._broadcast_distributions import _make_stack
+        from probpipe.functions._result import _make_stack
 
         with pytest.raises(ValueError, match="got 0 outputs but expected"):
             _make_stack(
@@ -931,8 +847,8 @@ class TestFunctionValuedColumnsStack:
     def test_rows_holding_callable_fields_stack_by_raw_column(self):
         """A callable field presents as a FunctionBatch; the raw columns are
         what stack, and the presentation survives the aggregation."""
-        from probpipe.core._broadcast_distributions import _make_stack
         from probpipe.core._function_batch import FunctionBatch
+        from probpipe.functions._result import _make_stack
         from probpipe.values._function_base import FunctionSpec
 
         rows = [
@@ -1153,7 +1069,7 @@ class TestBatchValuedRowAggregation:
         """
         import pandas as pd
 
-        from probpipe.core._broadcast_distributions import _make_stack
+        from probpipe.functions._result import _make_stack
 
         rows = [
             NumericArrayBatch(

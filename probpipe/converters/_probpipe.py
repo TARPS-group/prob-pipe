@@ -18,7 +18,6 @@ from typing import Any
 
 import jax.numpy as jnp
 
-from ..core._broadcast_distributions import SAMPLE_LEVEL
 from ..core._numeric_record_distribution import NumericRecordDistribution
 from ..core._spec_base import NumericArraySpec, NumericSpec
 from ..core.provenance import Provenance
@@ -27,6 +26,7 @@ from ..distributions._distribution import Distribution, NumericDistribution
 from ..distributions._empirical import EmpiricalDistribution, _batch_form, _coordinates
 from ..families._backend import _allow_batched_tfp_init
 from ..families._transformed import BijectorTransformedDistribution
+from ..functions._result import SAMPLE_LEVEL
 from ._registry import (
     _PROBPIPE_PROVIDER_ABI,
     ConversionInfo,

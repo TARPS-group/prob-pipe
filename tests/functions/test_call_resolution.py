@@ -12,7 +12,7 @@ from typing import Any
 import jax.numpy as jnp
 import pytest
 
-from probpipe import BroadcastDistribution, Normal, workflow_run
+from probpipe import EmpiricalDistribution, Normal, workflow_run
 from probpipe.core.node import Node
 from probpipe.functions import Module, _call, workflow_method
 from probpipe.values import _binding
@@ -359,8 +359,9 @@ class TestCallOptions:
                 include_inputs=True,
             )(normal_dist)
 
-        assert isinstance(result, BroadcastDistribution)
+        assert isinstance(result, EmpiricalDistribution)
         assert result.num_atoms == 6
+        assert result.event_spec.exposes_record
 
     def test_workflow_run_reproduces_sampling_state_for_a_call(
         self,

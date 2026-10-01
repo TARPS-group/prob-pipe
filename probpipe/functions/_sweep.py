@@ -22,7 +22,6 @@ try:
 except ImportError:
     task = flow = None
 
-from ..core._broadcast_distributions import BroadcastDistribution, _make_stack, _row_at_its_kind
 from ..core._numeric_array import NumericArray
 from ..core._numeric_array_batch import NumericArrayBatch, _MappedBatchStore
 from ..core._object_batch import _ObjectBatch
@@ -34,6 +33,7 @@ from ..core.record import Record
 from ..core.tracked import TrackedTerm
 from ..distributions._distribution import Distribution
 from . import _broker, _context, _execution, _execution_contract, _plan, _recipe, _result
+from ._result import _make_stack, _row_at_its_kind
 
 
 def execute_sweep(
@@ -56,7 +56,7 @@ def execute_sweep(
             _plan.LogicalUnit,
             bool,
         ],
-        BroadcastDistribution | Distribution,
+        Distribution,
     ],
     workflow_name: str,
     output_name: str | None = None,
@@ -66,8 +66,13 @@ def execute_sweep(
     provenance_parents: list[TrackedTerm] | None = None,
     provenance_inputs: Mapping[str, Any] | None = None,
     workflow_kind: WorkflowKind = WorkflowKind.OFF,
+    route: Mapping[str, Any] | None = None,
 ) -> Any:
-    """Execute pure or nested sweep regimes for one workflow call."""
+    """Execute pure or nested sweep regimes for one workflow call.
+
+    *route* is the selected route's name and exactness, which provenance
+    records.
+    """
     if plan.regime not in ("sweep", "nested"):
         raise ValueError(f"execute_sweep requires a sweep plan; got {plan.regime!r}")
 
@@ -122,6 +127,7 @@ def execute_sweep(
             parents=provenance_parents,
             inputs=provenance_inputs,
             stochastic_plan=None,
+            route=route,
         )
         return _result._coerce_output(
             aggregate,
@@ -133,27 +139,19 @@ def execute_sweep(
     if stochastic_plan is None:  # pragma: no cover - Function planning contract guard
         raise RuntimeError("nested sweep is missing its stochastic plan")
 
-    per_row_marginals: list[Distribution] = []
+    per_row_laws: list[Distribution] = []
     for logical_unit in stochastic_plan.logical_units:
         row_values = slice_sweep_values(
             values=values,
             index=logical_unit.flat_index,
             array_groups=plan.array_groups,
         )
-        inner = distribution_broadcast(
-            row_values,
-            stochastic_plan,
-            logical_unit,
-            True,
+        per_row_laws.append(
+            distribution_broadcast(row_values, stochastic_plan, logical_unit, False)
         )
-        if isinstance(inner, BroadcastDistribution):
-            marginal = inner.marginalize()
-        else:
-            marginal = inner
-        per_row_marginals.append(marginal)
 
     stacked = _make_stack(
-        per_row_marginals,
+        per_row_laws,
         batch_shape=plan.sweep_batch_shape,
         level_names=plan.sweep_level_names,
         axis_groups=plan.sweep_axis_groups,
@@ -170,6 +168,7 @@ def execute_sweep(
         parents=provenance_parents,
         inputs=provenance_inputs,
         stochastic_plan=stochastic_plan,
+        route=route,
     )
     return _result._coerce_output(
         stacked,
@@ -415,6 +414,7 @@ def make_sweep_provenance(
     parents: list[TrackedTerm] | None = None,
     inputs: Mapping[str, Any] | None = None,
     stochastic_plan: _plan.StochasticPlan | None = None,
+    route: Mapping[str, Any] | None = None,
 ) -> Provenance | None:
     """Build provenance metadata for pure and nested sweep outputs.
 
@@ -441,6 +441,7 @@ def make_sweep_provenance(
             "k": k,
             "ra_args": [ref.label for ref in array_args],
             "dist_args": [ref.label for ref in dist_args],
+            **(dict(route) if route is not None else {}),
         },
         inputs=inputs,
         controls=controls,

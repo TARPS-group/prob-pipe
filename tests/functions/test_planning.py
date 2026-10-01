@@ -88,10 +88,6 @@ class TestTheResultOfALift:
 
         assert set(result.event_spec.components) == {"rate"}
 
-    @pytest.mark.pending(
-        reason="a lift's event is the output declaration, a whole-term array stays whole",
-        raises=AssertionError,
-    )
     def test_a_lift_plans_a_distribution_over_the_output_declaration(self):
         with workflow_run(seed=0):
             result = _lifted_rate()(jnp.zeros(4), standard_normal())
@@ -100,10 +96,6 @@ class TestTheResultOfALift:
         assert isinstance(result.event_spec.spec, NumericArraySpec)
         assert result.event_spec.spec.support is positive
 
-    @pytest.mark.pending(
-        reason="an undeclared array return is a whole term under output_name",
-        raises=AssertionError,
-    )
     def test_an_undeclared_array_return_lifts_to_a_whole_term_under_output_name(self):
         @function(n_broadcast_samples=6, dispatch="sequential")
         def square(x):
@@ -162,19 +154,12 @@ class TestIncludingTheInputs:
         assert "x" not in result.event_spec.components
         assert result.name == "prediction"
 
-    @pytest.mark.pending(
-        reason="include_inputs returns a joint EmpiricalDistribution", raises=AssertionError
-    )
     def test_the_joint_is_an_empirical_law(self):
         with workflow_run(seed=0):
             result = self._predict()(theta=standard_normal(), x=jnp.ones(3))
 
         assert isinstance(result, EmpiricalDistribution)
 
-    @pytest.mark.pending(
-        reason="the output contributes the components its OutputSpec exposes",
-        raises=AssertionError,
-    )
     def test_each_lifted_parameter_and_each_exposed_output_component_is_a_field(self):
         with workflow_run(seed=0):
             result = self._predict()(theta=standard_normal(), x=jnp.ones(3))
@@ -192,9 +177,6 @@ class TestIncludingTheInputs:
         theta = result.event_spec.components["theta"]
         assert isinstance(theta, RecordSpec) and set(theta) == {"beta"}
 
-    @pytest.mark.pending(
-        reason="a parameter and an output component of one name collide", raises=AssertionError
-    )
     def test_a_parameter_named_like_an_output_component_raises(self):
         @function(include_inputs=True, n_broadcast_samples=6, dispatch="sequential")
         def x(x):

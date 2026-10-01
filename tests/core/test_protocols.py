@@ -463,47 +463,6 @@ class TestSampleReturnTypeConvention:
         assert jg._sample(k, (5,)).batch_shape == (5,)
 
 
-class TestMixtureSamplingDispatch:
-    """``_MixtureSampling._sample`` dispatches on component sample type.
-
-    Numeric components → Array; Record components → RecordBatch;
-    incompatible types → clear TypeError.
-    """
-
-    def test_array_components_stacked(self):
-        import jax.numpy as jnp
-
-        from probpipe.core._broadcast_distributions import _make_mixture_marginal
-
-        comps = [Normal(loc=0.0, scale=1.0, name=f"c{i}") for i in range(3)]
-        mix = _make_mixture_marginal(comps)
-        s = mix._sample(jax.random.PRNGKey(0), (4,))
-        assert isinstance(s, jnp.ndarray)
-        assert s.shape == (4,)
-
-    def test_record_components_stacked_as_record_batch(self):
-        from probpipe import Record
-        from probpipe.core._broadcast_distributions import _make_mixture_marginal
-
-        comps = [
-            ProductDistribution(
-                a=Normal(loc=float(i), scale=1.0, name="a"),
-                b=Normal(loc=float(-i), scale=1.0, name="b"),
-            )
-            for i in range(3)
-        ]
-        from probpipe import NumericRecordBatch
-
-        mix = _make_mixture_marginal(comps)
-        # Batched → RecordBatch
-        s_batched = mix._sample(jax.random.PRNGKey(0), (5,))
-        assert isinstance(s_batched, NumericRecordBatch)
-        assert s_batched.batch_shape == (5,)
-        # Unbatched → Record (first row of the stacked RecordBatch)
-        s_one = mix._sample(jax.random.PRNGKey(0), ())
-        assert isinstance(s_one, Record)
-
-
 # ---------------------------------------------------------------------------
 # Dynamic protocol claims on concrete distributions
 # ---------------------------------------------------------------------------

@@ -323,7 +323,7 @@ class TestCompletedOutputDeclarations:
         elif mode == "sweep":
             laws = tuple(result)
         else:
-            laws = result.components
+            laws = tuple(result.atoms)
         for law in laws:
             assert law.spec is stored.spec
             assert law.event_spec.components["y"].dtype == np.dtype("float32")
@@ -402,13 +402,11 @@ class TestCompletedOutputDeclarations:
         )
         with workflow_run(seed=4):
             joint = wrapped.with_options(include_inputs=True)(Normal("x", 0, 1))
-        result = joint.marginalize()
-        assert result.name == "result"
-        assert tuple(result.event_spec.components) == ("component",)
-        assert result.event_spec.spec["component"].shape == (2,)
-        np.testing.assert_allclose(
-            result.atoms["component"][:, 1], result.atoms["component"][:, 0] + 1, rtol=0, atol=0
-        )
+        assert joint.name == "result"
+        assert tuple(joint.event_spec.components) == ("x", "component")
+        column = joint._rows["component/component" if kind == "record_hole" else "component"]
+        assert column.shape == (8, 2)
+        np.testing.assert_allclose(column[:, 1], column[:, 0] + 1, rtol=0, atol=0)
         assert wrapped.output_spec is declaration
         if kind in ("hole", "record_hole"):
             assert declaration.spec is None

@@ -30,7 +30,6 @@ from probpipe import (
     random_unnormalized_log_prob,
     sample,
 )
-from probpipe.core._broadcast_distributions import _make_mixture_marginal
 from probpipe.core.constraints import real
 from probpipe.distributions import DistributionBatch
 
@@ -87,6 +86,18 @@ class TestRandomFunction:
 # ---------------------------------------------------------------------------
 
 
+class _Mixture(Distribution, SupportsMean):
+    """The finite mixture ``Σᵢ wᵢ pᵢ`` of laws that share one declaration, by its mean."""
+
+    def __init__(self, components, weights, *, name="mixture"):
+        super().__init__(name, components[0].event_spec)
+        self._components = list(components)
+        self._w = weights
+
+    def _mean(self):
+        return self._w.mean(jnp.stack([component._mean() for component in self._components]))
+
+
 class _DiracLogProbFunction(RandomFunction):
     """The random log-density of a finite mixture: ``log p_i(x)`` with weight ``w_i``."""
 
@@ -97,10 +108,9 @@ class _DiracLogProbFunction(RandomFunction):
 
     def __call__(self, x):
         scalar_dists = [
-            Normal(loc=c._log_prob(x), scale=jnp.array(1e-8), name=f"lp{i}")
-            for i, c in enumerate(self._components)
+            Normal(loc=c._log_prob(x), scale=jnp.array(1e-8), name="lp") for c in self._components
         ]
-        return _make_mixture_marginal(scalar_dists, weights=self._w)
+        return _Mixture(scalar_dists, self._w)
 
 
 class _DiracRandomMeasure(
@@ -144,9 +154,7 @@ class _DiracRandomMeasure(
         return _object_array([self._components[int(i)] for i in indices], sample_shape)
 
     def _mean(self):
-        return _make_mixture_marginal(
-            self._components, weights=self._w, name=f"{self.name}_expected"
-        )
+        return _Mixture(self._components, self._w, name=f"{self.name}_expected")
 
     def _random_log_prob(self):
         return _DiracLogProbFunction(self._components, self._w)

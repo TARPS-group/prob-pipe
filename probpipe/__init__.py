@@ -46,7 +46,6 @@ from probpipe.core._array_backend import (
     register_array_backend,
 )
 from probpipe.core._batch import Batch, BatchSpec
-from probpipe.core._broadcast_distributions import BroadcastDistribution
 from probpipe.core._dispatch import MathematicalDomainError, ResolutionError
 from probpipe.core._function_batch import FunctionBatch
 from probpipe.core._numeric import Numeric
@@ -237,7 +236,6 @@ __all__ = [
     "Binomial",
     "BootstrapDistribution",
     "BootstrapReplicateDistribution",
-    "BroadcastDistribution",
     "Categorical",
     "Cauchy",
     "ConditionallyIndependentLikelihood",

@@ -42,7 +42,6 @@ from typing import Any, Protocol, runtime_checkable
 
 from ..core._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
 from ..core._batch import Batch, BatchSpec, _ranks_of
-from ..core._broadcast_distributions import _make_stack
 from ..core._dispatch import BaseDispatchRegistry, Feasibility, MethodInfo, ResolutionError
 from ..core._kinds import _KINDS, batch_class_for_spec
 from ..core._numeric_array import NumericArray
@@ -63,6 +62,7 @@ from ..functions._call import admit_arguments
 from ..functions._plan import BroadcastPlan, build_broadcast_plan
 from ..functions._result import (
     _copy_result_term,
+    _make_stack,
     _wrap_as_term,
     _wrap_declared_function_output,
 )

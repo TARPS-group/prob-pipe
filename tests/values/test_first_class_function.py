@@ -1037,13 +1037,12 @@ class TestSymbolicCalls:
         with workflow_run(seed=4):
             result = wrapped(Normal("x", 0, 1))
 
-        assert result.event_spec.spec.leaf_shapes == {"pair": (2,)}
+        assert list(result.event_spec.components) == ["pair"]
+        assert result.event_spec.spec.shape == (2,)
         assert result.num_atoms == 8
-        assert result.atoms["pair"].shape == (8, 2)
-        np.testing.assert_allclose(
-            result.atoms["pair"][:, 1],
-            result.atoms["pair"][:, 0] + 1,
-        )
+        pairs = np.asarray(result._rows)
+        assert pairs.shape == (8, 2)
+        np.testing.assert_allclose(pairs[:, 1], pairs[:, 0] + 1)
 
     def test_every_sweep_cell_is_validated_against_output_template(self):
         rows = NumericRecordBatch.stack(
@@ -1095,8 +1094,9 @@ class TestSymbolicCalls:
             result = wrapped(Normal("x", 0, 1))
 
         assert result.provenance.metadata["dispatch"] == "sequential"
-        assert result.event_spec.spec["y"].support == positive
-        assert bool(jnp.all(result.atoms["y"] > 0))
+        assert list(result.event_spec.components) == ["y"]
+        assert result.event_spec.spec.support == positive
+        assert bool(jnp.all(result._rows > 0))
 
     def test_support_pinned_broadcast_explicit_jax_reports_traceability_error(self):
         wrapped = Function(
@@ -1221,19 +1221,15 @@ class TestSymbolicCalls:
         )
 
         with workflow_run(seed=3):
-            broadcast = wrapped.with_options(include_inputs=True)(Normal("x", 0, 1))
-        result = broadcast.marginalize()
+            joint = wrapped.with_options(include_inputs=True)(Normal("x", 0, 1))
+        laws = joint._rows["function"]
 
-        assert result.event_spec == OutputSpec(y=NumericArraySpec((), jnp.asarray(0.0).dtype, real))
-        assert result.num_atoms == 8
-        np.testing.assert_allclose(
-            jnp.stack([component.loc for component in result.components]),
-            broadcast.input_samples["x"],
+        assert joint.event_spec.components["function"] == DistributionSpec(
+            OutputSpec(y=NumericArraySpec((), jnp.asarray(0.0).dtype, real))
         )
-        np.testing.assert_allclose(
-            jnp.stack([component.scale for component in result.components]),
-            np.ones(8),
-        )
+        assert joint.num_atoms == 8
+        np.testing.assert_allclose(jnp.stack([law.loc for law in laws]), joint._rows["x"])
+        np.testing.assert_allclose(jnp.stack([law.scale for law in laws]), np.ones(8))
 
     def test_distribution_broadcast_rejects_cross_kind_declared_dtype(self):
         wrapped = Function(
@@ -1479,7 +1475,7 @@ class TestReentrancyAndProvenance:
 
         def evaluate(_):
             with workflow_run(seed=19):
-                return wrapped(source).atoms["function"]
+                return wrapped(source)._rows
 
         sequential = [evaluate(index) for index in range(2)]
         with ThreadPoolExecutor(max_workers=2) as pool:
@@ -1589,7 +1585,7 @@ class TestVariadicPlanning:
 
         assert isinstance(result, Distribution)
         assert result.num_atoms == 8
-        assert tuple(result.input_samples) == ("*items[0]",)
+        assert list(result.event_spec.components) == ["*items[0]", "function"]
         assert result.provenance.metadata["broadcast_args"] == ["*items[0]"]
 
     def test_record_batch_in_varargs_is_swept(self):

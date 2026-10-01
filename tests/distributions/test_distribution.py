@@ -505,7 +505,6 @@ def _public_distribution_classes() -> list[type]:
 # The classes the design retires keep a keyword name until they are removed.
 _RETIRING = {
     "ApproximateDistribution",
-    "BroadcastDistribution",
     "FlattenedDistributionView",
     "JointGaussian",
     "NumericRecordDistributionView",
@@ -1247,12 +1246,6 @@ class TestDerivedDeclarations:
 class TestViewAndWrapperDeclarations:
     """Views declare the term they select."""
 
-    def test_an_empty_mixture_marginal_constructs(self):
-        from probpipe.core._broadcast_distributions import _make_mixture_marginal
-
-        marginal = _make_mixture_marginal([])
-        assert isinstance(marginal.event_spec.spec, OpaqueSpec)
-
     def test_a_record_view_keeps_only_a_support_every_piece_satisfies(self):
         from probpipe import real
 
@@ -1273,7 +1266,7 @@ class TestViewAndWrapperDeclarations:
             return args[0] * 2.0
 
         out = double.with_options(include_inputs=True)(Normal("a", 0.0, 1.0))
-        assert list(out.event_spec.components) == ["*args[0]", "_output"]
+        assert list(out.event_spec.components) == ["*args[0]", "double"]
         assert list(out["*args[0]"].event_spec.components) == ["*args[0]"]
 
     def test_a_nested_view_joins_a_path_into_its_group(self):
