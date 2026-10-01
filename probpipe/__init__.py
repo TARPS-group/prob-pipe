@@ -185,6 +185,7 @@ from probpipe.functions._errors import (
 )
 from probpipe.functions._replay import replay_run
 from probpipe.functions._result import ResultKindError, ResultSchemaError
+from probpipe.functions._rules import evaluation_rule_registry
 from probpipe.inference import (
     ApproximateDistribution,
     BayesFlowLikelihood,
@@ -350,6 +351,7 @@ __all__ = [
     "condition_on_nutpie",
     "converter_registry",
     "elliptical_slice",
+    "evaluation_rule_registry",
     "expectation_method_registry",
     "function",
     "greater_than",

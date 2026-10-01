@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from ._replay import replay_run as replay_run
     from ._result import ResultKindError as ResultKindError
     from ._result import ResultSchemaError as ResultSchemaError
+    from ._rules import evaluation_rule_registry as evaluation_rule_registry
 
 _EXPORTS = {
     "Function": "probpipe.values",
@@ -48,6 +49,7 @@ _EXPORTS = {
     "ResultSchemaError": "probpipe.functions._result",
     "bijector_for": "probpipe.functions._reparameterization",
     "register_bijector": "probpipe.functions._reparameterization",
+    "evaluation_rule_registry": "probpipe.functions._rules",
 }
 __all__ = list(_EXPORTS)
 

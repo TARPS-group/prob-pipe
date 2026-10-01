@@ -2,8 +2,17 @@
 
 from __future__ import annotations
 
+import jax.numpy as jnp
 import pytest
 
+from probpipe import (
+    ApplicabilityError,
+    EmpiricalDistribution,
+    NumericArrayBatch,
+    NumericArraySpec,
+    workflow_run,
+)
+from probpipe.functions import _rules
 from probpipe.operations import RouteSource
 from probpipe.operations._evaluate import evaluate
 from probpipe.values import Function
@@ -20,11 +29,42 @@ def test_the_route_is_the_evaluation_rule_registry():
     )
 
 
-@pytest.mark.pending(reason="the evaluation-rule registry realizes evaluate")
 def test_a_map_evaluates_at_a_value():
     assert float(evaluate(Function("f", lambda x: x + 1.0), 1.0)) == 2.0
 
 
-@pytest.mark.pending(reason="the evaluation-rule registry realizes evaluate")
 def test_a_map_pushes_a_distribution_forward():
-    assert evaluate(Function("f", lambda x: 2.0 * x), Gaussian("g")) is not None
+    with workflow_run(seed=0):
+        law = evaluate(Function("f", lambda x: 2.0 * x), Gaussian("g"))
+    assert isinstance(law, EmpiricalDistribution)
+    assert law.provenance.operation == "workflow.evaluate"
+
+
+def test_the_registry_is_exported_beside_the_converter_registry():
+    import probpipe
+
+    assert probpipe.evaluation_rule_registry is _rules.evaluation_rule_registry
+    assert probpipe.functions.evaluation_rule_registry is _rules.evaluation_rule_registry
+
+
+def test_the_fixed_arguments_bind_the_other_parameters():
+    def shift(x, offset):
+        return x + offset
+
+    value = evaluate(Function("shift", shift), 1.0, fixed_args={"offset": 2.0})
+    assert float(value) == 3.0
+
+
+def test_a_map_left_with_two_open_parameters_is_refused():
+    def add(x, y):
+        return x + y
+
+    with pytest.raises(ApplicabilityError, match="exactly one parameter"):
+        evaluate(Function("add", add), 1.0)
+
+
+def test_a_batch_is_swept_elementwise():
+    rows = NumericArrayBatch("rows", jnp.arange(3.0), "row", element_spec=NumericArraySpec(()))
+    swept = evaluate(Function("f", lambda x: x + 1.0), rows)
+    assert isinstance(swept, NumericArrayBatch)
+    assert swept.level_names == ("row",)
