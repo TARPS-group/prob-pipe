@@ -16,7 +16,7 @@ ProbPipe is built around a small number of mathematical objects, their specializ
 | function | `f : X → Y` | `Function` |
 | linear operator | `A : ℝⁿ → ℝᵐ` | `LinOp`, the linear `Function` subtype |
 
-Labels and component names are distinct sorts of name (C5): composition matches the component interface declared by `OutputSpec` and never reads a label.
+Labels and component names are distinct sorts of name (C5): composition matches the component interface declared by `OutputSpec`, whatever the objects' labels.
 
 Each object also has an indexed-collection form (a *batch*), and every function lifts to batches elementwise. Structured values, distributions, and conditional distributions additionally have **numeric** specializations, such as `NumericRecord` and `NumericDistribution`, covering the all-array case: they identify the event space with a flat vector space, where `LinOp` acts and differentiation applies.
 
@@ -27,7 +27,7 @@ Some important mathematical operations supported by ProbPipe include the followi
 | evaluation | `f(x)`, `K(s, ·)`, `Ax`, and the pushforward `f♯μ` (i.e., the law of `f(X)` for `X ~ μ`) |
 | sampling | `x ~ μ` |
 | density evaluation | `(dμ/dν)(x)` |
-| expectation and summaries | `E[f(X)]` for `X ~ μ`; mean, variance, covariance, quantiles |
+| distribution functionals | `E[f(X)]` for `X ~ μ`; mean, variance, covariance, quantiles |
 | composition | `p(x \| y) · p(y)`, `f ∘ g`, `A B` |
 | conditioning | `μ(· \| y = b)` for a field `y` |
 | marginalization | the law of a named field of `X ~ μ` |
@@ -35,7 +35,7 @@ Some important mathematical operations supported by ProbPipe include the followi
 
 ### Contents
 
-The document has seven parts, a package-structure companion, and one more part planned:
+The document has seven parts and one more planned, and it has a glossary and a package-structure companion:
 
 - **[Part I — Design Principles](01-design-principles.md)** — the high-level commitments that drive every downstream design decision. They are stated without reference to any specific class, type, or API.
 - **[Part II — Shared Abstractions](02-shared-abstractions.md)** — the generic, type-agnostic abstractions the rest of the library is built on: the term-specification layer with named input/output component declarations and the `Numeric` interface, identity, provenance, and metadata, batching, the named-tree abstraction, and the dispatch registries.
@@ -45,6 +45,7 @@ The document has seven parts, a package-structure companion, and one more part p
 - **[Part VI — Operations](06-operations.md)** — precise contracts for the core operations, functions before distributions: function evaluation, inversion, sampling, density evaluation, distribution functionals, conditioning, joints, marginals and factors, mixtures, conversion between representations, and batched operations.
 - **[Part VII — The Distribution Catalog](07-distribution-catalog.md)** — the concrete families: parametric, empirical, mixtures, evaluation results, random functions and measures, the Gaussian algebra, inference-produced distributions, and the conditional families, including GLM likelihoods.
 - **Part VIII — Agentic Interface (planned)** — A higher-level agentic interface to help guide the process of designing, building, and auditing a ProbPipe workflow.
+- **[Glossary](glossary.md)** — the terms of art in alphabetical order, each defined once with the section that owns its rules.
 - **[Package Structure](package-structure.md)** — the target package and module layout realizing the parts: the layered import graph, upward registration, and the public-API conventions.
 
 ### Conventions

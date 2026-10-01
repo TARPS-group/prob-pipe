@@ -15,7 +15,7 @@ The package layout realizes the design reference as an import architecture: one 
 
 ### Rationale
 
-The layout makes the reference's dependency order mechanical: what a part may depend on is what its package may import, so the document and the code cannot drift on layering. Upward registration is `D2 – Generality first` in the import graph, since the supported set grows by adding a provider package rather than by widening a lower layer. The single curated namespace serves `C3 – Computational detail hidden by default, available on demand`: module paths stay free to change, and a user's imports do not. Module boundaries on the implementation's existing divisions keep the reorganization concrete: each target module names work that is already one coherent unit.
+The layout makes the reference's dependency order mechanical: what a part may depend on is what its package may import, so the document and the code cannot drift on layering. Upward registration is `D2 – Generality first` in the import graph, since the supported set grows by adding a provider package rather than by widening a lower layer. The single curated namespace serves `C3 – Computational detail hidden by default, available on demand`: module locations stay free to change, and a user's imports do not. Module boundaries on the implementation's existing divisions keep the reorganization concrete: each target module names work that is already one coherent unit.
 
 ### The tree
 
@@ -180,6 +180,7 @@ spec types of `core/`. `DistributionSpec` is defined beside `Distribution` in
 | `modeling/_likelihood.py` (`IncrementalConditioner`) | retired as a class; a fold of `condition_on` over data batches, settled with `iterate` |
 | `converters/_registry.py`, `converters/_protocol.py` | `distributions/_conversion.py` (IV.3): `ConversionMethod` becomes the `exact` flag, `Converter.convert` becomes `execute`, and the protocol resolver becomes protocol targets |
 | `converters/_probpipe.py`, `converters/_scipy.py`, `converters/_tfp.py` | `families/_converters.py` (IV.3) |
+| `expectation_method_registry` (`operations/_moments.py`) | retired: `expectation` is the derived operation `mean(evaluate(f, d))` (VI.5), and an integration method registers as an evaluation rule in `functions/_rules.py` (V.7) |
 | `expectation`'s `return_dist` and `set_return_approx_dist` (`core/ops.py`, `distributions/_distribution.py`) | retired: the error of a Monte Carlo estimate is taken explicitly through the bootstrap (VII.2); `set_default_num_evaluations` becomes the sample-count default in `core/_config.py` (V.2) |
 | `core/_kinds.py`, `core/_array_backend.py` | `core/`, in place: the kind table (II.1) and the array-backend registry (II.3) |
 | `core/_immutable.py`, `core/_fingerprint.py` | `core/_identity.py` (II.4) |
