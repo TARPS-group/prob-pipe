@@ -155,6 +155,12 @@ class TestMean:
         assert result.spec == NumericArraySpec((), jnp.float32, real)
         assert _value(result) == 2.0
 
+    def test_check_lists_the_closed_form_route_as_exact(self):
+        report = mean.check(Gaussian("g", 2.0))
+        routes = {info.method_name: info for info in report.routes}
+        assert routes["closed_form"].exact is True
+        assert (report.route, report.exact) == ("closed_form", True)
+
     def test_the_result_keeps_the_event_components_and_packaging(self):
         assert mean.check(Gaussian("g")).result == OutputSpec(
             g=NumericArraySpec((), jnp.float32, real)

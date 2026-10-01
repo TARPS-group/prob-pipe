@@ -86,8 +86,10 @@ class PointReport(Feasibility):
     result : OutputSpec or None
         The result declaration planning derived, which for a lifted call is that
         of one point.
-    routes : tuple of (str, Feasibility)
-        Each probed candidate's label and report, in selection order.
+    routes : tuple of (str, Feasibility, bool or None)
+        Each probed candidate's label, report, and exactness, in selection
+        order. The exactness is the implementation's that the candidate's report
+        selects, its route's declaration for a route that states one.
     deferred : tuple of str
         The checks deferred to the return.
     """
@@ -96,7 +98,7 @@ class PointReport(Feasibility):
     method: str | None = None
     exact: bool | None = None
     result: OutputSpec | None = None
-    routes: tuple[tuple[str, Feasibility], ...] = ()
+    routes: tuple[tuple[str, Feasibility, bool | None], ...] = ()
     deferred: tuple[str, ...] = ()
 
 
@@ -180,7 +182,10 @@ def check_point(
     if not select:
         return PointReport(True, result=result, deferred=deferred)
     candidate, report, probed = _probe(candidates, call, result)
-    reports = tuple((probed_candidate.label, probe) for probed_candidate, probe in probed)
+    reports = tuple(
+        (probed_candidate.label, probe, probed_candidate.exactness(probe))
+        for probed_candidate, probe in probed
+    )
     if candidate is None or report is None:
         return PointReport(
             False,
@@ -297,8 +302,9 @@ def call_report(
 ) -> CallReport:
     """The CallReport of a call from the check of its points.
 
-    Each probed candidate's report is named by its label, and a report whose
-    exactness is open states the call approximate.
+    Each probed candidate's report is named by its label and states the
+    candidate's exactness, and a report whose exactness is open states the
+    call approximate.
     """
     routes = tuple(
         MethodInfo(
@@ -306,9 +312,9 @@ def call_report(
             report.description,
             report.pending,
             method_name=label,
-            exact=bool(getattr(report, "exact", None)),
+            exact=bool(exact),
         )
-        for label, report in point.routes
+        for label, report, exact in point.routes
     )
     chosen: MethodInfo | None
     if point.feasible is None:
