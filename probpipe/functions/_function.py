@@ -123,7 +123,13 @@ def function(
 
     def decorator(func: Callable[..., Any]) -> Function:
         options = dict(kwargs)
-        return Function(options.pop("name", func.__name__), func, **options)
+        if "name" in options:
+            name = options.pop("name")
+        else:
+            name = getattr(func, "__name__", None)
+        if name is None:
+            raise ValueError("A callable without __name__ requires an explicit 'name' argument.")
+        return Function(name, func, **options)
 
     if _func is not None:
         return decorator(_func)

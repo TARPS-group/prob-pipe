@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import inspect
 from pathlib import Path
+from functools import partial
 
 import jax.numpy as jnp
 import numpy as np
@@ -79,6 +80,32 @@ class TestFunctionDeclarations:
         assert first.output_name == second.output_name == "value"
         assert float(first()) == 1
         assert float(second()) == 2
+        
+    @pytest.fixture(params=["partial", "instance"])
+    def unnamed_callable(self, request):
+        def add(a, b):
+            return a + b
+
+        class AddOne:
+            def __call__(self, x):
+                return x + 1
+
+        if request.param == "partial":
+            return partial(add, 1)
+        return AddOne()
+    
+    def test_decorator_accepts_unnamed_callable_with_explicit_name(self, unnamed_callable):
+        wrapped = function(name="add1")(unnamed_callable)
+        assert wrapped.name == "add1"
+        assert wrapped.output_name == "add1"
+        assert wrapped.raw() is unnamed_callable
+        assert wrapped.apply(114514) == 114515
+        
+    @pytest.mark.parametrize("with_parentheses", [True, False])
+    def test_decorator_requires_name_for_unnamed_callable(self, unnamed_callable, with_parentheses):
+        decorate = function() if with_parentheses else function
+        with pytest.raises(ValueError, match="an explicit 'name'"):
+            decorate(unnamed_callable)
 
     def test_returned_function_keeps_its_own_output_contract(self):
         returned = Function("inner", lambda: 3, output_spec=NumericArraySpec(()))
