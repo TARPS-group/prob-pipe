@@ -13,6 +13,10 @@ from dataclasses import dataclass
 from types import UnionType
 from typing import Any, Union, get_args, get_origin
 
+from ..core._array_backend import _is_numeric_leaf
+from ..core._batch import Batch, BatchSpec
+from ..core._specs import InputSpec, NumericArraySpec, OpaqueSpec, RecordSpec, TermSpec
+from ..core.tracked import TrackedTerm
 from ..distributions._capabilities import (
     SupportsConditionalCovariance,
     SupportsConditionalExpectation,
@@ -26,8 +30,9 @@ from ..distributions._capabilities import (
     SupportsConditionalUnnormalizedLogProb,
     SupportsConditionalVariance,
 )
-from ..distributions._conditional import ConditionalDistribution
-from ..values import _binding
+from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
+from ..distributions._distribution import Distribution, DistributionSpec
+from ..values import FunctionSpec, _binding
 from ..values._binding import WorkflowSignatureInfo, resolve_workflow_values
 from . import _normalization
 
@@ -176,13 +181,67 @@ def _expects_value(expected: Any) -> bool:
     return not (_normalization.is_distribution_hint(expected) or _consumes_kernel(expected))
 
 
-def admit_arguments(info: WorkflowSignatureInfo, values: Mapping[str, Any]) -> None:
+def arrived_kind(value: Any) -> type[TermSpec]:
+    """The kind *value* is, named by its spec class, by the kind-directed wrap of V.4.
+
+    A tracked term is the kind of its spec; a raw mapping is a record, a numeric
+    host an array, and a callable a function; any other value, a list, a tuple,
+    or a set among them, is opaque.
+    """
+    if isinstance(value, TrackedTerm):
+        spec = getattr(value, "spec", None)
+        if isinstance(spec, TermSpec):
+            return type(spec)
+    if isinstance(value, Mapping):
+        return RecordSpec
+    if _is_numeric_leaf(value):
+        return NumericArraySpec
+    if callable(value):
+        return FunctionSpec
+    return OpaqueSpec
+
+
+def _accepts(declared: type[TermSpec], kind: type[TermSpec]) -> bool:
+    """Whether a slot declaring the kind *declared* admits a value of the kind *kind*.
+
+    The record kinds admit each other, unification deciding their fields, and an
+    opaque slot admits every kind, as ``OpaqueSpec.is_valid`` does.
+    """
+    if declared is OpaqueSpec or issubclass(kind, declared):
+        return True
+    return issubclass(declared, RecordSpec) and issubclass(kind, RecordSpec)
+
+
+def _admitted_kind(value: Any, declared: type[TermSpec]) -> type[TermSpec]:
+    """The kind of *value* that a slot declaring *declared* checks.
+
+    A law at a slot of a value kind lifts, so its event kind is checked, and a
+    batch at a slot of another kind is swept, so its element kind is.
+    """
+    lifted = (ConditionalDistributionSpec, DistributionSpec, BatchSpec)
+    if isinstance(value, Distribution) and not issubclass(declared, lifted):
+        return type(value.event_spec.spec)
+    if isinstance(value, Batch) and not issubclass(declared, BatchSpec):
+        return type(value.element_spec)
+    return arrived_kind(value)
+
+
+def admit_arguments(
+    info: WorkflowSignatureInfo,
+    values: Mapping[str, Any],
+    *,
+    input_spec: InputSpec | None = None,
+    function_name: str | None = None,
+) -> None:
     """Admit each bound argument against what its parameter accepts.
 
     Each argument is admitted against its parameter's own annotation, so an
     argument that a variadic parameter annotated ``Any`` collects is admitted
     whatever its kind. A conditional distribution at a parameter that expects a
-    value is refused, since a kernel has no marginal law to lift over.
+    value is refused, since a kernel has no marginal law to lift over. Where an
+    *input_spec* declares a slot, the argument's kind must be the slot's: a
+    value's own kind, the event kind of a law the slot lifts, or the element
+    kind of a batch it sweeps (V.4).
 
     Parameters
     ----------
@@ -190,12 +249,31 @@ def admit_arguments(info: WorkflowSignatureInfo, values: Mapping[str, Any]) -> N
         The wrapped function's signature and resolved annotations.
     values : Mapping of str to Any
         The bound arguments, shaped by the signature.
+    input_spec : InputSpec or None
+        The declared slots, whose kinds the arguments are admitted against.
+    function_name : str or None
+        The function's name, for the message.
 
     Raises
     ------
     ApplicabilityError
-        If an argument's kind is not one its parameter accepts.
+        If an argument's kind is not one its parameter accepts, naming the
+        parameter, the kind it accepts, and what arrived.
     """
+    if input_spec is not None:
+        for name, spec in input_spec.items():
+            if name not in values:
+                continue
+            value = values[name]
+            kind = _admitted_kind(value, type(spec))
+            if not _accepts(type(spec), kind):
+                owner = f"{function_name}: " if function_name else ""
+                arrived = type(value).__name__
+                article = "an" if arrived[0] in "AEIOU" else "a"
+                raise ApplicabilityError(
+                    f"{owner}parameter {name!r} accepts {type(spec).__name__}, and got "
+                    f"{article} {arrived}, whose kind is {kind.__name__}"
+                )
     for ref in _binding.iter_input_refs(info, values):
         value = _binding.input_ref_value(values, ref)
         if isinstance(value, ConditionalDistribution) and _expects_value(

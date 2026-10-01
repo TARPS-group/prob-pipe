@@ -287,10 +287,6 @@ class TestAlignment:
         assert result.batch_shape == (2, 3)
         assert result.level_names == ("left", "right")
 
-    @pytest.mark.pending(
-        reason="misaligned levels raise ApplicabilityError naming the level",
-        raises=AssertionError,
-    )
     def test_misaligned_levels_raise_applicability_error_naming_the_level(self):
         @function(dispatch="sequential")
         def add(x, y):

@@ -7,6 +7,7 @@ from typing import Any
 
 from ..core._spec_base import _unify_specs
 from ..core._specs import InputSpec, TermSpec
+from ._call import ApplicabilityError
 
 
 def _lifted_element_spec(
@@ -34,22 +35,33 @@ def _bind_planned_function_inputs(
     values: Mapping[str, Any],
     lifted_names: set[str],
 ) -> tuple[InputSpec | None, dict[str, int]]:
-    """Bind pre-lifting values using event schemas for lifted inputs."""
+    """Bind pre-lifting values using event schemas for lifted inputs.
+
+    Raises
+    ------
+    ApplicabilityError
+        If the arguments' slots are not the declared ones, or an argument, the
+        event of a law the call lifts, or the element of a batch it sweeps does
+        not unify with its slot, the dimensions shared across slots included.
+    """
     if input_spec is None:
         return None, {}
     context = f"Function {function_name!r} input"
     if input_spec.keys() != values.keys():
-        raise ValueError(
+        raise ApplicabilityError(
             f"{context} fields {sorted(values)} do not match template fields {sorted(input_spec)}"
         )
     bindings: dict[str, int] = {}
-    for name, expected in input_spec.items():
-        path = f"{context}/{name}"
-        if name in lifted_names:
-            actual = _lifted_element_spec(
-                values[name], expected=expected, function_name=function_name, name=name
-            )
-            _unify_specs(expected, actual, bindings, path)
-        else:
-            expected._bind_dims_from_value(values[name], bindings, path)
+    try:
+        for name, expected in input_spec.items():
+            path = f"{context}/{name}"
+            if name in lifted_names:
+                actual = _lifted_element_spec(
+                    values[name], expected=expected, function_name=function_name, name=name
+                )
+                _unify_specs(expected, actual, bindings, path)
+            else:
+                expected._bind_dims_from_value(values[name], bindings, path)
+    except ValueError as error:
+        raise ApplicabilityError(str(error)) from error
     return input_spec.with_dim_sizes(**bindings), bindings

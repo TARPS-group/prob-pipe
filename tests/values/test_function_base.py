@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from probpipe import (
+    ApplicabilityError,
     DistributionSpec,
     Function,
     FunctionSpec,
@@ -99,7 +100,7 @@ class TestFunctionDeclarations:
         assert isinstance(result, Function)
         assert result.spec == declaration
         assert float(result(2)) == 3
-        with pytest.raises(ValueError, match="input/x"):
+        with pytest.raises(ApplicabilityError, match="input/x"):
             result(jnp.ones(2))
 
     def test_returned_array_batch_receives_its_declared_element_spec(self):

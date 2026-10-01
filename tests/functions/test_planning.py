@@ -189,9 +189,6 @@ class TestIncludingTheInputs:
 
 
 class TestFailures:
-    @pytest.mark.pending(
-        reason="conflicting declarations raise ApplicabilityError", raises=AssertionError
-    )
     def test_arguments_that_do_not_unify_raise_applicability_error(self):
         wrapped = Function(
             "add",

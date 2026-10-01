@@ -19,6 +19,7 @@ from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
 from ..values import _binding
 from . import _descendants, _normalization
+from ._call import ApplicabilityError
 
 BroadcastRegime = Literal["none", "distribution", "sweep", "nested"]
 StochasticExecutionMode = Literal["exact", "sampled"]
@@ -461,9 +462,9 @@ def build_array_zip_groups(
 
     Raises
     ------
-    ValueError
+    ApplicabilityError
         If two batches carry the same levels on different axes, or two groups
-        share a level without sharing all their levels.
+        share a level without sharing all their levels, naming the level.
     """
     groups: list[ArrayBroadcastGroup] = []
     for first, arg_refs in group_by_alignment(values=values, refs=refs):
@@ -474,11 +475,12 @@ def build_array_zip_groups(
             # partition with a ((2, 3), (4,)) one and hand the output whichever
             # arrived first.
             if tuple(other.axis_groups) != tuple(first.axis_groups):
-                raise ValueError(
-                    f"{arg_refs[0].label!r} and {ref.label!r} carry the same levels but "
-                    f"are batched differently: {tuple(first.axis_groups)} against "
-                    f"{tuple(other.axis_groups)}. Levels align by name, so operands naming "
-                    f"the same levels must hold them on the same axes"
+                raise ApplicabilityError(
+                    f"{arg_refs[0].label!r} and {ref.label!r} carry the same levels "
+                    f"{tuple(first.level_names)} but are batched differently: "
+                    f"{tuple(first.axis_groups)} against {tuple(other.axis_groups)}. Levels "
+                    f"align by name, so operands naming the same levels must hold them on the "
+                    f"same axes"
                 )
         batch_shape = tuple(first.batch_shape)
         groups.append(
@@ -502,7 +504,7 @@ def build_array_zip_groups(
         for level_name in dict.fromkeys(names):
             prior = owners.setdefault(level_name, (group.arg_refs[0].label, names))
             if prior[1] != names or prior[0] != group.arg_refs[0].label:
-                raise ValueError(
+                raise ApplicabilityError(
                     f"{prior[0]!r} and {group.arg_refs[0].label!r} share the level "
                     f"{level_name!r} without sharing all their levels ({prior[1]} against "
                     f"{names}). Aligning one shared level across differently-leveled operands "

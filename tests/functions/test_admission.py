@@ -113,9 +113,6 @@ class TestWrap:
 
         assert seen[0] is array
 
-    @pytest.mark.pending(
-        reason="admission reads the kind a raw argument wraps as", raises=AssertionError
-    )
     def test_a_raw_collection_wraps_as_opaque_and_fails_a_numeric_slot(self):
         wrapped = Function("f", lambda x: x, input_spec={"x": NumericArraySpec((2,))})
 
@@ -307,9 +304,6 @@ class TestAdmission:
 
         assert isinstance(result, Distribution)
 
-    @pytest.mark.pending(
-        reason="a declared-kind mismatch raises ApplicabilityError", raises=AssertionError
-    )
     def test_a_declared_kind_mismatch_names_the_parameter_what_it_accepts_and_what_arrived(self):
         wrapped = Function("f", lambda x: x, input_spec=InputSpec({"x": NumericArraySpec((2,))}))
 
@@ -318,10 +312,6 @@ class TestAdmission:
         assert isinstance(error, ApplicabilityError)
         assert "x" in str(error) and "NumericArraySpec" in str(error) and "str" in str(error)
 
-    @pytest.mark.pending(
-        reason="an object with methods passes only a parameter accepting Opaque",
-        raises=AssertionError,
-    )
     def test_a_bare_object_passes_only_a_parameter_that_accepts_opaque(self):
         class Sampler:
             def _sample(self, key, sample_shape=()):

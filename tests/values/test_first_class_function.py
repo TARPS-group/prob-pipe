@@ -19,6 +19,7 @@ import pytest
 import probpipe
 from probpipe import (
     Annotated,
+    ApplicabilityError,
     BatchSpec,
     Distribution,
     DistributionBatch,
@@ -567,7 +568,7 @@ class TestApplyContract:
             dispatch="sequential",
             n_broadcast_samples=5,
         )
-        with pytest.raises(ValueError, match=r"RecordSpec.*does not conform"):
+        with pytest.raises(ApplicabilityError, match=r"accepts NumericArraySpec.*RecordSpec"):
             wrapped(v=law)
 
     @pytest.mark.parametrize(
@@ -662,7 +663,7 @@ class TestApplyContract:
             dispatch="sequential",
         )
 
-        with pytest.raises(ValueError, match=r"RecordSpec.*does not conform"):
+        with pytest.raises(ApplicabilityError, match=r"accepts NumericArraySpec.*RecordSpec"):
             wrapped(v=rows)
 
     @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
@@ -691,7 +692,7 @@ class TestApplyContract:
         assert result.element_spec == NumericArraySpec((3,))
         np.testing.assert_allclose(result.values, np.asarray(data) + 1, rtol=0, atol=0)
         assert wrapped.input_spec.free_dims == {"n"}
-        with pytest.raises(ValueError, match="already bound"):
+        with pytest.raises(ApplicabilityError, match="already bound"):
             wrapped(x=rows, offset=jnp.ones(4))
 
     @pytest.mark.parametrize("entrypoint", ["apply", "__call__"])
@@ -731,7 +732,7 @@ class TestApplyContract:
             dispatch="sequential",
         )
 
-        with pytest.raises(ValueError, match=r"OpaqueSpec.*does not conform.*NumericArraySpec"):
+        with pytest.raises(ApplicabilityError, match=r"accepts NumericArraySpec.*OpaqueSpec"):
             wrapped(
                 v=OpaqueBatch(
                     "rows",
@@ -979,12 +980,14 @@ class TestSymbolicCalls:
         values = DistributionBatch("laws", [Normal("x", 0, 1), Normal("x", 1, 1)], "law")
 
         # Each element is a law, which an array input does not admit.
-        with pytest.raises(ValueError, match=r"input/x .*does not conform"):
+        with pytest.raises(
+            ApplicabilityError, match=r"'x' accepts NumericArraySpec.*DistributionSpec"
+        ):
             wrapped(values)
 
     def test_repeated_input_symbol_conflict_has_function_path(self, regression_function):
         with pytest.raises(
-            ValueError,
+            ApplicabilityError,
             match=r"Function 'function' input/p.*'p'.*already bound",
         ):
             regression_function(np.ones((3, 2)), np.ones((4,)))

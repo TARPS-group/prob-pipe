@@ -294,7 +294,12 @@ def _call_with_options_in_context(
         values=call.values,
         signature_info=function._signature_info,
     )
-    _call.admit_arguments(function._signature_info, values)
+    _call.admit_arguments(
+        function._signature_info,
+        values,
+        input_spec=function.input_spec,
+        function_name=function._name,
+    )
     broadcast_plan = _plan.build_broadcast_plan(
         values=values,
         signature_info=function._signature_info,
@@ -355,12 +360,15 @@ def _call_with_options_in_context(
             provenance_inputs[ref.label] = value
 
     def invoke_point(**point_values: Any) -> Any:
-        _, point_bindings = _bind_function_inputs(
-            function_name=function._name,
-            input_spec=function.input_spec,
-            values=point_values,
-            bindings=invocation_bindings,
-        )
+        try:
+            _, point_bindings = _bind_function_inputs(
+                function_name=function._name,
+                input_spec=function.input_spec,
+                values=point_values,
+                bindings=invocation_bindings,
+            )
+        except ValueError as error:
+            raise _call.ApplicabilityError(str(error)) from error
         context = _FunctionInvocationContext(point_bindings)
         result = function._invoke_resolved(point_values, context=context)
         try:
