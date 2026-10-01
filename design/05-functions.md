@@ -33,7 +33,7 @@ def predict(theta, x): ...                    # an ordinary callable over concre
 def predict(theta, x): ...
 ```
 
-**The engine.** The engine is one callable installed into the base's call path (III.3), once, at import. On concrete values it agrees with plain evaluation, adding only the wrap and the provenance. Every call runs the stack below in order, and a failure ends the call at its step. The stack reads three declarations from the `Function` it runs: what each parameter **accepts**, the **result declaration**, and the **realization**. For a `@function` the three are as follows. A parameter accepts its declared input spec, or any value where it is unannotated. The result declaration is the `output_spec` given at construction, bound per call by unification, or is read from the return when none was given. The realization is the body, or, for a lifted application, the route the evaluation registry selects (V.7).
+**The engine.** The engine is one callable installed as the base's call handler (III.3), once, at import. On concrete values it agrees with plain evaluation, adding only the wrap and the provenance. Every call runs the stack below in order, and a failure ends the call at its step. The stack reads three declarations from the `Function` it runs: what each parameter **accepts**, the **result declaration**, and the **realization**. For a `@function` the three are as follows. A parameter accepts its declared input spec, or any value where it is unannotated. The result declaration is the `output_spec` given at construction, bound per call by unification, or is read from the return when none was given. The realization is the body, or, for a lifted application, the route the evaluation registry selects (V.7).
 
 1. **Configure** (V.2). The effective controls are resolved: the framework's defaults, the decorator's values, and a `with_options` view, in that order.
 2. **Bind** (V.3). The arguments bind to the wrapped function's signature, tracked arguments as dependencies and the rest as inputs.
@@ -256,7 +256,7 @@ Execution first constructs the planned conversions in dependency order and valid
 
 ### Rationale
 
-Dispatch and orchestration are `C3 – Computational detail hidden by default, available on demand` in action: the algorithm that realizes a lifted call, and whether its graph is recorded, are computational concerns, handled automatically by default and exposed for users who need control. Keeping them orthogonal, so that how a call runs is independent of whether it is traced, lets the fast vectorized path and full lineage tracking compose rather than trade off.
+Dispatch and orchestration are `C3 – Computational detail hidden by default, available on demand` in action: the algorithm that realizes a lifted call, and whether its graph is recorded, are computational concerns, handled automatically by default and exposed for users who need control. Keeping them orthogonal, so that how a call runs is independent of whether it is traced, lets fast vectorized execution and full lineage tracking compose rather than trade off.
 
 ### Open points
 

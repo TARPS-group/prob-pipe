@@ -46,7 +46,7 @@ class FactoredFullyNumericConditionalDistribution(
 2. no factor of the closure consumes an extra field, and each factor that holds extra fields is exact at its fields in the target, through its own `SupportsMarginals` or, for a `ConditionalDistribution` factor, `SupportsConditionalMarginals`;
 3. the affected factors admit closed-form integration, as when they are jointly Gaussian.
 
-In the second case the marginal is the joint of the reduced factors. On any other path the exact route's guard declines, leaving the fallback available when sampling is supported and the fidelity controls permit it (VI.8).
+In the second case the marginal is the joint of the reduced factors. At any other path the exact route's guard rejects the call, leaving the fallback available when sampling is supported and the fidelity controls permit it (VI.8).
 
 ### Rationale
 
