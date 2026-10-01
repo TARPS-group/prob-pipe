@@ -30,6 +30,7 @@ from probpipe.inference._blackjax_sgmcmc import (
 )
 from probpipe.inference._inference_utils import observed_target
 from probpipe.inference._minibatch import MinibatchedDistribution
+from tests.inference._harness import validate_method
 
 # -- Fixtures ------------------------------------------------------------------
 
@@ -365,3 +366,11 @@ class TestConditionOnDispatch:
         # by execute() and threaded into MinibatchedDistribution.
         assert post.flat_samples.shape == (100, logistic_problem["P"])
         assert jnp.all(jnp.isfinite(post.flat_samples))
+
+
+# ---------------------------------------------------------------------------
+# The canonical cases of the cross-method validation harness
+# ---------------------------------------------------------------------------
+
+test_blackjax_sgld_canonical = validate_method("blackjax_sgld")
+test_blackjax_sghmc_canonical = validate_method("blackjax_sghmc")

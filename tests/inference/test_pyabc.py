@@ -31,6 +31,7 @@ from probpipe.inference._inference_utils import observed_target
 from probpipe.inference._pyabc import PyABCDistribution, PyABCSMCMethod
 from probpipe.modeling import GenerativeLikelihood, Likelihood
 from probpipe.modeling._simple_generative import SimpleGenerativeModel
+from tests.inference._harness import validate_method
 
 # Observation noise: small enough that the conjugate posterior concentrates.
 _SIGMA = 0.2
@@ -414,3 +415,10 @@ class TestPyABCDistributionBacking:
         StudentT, which has no scipy-converter mapping, is feasible."""
         model = _model(ProductDistribution(C.StudentT(df=5.0, loc=0.0, scale=3.0, name="t")))
         assert PyABCSMCMethod().check(observed_target(model, jnp.array([2.0]))).feasible
+
+
+# ---------------------------------------------------------------------------
+# The canonical cases of the cross-method validation harness
+# ---------------------------------------------------------------------------
+
+test_pyabc_smcabc_canonical = validate_method("pyabc_smcabc")

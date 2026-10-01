@@ -17,6 +17,7 @@ from probpipe import (
 from probpipe.inference import inference_method_registry
 from probpipe.inference._inference_utils import observed_target
 from probpipe.modeling._likelihood import Likelihood
+from tests.inference._harness import validate_method
 
 # TFP/JAX emit a deprecation warning during random-key construction
 # (``shape requires ndarray or scalar arguments, got <class 'NoneType'>``)
@@ -417,3 +418,11 @@ class TestCheckFeasibility:
         method = inference_method_registry.get_method("blackjax_nuts")
         info = method.check(observed_target(small_model, jnp.zeros((4,))))
         assert info.feasible is True
+
+
+# ---------------------------------------------------------------------------
+# The canonical cases of the cross-method validation harness
+# ---------------------------------------------------------------------------
+
+test_blackjax_nuts_canonical = validate_method("blackjax_nuts")
+test_blackjax_hmc_canonical = validate_method("blackjax_hmc")

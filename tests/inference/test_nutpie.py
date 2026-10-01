@@ -19,6 +19,7 @@ from probpipe.inference._nutpie import (
     _extract_chains,
     condition_on_nutpie,
 )
+from tests.inference._harness import validate_method
 
 # ---------------------------------------------------------------------------
 # Helpers (no model compilation needed)
@@ -398,3 +399,11 @@ class TestNutpieIntegration:
         assert set(draws.event_template.fields) == {"mu", "X"}
         np.testing.assert_allclose(float(jnp.mean(jnp.asarray(draws["mu"]))), 100.0, atol=10.0)
         np.testing.assert_allclose(float(jnp.mean(jnp.asarray(draws["X"]))), -100.0, atol=10.0)
+
+
+# ---------------------------------------------------------------------------
+# The canonical cases of the cross-method validation harness
+# ---------------------------------------------------------------------------
+
+test_nutpie_nuts_canonical_pymc = validate_method("nutpie_nuts", representation="pymc")
+test_nutpie_nuts_canonical_stan = validate_method("nutpie_nuts", representation="stan")
