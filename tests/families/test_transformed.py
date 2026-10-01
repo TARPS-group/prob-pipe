@@ -297,13 +297,26 @@ class TestTheSupport:
             (tfb.Sigmoid(), unit_interval),
             (tfb.Softplus(), positive),
             (tfb.Chain([tfb.Exp(), tfb.Shift(1.0)]), positive),
+            (tfb.Chain([tfb.Shift(1.0), tfb.Scale(2.0)]), real),
             (tfb.Shift(1.0), real),
         ],
-        ids=["exp", "sigmoid", "softplus", "chain", "shift"],
+        ids=["exp", "sigmoid", "softplus", "chain", "affine-chain", "shift"],
     )
     def test_a_backend_bijector_declares_its_image(self, standard, bijector, support):
         transformed = BijectorTransformedDistribution("td", standard, bijector)
         assert transformed.support == support
+
+    @pytest.mark.parametrize(
+        "bijector",
+        [tfb.Chain([tfb.Shift(1.0), tfb.Exp()]), tfb.Chain([tfb.Scale(2.0), tfb.Sigmoid()])],
+        ids=["shift-after-exp", "scale-after-sigmoid"],
+    )
+    def test_a_chain_with_an_inner_image_short_of_the_line_leaves_the_support_undeclared(
+        self, standard, bijector
+    ):
+        # The images, (1, ∞) and (0, 2), are not the outermost bijector's image, the line.
+        transformed = BijectorTransformedDistribution("td", standard, bijector)
+        assert transformed.support is None
 
     @pytest.mark.parametrize(
         "constraint",
