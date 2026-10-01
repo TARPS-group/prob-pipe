@@ -33,6 +33,7 @@ from ..values._binding import WorkflowInputRef, input_ref_value, replace_input_r
 from . import _execution, _plan, _recipe
 from ._broker import _record_active_execution_contract
 from ._context import _workflow_jax_runtime_guard
+from ._contract import _sole_leaf_path as _contract_sole_leaf_path
 from ._execution_contract import (
     make_execution_contract,
     supports_execution_contract,
@@ -567,11 +568,7 @@ def _sole_leaf_path(drawn: Any) -> str | None:
     from ..core._record_batch import RecordBatch
     from ..core.record import Record
 
-    if isinstance(drawn, (Record, RecordBatch)):
-        leaf_paths = tuple(drawn.event_template.keys())
-        if len(leaf_paths) == 1:
-            return leaf_paths[0]
-    return None
+    return _contract_sole_leaf_path(drawn.event_template) if isinstance(drawn, (Record, RecordBatch)) else None
 
 
 def _present_draw(drawn: Any) -> Any:

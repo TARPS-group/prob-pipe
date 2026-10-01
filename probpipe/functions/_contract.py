@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from ..core._record_spec import RecordSpec
 from ..core._spec_base import _unify_specs
 from ..core._specs import InputSpec, TermSpec
 
@@ -19,7 +20,12 @@ def _lifted_element_spec(
     if isinstance(value, Batch):
         return value.element_spec
     if isinstance(value, Distribution):
-        return value.event_spec.spec
+        spec = value.event_spec.spec
+        if isinstance(spec, RecordSpec):
+            path = _sole_leaf_path(spec)
+            if path is not None:
+                return spec[path]
+        return spec
     raise ValueError(
         f"Function {function_name!r} input {name!r} states no element specification for "
         f"lifting: a {type(value).__name__} reports neither an element_spec nor an "
@@ -53,3 +59,9 @@ def _bind_planned_function_inputs(
         else:
             expected._bind_dims_from_value(values[name], bindings, path)
     return input_spec.with_dim_sizes(**bindings), bindings
+
+
+def _sole_leaf_path(spec: RecordSpec) -> str | None:
+    """Return the sole leaf path, or None if the record has no or multiple leaves."""
+    paths = list(spec.keys())
+    return paths[0] if len(paths) == 1 else None

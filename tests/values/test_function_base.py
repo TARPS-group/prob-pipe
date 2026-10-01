@@ -12,6 +12,7 @@ import pytest
 
 from probpipe import (
     DistributionSpec,
+    EmpiricalDistribution,
     Function,
     FunctionSpec,
     InputSpec,
@@ -292,6 +293,48 @@ class TestLiftedNames:
         np.testing.assert_array_equal(
             result.values,
             [[0.0, 1.0], [1.0, 2.0], [2.0, 3.0]],
+        )
+        
+        
+class TestLiftedInputDeclarations:
+    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "auto"])
+    def test_declared_array_input_accepts_single_leaf_empirical(self, dispatch):
+        values = jnp.asarray([0.0, 1.0, 2.0])
+        law = EmpiricalDistribution("theta", values)
+        predict = Function(
+            "predict",
+            lambda theta: 2 * theta,
+            input_spec={"theta": NumericArraySpec(())},
+            dispatch=dispatch,
+        )
+        result = predict(theta=law)
+        assert result.num_atoms == 3
+        np.testing.assert_array_equal(result.samples["predict"], 2 * values)
+        
+    
+    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "auto"])
+    def test_declared_functions_compose_over_a_law(self, dispatch):
+        F = Function(
+            "F",
+            lambda theta: theta + 1,
+            input_spec={"theta": NumericArraySpec(())},
+            dispatch=dispatch,
+            n_broadcast_samples=8,
+        )
+        G = Function(
+            "G",
+            lambda x: x * 2,
+            input_spec={"x": NumericArraySpec(())},
+            dispatch=dispatch,
+        )
+        with workflow_run(seed=114514):
+            intermediate = F(Normal("theta", 0.0, 1.0))
+            result = G(intermediate)
+        assert intermediate.num_atoms == 8
+        assert result.num_atoms == 8
+        np.testing.assert_array_equal(
+            result.samples["G"],
+            2 * (intermediate.samples["F"]),
         )
 
 
