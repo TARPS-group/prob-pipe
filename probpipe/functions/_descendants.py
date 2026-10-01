@@ -219,11 +219,24 @@ def _capture_stochastic_consumer(
         return _capture_descendant(value, *rule, session=session)
     return CapturedStochasticConsumer(
         root=value,
-        sample_root=value._sample,
+        sample_root=_sampler(value),
         record_path=(),
         descendant_descriptor=None,
         evaluator=_identity,
     )
+
+
+def _sampler(root: Distribution) -> Callable[[Any, tuple[int, ...]], Any]:
+    """The sampler of *root*, which reads ``root._sample`` when it draws.
+
+    A check reads the root of a law that does not sample without failing, and
+    the sampling lift then declines the law.
+    """
+
+    def sample(key: Any, sample_shape: tuple[int, ...]) -> Any:
+        return root._sample(key, sample_shape)
+
+    return sample
 
 
 def _capture_element(

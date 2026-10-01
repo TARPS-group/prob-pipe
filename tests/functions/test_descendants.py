@@ -521,6 +521,24 @@ class TestLifts:
 
         np.testing.assert_allclose(_raw_mean(result), 0.0, atol=1e-5)
 
+    def test_a_transform_passed_before_its_empirical_root_enumerates(self):
+        root = EmpiricalDistribution(
+            "base", jnp.asarray([1.0, 4.0]), weights=jnp.asarray([0.2, 0.8])
+        )
+        exponentiated = BijectorTransformedDistribution("exponentiated", root, tfb.Exp())
+        workflow = Function(
+            "function",
+            lambda exp_base, base: exp_base - jnp.exp(base),
+            dispatch="sequential",
+            n_broadcast_samples=16,
+        )
+
+        with patch.object(type(root), "_sample", side_effect=AssertionError("sampled exact root")):
+            result = workflow.with_options(exact_only=True)(exponentiated, root)
+
+        assert result.num_atoms == 2
+        np.testing.assert_allclose(_raw_mean(result), 0.0, atol=1e-5)
+
     def test_an_exact_record_projection_then_transform_stays_diagonal(self):
         root = EmpiricalDistribution(
             "joint",

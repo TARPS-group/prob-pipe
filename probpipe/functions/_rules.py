@@ -57,7 +57,7 @@ from ..distributions._capabilities import SupportsSampling
 from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
 from ..values import Function, _binding
-from . import _plan
+from . import _descendants, _plan
 
 __all__ = ["FLOOR_PRIORITY", "evaluation_rule_registry"]
 
@@ -295,8 +295,10 @@ class _EmpiricalEnumeration(BinaryDispatchMethod):
 
         A group enumerates when its root is an empirical law, and the product of
         the groups' atom counts is at most the ``n_broadcast_samples`` control.
-        A call whose groups' roots are not all empirical is declined before any
-        plan is built.
+        The operand's root is read as the lift reads it, through views, batch
+        elements, and registered descendants, so the decision does not depend
+        on the order of the arguments. A call whose operand's root is not
+        empirical is declined before any plan is built.
 
         Returns
         -------
@@ -305,7 +307,7 @@ class _EmpiricalEnumeration(BinaryDispatchMethod):
             group that does not enumerate within the sample count, which the
             sampling lift then realizes.
         """
-        root = getattr(operand, "parent", None) or operand
+        root = _descendants.capture_stochastic_consumer(operand).root
         if not isinstance(root, EmpiricalDistribution):
             return Feasibility(False, f"{_describe(root)} is not an empirical law")
         values = _call_values(operand, parameter, fixed_args)
