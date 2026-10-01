@@ -10,9 +10,9 @@ The terms of art of the reference, in alphabetical order. Each entry defines its
 - **component**: a named part of the interface that an `OutputSpec` declares for one produced term, which is the whole term under one name or each field of an exposed record (II.2). The components of a `MixtureDistribution` are its component laws (VII.3).
 - **conversion**: a change of a distribution's representation that preserves its law, up to the recorded fidelity, and its event declaration; a converter is the registered method that carries one out (IV.3).
 - **declaration**: static information an object states before any computation, such as a spec, a claimed capability, or a method's exactness (II.7). In particular, an `InputSpec` declares a map-like kind's input slots, an `OutputSpec` declares the components of one produced term, and a law's event declaration is the `OutputSpec` of a draw (II.2, III.7).
-- **derived operation**: an operation defined by an identity over other operations, such as `prob = exp ∘ log_prob` (VI.0, VI.4).
+- **derived operation**: an operation defined by an identity over other operations, such as `prob = exp ∘ log_prob` or `expectation(d, f) = mean(evaluate(f, d))` (VI.0, VI.4, VI.5).
 - **element**: one object of a batch, at one position of its batch axes (II.5). The scalar values of an array are its entries.
-- **evaluation rule**: a method of the evaluation-rule registry, which realizes a map applied to a distribution or a batch, such as a closed-form rule or the sampling lift (V.7).
+- **evaluation rule**: a method of the evaluation-rule registry, which realizes a map applied to a distribution or a batch, such as a closed-form rule, an integration rule, or the sampling lift (V.7).
 - **event**: one value of a distribution's space, such as a draw or a stored datum, typed by the law's event declaration (III.5, III.7). A workflow-owned random event is one draw's occurrence in a workflow scope (V.8).
 - **exact and approximate**: a method or route is exact when its returned representation denotes the requested mathematical result, and approximate when it returns a stand-in for that result (II.7).
 - **factor**: a constituent `Distribution` or `ConditionalDistribution` that a factored joint was built from (IV.1); `factor(d, component_name)` returns the one that produces a component (VI.8).

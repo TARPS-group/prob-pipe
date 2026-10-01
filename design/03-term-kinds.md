@@ -500,7 +500,7 @@ class SupportsMarginals(Protocol):
     def _marginal(self, path: str | tuple[str, ...]) -> Distribution: ...   # the detached marginal of a field or field group
 ```
 
-Here `Key` is a PRNG key and `ArrayLike` an array-or-scalar input. `_expectation` integrates an *arbitrary* function exactly, which in practice means finite support: its argument is an opaque callable, so a guard has only the law to inspect, and only a law exact for every integrand claims the capability. Exact moments of structured maps are computed by `evaluate`, which dispatches on the map's type. A law of finite support, such as an empirical law, computes `_expectation(f)` by evaluating `f` at every atom whatever `f` is, in one vectorized call when `f` traces, as `auto` dispatch does (V.9), and one atom at a time otherwise.
+Here `Key` is a PRNG key and `ArrayLike` an array-or-scalar input. `_expectation` integrates an *arbitrary* function exactly, which in practice means finite support: its argument is an opaque callable, so a guard has only the law to inspect, and only a law exact for every integrand claims the capability. The exact expectation of a structured map is computed through `evaluate`, which dispatches on the map's type (VI.5). A law of finite support, such as an empirical law, computes `_expectation(f)` by evaluating `f` at every atom whatever `f` is, in one vectorized call when `f` traces, as `auto` dispatch does (V.9), and one atom at a time otherwise.
 
 `d._marginal(p)` returns a law labeled as `d` is and declared as the view `d[p]` is (III.7), and at a selection its fields follow the order of the paths.
 
