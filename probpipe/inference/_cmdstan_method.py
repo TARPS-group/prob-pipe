@@ -45,6 +45,8 @@ class CmdStanNutsMethod(InferenceMethod):
     applies to a disjoint model class.
     """
 
+    _method_options = ("num_chains", "num_results", "num_warmup", "random_seed")
+
     @property
     def name(self) -> str:
         return "cmdstan_nuts"
@@ -71,6 +73,7 @@ class CmdStanNutsMethod(InferenceMethod):
         draws of the parameter blocks alone, each in its own shape, and no
         sampler, transformed, or generated column.
         """
+        self._check_options(kwargs)
         cmdstanpy = _import_cmdstanpy()
 
         num_results = kwargs.get("num_results", 1000)

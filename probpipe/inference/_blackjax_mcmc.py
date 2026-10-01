@@ -290,6 +290,16 @@ def _extract_blackjax_sample_stats(
 class _BlackJAXMCMCMethod(InferenceMethod):
     """Base for BlackJAX gradient MCMC methods (NUTS, HMC)."""
 
+    _method_options = (
+        "init",
+        "num_chains",
+        "num_integration_steps",
+        "num_results",
+        "num_warmup",
+        "random_seed",
+        "step_size",
+    )
+
     def __init__(self, algorithm: Algorithm, method_name: str, method_priority: int | None):
         self._algorithm = algorithm
         self._method_name = method_name
@@ -330,6 +340,7 @@ class _BlackJAXMCMCMethod(InferenceMethod):
 
     def execute(self, target: Any, /, **kwargs: Any) -> ApproximateDistribution:
         """Chains of the BlackJAX kernel on the flat form of the target's unnormalized density."""
+        self._check_options(kwargs)
         random_seed: int = kwargs.get("random_seed", 0)
         model, observed = observed_parts(target)
         target_flat, flat_init, event_spec = build_target_log_prob_flat(

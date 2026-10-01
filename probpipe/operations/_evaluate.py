@@ -17,7 +17,7 @@ from ..core._spec_base import TermSpec
 from ..core._specs import OutputSpec
 from ..functions import _plan, _rules
 from ..functions._call import ApplicabilityError
-from ..values import Function, FunctionSpec, _binding
+from ..values import Function, FunctionSpec
 from ._operation import BoundCall, RouteSource, _CheckedRoute, operation
 
 __all__ = ["evaluate"]
@@ -99,8 +99,7 @@ def _call_values(call: BoundCall) -> tuple[Function, str, Any, dict[str, Any]]:
 
 def _lifts(f: Function, parameter: str, operand: Any) -> bool:
     """Whether the direct call lifts *operand* at *parameter*: a law sampled or a batch swept."""
-    hint = _binding.parameter_lifting_hint(f._signature_info, parameter)
-    return _plan.is_broadcast(operand, hint) or _plan.is_swept(operand, hint)
+    return _plan.lift_at(f, parameter, operand) != "whole"
 
 
 def _evaluation_rules_check(call: BoundCall, result: OutputSpec | None) -> Any:

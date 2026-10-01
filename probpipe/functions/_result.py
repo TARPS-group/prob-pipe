@@ -13,13 +13,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import replace
 from math import prod
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import jax.numpy as jnp
 import numpy as np
 
-from ..core._array_backend import _event_shape_of, _to_jax_array
-from ..core._batch import BatchSpec, _ranks_of
+from ..core._array_backend import _event_shape_of, _numpy_dtype_of, _to_jax_array
+from ..core._batch import Batch, BatchSpec, _ranks_of
 from ..core._function_batch import FunctionBatch
 from ..core._kinds import batch_class_for_spec
 from ..core._numeric_array import NumericArray
@@ -30,13 +30,16 @@ from ..core._object_batch import _from_iterable, _is_object_array, _ObjectBatch
 from ..core._opaque import Opaque
 from ..core._opaque_batch import OpaqueBatch
 from ..core._record_batch import RecordBatch, _batch_class_for, _MappedBatchColumns
-from ..core._spec_base import _full_array_shape_or_none
+from ..core._record_spec import _reshaped_template
+from ..core._spec_base import _full_array_shape_or_none, _unify_specs
 from ..core._specs import NumericArraySpec, OutputSpec, RecordSpec
+from ..core.named_tree import _unflatten_paths
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
 from ..distributions._batches import DistributionBatch
 from ..distributions._distribution import Distribution
+from ..values._function_base import _validate_function_output
 
 BroadcastMode = Literal["wrap", "stack", "nested"]
 BROADCAST_WRAP: BroadcastMode = "wrap"
@@ -998,3 +1001,141 @@ def _make_stack(
         f"{type(inner_outputs).__name__}; expected a list, jnp.ndarray, "
         f"or batched Record."
     )
+
+
+# ---------------------------------------------------------------------------
+# The return of a Function realized by routes
+# ---------------------------------------------------------------------------
+
+
+def declared_term(value: Any, declared: OutputSpec | None, label: str) -> Any:
+    """*value* validated against *declared* and wrapped at the kind it names, labeled *label*.
+
+    This is the return step of one point of a call that a route realized
+    (V.10): a type hole is completed from *value*, a batch declaration reads
+    *value*'s leading axes as its levels, and an undeclared result wraps by
+    the kind-directed table.
+
+    Raises
+    ------
+    ResultSchemaError
+        If *value* does not satisfy the declaration.
+    """
+    try:
+        if declared is not None and isinstance(declared.spec, BatchSpec):
+            return _batch_at(value, declared.spec, label)
+        if declared is None:
+            return _wrap_as_term(value, label)
+        completed = _validate_function_output(
+            function_name=label, output_spec=declared, result=value, bindings={}
+        )
+    except ResultSchemaError:
+        raise
+    except ValueError as error:
+        raise ResultSchemaError(str(error)) from error
+    return _wrap_declared_function_output(
+        value, function_name=label, output_spec=cast("OutputSpec", completed)
+    )
+
+
+def _batch_at(value: Any, spec: BatchSpec, label: str) -> Any:
+    """*value*, whose leading axes range over *spec*'s levels, as the batch *spec* declares.
+
+    A batch is kept as it is. Record columns and stacked arrays become the
+    batch form of their element kind, whose element declaration is read from
+    the value and unified with the declared one, and an object array becomes
+    the batch form the kind table records for the declared element.
+
+    Raises
+    ------
+    ValueError
+        If the leading axes are not the declared batch shape, the element does
+        not unify with the declared element, or *value* has no batch form.
+    """
+    batch_shape = tuple(spec.batch_shape)
+    ranks = _ranks_of(spec.axis_groups)
+    levels = tuple(spec.level_names)
+    n_axes = len(batch_shape)
+
+    def require_leading(shape: tuple[Any, ...]) -> None:
+        if tuple(shape[:n_axes]) != batch_shape:
+            raise ValueError(
+                f"{label}: the result's leading axes {tuple(shape[:n_axes])} are not the "
+                f"declared batch shape {batch_shape}"
+            )
+
+    if isinstance(value, Batch):
+        require_leading(tuple(value.batch_shape))
+        return value
+    if isinstance(value, Mapping) and not isinstance(value, Record):
+        # A record-valued route returns the nested mapping of its stacked columns.
+        value = Record(label, **value)
+    if isinstance(value, Record):
+        template = value.event_template
+        columns = {path: value[path] for path in template}
+        for column in columns.values():
+            require_leading(tuple(_event_shape_of(column)))
+        element = _reshaped_template(template, lambda shape: shape[n_axes:])
+        _unify_specs(spec.element_spec, element, {}, f"{label} element")
+        return _batch_class_for(element)(
+            label, columns, levels, element_spec=element, axes_per_level=ranks
+        )
+    if _is_object_array(value):
+        require_leading(value.shape)
+        batch_class = batch_class_for_spec(spec.element_spec)
+        if batch_class is not None and batch_class is not NumericArrayBatch:
+            return batch_class(
+                label, value, levels, element_spec=spec.element_spec, axes_per_level=ranks
+            )
+        return _make_stack(
+            list(value.reshape((prod(batch_shape), *value.shape[n_axes:]))),
+            batch_shape=batch_shape,
+            axis_groups=tuple(spec.axis_groups),
+            level_names=levels,
+            field_name=label,
+            name=label,
+        )
+    if _is_numeric_leaf(value):
+        shape = tuple(_event_shape_of(value))
+        require_leading(shape)
+        declared = spec.element_spec
+        support = declared.support if isinstance(declared, NumericArraySpec) else None
+        element = NumericArraySpec(shape[n_axes:], _numpy_dtype_of(value), support)
+        _unify_specs(declared, element, {}, f"{label} element")
+        return NumericArrayBatch(label, value, levels, element_spec=element, axes_per_level=ranks)
+    raise ValueError(f"{label}: a {type(value).__name__} has no form as the declared batch")
+
+
+def raw_form(term: Any) -> Any:
+    """*term*'s representation, detached from the workflow, as a routed call returns it raw.
+
+    An array is its stored array, a record the nested mapping of its raw
+    leaves, and a batch its storage view: the stacked array, the nested
+    mapping of raw columns, or the object array of the stored elements. An
+    opaque value is the object it wraps, a function its wrapped callable, and
+    a law or a kernel is its own representation, without provenance.
+    """
+    from ..values import Function
+
+    if isinstance(term, (NumericArray, Opaque)):
+        return term.value
+    if isinstance(term, Record):
+        return _raw_leaves(term.to_nested_dict())
+    if isinstance(term, NumericArrayBatch):
+        return term.values
+    if isinstance(term, RecordBatch):
+        return _unflatten_paths(term._raw_columns())
+    if isinstance(term, _ObjectBatch):
+        return term._store
+    if isinstance(term, Function):
+        return term.raw()
+    if isinstance(term, TrackedTerm) and term.provenance is not None:
+        return _copy_result_term(term)
+    return term
+
+
+def _raw_leaves(node: Any) -> Any:
+    """A record's nested mapping, each leaf at its raw form."""
+    if isinstance(node, dict):
+        return {name: _raw_leaves(child) for name, child in node.items()}
+    return raw_form(node)

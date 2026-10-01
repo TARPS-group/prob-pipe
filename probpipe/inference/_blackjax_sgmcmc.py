@@ -82,6 +82,18 @@ def _build_grad_estimator(measure: RandomMeasure, unflatten: Callable[[Array], A
 # ---------------------------------------------------------------------------
 
 
+#: The ``method_options`` entries both SG-MCMC methods read.
+_SGMCMC_OPTIONS = (
+    "batch_size",
+    "init",
+    "num_results",
+    "num_warmup",
+    "random_seed",
+    "step_size",
+    "with_replacement",
+)
+
+
 class _BlackJAXSGMCMCMethod(InferenceMethod):
     """Base for the two BlackJAX SGMCMC methods.
 
@@ -93,6 +105,7 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
 
     _method_name: str = ""
     _method_priority: int | None = None
+    _method_options = _SGMCMC_OPTIONS
 
     @property
     def name(self) -> str:
@@ -149,6 +162,7 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
 
     def execute(self, target: Any, /, **kwargs: Any) -> ApproximateDistribution:
         """Run the SGMCMC kernel; return an :class:`ApproximateDistribution`."""
+        self._check_options(kwargs)
         factors = model_factors(target)
         batch_size: int = kwargs["batch_size"]
         num_results: int = kwargs.get("num_results", 1000)
@@ -282,6 +296,7 @@ class BlackJAXSGHMCMethod(_BlackJAXSGMCMCMethod):
 
     _method_name = "blackjax_sghmc"
     _method_priority = None
+    _method_options = (*_SGMCMC_OPTIONS, "alpha", "beta", "num_integration_steps")
 
     def _build_algorithm(self, grad_estimator, **kwargs: Any):
         num_integration_steps: int = kwargs.get("num_integration_steps", 10)

@@ -141,6 +141,15 @@ def _chain_target(
 class _TFPGradientMethod(InferenceMethod):
     """Base for TFP gradient-based MCMC methods (NUTS, HMC)."""
 
+    _method_options = (
+        "init",
+        "num_chains",
+        "num_results",
+        "num_warmup",
+        "random_seed",
+        "step_size",
+    )
+
     def __init__(self, algorithm: str, method_name: str, method_priority: int | None):
         self._algorithm = algorithm
         self._method_name = method_name
@@ -186,6 +195,7 @@ class _TFPGradientMethod(InferenceMethod):
 
     def execute(self, target: Any, /, **kwargs: Any) -> ApproximateDistribution:
         """Chains of the TFP kernel on the target's unnormalized density."""
+        self._check_options(kwargs)
         random_seed = kwargs.get("random_seed", 0)
         model, observed = observed_parts(target)
         density, init, event_spec = _chain_target(

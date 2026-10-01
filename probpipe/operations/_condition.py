@@ -19,8 +19,9 @@ The routes, in selection order:
 1. ``curry`` binds given slots of a kernel through its ``_condition_on``, which
    is exact unless the kernel claims ``SupportsApproximateConditioning``, and
    normalizes the result.
-2. ``slice`` assembles the conditional from a factored law's normalized factors
-   when the conditioned fields admit an exact slice.
+2. ``slice`` assembles the conditional from a factored law's factors when the
+   conditioned fields are the whole event of factors upstream of the rest, or
+   part of a law's that conditions on them exactly, and normalizes the result.
 3. ``exact_conditioning`` calls ``_condition_on`` on a law claiming
    ``SupportsExactConditioning``.
 4. ``bayes`` curries any given slots the given names, forms the unnormalized
@@ -45,20 +46,18 @@ conditional capabilities state whether its laws are normalized. ``check``
 computes no exact stage, so it reports a curry unresolved when the kernel's
 capabilities do not state it, and the call reads the computed law's own.
 
-The inference methods' own parameters, such as warmup lengths, are controls set
-through ``with_options``. Each route declares the controls it reads: the routes
-that normalize pass the parameters of the registered inference methods to the
-selected method, or, when they curry a kernel normalized per value, to the
-method that normalizes the law it yields; ``approximate_conditioning`` passes
-an amortized posterior's sample count and seed to its ``_condition_on`` as
-keyword options, and the other routes read none. A control that no route
-declares raises ``TypeError`` at ``with_options``.
+The inference methods' budgets, such as warmup lengths, are the entries of the
+``method_options`` control. The routes that normalize pass them to the selected
+method, or, when they curry a kernel normalized per value, to the method that
+normalizes the law it yields; ``approximate_conditioning`` passes them to the
+law's ``_condition_on`` as keyword options, and the other routes read none. The
+method that runs validates them: an inference method refuses an entry it does
+not read with ``TypeError``, naming the entries it reads.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
-from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, ClassVar
@@ -89,17 +88,21 @@ from ..distributions._capabilities import (
 from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
 from ..distributions._distribution import Distribution, DistributionSpec
 from ..distributions._empirical import EmpiricalDistribution
-from ..distributions._factored import SupportsFactors
+from ..distributions._factored import (
+    FactoredDistribution,
+    SupportsFactors,
+    _bound_factor,
+)
+from ..functions._call import checking
+from ..functions._resolution import PointReport
 from ._convert import convert
 from ._operation import (
     BoundCall,
-    Operation,
     RouteSource,
     _CheckedRoute,
-    _PointCheck,
     _RegistryRoute,
     _workflow_draws,
-    operation_registry,
+    operation,
 )
 from ._sample import _record_batch, _sample_result, _sample_shape, sample
 
@@ -109,9 +112,6 @@ _PATH_SEP = "/"
 
 #: The name of the route that returns the exact stage's result.
 _UNNORMALIZED = "unnormalized"
-
-#: Whether the routes are probed for ``check``, which computes no exact stage.
-_CHECKING: ContextVar[bool] = ContextVar("condition_on_checking", default=False)
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +130,10 @@ class InferenceMethod(UnaryDispatchMethod):
     requires of the target, such as an unnormalized density, a backend program,
     or the joint and the given values to simulate from.
 
+    A method validates the ``method_options`` entries it receives when it runs:
+    a subclass names the entries its ``execute`` reads in ``_method_options``
+    and calls :meth:`_check_options` before it computes anything.
+
     Notes
     -----
     Every inference method is approximate: a finite MCMC, SG-MCMC, slice,
@@ -139,9 +143,33 @@ class InferenceMethod(UnaryDispatchMethod):
     representation of the conditional law itself overrides ``exact``.
     """
 
+    #: The ``method_options`` entries the method reads; ``None`` names none, for a
+    #: method that validates its entries itself.
+    _method_options: ClassVar[tuple[str, ...] | None] = None
+
     @property
     def exact(self) -> bool:
         return False
+
+    def _check_options(self, options: Mapping[str, Any]) -> None:
+        """Refuse a ``method_options`` entry that the method does not read.
+
+        A method whose ``_method_options`` is ``None`` admits every entry.
+
+        Raises
+        ------
+        TypeError
+            Naming the method, the entries it does not read, and those it reads.
+        """
+        reads = self._method_options
+        if reads is None:
+            return
+        unread = sorted(set(options) - set(reads))
+        if unread:
+            raise TypeError(
+                f"method_options {unread} are not options of the inference method "
+                f"{self.name!r}, which reads {sorted(reads)}"
+            )
 
 
 #: The builder of the target of a model and its observed data, which
@@ -176,20 +204,14 @@ class _InferenceMethodRegistry(UnaryDispatchRegistry[UnaryDispatchMethod]):
         """The selected method's result; see :meth:`UnaryDispatchRegistry.execute`.
 
         The keyword options are the call's ``method_options``, which the
-        selected method validates before it runs.
+        selected method validates when it runs.
 
         Raises
         ------
         TypeError
-            If an option is one the selected method does not read.
+            If the selected method refuses an option it does not read.
         """
-        targets = self._targets(args)
-        if kwargs:
-            selected = method
-            if selected is None:
-                selected = super().check(*targets, exact_only=exact_only, **kwargs).method_name
-            _check_method_options(selected, kwargs)
-        return super().execute(*targets, method=method, exact_only=exact_only, **kwargs)
+        return super().execute(*self._targets(args), method=method, exact_only=exact_only, **kwargs)
 
     @staticmethod
     def _targets(args: tuple[Any, ...]) -> tuple[Any, ...]:
@@ -210,82 +232,6 @@ class _InferenceMethodRegistry(UnaryDispatchRegistry[UnaryDispatchMethod]):
 #: The registry of the normalization stage, keyed on the target's type; the
 #: methods of ``probpipe.inference`` register here.
 inference_method_registry: UnaryDispatchRegistry[UnaryDispatchMethod] = _InferenceMethodRegistry()
-
-
-_MCMC_OPTIONS = ("init", "num_chains", "num_results", "num_warmup", "random_seed", "step_size")
-_SGMCMC_OPTIONS = (
-    "batch_size",
-    "init",
-    "num_results",
-    "num_warmup",
-    "random_seed",
-    "step_size",
-    "with_replacement",
-)
-_BACKEND_NUTS_OPTIONS = ("num_chains", "num_results", "num_warmup", "random_seed")
-
-#: The ``method_options`` entries each inference method registered by
-#: :mod:`probpipe.inference` reads, by method name, against which the
-#: registry validates a call's options before the method runs.
-_INFERENCE_METHOD_OPTIONS: Mapping[str, tuple[str, ...]] = MappingProxyType(
-    {
-        "blackjax_nuts": (*_MCMC_OPTIONS, "num_integration_steps"),
-        "blackjax_hmc": (*_MCMC_OPTIONS, "num_integration_steps"),
-        "blackjax_rwmh": (*_MCMC_OPTIONS, "adapt", "n_windows", "proposal_cov"),
-        "blackjax_elliptical_slice": (
-            "init",
-            "num_chains",
-            "num_results",
-            "num_warmup",
-            "random_seed",
-        ),
-        "blackjax_sgld": _SGMCMC_OPTIONS,
-        "blackjax_sghmc": (*_SGMCMC_OPTIONS, "alpha", "beta", "num_integration_steps"),
-        "tfp_nuts": _MCMC_OPTIONS,
-        "tfp_hmc": _MCMC_OPTIONS,
-        "nutpie_nuts": _BACKEND_NUTS_OPTIONS,
-        "cmdstan_nuts": _BACKEND_NUTS_OPTIONS,
-        "pymc_nuts": (*_BACKEND_NUTS_OPTIONS, "cores"),
-        "pymc_advi": ("num_iterations", "num_results", "random_seed", "vi_method"),
-        "pyabc_smcabc": (
-            "distance_fn",
-            "eps",
-            "eps_alpha",
-            "max_populations",
-            "max_total_nr_simulations",
-            "max_walltime",
-            "min_acceptance_rate",
-            "minimum_epsilon",
-            "n_particles",
-            "random_seed",
-            "sampler",
-            "summary_fn",
-            "transitions",
-        ),
-    }
-)
-
-
-def _check_method_options(method: str | None, options: Mapping[str, Any]) -> None:
-    """Refuse a ``method_options`` entry that the inference method *method* does not read.
-
-    A method outside the table of the registered methods' options validates its
-    own options.
-
-    Raises
-    ------
-    TypeError
-        Naming the method, the entries it does not read, and those it reads.
-    """
-    reads = _INFERENCE_METHOD_OPTIONS.get(method or "")
-    if reads is None:
-        return
-    unread = sorted(set(options) - set(reads))
-    if unread:
-        raise TypeError(
-            f"method_options {unread} are not options of the inference method {method!r}, "
-            f"which reads {sorted(reads)}"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -896,11 +842,191 @@ def _never(call: BoundCall) -> bool:
     return False
 
 
+def _slice_plan(d: Any, keys: tuple[str, ...]) -> tuple[Feasibility, dict[int, frozenset[str]]]:
+    """Whether the slice applies to the factored law *d* at *keys*, and what it fixes in each factor.
+
+    Returns
+    -------
+    tuple
+        The report, and the components the given fixes in each factor it
+        touches, by the factor's index.
+    """
+    factors = d.factors
+    producer = {
+        component: index
+        for index, factor in enumerate(factors)
+        for component in factor.event_spec.components
+    }
+    fixed: dict[int, set[str]] = {}
+    for key in keys:
+        if key not in producer:
+            reason = (
+                f"conditioning the interior path {key!r} is not implemented"
+                if _head(key) in producer
+                else f"{key!r} is not a component of the factors"
+            )
+            return Feasibility(False, f"route 'slice' declined: {reason}"), {}
+        fixed.setdefault(producer[key], set()).add(key)
+    whole = {
+        index
+        for index, components in fixed.items()
+        if components == set(factors[index].event_spec.components)
+    }
+    if len(whole) == len(factors):
+        return Feasibility(
+            False, "route 'slice' declined: the given names every produced field, leaving no law"
+        ), {}
+    for index, components in sorted(fixed.items()):
+        factor = factors[index]
+        slots = factor.given_spec if isinstance(factor, ConditionalDistribution) else {}
+        free = sorted(
+            component
+            for parent in sorted({producer[slot] for slot in slots if slot in producer} - whole)
+            for component in factors[parent].event_spec.components
+        )
+        if free:
+            return Feasibility(
+                False,
+                f"route 'slice' declined: the factor producing {sorted(components)} conditions "
+                f"on {free}, which the given leaves free, so the conditional is not a product "
+                f"of the factors",
+            ), {}
+        if index in whole:
+            continue
+        others = sorted(set(factor.event_spec.components) - components)
+        if not isinstance(factor, SupportsExactConditioning) or isinstance(
+            factor, ConditionalDistribution
+        ):
+            return Feasibility(
+                False,
+                f"route 'slice' declined: the factor producing {sorted(components)} produces "
+                f"{others} as well, and it does not condition on them exactly, since its fields "
+                f"are not assumed independent",
+            ), {}
+        guard = _capability_guard(factor, "_condition_on", tuple(sorted(components)))
+        if guard.feasible is not True:
+            return guard, {}
+    return Feasibility(True), {index: frozenset(components) for index, components in fixed.items()}
+
+
+def _can_slice(call: BoundCall) -> Feasibility:
+    """The given fixes whole factors upstream of every factor it touches, or part of a law's.
+
+    Every key names a component of a factored law. A factor the given touches
+    either has every component fixed, or is a law whose exact conditioning
+    admits the fixed components, and every factor it conditions on has every
+    component fixed, so the conditional is the product of the other factors at
+    the fixed values. At least one component stays unconditioned.
+    """
+    d, keys = call.operands["d"], _given_keys(call.operands["given"])
+    if not isinstance(d, SupportsFactors) or isinstance(d, ConditionalDistribution):
+        return Feasibility(
+            False, "route 'slice' declined: the conditioned object is not a joint law"
+        )
+    if not keys:
+        return Feasibility(False, "route 'slice' declined: the given names no field")
+    return _slice_plan(d, keys)[0]
+
+
+def _sliced_factors(call: BoundCall) -> list[tuple[Any, frozenset[str], dict[str, Any]]]:
+    """Each factor the slice keeps, with the components it fixes there and the values it binds.
+
+    A factor whose components are all fixed drops out, and a kernel binds the
+    fixed components it conditions on.
+    """
+    d = call.operands["d"]
+    values = _given_values(call.operands["given"])
+    _, fixed = _slice_plan(d, tuple(values))
+    kept = []
+    for index, factor in enumerate(d.factors):
+        components = fixed.get(index, frozenset())
+        if components == set(factor.event_spec.components):
+            continue
+        slots = factor.given_spec if isinstance(factor, ConditionalDistribution) else {}
+        bound = {slot: values[slot] for slot in slots if slot in values}
+        kept.append((factor, components, bound))
+    return kept
+
+
+def _slice(call: BoundCall) -> Any:
+    """The product of the factors the given leaves unconditioned, at the fixed values.
+
+    A law fixed in part is replaced by its exact conditional, and a kernel is
+    curried at the fixed components it conditions on, receiving the call's
+    ``method_options`` where evaluating it runs a method, as in currying. One
+    factor kept is the result itself.
+
+    Raises
+    ------
+    ValueError
+        If a law's exact conditional does not produce the components the given
+        leaves free in it.
+    """
+    d = call.operands["d"]
+    values = _given_values(call.operands["given"])
+    factors = []
+    for factor, components, bound in _sliced_factors(call):
+        if components:
+            free = set(factor.event_spec.components) - components
+            factor = factor._condition_on({key: values[key] for key in sorted(components)})
+            if set(factor.event_spec.components) != free:
+                raise ValueError(
+                    f"the exact conditional of {d.name!r}'s factor on {sorted(components)} "
+                    f"produces {sorted(factor.event_spec.components)}, not {sorted(free)}"
+                )
+        if bound:
+            options: dict[str, Any] = {}
+            if isinstance(factor, (_PerValueNormalization, SupportsApproximateConditioning)):
+                options = dict(call.controls.get("method_options", {}))
+            factor = _bound_factor(factor, bound, options)
+        factors.append(factor)
+    law = factors[0] if len(factors) == 1 else FactoredDistribution(d.name, factors)
+    if law.provenance is None:
+        law.with_provenance(
+            Provenance.create(
+                "condition_on", parents=[d], metadata={"stage": "exact", "route": "slice"}
+            )
+        )
+    return law
+
+
+def _slice_is_exact(call: BoundCall) -> bool:
+    """The slice is exact unless it curries a kernel that claims SupportsApproximateConditioning."""
+    return not any(
+        bound and isinstance(factor, SupportsApproximateConditioning)
+        for factor, _, bound in _sliced_factors(call)
+    )
+
+
+def _sliced_is_normalized(call: BoundCall) -> bool | None:
+    """Whether every factor the slice keeps is normalized, as the factors declare.
+
+    A law's exact conditional is normalized, and a kernel's laws are as its
+    conditional capabilities state.
+    """
+    states = []
+    for factor, components, _ in _sliced_factors(call):
+        if isinstance(factor, ConditionalDistribution):
+            states.append(_laws_are_normalized(factor))
+        else:
+            states.append(True if components else _is_normalized(factor))
+    if False in states:
+        return False
+    return True if all(states) else None
+
+
 _CURRY = _ExactStage(
     check=_can_curry,
     compute=_curry,
     exact=_evaluation_is_exact,
     normalized=_curried_is_normalized,
+    yields_kernel=_leaves_a_slot,
+)
+_SLICE = _ExactStage(
+    check=_can_slice,
+    compute=_slice,
+    exact=_slice_is_exact,
+    normalized=_sliced_is_normalized,
     yields_kernel=_leaves_a_slot,
 )
 _BAYES = _ExactStage(
@@ -981,7 +1107,7 @@ class _NormalizingRoute(_RegistryRoute):
         result = None
         normalized = self._stage.normalized(call)
         if normalized is None:
-            if _CHECKING.get():
+            if checking():
                 return Feasibility(
                     None,
                     pending=(
@@ -1002,12 +1128,12 @@ class _NormalizingRoute(_RegistryRoute):
             d = call.operands["d"]
             if isinstance(d, _PerValueNormalization) and not self._stage.yields_kernel(call):
                 return self._evaluation_report(call, d, exact)
-            return _PointCheck(True, exact=exact)
+            return PointReport(True, exact=exact)
         normalization = self._normalization(call, method, exact_only)
         if self._stage.yields_kernel(call):
             return self._per_value_report(call, normalization, exact)
         if result is None:
-            if _CHECKING.get() and not exact:
+            if checking() and not exact:
                 evaluated = type(_evaluated(call.operands["d"])).__name__
                 return Feasibility(
                     None,
@@ -1030,7 +1156,7 @@ class _NormalizingRoute(_RegistryRoute):
         A check computes the law the inner kernel yields only when that kernel
         is evaluated exactly.
         """
-        if _CHECKING.get() and isinstance(kernel.kernel, SupportsApproximateConditioning):
+        if checking() and isinstance(kernel.kernel, SupportsApproximateConditioning):
             return Feasibility(
                 None,
                 pending=(
@@ -1040,7 +1166,7 @@ class _NormalizingRoute(_RegistryRoute):
             )
         info = kernel._normalization_report(call.operands["given"], self.method_options(call))
         if not isinstance(info, MethodInfo):
-            return info if info.feasible is not True else _PointCheck(True, exact=exact)
+            return info if info.feasible is not True else PointReport(True, exact=exact)
         if info.feasible is not True:
             return info
         return replace(info, exact=exact and info.exact)
@@ -1069,7 +1195,7 @@ class _NormalizingRoute(_RegistryRoute):
         if normalization.method is not None:
             method = self.registry.get_method(normalization.method)
             return MethodInfo(True, method_name=normalization.method, exact=exact and method.exact)
-        return _PointCheck(True, exact=exact)
+        return PointReport(True, exact=exact)
 
     def run(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Any:
         """The exact stage's result, normalized as the declarations, or else its own, require."""
@@ -1085,32 +1211,6 @@ class _NormalizingRoute(_RegistryRoute):
 # ---------------------------------------------------------------------------
 # The operation
 # ---------------------------------------------------------------------------
-
-
-class _Conditioning(Operation):
-    """``condition_on``'s operation, whose check computes no exact stage.
-
-    The routes that normalize share the inference-method registry, so a
-    ``method=`` control naming one of its methods selects each of those routes
-    with that method, in selection order, and the first whose exact stage
-    applies runs, as for any routes that share a registry. A check probes the
-    routes with no exact stage computed, and a call probes them with the exact
-    stage computable.
-    """
-
-    def _check_point(self, values: Mapping[str, Any], *, select: bool = True) -> _PointCheck:
-        token = _CHECKING.set(True)
-        try:
-            return super()._check_point(values, select=select)
-        finally:
-            _CHECKING.reset(token)
-
-    def _invoke_resolved(self, values: Mapping[str, Any], *, context: Any) -> Any:
-        token = _CHECKING.set(False)
-        try:
-            return super()._invoke_resolved(values, context=context)
-        finally:
-            _CHECKING.reset(token)
 
 
 def _condition_on_result(d: TermSpec, given: TermSpec) -> OutputSpec:
@@ -1131,18 +1231,10 @@ def _condition_on_result(d: TermSpec, given: TermSpec) -> OutputSpec:
     return OutputSpec(condition_on=None)
 
 
-def _conditioning_operation(declaration: Callable[..., Any]) -> _Conditioning:
-    """Declare ``condition_on`` as a :class:`_Conditioning` and register it."""
-    op = _Conditioning(
-        declaration,
-        result=_condition_on_result,
-        roles={"d": (DistributionSpec, ConditionalDistributionSpec), "given": (TermSpec,)},
-    )
-    operation_registry.register(op)
-    return op
-
-
-@_conditioning_operation
+@operation(
+    result=_condition_on_result,
+    roles={"d": (DistributionSpec, ConditionalDistributionSpec), "given": (TermSpec,)},
+)
 def condition_on(d: Distribution, given: Any):
     """Fix fields of *d* at the values *given* holds, and return the resulting law, normalized.
 
@@ -1178,27 +1270,6 @@ def condition_on(d: Distribution, given: Any):
     """
 
 
-def _slice_check(call: BoundCall, result: OutputSpec | None) -> Any:
-    """The conditioned fields leave a conditional assembled from normalized factors.
-
-    A field's slice is exact when the conditional is a product of available
-    factors and exact local conditioning operations, which graph position alone
-    does not establish.
-    """
-    d, keys = call.operands["d"], _given_keys(call.operands["given"])
-    if not isinstance(d, SupportsFactors) or isinstance(d, ConditionalDistribution) or not keys:
-        return False
-    return Feasibility(
-        False,
-        "route 'slice' declined: assembling a conditional from the factors is not implemented",
-    )
-
-
-def _slice(call: BoundCall, result: OutputSpec | None) -> Any:
-    """The conditional assembled from the factors the slice keeps."""
-    raise NotImplementedError("condition_on.slice")
-
-
 def _given_paths(d: Any, given: Any) -> tuple[str, ...]:
     """The paths *given* binds: its keys, or every component when the value is a whole draw."""
     keys = _given_keys(given)
@@ -1214,25 +1285,25 @@ def _conditioning_guard(call: BoundCall, result: OutputSpec | None) -> Any:
 def _exact_stage_by_name(call: BoundCall, result: OutputSpec | None) -> Any:
     """Selected only by name, as ``method="unnormalized"``; the exact stage alone then runs.
 
-    The exact stage is the first of currying, exact conditioning, and the
-    unnormalized conditional that applies.
+    The exact stage is the first of currying, slicing, exact conditioning, and
+    the unnormalized conditional that applies.
     """
     if call.controls["method"] != _UNNORMALIZED:
         return Feasibility(
             False, f'route {_UNNORMALIZED!r} declined: it is selected only by method="unnormalized"'
         )
     reports = []
-    for stage in (_CURRY, _EXACT_CONDITIONING, _BAYES):
+    for stage in (_CURRY, _SLICE, _EXACT_CONDITIONING, _BAYES):
         report = stage.check(call)
         if report.feasible is not False:
-            return report if report.feasible is None else _PointCheck(True, exact=stage.exact(call))
+            return report if report.feasible is None else PointReport(True, exact=stage.exact(call))
         reports.append(report.description)
     return Feasibility(False, f"route {_UNNORMALIZED!r} declined: {'; '.join(reports)}")
 
 
 def _exact_stage_result(call: BoundCall, result: OutputSpec | None) -> Any:
     """The result of the exact stage that applies, normalized or not."""
-    for stage in (_CURRY, _EXACT_CONDITIONING, _BAYES):
+    for stage in (_CURRY, _SLICE, _EXACT_CONDITIONING, _BAYES):
         if stage.check(call).feasible is True:
             return stage.compute(call)
     raise AssertionError("the exact stage ran with no stage that applies")
@@ -1243,7 +1314,11 @@ condition_on.register_route(
         "curry", source=RouteSource.STRUCTURAL, stage=_CURRY, registry=inference_method_registry
     )
 )
-condition_on.structural_route("slice", check=_slice_check, execute=_slice, exact=True)
+condition_on.register_route(
+    _NormalizingRoute(
+        "slice", source=RouteSource.STRUCTURAL, stage=_SLICE, registry=inference_method_registry
+    )
+)
 _exact_conditioning_route = condition_on.capability_route(
     "exact_conditioning",
     operand="d",

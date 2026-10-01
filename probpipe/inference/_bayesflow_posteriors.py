@@ -305,12 +305,20 @@ class _AmortizedPosterior(
 
         Raises
         ------
+        TypeError
+            If a keyword is neither ``num_results`` nor ``random_seed``.
         KeyError
             If *given* names a key other than the observation slot.
         ValueError
             If ``num_results`` is not positive, or the observation's size is not
             the trained one.
         """
+        unread = sorted(set(kwargs) - {"num_results", "random_seed"})
+        if unread:
+            raise TypeError(
+                f"method_options {unread} are not options of the amortized posterior "
+                f"{self.name!r}, which reads ['num_results', 'random_seed']"
+            )
         num_results = int(kwargs.get("num_results", self._num_results))
         if num_results < 1:
             raise ValueError(f"num_results must be a positive integer, got {num_results}.")

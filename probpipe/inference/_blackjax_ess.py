@@ -299,6 +299,8 @@ class BlackJAXESSMethod(InferenceMethod):
     ranks above ``blackjax_rwmh`` (55) and below the NUTS backends (82–88).
     """
 
+    _method_options = ("init", "num_chains", "num_results", "num_warmup", "random_seed")
+
     @property
     def name(self) -> str:
         return "blackjax_elliptical_slice"
@@ -345,6 +347,7 @@ class BlackJAXESSMethod(InferenceMethod):
 
     def execute(self, target: Any, /, **kwargs: Any) -> ApproximateDistribution:
         """Elliptical slice chains on the joint the target conditions, at its data."""
+        self._check_options(kwargs)
         return _elliptical_slice(
             target,
             num_results=kwargs.get("num_results", 1000),

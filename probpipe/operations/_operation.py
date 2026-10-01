@@ -4,19 +4,21 @@ An **operation** is a :class:`~probpipe.values.Function` whose implementations
 differ in the kinds they handle, in the declaration of their result, and in
 where they come from. ``@operation`` declares one from a signature and a result
 rule, and its routes are registered beside it. A call runs the engine's stack,
-and this module supplies the operation's side of four of its steps:
+which reads three declarations from the operation at its steps:
 
-1. **Admission** checks each argument against the kinds its **role** accepts,
-   each kind named by its spec class.
+1. **Admission** and lift classification read each parameter's **role**, the
+   kinds it accepts, each named by its spec class: an argument the role admits
+   passes whole, a batch or a law over an admitted kind is lifted, and any
+   other argument is refused.
 2. **Planning** checks the **applicability conditions** and runs the **result
-   rule**, which derives the result's declaration from the operands' specs and
-   from the parameters that select rather than supply, such as a field path.
-3. **Resolution** selects one **route** among the feasible ones. Exact routes
-   rank before approximate ones, a fallback ranks below every other route of
-   the same exactness, and registration order breaks the remaining ties. The
-   ``method`` and ``exact_only`` controls restrict the choice.
-4. **Return** wraps the selected route's raw result at the declared kind, and
-   under ``raw`` returns that term's raw form.
+   rule**, which derives the declaration of each point's result from the
+   operands' specs and from the parameters that select rather than supply,
+   such as a field path; the return validates the result against it.
+3. **Resolution** selects one **route** among the operation's candidates, in
+   the order this module ranks them: exact routes before approximate ones, a
+   fallback below every other route whatever its exactness, and registration
+   order for the remaining ties. The ``method`` and ``exact_only`` controls
+   restrict the choice, and provenance records the selected route.
 
 An operation takes no key: each draw a route causes is a workflow-owned random
 event, whose key :func:`_workflow_draws` derives from the workflow scope.
@@ -32,50 +34,27 @@ import ast
 import dis
 import inspect
 import textwrap
-from collections.abc import Callable, Iterable, Iterator, Mapping
-from dataclasses import dataclass, replace
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass
 from enum import Enum
-from itertools import product
-from math import prod
 from types import MappingProxyType
 from typing import Any, Protocol, runtime_checkable
 
 from ..core._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
-from ..core._batch import Batch, BatchSpec, _ranks_of
 from ..core._dispatch import BaseDispatchRegistry, Feasibility, MethodInfo, ResolutionError
-from ..core._kinds import _KINDS, batch_class_for_spec
-from ..core._numeric_array import NumericArray
-from ..core._numeric_array_batch import NumericArrayBatch
-from ..core._object_batch import _is_object_array, _ObjectBatch
-from ..core._opaque import Opaque
-from ..core._record_batch import RecordBatch, _batch_class_for
-from ..core._record_spec import RecordSpec, _reshaped_template
-from ..core._spec_base import NumericArraySpec, TermSpec, _unify_specs
+from ..core._kinds import _KINDS
+from ..core._record_spec import RecordSpec
+from ..core._spec_base import NumericArraySpec, OpaqueSpec, TermSpec
 from ..core._specs import OutputSpec
-from ..core.named_tree import _unflatten_paths
-from ..core.node import Node
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
 from ..distributions._capabilities import _capability_guard, _guard_condition
 from ..functions import _broker, _descendants
-from ..functions._call import ApplicabilityError, CallReport, admit_arguments
-from ..functions._plan import BroadcastPlan, build_broadcast_plan
-from ..functions._result import (
-    _copy_result_term,
-    _make_stack,
-    _wrap_as_term,
-    _wrap_declared_function_output,
-)
-from ..functions._sweep import slice_sweep_values
+from ..functions._call import ApplicabilityError, CallReport
+from ..functions._resolution import PointReport, StandIn
 from ..values import Function, FunctionSpec
-from ..values._binding import (
-    WorkflowInputRef,
-    input_ref_value,
-    replace_input_refs,
-    resolve_workflow_values,
-    values_to_bound_arguments,
-)
-from ..values._function_base import _validate_function_output
+from ..values._binding import values_to_bound_arguments
+from ..values._function_base import _COMPLETED_AT_RETURN
 
 __all__ = [
     "BoundCall",
@@ -90,16 +69,15 @@ __all__ = [
     "operation_registry",
 ]
 
-#: The controls every operation adds to the framework's, with their defaults.
-_OPERATION_CONTROLS: Mapping[str, Any] = MappingProxyType(
-    {"method": None, "exact_only": False, "raw": False}
-)
-
 #: The term classes whose spec class the kind table does not record.
 _UNREGISTERED_TERM_KINDS: tuple[tuple[type, type[TermSpec]], ...] = (
     (Function, FunctionSpec),
     (Record, RecordSpec),
 )
+
+#: The kinds an unannotated parameter accepts, which are the value kinds, so a
+#: law there lifts and a batch is swept, as at a Function's parameter (V.5).
+_VALUE_KINDS: tuple[type[TermSpec], ...] = (NumericArraySpec, RecordSpec, OpaqueSpec, FunctionSpec)
 
 
 class RouteSource(Enum):
@@ -126,10 +104,11 @@ class BoundCall:
         The operation, as the view the call went through.
     operands : Mapping[str, Any]
         Every bound argument by its parameter name, defaults included, in
-        signature order: a term, a raw value, or a planned conversion.
+        signature order: a term, a raw value, or a planned conversion; at a
+        point of a lifted call, an element or a stand-in for a draw.
     controls : Mapping[str, Any]
-        The resolved controls: the framework's, ``method_options`` among them,
-        and the operation's ``method``, ``exact_only``, and ``raw``.
+        The resolved controls, ``method``, ``exact_only``, ``raw``, and
+        ``method_options`` among them.
     """
 
     operation: Function
@@ -173,22 +152,12 @@ class BoundCall:
         )
 
 
-@dataclass(frozen=True)
-class _Point:
-    """A stand-in for one point of a lifted argument, carrying the point's declaration.
-
-    A check draws nothing, so the operand of a point where the engine passes a
-    law's draw is this stand-in, whose spec is the law's event declaration, and
-    an empty sweep's point holds one whose spec is the batch's element
-    declaration.
-    """
-
-    spec: TermSpec
-
-
 def _spec_of(value: Any) -> TermSpec:
-    """The spec of *value*: a term's own, and otherwise the kind the wrap table gives it."""
-    if isinstance(value, _Point):
+    """The spec of *value*: a term's own, and otherwise the kind the wrap table gives it.
+
+    A stand-in for a draw or an element, which a check passes, carries its spec.
+    """
+    if isinstance(value, StandIn):
         return value.spec
     spec = getattr(value, "spec", None) if isinstance(value, TrackedTerm) else None
     if isinstance(spec, TermSpec):
@@ -554,7 +523,7 @@ def _identity_route(
 
 
 # ---------------------------------------------------------------------------
-# Selection
+# The candidates of selection
 # ---------------------------------------------------------------------------
 
 
@@ -564,7 +533,9 @@ class _Candidate:
 
     A registry route contributes one candidate for its exact methods and one for
     its approximate ones; ``method`` is the registry method a ``method=`` control
-    names, whose exactness the registry reports.
+    names, whose exactness the registry reports. A candidate is what the
+    engine's resolution step probes and runs, through the members
+    :mod:`probpipe.functions._resolution` names.
     """
 
     route: Any
@@ -591,180 +562,49 @@ class _Candidate:
             return f"{self.route.name}/{self.method}"
         return f"{self.route.name} ({'exact' if self.exact else 'approximate'} methods)"
 
+    @property
+    def route_name(self) -> str:
+        """The name of the route the candidate belongs to."""
+        return self.route.name
 
-def _probe(candidate: _Candidate, call: BoundCall, result: OutputSpec | None) -> Feasibility:
-    """The candidate's report for *call*, without executing anything."""
-    route = candidate.route
-    if isinstance(route, _RegistryRoute):
-        return route.probe(
-            call,
-            method=candidate.method,
-            exact_only=call.controls["exact_only"] or candidate.exact is True,
-        )
-    return route.check(call, result)
-
-
-def _exactness(candidate: _Candidate, report: Feasibility) -> bool | None:
-    """The exactness of the implementation *candidate* selects, as its report gives it.
-
-    A route that delegates its exactness reports that of what its probe
-    selected: a registry route's method, or the route a derived operation's
-    constituent selects.
-    """
-    if candidate.route.exact is None and isinstance(report, (MethodInfo, _PointCheck)):
-        return report.exact
-    return candidate.route.exact
-
-
-# ---------------------------------------------------------------------------
-# The check report
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class _PointCheck(Feasibility):
-    """What the check of an operation finds at its points, before it becomes a CallReport.
-
-    The call is feasible when a route is selected, unresolved when a route
-    ranked above every feasible one still needs declarations, and infeasible
-    when no route applies. A call the engine lifts is checked at each of its
-    points, and it is feasible when every point is. A route's probe may return
-    one, to report a feasible route of a stated exactness that runs no method.
-
-    Attributes
-    ----------
-    route : str or None
-        The selected route, when selection can be decided and every point
-        selects it.
-    method : str or None
-        The registry method a selected registry route delegates to.
-    exact : bool or None
-        The selected implementation's declared exactness; under a lift,
-        ``False`` when any point's is.
-    result : OutputSpec or None
-        The result declaration planning derived, which under a lift is that of
-        one point.
-    routes : tuple of (str, Feasibility)
-        Each candidate that was probed and its report, in selection order, at
-        the point that decides the report: the first infeasible or unresolved
-        point, and otherwise the first point.
-    deferred : tuple of str
-        The checks deferred to the return.
-    lifted : tuple of (str, str)
-        Each argument the engine lifts, by its label, with ``"sweep"`` for a
-        batch mapped over its elements or ``"broadcast"`` for a law pushed
-        through its draws; empty for a plain call.
-    """
-
-    route: str | None = None
-    method: str | None = None
-    exact: bool | None = None
-    result: OutputSpec | None = None
-    routes: tuple[tuple[str, Feasibility], ...] = ()
-    deferred: tuple[str, ...] = ()
-    lifted: tuple[tuple[str, str], ...] = ()
-
-
-def _draws(values: Mapping[str, Any], plan: BroadcastPlan) -> dict[WorkflowInputRef, _Point]:
-    """A stand-in for a draw of each law the engine broadcasts over, by its reference."""
-    return {ref: _Point(input_ref_value(values, ref).event_spec.spec) for ref in plan.dist_args}
-
-
-def _element_spec(values: Mapping[str, Any], ref: WorkflowInputRef) -> TermSpec:
-    """The declaration of one element of the swept argument *ref*."""
-    spec = input_ref_value(values, ref).spec
-    return spec.element_spec if isinstance(spec, BatchSpec) else spec
-
-
-def _points(
-    values: Mapping[str, Any], plan: BroadcastPlan
-) -> Iterator[tuple[tuple[int, ...], dict[str, Any]]]:
-    """Each point of a call the engine realizes, with its cell in the sweep.
-
-    A swept argument contributes its element at the cell, as the engine's
-    sweep reads it, and a law the engine broadcasts over contributes a
-    stand-in for its draw.
-    """
-    draws = _draws(values, plan)
-    if not plan.array_args:
-        yield (), replace_input_refs(values, draws)
-        return
-    cells = product(*(range(size) for size in plan.sweep_batch_shape))
-    for index, cell in enumerate(cells):
-        row = slice_sweep_values(values=values, index=index, array_groups=plan.array_groups)
-        yield cell, replace_input_refs(row, draws)
-
-
-def _combined(
-    reports: list[tuple[tuple[int, ...], _PointCheck]], lifted: tuple[tuple[str, str], ...]
-) -> _PointCheck:
-    """The report of a call from those of its points, each with its sweep cell.
-
-    The call is infeasible at its first infeasible point, and unresolved when
-    a point is unresolved and none is infeasible. Otherwise it is feasible,
-    with the route and method every point selects, if they agree, and the
-    exactness its points share, approximate when any point is.
-    """
-    deferred = tuple(dict.fromkeys(item for _, report in reports for item in report.deferred))
-    for cell, report in reports:
-        if report.feasible is False:
-            where = f"sweep cell {cell}: " if cell else ""
-            return replace(
-                report, description=where + report.description, deferred=deferred, lifted=lifted
+    def probe(self, call: BoundCall, result: OutputSpec | None) -> Feasibility:
+        """The candidate's report for *call*, without executing anything."""
+        route = self.route
+        if isinstance(route, _RegistryRoute):
+            return route.probe(
+                call,
+                method=self.method,
+                exact_only=call.controls["exact_only"] or self.exact is True,
             )
-    unresolved = [report for _, report in reports if report.feasible is None]
-    if unresolved:
-        pending = tuple(dict.fromkeys(item for report in unresolved for item in report.pending))
-        return replace(unresolved[0], pending=pending, deferred=deferred, lifted=lifted)
-    first = reports[0][1]
-    agree = all(
-        (report.route, report.method) == (first.route, first.method) for _, report in reports
-    )
-    exactness = {report.exact for _, report in reports}
-    exact = False if False in exactness else (first.exact if len(exactness) == 1 else None)
-    return replace(
-        first,
-        route=first.route if agree else None,
-        method=first.method if agree else None,
-        exact=exact,
-        deferred=deferred,
-        lifted=lifted,
-    )
+        return route.check(call, result)
 
+    def run(self, call: BoundCall, result: OutputSpec | None, report: Feasibility) -> Any:
+        """The route's raw result for *call*, by the method *report* selected for a registry route."""
+        route = self.route
+        if isinstance(route, _RegistryRoute):
+            return route.run(
+                call,
+                method=report.method_name if isinstance(report, MethodInfo) else self.method,
+                exact_only=call.controls["exact_only"] or self.exact is True,
+            )
+        return route.execute(call, result)
 
-def _call_report(point: _PointCheck) -> CallReport:
-    """The CallReport of a call from the check of its points.
+    def exactness(self, report: Feasibility) -> bool | None:
+        """The exactness of the implementation the candidate selects, as *report* gives it.
 
-    Each probed candidate's report is named by its label, and a report whose
-    exactness is open states the call approximate.
-    """
-    routes = tuple(
-        MethodInfo(
-            report.feasible,
-            report.description,
-            report.pending,
-            method_name=label,
-            exact=bool(getattr(report, "exact", None)),
-        )
-        for label, report in point.routes
-    )
-    selected: MethodInfo | None
-    if point.feasible is None:
-        selected = None
-    elif point.feasible is False:
-        selected = MethodInfo(False, point.description)
-    else:
-        name = point.route or ""
-        if point.route is not None and point.method is not None:
-            name = f"{point.route}/{point.method}"
-        selected = MethodInfo(True, method_name=name, exact=bool(point.exact))
-    return CallReport(
-        routes=routes,
-        selected=selected,
-        deferred=point.deferred,
-        result=point.result,
-        lifted=tuple(dict.fromkeys(label for label, _ in point.lifted)),
-    )
+        A route that delegates its exactness reports that of what its probe
+        selected: a registry route's method, or the route a derived operation's
+        constituent selects.
+        """
+        if self.route.exact is None and isinstance(report, (MethodInfo, PointReport)):
+            return report.exact
+        return self.route.exact
+
+    def method_of(self, report: Feasibility) -> str | None:
+        """The registry method a registry route delegates to, as *report* names it."""
+        if isinstance(self.route, _RegistryRoute) and isinstance(report, MethodInfo):
+            return report.method_name
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -827,11 +667,14 @@ def _identity_source(function: Callable[..., Any]) -> str | None:
 def _kinds_for(hint: Any) -> tuple[type[TermSpec], ...]:
     """The kinds a parameter annotated *hint* accepts, each named by its spec class.
 
-    An unannotated parameter and one annotated ``Any`` accept every kind, a term
-    class accepts its own kind, and any other annotation, such as ``str`` for a
-    field path, selects rather than supplies and accepts none.
+    An unannotated parameter accepts the value kinds, so a law there lifts and a
+    batch of values is swept; one annotated ``Any`` accepts every kind as it
+    arrives; a term class accepts its own kind; and any other annotation, such
+    as ``str`` for a field path, selects rather than supplies and accepts none.
     """
-    if hint is inspect.Parameter.empty or hint is Any:
+    if hint is inspect.Parameter.empty:
+        return _VALUE_KINDS
+    if hint is Any:
         return (TermSpec,)
     if not isinstance(hint, type):
         return ()
@@ -880,12 +723,15 @@ class Operation(Function):
     """A Function realized by routes, with operand roles, conditions, and a result rule.
 
     Calling it runs the engine's stack, whose admission, planning, resolution,
-    and return steps read the declarations below: each argument is admitted by
-    its role, the applicability conditions and the result rule derive the
-    result's declaration, a route is selected, and its raw result is wrapped at
-    the declared kind. The routes are registered after construction with the
-    four helpers or :meth:`register_route`, and a derived operation also carries
-    its defining identity as a route.
+    and return steps read the declarations below: each argument is admitted and
+    lifted by its role, the applicability conditions and the result rule derive
+    each point's result declaration, the engine selects a route among the
+    operation's candidates, and the return wraps the route's raw result at the
+    declared kind. A parameter annotated ``Any`` takes its argument as it
+    arrives, with no lifting, so its role only narrows what it admits. The
+    routes are registered after construction with the four helpers or
+    :meth:`register_route`, and a derived operation also carries its defining
+    identity as a route.
 
     Parameters
     ----------
@@ -971,7 +817,6 @@ class Operation(Function):
         set_attribute(self, "_derived", derived)
         set_attribute(self, "_identity", _identity_source(declaration) if derived else None)
         set_attribute(self, "_route_table", _RouteTable())
-        set_attribute(self, "_controls", MappingProxyType({}))
         if derived:
             self.register_route(_identity_route(declaration, self.signature, identity_check))
 
@@ -1221,14 +1066,13 @@ class Operation(Function):
     # -- controls ----------------------------------------------------------
 
     def with_options(self, **controls: Any) -> Operation:
-        """Return a view with revised controls, the operation's own included.
+        """Return a view with revised controls.
 
-        The framework's controls are those of :meth:`Function.with_options`,
-        ``method_options`` among them, whose budgets the selected method
-        validates when it runs. The operation adds ``method``, a route's name or
-        a method of a registry route's registry; ``exact_only``, which excludes
-        every approximate route; and ``raw``, which returns the result detached.
-        ``None`` leaves a control unchanged.
+        The controls are those of :meth:`Function.with_options`: ``method``
+        names a route or a method of a registry route's registry,
+        ``exact_only`` excludes every approximate route, ``raw`` returns the
+        result detached, and ``method_options`` holds the budgets the selected
+        method validates when it runs. ``None`` leaves a control unchanged.
 
         Raises
         ------
@@ -1238,237 +1082,48 @@ class Operation(Function):
         ValueError
             On a framework control's own error.
         """
-        # The operation selects its own routes, so its controls stay out of the
-        # engine's options even where the engine declares the same names.
-        unknown = set(controls) - set(self.options) - set(_OPERATION_CONTROLS)
+        unknown = set(controls) - set(self.options)
         if unknown:
             raise TypeError(f"Unknown controls for operation {self.name!r}: {sorted(unknown)}")
-        own = {name: value for name, value in controls.items() if name in _OPERATION_CONTROLS}
-        framework = {
-            name: value for name, value in controls.items() if name not in _OPERATION_CONTROLS
-        }
-        method = own.get("method")
-        if method is not None and (not isinstance(method, str) or not method):
-            raise TypeError(f"method must be a route or method name; got {method!r}")
-        for flag in ("exact_only", "raw"):
-            if own.get(flag) is not None and type(own[flag]) is not bool:
-                raise TypeError(f"{flag} must be a bool; got {own[flag]!r}")
-        clone = super().with_options(**framework)
-        revised = dict(self._controls)
-        revised.update({name: value for name, value in own.items() if value is not None})
-        object.__setattr__(clone, "_controls", MappingProxyType(revised))
-        return clone
-
-    def _resolved_controls(self) -> Mapping[str, Any]:
-        """Every control's effective value for a call through this view."""
-        return MappingProxyType({**self.options, **_OPERATION_CONTROLS, **self._controls})
-
-    # -- the call ----------------------------------------------------------
-
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        """Run the engine's stack on the call, or return the result detached under ``raw``.
-
-        Under ``raw``, a call the engine lifts runs the stack and returns its
-        result's raw form, and any other call is realized by :meth:`apply`.
-        """
-        if not self._controls.get("raw", False):
-            return super().__call__(*args, **kwargs)
-        _, plan = self._lift_plan(args, kwargs)
-        if plan.regime == "none":
-            return self.apply(*args, **kwargs)
-        return _raw_form(self.with_options(raw=False)(*args, **kwargs))
-
-    def apply(self, *args: Any, **kwargs: Any) -> Any:
-        """Realize one call with no lifting, tracking, or provenance, and return its raw form.
-
-        The result is validated against the call's declaration, and its raw form
-        is that of the term the declaration names: an array for an array, the
-        nested mapping of raw leaves for a record, the storage view for a
-        batch, and the law itself for a law.
-
-        Raises
-        ------
-        TypeError
-            If the arguments do not bind to the signature.
-        ApplicabilityError
-            If an argument's kind is not accepted or a condition fails.
-        ResolutionError
-            If no route applies under the controls.
-        """
-        view = self if self._controls.get("raw", False) else self.with_options(raw=True)
-        return Function.apply(view, *args, **kwargs)
+        return super().with_options(**controls)
 
     def raw(self) -> Callable[..., Any]:
         """The evaluator that realizes one call with no lifting, tracking, or provenance.
 
-        It is :meth:`apply`, so it returns the result's raw form.
+        It is :meth:`apply`, which returns the result's raw form.
         """
         return self.apply
 
-    def _invoke_resolved(self, values: Mapping[str, Any], *, context: Any) -> Any:
-        """Admit, plan, resolve, and execute one point of the call, then wrap its result.
+    # -- the declarations the engine reads ------------------------------------
 
-        Under ``raw`` the wrapped result's raw form is returned.
-        """
-        call = BoundCall(self, MappingProxyType(dict(values)), self._resolved_controls())
-        self._admit(call)
-        result, _ = self._plan(call)
-        candidate, report, reports = self._select(call, result)
-        if candidate is None:
-            raise ResolutionError(self._no_route_message(call, reports))
-        if report.feasible is None:
-            raise ResolutionError(
-                f"{self.name}: route {candidate.label!r} is unresolved; pending: "
-                f"{', '.join(report.pending)}"
-            )
-        route = candidate.route
-        if isinstance(route, _RegistryRoute):
-            value = route.run(
-                call,
-                method=report.method_name if isinstance(report, MethodInfo) else candidate.method,
-                exact_only=call.controls["exact_only"] or candidate.exact is True,
-            )
-        else:
-            value = route.execute(call, result)
-        wrapped = _wrap_result(value, result, self.output_name)
-        return _raw_form(wrapped) if call.controls["raw"] else wrapped
+    def _route_candidates(self, controls: Mapping[str, Any]) -> tuple[_Candidate, ...]:
+        """The candidates that may realize one point under *controls*, in selection order.
 
-    def check(self, *args: Any, **kwargs: Any) -> CallReport:
-        """Report how a call would resolve, without executing any route.
-
-        The arguments bind as the call's would, and admission and planning raise
-        as the call's would, since their failures are properties of the call.
-        Where the engine lifts an argument, each point of the call is checked as
-        the engine runs it: a swept batch at each of its elements, and a law at
-        a value parameter at its event declaration, since a check draws
-        nothing. At each point the routes are probed in selection order until
-        one is feasible or unresolved.
-
-        Returns
-        -------
-        CallReport
-            Each probed candidate's report and the selected one, the selected
-            report naming the route, and ``route/method`` for a registry route's
-            method, or an empty name when the points of a lifted call select
-            different routes; the result declaration; the checks deferred to the
-            return; and the parameters whose arguments the engine lifts.
+        A ``method`` name resolves as :meth:`_named_candidates` states.
 
         Raises
         ------
+        ResolutionError
+            If ``method`` names no route or registry method, matches several, or
+            names an approximate route while ``exact_only`` is set.
+        """
+        return tuple(self._candidates(controls))
+
+    def _plan_point(
+        self, values: Mapping[str, Any], controls: Mapping[str, Any]
+    ) -> tuple[BoundCall, OutputSpec | None, tuple[str, ...]]:
+        """The bound call of one point, its result declaration, and the checks deferred to return.
+
+        Raises
+        ------
+        ApplicabilityError
+            If a condition fails, or the result rule rules the call out.
         TypeError
-            If the arguments do not bind to the signature.
-        ApplicabilityError
-            If an argument's kind, or a lifted argument's element or event kind,
-            is not accepted, or a condition fails.
-        ResolutionError
-            If ``method`` names neither a route nor a registry method.
+            If the result rule returns something other than an OutputSpec or None.
         """
-        values, plan = self._lift_plan(args, kwargs)
-        admit_arguments(self._signature_info, values)
-        lifted = (
-            *((ref.label, "sweep") for ref in plan.array_args),
-            *((ref.label, "broadcast") for ref in plan.dist_args),
-        )
-        if plan.array_args and plan.n_sweep == 0:
-            elements = {ref: _Point(_element_spec(values, ref)) for ref in plan.array_args}
-            point = replace_input_refs(values, {**elements, **_draws(values, plan)})
-            return _call_report(replace(self._check_point(point, select=False), lifted=lifted))
-        reports: list[tuple[tuple[int, ...], _PointCheck]] = []
-        for cell, point in _points(values, plan):
-            report = self._check_point(point)
-            reports.append((cell, report))
-            if report.feasible is False:
-                break
-        return _call_report(_combined(reports, lifted))
-
-    def _lift_plan(
-        self, args: tuple[Any, ...], kwargs: Mapping[str, Any]
-    ) -> tuple[dict[str, Any], BroadcastPlan]:
-        """The call's arguments bound to the signature, and the engine's plan of what it lifts."""
-        bound = self.signature.bind_partial(*args, **kwargs)
-        values = resolve_workflow_values(
-            self._signature_info,
-            dict(bound.arguments),
-            bind=self._bind,
-            module=self._module,
-            dependency_type=Node,
-            workflow_name=self.name,
-        )
-        return values, build_broadcast_plan(values=values, signature_info=self._signature_info)
-
-    def _check_point(self, values: Mapping[str, Any], *, select: bool = True) -> _PointCheck:
-        """The report of one point of a call: its admission, its planning, and its selection.
-
-        Without *select*, the point is admitted and planned, and no route is
-        selected, as for an empty sweep, which runs none.
-
-        Raises
-        ------
-        ApplicabilityError
-            If an argument's kind is not accepted or a condition fails.
-        ResolutionError
-            If ``method`` names neither a route nor a registry method.
-        """
-        call = BoundCall(self, MappingProxyType(dict(values)), self._resolved_controls())
-        self._admit(call)
+        call = BoundCall(self, MappingProxyType(dict(values)), controls)
         result, deferred = self._plan(call)
-        if not select:
-            return _PointCheck(True, result=result, deferred=deferred)
-        candidate, report, reports = self._select(call, result)
-        probed = tuple((probed_candidate.label, probe) for probed_candidate, probe in reports)
-        if candidate is None:
-            return _PointCheck(
-                False,
-                self._no_route_message(call, reports),
-                result=result,
-                routes=probed,
-                deferred=deferred,
-            )
-        if report.feasible is None:
-            return _PointCheck(
-                None, pending=report.pending, result=result, routes=probed, deferred=deferred
-            )
-        registry = isinstance(candidate.route, _RegistryRoute)
-        return _PointCheck(
-            True,
-            route=candidate.route.name,
-            method=report.method_name if registry and isinstance(report, MethodInfo) else None,
-            exact=_exactness(candidate, report),
-            result=result,
-            routes=probed,
-            deferred=deferred,
-        )
-
-    # -- the operation's side of the stack's steps ---------------------------
-
-    def _admit(self, call: BoundCall) -> None:
-        """Check each supplying argument's kind against its role.
-
-        Raises
-        ------
-        ApplicabilityError
-            If an argument's kind is not one its role accepts.
-        """
-        for name, accepts in self._roles.items():
-            if not accepts or name not in call.operands:
-                continue
-            value = call.operands[name]
-            parameter = self.signature.parameters[name]
-            if value is None and parameter.default is None:
-                continue
-            if parameter.kind is inspect.Parameter.VAR_KEYWORD:
-                items = tuple(value.values())
-            elif parameter.kind is inspect.Parameter.VAR_POSITIONAL:
-                items = tuple(value)
-            else:
-                items = (value,)
-            for item in items:
-                kind = type(_spec_of(item))
-                if not issubclass(kind, accepts):
-                    raise ApplicabilityError(
-                        f"{self.name}: {name!r} accepts {_kind_names(accepts)}, but received a "
-                        f"{type(item).__name__}, whose kind is {kind.__name__}"
-                    )
+        return call, result, deferred
 
     def _plan(self, call: BoundCall) -> tuple[OutputSpec | None, tuple[str, ...]]:
         """Check the applicability conditions, then derive the result's declaration.
@@ -1503,7 +1158,7 @@ class Operation(Function):
                 f"OutputSpec or None"
             )
         if result is None or result.spec is None:
-            deferred.append("the result's type is completed from the returned value")
+            deferred.append(_COMPLETED_AT_RETURN)
         return result, tuple(deferred)
 
     def _candidates(self, controls: Mapping[str, Any]) -> list[_Candidate]:
@@ -1595,39 +1250,6 @@ class Operation(Function):
         """The routes a ``method`` control may name, in words."""
         return f"routes: {', '.join(route.name for route in self._route_table.routes) or 'none'}"
 
-    def _select(
-        self, call: BoundCall, result: OutputSpec | None
-    ) -> tuple[_Candidate | None, Feasibility | None, list[tuple[_Candidate, Feasibility]]]:
-        """Probe the candidates in selection order until one is feasible or unresolved.
-
-        Returns
-        -------
-        tuple
-            The first candidate that is not infeasible and its report, both
-            ``None`` when every candidate is infeasible, and every probed
-            candidate with its report.
-        """
-        reports: list[tuple[_Candidate, Feasibility]] = []
-        for candidate in self._candidates(call.controls):
-            report = _probe(candidate, call, result)
-            reports.append((candidate, report))
-            if report.feasible is not False:
-                return candidate, report, reports
-        return None, None, reports
-
-    def _no_route_message(
-        self, call: BoundCall, reports: list[tuple[_Candidate, Feasibility]]
-    ) -> str:
-        """The ResolutionError message listing each probed candidate and its reason."""
-        restriction = " with exact_only" if call.controls["exact_only"] else ""
-        if not reports:
-            return f"{self.name}: no route applies{restriction}; none is registered"
-        tried = "; ".join(
-            f"{candidate.label}: {report.description or 'infeasible'}"
-            for candidate, report in reports
-        )
-        return f"{self.name}: no route applies{restriction}. Tried: {tried}"
-
     # -- the summary ---------------------------------------------------------
 
     def summary(self) -> OperationSummary:
@@ -1660,7 +1282,7 @@ class Operation(Function):
 
 
 # ---------------------------------------------------------------------------
-# Randomness and the return
+# Randomness
 # ---------------------------------------------------------------------------
 
 
@@ -1699,128 +1321,6 @@ def _workflow_draws(
         ),
     )
     return _descendants.sample_captured_consumer(captured, key, sample_shape)
-
-
-def _wrap_result(value: Any, declared: OutputSpec | None, label: str) -> Any:
-    """*value* validated against *declared* and wrapped at its kind, labeled *label*.
-
-    A type hole is completed from *value*, and an undeclared result wraps by the
-    kind-directed table.
-
-    Raises
-    ------
-    ValueError
-        If *value* does not satisfy the declaration.
-    """
-    if declared is not None and isinstance(declared.spec, BatchSpec):
-        return _batch_at(value, declared.spec, label)
-    if declared is None:
-        return _wrap_as_term(value, label)
-    completed = _validate_function_output(
-        function_name=label, output_spec=declared, result=value, bindings={}
-    )
-    return _wrap_declared_function_output(value, function_name=label, output_spec=completed)
-
-
-def _raw_form(term: Any) -> Any:
-    """*term*'s representation, detached from the workflow.
-
-    An array is its stored array, a record the nested mapping of its raw
-    leaves, and a batch its storage view: the stacked array, the nested
-    mapping of raw columns, or the object array of the stored elements. An
-    opaque value is the object it wraps, a function its wrapped callable, and
-    a law or a kernel is its own representation, without provenance.
-    """
-    if isinstance(term, (NumericArray, Opaque)):
-        return term.value
-    if isinstance(term, Record):
-        return _raw_leaves(term.to_nested_dict())
-    if isinstance(term, NumericArrayBatch):
-        return term.values
-    if isinstance(term, RecordBatch):
-        return _unflatten_paths(term._raw_columns())
-    if isinstance(term, _ObjectBatch):
-        return term._store
-    if isinstance(term, Function):
-        return term.raw()
-    if isinstance(term, TrackedTerm) and term.provenance is not None:
-        return _copy_result_term(term)
-    return term
-
-
-def _raw_leaves(node: Any) -> Any:
-    """A record's nested mapping, each leaf at its raw form."""
-    if isinstance(node, dict):
-        return {name: _raw_leaves(child) for name, child in node.items()}
-    return _raw_form(node)
-
-
-def _batch_at(value: Any, spec: BatchSpec, label: str) -> Any:
-    """*value*, whose leading axes range over *spec*'s levels, as the batch *spec* declares.
-
-    A batch is kept as it is. Record columns and stacked arrays become the
-    batch form of their element kind, whose element declaration is read from
-    the value and unified with the declared one, and an object array becomes
-    the batch form the kind table records for the declared element.
-
-    Raises
-    ------
-    ValueError
-        If the leading axes are not the declared batch shape, the element does
-        not unify with the declared element, or *value* has no batch form.
-    """
-    batch_shape = tuple(spec.batch_shape)
-    ranks = _ranks_of(spec.axis_groups)
-    levels = tuple(spec.level_names)
-    n_axes = len(batch_shape)
-
-    def require_leading(shape: tuple[Any, ...]) -> None:
-        if tuple(shape[:n_axes]) != batch_shape:
-            raise ValueError(
-                f"{label}: the result's leading axes {tuple(shape[:n_axes])} are not the "
-                f"declared batch shape {batch_shape}"
-            )
-
-    if isinstance(value, Batch):
-        require_leading(tuple(value.batch_shape))
-        return value
-    if isinstance(value, Mapping) and not isinstance(value, Record):
-        # A record-valued route returns the nested mapping of its stacked columns.
-        value = Record(label, **value)
-    if isinstance(value, Record):
-        template = value.event_template
-        columns = {path: value[path] for path in template}
-        for column in columns.values():
-            require_leading(tuple(_event_shape_of(column)))
-        element = _reshaped_template(template, lambda shape: shape[n_axes:])
-        _unify_specs(spec.element_spec, element, {}, f"{label} element")
-        return _batch_class_for(element)(
-            label, columns, levels, element_spec=element, axes_per_level=ranks
-        )
-    if _is_object_array(value):
-        require_leading(value.shape)
-        batch_class = batch_class_for_spec(spec.element_spec)
-        if batch_class is not None and batch_class is not NumericArrayBatch:
-            return batch_class(
-                label, value, levels, element_spec=spec.element_spec, axes_per_level=ranks
-            )
-        return _make_stack(
-            list(value.reshape((prod(batch_shape), *value.shape[n_axes:]))),
-            batch_shape=batch_shape,
-            axis_groups=tuple(spec.axis_groups),
-            level_names=levels,
-            field_name=label,
-            name=label,
-        )
-    if _is_numeric_leaf(value):
-        shape = tuple(_event_shape_of(value))
-        require_leading(shape)
-        declared = spec.element_spec
-        support = declared.support if isinstance(declared, NumericArraySpec) else None
-        element = NumericArraySpec(shape[n_axes:], _numpy_dtype_of(value), support)
-        _unify_specs(declared, element, {}, f"{label} element")
-        return NumericArrayBatch(label, value, levels, element_spec=element, axes_per_level=ranks)
-    raise ValueError(f"{label}: a {type(value).__name__} has no form as the declared batch")
 
 
 # ---------------------------------------------------------------------------
