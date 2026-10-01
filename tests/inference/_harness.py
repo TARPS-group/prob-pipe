@@ -150,6 +150,20 @@ KNOWN_FAILURES[("blackjax_rwmh", "probpipe", "eight_schools")] = (
     _CONSTRAINED_SCALE,
     AssertionError,
 )
+_ABC_BUDGET = (
+    "the harness's SMC-ABC budget, 200 particles over four populations, leaves a "
+    "coordinate's mean further from the reference than a quarter of its posterior sd"
+)
+_ABC_OUTSIDE_THE_SUPPORT = (
+    "bug: pyABC perturbs a bounded parameter in its constrained coordinate, and "
+    "particles outside the unit interval reach the posterior"
+)
+KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "gaussian_linear")] = (_ABC_BUDGET, AssertionError)
+KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "eight_schools")] = (_ABC_BUDGET, AssertionError)
+KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "beta_bernoulli")] = (
+    _ABC_OUTSIDE_THE_SUPPORT,
+    ValueError,
+)
 # A result declares its target's supports, so the mean of draws outside the
 # support fails the mean's check of its declared support.
 for _method in _FLAT_CHAIN_METHODS:
