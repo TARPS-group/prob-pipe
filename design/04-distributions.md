@@ -87,7 +87,7 @@ A composition that breaks a composition rule raises `ValueError`, for example a 
 
 **Naming the result.** The joint's `name` joins the operands' current labels with `·`, treating each as an ordinary string. So `lik * prior` is named `lik·prior`, and `(lik * prior).with_name("posterior") * d` is named `posterior·d`. Exchanging independent operands may change the label while preserving the joint law.
 
-Composition determines structure from component names alone. Every operand enters as its flattened factors, so the joint's factors, its produced components, and its connections are the same whatever the operands are called: `AB * C` and `AB.with_name(AB.name) * C` are one joint under one name, and `(lik * prior).with_name("posterior") * d` is the three-factor joint of `lik`, `prior`, and `d`. The only effect of `with_name` on a later composition is the text it contributes to the derived label.
+Composition determines structure from the names of components and given slots alone. Every operand enters as its flattened factors, so the joint's factors, its produced components, and its connections are the same whatever the operands are called: `AB * C` and `AB.with_name(AB.name) * C` are one joint under one name, and `(lik * prior).with_name("posterior") * d` is the three-factor joint of `lik`, `prior`, and `d`. The only effect of `with_name` on a later composition is the text it contributes to the derived label.
 
 ```python
 def __mul__(self, other: Distribution | ConditionalDistribution) -> FactoredDistribution | FactoredConditionalDistribution: ...

@@ -16,13 +16,13 @@ The terms of art of the reference, in alphabetical order. Each entry defines its
 - **event**: one value of a distribution's space, such as a draw or a stored datum, typed by the law's event declaration (III.5, III.7). A workflow-owned random event is one draw's occurrence in a workflow scope (V.8).
 - **exact and approximate**: a method or route is exact when its returned representation denotes the requested mathematical result, and approximate when it returns a stand-in for that result (II.7).
 - **factor**: a constituent `Distribution` or `ConditionalDistribution` that a factored joint was built from (IV.1); `factor(d, component_name)` returns the one that produces a component (VI.8).
-- **field**: one named leaf of a named tree, such as a value of a record or a leaf of a draw's schema, addressed by its key (II.6). An interior path names a group of fields (IV.1).
+- **field**: one named leaf of a named tree, such as a record's leaf value or a leaf spec of a draw's schema, addressed by its key (II.6). An interior path names a group of fields (IV.1).
 - **floor**: a generic fallback with the lowest rank on its stated domain, such as the sampling lift on samplable distributions and the elementwise sweep on batches (V.7).
 - **given slot**: a named input of a `ConditionalDistribution`, declared in its `given_spec`, which `condition_on` binds (III.9, VI.6).
 - **guard**: a predicate on a capability's instance and a call's arguments that decides whether the capability supports the call, as a `LinOp`'s inverse guard rejects a non-square operator (III.8).
 - **key**: a path that addresses a field, so the keys of a named tree are its field paths (II.6). A PRNG key is the random-number key that a workflow scope derives for each draw (V.8).
 - **kind**: a sort of tracked term, such as `NumericArray`, `Record`, or `Distribution`, identified by the class of its term spec; the kind table records each kind's tracked class and batch form (II.1).
-- **label**: an object's name, which describes the object to a reader and has no mathematical meaning (C5). II.4 owns how a label is set and derived, and III.7 owns the label of a field view.
+- **label**: an object's name, which describes the object to a reader and has no mathematical meaning (C5). II.4 owns how a label is set and derived, and III.7 and III.8 own the labels of a field view and of a marginal.
 - **level**: a named group of contiguous batch axes; a batch's `axis_groups` tiles its batch shape into levels, outermost first (II.5).
 - **lift**: the application of a function to a distribution or a batch where it expects a value, which is a broadcast for a distribution and a sweep for a batch (C4, V.5). The sampling lift is the generic evaluation rule that realizes a broadcast from draws (V.7).
 - **marginal**: the law of the field or field group at a path of a distribution, detached from that distribution; `marginal(d, path)` returns it, and `_marginal` is its capability (VI.8, III.8).

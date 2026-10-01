@@ -312,7 +312,7 @@ A `Record` is the *values* half of `C1 – Uniform interface to functions, distr
 
 ### Contract
 
-A `RecordBatch` is a batch of `Record`s that all conform to one shared `RecordSpec`. It is the batched value a `Function` produces and consumes, such as the many draws a `sample` yields. It is a *collection* of records. `NumericRecordBatch` is the all-array specialization. Indexing addresses both axes and stays unambiguous by dispatching on the key's type:
+A `RecordBatch` is a batch of `Record`s that all conform to one shared `RecordSpec`. It is the batched value a `Function` produces and consumes, such as the many draws a `sample` yields. It is a *collection* of records. `NumericRecordBatch` is the all-array specialization. Indexing addresses both axes and stays unambiguous by dispatching on the type of its argument:
 
 ```python
 class RecordBatch(Batch[Record]):
