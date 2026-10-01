@@ -24,13 +24,12 @@ from probpipe import (
     RecordSpec,
     random_unnormalized_log_prob,
 )
-from probpipe.core._random_functions import RandomFunction
-from probpipe.core._random_measures import RandomMeasure
 from probpipe.core._specs import OpaqueSpec, OutputSpec
 from probpipe.distributions._capabilities import (
     SupportsRandomUnnormalizedLogProb,
     SupportsUnnormalizedLogProb,
 )
+from probpipe.families import RandomFunction, RandomMeasure
 from probpipe.inference._minibatch import (
     MinibatchedDistribution,
     _FixedMinibatchDistribution,

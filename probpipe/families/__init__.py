@@ -18,8 +18,11 @@ Provides:
   - the mixture family, ``MixtureDistribution``;
   - the evaluation-result families, ``LinearPushforwardDistribution`` and
     ``BijectorTransformedDistribution``;
-  - the Gaussian algebra's ``FactoredMultivariateGaussian`` and
-    ``GaussianProcess``;
+  - the random functions and random measures, ``RandomFunction`` and
+    ``RandomMeasure``;
+  - the Gaussian algebra's ``FactoredMultivariateGaussian``,
+    ``GaussianRandomFunction``, ``GaussianProcess``, and
+    ``LinearBasisFunction``;
   - the conditional families: ``LinearGaussianConditional``, the response
     families ``GLMFamily``, ``GaussianFamily``, ``BernoulliFamily``, and
     ``PoissonFamily``, and ``glm_likelihood``;
@@ -53,10 +56,16 @@ from ._continuous import (
     Uniform,
 )
 from ._discrete import Bernoulli, Binomial, Categorical, NegativeBinomial, Poisson
-from ._gaussian import FactoredMultivariateGaussian, GaussianProcess
+from ._gaussian import (
+    FactoredMultivariateGaussian,
+    GaussianProcess,
+    GaussianRandomFunction,
+    LinearBasisFunction,
+)
 from ._mixture import MixtureDistribution
 from ._multivariate import Dirichlet, Multinomial, MultivariateNormal, VonMisesFisher, Wishart
 from ._programs import PyMCModel, StanModel, UnnormalizedDistribution
+from ._random_functions import RandomFunction, RandomMeasure
 from ._resampling import EpanechnikovKernel, GaussianKernel, SmoothingKernel
 from ._transformed import BijectorTransformedDistribution, LinearPushforwardDistribution
 
@@ -77,10 +86,12 @@ __all__ = [
     "GaussianFamily",
     "GaussianKernel",
     "GaussianProcess",
+    "GaussianRandomFunction",
     "HalfCauchy",
     "HalfNormal",
     "InverseGamma",
     "Laplace",
+    "LinearBasisFunction",
     "LinearGaussianConditional",
     "LinearPushforwardDistribution",
     "LogNormal",
@@ -93,6 +104,8 @@ __all__ = [
     "Poisson",
     "PoissonFamily",
     "PyMCModel",
+    "RandomFunction",
+    "RandomMeasure",
     "SmoothingKernel",
     "StanModel",
     "StudentT",

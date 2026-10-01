@@ -52,10 +52,6 @@ _CURRENT_MODULES = {
     "BootstrapReplicateDistribution": "probpipe.core._empirical",
     "BootstrapDistribution": "probpipe.core._numeric_record_distribution",
     "KDEDistribution": "probpipe.distributions.kde",
-    "RandomFunction": "probpipe.core._random_functions",
-    "RandomMeasure": "probpipe.core._random_measures",
-    "GaussianRandomFunction": "probpipe.distributions.gaussian_random_function",
-    "LinearBasisFunction": "probpipe.distributions.gaussian_random_function",
 }
 
 #: Declarations of these sections that the distribution layer owns and checks.
@@ -71,12 +67,6 @@ _PENDING = {
     ),
     "KDEDistribution": (
         "the KDE takes atoms, bandwidth, weights, and a SmoothingKernel class, in that order"
-    ),
-    "GaussianRandomFunction": (
-        "predict_covariance and __call__ take the stacked inputs only, without the joint flags"
-    ),
-    "LinearBasisFunction": (
-        "the basis-function model takes basis and weights, with output_spec and event_spec"
     ),
 }
 

@@ -70,8 +70,6 @@ from probpipe.core._numeric_record_distribution import (
 )
 from probpipe.core._opaque import Opaque, OpaqueSpec
 from probpipe.core._opaque_batch import OpaqueBatch
-from probpipe.core._random_functions import ArrayRandomFunction, RandomFunction
-from probpipe.core._random_measures import NumericRandomMeasure, RandomMeasure
 from probpipe.core._record_batch import RecordBatch
 from probpipe.core._record_distribution import RecordDistribution
 from probpipe.core._specs import (
@@ -112,13 +110,10 @@ from probpipe.core.transition import (
     with_resampling,
 )
 from probpipe.distributions import (
-    # Gaussian random functions
-    GaussianRandomFunction,
     JointEmpirical,
     JointGaussian,
     # KDE
     KDEDistribution,
-    LinearBasisFunction,
     NumericJointEmpirical,
     # Joint
     ProductDistribution,
@@ -155,10 +150,12 @@ from probpipe.families import (
     Dirichlet,
     Exponential,
     Gamma,
+    GaussianRandomFunction,
     HalfCauchy,
     HalfNormal,
     InverseGamma,
     Laplace,
+    LinearBasisFunction,
     LogNormal,
     Multinomial,
     MultivariateNormal,
@@ -166,6 +163,8 @@ from probpipe.families import (
     Normal,
     Pareto,
     Poisson,
+    RandomFunction,
+    RandomMeasure,
     StudentT,
     TFPDistribution,
     TruncatedNormal,
@@ -233,7 +232,6 @@ __all__ = [
     "ApplicabilityError",
     "ApproximateDistribution",
     "ArrayBackend",
-    "ArrayRandomFunction",
     "Batch",
     "BatchSpec",
     "BayesFlowLikelihood",
@@ -295,7 +293,6 @@ __all__ = [
     "NumericArraySpec",
     "NumericDistribution",
     "NumericJointEmpirical",
-    "NumericRandomMeasure",
     "NumericRecord",
     "NumericRecordBatch",
     "NumericRecordDistribution",

@@ -311,24 +311,20 @@ def test_x64_kde_distribution():
 def test_x64_gaussian_random_function():
     out = _run_x64(
         """
-        from probpipe.families import MultivariateNormal
-        from probpipe.distributions.gaussian_random_function import LinearBasisFunction
+        from probpipe.families import LinearBasisFunction, MultivariateNormal
         import jax
 
         weights = MultivariateNormal(
             loc=jnp.zeros(3), cov=jnp.eye(3), name='w',
         )
-        feature_map = lambda X: jnp.stack([jnp.ones_like(X[..., 0]),
-                                            X[..., 0],
-                                            X[..., 0] ** 2], axis=-1)
-        grf = LinearBasisFunction(
-            'grf', feature_map, weights, input_shape=(1,), output_shape=(),
-        )
+        basis = lambda X: jnp.stack([jnp.ones_like(X[..., 0]),
+                                      X[..., 0],
+                                      X[..., 0] ** 2], axis=-1)
+        grf = LinearBasisFunction('grf', basis, weights)
         X = jnp.linspace(-1.0, 1.0, 5)[:, None]
         d = grf(X)
         assert d.dtype == jnp.float64, d.dtype
-        # bias defaults to zeros at the weight dtype
-        assert grf._bias.dtype == jnp.float64
+        assert grf.predict_variance(X).dtype == jnp.float64
         print('OK')
         """
     )

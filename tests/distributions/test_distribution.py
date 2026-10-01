@@ -1227,17 +1227,12 @@ class TestDerivedDeclarations:
         )
         assert over_atoms.event_shape == (2,)
 
-    def test_a_random_function_draws_an_unspecified_callable(self):
+    def test_a_random_function_draws_a_callable_with_a_named_output(self):
         from probpipe import FunctionSpec, LinearBasisFunction
 
         weights = MultivariateNormal("w", loc=jnp.zeros(2), cov=jnp.eye(2))
-        f = LinearBasisFunction(
-            "f",
-            feature_map=lambda X: jnp.concatenate([X, X**2], -1),
-            weights=weights,
-            input_shape=(1,),
-        )
-        assert f.event_spec == OutputSpec(f=FunctionSpec())
+        f = LinearBasisFunction("f", lambda X: jnp.concatenate([X, X**2], -1), weights)
+        assert f.event_spec == OutputSpec(f=FunctionSpec(output_spec=OutputSpec(f=None)))
         # A derived function keeps its base's component; its label is not one.
         shifted = f + 1.0
         assert shifted.name == "shift(f)"

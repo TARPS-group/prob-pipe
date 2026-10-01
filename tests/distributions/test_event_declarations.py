@@ -87,7 +87,6 @@ from probpipe.core._numeric_record_distribution import (
     FlattenedDistributionView,
     NumericRecordDistributionView,
 )
-from probpipe.core._random_measures import RandomMeasure
 from probpipe.core._record_distribution import _RecordDistributionView
 from probpipe.core._specs import RecordSpec
 from probpipe.distributions import (
@@ -101,12 +100,6 @@ from probpipe.distributions._factored import _SoleField
 from probpipe.distributions._joint_empirical import NumericJointEmpirical
 from probpipe.distributions._product import TFPProductDistribution
 from probpipe.distributions._views import _RenamedDistribution
-from probpipe.distributions.gaussian_random_function import (
-    _IndependentSumGRF,
-    _LinearMapGRF,
-    _ScaledGRF,
-    _ShiftedGRF,
-)
 from probpipe.families import (
     BijectorTransformedDistribution,
     FactoredMultivariateGaussian,
@@ -114,8 +107,15 @@ from probpipe.families import (
     LinearPushforwardDistribution,
     MixtureDistribution,
     PoissonFamily,
+    RandomMeasure,
 )
 from probpipe.families._conditional import _LogRatePoisson
+from probpipe.families._gaussian import (
+    _IndependentSumGRF,
+    _LinearMapGRF,
+    _ScaledGRF,
+    _ShiftedGRF,
+)
 from probpipe.families._programs import (
     PyMCModel,
     StanModel,
@@ -156,11 +156,7 @@ def _basis_function(name: str = "f", output_shape: tuple[int, ...] = ()) -> Line
     width = 2 * max(1, int(np.prod(output_shape)))
     weights = MultivariateNormal("w", loc=jnp.zeros(width), cov=jnp.eye(width))
     return LinearBasisFunction(
-        name,
-        feature_map=functools.partial(_features, output_shape=output_shape),
-        weights=weights,
-        input_shape=(1,),
-        output_shape=output_shape,
+        name, functools.partial(_features, output_shape=output_shape), weights
     )
 
 
@@ -372,7 +368,6 @@ _STUB_CONSTRUCTIONS = {
         MixtureDistribution,
         LinearPushforwardDistribution,
         FactoredMultivariateGaussian,
-        GaussianProcess,
     )
 }
 

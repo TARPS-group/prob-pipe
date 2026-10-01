@@ -20,6 +20,7 @@ import numpy as np
 import pytest
 
 from probpipe import (
+    GaussianRandomFunction,
     LinearBasisFunction,
     MultivariateNormal,
     Normal,
@@ -33,7 +34,6 @@ from probpipe.distributions import (
     Distribution,
     FactoredConditionalDistribution,
     FactoredDistribution,
-    GaussianRandomFunction,
     SupportsFactors,
 )
 
@@ -111,9 +111,7 @@ def _features(X):
 def _random_function() -> LinearBasisFunction:
     """A random function labeled ``f`` whose Gaussian weights multiply ``_features``."""
     weights = MultivariateNormal("w", loc=jnp.zeros(2), cov=jnp.eye(2))
-    return LinearBasisFunction(
-        "f", feature_map=_features, weights=weights, input_shape=(1,), output_shape=()
-    )
+    return LinearBasisFunction("f", _features, weights)
 
 
 def _structure(joint: Any) -> tuple:

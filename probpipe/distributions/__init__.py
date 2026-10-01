@@ -1,4 +1,3 @@
-from ..core._random_functions import ArrayRandomFunction, RandomFunction
 from . import _composition
 from ._batches import ConditionalDistributionBatch, DistributionBatch
 from ._capabilities import (
@@ -33,10 +32,6 @@ from ._factored import (
     SupportsFactors,
 )
 from ._views import FieldView
-from .gaussian_random_function import (
-    GaussianRandomFunction,
-    LinearBasisFunction,
-)
 from .joint import (
     JointEmpirical,
     JointGaussian,
@@ -47,7 +42,6 @@ from .joint import (
 from .kde import KDEDistribution
 
 __all__ = [
-    "ArrayRandomFunction",
     "ConditionalDistribution",
     "ConditionalDistributionBatch",
     "ConditionalDistributionSpec",
@@ -63,19 +57,15 @@ __all__ = [
     "FactoredNumericDistribution",
     "FieldView",
     "FullyNumericConditionalDistribution",
-    "GaussianRandomFunction",
     "JointEmpirical",
     "JointGaussian",
     # KDE
     "KDEDistribution",
-    "LinearBasisFunction",
     "NumericConditionalDistribution",
     "NumericDistribution",
     "NumericJointEmpirical",
     # Joint
     "ProductDistribution",
-    # Random functions
-    "RandomFunction",
     "SequentialJointDistribution",
     "SupportsConditionalCovariance",
     "SupportsConditionalExpectation",

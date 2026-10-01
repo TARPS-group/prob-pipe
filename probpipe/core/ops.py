@@ -40,8 +40,8 @@ from ..distributions._capabilities import (
     SupportsVariance,
 )
 from ..distributions._distribution import Distribution
+from ..families._random_functions import RandomFunction
 from ..functions import _broker, _descendants, function
-from ._random_functions import RandomFunction
 
 __all__ = [
     "condition_on",
@@ -453,7 +453,7 @@ def mean(dist: SupportsMean) -> Any:
       :class:`~probpipe.custom_types.Array`.
     * Structured distributions, whose draws are records — returns
       :class:`~probpipe.record.Record`.
-    * :class:`~probpipe.core._random_measures.RandomMeasure`, whose draws are
+    * :class:`~probpipe.RandomMeasure`, whose draws are
       distributions — returns the marginalised :class:`~probpipe.Distribution`
       with marginal ``D̄(A) = ∫ D(A) dM(D)``.
 
@@ -582,7 +582,7 @@ def random_log_prob(
     distribution over scalars at every input.
 
     When *value* is omitted, returns that callable as a
-    :class:`~probpipe.core._random_functions.RandomFunction`. When *value* is
+    :class:`~probpipe.RandomFunction`. When *value* is
     provided (positionally, or built from field kwargs via
     :meth:`Distribution._pack_value`), returns the array-valued distribution over
     ``log D(value)`` directly — equivalent to ``random_log_prob(dist)(value)``.
@@ -616,7 +616,7 @@ def random_unnormalized_log_prob(
     scalars at every input.
 
     When *value* is omitted, returns that callable as a
-    :class:`~probpipe.core._random_functions.RandomFunction`. When *value* is
+    :class:`~probpipe.RandomFunction`. When *value* is
     provided (positionally, or built from field kwargs via
     :meth:`Distribution._pack_value`), returns the array-valued distribution over
     ``log D̃(value)`` directly — equivalent to
