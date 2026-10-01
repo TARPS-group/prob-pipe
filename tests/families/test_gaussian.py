@@ -58,6 +58,22 @@ def _dense(cov):
     return np.asarray(cov.to_dense())
 
 
+def _assert_the_joint_law(law, phi_X, w_mean, w_cov, key):
+    """*law* is the joint law of the flattened values ``Φ(X) w`` for ``w ~ N(m, C)``.
+
+    Its moments are the dense ground truth, and its draws are finite with that covariance,
+    although the covariance is singular when there are more values than weights.
+    """
+    phi_flat = np.asarray(phi_X).reshape(-1, phi_X.shape[-1])
+    joint_cov = phi_flat @ np.asarray(w_cov) @ phi_flat.T
+    np.testing.assert_allclose(mean(law), phi_flat @ np.asarray(w_mean), rtol=1e-5, atol=1e-6)
+    np.testing.assert_allclose(variance(law), np.diag(joint_cov), rtol=1e-5, atol=1e-7)
+    np.testing.assert_allclose(_dense(law._cov()), joint_cov, rtol=1e-5, atol=1e-7)
+    draws = np.asarray(law._sample(key, (100_000,)))
+    assert np.isfinite(draws).all()
+    np.testing.assert_allclose(np.cov(draws, rowvar=False), joint_cov, atol=2e-3)
+
+
 @pytest.fixture
 def key():
     return jax.random.PRNGKey(42)
@@ -306,15 +322,21 @@ class TestLinearBasisFunction:
         assert isinstance(scalar_lbf, RandomFunction)
         assert isinstance(scalar_lbf, SupportsSampling)
 
-    def test_evaluation_is_the_joint_law(self, scalar_lbf):
-        dist = scalar_lbf(jnp.linspace(-1, 1, 10).reshape(-1, 1))
+    def test_evaluation_is_the_joint_law(self, scalar_lbf, key):
+        X = jnp.linspace(-1, 1, 10).reshape(-1, 1)
+        dist = scalar_lbf(X)
         assert isinstance(dist, MultivariateNormal)
         assert dist.event_shape == (10,)
+        weights = scalar_lbf._weights
+        _assert_the_joint_law(dist, _polynomial_basis(X), weights.loc, weights.cov, key)
 
-    def test_a_multi_output_evaluation_is_the_flattened_joint_law(self, multi_output_lbf):
-        dist = multi_output_lbf(jnp.linspace(-1, 1, 5).reshape(-1, 1))
+    def test_a_multi_output_evaluation_is_the_flattened_joint_law(self, multi_output_lbf, key):
+        X = jnp.linspace(-1, 1, 5).reshape(-1, 1)
+        dist = multi_output_lbf(X)
         assert isinstance(dist, MultivariateNormal)
         assert dist.event_shape == (10,)
+        weights = multi_output_lbf._weights
+        _assert_the_joint_law(dist, _multi_output_basis(X), weights.loc, weights.cov, key)
 
     def test_the_mean_value(self, scalar_lbf):
         dist = scalar_lbf(jnp.array([[0.0], [1.0]]))
@@ -411,11 +433,16 @@ class TestLinearMap:
         assert h.predict_mean(X).shape == (5, 2)
         assert h.predict_variance(X).shape == (5, 2)
 
-    def test_evaluation_is_the_flattened_joint_law(self, weight_grf):
+    def test_evaluation_is_the_flattened_joint_law(self, weight_grf, key):
         A = jnp.array([[1.0, 0.0, 1.0], [0.0, 1.0, 0.0]])
-        dist = (A @ weight_grf)(jnp.linspace(-1, 1, 5).reshape(-1, 1))
+        X = jnp.linspace(-1, 1, 5).reshape(-1, 1)
+        dist = (A @ weight_grf)(X)
         assert isinstance(dist, MultivariateNormal)
         assert dist.event_shape == (10,)
+        # The basis of A g is A Φ_g(x).
+        phi = jnp.einsum("od,ndw->now", A, _weight_basis(X))
+        weights = weight_grf._weights
+        _assert_the_joint_law(dist, phi, weights.loc, weights.cov, key)
 
     def test_mean_value(self, weight_grf):
         A = jnp.array([[1.0, 0.0, 1.0], [0.0, 1.0, 0.0]])

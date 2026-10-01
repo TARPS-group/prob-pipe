@@ -5,9 +5,19 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 import scipy.stats
+import tensorflow_probability.substrates.jax.distributions as tfd
 
-from probpipe import NumericDistribution, TFPDistribution, cov, log_prob, mean, sample, variance
-from probpipe.families import Dirichlet, Multinomial, VonMisesFisher, Wishart
+from probpipe import (
+    MathematicalDomainError,
+    NumericDistribution,
+    TFPDistribution,
+    cov,
+    log_prob,
+    mean,
+    sample,
+    variance,
+)
+from probpipe.families import Dirichlet, Multinomial, MultivariateNormal, VonMisesFisher, Wishart
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -185,6 +195,85 @@ class TestVonMisesFisher:
         samples = sample(d, key=key, sample_shape=(100,))
         norms = jnp.linalg.norm(samples, axis=-1)
         assert jnp.allclose(norms, 1.0, atol=1e-5)
+
+
+def _rank_three_covariance(n=10):
+    """``Φ Φᵀ`` for quadratic features at n points, a covariance of rank 3."""
+    x = jnp.linspace(0.0, 1.0, n)
+    phi = jnp.stack([jnp.ones_like(x), x, x**2], axis=-1)
+    return phi @ phi.T
+
+
+class TestASingularMultivariateNormal:
+    """A positive semidefinite, singular covariance draws through a rank-tolerant root."""
+
+    def test_draws_are_finite_and_have_the_covariance(self, key):
+        cov = _rank_three_covariance()
+        d = MultivariateNormal("z", jnp.zeros(10), cov=cov)
+        draws = np.asarray(d._sample(key, (200_000,)))
+        assert np.isfinite(draws).all()
+        np.testing.assert_allclose(np.cov(draws, rowvar=False), cov, atol=0.03)
+
+    def test_draws_lie_on_the_affine_support(self, key):
+        d = MultivariateNormal("z", jnp.array([1.0, -1.0]), cov=jnp.array([[1.0, 1.0], [1.0, 1.0]]))
+        draws = np.asarray(d._sample(key, (1000,)))
+        np.testing.assert_allclose(draws[:, 0] - draws[:, 1], 2.0, atol=1e-4)
+        assert draws[:, 0].std() > 0.5
+
+    def test_the_scale_factor_is_a_finite_triangular_root(self):
+        cov = _rank_three_covariance()
+        factor = MultivariateNormal("z", jnp.zeros(10), cov=cov).scale_tril
+        np.testing.assert_array_equal(factor, jnp.tril(factor))
+        np.testing.assert_allclose(factor @ factor.T, cov, atol=1e-5)
+
+    def test_the_moments_are_the_given_covariances(self):
+        cov = _rank_three_covariance()
+        d = MultivariateNormal("z", jnp.arange(10.0), cov=cov)
+        np.testing.assert_allclose(variance(d), jnp.diagonal(cov), rtol=1e-6)
+        np.testing.assert_allclose(d.cov, cov, rtol=1e-6)
+        np.testing.assert_allclose(mean(d), jnp.arange(10.0), rtol=1e-6)
+
+    def test_there_is_no_density(self):
+        d = MultivariateNormal("z", jnp.zeros(2), cov=jnp.array([[1.0, 1.0], [1.0, 1.0]]))
+        with pytest.raises(MathematicalDomainError, match="singular"):
+            d._log_prob(jnp.zeros(2))
+        with pytest.raises(MathematicalDomainError, match="singular"):
+            log_prob(d, jnp.zeros(2))
+
+    def test_a_singular_scale_factor_has_no_density(self):
+        d = MultivariateNormal("z", jnp.zeros(2), jnp.array([[1.0, 0.0], [1.0, 0.0]]))
+        with pytest.raises(MathematicalDomainError, match="singular"):
+            d._log_prob(jnp.zeros(2))
+
+    def test_a_traced_singular_covariance_draws_finite_values_and_scores_nan(self, key):
+        cov = jnp.array([[1.0, 1.0], [1.0, 1.0]])
+
+        def draws_and_density(c):
+            d = MultivariateNormal("z", jnp.zeros(2), cov=c)
+            return d._sample(key, (500,)), d._log_prob(jnp.zeros(2))
+
+        draws, density = jax.jit(draws_and_density)(cov)
+        assert np.isfinite(np.asarray(draws)).all()
+        assert np.isnan(float(density))
+
+    def test_a_positive_definite_covariance_keeps_its_cholesky_factor(self, key):
+        cov = jnp.array([[2.0, 0.5], [0.5, 1.0]])
+        d = MultivariateNormal("z", jnp.array([1.0, -1.0]), cov=cov)
+        np.testing.assert_allclose(d.scale_tril, jnp.linalg.cholesky(cov), rtol=1e-6)
+        backend = tfd.MultivariateNormalTriL(jnp.array([1.0, -1.0]), jnp.linalg.cholesky(cov))
+        np.testing.assert_array_equal(d._sample(key, (5,)), backend.sample(5, seed=key))
+        np.testing.assert_allclose(
+            d._log_prob(jnp.zeros(2)), backend.log_prob(jnp.zeros(2)), rtol=1e-6
+        )
+
+    def test_a_traced_positive_definite_covariance_is_differentiable(self):
+        def log_density(scale):
+            d = MultivariateNormal("z", jnp.zeros(3), cov=scale * jnp.eye(3))
+            return d._log_prob(jnp.ones(3))
+
+        # log N(1; 0, s I) = -1.5 log(2π s) - 1.5 / s, with derivative -1.5 / s + 1.5 / s².
+        for differentiate in (jax.grad(log_density), jax.jit(jax.grad(log_density))):
+            assert float(differentiate(2.0)) == pytest.approx(-0.375, rel=1e-5)
 
 
 # ---------------------------------------------------------------------------

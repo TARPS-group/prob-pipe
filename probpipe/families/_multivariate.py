@@ -18,6 +18,7 @@ import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from .._dtype import _as_float_array, _promote_floats
+from ..core._dispatch import MathematicalDomainError
 from ..core._specs import OutputSpec
 from ..core.constraints import (
     Constraint,
@@ -51,14 +52,70 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
+def _rank_tolerant_factor(cov: Array) -> Array:
+    """A lower-triangular ``L`` with ``L Lᵀ`` the positive semidefinite part of *cov*.
+
+    The root ``R = V max(Λ, 0)^½`` of the symmetric eigendecomposition
+    ``cov = V Λ Vᵀ`` is reduced to a triangular factor by the QR decomposition
+    ``Rᵀ = Q U``, since ``R Rᵀ = Uᵀ U``, with signs that make the diagonal
+    nonnegative.
+    """
+    eigenvalues, vectors = jnp.linalg.eigh(cov)
+    root = vectors * jnp.sqrt(jnp.clip(eigenvalues, 0.0))
+    _, upper = jnp.linalg.qr(root.T)
+    signs = jnp.where(jnp.diagonal(upper) < 0, -1.0, 1.0).astype(upper.dtype)
+    return (upper * signs[:, None]).T
+
+
+def _covariance_factor(cov: Array) -> tuple[Array, bool | Array]:
+    """A lower-triangular factor of *cov* and whether *cov* is positive definite.
+
+    A positive definite *cov* has its Cholesky factor, and a singular one,
+    whose Cholesky factorization fails, the rank-tolerant factor. The answer is
+    a ``bool`` for a concrete *cov*, and a traced boolean otherwise, on which
+    the factor is chosen when the computation runs.
+    """
+    cholesky = jnp.linalg.cholesky(cov)
+    positive_definite = jnp.all(jnp.isfinite(cholesky))
+    if isinstance(positive_definite, jax.core.Tracer):
+        factor = jax.lax.cond(
+            positive_definite,
+            lambda factor, _: factor,
+            lambda _, matrix: _rank_tolerant_factor(matrix),
+            cholesky,
+            cov,
+        )
+        return factor, positive_definite
+    if bool(positive_definite):
+        return cholesky, True
+    return _rank_tolerant_factor(cov), False
+
+
+def _nonsingular_factor(scale_tril: Array) -> bool | Array:
+    """Whether the triangular *scale_tril* is nonsingular, a traced boolean when it is traced."""
+    nonsingular = jnp.all(jnp.diagonal(scale_tril) != 0)
+    return nonsingular if isinstance(nonsingular, jax.core.Tracer) else bool(nonsingular)
+
+
 class MultivariateNormal(TFPDistribution):
     """
     Multivariate normal (Gaussian) distribution.
 
     Its covariance keeps the structure it was given: a ``LinOp`` as it is, a
     dense matrix as a ``DenseLinOp``, and a Cholesky factor as a
-    ``CholeskyLinOp`` over it. The quantile of each coordinate is that of its
-    normal marginal, ``loc + sqrt(cov_ii) Φ⁻¹(q)``.
+    ``CholeskyLinOp`` over it. The variance is the covariance's diagonal, and
+    the quantile of each coordinate is that of its normal marginal,
+    ``loc + sqrt(cov_ii) Φ⁻¹(q)``.
+
+    **A singular covariance.** A covariance that is positive semidefinite but
+    singular has no Cholesky factor, so the family draws through a
+    rank-tolerant one: the symmetric eigendecomposition with its eigenvalues
+    clipped at zero, reduced to a lower-triangular factor. The law is then
+    concentrated on an affine subspace and has no density with respect to
+    Lebesgue measure, so its log-density raises ``MathematicalDomainError``. A
+    covariance whose Cholesky factorization fails is treated as singular. A
+    traced covariance chooses its factor when the computation runs, and its
+    log-density is NaN where the covariance is singular.
 
     Parameters
     ----------
@@ -70,8 +127,7 @@ class MultivariateNormal(TFPDistribution):
         Lower-triangular Cholesky factor of the covariance.  Exactly one of
         *scale_tril* or *cov* must be provided.
     cov : LinOp or array-like, shape ``(d, d)``, optional
-        Covariance, as an operator or a matrix, Cholesky-decomposed for the
-        backend.
+        Covariance, as an operator or a matrix, factored for the backend.
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
@@ -120,11 +176,15 @@ class MultivariateNormal(TFPDistribution):
         if cov is not None:
             if cov.shape != (loc.shape[0], loc.shape[0]):
                 raise ValueError(f"cov shape {cov.shape} does not match loc length {loc.shape[0]}.")
-            scale_tril = jnp.linalg.cholesky(cov)
+            scale_tril, positive_definite = _covariance_factor(cov)
+        else:
+            positive_definite = _nonsingular_factor(scale_tril)
 
         self._loc = loc
         self._scale_tril = scale_tril
+        self._dense_cov = cov
         self._given_cov = operator if operator is not None else cov
+        self._positive_definite = positive_definite
         backend = tfd.MultivariateNormalTriL(loc=loc, scale_tril=scale_tril)
         super().__init__(name, backend, event_spec=event_spec)
 
@@ -136,11 +196,18 @@ class MultivariateNormal(TFPDistribution):
 
     @property
     def scale_tril(self) -> Array:
+        """A lower-triangular factor ``L`` of the covariance, ``L Lᵀ = cov``.
+
+        It is the Cholesky factor when the covariance is positive definite, and
+        the rank-tolerant factor when it is singular.
+        """
         return self._scale_tril
 
     @property
     def cov(self) -> Array:
-        """Full covariance matrix (computed from Cholesky factor)."""
+        """The covariance matrix: the one given, or ``L Lᵀ`` for a given factor ``L``."""
+        if self._dense_cov is not None:
+            return self._dense_cov
         return self._scale_tril @ self._scale_tril.T
 
     @property
@@ -152,7 +219,31 @@ class MultivariateNormal(TFPDistribution):
     def _event_support(self) -> Constraint:
         return real
 
-    # -- the covariance and the quantiles ------------------------------------
+    # -- the density, the moments, and the quantiles -------------------------
+
+    def _log_prob(self, value: ArrayLike) -> Array:
+        """The normal log-density, keeping the leading axes of *value*.
+
+        Raises
+        ------
+        MathematicalDomainError
+            If the covariance is singular, since the law then has no density
+            with respect to Lebesgue measure.
+        """
+        positive_definite = self._positive_definite
+        if positive_definite is False:
+            raise MathematicalDomainError(
+                f"the covariance of {self.name!r} is singular, so the law is concentrated on an "
+                f"affine subspace and has no density with respect to Lebesgue measure"
+            )
+        log_density = super()._log_prob(value)
+        if positive_definite is True:
+            return log_density
+        return jnp.where(positive_definite, log_density, jnp.nan)
+
+    def _variance(self) -> Array:
+        """The variance of each coordinate, the covariance's diagonal."""
+        return jnp.diagonal(self.cov)
 
     def _cov(self) -> LinOp:
         """The covariance operator, with the structure it was given."""
