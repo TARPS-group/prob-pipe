@@ -41,7 +41,7 @@ from tests._ops import (
     variance,
 )
 from tests.correctness import _records
-from tests.correctness._laws import Population, _NestedObservationKernel
+from tests.correctness._laws import Population, RecordObservationKernel
 from tests.correctness._records import LAYOUTS, SCHEMAS, columns, group_paths, leaf_paths
 
 #: The four-standard-error band of every Monte Carlo comparison.
@@ -236,7 +236,7 @@ def _population_atoms() -> EmpiricalDistribution:
 
 def _theta_given_population():
     """The kernel ``theta | population ~ N(mu, tau)``, whose given slot is a record."""
-    return _NestedObservationKernel(
+    return RecordObservationKernel(
         "theta",
         {"population": _POPULATION},
         NumericArraySpec((), jnp.float32, real),

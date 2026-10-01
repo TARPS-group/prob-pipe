@@ -3,6 +3,8 @@
 Provides:
   - ``ExactGaussianRegression``: the joint of a Gaussian prior and a linear
     Gaussian observation, which claims exact conditioning on the observation;
+  - ``RecordObservationKernel``: an observation kernel whose given slots are
+    records;
   - ``Population``, ``Groups``, and ``schools_likelihood``: the eight-schools
     model with its parameters as a nested record, ``population/mu``,
     ``population/tau``, and ``groups/theta_tilde``;
@@ -181,7 +183,7 @@ def schools_likelihood() -> ObservationKernel:
         location = mu + tau * jnp.asarray(groups["theta_tilde"])
         return tfd.Independent(tfd.Normal(loc=location, scale=sigma), 1)
 
-    return _NestedObservationKernel(
+    return RecordObservationKernel(
         "y",
         {"population": POPULATION, "groups": GROUPS},
         NumericArraySpec((J,), jnp.float32, real),
@@ -189,7 +191,7 @@ def schools_likelihood() -> ObservationKernel:
     )
 
 
-class _NestedObservationKernel(ObservationKernel):
+class RecordObservationKernel(ObservationKernel):
     """An observation kernel whose given slots are records, read as nested mappings of raw leaves."""
 
     def _law(self, given: Any) -> Distribution:
