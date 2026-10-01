@@ -46,10 +46,11 @@ capabilities do not state it, and the call reads the computed law's own.
 The inference methods' own parameters, such as warmup lengths, are controls set
 through ``with_options``. Each route declares the controls it reads: the routes
 that normalize pass the parameters of the registered inference methods to the
-selected method, ``approximate_conditioning`` passes an amortized posterior's
-sample count and seed to its ``_condition_on`` as keyword options, and the other
-routes read none. A control that no route declares raises ``TypeError`` at
-``with_options``.
+selected method, or, when they curry a kernel normalized per value, to the
+method that normalizes the law it yields; ``approximate_conditioning`` passes
+an amortized posterior's sample count and seed to its ``_condition_on`` as
+keyword options, and the other routes read none. A control that no route
+declares raises ``TypeError`` at ``with_options``.
 """
 
 from __future__ import annotations
@@ -515,6 +516,21 @@ class _Normalization:
     exact_only: bool
     options: Mapping[str, Any]
 
+    def with_budgets(self, budgets: Mapping[str, Any]) -> _Normalization:
+        """This normalization with the method parameters *budgets* set as well."""
+        if not budgets:
+            return self
+        return replace(self, options=MappingProxyType({**self.options, **budgets}))
+
+    def admits_an_exact_method(self) -> bool:
+        """Whether an exact method may run: the named one, or one automatic selection reaches."""
+        if self.method is not None:
+            return self.registry.get_method(self.method).exact
+        return any(
+            method.exact and method.priority is not None
+            for method in map(self.registry.get_method, self.registry.list_methods())
+        )
+
     def report(self, target: Any) -> Feasibility:
         """The registry's report for normalizing the law *target*.
 
@@ -561,7 +577,8 @@ class _PerValueNormalization(ConditionalDistribution):
     another such kernel. Its laws sample, so it claims
     ``SupportsConditionalSampling``, and it claims
     ``SupportsApproximateConditioning`` unless only exact methods normalize it,
-    since evaluating it then runs an approximate method.
+    since evaluating it then runs an approximate method. The budgets a binding
+    passes are the method's, and they update those of the normalization.
 
     Parameters
     ----------
@@ -590,11 +607,26 @@ class _PerValueNormalization(ConditionalDistribution):
     def _condition_on(
         self, given: Record | Mapping[str, Any], /, **kwargs: Any
     ) -> Distribution | ConditionalDistribution:
-        """The normalized law at a value of every given slot, or a kernel over the rest."""
-        result = self._kernel._condition_on(given, **kwargs)
+        """The normalized law at a value of every given slot, or a kernel over the rest.
+
+        *kwargs* are budgets of the method that normalizes the law.
+        """
+        result = self._kernel._condition_on(given)
         if not _needs_normalization(result):
             return result
-        return _normalized(result, self._normalization)
+        return _normalized(result, self._normalization.with_budgets(kwargs))
+
+    def _normalization_report(
+        self, given: Record | Mapping[str, Any], budgets: Mapping[str, Any]
+    ) -> Feasibility:
+        """The registry's report for normalizing the law at a value of every given slot.
+
+        It computes that law and runs no method.
+        """
+        law = self._kernel._condition_on(given)
+        if not _needs_normalization(law):
+            return Feasibility(True)
+        return self._normalization.with_budgets(budgets).report(law)
 
     _conditional_sample = _per_value_sample
 
@@ -689,17 +721,17 @@ def _can_curry(call: BoundCall) -> Feasibility:
 def _curry(call: BoundCall) -> Any:
     """The kernel's ``_condition_on`` at the given slots.
 
-    A kernel that claims ``SupportsApproximateConditioning`` also receives the
-    budgets an amortized posterior reads that the call sets.
+    A kernel normalized per value also receives the inference methods' budgets
+    that the call sets, and any other kernel that claims
+    ``SupportsApproximateConditioning`` those an amortized posterior reads.
     """
     kernel = call.operands["d"]
-    options: dict[str, Any] = {}
-    if isinstance(kernel, SupportsApproximateConditioning):
-        options = {
-            name: call.controls[name]
-            for name in _AMORTIZED_CONDITIONING_CONTROLS
-            if name in call.controls
-        }
+    budgets: Iterable[str] = ()
+    if isinstance(kernel, _PerValueNormalization):
+        budgets = sorted(_NORMALIZATION_CONTROLS)
+    elif isinstance(kernel, SupportsApproximateConditioning):
+        budgets = _AMORTIZED_CONDITIONING_CONTROLS
+    options = {name: call.controls[name] for name in budgets if name in call.controls}
     return kernel._condition_on(call.operands["given"], **options)
 
 
@@ -872,6 +904,9 @@ class _NormalizingRoute(_RegistryRoute):
                     f"route {self.name!r} declined: the exact stage's result is normalized, "
                     f"so no inference method runs on it",
                 )
+            d = call.operands["d"]
+            if isinstance(d, _PerValueNormalization) and not self._stage.yields_kernel(call):
+                return self._evaluation_report(call, d, exact)
             return CallCheck(True, exact=exact)
         normalization = self._normalization(call, method, exact_only)
         if self._stage.yields_kernel(call):
@@ -881,19 +916,48 @@ class _NormalizingRoute(_RegistryRoute):
             return info
         return replace(info, exact=False)
 
+    def _evaluation_report(
+        self, call: BoundCall, kernel: _PerValueNormalization, exact: bool
+    ) -> Feasibility:
+        """The report of the method that binding every slot of *kernel* runs, which runs nothing.
+
+        A check computes the law the inner kernel yields only when that kernel
+        is evaluated exactly.
+        """
+        if _CHECKING.get() and isinstance(kernel.kernel, SupportsApproximateConditioning):
+            return Feasibility(
+                None,
+                pending=(
+                    f"route {self.name!r}: the law the approximate kernel "
+                    f"{type(kernel.kernel).__name__} yields is the target, which a call computes",
+                ),
+            )
+        info = kernel._normalization_report(call.operands["given"], self.budgets(call))
+        if not isinstance(info, MethodInfo):
+            return info if info.feasible is not True else CallCheck(True, exact=exact)
+        if info.feasible is not True:
+            return info
+        return replace(info, exact=exact and info.exact)
+
     def _per_value_report(
         self, call: BoundCall, normalization: _Normalization, exact: bool
     ) -> Feasibility:
         """The report of normalizing a kernel per value, whose method is selected once bound.
 
-        Its laws are exact only when the caller requires exact methods, which
-        then normalize each law.
+        Its laws are exact only when the caller requires exact methods, so that
+        report requires a registered exact method that may normalize them.
         """
         if normalization.exact_only and not call.controls["exact_only"]:
             return Feasibility(
                 False,
                 f"route {self.name!r} declined: the kernel's laws are normalized once its "
                 f"last given is bound, by a method that may be approximate",
+            )
+        if normalization.exact_only and not normalization.admits_an_exact_method():
+            return Feasibility(
+                False,
+                f"route {self.name!r} declined: the kernel's laws are unnormalized, and no "
+                f'exact method normalizes them; method="unnormalized" returns the kernel',
             )
         exact = exact and normalization.exact_only
         if normalization.method is not None:

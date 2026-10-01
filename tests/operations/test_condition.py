@@ -499,6 +499,66 @@ class TestTheNormalizationStage:
         draws = kernel._conditional_sample({"b": 2.0}, jax.random.PRNGKey(0), (3,))
         assert draws.shape == (3,)
 
+    def test_a_per_value_kernel_passes_the_budgets_to_its_method_only(
+        self, approximate_method, tmp_path
+    ):
+        from probpipe.families import StanModel
+
+        program = tmp_path / "mean.stan"
+        program.write_text(
+            "data { int N; vector[N] y; } parameters { real mu; } model { y ~ normal(mu, 1); }"
+        )
+        kernel = condition_on(StanModel("mean", str(program)), {"N": 3})
+        assert set(kernel.given_spec) == {"y"}
+        view = condition_on.with_options(num_results=30, num_warmup=7)
+        assert view(kernel, {"y": [1.0, 2.0, 3.0]}).loc == 4.0
+        assert approximate_method.options == [{"num_results": 30, "num_warmup": 7}]
+
+    def test_check_names_the_method_that_normalizes_the_bound_law(self, approximate_method):
+        kernel = condition_on(_UnnormalizedKernel("theta", ("a", "b")), {"a": 1.0})
+        report = condition_on.check(kernel, {"b": 2.0})
+        assert (report.route, report.method, report.exact) == (
+            "curry",
+            "operations_suite_factored",
+            False,
+        )
+        assert approximate_method.targets == []
+
+    def test_exact_only_declines_a_per_value_kernel_no_exact_method_normalizes(self, monkeypatch):
+        _normalize_with(
+            monkeypatch, _SuiteMethod("operations_suite_approximate", False, (Unnormalized,), 9.0)
+        )
+        view = condition_on.with_options(exact_only=True)
+        report = view.check(_UnnormalizedKernel("theta", ("a", "b")), {"a": 1.0})
+        assert report.feasible is False
+        assert 'method="unnormalized"' in report.description
+        with pytest.raises(ResolutionError, match='method="unnormalized"'):
+            view(_UnnormalizedKernel("theta", ("a", "b")), {"a": 1.0})
+
+    def test_binding_the_rest_of_an_exact_per_value_kernel_reports_its_method(self, suite_methods):
+        view = condition_on.with_options(exact_only=True)
+        kernel = view(_UnnormalizedKernel("theta", ("a", "b")), {"a": 1.0})
+        report = condition_on.check(kernel, {"b": 2.0})
+        assert (report.route, report.method, report.exact) == (
+            "curry",
+            "operations_suite_exact",
+            True,
+        )
+        assert condition_on(kernel, {"b": 2.0}).loc == 0.5
+
+    def test_binding_the_rest_raises_up_front_when_no_exact_method_applies(self, monkeypatch):
+        _normalize_with(
+            monkeypatch, _SuiteMethod("operations_suite_exact", True, (_Conjugate,), 0.5)
+        )
+        kernel = condition_on.with_options(exact_only=True)(
+            _UnnormalizedKernel("theta", ("a", "b")), {"a": 1.0}
+        )
+        report = condition_on.check(kernel, {"b": 2.0})
+        assert report.feasible is False
+        assert 'method="unnormalized"' in report.description
+        with pytest.raises(ResolutionError, match='method="unnormalized"'):
+            condition_on(kernel, {"b": 2.0})
+
     def test_conditioning_a_produced_field_of_a_kernel_keeps_it_a_kernel(self, approximate_method):
         joint = Kernel("y", ("mu",)) * Kernel("z", ("mu",))
         kernel = condition_on(joint, {"y": 0.0})
