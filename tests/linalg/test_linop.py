@@ -1,4 +1,5 @@
 # tests/linalg/test_linop.py
+import jax
 import jax.numpy as jnp
 import pytest
 
@@ -229,6 +230,27 @@ def test_scaled_preserves_positive_definite_when_scalar_positive():
     # negative scalar removes positive_definite
     s2 = ScaledLinOp(d, -1.0)
     assert "positive_definite" not in s2.flags
+
+
+def test_a_scaled_operator_differentiates_and_compiles_in_its_scalar():
+    A = jnp.array([[2.0, 1.0], [1.0, 3.0]])
+    x = jnp.array([1.0, -2.0])
+
+    def total(scalar):
+        scaled = DenseLinOp(A) * scalar
+        return jnp.sum(scaled.to_dense()) + jnp.sum(scaled.matvec(x))
+
+    expected = float(jnp.sum(A) + jnp.sum(A @ x))
+    assert float(jax.grad(total)(2.0)) == pytest.approx(expected, rel=1e-6)
+    assert float(jax.jit(total)(2.0)) == pytest.approx(2.0 * expected, rel=1e-6)
+    assert float(jax.jit(jax.grad(total))(2.0)) == pytest.approx(expected, rel=1e-6)
+
+
+def test_a_traced_scalar_leaves_positive_definiteness_undeclared():
+    d = DiagonalLinOp(jnp.array([2.0, 3.0]))
+    flags = []
+    jax.jit(lambda scalar: flags.append(ScaledLinOp(d, scalar).flags) or scalar)(2.0)
+    assert "positive_definite" not in flags[0]
 
 
 def test_logdet_sign_error():

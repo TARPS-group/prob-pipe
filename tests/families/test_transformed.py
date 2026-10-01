@@ -24,9 +24,11 @@ from probpipe import (
     mean,
     positive,
     real,
+    replay_run,
     sample,
     simplex,
     unit_interval,
+    workflow_run,
 )
 from probpipe.distributions._capabilities import (
     SupportsCovariance,
@@ -38,6 +40,7 @@ from probpipe.distributions._capabilities import (
 from probpipe.distributions._empirical import EmpiricalDistribution
 from probpipe.families import BijectorTransformedDistribution, LinearPushforwardDistribution
 from probpipe.linalg import DenseLinOp, LinOp
+from tests.functions._replay_fixtures import replayable_difference
 
 
 class _Exp(Function):
@@ -234,6 +237,55 @@ class TestSampling:
         )
 
 
+def _exp_law(bijector_kind: str) -> BijectorTransformedDistribution:
+    bijector = tfb.Exp() if bijector_kind == "backend" else _Exp()
+    return BijectorTransformedDistribution("y", Normal("x", 0.0, 1.0), bijector)
+
+
+class TestReplay:
+    """A transformed law builds, samples, and lifts inside ``replay_run`` as when recorded."""
+
+    @pytest.mark.parametrize("bijector_kind", ["backend", "function"])
+    def test_a_draw_replays_identically(self, bijector_kind):
+        law = _exp_law(bijector_kind)
+        with workflow_run(seed=4):
+            original = sample(law, sample_shape=(3,))
+        with replay_run(original.provenance):
+            replayed = sample(law, sample_shape=(3,))
+        np.testing.assert_array_equal(np.asarray(replayed), np.asarray(original))
+
+    @pytest.mark.parametrize("bijector_kind", ["backend", "function"])
+    def test_a_law_built_inside_the_replay_draws_the_recorded_values(self, bijector_kind):
+        with workflow_run(seed=4):
+            original = sample(_exp_law(bijector_kind))
+        with replay_run(original.provenance):
+            replayed = sample(_exp_law(bijector_kind))
+        np.testing.assert_array_equal(np.asarray(replayed), np.asarray(original))
+
+    def test_a_lift_replays_identically(self):
+        difference = Function(
+            name="replayable_difference",
+            fn=replayable_difference,
+            n_broadcast_samples=8,
+            dispatch="sequential",
+        )
+
+        def operands():
+            root = Normal("root", 0.0, 1.0)
+            return {
+                "left": root,
+                "right": BijectorTransformedDistribution("right", root, tfb.Exp()),
+            }
+
+        with workflow_run(seed=53):
+            original = difference(**operands())
+        with replay_run(original.provenance):
+            replayed = difference(**operands())
+        np.testing.assert_array_equal(
+            np.asarray(replayed.atoms.to_vector()), np.asarray(original.atoms.to_vector())
+        )
+
+
 class TestTheCapabilities:
     def test_a_density_base_gives_a_density(self, standard):
         assert isinstance(
@@ -297,13 +349,26 @@ class TestTheSupport:
             (tfb.Sigmoid(), unit_interval),
             (tfb.Softplus(), positive),
             (tfb.Chain([tfb.Exp(), tfb.Shift(1.0)]), positive),
+            (tfb.Chain([tfb.Shift(1.0), tfb.Scale(2.0)]), real),
             (tfb.Shift(1.0), real),
         ],
-        ids=["exp", "sigmoid", "softplus", "chain", "shift"],
+        ids=["exp", "sigmoid", "softplus", "chain", "affine-chain", "shift"],
     )
     def test_a_backend_bijector_declares_its_image(self, standard, bijector, support):
         transformed = BijectorTransformedDistribution("td", standard, bijector)
         assert transformed.support == support
+
+    @pytest.mark.parametrize(
+        "bijector",
+        [tfb.Chain([tfb.Shift(1.0), tfb.Exp()]), tfb.Chain([tfb.Scale(2.0), tfb.Sigmoid()])],
+        ids=["shift-after-exp", "scale-after-sigmoid"],
+    )
+    def test_a_chain_with_an_inner_image_short_of_the_line_leaves_the_support_undeclared(
+        self, standard, bijector
+    ):
+        # The images, (1, ∞) and (0, 2), are not the outermost bijector's image, the line.
+        transformed = BijectorTransformedDistribution("td", standard, bijector)
+        assert transformed.support is None
 
     @pytest.mark.parametrize(
         "constraint",

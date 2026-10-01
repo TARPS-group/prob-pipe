@@ -5,6 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from probpipe import NumericArraySpec, OutputSpec, RecordSpec
+
 
 class _FakeRecord(dict):
     """Dict subclass that also supports attribute-style and .fields access."""
@@ -43,6 +45,7 @@ class _FakePosterior:
         seed: int = 0,
     ) -> None:
         rng = np.random.default_rng(seed)
+        self.name = "posterior"
         self._param_names = param_names
         self._n_chains = n_chains
         self._n_draws = n_draws
@@ -55,6 +58,11 @@ class _FakePosterior:
     @property
     def fields(self) -> list[str]:
         return self._param_names
+
+    @property
+    def event_spec(self) -> OutputSpec:
+        """An exposed record with one scalar component per parameter."""
+        return OutputSpec(RecordSpec(**{p: NumericArraySpec(()) for p in self._param_names}))
 
     @property
     def num_chains(self) -> int:

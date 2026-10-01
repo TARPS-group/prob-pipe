@@ -64,13 +64,19 @@ _BACKEND_IMAGES: dict[type, Constraint] = {
 
 
 def _backend_image(bijector: tfb.Bijector) -> Constraint | None:
-    """The support *bijector* maps onto, or ``None`` when this module does not know it.
+    """The support *bijector* maps the real line onto, or ``None`` unless it is known exactly.
 
-    A chain applies its first bijector last, so that bijector's image bounds the
-    chain's.
+    A chain applies its first bijector last. Its image is that bijector's image
+    when every bijector applied before it is affine, and so maps the line onto
+    itself; otherwise the image is a subset this module does not compute.
     """
     if isinstance(bijector, tfb.Chain):
-        return _backend_image(bijector.bijectors[0]) if bijector.bijectors else real
+        if not bijector.bijectors:
+            return real
+        outermost, *inner = bijector.bijectors
+        if all(_backend_is_affine(part) for part in inner):
+            return _backend_image(outermost)
+        return None
     if isinstance(bijector, tfb.Sigmoid):
         if bijector.low is None and bijector.high is None:
             return unit_interval

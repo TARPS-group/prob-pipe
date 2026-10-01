@@ -12,16 +12,18 @@ the method that realizes each one unless the family defines its own. A moment
 is the backend's, the covariance is a linear operator over the flattened draw,
 and the quantiles are per coordinate with the level axes leading.
 
-A scalar family given parameters with axes draws one array of independent
-coordinates, one per entry of the broadcast parameters, so the backend's batch
-axes become the event's axes. A family whose draws are themselves arrays takes
-parameters for one law; a batch of separate laws is a ``DistributionBatch``.
+Parameters with more axes than one law needs give one law whose extra leading
+axes are event axes of independent coordinates, so the backend's batch axes
+become the event's leading axes: a scalar family draws one coordinate per entry
+of the broadcast parameters, and a family whose draws are arrays draws one
+independent row per entry. Separate laws form a ``DistributionBatch``.
 """
 
 from __future__ import annotations
 
 import contextlib
 import contextvars
+import functools
 from collections.abc import Callable, Generator
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -41,6 +43,7 @@ from ..distributions._capabilities import (
     SupportsQuantile,
     SupportsSampling,
     SupportsVariance,
+    _implements,
 )
 from ..distributions._distribution import Distribution, NumericDistribution
 from ..linalg import DenseLinOp, DiagonalLinOp, LinOp
@@ -92,8 +95,17 @@ def _allow_batched_tfp_init() -> Generator[None, None, None]:
 
 
 def _coordinates(backend: tfd.Distribution) -> tfd.Distribution:
-    """The backend of one coordinate, whose batch axes the event of independent coordinates reinterprets."""
+    """The backend of one coordinate or row, whose batch axes the event's leading axes reinterpret."""
     return backend.distribution if isinstance(backend, tfd.Independent) else backend
+
+
+def _block_diagonal(blocks: Array) -> Array:
+    """The block-diagonal matrix of *blocks* ``(*rows, k, k)`` over the rows' row-major order."""
+    k = blocks.shape[-1]
+    flat = jnp.reshape(blocks, (-1, k, k))
+    n = flat.shape[0]
+    joint = jnp.einsum("ij,iab->iajb", jnp.eye(n, dtype=flat.dtype), flat)
+    return jnp.reshape(joint, (n * k, n * k))
 
 
 def _backend_mean(self: TFPDistribution) -> Array:
@@ -109,13 +121,17 @@ def _backend_variance(self: TFPDistribution) -> Array:
 def _backend_cov(self: TFPDistribution) -> LinOp:
     """The covariance of the flattened draw, a ``(d, d)`` operator.
 
-    Independent coordinates have the diagonal operator of their variances, and
-    a law over a vector has the backend's dense covariance.
+    Independent coordinates have the diagonal operator of their variances, a
+    law over a vector has the backend's dense covariance, and independent rows
+    have the block-diagonal matrix of the rows' covariances.
     """
     backend = self._tfp_dist
-    if isinstance(backend, tfd.Independent) or tuple(backend.event_shape) == ():
+    row = _coordinates(backend)
+    if tuple(row.event_shape) == ():
         return DiagonalLinOp(jnp.reshape(backend.variance(), (-1,)))
-    return DenseLinOp(backend.covariance())
+    if row is backend:
+        return DenseLinOp(backend.covariance())
+    return DenseLinOp(_block_diagonal(row.covariance()))
 
 
 def _backend_quantile(self: TFPDistribution, q: ArrayLike) -> Array:
@@ -133,6 +149,41 @@ _BACKEND_METHODS: dict[type, dict[str, Callable[..., Any]]] = {
     SupportsCovariance: {"_cov": _backend_cov},
     SupportsQuantile: {"_quantile": _backend_quantile},
 }
+
+
+# ---------------------------------------------------------------------------
+# Rebuilding a family from its constructor arguments
+# ---------------------------------------------------------------------------
+
+
+def _recording_arguments(init: Callable[..., None]) -> Callable[..., None]:
+    """*init*, recording on the instance the arguments of the outermost constructor call.
+
+    A family's constructor calls the adapter's, so the arguments recorded are
+    those the family was called with, together with whether it was built in the
+    separate-laws form.
+    """
+
+    @functools.wraps(init)
+    def __init__(self: TFPDistribution, *args: Any, **kwargs: Any) -> None:
+        if getattr(self, "_constructor_arguments", None) is None:
+            recorded = (args, kwargs, _BATCHED_INIT_BYPASS.get())
+            object.__setattr__(self, "_constructor_arguments", recorded)
+        init(self, *args, **kwargs)
+
+    return __init__
+
+
+def _rebuilt_family(
+    cls: type[TFPDistribution],
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    separate_laws: bool,
+) -> TFPDistribution:
+    """The family *cls* constructed from *args* and *kwargs* in the form it was built in."""
+    form = _allow_batched_tfp_init() if separate_laws else contextlib.nullcontext()
+    with form:
+        return cls(*args, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -154,8 +205,8 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
     family's support, declared as a whole term, so every instance is a
     :class:`~probpipe.NumericDistribution`. Its component defaults to the law's
     name, and an ``event_spec`` declaration names another. A backend whose
-    draws are scalars and whose parameters have axes is reinterpreted as one
-    array of independent coordinates along those axes.
+    parameters have axes beyond one law's is reinterpreted as one law whose
+    leading event axes are those axes, over independent coordinates or rows.
 
     Parameters
     ----------
@@ -173,18 +224,18 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
     Raises
     ------
     TypeError
-        If *event_spec* is not an :class:`~probpipe.OutputSpec`, or exposes a
-        record.
+        If *backend_dist* is not a backend distribution, or *event_spec* is
+        not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
-        If the backend's draws are arrays and its parameters have axes, since
-        a batch of separate laws is a ``DistributionBatch``, or *event_spec*
-        declares a type that one draw does not conform to.
+        If *event_spec* declares a type that one draw does not conform to.
 
     Notes
     -----
-    A subclass that builds its backend after construction passes ``None`` for
-    *backend_dist* and its own complete *event_spec*, and sets ``_tfp_dist``
-    itself.
+    A family pickles and copies by rebuilding from the arguments its
+    constructor was called with, in the form it was built in, and then
+    restoring the state assigned since, such as a new label or provenance. The
+    backend is rebuilt rather than copied, since some backends, such as the
+    one reinterpreting independent coordinates, neither pickle nor deep-copy.
     """
 
     #: The capabilities the family's backend computes beyond sampling and the density.
@@ -193,28 +244,33 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
     _tfp_dist: tfd.Distribution
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
-        """Give a family the method realizing each capability its table lists."""
+        """Give a family the method realizing each capability its table lists.
+
+        A method the family implements, in its body or through a base it
+        inherits, is kept. A family's own constructor is wrapped to record the
+        arguments it is called with, which :meth:`__reduce__` rebuilds the
+        family from.
+        """
         super().__init_subclass__(**kwargs)
         for protocol in vars(cls).get("_backend_capabilities", ()):
             for method, implementation in _BACKEND_METHODS[protocol].items():
-                if method not in vars(cls):
+                if not _implements(cls, method):
                     setattr(cls, method, implementation)
+        if "__init__" in vars(cls):
+            cls.__init__ = _recording_arguments(vars(cls)["__init__"])
 
+    @_recording_arguments
     def __init__(
         self,
         name: str,
-        backend_dist: tfd.Distribution | None,
+        backend_dist: tfd.Distribution,
         *,
         event_spec: OutputSpec | None = None,
     ) -> None:
-        if backend_dist is None:
-            if event_spec is None:
-                raise TypeError(
-                    f"{type(self).__name__} builds its backend after construction, so it "
-                    f"must pass its own event_spec"
-                )
-            super().__init__(name, event_spec)
-            return
+        if not isinstance(backend_dist, tfd.Distribution):
+            raise TypeError(
+                f"backend_dist must be a backend distribution, got {type(backend_dist).__name__}"
+            )
         backend_dist = self._reinterpreted(backend_dist)
         self._tfp_dist = backend_dist
         produced = NumericArraySpec(
@@ -229,22 +285,10 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
         super().__init__(name, declaration)
 
     def _reinterpreted(self, backend: tfd.Distribution) -> tfd.Distribution:
-        """*backend* with its batch axes as the event's, for draws of independent coordinates.
-
-        Raises
-        ------
-        ValueError
-            If the backend's draws are arrays and its parameters have axes.
-        """
+        """*backend* with its batch axes leading the event's, over independent coordinates or rows."""
         batch = tuple(backend.batch_shape)
         if not batch or _BATCHED_INIT_BYPASS.get():
             return backend
-        if tuple(backend.event_shape) != ():
-            raise ValueError(
-                f"{type(self).__name__} parameters imply {batch} separate laws over arrays "
-                f"of shape {tuple(backend.event_shape)}; a batch of separate laws is a "
-                f"DistributionBatch"
-            )
         return tfd.Independent(backend, reinterpreted_batch_ndims=len(batch))
 
     # -- the event declaration ----------------------------------------------
@@ -260,6 +304,19 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
     def raw(self) -> tfd.Distribution:
         """The wrapped backend distribution."""
         return self._tfp_dist
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        """Rebuild from the recorded constructor arguments, then restore the other state.
+
+        Every attribute but the backend is restored, so a label or provenance
+        assigned after construction is kept.
+        """
+        arguments = getattr(self, "_constructor_arguments", None)
+        if arguments is None:
+            return super().__reduce__()
+        instance_dict, slots = self.__getstate__()
+        kept = {key: value for key, value in (instance_dict or {}).items() if key != "_tfp_dist"}
+        return (_rebuilt_family, (type(self), *arguments), (kept or None, slots))
 
     # -- sampling and the density ---------------------------------------------
 

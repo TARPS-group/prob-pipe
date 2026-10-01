@@ -13,6 +13,7 @@ Provides:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import prod
 from typing import Any, ClassVar
 
@@ -77,6 +78,16 @@ def _event_rank(law: Distribution) -> int:
     return len(law.event_spec.spec.shape)
 
 
+def _forward(bijector: Function) -> Callable[[Array], Array]:
+    """The bijector's forward map at one point: its wrapped callable.
+
+    The law evaluates the map itself rather than through ``apply``, which the
+    engine refuses inside ``replay_run``, so a transformed law builds, samples,
+    and pushes its moments forward in a replayed call as in the recorded one.
+    """
+    return bijector.raw()
+
+
 def _per_point(function: Any, value: Array, rank: int) -> Array:
     """*function* of one point, mapped over the leading axes of *value* beyond *rank*."""
     batch = value.shape[: value.ndim - rank]
@@ -92,7 +103,7 @@ def _transformed_sample(
 ) -> Array:
     """Draws of the base pushed through the bijector, with *sample_shape* leading."""
     draws = jnp.asarray(self._base._sample(key, sample_shape))
-    return _per_point(self._bijector.apply, draws, _event_rank(self._base))
+    return _per_point(_forward(self._bijector), draws, _event_rank(self._base))
 
 
 def _change_of_variables(
@@ -124,16 +135,17 @@ def _affine_jacobian(self: BijectorTransformedDistribution) -> Array:
     """The constant Jacobian of the affine forward map over the flattened events."""
     base_shape = self._base.event_spec.spec.shape
     point = jnp.reshape(jnp.asarray(self._base._mean()), (-1,))
+    forward = _forward(self._bijector)
 
     def flat_map(vector: Array) -> Array:
-        return jnp.reshape(self._bijector.apply(jnp.reshape(vector, base_shape)), (-1,))
+        return jnp.reshape(forward(jnp.reshape(vector, base_shape)), (-1,))
 
     return jax.jacfwd(flat_map)(point)
 
 
 def _transformed_mean(self: BijectorTransformedDistribution) -> Array:
     """``f(E[X])``, which is ``E[f(X)]`` for an affine ``f``."""
-    return self._bijector.apply(jnp.asarray(self._base._mean()))
+    return _forward(self._bijector)(jnp.asarray(self._base._mean()))
 
 
 def _transformed_cov(self: BijectorTransformedDistribution) -> LinOp:
@@ -243,7 +255,7 @@ class BijectorTransformedDistribution(Distribution):
             )
         base_spec = base.event_spec.spec
         point = jax.ShapeDtypeStruct(tuple(base_spec.shape), base_spec.dtype or jnp.float32)
-        image = jax.eval_shape(bijector.apply, point)
+        image = jax.eval_shape(_forward(bijector), point)
         object.__setattr__(self, "_base", base)
         object.__setattr__(self, "_bijector", bijector)
         super().__init__(name, NumericArraySpec(tuple(image.shape), image.dtype, _image(bijector)))

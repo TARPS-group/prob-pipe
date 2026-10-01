@@ -139,8 +139,20 @@ class TestAddRhat:
         from probpipe.diagnostics._views import DiagnosticsView
 
         view = DiagnosticsView(posterior_single_chain._annotations["diagnostics"])
+        assert set(view.rhat) == {"alpha", "beta"}
         for v in view.rhat.values():
-            assert isinstance(v, NotComputed)
+            assert v == NotComputed("R-hat requires at least 2 chains")
+
+    def test_a_single_chain_posterior_reports_each_component(self):
+        import jax.numpy as jnp
+
+        from probpipe import ApproximateDistribution, NumericArraySpec, RecordSpec
+
+        draws = jnp.asarray(np.random.default_rng(0).normal(size=(50, 3)), jnp.float32)
+        event = RecordSpec(mu=NumericArraySpec((2,), jnp.float32), sigma=NumericArraySpec(()))
+        payload = mcmc._compute_rhat_op(ApproximateDistribution([draws], event_spec=event))
+        not_computed = NotComputed("R-hat requires at least 2 chains")
+        assert payload["values"] == {"mu": not_computed, "sigma": not_computed}
 
     def test_idempotent(self, posterior):
         """Calling add_rhat twice should not raise and last write wins."""

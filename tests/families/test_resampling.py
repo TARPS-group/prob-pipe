@@ -370,13 +370,19 @@ class TestTheBandwidthRules:
         atom_variance = np.asarray(weights @ (centers - weights @ centers) ** 2)
         np.testing.assert_allclose(kde._variance(), atom_variance + h**2, rtol=1e-5)
 
-    def test_silverman_adds_its_constant(self, centers):
+    @pytest.mark.parametrize("d", [1, 3])
+    def test_silverman_adds_its_constant(self, d):
+        # Silverman's constant (4/(d+2))^(1/(d+4)) is one at d = 2, where the rules agree.
+        atoms = jnp.array([[0.0, 1.0, -2.0], [2.0, -1.0, 0.5], [4.0, 0.5, 1.0]])[:, :d]
         weights = jnp.array([0.2, 0.3, 0.5])
         n_eff = 1.0 / float(jnp.sum(weights**2))
-        h = (4.0 / 4.0) ** (1.0 / 6.0) * n_eff ** (-1.0 / 6.0) * self._spread(centers, weights)
-        kde = KDEDistribution("k", centers, "silverman", weights)
-        atom_variance = np.asarray(weights @ (centers - weights @ centers) ** 2)
-        np.testing.assert_allclose(kde._variance(), atom_variance + h**2, rtol=1e-5)
+        constant = (4.0 / (d + 2)) ** (1.0 / (d + 4))
+        h = constant * n_eff ** (-1.0 / (d + 4)) * self._spread(atoms, weights)
+        silverman = KDEDistribution("k", atoms, "silverman", weights)
+        scott = KDEDistribution("k", atoms, "scott", weights)
+        atom_variance = np.asarray(weights @ (atoms - weights @ atoms) ** 2)
+        np.testing.assert_allclose(silverman._variance(), atom_variance + h**2, rtol=1e-5)
+        assert not np.allclose(silverman._variance(), scott._variance(), rtol=1e-3)
 
     def test_uniform_weights_count_every_atom(self):
         atoms = jnp.arange(8.0)
@@ -482,6 +488,28 @@ class TestARecordKDE:
         )
         expected = flat._log_prob(jnp.array([[0.5, -0.3], [0.6, -0.4], [0.7, -0.5]]))
         np.testing.assert_allclose(kde._log_prob(batch), expected, rtol=1e-6)
+
+    def test_a_batch_of_records_is_read_by_the_kdes_leaf_paths(self):
+        atoms = NumericRecordBatch(
+            "atoms",
+            {
+                "a": jnp.array([[0.0, 1.0], [2.0, -1.0], [4.0, 0.5]]),
+                "b": jnp.array([1.0, 3.0, 2.0]),
+            },
+            "atom",
+            element_spec=NumericRecordSpec(a=(2,), b=()),
+        )
+        kde = KDEDistribution("post", atoms, NumericRecord("h", {"a": 0.5, "b": 1.5}))
+        a, b = jnp.array([[0.5, 0.2], [2.5, -0.5]]), jnp.array([1.2, 2.8])
+        in_order = NumericRecordBatch(
+            "values", {"a": a, "b": b}, "value", element_spec=NumericRecordSpec(a=(2,), b=())
+        )
+        reordered = NumericRecordBatch(
+            "values", {"b": b, "a": a}, "value", element_spec=NumericRecordSpec(b=(), a=(2,))
+        )
+        expected = kde._log_prob({"a": a, "b": b})
+        np.testing.assert_allclose(kde._log_prob(in_order), expected, rtol=1e-6)
+        np.testing.assert_allclose(kde._log_prob(reordered), expected, rtol=1e-6)
 
     def test_the_density_refuses_a_bare_array_for_a_record(self, record_centers):
         kde = KDEDistribution("post", record_centers, 0.5)

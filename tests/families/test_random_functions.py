@@ -14,6 +14,7 @@ from probpipe import (
     FunctionSpec,
     MultivariateNormal,
     Normal,
+    NumericArraySpec,
     OpaqueSpec,
     OutputSpec,
     RandomFunction,
@@ -67,6 +68,20 @@ class TestRandomFunction:
 
     def test_a_draw_is_an_unspecified_callable_by_default(self):
         assert _MinimalRandomFunction("rf").event_spec == OutputSpec(rf=FunctionSpec())
+
+    def test_a_hole_in_the_event_is_an_unspecified_callable(self):
+        assert _MinimalRandomFunction("rf", OutputSpec(g=None)).event_spec == OutputSpec(
+            g=FunctionSpec()
+        )
+
+    @pytest.mark.parametrize(
+        "event_spec",
+        [OutputSpec(rf=NumericArraySpec(())), NumericArraySpec(())],
+        ids=["declaration", "term-spec"],
+    )
+    def test_an_event_that_is_not_a_function_raises(self, event_spec):
+        with pytest.raises(TypeError, match="FunctionSpec"):
+            _MinimalRandomFunction("rf", event_spec)
 
     def test_sample_raises(self, key):
         with pytest.raises(TypeError, match="does not support sampling"):
@@ -182,6 +197,20 @@ class TestInheritance:
 
     def test_a_draw_is_an_opaque_law_by_default(self):
         assert RandomMeasure("m").event_spec.spec == DistributionSpec(OutputSpec(m=OpaqueSpec()))
+
+    def test_a_hole_in_the_event_is_an_opaque_law(self):
+        assert RandomMeasure("m", OutputSpec(g=None)).event_spec == OutputSpec(
+            g=DistributionSpec(OutputSpec(m=OpaqueSpec()))
+        )
+
+    @pytest.mark.parametrize(
+        "event_spec",
+        [OutputSpec(m=NumericArraySpec(())), NumericArraySpec(())],
+        ids=["declaration", "term-spec"],
+    )
+    def test_an_event_that_is_not_a_law_raises(self, event_spec):
+        with pytest.raises(TypeError, match="DistributionSpec"):
+            RandomMeasure("m", event_spec)
 
     def test_no_outer_event_shape_or_support(self):
         """A law-valued draw has no array shape or support of its own."""

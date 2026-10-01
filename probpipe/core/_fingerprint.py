@@ -17,8 +17,9 @@ Supported types
 - ``set`` / ``frozenset`` — order-independent (element sub-digests, sorted)
 - ``Record`` — leaf paths + leaf values (leaf-keyed collection)
 - ``Distribution`` — class + name + parameters; ``EmpiricalDistribution``
-  hashes atoms + weights, ``KDEDistribution`` hashes atoms + weights + kernel
-  class + scales; ``Weights`` are hashed by content
+  hashes its atoms' levels + element spec + stored rows + weights,
+  ``KDEDistribution`` hashes atoms + weights + kernel class + scales;
+  ``Weights`` are hashed by content
 - ``Function`` — frozen signature and input/output declarations, plus either
   plain-callable bytecode, referenced names, and captured/default values or a
   private implementation type
@@ -739,11 +740,24 @@ def _update_distribution(
             _update(h, v, depth + 1, max_array_bytes, state)
             h.update(b";")
     elif _is_empirical(dist):
-        # An empirical law: hash its atoms and its normalized weights through the
-        # public accessors, so a reweighted posterior (IS/SMC) is distinguished
-        # from the original by its weights' values.
+        # An empirical law: hash the levels its atoms lie on, their element spec,
+        # the stored rows, and the normalized weights. The rows are hashed by
+        # content whatever the atoms' kind, an object array element by element, so
+        # equal laws over opaque atoms agree, and a reweighted posterior (IS/SMC) is
+        # distinguished from the original by its weights' values.
+        atoms = dist.atoms
         h.update(b"atoms=")
-        _update(h, dist.atoms, depth + 1, max_array_bytes, state)
+        h.update(type(atoms).__name__.encode())
+        h.update(b":levels=")
+        for level, group in zip(atoms.level_names, atoms.axis_groups, strict=True):
+            h.update(level.encode())
+            h.update(b"@")
+            h.update(repr(tuple(group)).encode())
+            h.update(b",")
+        h.update(b":spec=")
+        _update(h, atoms.element_spec, depth + 1, max_array_bytes, state)
+        h.update(b":rows=")
+        _update(h, dist._rows, depth + 1, max_array_bytes, state)
         h.update(b"weights=")
         _update(h, dist.weights, depth + 1, max_array_bytes, state)
     elif _is_kde(dist):

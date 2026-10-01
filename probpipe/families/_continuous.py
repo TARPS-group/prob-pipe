@@ -11,13 +11,27 @@ draw, and parameters with axes give one draw of independent coordinates of the
 broadcast shape. Each family claims the mean, the variance, the covariance,
 and, except ``Pareto``, whose backend has no quantile function, the quantile of
 each coordinate.
+
+A moment known not to exist raises ``MathematicalDomainError``: the mean and
+the variance of a ``Cauchy`` and a ``HalfCauchy``, the mean of a ``StudentT``
+for degrees of freedom at most one and its variance at most two, and the mean
+of an ``InverseGamma`` or a ``Pareto`` for a concentration at most one and its
+variance at most two, a covariance with its variance. A moment that diverges
+to infinity is reported as not existing too, since infinity is not a value of
+the event. Where existence depends on a parameter that is traced, the
+capability's guard reports that it needs values not yet known.
 """
 
 from __future__ import annotations
 
+from typing import NoReturn
+
+import jax
+import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from .._dtype import _as_float_array, _promote_floats
+from ..core._dispatch import MathematicalDomainError
 from ..core._specs import OutputSpec
 from ..core.constraints import (
     Constraint,
@@ -35,7 +49,8 @@ from ..distributions._capabilities import (
     SupportsQuantile,
     SupportsVariance,
 )
-from ._backend import TFPDistribution
+from ..linalg import LinOp
+from ._backend import TFPDistribution, _backend_cov
 
 __all__ = [
     "Beta",
@@ -56,6 +71,105 @@ __all__ = [
 
 #: The capabilities the backend computes for the families with a quantile function.
 _CLOSED_FORM = frozenset({SupportsMean, SupportsVariance, SupportsCovariance, SupportsQuantile})
+
+
+# ---------------------------------------------------------------------------
+# Moments that do not exist
+# ---------------------------------------------------------------------------
+
+
+def _no_moment(law: TFPDistribution, moment: str, reason: str) -> NoReturn:
+    """Raise that the *moment* of *law* does not exist, for *reason*.
+
+    Raises
+    ------
+    MathematicalDomainError
+        Always.
+    """
+    raise MathematicalDomainError(f"the {moment} of {law.name!r} does not exist: {reason}")
+
+
+def _require_moment(law: TFPDistribution, holds: Array, moment: str, reason: str) -> None:
+    """Raise unless *holds* for every coordinate, when *holds* is concrete.
+
+    A traced *holds* decides nothing before the computation runs, so the
+    capability then returns the backend's value.
+
+    Raises
+    ------
+    MathematicalDomainError
+        If *holds* is concrete and false for a coordinate.
+    """
+    if not isinstance(holds, jax.core.Tracer) and not bool(jnp.all(holds)):
+        _no_moment(law, moment, reason)
+
+
+def _decided(*parameters: Array) -> bool | None:
+    """``True`` when every parameter is concrete, and ``None`` while one is traced."""
+    return None if any(isinstance(p, jax.core.Tracer) for p in parameters) else True
+
+
+class _TailBoundedMoments:
+    """The moments of a family whose tail parameter decides which exist.
+
+    The mean exists where the parameter named by ``_tail_parameter`` exceeds
+    one, and the variance, with the covariance, where it exceeds two. Each
+    guard decides existence once the parameter is concrete.
+    """
+
+    _tail_parameter: str
+    _tail_description: str
+
+    def _tail(self) -> Array:
+        return getattr(self, self._tail_parameter)
+
+    def _mean(self) -> Array:
+        """The backend's mean, where it exists.
+
+        Raises
+        ------
+        MathematicalDomainError
+            If the parameter is at most one for a coordinate.
+        """
+        reason = f"it is finite only for {self._tail_description} above one"
+        _require_moment(self, self._tail() > 1, "mean", reason)
+        return self._tfp_dist.mean()
+
+    def _mean_guard(self) -> bool | None:
+        """The parameter that decides whether the mean exists is concrete."""
+        return _decided(self._tail())
+
+    def _variance(self) -> Array:
+        """The backend's variance, where it exists.
+
+        Raises
+        ------
+        MathematicalDomainError
+            If the parameter is at most two for a coordinate.
+        """
+        reason = f"it is finite only for {self._tail_description} above two"
+        _require_moment(self, self._tail() > 2, "variance", reason)
+        return self._tfp_dist.variance()
+
+    def _variance_guard(self) -> bool | None:
+        """The parameter that decides whether the variance exists is concrete."""
+        return _decided(self._tail())
+
+    def _cov(self) -> LinOp:
+        """The diagonal covariance of the independent coordinates, where the variance exists.
+
+        Raises
+        ------
+        MathematicalDomainError
+            If the parameter is at most two for a coordinate.
+        """
+        reason = f"its variance is finite only for {self._tail_description} above two"
+        _require_moment(self, self._tail() > 2, "covariance", reason)
+        return _backend_cov(self)
+
+    def _cov_guard(self) -> bool | None:
+        """The parameter that decides whether the covariance exists is concrete."""
+        return _decided(self._tail())
 
 
 # ---------------------------------------------------------------------------
@@ -226,8 +340,11 @@ class Gamma(TFPDistribution):
 # ---------------------------------------------------------------------------
 
 
-class InverseGamma(TFPDistribution):
+class InverseGamma(_TailBoundedMoments, TFPDistribution):
     """Inverse-gamma distribution.
+
+    The mean exists for a concentration above one and the variance above two;
+    elsewhere each raises ``MathematicalDomainError``.
 
     Parameters
     ----------
@@ -252,6 +369,8 @@ class InverseGamma(TFPDistribution):
     """
 
     _backend_capabilities = _CLOSED_FORM
+    _tail_parameter = "_concentration"
+    _tail_description = "a concentration"
 
     def __init__(
         self,
@@ -381,8 +500,11 @@ class LogNormal(TFPDistribution):
 # ---------------------------------------------------------------------------
 
 
-class StudentT(TFPDistribution):
+class StudentT(_TailBoundedMoments, TFPDistribution):
     """Student's t-distribution.
+
+    The mean exists for degrees of freedom above one and the variance above
+    two; elsewhere each raises ``MathematicalDomainError``.
 
     Parameters
     ----------
@@ -409,6 +531,8 @@ class StudentT(TFPDistribution):
     """
 
     _backend_capabilities = _CLOSED_FORM
+    _tail_parameter = "_df"
+    _tail_description = "degrees of freedom"
 
     def __init__(
         self,
@@ -500,6 +624,9 @@ class Uniform(TFPDistribution):
 class Cauchy(TFPDistribution):
     """Cauchy distribution.
 
+    Its mean, variance, and covariance do not exist, and each raises
+    ``MathematicalDomainError``.
+
     Parameters
     ----------
     name : str
@@ -540,6 +667,36 @@ class Cauchy(TFPDistribution):
 
     def _event_support(self) -> Constraint:
         return real
+
+    def _mean(self) -> NoReturn:
+        """The mean, which does not exist.
+
+        Raises
+        ------
+        MathematicalDomainError
+            Always, since ``E|X|`` is infinite.
+        """
+        _no_moment(self, "mean", "E|X| is infinite")
+
+    def _variance(self) -> NoReturn:
+        """The variance, which does not exist.
+
+        Raises
+        ------
+        MathematicalDomainError
+            Always, since the law has no mean.
+        """
+        _no_moment(self, "variance", "the law has no mean")
+
+    def _cov(self) -> NoReturn:
+        """The covariance, which does not exist.
+
+        Raises
+        ------
+        MathematicalDomainError
+            Always, since the law has no variance.
+        """
+        _no_moment(self, "covariance", "its variance does not exist, since the law has no mean")
 
 
 # ---------------------------------------------------------------------------
@@ -642,6 +799,9 @@ class HalfNormal(TFPDistribution):
 class HalfCauchy(TFPDistribution):
     """Half-Cauchy distribution (support on [loc, inf)).
 
+    Its mean is infinite, and its variance and covariance do not exist, so each
+    raises ``MathematicalDomainError``.
+
     Parameters
     ----------
     name : str
@@ -687,14 +847,47 @@ class HalfCauchy(TFPDistribution):
     def _event_support(self) -> Constraint:
         return greater_than(self._loc)
 
+    def _mean(self) -> NoReturn:
+        """The mean, which is infinite.
+
+        Raises
+        ------
+        MathematicalDomainError
+            Always, since ``E[X]`` diverges.
+        """
+        _no_moment(self, "mean", "E[X] is infinite")
+
+    def _variance(self) -> NoReturn:
+        """The variance, which does not exist.
+
+        Raises
+        ------
+        MathematicalDomainError
+            Always, since the mean is infinite.
+        """
+        _no_moment(self, "variance", "the mean is infinite")
+
+    def _cov(self) -> NoReturn:
+        """The covariance, which does not exist.
+
+        Raises
+        ------
+        MathematicalDomainError
+            Always, since the mean is infinite.
+        """
+        _no_moment(self, "covariance", "its variance does not exist, since the mean is infinite")
+
 
 # ---------------------------------------------------------------------------
 # Pareto
 # ---------------------------------------------------------------------------
 
 
-class Pareto(TFPDistribution):
+class Pareto(_TailBoundedMoments, TFPDistribution):
     """Pareto distribution.
+
+    The mean exists for a concentration above one and the variance above two;
+    elsewhere each raises ``MathematicalDomainError``.
 
     Parameters
     ----------
@@ -719,6 +912,8 @@ class Pareto(TFPDistribution):
     """
 
     _backend_capabilities = frozenset({SupportsMean, SupportsVariance, SupportsCovariance})
+    _tail_parameter = "_concentration"
+    _tail_description = "a concentration"
 
     def __init__(
         self,

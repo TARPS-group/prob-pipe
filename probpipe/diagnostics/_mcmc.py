@@ -260,8 +260,8 @@ def _compute_rhat_op(
 
     if getattr(posterior, "num_chains", 1) < 2:
         values = {
-            field: NotComputed("R-hat requires at least 2 chains")
-            for field in getattr(posterior, "fields", ())
+            component: NotComputed("R-hat requires at least 2 chains")
+            for component in posterior.event_spec.components
         }
         warns: list[str] = []
 

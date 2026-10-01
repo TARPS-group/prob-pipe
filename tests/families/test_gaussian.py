@@ -14,6 +14,7 @@ from probpipe import (
     LinearBasisFunction,
     MultivariateNormal,
     Normal,
+    NumericArraySpec,
     OutputSpec,
     RandomFunction,
     SupportsMean,
@@ -56,6 +57,22 @@ def _dense_joint_cov(phi_X, w_cov):
 def _dense(cov):
     assert isinstance(cov, LinOp)
     return np.asarray(cov.to_dense())
+
+
+def _assert_the_joint_law(law, phi_X, w_mean, w_cov, key):
+    """*law* is the joint law of the flattened values ``Φ(X) w`` for ``w ~ N(m, C)``.
+
+    Its moments are the dense ground truth, and its draws are finite with that covariance,
+    although the covariance is singular when there are more values than weights.
+    """
+    phi_flat = np.asarray(phi_X).reshape(-1, phi_X.shape[-1])
+    joint_cov = phi_flat @ np.asarray(w_cov) @ phi_flat.T
+    np.testing.assert_allclose(mean(law), phi_flat @ np.asarray(w_mean), rtol=1e-5, atol=1e-6)
+    np.testing.assert_allclose(variance(law), np.diag(joint_cov), rtol=1e-5, atol=1e-7)
+    np.testing.assert_allclose(_dense(law._cov()), joint_cov, rtol=1e-5, atol=1e-7)
+    draws = np.asarray(law._sample(key, (100_000,)))
+    assert np.isfinite(draws).all()
+    np.testing.assert_allclose(np.cov(draws, rowvar=False), joint_cov, atol=2e-3)
 
 
 @pytest.fixture
@@ -196,6 +213,46 @@ class TestDeclarations:
         )
         assert process.event_spec == OutputSpec(g=FunctionSpec(output_spec=OutputSpec(f=None)))
 
+    def test_an_event_that_is_not_a_function_raises(self):
+        with pytest.raises(TypeError, match="FunctionSpec"):
+            GaussianProcess(
+                "f",
+                lambda X: jnp.zeros(X.shape[0]),
+                _rbf_kernel,
+                event_spec=OutputSpec(g=NumericArraySpec(())),
+            )
+
+    def test_an_event_function_naming_another_output_raises(self):
+        with pytest.raises(ValueError, match="names the output"):
+            GaussianProcess(
+                "f",
+                lambda X: jnp.zeros(X.shape[0]),
+                _rbf_kernel,
+                output_spec=OutputSpec(y=None),
+                event_spec=OutputSpec(g=FunctionSpec(output_spec=OutputSpec(z=None))),
+            )
+
+    def test_an_event_function_naming_the_output_is_kept(self):
+        event = OutputSpec(g=FunctionSpec(output_spec=OutputSpec(y=None)))
+        process = GaussianProcess(
+            "f",
+            lambda X: jnp.zeros(X.shape[0]),
+            _rbf_kernel,
+            output_spec=OutputSpec(y=None),
+            event_spec=event,
+        )
+        assert process.event_spec == event
+
+    def test_an_event_function_without_an_output_takes_the_output_declaration(self):
+        process = GaussianProcess(
+            "f",
+            lambda X: jnp.zeros(X.shape[0]),
+            _rbf_kernel,
+            output_spec=OutputSpec(y=None),
+            event_spec=OutputSpec(g=FunctionSpec()),
+        )
+        assert process.event_spec == OutputSpec(g=FunctionSpec(output_spec=OutputSpec(y=None)))
+
     def test_a_record_output_declaration_raises(self):
         from probpipe import NumericRecordSpec
 
@@ -306,15 +363,21 @@ class TestLinearBasisFunction:
         assert isinstance(scalar_lbf, RandomFunction)
         assert isinstance(scalar_lbf, SupportsSampling)
 
-    def test_evaluation_is_the_joint_law(self, scalar_lbf):
-        dist = scalar_lbf(jnp.linspace(-1, 1, 10).reshape(-1, 1))
+    def test_evaluation_is_the_joint_law(self, scalar_lbf, key):
+        X = jnp.linspace(-1, 1, 10).reshape(-1, 1)
+        dist = scalar_lbf(X)
         assert isinstance(dist, MultivariateNormal)
         assert dist.event_shape == (10,)
+        weights = scalar_lbf._weights
+        _assert_the_joint_law(dist, _polynomial_basis(X), weights.loc, weights.cov, key)
 
-    def test_a_multi_output_evaluation_is_the_flattened_joint_law(self, multi_output_lbf):
-        dist = multi_output_lbf(jnp.linspace(-1, 1, 5).reshape(-1, 1))
+    def test_a_multi_output_evaluation_is_the_flattened_joint_law(self, multi_output_lbf, key):
+        X = jnp.linspace(-1, 1, 5).reshape(-1, 1)
+        dist = multi_output_lbf(X)
         assert isinstance(dist, MultivariateNormal)
         assert dist.event_shape == (10,)
+        weights = multi_output_lbf._weights
+        _assert_the_joint_law(dist, _multi_output_basis(X), weights.loc, weights.cov, key)
 
     def test_the_mean_value(self, scalar_lbf):
         dist = scalar_lbf(jnp.array([[0.0], [1.0]]))
@@ -411,11 +474,16 @@ class TestLinearMap:
         assert h.predict_mean(X).shape == (5, 2)
         assert h.predict_variance(X).shape == (5, 2)
 
-    def test_evaluation_is_the_flattened_joint_law(self, weight_grf):
+    def test_evaluation_is_the_flattened_joint_law(self, weight_grf, key):
         A = jnp.array([[1.0, 0.0, 1.0], [0.0, 1.0, 0.0]])
-        dist = (A @ weight_grf)(jnp.linspace(-1, 1, 5).reshape(-1, 1))
+        X = jnp.linspace(-1, 1, 5).reshape(-1, 1)
+        dist = (A @ weight_grf)(X)
         assert isinstance(dist, MultivariateNormal)
         assert dist.event_shape == (10,)
+        # The basis of A g is A Φ_g(x).
+        phi = jnp.einsum("od,ndw->now", A, _weight_basis(X))
+        weights = weight_grf._weights
+        _assert_the_joint_law(dist, phi, weights.loc, weights.cov, key)
 
     def test_mean_value(self, weight_grf):
         A = jnp.array([[1.0, 0.0, 1.0], [0.0, 1.0, 0.0]])
@@ -533,6 +601,33 @@ class TestScale:
         with pytest.raises(ValueError, match="scalar"):
             jnp.array([1.0, 2.0, 3.0]) * weight_grf
 
+    def test_a_traced_scalar_differentiates_and_compiles(self):
+        process = GaussianProcess("g", lambda X: jnp.zeros(X.shape[0]), _rbf_kernel)
+        X = jnp.array([[0.0], [0.5], [1.0]])
+        kernel_sum = float(jnp.sum(_rbf_kernel(X, X)))
+
+        def total(alpha):
+            return jnp.sum((alpha * process).predict_covariance(X).to_dense())
+
+        # d/dα of Σ α² K is 2 α Σ K.
+        for differentiate in (jax.grad(total), jax.jit(jax.grad(total))):
+            assert float(differentiate(2.0)) == pytest.approx(4.0 * kernel_sum, rel=1e-5)
+        assert float(jax.jit(total)(2.0)) == pytest.approx(4.0 * kernel_sum, rel=1e-5)
+
+    def test_the_law_of_a_traced_scaling_differentiates(self):
+        process = GaussianProcess("g", lambda X: jnp.zeros(X.shape[0]), _rbf_kernel)
+        X = jnp.array([[0.0], [0.5], [1.0]])
+        y = jnp.array([0.1, 0.2, -0.1])
+
+        def log_density(alpha):
+            return (alpha * process)(X)._log_prob(y)
+
+        # log N(y; 0, α² K) has the derivative yᵀ K⁻¹ y / α³ - n / α.
+        quadratic = float(y @ jnp.linalg.solve(_rbf_kernel(X, X), y))
+        expected = quadratic / 8.0 - 3.0 / 2.0
+        for differentiate in (jax.grad(log_density), jax.jit(jax.grad(log_density))):
+            assert float(differentiate(2.0)) == pytest.approx(expected, rel=1e-3)
+
 
 class TestIndependentSum:
     def test_mean_is_sum(self):
@@ -574,6 +669,15 @@ class TestIndependentSum:
         h = _ScalarGP() + _MultiOutputGRF()
         with pytest.raises(ValueError, match="one shape"):
             h.predict_mean(jnp.ones((3, 2)))
+
+    def test_a_shape_mismatch_raises_for_the_variance_as_for_the_mean(self):
+        # At two points the scalar member's variance, (2,), broadcasts against (2, 2).
+        h = _ScalarGP() + _MultiOutputGRF()
+        X = jnp.ones((2, 2))
+        with pytest.raises(ValueError, match="one shape"):
+            h.predict_mean(X)
+        with pytest.raises(ValueError, match="one shape"):
+            h.predict_variance(X)
 
     def test_sub_grfs(self):
         gp1, gp2 = _ScalarGP(1.0, 1.0, name="a"), _ScalarGP(0.5, 0.5, name="b")

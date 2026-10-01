@@ -13,6 +13,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 import jax.scipy.linalg as jsla
 
@@ -61,6 +62,13 @@ ALLOWED_FLAGS = frozenset(
 def _promote_dtype(*dtypes: Any) -> Any:
     """Return promoted dtype for given dtypes/arrays."""
     return jnp.result_type(*dtypes)
+
+
+def _known_positive(scalar: float | Array) -> bool:
+    """Whether *scalar* is concrete and positive; a traced scalar's sign is not known."""
+    if isinstance(scalar, jax.core.Tracer):
+        return False
+    return bool(scalar > 0)
 
 
 def _as_linear_operator(A: LinOpLike) -> LinOp:
@@ -416,15 +424,22 @@ class SumLinOp(LinOp):
 
 
 class ScaledLinOp(LinOp):
-    """Scalar multiple of a linear operator."""
+    """Scalar multiple of a linear operator.
 
-    def __init__(self, op: LinOp, scalar: float) -> None:
+    A scalar given as an array is kept as one, so the operator differentiates
+    and compiles through a traced scalar; a Python number is kept as a float.
+    The operator is declared positive definite when its operand is and the
+    scalar is known to be positive, which a traced scalar is not.
+    """
+
+    def __init__(self, op: LinOp, scalar: float | Array) -> None:
         super().__init__()
         if not isinstance(op, LinOp):
             raise ValueError("ScaledLinOp requires a LinOp object.")
 
         self.op = op
-        self.scalar = float(_ensure_real_scalar(scalar, as_array=False))
+        value = _ensure_real_scalar(scalar, as_array=True)
+        self.scalar = value if isinstance(scalar, jax.Array) else float(value)
 
         if "dense" in op.flags:
             self.add_flag("dense")
@@ -433,7 +448,7 @@ class ScaledLinOp(LinOp):
             self.add_flag("symmetric")
         if "symmetric" in op.flags:
             self.add_flag("symmetric")
-        if self.scalar > 0 and "positive_definite" in op.flags:
+        if "positive_definite" in op.flags and _known_positive(self.scalar):
             self.add_flag("positive_definite")
 
     @property

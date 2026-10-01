@@ -90,20 +90,48 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution):
 def _declarations(
     name: str, output_spec: OutputSpec | None, event_spec: OutputSpec | None
 ) -> tuple[OutputSpec, OutputSpec]:
-    """The drawn function's output declaration and the event's, each defaulting to *name*."""
+    """The drawn function's output declaration and the event's, each defaulting to *name*.
+
+    The event is a function, so a declared event type is a ``FunctionSpec`` whose
+    output side names the drawn function's output component. A type hole in the
+    event, or in the function's output side, is filled with the output declaration.
+
+    Raises
+    ------
+    TypeError
+        If *output_spec* is not an ``OutputSpec`` naming one component, or
+        *event_spec* is not an ``OutputSpec`` or declares a type that is not a
+        ``FunctionSpec``.
+    ValueError
+        If the event's ``FunctionSpec`` names another output component.
+    """
     output = OutputSpec(**{name: None}) if output_spec is None else output_spec
     if not isinstance(output, OutputSpec) or output._component_name is None:
         raise TypeError(
             f"output_spec of {name!r} must be an OutputSpec naming one component, got "
             f"{output_spec!r}"
         )
-    function = FunctionSpec(output_spec=output)
     if event_spec is None:
-        return output, OutputSpec(**{name: function})
+        return output, OutputSpec(**{name: FunctionSpec(output_spec=output)})
     if not isinstance(event_spec, OutputSpec):
         raise TypeError(f"event_spec of {name!r} must be an OutputSpec, got {event_spec!r}")
-    if event_spec.spec is None:
-        return output, event_spec._with_spec(function)
+    declared = event_spec.spec
+    if declared is None:
+        return output, event_spec._with_spec(FunctionSpec(output_spec=output))
+    if not isinstance(declared, FunctionSpec):
+        raise TypeError(
+            f"the event of the random function {name!r} is a function, so event_spec declares "
+            f"a FunctionSpec; got {type(declared).__name__}"
+        )
+    if declared.output_spec is None:
+        filled = FunctionSpec(input_spec=declared.input_spec, output_spec=output)
+        return output, event_spec._with_spec(filled)
+    named = declared.output_spec._component_name
+    if named != output._component_name:
+        raise ValueError(
+            f"the event of {name!r} declares a function whose output is {named!r}, but the "
+            f"drawn function names the output component {output._component_name!r}"
+        )
     return output, event_spec
 
 
@@ -136,10 +164,11 @@ class GaussianRandomFunction(RandomFunction, SupportsMean, SupportsVariance, ABC
 
     The drawn function's output component and the function-valued event's
     component both default to the label; ``output_spec`` names the former and
-    ``event_spec`` the latter, and a type hole in ``event_spec`` is filled with
-    the ``FunctionSpec`` of the output. The mean is the mean function and the
-    variance the pointwise variance function, each a callable on stacked
-    inputs.
+    ``event_spec`` the latter. A type that ``event_spec`` declares is a
+    ``FunctionSpec`` naming the output component, and a type hole in it, or in
+    its output side, is filled with the output declaration. The mean is the
+    mean function and the variance the pointwise variance function, each a
+    callable on stacked inputs.
 
     Shifts ``f + b``, scalings ``alpha * f`` by a scalar, output-side linear
     maps ``A @ f``, and sums ``f + g`` of independent members are again
@@ -158,7 +187,11 @@ class GaussianRandomFunction(RandomFunction, SupportsMean, SupportsVariance, ABC
     ------
     TypeError
         If *output_spec* is not an ``OutputSpec`` naming one component, or
-        *event_spec* is not an ``OutputSpec``.
+        *event_spec* is not an ``OutputSpec`` or declares a type that is not a
+        ``FunctionSpec``.
+    ValueError
+        If the ``FunctionSpec`` that *event_spec* declares names another output
+        component.
     """
 
     def __init__(
@@ -289,8 +322,10 @@ class GaussianProcess(GaussianRandomFunction):
     Raises
     ------
     TypeError
-        If *mean_fn* or *cov_kernel* is not callable, or a declaration is not
-        an ``OutputSpec``.
+        If *mean_fn* or *cov_kernel* is not callable, or a declaration is
+        refused as :class:`GaussianRandomFunction` refuses it.
+    ValueError
+        As :class:`GaussianRandomFunction` raises.
     """
 
     def __init__(
@@ -359,7 +394,10 @@ class LinearBasisFunction(GaussianRandomFunction, SupportsSampling):
     ------
     TypeError
         If *weights* is not a ``MultivariateNormal``, *basis* is not callable,
-        or a declaration is not an ``OutputSpec``.
+        or a declaration is refused as :class:`GaussianRandomFunction` refuses
+        it.
+    ValueError
+        As :class:`GaussianRandomFunction` raises.
     """
 
     def __init__(
@@ -543,6 +581,23 @@ class _ScaledGRF(GaussianRandomFunction):
         return self._base.predict_covariance(X) * (self._alpha**2)
 
 
+def _summed(left: Array, right: Array) -> Array:
+    """``left + right`` for the values of two members at the same points.
+
+    Raises
+    ------
+    ValueError
+        If the two members' values have different shapes, which would otherwise
+        broadcast.
+    """
+    left, right = jnp.asarray(left), jnp.asarray(right)
+    if left.shape != right.shape:
+        raise ValueError(
+            f"f + g adds values of one shape, got {left.shape[1:]} and {right.shape[1:]}"
+        )
+    return left + right
+
+
 class _IndependentSumGRF(GaussianRandomFunction):
     """``h(x) = g₁(x) + g₂(x)`` for independent members; constructed by ``g₁ + g₂``.
 
@@ -569,15 +624,10 @@ class _IndependentSumGRF(GaussianRandomFunction):
         return self._left._joint and self._right._joint
 
     def predict_mean(self, X: Array) -> Array:
-        left, right = self._left.predict_mean(X), self._right.predict_mean(X)
-        if left.shape != right.shape:
-            raise ValueError(
-                f"f + g adds values of one shape, got {left.shape[1:]} and {right.shape[1:]}"
-            )
-        return left + right
+        return _summed(self._left.predict_mean(X), self._right.predict_mean(X))
 
     def predict_variance(self, X: Array) -> Array:
-        return self._left.predict_variance(X) + self._right.predict_variance(X)
+        return _summed(self._left.predict_variance(X), self._right.predict_variance(X))
 
     def predict_covariance(self, X: Array) -> LinOp:
         return self._left.predict_covariance(X) + self._right.predict_covariance(X)

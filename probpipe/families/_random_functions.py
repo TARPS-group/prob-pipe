@@ -24,6 +24,28 @@ from ..values._function_base import FunctionSpec
 __all__ = ["RandomFunction", "RandomMeasure"]
 
 
+def _event_of_kind(
+    name: str, event_spec: OutputSpec | TermSpec | None, kind: type[TermSpec], default: TermSpec
+) -> OutputSpec | TermSpec:
+    """The event declaration of a law whose draws are of *kind*, with a hole filled by *default*.
+
+    Raises
+    ------
+    TypeError
+        If *event_spec* declares a type that is not a *kind*.
+    """
+    if event_spec is None:
+        return default
+    declared = event_spec.spec if isinstance(event_spec, OutputSpec) else event_spec
+    if declared is None:
+        return event_spec._with_spec(default)
+    if not isinstance(declared, kind):
+        raise TypeError(
+            f"the event of {name!r} declares a {kind.__name__}, got {type(declared).__name__}"
+        )
+    return event_spec
+
+
 class RandomFunction(Distribution):
     """A distribution over functions, whose value at a point is a distribution.
 
@@ -40,13 +62,19 @@ class RandomFunction(Distribution):
     name : str
         The random function's label.
     event_spec : OutputSpec or TermSpec, optional
-        The declaration of one draw, a bare term spec completing as for
-        ``Distribution``. By default a draw is a callable whose input and
-        output are unspecified, a whole term under *name*.
+        The declaration of one draw, whose type is a ``FunctionSpec``; a bare
+        term spec completes as for ``Distribution``. The type defaults to a
+        callable whose input and output are unspecified, which also fills a
+        type hole, and the declaration to a whole term under *name*.
+
+    Raises
+    ------
+    TypeError
+        If *event_spec* declares a type that is not a ``FunctionSpec``.
     """
 
     def __init__(self, name: str, event_spec: OutputSpec | TermSpec | None = None) -> None:
-        super().__init__(name, FunctionSpec() if event_spec is None else event_spec)
+        super().__init__(name, _event_of_kind(name, event_spec, FunctionSpec, FunctionSpec()))
 
     @abstractmethod
     def __call__(self, x: Any) -> Distribution:
@@ -70,11 +98,16 @@ class RandomMeasure(Distribution):
     name : str
         The random measure's label.
     event_spec : OutputSpec or TermSpec, optional
-        The declaration of one draw, a ``DistributionSpec``. By default a draw
-        is a law whose event is opaque, a whole term under *name*.
+        The declaration of one draw, whose type is a ``DistributionSpec``. The
+        type defaults to a law whose event is opaque, which also fills a type
+        hole, and the declaration to a whole term under *name*.
+
+    Raises
+    ------
+    TypeError
+        If *event_spec* declares a type that is not a ``DistributionSpec``.
     """
 
     def __init__(self, name: str, event_spec: OutputSpec | TermSpec | None = None) -> None:
-        if event_spec is None:
-            event_spec = DistributionSpec(OutputSpec(**{name: OpaqueSpec()}))
-        super().__init__(name, event_spec)
+        opaque_law = DistributionSpec(OutputSpec(**{name: OpaqueSpec()}))
+        super().__init__(name, _event_of_kind(name, event_spec, DistributionSpec, opaque_law))

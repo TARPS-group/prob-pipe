@@ -9,12 +9,17 @@ import pytest
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
 from probpipe import (
+    ApproximateDistribution,
     EmpiricalDistribution,
     GLMLikelihood,
     MultivariateNormal,
     Normal,
+    NumericArraySpec,
+    OutputSpec,
+    RecordSpec,
     predictive_check,
 )
+from probpipe.core._numeric_record import NumericRecord
 from probpipe.validation import predictive_check as pc_direct
 from probpipe.validation._predictive_check import (
     _supports_key_arg,
@@ -376,6 +381,77 @@ class TestPredictiveCheck:
         _record_check_in_annotations(dist, stats, result)
 
         assert not hasattr(dist, "_annotations")
+
+
+# ---------------------------------------------------------------------------
+# Tests — a posterior over a record
+# ---------------------------------------------------------------------------
+
+
+def _posteriors_of(draws, spec):
+    """A posterior over the record of one field holding *draws*, and the same as a whole term."""
+    chains = [draws[: len(draws) // 2], draws[len(draws) // 2 :]]
+    record = ApproximateDistribution(chains, event_spec=RecordSpec(beta=spec))
+    whole = ApproximateDistribution(chains, event_spec=OutputSpec(beta=spec))
+    return record, whole
+
+
+class TestARecordPosterior:
+    """A record posterior's draws reach the likelihood as records, as an array posterior's do."""
+
+    def test_the_batched_path_hands_on_a_batch_of_records(self):
+        rng = np.random.default_rng(0)
+        X = jnp.asarray(rng.normal(size=(30, 2)), jnp.float32)
+        y = jnp.asarray(rng.poisson(2.0, size=30), jnp.float32)
+        draws = jnp.asarray(0.05 * rng.normal(size=(200, 3)), jnp.float32)
+        likelihood = GLMLikelihood(tfp_glm.Poisson(), X)
+        results = [
+            predictive_check(
+                law, likelihood, jnp.mean, y, num_replications=40, key=jax.random.PRNGKey(0)
+            )
+            for law in _posteriors_of(draws, NumericArraySpec((3,), jnp.float32))
+        ]
+        assert 0.0 <= results[0]["p_value"] <= 1.0
+        assert results[0]["p_value"] == results[1]["p_value"]
+        np.testing.assert_array_equal(
+            results[0]["replicated_statistics"].atoms.values,
+            results[1]["replicated_statistics"].atoms.values,
+        )
+
+    def test_the_loop_path_hands_on_a_record_that_reads_as_its_one_field(self):
+        draws = jnp.asarray(np.random.default_rng(1).normal(size=(40,)), jnp.float32)
+        results = [
+            predictive_check(
+                law,
+                NumpyGaussianLikelihood(rng_seed=0),
+                test_fn=lambda d: float(np.mean(d)),
+                observed_data=jnp.ones(20),
+                num_replications=10,
+                key=jax.random.PRNGKey(2),
+            )
+            for law in _posteriors_of(draws, NumericArraySpec((), jnp.float32))
+        ]
+        assert results[0]["p_value"] == results[1]["p_value"]
+        np.testing.assert_array_equal(
+            results[0]["replicated_statistics"].atoms.values,
+            results[1]["replicated_statistics"].atoms.values,
+        )
+
+    def test_a_numeric_record_of_draws_is_checked_as_its_rows(self):
+        rng = np.random.default_rng(0)
+        X = jnp.asarray(rng.normal(size=(30, 2)), jnp.float32)
+        y = jnp.asarray(rng.poisson(2.0, size=30), jnp.float32)
+        draws = jnp.asarray(0.05 * rng.normal(size=(200, 3)), jnp.float32)
+        likelihood = GLMLikelihood(tfp_glm.Poisson(), X)
+        rows = NumericRecord("posterior", beta=np.asarray(draws))
+        result = predictive_check(
+            rows, likelihood, jnp.mean, y, num_replications=40, key=jax.random.PRNGKey(0)
+        )
+        record, _ = _posteriors_of(draws, NumericArraySpec((3,), jnp.float32))
+        expected = predictive_check(
+            record, likelihood, jnp.mean, y, num_replications=40, key=jax.random.PRNGKey(0)
+        )
+        assert result["p_value"] == expected["p_value"]
 
 
 # ---------------------------------------------------------------------------
