@@ -58,7 +58,6 @@ not read with ``TypeError``, naming the entries it reads.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
-from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, ClassVar
@@ -94,16 +93,16 @@ from ..distributions._factored import (
     SupportsFactors,
     _bound_factor,
 )
+from ..functions._call import checking
+from ..functions._resolution import PointReport
 from ._convert import convert
 from ._operation import (
     BoundCall,
-    Operation,
     RouteSource,
     _CheckedRoute,
-    _PointCheck,
     _RegistryRoute,
     _workflow_draws,
-    operation_registry,
+    operation,
 )
 from ._sample import _record_batch, _sample_result, _sample_shape, sample
 
@@ -113,9 +112,6 @@ _PATH_SEP = "/"
 
 #: The name of the route that returns the exact stage's result.
 _UNNORMALIZED = "unnormalized"
-
-#: Whether the routes are probed for ``check``, which computes no exact stage.
-_CHECKING: ContextVar[bool] = ContextVar("condition_on_checking", default=False)
 
 
 # ---------------------------------------------------------------------------
@@ -1111,7 +1107,7 @@ class _NormalizingRoute(_RegistryRoute):
         result = None
         normalized = self._stage.normalized(call)
         if normalized is None:
-            if _CHECKING.get():
+            if checking():
                 return Feasibility(
                     None,
                     pending=(
@@ -1132,12 +1128,12 @@ class _NormalizingRoute(_RegistryRoute):
             d = call.operands["d"]
             if isinstance(d, _PerValueNormalization) and not self._stage.yields_kernel(call):
                 return self._evaluation_report(call, d, exact)
-            return _PointCheck(True, exact=exact)
+            return PointReport(True, exact=exact)
         normalization = self._normalization(call, method, exact_only)
         if self._stage.yields_kernel(call):
             return self._per_value_report(call, normalization, exact)
         if result is None:
-            if _CHECKING.get() and not exact:
+            if checking() and not exact:
                 evaluated = type(_evaluated(call.operands["d"])).__name__
                 return Feasibility(
                     None,
@@ -1160,7 +1156,7 @@ class _NormalizingRoute(_RegistryRoute):
         A check computes the law the inner kernel yields only when that kernel
         is evaluated exactly.
         """
-        if _CHECKING.get() and isinstance(kernel.kernel, SupportsApproximateConditioning):
+        if checking() and isinstance(kernel.kernel, SupportsApproximateConditioning):
             return Feasibility(
                 None,
                 pending=(
@@ -1170,7 +1166,7 @@ class _NormalizingRoute(_RegistryRoute):
             )
         info = kernel._normalization_report(call.operands["given"], self.method_options(call))
         if not isinstance(info, MethodInfo):
-            return info if info.feasible is not True else _PointCheck(True, exact=exact)
+            return info if info.feasible is not True else PointReport(True, exact=exact)
         if info.feasible is not True:
             return info
         return replace(info, exact=exact and info.exact)
@@ -1199,7 +1195,7 @@ class _NormalizingRoute(_RegistryRoute):
         if normalization.method is not None:
             method = self.registry.get_method(normalization.method)
             return MethodInfo(True, method_name=normalization.method, exact=exact and method.exact)
-        return _PointCheck(True, exact=exact)
+        return PointReport(True, exact=exact)
 
     def run(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Any:
         """The exact stage's result, normalized as the declarations, or else its own, require."""
@@ -1215,32 +1211,6 @@ class _NormalizingRoute(_RegistryRoute):
 # ---------------------------------------------------------------------------
 # The operation
 # ---------------------------------------------------------------------------
-
-
-class _Conditioning(Operation):
-    """``condition_on``'s operation, whose check computes no exact stage.
-
-    The routes that normalize share the inference-method registry, so a
-    ``method=`` control naming one of its methods selects each of those routes
-    with that method, in selection order, and the first whose exact stage
-    applies runs, as for any routes that share a registry. A check probes the
-    routes with no exact stage computed, and a call probes them with the exact
-    stage computable.
-    """
-
-    def _check_point(self, values: Mapping[str, Any], *, select: bool = True) -> _PointCheck:
-        token = _CHECKING.set(True)
-        try:
-            return super()._check_point(values, select=select)
-        finally:
-            _CHECKING.reset(token)
-
-    def _invoke_resolved(self, values: Mapping[str, Any], *, context: Any) -> Any:
-        token = _CHECKING.set(False)
-        try:
-            return super()._invoke_resolved(values, context=context)
-        finally:
-            _CHECKING.reset(token)
 
 
 def _condition_on_result(d: TermSpec, given: TermSpec) -> OutputSpec:
@@ -1261,18 +1231,10 @@ def _condition_on_result(d: TermSpec, given: TermSpec) -> OutputSpec:
     return OutputSpec(condition_on=None)
 
 
-def _conditioning_operation(declaration: Callable[..., Any]) -> _Conditioning:
-    """Declare ``condition_on`` as a :class:`_Conditioning` and register it."""
-    op = _Conditioning(
-        declaration,
-        result=_condition_on_result,
-        roles={"d": (DistributionSpec, ConditionalDistributionSpec), "given": (TermSpec,)},
-    )
-    operation_registry.register(op)
-    return op
-
-
-@_conditioning_operation
+@operation(
+    result=_condition_on_result,
+    roles={"d": (DistributionSpec, ConditionalDistributionSpec), "given": (TermSpec,)},
+)
 def condition_on(d: Distribution, given: Any):
     """Fix fields of *d* at the values *given* holds, and return the resulting law, normalized.
 
@@ -1334,7 +1296,7 @@ def _exact_stage_by_name(call: BoundCall, result: OutputSpec | None) -> Any:
     for stage in (_CURRY, _SLICE, _EXACT_CONDITIONING, _BAYES):
         report = stage.check(call)
         if report.feasible is not False:
-            return report if report.feasible is None else _PointCheck(True, exact=stage.exact(call))
+            return report if report.feasible is None else PointReport(True, exact=stage.exact(call))
         reports.append(report.description)
     return Feasibility(False, f"route {_UNNORMALIZED!r} declined: {'; '.join(reports)}")
 

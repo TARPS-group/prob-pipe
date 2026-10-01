@@ -26,8 +26,11 @@ def _joint_result(A: Any, B: Any, align: Any) -> OutputSpec:
 
 
 @operation(result=_joint_result, roles={"A": _FACTOR_KINDS, "B": _FACTOR_KINDS})
-def joint(A: Distribution, B: Distribution, **align: str):
+def joint(A: Any, B: Any, **align: str):
     """Compose *A* with *B* after renaming *B*'s fields, as ``A * B.with_path_names(**align)``.
+
+    The factors are consumed as objects, so a batch of laws is refused rather
+    than swept (VI.11).
 
     Parameters
     ----------
@@ -45,7 +48,7 @@ def joint(A: Distribution, B: Distribution, **align: str):
     Raises
     ------
     ApplicabilityError
-        If a factor is neither distribution kind.
+        If a factor is neither distribution kind, a batch of laws included.
     ValueError
         If composition rejects the realigned factors.
     """

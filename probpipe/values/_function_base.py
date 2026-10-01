@@ -364,6 +364,9 @@ def _validate_function_declarations(
         spec._bind_dims_from_value(value, effective, f"Function {function_name!r} {source}/{name}")
 
 
+#: The check a result declaration with a type hole defers to the return.
+_COMPLETED_AT_RETURN = "the result's type is completed from the returned value"
+
 #: The engine's controls, each with its default. A default sample count of None
 #: stands for the constructing class's ``DEFAULT_N_BROADCAST_SAMPLES``.
 _CONTROL_DEFAULTS: Mapping[str, Any] = MappingProxyType(
@@ -496,7 +499,19 @@ class Function(Node, TrackedTerm, Annotated):
     preserved. ``with_options`` returns a shallow copy with revised controls.
     A Function stores only the controls set on it, so ``options`` reads every
     other control's default when it is read.
+
+    The engine reads three declarations from the Function it runs (V.1): what
+    each parameter accepts, the result declaration, and the realization. A
+    Function declares them by its input declaration and annotations, its
+    ``output_spec``, and its body; a subclass realized by routes, as an
+    operation is, declares them through ``_roles``, :meth:`_plan_point`, and
+    :meth:`_route_candidates`.
     """
+
+    #: The kinds each parameter with a role accepts, each named by its spec class
+    #: (VI.0). A parameter with no role is admitted by its input declaration and
+    #: lifted as its annotation states, as every parameter of a Function is.
+    _roles: Mapping[str, tuple[type[TermSpec], ...]] = MappingProxyType({})
 
     _signature_info: WorkflowSignatureInfo
     _bind: Mapping[str, Any]
@@ -764,9 +779,41 @@ class Function(Node, TrackedTerm, Annotated):
     def _invoke_resolved(
         self, values: Mapping[str, Any], *, context: _FunctionInvocationContext
     ) -> Any:
-        return self._implementation.invoke(
-            values_to_bound_arguments(self.signature, values), context=context
+        """Realize one point with no lifting, as the installed engine does.
+
+        A Function's body runs on *values*; one realized by routes runs the
+        route the engine selects and returns the result's raw form.
+        """
+        return _invoke_engine(self, values, context)
+
+    def _route_candidates(self, controls: Mapping[str, Any]) -> tuple[Any, ...] | None:
+        """The routes that may realize one point of a call under *controls*, in selection order.
+
+        A Function's body is its one route, so it lists none and the engine
+        runs the body. A subclass realized by routes returns them, each with
+        the members :mod:`probpipe.functions._resolution` names.
+        """
+        return None
+
+    def _plan_point(
+        self, values: Mapping[str, Any], controls: Mapping[str, Any]
+    ) -> tuple[Any, OutputSpec | None, tuple[str, ...]]:
+        """What the routes read at one point: its call object, result declaration, and deferrals.
+
+        A Function's call object is *values*, and its result declaration its
+        ``output_spec``, whose type hole defers the type to the return.
+
+        Returns
+        -------
+        tuple
+            The object the routes' checks read, the result declaration, and the
+            checks deferred to the return.
+        """
+        declared = self.output_spec
+        deferred = (
+            () if declared is not None and declared.spec is not None else (_COMPLETED_AT_RETURN,)
         )
+        return values, declared, deferred
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         return _call_engine(self, *args, **kwargs)
@@ -858,9 +905,18 @@ def _plain_check(function: Function, *args: Any, **kwargs: Any) -> Any:
     raise NotImplementedError("Function.check")
 
 
+def _plain_invoke(
+    function: Function, values: Mapping[str, Any], context: _FunctionInvocationContext
+) -> Any:
+    return function._implementation.invoke(
+        values_to_bound_arguments(function.signature, values), context=context
+    )
+
+
 _call_engine: Callable[..., Any] = _plain_call
 _check_engine: Callable[..., Any] = _plain_check
 _apply_scope: Callable[[], AbstractContextManager[Any]] = nullcontext
+_invoke_engine: Callable[..., Any] = _plain_invoke
 
 
 def install_call_engine(engine: Callable[..., Any]) -> None:
@@ -875,9 +931,10 @@ def install_call_engine(engine: Callable[..., Any]) -> None:
     engine : callable
         Called as ``engine(function, *args, **kwargs)`` for every call of a
         Function. It may also provide ``check(function, *args, **kwargs)``,
-        which serves :meth:`Function.check`, and ``apply_scope()``, which
-        returns the context manager :meth:`Function.apply` enters around plain
-        evaluation.
+        which serves :meth:`Function.check`; ``apply_scope()``, which returns
+        the context manager :meth:`Function.apply` enters around plain
+        evaluation; and ``invoke(function, values, context)``, which realizes
+        the one point :meth:`Function.apply` evaluates.
 
     Raises
     ------
@@ -887,7 +944,7 @@ def install_call_engine(engine: Callable[..., Any]) -> None:
         If a different engine is already installed. Installing the same engine
         again changes nothing.
     """
-    global _call_engine, _check_engine, _apply_scope
+    global _call_engine, _check_engine, _apply_scope, _invoke_engine
     if not callable(engine):
         raise TypeError("The Function call engine must be callable")
     if _call_engine is not _plain_call and _call_engine is not engine:
@@ -895,6 +952,7 @@ def install_call_engine(engine: Callable[..., Any]) -> None:
     _call_engine = engine
     _check_engine = getattr(engine, "check", _plain_check)
     _apply_scope = getattr(engine, "apply_scope", nullcontext)
+    _invoke_engine = getattr(engine, "invoke", _plain_invoke)
 
 
 # ---------------------------------------------------------------------------

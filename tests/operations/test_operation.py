@@ -12,10 +12,14 @@ import pytest
 
 from probpipe import (
     ApplicabilityError,
+    EmpiricalDistribution,
+    FunctionBatch,
     NumericArrayBatch,
     NumericArraySpec,
+    OpaqueSpec,
     Record,
     RecordSpec,
+    ResultSchemaError,
     TrackedTerm,
     workflow_run,
 )
@@ -43,7 +47,7 @@ from probpipe.operations import (
 from probpipe.operations._moments import mean
 from probpipe.operations._operation import _workflow_draws
 from probpipe.operations._sample import sample
-from probpipe.values import Function
+from probpipe.values import Function, FunctionSpec
 
 from ._laws import REAL, Bare, Gaussian, GuardedMean, Pair, Sampler
 
@@ -266,6 +270,57 @@ class TestRoles:
         with pytest.raises(EngineRefusal):
             center(jnp.zeros(2))
 
+    def test_an_unannotated_parameter_accepts_the_value_kinds(self):
+        @operation(result=_open, registry=OperationRegistry())
+        def scored(d: Distribution, value):
+            """An unannotated value."""
+
+        (_, value) = scored.summary().operands
+        assert value.accepts == (NumericArraySpec, RecordSpec, OpaqueSpec, FunctionSpec)
+
+    def test_a_law_at_a_value_role_is_lifted_and_a_law_its_role_admits_passes_whole(self):
+        seen: list[Any] = []
+
+        @operation(result=_open, registry=OperationRegistry())
+        def shifted(d: Distribution, value):
+            """The value shifted by one."""
+
+        def execute(call: BoundCall, result: Any) -> Any:
+            seen.append((call.operands["d"], call.operands["value"]))
+            return jnp.asarray(call.operands["value"]) + 1.0
+
+        shifted.structural_route(
+            "shift", check=lambda call, result: True, execute=execute, exact=True
+        )
+        law = Gaussian("g")
+        report = shifted.check(law, Gaussian("v", 2.0))
+        assert (report.route, report.lifted) == ("shift", ("value",))
+        with workflow_run(seed=0):
+            pushforward = shifted.with_options(n_broadcast_samples=8, dispatch="sequential")(
+                law, Gaussian("v", 2.0)
+            )
+        assert isinstance(pushforward, EmpiricalDistribution)
+        assert len(seen) == 8
+        assert all(d is law and not isinstance(value, Distribution) for d, value in seen)
+
+    def test_a_parameter_annotated_any_takes_its_argument_as_it_arrives(self):
+        def rule(f: Any) -> None:
+            """Leaves the result open."""
+
+        @operation(result=rule, roles={"f": (FunctionSpec,)}, registry=OperationRegistry())
+        def applied(f: Any):
+            """A function, consumed as an object."""
+
+        applied.structural_route("any", exact=True, **_route(True, 0.0))
+        functions = FunctionBatch("fs", [lambda x: x, lambda x: 2 * x], "fs")
+        with pytest.raises(ApplicabilityError, match=r"'f' accepts FunctionSpec.*FunctionBatch"):
+            applied(functions)
+
+    def test_apply_lifts_nothing(self):
+        laws = DistributionBatch("laws", [Gaussian("g", 1.0), Gaussian("g", 2.0)], "laws")
+        with pytest.raises(ApplicabilityError, match="'d' accepts DistributionSpec"):
+            center.apply(laws)
+
 
 # ---------------------------------------------------------------------------
 # The result rule and the applicability conditions
@@ -333,6 +388,21 @@ class TestResultRule:
             exact=True,
         )
         assert isinstance(toy(Gaussian("g")), Record)
+
+    def test_the_engine_refuses_a_result_that_violates_the_rule_at_return(self):
+        def rule(d: Any) -> OutputSpec:
+            """Three coordinates."""
+            return OutputSpec(toy=NumericArraySpec((3,)))
+
+        toy = _toy(result=rule)
+        toy.structural_route(
+            "short",
+            check=lambda call, result: True,
+            execute=lambda call, result: jnp.zeros(2),
+            exact=True,
+        )
+        with pytest.raises(ResultSchemaError, match="shape"):
+            toy(Gaussian("g"))
 
     def test_a_result_that_violates_the_declaration_raises_value_error(self):
         def rule(d: Any) -> OutputSpec:
@@ -481,6 +551,16 @@ class TestSelection:
         with pytest.raises(ResolutionError, match="unresolved"):
             center(GuardedMean("g", None))
 
+    def test_provenance_records_the_selected_route(self):
+        exact = center(Gaussian("g")).provenance.metadata
+        assert (exact["route"], exact["exact"]) == ("closed_form", True)
+        approximate = center(GuardedMean("g", False)).provenance.metadata
+        assert (approximate["route"], approximate["exact"]) == ("monte_carlo", False)
+
+    def test_the_call_takes_the_route_its_check_reports(self):
+        for law in (Gaussian("g"), GuardedMean("g", False), Sampler("s")):
+            assert center(law).provenance.metadata["route"] == center.check(law).route
+
     def test_check_executes_no_route(self):
         toy = _toy()
 
@@ -581,6 +661,15 @@ class TestRegistryRoutes:
         toy = self._operation(registry).with_options(exact_only=True)
         with pytest.raises(ResolutionError, match="exact_only"):
             toy(Gaussian("g"))
+
+    def test_provenance_records_the_registry_method(self):
+        registry = _registry(precise=(True, True, 2.0), rough=(False, True, 3.0))
+        metadata = self._operation(registry)(Gaussian("g")).provenance.metadata
+        assert (metadata["route"], metadata["method"], metadata["exact"]) == (
+            "methods",
+            "precise",
+            True,
+        )
 
     def test_method_options_reach_the_registered_methods(self):
         registry = _registry(precise=(True, True, 2.0))
@@ -761,6 +850,25 @@ class TestLiftedChecks:
         )
         report = center.check(empty)
         assert (report.feasible, report.route, report.lifted) == (True, None, ("d",))
+
+    def test_a_method_names_the_route_each_point_of_a_lifted_call_takes(self):
+        laws = _laws(Gaussian("g", 1.0), Gaussian("g", 2.0))
+        view = center.with_options(method="monte_carlo", n_broadcast_samples=4000)
+        assert view.check(laws).route == "monte_carlo"
+        with workflow_run(seed=0):
+            means = view(laws)
+        np.testing.assert_allclose(np.asarray(means.values), [1.0, 2.0], atol=0.1)
+
+    def test_exact_only_excludes_the_sampling_lift_of_a_value(self):
+        @operation(result=_open, registry=OperationRegistry())
+        def shifted(d: Distribution, value):
+            """The value shifted by one."""
+
+        shifted.structural_route("shift", exact=True, **_route(True, 0.0))
+        view = shifted.with_options(exact_only=True)
+        assert view.check(Gaussian("g"), Gaussian("v")).feasible is False
+        with pytest.raises(ResolutionError, match="exact_only"):
+            view(Gaussian("g"), Gaussian("v"))
 
     def test_a_plain_call_lifts_nothing(self):
         assert center.check(Gaussian("g")).lifted == ()

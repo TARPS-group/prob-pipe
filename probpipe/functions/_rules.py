@@ -24,8 +24,9 @@ Three rules are registered here:
 A **floor** is the fallback on its stated domain. The registry ranks the floors
 in a tier of their own, below every other rule whatever its exactness and
 priority, and orders each tier as every dispatch registry does. A floor's check
-applies the test the planner applies to the argument at its parameter, so the
-floor is feasible where the direct call takes it and nowhere else.
+applies the test the planner applies to the argument at its parameter, its
+role included, so the floor is feasible where the direct call takes it and
+nowhere else.
 
 A rule's ``check`` and ``execute`` take the map and the operand positionally,
 followed by three keywords:
@@ -56,7 +57,7 @@ from ..distributions._capabilities import SupportsSampling
 from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
 from ..values import Function, _binding
-from . import _normalization, _plan
+from . import _plan
 
 __all__ = ["FLOOR_PRIORITY", "evaluation_rule_registry"]
 
@@ -73,13 +74,6 @@ _FORWARDED_CONTROLS = (
     "exact_only",
     "method_options",
 )
-
-
-def _lifting_hint(f: Function, parameter: str | None) -> Any:
-    """The annotation that governs lifting at *parameter* of *f*, or None without one."""
-    if parameter is None:
-        return None
-    return _binding.parameter_lifting_hint(f._signature_info, parameter)
 
 
 def _describe(operand: Any) -> str:
@@ -169,10 +163,10 @@ class _SamplingLift(_Floor):
             the call does not sample the operand, and when neither the operand
             nor its parent claims SupportsSampling.
         """
-        expected = _lifting_hint(f, parameter)
-        if _normalization.is_distribution_hint(expected):
+        lift = _plan.lift_at(f, parameter, operand)
+        if lift == "whole" and isinstance(operand, Distribution):
             return Feasibility(False, f"parameter {parameter!r} consumes the distribution itself")
-        if not _plan.is_broadcast(operand, expected):
+        if lift != "broadcast":
             return Feasibility(
                 False, f"the call does not sample {_describe(operand)} at parameter {parameter!r}"
             )
@@ -238,7 +232,7 @@ class _ElementwiseSweep(_Floor):
             operand satisfies, and when the ``include_inputs`` control asks for
             the inputs, which the sweep does not return.
         """
-        if not _plan.is_swept(operand, _lifting_hint(f, parameter)):
+        if _plan.lift_at(f, parameter, operand) != "sweep":
             return Feasibility(
                 False, f"the call does not sweep {_describe(operand)} at parameter {parameter!r}"
             )
@@ -315,7 +309,9 @@ class _EmpiricalEnumeration(BinaryDispatchMethod):
         if not isinstance(root, EmpiricalDistribution):
             return Feasibility(False, f"{_describe(root)} is not an empirical law")
         values = _call_values(operand, parameter, fixed_args)
-        plan = _plan.build_broadcast_plan(values=values, signature_info=f._signature_info)
+        plan = _plan.build_broadcast_plan(
+            values=values, signature_info=f._signature_info, roles=f._roles
+        )
         if plan.regime != "distribution":
             return Feasibility(
                 False, f"the call does not lift {_describe(operand)} alone as a distribution"

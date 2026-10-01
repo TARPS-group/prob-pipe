@@ -2,16 +2,19 @@
 
 Steps 2 and 3 of the call stack: the arguments bind to the wrapped function's
 signature by Python's rules, and each bound argument is admitted against what
-its parameter accepts. A violation of the call contract raises
+its parameter accepts: the kinds its role names where the Function declares
+roles, as an operation does, and otherwise its input declaration and its
+annotation. A violation of the call contract raises
 :class:`ApplicabilityError`.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from types import MappingProxyType, UnionType
-from typing import Any, Union, get_args, get_origin
+from typing import Any, Literal, Union, get_args, get_origin
 
 from ..core._array_backend import _is_numeric_leaf
 from ..core._batch import Batch, BatchSpec
@@ -58,6 +61,20 @@ _KERNEL_HINT_PROTOCOLS: tuple[type, ...] = (
     SupportsConditionalExpectation,
     SupportsConditionalMarginals,
 )
+
+
+#: Whether the engine is probing a call for ``check``, which executes no route.
+_CHECKING: ContextVar[bool] = ContextVar("probpipe_function_check", default=False)
+
+
+def checking() -> bool:
+    """Whether the engine is probing a call for ``check`` rather than running it.
+
+    A route whose probe would compute part of its result to decide, as
+    ``condition_on``'s exact stage does, reports the route unresolved instead
+    while a check probes, since a check executes nothing.
+    """
+    return _CHECKING.get()
 
 
 class ApplicabilityError(TypeError):
@@ -305,16 +322,97 @@ def _admitted_kind(value: Any, declared: type[TermSpec]) -> type[TermSpec]:
     return arrived_kind(value)
 
 
+def role_admits(role: tuple[type[TermSpec], ...], kind: type[TermSpec]) -> bool:
+    """Whether a parameter whose role names the kinds *role* admits a value of the kind *kind*.
+
+    A named kind admits its subclasses, and the record kinds admit each other,
+    unification deciding their fields.
+    """
+    return any(
+        issubclass(kind, accepted)
+        or (issubclass(accepted, RecordSpec) and issubclass(kind, RecordSpec))
+        for accepted in role
+    )
+
+
+def role_lift(value: Any, role: tuple[type[TermSpec], ...]) -> Literal["sweep", "broadcast"] | None:
+    """How the call lifts *value* at a parameter whose role does not admit it, or ``None``.
+
+    A batch whose elements are of an admitted kind is swept, and a law whose
+    draws are is broadcast (V.4, V.5); any other value has no lift.
+    """
+    if isinstance(value, Batch) and len(value.batch_shape) > 0:
+        return "sweep" if role_admits(role, type(value.element_spec)) else None
+    if isinstance(value, Distribution):
+        event = value.event_spec.spec
+        return "broadcast" if event is not None and role_admits(role, type(event)) else None
+    return None
+
+
+def _role_refusal(
+    function_name: str | None, label: str, role: tuple[type[TermSpec], ...], value: Any
+) -> ApplicabilityError:
+    """The refusal of *value* at the parameter *label* names, whose role names *role*."""
+    owner = f"{function_name}: " if function_name else ""
+    kinds = ", ".join(kind.__name__ for kind in role)
+    detail = f", whose kind is {arrived_kind(value).__name__}"
+    if isinstance(value, Batch) and len(value.batch_shape) > 0:
+        detail += f" with {type(value.element_spec).__name__} elements"
+    elif isinstance(value, Distribution) and value.event_spec.spec is not None:
+        detail += f" with {type(value.event_spec.spec).__name__} draws"
+    return ApplicabilityError(
+        f"{owner}{label!r} accepts {kinds}, but received a {type(value).__name__}{detail}"
+    )
+
+
+def _admit_by_role(
+    info: WorkflowSignatureInfo,
+    ref: _binding.WorkflowInputRef,
+    value: Any,
+    role: tuple[type[TermSpec], ...],
+    *,
+    function_name: str | None,
+    lifts: bool,
+) -> None:
+    """Admit *value* at the parameter *ref* names by the kinds its role names.
+
+    A role that names no kind marks a parameter that selects rather than
+    supplies, which admits every value, and so does ``None`` at a parameter
+    defaulting to it. Otherwise the value's own kind must be admitted, or, when
+    the call lifts and the parameter is not annotated ``Any``, the kind of its
+    elements or its draws.
+
+    Raises
+    ------
+    ApplicabilityError
+        If the role admits neither the value nor what it lifts to.
+    """
+    if not role:
+        return
+    if value is None and info.signature.parameters[ref.parameter_name].default is None:
+        return
+    if role_admits(role, arrived_kind(value)):
+        return
+    hint = _binding.parameter_lifting_hint(info, ref.parameter_name)
+    if lifts and hint is not Any and role_lift(value, role) is not None:
+        return
+    raise _role_refusal(function_name, ref.label, role, value)
+
+
 def admit_arguments(
     info: WorkflowSignatureInfo,
     values: Mapping[str, Any],
     *,
     input_spec: InputSpec | None = None,
     function_name: str | None = None,
+    roles: Mapping[str, tuple[type[TermSpec], ...]] | None = None,
+    lifts: bool = True,
 ) -> None:
     """Admit each bound argument against what its parameter accepts.
 
-    Each argument is admitted against its parameter's own annotation, so an
+    A parameter with a role admits the kinds the role names, and a lifted
+    argument whose elements or draws are of such a kind (VI.0). Any other
+    argument is admitted against its parameter's own annotation, so an
     argument that a variadic parameter annotated ``Any`` collects is admitted
     whatever its kind. A conditional distribution at a parameter that expects a
     value is refused, since a kernel has no marginal law to lift over. Where an
@@ -332,12 +430,17 @@ def admit_arguments(
         The declared slots, whose kinds the arguments are admitted against.
     function_name : str or None
         The function's name, for the message.
+    roles : Mapping of str to tuple of TermSpec subclasses, or None
+        The kinds each parameter with a role accepts.
+    lifts : bool
+        Whether the call may lift an argument; a point evaluated with no
+        lifting admits only the kinds a role names.
 
     Raises
     ------
     ApplicabilityError
         If an argument's kind is not one its parameter accepts, naming the
-        parameter, the kind it accepts, and what arrived.
+        parameter, the kinds it accepts, and what arrived.
     """
     if input_spec is not None:
         for name, spec in input_spec.items():
@@ -355,6 +458,10 @@ def admit_arguments(
                 )
     for ref in _binding.iter_input_refs(info, values):
         value = _binding.input_ref_value(values, ref)
+        role = (roles or {}).get(ref.parameter_name)
+        if role is not None:
+            _admit_by_role(info, ref, value, role, function_name=function_name, lifts=lifts)
+            continue
         if isinstance(value, ConditionalDistribution) and _expects_value(
             info.hints.get(ref.parameter_name)
         ):

@@ -3,6 +3,11 @@
 This private module classifies already-normalized workflow inputs into
 the broadcast regime and sweep shape that ``Function`` should
 execute. Planning is intentionally side-effect-free.
+
+An argument at a parameter with a role, as an operation's are, lifts by the
+role: it passes whole when the role admits its kind, and is otherwise swept or
+broadcast over the elements or draws the role admits (V.5, VI.0). Every other
+argument lifts as its parameter's annotation states.
 """
 
 from __future__ import annotations
@@ -15,13 +20,15 @@ from types import UnionType
 from typing import Any, Literal, Union, get_args, get_origin
 
 from ..core._batch import Batch
+from ..core._spec_base import TermSpec
 from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
 from ..values import _binding
 from . import _descendants, _normalization
-from ._call import ApplicabilityError
+from ._call import ApplicabilityError, arrived_kind, role_admits, role_lift
 
 BroadcastRegime = Literal["none", "distribution", "sweep", "nested"]
+Lift = Literal["whole", "sweep", "broadcast"]
 StochasticExecutionMode = Literal["exact", "sampled"]
 StochasticEvaluationMode = Literal["exact", "sampled", "mixed_exact_sampled"]
 LogicalUnitLayout = Literal["singleton", "canonical_sweep"]
@@ -212,21 +219,57 @@ def is_broadcast(value: Any, expected: Any) -> bool:
     )
 
 
+def lift_of(value: Any, expected: Any, role: tuple[type[TermSpec], ...] | None = None) -> Lift:
+    """How a call passes *value* at a parameter annotated *expected* whose role is *role*.
+
+    Without a role the annotation decides, as :func:`is_swept` and
+    :func:`is_broadcast` state. With one, *value* passes whole when the role
+    admits its kind, names no kind, or the annotation is ``Any``; otherwise a
+    batch over an admitted kind is swept and a law over an admitted event kind
+    is broadcast. A value no lift admits passes whole, for admission to refuse.
+    """
+    if role is None:
+        if is_swept(value, expected):
+            return "sweep"
+        return "broadcast" if is_broadcast(value, expected) else "whole"
+    if not role or expected is Any or role_admits(role, arrived_kind(value)):
+        return "whole"
+    return role_lift(value, role) or "whole"
+
+
+def lift_at(function: Any, parameter: str | None, value: Any) -> Lift:
+    """How a call of *function* passes *value* at *parameter*, as :func:`lift_of` states.
+
+    The parameter's annotation and role are the function's; with no parameter
+    the value lifts as at an unannotated one.
+    """
+    if parameter is None:
+        return lift_of(value, None)
+    hint = _binding.parameter_lifting_hint(function._signature_info, parameter)
+    return lift_of(value, hint, function._roles.get(parameter))
+
+
 def build_broadcast_plan(
     *,
     values: Mapping[str, Any],
     signature_info: _binding.WorkflowSignatureInfo,
+    roles: Mapping[str, tuple[type[TermSpec], ...]] | None = None,
 ) -> BroadcastPlan:
-    """Classify normalized values into a broadcast execution plan."""
+    """Classify normalized values into a broadcast execution plan.
+
+    Each argument lifts as :func:`lift_of` states, by its parameter's role in
+    *roles* where it has one.
+    """
     dist_args: list[_binding.WorkflowInputRef] = []
     array_args: list[_binding.WorkflowInputRef] = []
 
     for ref in _binding.iter_input_refs(signature_info, values):
         value = _binding.input_ref_value(values, ref)
         expected = _binding.input_ref_hint(signature_info, ref)
-        if is_swept(value, expected):
+        lift = lift_of(value, expected, (roles or {}).get(ref.parameter_name))
+        if lift == "sweep":
             array_args.append(ref)
-        elif is_broadcast(value, expected):
+        elif lift == "broadcast":
             dist_args.append(ref)
 
     array_groups = build_array_zip_groups(values=values, refs=array_args)

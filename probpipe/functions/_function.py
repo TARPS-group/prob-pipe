@@ -5,18 +5,22 @@ The engine runs the call stack of design Part V on every call of a Function:
 1. configure: the controls a Function carries, resolved by ``with_options``;
 2. bind: the arguments bind to the signature (:mod:`._call`);
 3. normalize: distribution arguments are converted where their parameter names
-   another class (:mod:`._normalization`) and each argument is admitted
-   (:func:`._call.admit_arguments`);
+   another class (:mod:`._normalization`) and each argument is admitted by its
+   role or its declaration (:func:`._call.admit_arguments`);
 4. classify the lift: the lifted arguments are found and grouped
    (:func:`._plan.build_broadcast_plan`, :func:`._plan.build_stochastic_plan`);
 5. plan: the input declarations unify and the output declaration binds the
-   shared dimensions (:func:`._contract._bind_planned_function_inputs`);
-6. resolve: a plain call runs its body and a lifted call runs its floor, which
-   is the sampling lift or the elementwise sweep (:mod:`._rules`);
+   shared dimensions (:func:`._contract._bind_planned_function_inputs`), or, for
+   a Function realized by routes, each point's result rule runs
+   (``Function._plan_point``);
+6. resolve: a lifted call resolves through the evaluation-rule registry
+   (:mod:`._rules`), and each point runs the body or the route selected among
+   the Function's routes (:mod:`._resolution`);
 7. execute: the points run under the dispatch mode with structural keys
    (:mod:`._broadcast`, :mod:`._sweep`, :mod:`._execution`);
-8. return: the result is validated, wrapped, labeled, and given provenance, or
-   detached under ``raw=True`` (:mod:`._result`).
+8. return: the result is validated, wrapped, labeled, and given provenance
+   recording the selected route, or detached under ``raw=True``
+   (:mod:`._result`).
 """
 
 from __future__ import annotations
@@ -71,6 +75,7 @@ from . import (
     _plan,
     _recipe,
     _replay,
+    _resolution,
     _result,
     _rules,
     _sweep,
@@ -277,6 +282,47 @@ def _call_with_options_in_context(
     call_inputs: dict[str, Any],
     options: _call.WorkflowCallOptions,
 ) -> Any:
+    # A call made while a check probes, as a probe that runs an operation makes
+    # one, selects and runs its routes as any call does.
+    token = _call._CHECKING.set(False)
+    try:
+        return _run_call(function, args, call_inputs, options)
+    finally:
+        _call._CHECKING.reset(token)
+
+
+def _realized_point(
+    function: Function,
+    values: Mapping[str, Any],
+    controls: Mapping[str, Any],
+    candidates: tuple[Any, ...],
+) -> Any:
+    """One point of a call realized by the route selected among *candidates*, as a term.
+
+    The point is planned, its route selected and run, and the raw result
+    validated against the point's declaration and wrapped at the kind it names.
+
+    Raises
+    ------
+    ApplicabilityError
+        If an applicability condition fails.
+    ResolutionError
+        If no candidate is feasible, or the first one that is not is unresolved.
+    ResultSchemaError
+        If the result does not satisfy the declaration.
+    """
+    point, result, _ = function._plan_point(values, controls)
+    candidate, report = _resolution.selected(function.name, controls, candidates, point, result)
+    value = candidate.run(point, result, report)
+    return _result.declared_term(value, result, function.output_name)
+
+
+def _run_call(
+    function: Function,
+    args: tuple[Any, ...],
+    call_inputs: dict[str, Any],
+    options: _call.WorkflowCallOptions,
+) -> Any:
     call = _call.resolve_workflow_call(
         function._signature_info,
         args,
@@ -301,12 +347,31 @@ def _call_with_options_in_context(
         values,
         input_spec=function.input_spec,
         function_name=function._name,
+        roles=function._roles,
     )
     broadcast_plan = _plan.build_broadcast_plan(
         values=values,
         signature_info=function._signature_info,
+        roles=function._roles,
     )
-    route = _resolve_route(function, values, broadcast_plan, call.overrides)
+    controls = function.options
+    candidates = function._route_candidates(controls)
+    selection: tuple[Any, OutputSpec | None, Any, Any] | None = None
+    if candidates is not None and broadcast_plan.regime == "none":
+        # The routes realize the one point, so the selection is the call's route.
+        point, result, _ = function._plan_point(values, controls)
+        candidate, report = _resolution.selected(function.name, controls, candidates, point, result)
+        selection = (point, result, candidate, report)
+        route = _Route(
+            candidate.route_name,
+            candidate.exactness(report),
+            method=candidate.method_of(report),
+        )
+    else:
+        # A Function's routes take the method control, so a lifted call selects
+        # its evaluation rule by rank.
+        rule_method = None if candidates is not None else controls["method"]
+        route = _resolve_route(function, values, broadcast_plan, call.overrides, rule_method)
     stochastic_plan = _plan.build_stochastic_plan(
         values,
         broadcast_plan,
@@ -362,6 +427,12 @@ def _call_with_options_in_context(
             provenance_inputs[ref.label] = value
 
     def invoke_point(**point_values: Any) -> Any:
+        if selection is not None:
+            point, result, candidate, report = selection
+            value = candidate.run(point, result, report)
+            return _result.declared_term(value, result, function.output_name)
+        if candidates is not None:
+            return _realized_point(function, point_values, controls, candidates)
         try:
             _, point_bindings = _bind_function_inputs(
                 function_name=function._name,
@@ -829,10 +900,13 @@ class _Route:
     Attributes
     ----------
     name : str
-        The route's name: ``"body"`` for a plain call, and otherwise the name of
-        the evaluation rule selected for the lifted call.
+        The route's name: ``"body"`` for a plain call of a Function, the
+        selected route for a plain call of a Function realized by routes, and
+        otherwise the name of the evaluation rule selected for the lifted call.
     exact : bool or None
         Whether the route's result denotes the call's mathematical result.
+    method : str or None
+        The registry method the selected route delegates to.
     rule : BinaryDispatchMethod or None
         The selected evaluation rule of a lifted call.
     operand : Any
@@ -852,11 +926,15 @@ class _Route:
     parameter: str | None = None
     fixed_args: Mapping[str, Any] = field(default_factory=dict)
     controls: Mapping[str, Any] = field(default_factory=dict)
+    method: str | None = None
 
     @property
     def metadata(self) -> dict[str, Any]:
-        """The route's name and exactness, as provenance records them."""
-        return {"route": self.name, "exact": self.exact}
+        """The route's name and exactness, and its registry method, as provenance records them."""
+        recorded: dict[str, Any] = {"route": self.name, "exact": self.exact}
+        if self.method is not None:
+            recorded["method"] = self.method
+        return recorded
 
 
 #: The one route of a plain call: the function's body, which is exact.
@@ -871,6 +949,7 @@ def _resolve_route(
     values: Mapping[str, Any],
     broadcast_plan: _plan.BroadcastPlan,
     overrides: _call.WorkflowCallOverrides,
+    rule_method: str | None,
 ) -> _Route:
     """Select the route that realizes the call (step 6).
 
@@ -878,8 +957,8 @@ def _resolve_route(
     ``exact_only`` admits it and a ``method`` name matches nothing. A lifted call
     resolves through the evaluation-rule registry on the function and the first
     lifted argument, a swept batch before a law, with the call's other arguments
-    as the fixed arguments; ``method`` names a rule and ``exact_only`` excludes
-    the approximate ones.
+    as the fixed arguments; *rule_method* names a rule and ``exact_only``
+    excludes the approximate ones.
 
     Raises
     ------
@@ -887,7 +966,7 @@ def _resolve_route(
         If ``method`` names no route, or no rule is feasible under the controls,
         naming each rule tried and what it lacked.
     """
-    info, route = _route_report(function, values, broadcast_plan, overrides)
+    info, route = _route_report(function, values, broadcast_plan, overrides, rule_method)
     if route is None:
         if broadcast_plan.regime == "none":
             raise ResolutionError(info.description)
@@ -908,13 +987,14 @@ def _route_report(
     values: Mapping[str, Any],
     broadcast_plan: _plan.BroadcastPlan,
     overrides: _call.WorkflowCallOverrides,
+    rule_method: str | None,
 ) -> tuple[MethodInfo, _Route | None]:
     """The report of the route that realizes the call, and the route when it is selected.
 
     The report probes without executing, as :func:`_resolve_route` states the
     selection; the route is ``None`` unless the report is feasible.
     """
-    method, exact_only = function.options["method"], function.options["exact_only"]
+    method, exact_only = rule_method, function.options["exact_only"]
     if broadcast_plan.regime == "none":
         if method is not None:
             return MethodInfo(
@@ -962,16 +1042,20 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
 
     Binding, admission, and planning raise as the call's would. A conversion is
     planned and reported, not constructed, and where the call lifts the law a
-    conversion constructs, selection waits on that law and is unresolved.
+    conversion constructs, selection waits on that law and is unresolved. A
+    Function realized by routes is checked at each point of the call, as the
+    engine realizes it, once its lifted call has an evaluation rule.
 
     Raises
     ------
     TypeError
         If the arguments do not bind to the signature.
     ApplicabilityError
-        If an argument's kind is not accepted, or the declarations conflict.
+        If an argument's kind is not accepted, a condition fails, or the
+        declarations conflict.
     ResolutionError
-        If a conversion has no converter.
+        If a conversion has no converter, or the ``method`` control names no
+        route of a Function realized by routes.
     """
     call = _call.resolve_workflow_call(
         function._signature_info,
@@ -995,10 +1079,16 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
         values,
         input_spec=function.input_spec,
         function_name=function._name,
+        roles=function._roles,
     )
     broadcast_plan = _plan.build_broadcast_plan(
-        values=values, signature_info=function._signature_info
+        values=values, signature_info=function._signature_info, roles=function._roles
     )
+    candidates = function._route_candidates(function.options)
+    if candidates is not None:
+        return _check_routes(
+            function, values, broadcast_plan, call, candidates, conversions, waiting
+        )
     lifted_refs = (*broadcast_plan.array_args, *broadcast_plan.dist_args)
     _, bindings = _bind_planned_function_inputs(
         function_name=function._name,
@@ -1026,7 +1116,9 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
             lifted=lifted,
             conversions=MappingProxyType(conversions),
         )
-    info, _ = _route_report(function, values, broadcast_plan, call.overrides)
+    info, _ = _route_report(
+        function, values, broadcast_plan, call.overrides, function.options["method"]
+    )
     return CallReport(
         routes=(info,),
         selected=None if info.feasible is None else info,
@@ -1035,6 +1127,50 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
         lifted=lifted,
         conversions=MappingProxyType(conversions),
     )
+
+
+def _check_routes(
+    function: Function,
+    values: Mapping[str, Any],
+    broadcast_plan: _plan.BroadcastPlan,
+    call: _call.ResolvedWorkflowCall,
+    candidates: tuple[Any, ...],
+    conversions: Mapping[str, Any],
+    waiting: tuple[str, ...],
+) -> CallReport:
+    """The check of a call that a Function's routes realize at each of its points.
+
+    A lifted call first needs an evaluation rule, selected by rank since the
+    ``method`` control names a route; its points are then checked as the
+    engine realizes them, each route probed while no route runs.
+    """
+    lifted = tuple(
+        dict.fromkeys(
+            ref.parameter_name for ref in (*broadcast_plan.array_args, *broadcast_plan.dist_args)
+        )
+    )
+    if waiting:
+        pending = MethodInfo(None, pending=waiting, method_name=_PLANNED, exact=False)
+        return CallReport(
+            routes=(pending,), lifted=lifted, conversions=MappingProxyType(dict(conversions))
+        )
+    if broadcast_plan.regime != "none":
+        info, _ = _route_report(function, values, broadcast_plan, call.overrides, None)
+        if info.feasible is not True:
+            return CallReport(
+                routes=(info,),
+                selected=None if info.feasible is None else info,
+                lifted=lifted,
+                conversions=MappingProxyType(dict(conversions)),
+            )
+    token = _call._CHECKING.set(True)
+    try:
+        point = _resolution.check_points(
+            function, values, function.options, candidates, broadcast_plan
+        )
+    finally:
+        _call._CHECKING.reset(token)
+    return _resolution.call_report(point, lifted=lifted, conversions=conversions)
 
 
 def _run_registered_rule(
@@ -1090,12 +1226,45 @@ class _CallEngine:
 
     def __call__(self, function: Function, *args: Any, **kwargs: Any) -> Any:
         result = _call_with_options(function, args, kwargs, _call.WorkflowCallOptions())
-        return _result._detach(result) if function.options["raw"] else result
+        if not function.options["raw"]:
+            return result
+        if function._route_candidates(function.options) is not None:
+            return _result.raw_form(result)
+        return _result._detach(result)
 
     @staticmethod
     def check(function: Function, *args: Any, **kwargs: Any) -> CallReport:
         """The probe of steps 1 to 6 that :meth:`Function.check` returns."""
         return _check_call(function, args, kwargs)
+
+    @staticmethod
+    def invoke(
+        function: Function, values: Mapping[str, Any], context: _FunctionInvocationContext
+    ) -> Any:
+        """The one point :meth:`Function.apply` evaluates, with no lifting, tracking, or provenance.
+
+        A Function's body runs on *values*. A Function realized by routes
+        admits each argument by its role, with no lifting, runs the route
+        selected for the point, and returns the result's raw form.
+        """
+        candidates = function._route_candidates(function.options)
+        if candidates is None:
+            return function._implementation.invoke(
+                _binding.values_to_bound_arguments(function.signature, values), context=context
+            )
+        _call.admit_arguments(
+            function._signature_info,
+            values,
+            function_name=function._name,
+            roles=function._roles,
+            lifts=False,
+        )
+        token = _call._CHECKING.set(False)
+        try:
+            term = _realized_point(function, values, function.options, candidates)
+        finally:
+            _call._CHECKING.reset(token)
+        return _result.raw_form(term)
 
     @staticmethod
     def apply_scope() -> AbstractContextManager[None]:

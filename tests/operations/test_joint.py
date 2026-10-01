@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import pytest
 
 from probpipe import ApplicabilityError
+from probpipe.distributions._batches import DistributionBatch
 from probpipe.distributions._conditional import ConditionalDistribution
 from probpipe.distributions._factored import FactoredDistribution
 from probpipe.operations import RouteSource
@@ -38,6 +39,11 @@ class TestJoint:
     def test_a_factor_that_is_not_a_distribution_raises_applicability_error(self):
         with pytest.raises(ApplicabilityError, match="'B' accepts"):
             joint(Kernel(), jnp.zeros(2))
+
+    def test_a_batch_of_laws_is_consumed_as_an_object_rather_than_swept(self):
+        laws = DistributionBatch("laws", [Gaussian("mu"), Gaussian("mu", 1.0)], "laws")
+        with pytest.raises(ApplicabilityError, match=r"'B' accepts.*DistributionBatch"):
+            joint(Kernel(), laws)
 
     def test_the_route_is_structural_and_exact(self):
         (route,) = joint.summary().routes
