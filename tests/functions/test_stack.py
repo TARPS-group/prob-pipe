@@ -111,7 +111,6 @@ class TestTheEngine:
 class TestCheck:
     """``check`` probes steps 1 to 6 and never executes the route it selects."""
 
-    @pytest.mark.pending(reason="the engine's probe of steps 1 to 6")
     def test_check_never_invokes_the_body(self):
         calls = []
 
@@ -124,7 +123,6 @@ class TestCheck:
 
         assert calls == []
 
-    @pytest.mark.pending(reason="the engine's probe of steps 1 to 6")
     def test_check_causes_no_random_event(self):
         @function(n_broadcast_samples=8, dispatch="sequential")
         def identity(x):
@@ -142,7 +140,6 @@ class TestCheck:
         ):
             np.testing.assert_array_equal(probed_leaf, baseline_leaf)
 
-    @pytest.mark.pending(reason="the engine's probe of steps 1 to 6")
     def test_a_view_probes_under_the_controls_of_its_call(self):
         @function
         def identity(x):
@@ -150,7 +147,6 @@ class TestCheck:
 
         identity.with_options(n_broadcast_samples=16).check(standard_normal())
 
-    @pytest.mark.pending(reason="the engine's probe of steps 1 to 6")
     def test_an_argument_that_does_not_bind_raises_as_the_call_would(self):
         @function
         def identity(x):

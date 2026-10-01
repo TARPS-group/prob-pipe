@@ -160,11 +160,11 @@ class TestConstruction:
         agreement."""
         from probpipe.core import (
             _array_backend,
-            _broadcast_distributions,
             _numeric_record,
             _record_batch,
             _spec_base,
         )
+        from probpipe.functions import _result
         from probpipe.record import design
 
         # dtype-level predicate (lives in _array_backend): imported directly from
@@ -173,8 +173,8 @@ class TestConstruction:
         assert design._is_numeric_dtype is _array_backend._is_numeric_dtype
         # Aggregation delegates instead of deciding: one factory, read from the
         # element declaration.
-        assert _broadcast_distributions._batch_class_for is _record_batch._batch_class_for
-        assert not hasattr(_broadcast_distributions, "_is_numeric_dtype")
+        assert _result._batch_class_for is _record_batch._batch_class_for
+        assert not hasattr(_result, "_is_numeric_dtype")
         # leaf-level predicate: one resolver shared by the record gate and inference
         assert _numeric_record._is_numeric_leaf is _array_backend._is_numeric_leaf
         assert _spec_base._is_numeric_leaf is _array_backend._is_numeric_leaf

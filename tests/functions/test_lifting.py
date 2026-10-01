@@ -72,6 +72,18 @@ class TestTheTrigger:
     def test_a_distribution_at_a_value_annotated_parameter_is_lifted(self, annotation):
         assert isinstance(_kind_of(annotation, standard_normal()), Distribution)
 
+    def test_a_parameter_annotated_any_passes_a_law_whole(self):
+        seen = []
+
+        def accept(x: Any):
+            seen.append(x)
+            return 0.0
+
+        law = standard_normal()
+        Function("accept", accept)(law)
+
+        assert seen == [law]
+
     @pytest.mark.parametrize(
         "annotation",
         [Distribution, Normal, SupportsMarginals, Distribution | None],
@@ -130,7 +142,6 @@ class TestTheTrigger:
         assert isinstance(result[0], Distribution)
         assert float(np.mean(atom_leaves(result[1])[0])) > 5.0
 
-    @pytest.mark.pending(reason="a nested sweep returns a DistributionBatch", raises=AssertionError)
     def test_a_nested_sweep_returns_a_batch_of_laws(self):
         @function(n_broadcast_samples=6, dispatch="sequential")
         def shift(a, z):
@@ -242,9 +253,6 @@ class TestGrouping:
 
         assert not np.allclose(atom_leaves(result)[0], 0.0)
 
-    @pytest.mark.pending(
-        reason="a law that cannot sample is refused with ResolutionError", raises=AssertionError
-    )
     def test_a_lifted_law_that_does_not_sample_raises_resolution_error(self):
         class Unsampled(Distribution):
             pass
@@ -279,10 +287,6 @@ class TestAlignment:
         assert result.batch_shape == (2, 3)
         assert result.level_names == ("left", "right")
 
-    @pytest.mark.pending(
-        reason="misaligned levels raise ApplicabilityError naming the level",
-        raises=AssertionError,
-    )
     def test_misaligned_levels_raise_applicability_error_naming_the_level(self):
         @function(dispatch="sequential")
         def add(x, y):

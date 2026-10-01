@@ -13,20 +13,22 @@ Registered at priority 100 so it is always tried first for ProbPipe types.
 from __future__ import annotations
 
 import contextlib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
 import jax.numpy as jnp
 
-from ..core._broadcast_distributions import SAMPLE_LEVEL
 from ..core._spec_base import NumericArraySpec, NumericSpec
 from ..core.constraints import _supports_compatible
 from ..core.provenance import Provenance
+from ..core.tracked import TrackedTerm
 from ..distributions._capabilities import SupportsMean
 from ..distributions._distribution import Distribution, NumericDistribution
 from ..distributions._empirical import EmpiricalDistribution, _batch_form, _coordinates
 from ..families._backend import _allow_batched_tfp_init
 from ..families._transformed import BijectorTransformedDistribution
+from ..functions._result import SAMPLE_LEVEL
 from ._registry import (
     _PROBPIPE_PROVIDER_ABI,
     ConversionInfo,
@@ -284,15 +286,33 @@ def _mm_provenance(source):
 
 
 def _point_estimate(x):
-    """Extract a plain array from a moment that may be a single-field NumericRecord.
+    """The array a moment or a batch of draws holds when the law's event has one leaf.
 
-    A law that draws a one-field record returns its moments in that form.
+    A record law returns its moments and its draws in raw form, a nested
+    mapping of raw leaves, and a law over a one-field record returns a
+    ``NumericRecord`` for its moments; each with one leaf is that leaf's array.
+    Any other value is returned as it is.
     """
     from ..core._numeric_record import NumericRecord
 
     if isinstance(x, NumericRecord) and len(x.fields) == 1:
         return x[x.fields[0]]
+    if isinstance(x, Mapping) and not isinstance(x, TrackedTerm):
+        leaves = _mapping_leaves(x)
+        if len(leaves) == 1:
+            return leaves[0]
     return x
+
+
+def _mapping_leaves(node: Mapping) -> list:
+    """The leaves of a nested mapping, in its order."""
+    leaves = []
+    for value in node.values():
+        if isinstance(value, Mapping) and not isinstance(value, TrackedTerm):
+            leaves.extend(_mapping_leaves(value))
+        else:
+            leaves.append(value)
+    return leaves
 
 
 # ---------------------------------------------------------------------------
@@ -464,7 +484,7 @@ def _convert_to_halfcauchy(source, key, **kw):
 
     if isinstance(source, HalfCauchy):
         return source
-    samples = _sample_with_execution_plan(source, key, kw)
+    samples = _point_estimate(_sample_with_execution_plan(source, key, kw))
     med = jnp.median(samples)
     r = HalfCauchy(loc=0.0, scale=jnp.maximum(med, 0.01), name=kw.get("name") or source.name)
     r.with_provenance(_mm_provenance(source))
@@ -476,7 +496,7 @@ def _convert_to_pareto(source, key, **kw):
 
     if isinstance(source, Pareto):
         return source
-    samples = _sample_with_execution_plan(source, key, kw)
+    samples = _point_estimate(_sample_with_execution_plan(source, key, kw))
     n = samples.shape[0]
     scale = jnp.maximum(jnp.min(samples), 1e-6)
     conc = jnp.maximum(n / jnp.sum(jnp.log(samples / scale)), 0.01)
@@ -494,7 +514,7 @@ def _convert_to_truncatednormal(source, key, **kw):
     m_raw, v_raw = _source_mean(source, kw), _source_variance(source, kw)
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     if batch is None:
-        samples = _sample_with_execution_plan(source, key, kw)
+        samples = _point_estimate(_sample_with_execution_plan(source, key, kw))
     else:
         kw.pop("num_samples", None)
         samples = batch.samples
@@ -556,7 +576,7 @@ def _convert_to_categorical(source, key, **kw):
 
     if isinstance(source, Categorical):
         return source
-    samples = _sample_with_execution_plan(source, key, kw)
+    samples = _point_estimate(_sample_with_execution_plan(source, key, kw))
     n_cat = int(jnp.max(samples)) + 1
     counts = jnp.array([(samples == k).sum() for k in range(n_cat)])
     probs = counts / counts.sum()
@@ -606,7 +626,7 @@ def _convert_to_multivariatenormal(source, key, **kw):
         cov_mat = _source_covariance(source, kw)
     except (NotImplementedError, AttributeError):
         # Fallback to sample-based covariance
-        samples = _sample_with_execution_plan(source, key, kw)
+        samples = _point_estimate(_sample_with_execution_plan(source, key, kw))
         diff = samples - loc
         cov_mat = jnp.einsum("ni,nj->ij", diff, diff) / samples.shape[0]
     cov_mat = 0.5 * (cov_mat + cov_mat.T)
@@ -657,7 +677,7 @@ def _convert_to_wishart(source, key, **kw):
 
     if isinstance(source, Wishart):
         return source
-    samples = _sample_with_execution_plan(source, key, kw)
+    samples = _point_estimate(_sample_with_execution_plan(source, key, kw))
     mean_mat = jnp.mean(samples, axis=0)
     d = mean_mat.shape[-1]
     df = d + 2.0
@@ -758,6 +778,42 @@ def _convert_to_kde(source, key, **kw):
     r = KDEDistribution(name, atoms, bandwidth, event_spec=source.event_spec)
     r.with_provenance(_mm_provenance(source))
     return r
+
+
+def _check_atoms_in_support(target: Any, source: Any) -> None:
+    """Refuse an empirical source whose atoms lie outside the target's support.
+
+    An empirical law's array atoms declare no support, so the declared check
+    has nothing to compare at such a leaf; its atoms are what the law is
+    supported on, and each must lie in the support the target's leaves share.
+    A target whose leaves differ in support, or a leaf whose support the source
+    declares, is left to the declared check.
+
+    Raises
+    ------
+    ValueError
+        If an atom of a leaf without a declared support lies outside the
+        target's support.
+    """
+    if not isinstance(source, EmpiricalDistribution):
+        return
+    if not isinstance(source.event_spec.spec, NumericSpec):
+        return
+    support = target.support
+    if support is None:
+        return
+    declared = source.supports
+    rows = source._rows
+    columns = rows if isinstance(rows, dict) else dict.fromkeys(declared, rows)
+    for path, column in columns.items():
+        if declared.get(path) is not None:
+            continue
+        if not bool(jnp.all(support.check(jnp.asarray(column)))):
+            raise ValueError(
+                f"Cannot convert {type(source).__name__} {source.name!r} to "
+                f"{type(target).__name__} (support={support}): atoms of {path!r} lie "
+                f"outside that support. Pass check_support=False to override."
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -961,6 +1017,7 @@ class ProbPipeConverter(Converter):
         if check_support and isinstance(result, NumericDistribution):
             with contextlib.suppress(AttributeError):
                 _check_support_compatible(result, source)
+            _check_atoms_in_support(result, source)
 
         return result
 

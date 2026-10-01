@@ -19,9 +19,10 @@ import pytest
 import probpipe
 from probpipe import (
     Annotated,
+    ApplicabilityError,
     BatchSpec,
     Distribution,
-    DistributionArray,
+    DistributionBatch,
     DistributionSpec,
     Function,
     FunctionSpec,
@@ -565,7 +566,7 @@ class TestApplyContract:
             dispatch="sequential",
             n_broadcast_samples=5,
         )
-        with pytest.raises(ValueError, match=r"RecordSpec.*does not conform"):
+        with pytest.raises(ApplicabilityError, match=r"accepts NumericArraySpec.*RecordSpec"):
             wrapped(v=law)
 
     @pytest.mark.parametrize(
@@ -660,7 +661,7 @@ class TestApplyContract:
             dispatch="sequential",
         )
 
-        with pytest.raises(ValueError, match=r"RecordSpec.*does not conform"):
+        with pytest.raises(ApplicabilityError, match=r"accepts NumericArraySpec.*RecordSpec"):
             wrapped(v=rows)
 
     @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
@@ -689,7 +690,7 @@ class TestApplyContract:
         assert result.element_spec == NumericArraySpec((3,))
         np.testing.assert_allclose(result.values, np.asarray(data) + 1, rtol=0, atol=0)
         assert wrapped.input_spec.free_dims == {"n"}
-        with pytest.raises(ValueError, match="already bound"):
+        with pytest.raises(ApplicabilityError, match="already bound"):
             wrapped(x=rows, offset=jnp.ones(4))
 
     @pytest.mark.parametrize("entrypoint", ["apply", "__call__"])
@@ -729,7 +730,7 @@ class TestApplyContract:
             dispatch="sequential",
         )
 
-        with pytest.raises(ValueError, match=r"OpaqueSpec.*does not conform.*NumericArraySpec"):
+        with pytest.raises(ApplicabilityError, match=r"accepts NumericArraySpec.*OpaqueSpec"):
             wrapped(
                 v=OpaqueBatch(
                     "rows",
@@ -964,7 +965,7 @@ class TestSymbolicCalls:
         assert regression_function.input_spec is declaration
         assert declaration == InputSpec(RecordSpec(X=("obs", "p"), p=("p",)).children)
 
-    def test_a_distribution_array_of_laws_is_not_an_array_input(self):
+    def test_a_distribution_batch_of_laws_is_not_an_array_input(self):
         def identity(x):
             return x
 
@@ -974,20 +975,17 @@ class TestSymbolicCalls:
             input_spec=InputSpec(RecordSpec(x=()).children),
             dispatch="sequential",
         )
-        values = DistributionArray(
-            [
-                Normal("left", 0, 1),
-                Normal("right", 1, 1),
-            ]
-        )
+        values = DistributionBatch("laws", [Normal("x", 0, 1), Normal("x", 1, 1)], "law")
 
-        # Each cell is a law, which an array input does not admit.
-        with pytest.raises(ValueError, match=r"input/x does not conform to its field spec"):
+        # Each element is a law, which an array input does not admit.
+        with pytest.raises(
+            ApplicabilityError, match=r"'x' accepts NumericArraySpec.*DistributionSpec"
+        ):
             wrapped(values)
 
     def test_repeated_input_symbol_conflict_has_function_path(self, regression_function):
         with pytest.raises(
-            ValueError,
+            ApplicabilityError,
             match=r"Function 'function' input/p.*'p'.*already bound",
         ):
             regression_function(np.ones((3, 2)), np.ones((4,)))
@@ -1040,13 +1038,12 @@ class TestSymbolicCalls:
         with workflow_run(seed=4):
             result = wrapped(Normal("x", 0, 1))
 
-        assert result.event_spec.spec.leaf_shapes == {"pair": (2,)}
+        assert list(result.event_spec.components) == ["pair"]
+        assert result.event_spec.spec.shape == (2,)
         assert result.num_atoms == 8
-        assert result.atoms["pair"].shape == (8, 2)
-        np.testing.assert_allclose(
-            result.atoms["pair"][:, 1],
-            result.atoms["pair"][:, 0] + 1,
-        )
+        pairs = np.asarray(result._rows)
+        assert pairs.shape == (8, 2)
+        np.testing.assert_allclose(pairs[:, 1], pairs[:, 0] + 1)
 
     def test_every_sweep_cell_is_validated_against_output_template(self):
         rows = NumericRecordBatch.stack(
@@ -1098,8 +1095,9 @@ class TestSymbolicCalls:
             result = wrapped(Normal("x", 0, 1))
 
         assert result.provenance.metadata["dispatch"] == "sequential"
-        assert result.event_spec.spec["y"].support == positive
-        assert bool(jnp.all(result.atoms["y"] > 0))
+        assert list(result.event_spec.components) == ["y"]
+        assert result.event_spec.spec.support == positive
+        assert bool(jnp.all(result._rows > 0))
 
     def test_support_pinned_broadcast_explicit_jax_reports_traceability_error(self):
         wrapped = Function(
@@ -1224,19 +1222,15 @@ class TestSymbolicCalls:
         )
 
         with workflow_run(seed=3):
-            broadcast = wrapped.with_options(include_inputs=True)(Normal("x", 0, 1))
-        result = broadcast.marginalize()
+            joint = wrapped.with_options(include_inputs=True)(Normal("x", 0, 1))
+        laws = joint._rows["function"]
 
-        assert result.event_spec == OutputSpec(y=NumericArraySpec((), jnp.asarray(0.0).dtype, real))
-        assert result.num_atoms == 8
-        np.testing.assert_allclose(
-            jnp.stack([component.loc for component in result.components]),
-            broadcast.input_samples["x"],
+        assert joint.event_spec.components["function"] == DistributionSpec(
+            OutputSpec(y=NumericArraySpec((), jnp.asarray(0.0).dtype, real))
         )
-        np.testing.assert_allclose(
-            jnp.stack([component.scale for component in result.components]),
-            np.ones(8),
-        )
+        assert joint.num_atoms == 8
+        np.testing.assert_allclose(jnp.stack([law.loc for law in laws]), joint._rows["x"])
+        np.testing.assert_allclose(jnp.stack([law.scale for law in laws]), np.ones(8))
 
     def test_distribution_broadcast_rejects_cross_kind_declared_dtype(self):
         wrapped = Function(
@@ -1268,19 +1262,13 @@ class TestSymbolicCalls:
 
         result = wrapped(rows)
 
-        assert isinstance(result, DistributionArray)
+        assert isinstance(result, DistributionBatch)
         assert result.event_spec == OutputSpec(y=NumericArraySpec((), jnp.asarray(0.0).dtype, real))
-        assert result.size == 3
-        np.testing.assert_allclose(
-            jnp.stack([component.loc for component in result.components]),
-            np.arange(3.0),
-        )
-        np.testing.assert_allclose(
-            jnp.stack([component.scale for component in result.components]),
-            np.ones(3),
-        )
+        assert result.batch_size == 3
+        np.testing.assert_allclose(jnp.stack([law.loc for law in result]), np.arange(3.0))
+        np.testing.assert_allclose(jnp.stack([law.scale for law in result]), np.ones(3))
 
-    def test_nested_broadcast_distribution_array_declares_the_output_record(self):
+    def test_nested_broadcast_distribution_batch_declares_the_output_record(self):
         rows = NumericRecordBatch.stack(
             [NumericRecord("row", offset=jnp.asarray(float(i))) for i in range(2)],
             level_name="draw",
@@ -1302,7 +1290,7 @@ class TestSymbolicCalls:
         with workflow_run(seed=5):
             result = wrapped(rows, Normal("noise", 0, 1))
 
-        assert isinstance(result, DistributionArray)
+        assert isinstance(result, DistributionBatch)
         assert result.event_spec.spec.fields == ("prediction",)
 
 
@@ -1488,7 +1476,7 @@ class TestReentrancyAndProvenance:
 
         def evaluate(_):
             with workflow_run(seed=19):
-                return wrapped(source).atoms["function"]
+                return wrapped(source)._rows
 
         sequential = [evaluate(index) for index in range(2)]
         with ThreadPoolExecutor(max_workers=2) as pool:
@@ -1598,7 +1586,7 @@ class TestVariadicPlanning:
 
         assert isinstance(result, Distribution)
         assert result.num_atoms == 8
-        assert tuple(result.input_samples) == ("*items[0]",)
+        assert list(result.event_spec.components) == ["*items[0]", "function"]
         assert result.provenance.metadata["broadcast_args"] == ["*items[0]"]
 
     def test_record_batch_in_varargs_is_swept(self):

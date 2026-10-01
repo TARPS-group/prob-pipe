@@ -42,7 +42,6 @@ from typing import Any, Protocol, runtime_checkable
 
 from ..core._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
 from ..core._batch import Batch, BatchSpec, _ranks_of
-from ..core._broadcast_distributions import _make_stack
 from ..core._dispatch import BaseDispatchRegistry, Feasibility, MethodInfo, ResolutionError
 from ..core._kinds import _KINDS, batch_class_for_spec
 from ..core._numeric_array import NumericArray
@@ -59,10 +58,11 @@ from ..core.record import Record
 from ..core.tracked import TrackedTerm
 from ..distributions._capabilities import _capability_guard, _guard_condition
 from ..functions import _broker, _descendants
-from ..functions._call import admit_arguments
+from ..functions._call import ApplicabilityError, CallReport, admit_arguments
 from ..functions._plan import BroadcastPlan, build_broadcast_plan
 from ..functions._result import (
     _copy_result_term,
+    _make_stack,
     _wrap_as_term,
     _wrap_declared_function_output,
 )
@@ -78,9 +78,7 @@ from ..values._binding import (
 from ..values._function_base import _validate_function_output
 
 __all__ = [
-    "ApplicabilityError",
     "BoundCall",
-    "CallCheck",
     "OperandSummary",
     "Operation",
     "OperationRegistry",
@@ -102,15 +100,6 @@ _UNREGISTERED_TERM_KINDS: tuple[tuple[type, type[TermSpec]], ...] = (
     (Function, FunctionSpec),
     (Record, RecordSpec),
 )
-
-
-class ApplicabilityError(TypeError):
-    """The arguments or declarations of a call violate the operation's contract.
-
-    Admission raises it for an argument whose kind the parameter's role does not
-    accept, and planning raises it for a failed applicability condition or for a
-    call that the result rule rules out.
-    """
 
 
 class RouteSource(Enum):
@@ -139,8 +128,8 @@ class BoundCall:
         Every bound argument by its parameter name, defaults included, in
         signature order: a term, a raw value, or a planned conversion.
     controls : Mapping[str, Any]
-        The resolved controls: the framework's, the operation's ``method``,
-        ``exact_only``, and ``raw``, and the budgets set for its routes.
+        The resolved controls: the framework's, ``method_options`` among them,
+        and the operation's ``method``, ``exact_only``, and ``raw``.
     """
 
     operation: Function
@@ -259,6 +248,11 @@ def _as_feasibility(report: Any, source: Callable[..., Any], owner: str) -> Feas
     """
     if isinstance(report, Feasibility):
         return report
+    if isinstance(report, CallReport):
+        # Another operation's check, as a derived operation's identity reads it.
+        if report.selected is not None:
+            return report.selected
+        return Feasibility(None, pending=report.pending)
     condition = _guard_condition(source)
     suffix = f": {condition}" if condition else ""
     if report is True:
@@ -271,43 +265,38 @@ def _as_feasibility(report: Any, source: Callable[..., Any], owner: str) -> Feas
 
 
 class _Route:
-    """The name, exactness, and budget controls every constructed route declares.
+    """The name and exactness every constructed route declares.
 
-    The budgets are the controls the route reads, and ``with_options`` admits
-    a budget only when a route of the operation declares it.
+    A route reads the numerical budgets of a call from its ``method_options``
+    control, which the method the route runs validates.
 
     Raises
     ------
     TypeError
-        If *name* is not a non-empty string, *exact* is neither a bool nor
-        ``None``, or a budget is not a non-empty string.
+        If *name* is not a non-empty string, or *exact* is neither a bool nor
+        ``None``.
     """
 
     source: RouteSource
     requires: tuple[type, ...] = ()
 
-    def __init__(self, name: str, *, exact: bool | None, controls: Iterable[str] = ()) -> None:
+    def __init__(self, name: str, *, exact: bool | None) -> None:
         if not isinstance(name, str) or not name:
             raise TypeError(f"a route's name must be a non-empty string; got {name!r}")
         if exact is not None and type(exact) is not bool:
             raise TypeError(f"route {name!r} must declare exact as a bool or None; got {exact!r}")
-        budgets = frozenset(controls)
-        if not all(isinstance(budget, str) and budget for budget in budgets):
-            raise TypeError(f"route {name!r} names its budgets by non-empty strings")
         self.name = name
         self.exact = exact
-        self.controls = budgets
 
     @property
     def condition(self) -> str:
         """The feasibility condition in words."""
         return ""
 
-    def budgets(self, call: BoundCall) -> dict[str, Any]:
-        """The budgets this route declares that *call* sets, by name."""
-        return {
-            name: call.controls[name] for name in sorted(self.controls) if name in call.controls
-        }
+    @staticmethod
+    def method_options(call: BoundCall) -> dict[str, Any]:
+        """The budgets *call* sets through its ``method_options`` control, by name."""
+        return dict(call.controls.get("method_options", {}))
 
     def __repr__(self) -> str:
         """The route's class and name."""
@@ -331,9 +320,8 @@ class _CheckedRoute(_Route):
         check: Callable[[BoundCall, OutputSpec | None], Any],
         execute: Callable[[BoundCall, OutputSpec | None], Any],
         exact: bool | None,
-        controls: Iterable[str] = (),
     ) -> None:
-        super().__init__(name, exact=exact, controls=controls)
+        super().__init__(name, exact=exact)
         if not isinstance(source, RouteSource):
             raise TypeError(f"route {name!r} needs a RouteSource; got {source!r}")
         if not callable(check) or not callable(execute):
@@ -364,8 +352,9 @@ class _CapabilityRoute(_Route):
     :func:`~probpipe.distributions._capabilities._capability_guard` with no
     arguments, or by a given *check*, which reads the call's arguments that
     the guard takes. The capability is called with the call's other arguments
-    in signature order and the budgets the route declares as keyword options,
-    or by a given *execute*.
+    in signature order, or by a given *execute*. An approximate capability also
+    receives the call's ``method_options`` as keyword options, while an exact
+    one computes its object with no budget and receives none.
 
     Raises
     ------
@@ -386,9 +375,8 @@ class _CapabilityRoute(_Route):
         exact: bool,
         check: Callable[[BoundCall, OutputSpec | None], Any] | None = None,
         execute: Callable[[BoundCall, OutputSpec | None], Any] | None = None,
-        controls: Iterable[str] = (),
     ) -> None:
-        super().__init__(name, exact=exact, controls=controls)
+        super().__init__(name, exact=exact)
         if not isinstance(operand, str) or not isinstance(method, str):
             raise TypeError(f"route {name!r} names its operand and method by strings")
         if not isinstance(protocol, type):
@@ -438,12 +426,17 @@ class _CapabilityRoute(_Route):
         return _capability_guard(subject, self.method)
 
     def execute(self, call: BoundCall, result: OutputSpec | None) -> Any:
-        """The capability called on the call's other arguments and budgets, or the given execute."""
+        """The capability called on the call's other arguments, and on its method options
+        when it is approximate.
+
+        A given *execute* replaces the call.
+        """
         if self._execute is not None:
             return self._execute(call, result)
         subject = call.operands[self.operand]
         others = [value for name, value in call.operands.items() if name != self.operand]
-        return getattr(subject, self.method)(*others, **self.budgets(call))
+        options = {} if self.exact else self.method_options(call)
+        return getattr(subject, self.method)(*others, **options)
 
 
 class _RegistryRoute(_Route):
@@ -451,7 +444,7 @@ class _RegistryRoute(_Route):
 
     The registry receives the call's arguments in signature order, or those
     *arguments* returns, with the keyword options *options* returns, or else the
-    budgets the route declares that the call sets. Its exactness is that of the
+    call's ``method_options``. Its exactness is that of the
     method the registry selects, so the route is ranked twice: its exact methods
     with the exact routes and its approximate methods with the approximate ones.
 
@@ -471,9 +464,8 @@ class _RegistryRoute(_Route):
         registry: BaseDispatchRegistry[Any],
         arguments: Callable[[BoundCall], Iterable[Any]] | None = None,
         options: Callable[[BoundCall], Mapping[str, Any]] | None = None,
-        controls: Iterable[str] = (),
     ) -> None:
-        super().__init__(name, exact=None, controls=controls)
+        super().__init__(name, exact=None)
         if not isinstance(registry, BaseDispatchRegistry):
             raise TypeError(f"route {name!r} needs a dispatch registry; got {registry!r}")
         for supplied in (arguments, options):
@@ -501,7 +493,7 @@ class _RegistryRoute(_Route):
         """The keyword options passed to the registry's methods."""
         if self._options is not None:
             return dict(self._options(call))
-        return self.budgets(call)
+        return self.method_options(call)
 
     def probe(self, call: BoundCall, *, method: str | None, exact_only: bool) -> MethodInfo:
         """The registry's report for *call*, restricted as the controls ask."""
@@ -582,10 +574,11 @@ class _Candidate:
 
     @property
     def rank(self) -> tuple[int, int, int]:
-        """Exact before approximate, a fallback below the other sources, then registration order."""
+        """A fallback below every other source whatever its exactness, then exact before
+        approximate, then registration order."""
         return (
-            0 if self.exact is True else 1,
             1 if self.route.source is RouteSource.FALLBACK else 0,
+            0 if self.exact is True else 1,
             self.index,
         )
 
@@ -618,7 +611,7 @@ def _exactness(candidate: _Candidate, report: Feasibility) -> bool | None:
     selected: a registry route's method, or the route a derived operation's
     constituent selects.
     """
-    if candidate.route.exact is None and isinstance(report, (MethodInfo, CallCheck)):
+    if candidate.route.exact is None and isinstance(report, (MethodInfo, _PointCheck)):
         return report.exact
     return candidate.route.exact
 
@@ -629,13 +622,14 @@ def _exactness(candidate: _Candidate, report: Feasibility) -> bool | None:
 
 
 @dataclass(frozen=True)
-class CallCheck(Feasibility):
-    """What :meth:`Operation.check` reports about one call, without executing it.
+class _PointCheck(Feasibility):
+    """What the check of an operation finds at its points, before it becomes a CallReport.
 
     The call is feasible when a route is selected, unresolved when a route
     ranked above every feasible one still needs declarations, and infeasible
     when no route applies. A call the engine lifts is checked at each of its
-    points, and it is feasible when every point is.
+    points, and it is feasible when every point is. A route's probe may return
+    one, to report a feasible route of a stated exactness that runs no method.
 
     Attributes
     ----------
@@ -702,8 +696,8 @@ def _points(
 
 
 def _combined(
-    reports: list[tuple[tuple[int, ...], CallCheck]], lifted: tuple[tuple[str, str], ...]
-) -> CallCheck:
+    reports: list[tuple[tuple[int, ...], _PointCheck]], lifted: tuple[tuple[str, str], ...]
+) -> _PointCheck:
     """The report of a call from those of its points, each with its sweep cell.
 
     The call is infeasible at its first infeasible point, and unresolved when
@@ -735,6 +729,41 @@ def _combined(
         exact=exact,
         deferred=deferred,
         lifted=lifted,
+    )
+
+
+def _call_report(point: _PointCheck) -> CallReport:
+    """The CallReport of a call from the check of its points.
+
+    Each probed candidate's report is named by its label, and a report whose
+    exactness is open states the call approximate.
+    """
+    routes = tuple(
+        MethodInfo(
+            report.feasible,
+            report.description,
+            report.pending,
+            method_name=label,
+            exact=bool(getattr(report, "exact", None)),
+        )
+        for label, report in point.routes
+    )
+    selected: MethodInfo | None
+    if point.feasible is None:
+        selected = None
+    elif point.feasible is False:
+        selected = MethodInfo(False, point.description)
+    else:
+        name = point.route or ""
+        if point.route is not None and point.method is not None:
+            name = f"{point.route}/{point.method}"
+        selected = MethodInfo(True, method_name=name, exact=bool(point.exact))
+    return CallReport(
+        routes=routes,
+        selected=selected,
+        deferred=point.deferred,
+        result=point.result,
+        lifted=tuple(dict.fromkeys(label for label, _ in point.lifted)),
     )
 
 
@@ -997,7 +1026,6 @@ class Operation(Function):
         check: Callable[[BoundCall, OutputSpec | None], Any],
         execute: Callable[[BoundCall, OutputSpec | None], Any],
         exact: bool,
-        controls: Iterable[str] = (),
     ) -> OperationRoute:
         """Register a route whose implementation comes from the operands' declared structure.
 
@@ -1013,8 +1041,6 @@ class Operation(Function):
             ``execute(call, result)``, returning the raw result.
         exact : bool
             Whether the result denotes the requested mathematical object.
-        controls : iterable of str
-            The budget controls the route reads.
 
         Returns
         -------
@@ -1035,7 +1061,6 @@ class Operation(Function):
                 check=check,
                 execute=execute,
                 exact=exact,
-                controls=controls,
             )
         )
 
@@ -1049,7 +1074,6 @@ class Operation(Function):
         exact: bool,
         check: Callable[[BoundCall, OutputSpec | None], Any] | None = None,
         execute: Callable[[BoundCall, OutputSpec | None], Any] | None = None,
-        controls: Iterable[str] = (),
     ) -> OperationRoute:
         """Register a route that calls a capability of the operand it names.
 
@@ -1076,9 +1100,6 @@ class Operation(Function):
         execute : callable, optional
             ``execute(call, result)``, for a capability that is not called with
             the call's other arguments in signature order.
-        controls : iterable of str
-            The budget controls the route reads, which the capability receives
-            as keyword options when the call sets them.
 
         Returns
         -------
@@ -1103,7 +1124,6 @@ class Operation(Function):
                 exact=exact,
                 check=check,
                 execute=execute,
-                controls=controls,
             )
         )
 
@@ -1114,7 +1134,6 @@ class Operation(Function):
         registry: BaseDispatchRegistry[Any],
         arguments: Callable[[BoundCall], Iterable[Any]] | None = None,
         options: Callable[[BoundCall], Mapping[str, Any]] | None = None,
-        controls: Iterable[str] = (),
     ) -> OperationRoute:
         """Register a route that delegates to a dispatch registry.
 
@@ -1133,9 +1152,7 @@ class Operation(Function):
             the call's arguments in signature order.
         options : callable, optional
             ``options(call)``, the keyword options for the registry's methods; by
-            default the budgets of *controls* that the call sets.
-        controls : iterable of str
-            The budget controls the registry's methods read.
+            default the call's ``method_options``.
 
         Returns
         -------
@@ -1150,9 +1167,7 @@ class Operation(Function):
             If the operation already has a route named *name*.
         """
         return self.register_route(
-            _RegistryRoute(
-                name, registry=registry, arguments=arguments, options=options, controls=controls
-            )
+            _RegistryRoute(name, registry=registry, arguments=arguments, options=options)
         )
 
     def fallback_route(
@@ -1162,7 +1177,6 @@ class Operation(Function):
         check: Callable[[BoundCall, OutputSpec | None], Any],
         execute: Callable[[BoundCall, OutputSpec | None], Any],
         exact: bool,
-        controls: Iterable[str] = (),
     ) -> OperationRoute:
         """Register a generic scheme applicable to a stated domain.
 
@@ -1181,8 +1195,6 @@ class Operation(Function):
             ``execute(call, result)``, returning the raw result.
         exact : bool
             Whether the result denotes the requested mathematical object.
-        controls : iterable of str
-            The budget controls the route reads.
 
         Returns
         -------
@@ -1203,7 +1215,6 @@ class Operation(Function):
                 check=check,
                 execute=execute,
                 exact=exact,
-                controls=controls,
             )
         )
 
@@ -1212,11 +1223,12 @@ class Operation(Function):
     def with_options(self, **controls: Any) -> Operation:
         """Return a view with revised controls, the operation's own included.
 
-        The framework's controls are those of :meth:`Function.with_options`. The
-        operation adds ``method``, a route's name or a method of a registry
-        route's registry; ``exact_only``, which excludes every approximate
-        route; ``raw``, which returns the result detached; and the budgets its
-        routes declare. ``None`` leaves a control unchanged.
+        The framework's controls are those of :meth:`Function.with_options`,
+        ``method_options`` among them, whose budgets the selected method
+        validates when it runs. The operation adds ``method``, a route's name or
+        a method of a registry route's registry; ``exact_only``, which excludes
+        every approximate route; and ``raw``, which returns the result detached.
+        ``None`` leaves a control unchanged.
 
         Raises
         ------
@@ -1228,20 +1240,13 @@ class Operation(Function):
         """
         # The operation selects its own routes, so its controls stay out of the
         # engine's options even where the engine declares the same names.
-        own = {name: value for name, value in controls.items() if name in _OPERATION_CONTROLS}
-        framework = {
-            name: value
-            for name, value in controls.items()
-            if name in self.options and name not in _OPERATION_CONTROLS
-        }
-        budgets = {
-            name: value
-            for name, value in controls.items()
-            if name not in framework and name not in own
-        }
-        unknown = self._unknown_budgets(budgets)
+        unknown = set(controls) - set(self.options) - set(_OPERATION_CONTROLS)
         if unknown:
             raise TypeError(f"Unknown controls for operation {self.name!r}: {sorted(unknown)}")
+        own = {name: value for name, value in controls.items() if name in _OPERATION_CONTROLS}
+        framework = {
+            name: value for name, value in controls.items() if name not in _OPERATION_CONTROLS
+        }
         method = own.get("method")
         if method is not None and (not isinstance(method, str) or not method):
             raise TypeError(f"method must be a route or method name; got {method!r}")
@@ -1251,16 +1256,8 @@ class Operation(Function):
         clone = super().with_options(**framework)
         revised = dict(self._controls)
         revised.update({name: value for name, value in own.items() if value is not None})
-        revised.update({name: value for name, value in budgets.items() if value is not None})
         object.__setattr__(clone, "_controls", MappingProxyType(revised))
         return clone
-
-    def _unknown_budgets(self, budgets: Mapping[str, Any]) -> set[str]:
-        """The names in *budgets* that no route declares."""
-        declared = {
-            name for route in self._route_table.routes for name in getattr(route, "controls", ())
-        }
-        return set(budgets) - declared
 
     def _resolved_controls(self) -> Mapping[str, Any]:
         """Every control's effective value for a call through this view."""
@@ -1336,7 +1333,7 @@ class Operation(Function):
         wrapped = _wrap_result(value, result, self.output_name)
         return _raw_form(wrapped) if call.controls["raw"] else wrapped
 
-    def check(self, *args: Any, **kwargs: Any) -> CallCheck:
+    def check(self, *args: Any, **kwargs: Any) -> CallReport:
         """Report how a call would resolve, without executing any route.
 
         The arguments bind as the call's would, and admission and planning raise
@@ -1349,10 +1346,12 @@ class Operation(Function):
 
         Returns
         -------
-        CallCheck
-            The selected route, its exactness, the result declaration, each probed
-            candidate's report, the checks deferred to the return, and each lifted
-            argument with how the engine lifts it.
+        CallReport
+            Each probed candidate's report and the selected one, the selected
+            report naming the route, and ``route/method`` for a registry route's
+            method, or an empty name when the points of a lifted call select
+            different routes; the result declaration; the checks deferred to the
+            return; and the parameters whose arguments the engine lifts.
 
         Raises
         ------
@@ -1373,14 +1372,14 @@ class Operation(Function):
         if plan.array_args and plan.n_sweep == 0:
             elements = {ref: _Point(_element_spec(values, ref)) for ref in plan.array_args}
             point = replace_input_refs(values, {**elements, **_draws(values, plan)})
-            return replace(self._check_point(point, select=False), lifted=lifted)
-        reports: list[tuple[tuple[int, ...], CallCheck]] = []
+            return _call_report(replace(self._check_point(point, select=False), lifted=lifted))
+        reports: list[tuple[tuple[int, ...], _PointCheck]] = []
         for cell, point in _points(values, plan):
             report = self._check_point(point)
             reports.append((cell, report))
             if report.feasible is False:
                 break
-        return _combined(reports, lifted)
+        return _call_report(_combined(reports, lifted))
 
     def _lift_plan(
         self, args: tuple[Any, ...], kwargs: Mapping[str, Any]
@@ -1397,7 +1396,7 @@ class Operation(Function):
         )
         return values, build_broadcast_plan(values=values, signature_info=self._signature_info)
 
-    def _check_point(self, values: Mapping[str, Any], *, select: bool = True) -> CallCheck:
+    def _check_point(self, values: Mapping[str, Any], *, select: bool = True) -> _PointCheck:
         """The report of one point of a call: its admission, its planning, and its selection.
 
         Without *select*, the point is admitted and planned, and no route is
@@ -1414,11 +1413,11 @@ class Operation(Function):
         self._admit(call)
         result, deferred = self._plan(call)
         if not select:
-            return CallCheck(True, result=result, deferred=deferred)
+            return _PointCheck(True, result=result, deferred=deferred)
         candidate, report, reports = self._select(call, result)
         probed = tuple((probed_candidate.label, probe) for probed_candidate, probe in reports)
         if candidate is None:
-            return CallCheck(
+            return _PointCheck(
                 False,
                 self._no_route_message(call, reports),
                 result=result,
@@ -1426,11 +1425,11 @@ class Operation(Function):
                 deferred=deferred,
             )
         if report.feasible is None:
-            return CallCheck(
+            return _PointCheck(
                 None, pending=report.pending, result=result, routes=probed, deferred=deferred
             )
         registry = isinstance(candidate.route, _RegistryRoute)
-        return CallCheck(
+        return _PointCheck(
             True,
             route=candidate.route.name,
             method=report.method_name if registry and isinstance(report, MethodInfo) else None,
@@ -1510,51 +1509,91 @@ class Operation(Function):
     def _candidates(self, controls: Mapping[str, Any]) -> list[_Candidate]:
         """The ways the routes may realize a call under *controls*, in selection order.
 
+        A ``method`` name resolves as :meth:`_named_candidates` states.
+
         Raises
         ------
         ResolutionError
-            If ``method`` names neither a route nor a method of a registry route's
-            registry, or names an approximate route while ``exact_only`` is set.
+            If ``method`` names no route or registry method, matches several, or
+            names an approximate route while ``exact_only`` is set.
         """
-        routes = list(self._route_table.routes)
         method, exact_only = controls["method"], controls["exact_only"]
-        candidates: list[_Candidate] = []
-        if method is None:
-            for index, route in enumerate(routes):
+        if method is not None:
+            candidates = self._named_candidates(method, exact_only)
+        else:
+            candidates = []
+            for index, route in enumerate(self._route_table.routes):
                 if isinstance(route, _RegistryRoute):
                     candidates += [_Candidate(route, True, index), _Candidate(route, False, index)]
                 else:
                     candidates.append(_Candidate(route, route.exact, index))
-        else:
-            named = [(index, route) for index, route in enumerate(routes) if route.name == method]
-            holders = [
-                (index, route)
-                for index, route in enumerate(routes)
-                if isinstance(route, _RegistryRoute) and method in route.registry.list_methods()
-            ]
-            if named:
-                index, route = named[0]
-                if isinstance(route, _RegistryRoute):
-                    candidates = [_Candidate(route, True, index), _Candidate(route, False, index)]
-                else:
-                    candidates = [_Candidate(route, route.exact, index)]
-                    if exact_only and route.exact is not True:
-                        raise ResolutionError(
-                            f"{self.name}: route {method!r} is not exact and exact_only was "
-                            f"requested"
-                        )
-            elif holders:
-                index, route = holders[0]
-                candidates = [_Candidate(route, None, index, method)]
-            else:
-                available = ", ".join(route.name for route in routes) or "none"
-                raise ResolutionError(
-                    f"{self.name}: no route or registered method named {method!r}; routes: "
-                    f"{available}"
-                )
         if exact_only:
             candidates = [c for c in candidates if c.exact is True or c.method is not None]
         return sorted(candidates, key=lambda candidate: candidate.rank)
+
+    def _named_candidates(self, method: str, exact_only: bool) -> list[_Candidate]:
+        """The candidates a ``method`` name selects.
+
+        A plain name selects the route of that name, or the method of that name
+        in the registry of the registry routes holding it; routes that share one
+        registry are each a candidate with that method. The qualified form
+        ``route/method`` selects the method within the named registry route.
+
+        Raises
+        ------
+        ResolutionError
+            If the name matches nothing; if a plain name matches a route and a
+            registry method, or methods of different registries, naming each
+            candidate as ``route/method``; or if it names an approximate route
+            while ``exact_only`` is set.
+        """
+        routes = list(self._route_table.routes)
+        route_name, qualified, method_name = method.partition("/")
+        if qualified:
+            for index, route in enumerate(routes):
+                if (
+                    route.name == route_name
+                    and isinstance(route, _RegistryRoute)
+                    and method_name in route.registry.list_methods()
+                ):
+                    return [_Candidate(route, None, index, method_name)]
+            raise ResolutionError(
+                f"{self.name}: no registry route {route_name!r} holds a method named "
+                f"{method_name!r}; {self._names_available()}"
+            )
+        named = [(index, route) for index, route in enumerate(routes) if route.name == method]
+        holders = [
+            (index, route)
+            for index, route in enumerate(routes)
+            if isinstance(route, _RegistryRoute) and method in route.registry.list_methods()
+        ]
+        registries = {id(route.registry) for _, route in holders}
+        if (named and holders) or len(registries) > 1:
+            forms = [route.name for _, route in named]
+            forms += [f"{route.name}/{method}" for _, route in holders]
+            raise ResolutionError(
+                f"{self.name}: method={method!r} matches {', '.join(forms)}; name one of "
+                f"them, a registry method as route/method"
+            )
+        if named:
+            index, route = named[0]
+            if isinstance(route, _RegistryRoute):
+                return [_Candidate(route, True, index), _Candidate(route, False, index)]
+            if exact_only and route.exact is not True:
+                raise ResolutionError(
+                    f"{self.name}: route {method!r} is not exact and exact_only was requested"
+                )
+            return [_Candidate(route, route.exact, index)]
+        if holders:
+            return [_Candidate(route, None, index, method) for index, route in holders]
+        raise ResolutionError(
+            f"{self.name}: no route or registered method named {method!r}; "
+            f"{self._names_available()}"
+        )
+
+    def _names_available(self) -> str:
+        """The routes a ``method`` control may name, in words."""
+        return f"routes: {', '.join(route.name for route in self._route_table.routes) or 'none'}"
 
     def _select(
         self, call: BoundCall, result: OutputSpec | None

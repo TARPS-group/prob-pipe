@@ -22,19 +22,19 @@ try:
 except ImportError:
     task = flow = None
 
-from ..core._batch import Batch
-from ..core._broadcast_distributions import BroadcastDistribution, _make_stack, _row_at_its_kind
-from ..core._distribution_array import DistributionArray, _make_distribution_array
 from ..core._numeric_array import NumericArray
 from ..core._numeric_array_batch import NumericArrayBatch, _MappedBatchStore
+from ..core._object_batch import _ObjectBatch
+from ..core._opaque import Opaque
 from ..core._record_batch import RecordBatch, _MappedBatchColumns
-from ..core._specs import OutputSpec, RecordSpec, _components_record
+from ..core._specs import OutputSpec, RecordSpec
 from ..core.config import WorkflowKind, prefect_config
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
 from ..distributions._distribution import Distribution
 from . import _broker, _context, _execution, _execution_contract, _plan, _recipe, _result
+from ._result import _make_stack, _row_at_its_kind
 
 
 def execute_sweep(
@@ -57,7 +57,7 @@ def execute_sweep(
             _plan.LogicalUnit,
             bool,
         ],
-        BroadcastDistribution | Distribution,
+        Distribution,
     ],
     workflow_name: str,
     output_name: str | None = None,
@@ -67,8 +67,13 @@ def execute_sweep(
     provenance_parents: list[TrackedTerm] | None = None,
     provenance_inputs: Mapping[str, Any] | None = None,
     workflow_kind: WorkflowKind = WorkflowKind.OFF,
+    route: Mapping[str, Any] | None = None,
 ) -> Any:
-    """Execute pure or nested sweep regimes for one workflow call."""
+    """Execute pure or nested sweep regimes for one workflow call.
+
+    *route* is the selected route's name and exactness, which provenance
+    records.
+    """
     if plan.regime not in ("sweep", "nested"):
         raise ValueError(f"execute_sweep requires a sweep plan; got {plan.regime!r}")
 
@@ -123,6 +128,7 @@ def execute_sweep(
             parents=provenance_parents,
             inputs=provenance_inputs,
             stochastic_plan=None,
+            route=route,
         )
         return _result._coerce_output(
             aggregate,
@@ -134,34 +140,24 @@ def execute_sweep(
     if stochastic_plan is None:  # pragma: no cover - Function planning contract guard
         raise RuntimeError("nested sweep is missing its stochastic plan")
 
-    per_row_marginals: list[Distribution] = []
+    per_row_laws: list[Distribution] = []
     for logical_unit in stochastic_plan.logical_units:
         row_values = slice_sweep_values(
             values=values,
             index=logical_unit.flat_index,
             array_groups=plan.array_groups,
         )
-        inner = distribution_broadcast(
-            row_values,
-            stochastic_plan,
-            logical_unit,
-            True,
+        per_row_laws.append(
+            distribution_broadcast(row_values, stochastic_plan, logical_unit, False)
         )
-        if isinstance(inner, BroadcastDistribution):
-            marginal = inner.marginalize()
-        else:
-            marginal = inner
-        per_row_marginals.append(marginal)
 
-    if output_template is not None and per_row_marginals:
-        output_template = output_template.bind_dims_from_spec(
-            _components_record(per_row_marginals[0].event_spec)
-        )
-    stacked = _make_distribution_array(
-        per_row_marginals,
+    stacked = _make_stack(
+        per_row_laws,
         batch_shape=plan.sweep_batch_shape,
+        level_names=plan.sweep_level_names,
+        axis_groups=plan.sweep_axis_groups,
         name=output_name,
-        output_template=output_template,
+        field_name=output_name,
     )
     provenance = make_sweep_provenance(
         values=values,
@@ -173,6 +169,7 @@ def execute_sweep(
         parents=provenance_parents,
         inputs=provenance_inputs,
         stochastic_plan=stochastic_plan,
+        route=route,
     )
     return _result._coerce_output(
         stacked,
@@ -198,20 +195,13 @@ def slice_sweep_values(
         rem = rem // group.size
         # A batch spanning several axes addresses its element by position, one
         # indexer per axis; a flat index would read the leading axis alone and
-        # run off its end. Positional tuples are used only for Batch values;
-        # other array-like operands retain their flat row-major index.
+        # run off its end.
         position: Any = idx
         if len(group.batch_shape) > 1:
             position = tuple(int(i) for i in np.unravel_index(idx, group.batch_shape))
         replacements: dict[_binding.WorkflowInputRef, Any] = {}
         for ref in group.arg_refs:
-            source = _binding.input_ref_value(values, ref)
-            if isinstance(source, DistributionArray):
-                replacements[ref] = source._flat_component(idx)
-            elif isinstance(source, Batch):
-                replacements[ref] = source[position]
-            else:
-                replacements[ref] = source[idx]
+            replacements[ref] = _binding.input_ref_value(values, ref)[position]
         out = _binding.replace_input_refs(out, replacements)
     return out
 
@@ -242,11 +232,12 @@ def execute_sweep_rows(
     if plan.n_sweep == 0:
         return []
 
-    has_dist_array = any(
-        isinstance(_binding.input_ref_value(values, ref), DistributionArray) for ref in array_args
+    # A batch of stored objects has no columns for the mapped body to read.
+    has_object_batch = any(
+        isinstance(_binding.input_ref_value(values, ref), _ObjectBatch) for ref in array_args
     )
     jax_structure_supported = not (
-        has_dist_array or len(plan.array_groups) > 1 or len(array_args) > 1
+        has_object_batch or len(plan.array_groups) > 1 or len(array_args) > 1
     )
     jax_contract = _execution_contract.make_execution_contract(
         evaluator="jax_vmap",
@@ -352,6 +343,12 @@ def mapped_row_body(
                 # As a batch row is carried, but with no level of its own: the
                 # axis the map adds is the only one the aggregate will have.
                 return _MappedBatchColumns.of_record(out)
+            if isinstance(out, Opaque):
+                raise TypeError(
+                    f"{field_name}: a row returned a {type(out.value).__name__}, which is "
+                    f"an Opaque, and the mapped dispatch stacks arrays, records, and "
+                    f"batches; an opaque row runs row-wise"
+                )
         if isinstance(out, RecordBatch):
             return _MappedBatchColumns.of(out)
         if isinstance(out, (NumericArray, NumericArrayBatch)):
@@ -424,6 +421,7 @@ def make_sweep_provenance(
     parents: list[TrackedTerm] | None = None,
     inputs: Mapping[str, Any] | None = None,
     stochastic_plan: _plan.StochasticPlan | None = None,
+    route: Mapping[str, Any] | None = None,
 ) -> Provenance | None:
     """Build provenance metadata for pure and nested sweep outputs.
 
@@ -450,6 +448,7 @@ def make_sweep_provenance(
             "k": k,
             "ra_args": [ref.label for ref in array_args],
             "dist_args": [ref.label for ref in dist_args],
+            **(dict(route) if route is not None else {}),
         },
         inputs=inputs,
         controls=controls,

@@ -54,10 +54,9 @@ class TestTheKindDirectedWrap:
 
         assert isinstance(result, kind)
 
-    @pytest.mark.pending(
-        reason="a returned list, tuple, or set is an Opaque, not a batch", raises=AssertionError
+    @pytest.mark.parametrize(
+        "value", [[1.0, 2.0], (1.0, 2.0), {1.0, 2.0}], ids=["list", "tuple", "set"]
     )
-    @pytest.mark.parametrize("value", [[1.0, 2.0], (1.0, 2.0)], ids=["list", "tuple"])
     def test_a_returned_collection_is_opaque(self, value):
         assert isinstance(Function("produce", lambda: value)(), Opaque)
 

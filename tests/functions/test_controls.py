@@ -36,6 +36,7 @@ _FRAMEWORK_CONTROLS = {
     "method": None,
     "exact_only": False,
     "conversions": {},
+    "method_options": {},
     "raw": False,
     "dispatch": "auto",
     "max_workers": None,
@@ -126,6 +127,32 @@ class TestResolution:
 
         assert result.num_atoms == 9
 
+    def test_an_unset_control_reads_the_default_when_it_is_read(self, monkeypatch):
+        wrapped = Function("identity", _identity)
+        view = wrapped.with_options(raw=True)
+        monkeypatch.setattr(Function, "DEFAULT_N_BROADCAST_SAMPLES", 17)
+
+        assert wrapped.options["n_broadcast_samples"] == 17
+        assert view.options["n_broadcast_samples"] == 17
+
+    def test_a_set_control_keeps_its_value_when_the_default_changes(self, monkeypatch):
+        wrapped = Function("identity", _identity, n_broadcast_samples=7)
+        monkeypatch.setattr(Function, "DEFAULT_N_BROADCAST_SAMPLES", 17)
+
+        assert wrapped.options["n_broadcast_samples"] == 7
+        assert wrapped.with_options(raw=True).options["n_broadcast_samples"] == 7
+
+    def test_the_default_read_at_call_time_governs_the_lift(self, monkeypatch):
+        @function(dispatch="sequential")
+        def identity(x):
+            return x
+
+        monkeypatch.setattr(Function, "DEFAULT_N_BROADCAST_SAMPLES", 6)
+        with workflow_run(seed=0):
+            result = identity(standard_normal())
+
+        assert result.num_atoms == 6
+
     def test_a_declaration_is_kept_by_a_view(self):
         wrapped = Function("value", _identity, output_spec=OutputSpec(v=NumericArraySpec(())))
 
@@ -199,12 +226,11 @@ class TestAdmissibility:
 
         assert float(wrapped(1.0).value) == float(add(1.0).value) == 3.0
 
-    @pytest.mark.pending(
-        reason="a control that a registered method declares is admitted", raises=TypeError
-    )
-    def test_a_control_a_registered_method_defines_is_admitted(self, monkeypatch):
+    def test_a_registered_rule_reads_its_budget_from_method_options(self, monkeypatch):
+        seen: list[dict[str, Any]] = []
+
         class _Quadrature(BinaryDispatchMethod):
-            """A rule that declares its own numerical budget, the number of nodes."""
+            """A rule whose numerical budget, the number of nodes, is a method option."""
 
             @property
             def name(self) -> str:
@@ -218,10 +244,6 @@ class TestAdmissibility:
             def priority(self) -> int:
                 return 0
 
-            @property
-            def controls(self) -> dict[str, Any]:
-                return {"n_nodes": 16}
-
             def supported_types(self) -> tuple[tuple[type, ...], tuple[type, ...]]:
                 return ((Function,), (Distribution,))
 
@@ -229,20 +251,28 @@ class TestAdmissibility:
                 return Feasibility(True)
 
             def execute(self, f: Any, operand: Any, /, **call: Any) -> Any:
-                return None
+                seen.append(dict(call["controls"]["method_options"]))
+                return jnp.float32(0.0)
 
         registry = type(_rules.evaluation_rule_registry)()
         registry.register(_Quadrature())
         monkeypatch.setattr(_rules, "evaluation_rule_registry", registry)
 
-        wrapped = Function("identity", _identity, n_nodes=32)
+        wrapped = Function("identity", _identity, method_options={"n_nodes": 32})
+        wrapped.with_options(method="quadrature")(standard_normal())
 
-        assert wrapped.options["n_nodes"] == 32
-        assert wrapped.with_options(n_nodes=8).options["n_nodes"] == 8
+        assert wrapped.options["method_options"] == {"n_nodes": 32}
+        assert seen == [{"n_nodes": 32}]
+        with pytest.raises(TypeError, match="n_nodes"):
+            Function("identity", _identity, n_nodes=32)
+
+    @pytest.mark.parametrize("method_options", [{"": 1}, [("n_nodes", 1)]], ids=["empty", "list"])
+    def test_method_options_map_option_names_to_values(self, method_options):
+        with pytest.raises(TypeError, match="method_options"):
+            Function("identity", _identity, method_options=method_options)
 
 
 class TestControlsThatSelectTheRoute:
-    @pytest.mark.pending(reason="route selection by the method control")
     def test_method_names_the_route_of_a_lifted_call(self):
         @function(n_broadcast_samples=8, dispatch="sequential")
         def identity(x):
@@ -253,7 +283,6 @@ class TestControlsThatSelectTheRoute:
 
         assert result.num_atoms == 8
 
-    @pytest.mark.pending(reason="route selection under exact_only")
     def test_exact_only_excludes_the_approximate_sampling_lift(self):
         @function
         def identity(x):

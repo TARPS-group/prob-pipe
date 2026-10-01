@@ -2,30 +2,42 @@
 
 A lifted application, which is the direct call ``f(d)`` or ``f(batch)``,
 resolves among **evaluation rules**: the methods of a binary dispatch registry
-keyed on the map's type and the operand's type. The engine consults the registry, the
-``evaluate`` operation exposes it, and the families register their rules into
-it at import, so a pair with a closed form or a fused batched routine takes it
-while every other pair resolves through a floor.
+keyed on the map's type and the operand's type. The engine consults the
+registry, the ``evaluate`` operation exposes it, and the families register
+their rules into it at import, so a pair with a closed form or a fused batched
+routine takes it while every other pair resolves through a floor.
+
+Three rules are registered here:
+
+1. the **sampling lift**, a floor on a distribution operand that samples, which
+   pushes draws through the map and returns an empirical law over the outputs,
+   an approximation;
+2. the **elementwise sweep**, a floor on a batch operand, which maps the
+   function over the operand's elements, exactly;
+3. the **empirical enumeration**, an exact rule on a distribution operand whose
+   lifted groups are all empirical laws, which evaluates the map once per
+   combination of atoms when every lifted group of the call enumerates within
+   the sample count, and so returns the exact pushforward of the empirical
+   laws. A group enumerates through its root, so a view of an empirical law
+   enumerates as the law does.
 
 A **floor** is the fallback on its stated domain. The registry ranks the floors
 in a tier of their own, below every other rule whatever its exactness and
-priority, and orders each tier as every dispatch registry does. Two floors are
-registered here:
-
-1. the sampling lift, on a distribution operand that samples, which pushes
-   draws through the map and returns an empirical law over the outputs;
-2. the elementwise sweep, on a batch or distribution-array operand, which maps
-   the function over the operand's elements.
-
-A floor's check applies the test the planner applies to the argument at its
-parameter, so the floor is feasible where the direct call takes it and nowhere else.
+priority, and orders each tier as every dispatch registry does. A floor's check
+applies the test the planner applies to the argument at its parameter, so the
+floor is feasible where the direct call takes it and nowhere else.
 
 A rule's ``check`` and ``execute`` take the map and the operand positionally,
 followed by three keywords:
 
 1. ``parameter``: the name of the parameter the operand binds;
-2. ``fixed_args``: the other arguments, by name;
+2. ``fixed_args``: the map's other arguments, by parameter name, which hold the
+   operand's own container when the operand is one argument of a variadic
+   parameter;
 3. ``controls``: the call's resolved controls.
+
+The three rules here are realized by the engine itself, so their ``execute``
+calls the map with ``method`` naming the rule, and the engine runs it.
 """
 
 from __future__ import annotations
@@ -40,9 +52,9 @@ from ..core._dispatch import (
     Feasibility,
     _Registration,
 )
-from ..core._distribution_array import DistributionArray
 from ..distributions._capabilities import SupportsSampling
 from ..distributions._distribution import Distribution
+from ..distributions._empirical import EmpiricalDistribution
 from ..values import Function, _binding
 from . import _normalization, _plan
 
@@ -50,6 +62,17 @@ __all__ = ["FLOOR_PRIORITY", "evaluation_rule_registry"]
 
 #: The priority each floor registers with, which orders the floors among themselves.
 FLOOR_PRIORITY = -(2**31)
+
+#: The engine controls an engine-realized rule forwards when it calls the map.
+_FORWARDED_CONTROLS = (
+    "n_broadcast_samples",
+    "dispatch",
+    "max_workers",
+    "include_inputs",
+    "workflow_kind",
+    "exact_only",
+    "method_options",
+)
 
 
 def _lifting_hint(f: Function, parameter: str | None) -> Any:
@@ -63,6 +86,42 @@ def _describe(operand: Any) -> str:
     """The operand's kind and name, for a report."""
     name = getattr(operand, "name", None)
     return type(operand).__name__ if name is None else f"{type(operand).__name__} {name!r}"
+
+
+def _call_values(
+    operand: Any, parameter: str | None, fixed_args: Mapping[str, Any] | None
+) -> dict[str, Any]:
+    """The call's arguments by parameter name: *fixed_args* with the operand at *parameter*.
+
+    A variadic parameter's container already holds the operand, so it is kept as
+    *fixed_args* gives it.
+    """
+    values = dict(fixed_args or {})
+    if parameter is not None and parameter not in values:
+        values[parameter] = operand
+    return values
+
+
+def _run_by_name(
+    rule: str,
+    f: Function,
+    operand: Any,
+    parameter: str | None,
+    fixed_args: Mapping[str, Any] | None,
+    controls: Mapping[str, Any] | None,
+) -> Any:
+    """Call *f* on the operand and the fixed arguments, with ``method`` naming *rule*.
+
+    The engine realizes the rules this module registers, so naming one runs it
+    there, under the forwarded controls.
+    """
+    forwarded = {
+        name: controls[name] for name in _FORWARDED_CONTROLS if controls and name in controls
+    }
+    bound = _binding.values_to_bound_arguments(
+        f.signature, _call_values(operand, parameter, fixed_args)
+    )
+    return f.with_options(**forwarded, method=rule)(*bound.args, **bound.kwargs)
 
 
 class _Floor(BinaryDispatchMethod):
@@ -107,9 +166,8 @@ class _SamplingLift(_Floor):
         -------
         Feasibility
             Infeasible when *parameter* consumes the distribution itself, when
-            the call does not sample the operand, as for a distribution array,
-            which it sweeps or passes whole, and when neither the operand nor
-            its parent claims SupportsSampling.
+            the call does not sample the operand, and when neither the operand
+            nor its parent claims SupportsSampling.
         """
         expected = _lifting_hint(f, parameter)
         if _normalization.is_distribution_hint(expected):
@@ -134,22 +192,15 @@ class _SamplingLift(_Floor):
         fixed_args: Mapping[str, Any] | None = None,
         controls: Mapping[str, Any] | None = None,
     ) -> Any:
-        """The pushforward of the operand through the map, as an empirical law.
-
-        Raises
-        ------
-        NotImplementedError
-            Until the engine runs the lift as this rule.
-        """
-        raise NotImplementedError("_SamplingLift.execute")
+        """The pushforward of the operand through the map, as an empirical law over the outputs."""
+        return _run_by_name(self.name, f, operand, parameter, fixed_args, controls)
 
 
 class _ElementwiseSweep(_Floor):
     """The floor on batch operands: the function mapped over the batch's elements.
 
     The result is the batch of the elementwise results on the operand's
-    levels, so the rule is exact. A distribution array is swept over its
-    components.
+    levels, so the rule is exact.
     """
 
     @property
@@ -165,12 +216,12 @@ class _ElementwiseSweep(_Floor):
         return FLOOR_PRIORITY
 
     def supported_types(self) -> tuple[tuple[type, ...], tuple[type, ...]]:
-        return ((Function,), (Batch, DistributionArray))
+        return ((Function,), (Batch,))
 
     def check(
         self,
         f: Function,
-        operand: Batch | DistributionArray,
+        operand: Batch,
         /,
         *,
         parameter: str | None = None,
@@ -200,21 +251,101 @@ class _ElementwiseSweep(_Floor):
     def execute(
         self,
         f: Function,
-        operand: Batch | DistributionArray,
+        operand: Batch,
         /,
         *,
         parameter: str | None = None,
         fixed_args: Mapping[str, Any] | None = None,
         controls: Mapping[str, Any] | None = None,
     ) -> Any:
-        """The batch of the map's results on the operand's elements.
+        """The batch of the map's results on the operand's elements, on its levels."""
+        return _run_by_name(self.name, f, operand, parameter, fixed_args, controls)
 
-        Raises
-        ------
-        NotImplementedError
-            Until the engine runs the sweep as this rule.
+
+class _EmpiricalEnumeration(BinaryDispatchMethod):
+    """The exact rule on empirical laws: the map evaluated at every combination of atoms.
+
+    Each combination of the lifted groups' atoms is evaluated once and carries
+    the product of their weights, so the result is the exact pushforward of
+    the empirical laws, an empirical law over the outputs. The rule admits any
+    distribution operand, since a view of an empirical law lifts through its
+    root, and its check decides from the groups' roots.
+    """
+
+    @property
+    def name(self) -> str:
+        return "empirical_enumeration"
+
+    @property
+    def exact(self) -> bool:
+        return True
+
+    @property
+    def priority(self) -> int:
+        return 0
+
+    def supported_types(self) -> tuple[tuple[type, ...], tuple[type, ...]]:
+        return ((Function,), (Distribution,))
+
+    def check(
+        self,
+        f: Function,
+        operand: Distribution,
+        /,
+        *,
+        parameter: str | None = None,
+        fixed_args: Mapping[str, Any] | None = None,
+        controls: Mapping[str, Any] | None = None,
+    ) -> Feasibility:
+        """Feasible when the call lifts only laws and every lifted group enumerates.
+
+        A group enumerates when its root is an empirical law, and the product of
+        the groups' atom counts is at most the ``n_broadcast_samples`` control.
+        A call whose groups' roots are not all empirical is declined before any
+        plan is built.
+
+        Returns
+        -------
+        Feasibility
+            Infeasible when the call sweeps a batch, lifts nothing, or lifts a
+            group that does not enumerate within the sample count, which the
+            sampling lift then realizes.
         """
-        raise NotImplementedError("_ElementwiseSweep.execute")
+        root = getattr(operand, "parent", None) or operand
+        if not isinstance(root, EmpiricalDistribution):
+            return Feasibility(False, f"{_describe(root)} is not an empirical law")
+        values = _call_values(operand, parameter, fixed_args)
+        plan = _plan.build_broadcast_plan(values=values, signature_info=f._signature_info)
+        if plan.regime != "distribution":
+            return Feasibility(
+                False, f"the call does not lift {_describe(operand)} alone as a distribution"
+            )
+        count = (controls or {}).get("n_broadcast_samples", f.options["n_broadcast_samples"])
+        stochastic = _plan.build_stochastic_plan(values, plan, count)
+        if stochastic is None or stochastic.evaluation_mode != "exact":
+            return Feasibility(
+                False,
+                f"not every lifted group is an empirical law whose atoms, with the other "
+                f"groups', number at most n_broadcast_samples={count}",
+            )
+        return Feasibility(True)
+
+    def execute(
+        self,
+        f: Function,
+        operand: Distribution,
+        /,
+        *,
+        parameter: str | None = None,
+        fixed_args: Mapping[str, Any] | None = None,
+        controls: Mapping[str, Any] | None = None,
+    ) -> Any:
+        """The exact pushforward of the empirical laws, as an empirical law over the outputs."""
+        return _run_by_name(self.name, f, operand, parameter, fixed_args, controls)
+
+
+#: The rules the engine realizes itself, by name.
+_ENGINE_RULES = frozenset({"sampling_lift", "elementwise_sweep", "empirical_enumeration"})
 
 
 class _EvaluationRuleRegistry(BinaryDispatchRegistry[BinaryDispatchMethod]):
@@ -236,3 +367,4 @@ class _EvaluationRuleRegistry(BinaryDispatchRegistry[BinaryDispatchMethod]):
 evaluation_rule_registry: BinaryDispatchRegistry[BinaryDispatchMethod] = _EvaluationRuleRegistry()
 evaluation_rule_registry.register(_SamplingLift())
 evaluation_rule_registry.register(_ElementwiseSweep())
+evaluation_rule_registry.register(_EmpiricalEnumeration())

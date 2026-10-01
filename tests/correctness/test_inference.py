@@ -165,7 +165,7 @@ class TestCalibration:
             canonical.case("gaussian_linear"),
             replications=REPLICATIONS,
             draws=RANK_DRAWS,
-            controls=budget,
+            method_options=budget,
         )
         self._assert_uniform(ranks)
 
@@ -238,7 +238,9 @@ class TestExactness:
             np.asarray(variance.with_options(raw=True)(exact), np.float64),
         )
         profile = PROFILES[method]
-        approximate = condition_on.with_options(method=method, **profile.controls)(model, given)
+        approximate = condition_on.with_options(
+            method=method, method_options=profile.method_options
+        )(model, given)
         assert_matches(approximate, reference, label=f"{method} against the exact conditional")
 
     def test_exact_only_rejects_a_normalization_by_inference(self):

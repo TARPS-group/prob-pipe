@@ -30,7 +30,6 @@ from probpipe import (
     Cauchy,
     Dirichlet,
     Distribution,
-    DistributionArray,
     EmpiricalDistribution,
     Exponential,
     Gamma,
@@ -60,12 +59,6 @@ from probpipe import (
     VonMisesFisher,
     Wishart,
     sample,
-)
-from probpipe.core._broadcast_distributions import (
-    BroadcastDistribution,
-    _ListMarginal,
-    _make_mixture_marginal,
-    _MixtureMarginal,
 )
 from probpipe.distributions import (
     FactoredDistribution,
@@ -220,16 +213,6 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
         "b", Normal("x", 0.0, 1.0), replicate_size=3
     ),
     BootstrapDistribution: lambda: BootstrapDistribution("measure", Normal("x", 0.0, 1.0), 3),
-    DistributionArray: lambda: DistributionArray.from_batched_params(
-        Normal, loc=jnp.zeros(3), scale=1.0, name="x"
-    ),
-    BroadcastDistribution: lambda: BroadcastDistribution(
-        {"x": jnp.zeros(3)}, jnp.zeros(3), broadcast_args=["x"]
-    ),
-    _MixtureMarginal: lambda: _make_mixture_marginal(
-        [Normal("y", 0.0, 1.0), Normal("y", 1.0, 1.0)]
-    ),
-    _ListMarginal: lambda: _ListMarginal(["a", "b"]),
     RandomMeasure: lambda: RandomMeasure("m"),
     MinibatchedDistribution: _measure,
     _FixedMinibatchDistribution: lambda: _measure()._draw_one(jax.random.PRNGKey(0)),
@@ -350,8 +333,7 @@ def _library_classes() -> set[type]:
     }
 
 
-# ``sample`` stacks a tuple draw as rows instead of wrapping it as one opaque
-# value, and wraps a batch-valued draw as an array.
+# ``sample`` wraps a batch-valued draw as an array.
 _DRAW_FAILURES = {
     BootstrapReplicateDistribution: pytest.mark.pending(
         reason="the exported sample wraps a batch-valued draw as an array, not as its declared batch",
@@ -365,9 +347,7 @@ _RUNTIME_CLASS = pytest.mark.xfail(
     strict=True,
     reason="a class made at runtime does not pickle (#417)",
 )
-_PICKLE_FAILURES = {
-    _MixtureMarginal: _RUNTIME_CLASS,
-}
+_PICKLE_FAILURES = {}
 
 
 # -- Tests --------------------------------------------------------------------

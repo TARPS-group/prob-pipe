@@ -11,8 +11,7 @@ import numpy as np
 import pytest
 
 from probpipe import (
-    BroadcastDistribution,
-    DistributionArray,
+    DistributionBatch,
     Function,
     Normal,
     NumericArray,
@@ -115,15 +114,9 @@ class TestSliceSweepValues:
             (1.0, 2.0),
         ]
 
-    def test_distribution_array_cell_uses_flat_component(self):
-        da = DistributionArray.from_batched_params(
-            Normal,
-            batch_shape=(2,),
-            loc=jnp.asarray([3.0, 4.0]),
-            scale=jnp.asarray([1.0, 1.0]),
-            name="d",
-        )
-        values = {"d": da}
+    def test_a_distribution_batch_cell_is_a_view_of_its_law(self):
+        laws = DistributionBatch("d", [Normal("x", 3.0, 1.0), Normal("x", 4.0, 1.0)], "law")
+        values = {"d": laws}
         plan = _plan(values)
 
         first = _sweep.slice_sweep_values(
@@ -141,6 +134,7 @@ class TestSliceSweepValues:
         assert isinstance(second["d"], Normal)
         assert float(first["d"].loc) == 3.0
         assert float(second["d"].loc) == 4.0
+        assert (first["d"].name, second["d"].name) == ("d[law=0]", "d[law=1]")
 
 
 class TestExecuteSweep:
@@ -216,7 +210,7 @@ class TestExecuteSweep:
                 include_inputs=True,
             )
 
-    def test_nested_sweep_calls_distribution_broadcast_and_marginalizes(self):
+    def test_nested_sweep_stacks_the_law_each_row_lifts(self):
         values = {
             "p": _numeric_record_batch("x", range(2)),
             "noise": Normal(loc=0.0, scale=1.0, name="noise"),
@@ -243,14 +237,7 @@ class TestExecuteSweep:
                     "include_inputs": include_inputs,
                 }
             )
-            loc = float(row_values["p"]["x"])
-            return BroadcastDistribution(
-                input_samples={"noise": jnp.asarray([0.0])},
-                output_samples=jnp.asarray([loc]),
-                output_distributions=[Normal(loc=loc, scale=1.0, name=f"row_{int(loc)}")],
-                weights=None,
-                broadcast_args=["noise"],
-            )
+            return Normal(loc=float(row_values["p"]["x"]), scale=1.0, name="row")
 
         result = _sweep.execute_sweep(
             func=lambda p, noise: p["x"] + noise,
@@ -265,8 +252,9 @@ class TestExecuteSweep:
             workflow_name="nested",
         )
 
+        assert isinstance(result, DistributionBatch)
         assert result.batch_shape == (2,)
-        assert [float(mean(component)) for component in result.components] == [
+        assert [float(mean(component)) for component in result] == [
             0.0,
             1.0,
         ]
@@ -275,13 +263,13 @@ class TestExecuteSweep:
                 "x": 0.0,
                 "plan": stochastic_plan,
                 "logical_unit": stochastic_plan.logical_units[0],
-                "include_inputs": True,
+                "include_inputs": False,
             },
             {
                 "x": 1.0,
                 "plan": stochastic_plan,
                 "logical_unit": stochastic_plan.logical_units[1],
-                "include_inputs": True,
+                "include_inputs": False,
             },
         ]
         assert result.provenance.operation == "workflow.nested"

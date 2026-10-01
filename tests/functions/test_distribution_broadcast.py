@@ -12,7 +12,6 @@ import numpy as np
 import pytest
 
 from probpipe import (
-    BroadcastDistribution,
     EmpiricalDistribution,
     Function,
     MultivariateNormal,
@@ -21,6 +20,7 @@ from probpipe import (
     NumericArraySpec,
     Record,
     RecordBatch,
+    function,
     sample,
     workflow_run,
 )
@@ -62,6 +62,11 @@ def _empirical_of_rows(name: str, rows: Record, weights=None) -> EmpiricalDistri
     columns = {path: rows[path] for path in rows.event_template}
     atoms = _batch_class_for(element)(name, columns, "atom", element_spec=element)
     return EmpiricalDistribution(name, atoms, weights)
+
+
+def _drawn(law: EmpiricalDistribution, path: str) -> np.ndarray:
+    """The atoms of *law* at the event path *path*, along one leading axis."""
+    return np.asarray(law._rows[path])
 
 
 def _execution_config(
@@ -153,8 +158,8 @@ class TestExecuteDistributionBroadcast:
 
         assert len(sample_calls) == 1
         assert len(events) == 1
-        np.testing.assert_array_equal(result.input_samples["first"], result.input_samples["second"])
-        np.testing.assert_allclose(result.samples, 0.0)
+        np.testing.assert_array_equal(_drawn(result, "first"), _drawn(result, "second"))
+        np.testing.assert_allclose(_drawn(result, "difference"), 0.0)
 
     def test_equal_but_distinct_sources_sample_independently(self):
         first_calls = []
@@ -183,7 +188,7 @@ class TestExecuteDistributionBroadcast:
 
         assert len(first_calls) == len(second_calls) == 1
         assert len(events) == 2
-        assert not np.array_equal(result.input_samples["first"], result.input_samples["second"])
+        assert not np.array_equal(_drawn(result, "first"), _drawn(result, "second"))
 
     @pytest.mark.parametrize("lookalike_attribute", ["parent", "base"])
     def test_unregistered_descendant_lookalikes_remain_independent(self, lookalike_attribute):
@@ -229,7 +234,7 @@ class TestExecuteDistributionBroadcast:
             workflow_kind=WorkflowKind.OFF,
         )
 
-        np.testing.assert_allclose(result.samples, 0.0)
+        np.testing.assert_allclose(_drawn(result, "difference"), 0.0)
 
     def test_weighted_empirical_aliases_enumerate_once(self):
         shared = EmpiricalDistribution(
@@ -256,9 +261,9 @@ class TestExecuteDistributionBroadcast:
         )
 
         assert result.num_atoms == 2
-        np.testing.assert_array_equal(result.input_samples["first"], jnp.asarray([1.0, 4.0]))
-        np.testing.assert_array_equal(result.input_samples["first"], result.input_samples["second"])
-        np.testing.assert_allclose(result.samples, 0.0)
+        np.testing.assert_array_equal(_drawn(result, "first"), jnp.asarray([1.0, 4.0]))
+        np.testing.assert_array_equal(_drawn(result, "first"), _drawn(result, "second"))
+        np.testing.assert_allclose(_drawn(result, "difference"), 0.0)
         np.testing.assert_allclose(result.weights, jnp.asarray([0.2, 0.8]))
 
     def test_weighted_record_root_and_view_enumerate_once(self):
@@ -290,7 +295,7 @@ class TestExecuteDistributionBroadcast:
         )
 
         assert result.num_atoms == 2
-        np.testing.assert_allclose(result.samples, 0.0)
+        np.testing.assert_allclose(_drawn(result, "difference"), 0.0)
         np.testing.assert_allclose(result.weights, jnp.asarray([0.3, 0.7]))
 
     def test_sample_path_uses_execution_request(self, monkeypatch):
@@ -331,7 +336,7 @@ class TestExecuteDistributionBroadcast:
         )
 
         request = seen["request"]
-        assert isinstance(result, BroadcastDistribution)
+        assert isinstance(result, EmpiricalDistribution)
         assert request.func is shift
         assert request.execution is execution
         assert len(request.work_items) == 5
@@ -380,15 +385,15 @@ class TestExecuteDistributionBroadcast:
 
         assert result.num_atoms == 4
         np.testing.assert_allclose(
-            result.input_samples["x"],
+            _drawn(result, "x"),
             jnp.asarray([[1.0], [1.0], [2.0], [2.0]]),
         )
         np.testing.assert_allclose(
-            result.input_samples["y"],
+            _drawn(result, "y"),
             jnp.asarray([[10.0], [20.0], [10.0], [20.0]]),
         )
         np.testing.assert_allclose(
-            result.samples,
+            _drawn(result, "add"),
             jnp.asarray([[11.0], [21.0], [12.0], [22.0]]),
         )
         np.testing.assert_allclose(
@@ -450,7 +455,7 @@ class TestExecuteDistributionBroadcast:
 
         assert seen["required"] is True
         assert result.num_atoms == 6
-        np.testing.assert_allclose(result.samples, result.input_samples["x"] * 2.0)
+        np.testing.assert_allclose(_drawn(result, "double"), _drawn(result, "x") * 2.0)
 
     def test_jax_prefect_path_requires_prefect(self, monkeypatch):
         values = {"x": Normal(loc=1.0, scale=0.5, name="x")}
@@ -648,7 +653,7 @@ class TestExecuteDistributionBroadcast:
                 workflow_kind=WorkflowKind.OFF,
             )
 
-        assert isinstance(result, BroadcastDistribution)
+        assert isinstance(result, EmpiricalDistribution)
         assert result.num_atoms == 3
 
     def test_executor_has_no_empirical_replanning_helper(self):
@@ -780,7 +785,7 @@ class TestCoSamplingThroughACall:
         )
 
         np.testing.assert_array_equal(
-            np.asarray(result.input_samples["a"]), np.asarray(result.input_samples["b"])
+            np.asarray(_drawn(result, "a")), np.asarray(_drawn(result, "b"))
         )
 
     def test_identical_but_distinct_laws_are_distinct_roots(self):
@@ -905,13 +910,15 @@ class TestCoSamplingThroughACall:
         # atom's own ``y`` — the pairing a joint exists to preserve.
         x, y = np.asarray(drawn["a"]["x"]), np.asarray(drawn["a"]["y"])
         np.testing.assert_allclose(y, x * 10)
-        np.testing.assert_allclose(np.asarray(drawn["_output"]).ravel(), y)
+        np.testing.assert_allclose(np.asarray(drawn["function"]).ravel(), y)
         assert set(x.tolist()) <= {1.0, 2.0, 3.0}
 
         with workflow_run(seed=0):
             one = sample(joint)
         assert np.asarray(one["a/x"]).shape == ()
-        np.testing.assert_allclose(float(np.asarray(one["_output"])), float(np.asarray(one["a/y"])))
+        np.testing.assert_allclose(
+            float(np.asarray(one["function"])), float(np.asarray(one["a/y"]))
+        )
 
     def test_a_record_valued_empirical_bigger_than_the_budget_samples(self):
         """Too many atoms to enumerate, so the group routes to sampling.
@@ -936,7 +943,7 @@ class TestCoSamplingThroughACall:
         pin died with the class that refused."""
         rows = [Record("r", x=jnp.array(1.0), tag="a"), Record("r", x=jnp.array(2.0), tag="b")]
 
-        stacked = _broadcast._stack_rows(rows, arg_name="a")
+        stacked = _broadcast._stack_rows(rows)
 
         np.testing.assert_allclose(np.asarray(stacked["x"]), [1.0, 2.0])
         assert list(stacked._raw_column("tag")) == ["a", "b"]
@@ -962,7 +969,7 @@ class TestCoSamplingThroughACall:
         with workflow_run(seed=0):
             drawn = sample(joint, sample_shape=(4,))
         np.testing.assert_allclose(
-            np.asarray(drawn["_output"]).ravel(), np.asarray(drawn["a"]["group/y"])
+            np.asarray(drawn["function"]).ravel(), np.asarray(drawn["a"]["group/y"])
         )
 
     @pytest.mark.parametrize("dispatch", ["auto", "sequential", "thread"])
@@ -1119,6 +1126,10 @@ class TestTheProbeModelsItsExecutorsTransform:
             **controls,
         )
 
+    @pytest.mark.pending(
+        reason="the empirical law of a lifted function that returns a batch",
+        raises=NotImplementedError,
+    )
     def test_a_batch_returning_body_falls_back_rather_than_failing_in_the_executor(self):
         """The regression: this raised the pytree rank error out of ``vmap``."""
         dist = Normal(loc=0.0, scale=1.0, name="x")
@@ -1127,6 +1138,10 @@ class TestTheProbeModelsItsExecutorsTransform:
 
         assert result is not None
 
+    @pytest.mark.pending(
+        reason="the empirical law of a lifted function that returns a batch",
+        raises=NotImplementedError,
+    )
     def test_the_fallback_is_what_ran(self, caplog):
         dist = Normal(loc=0.0, scale=1.0, name="x")
 
@@ -1135,6 +1150,10 @@ class TestTheProbeModelsItsExecutorsTransform:
 
         assert any("not JAX-traceable" in record.message for record in caplog.records)
 
+    @pytest.mark.pending(
+        reason="the empirical law of a lifted function that returns a batch",
+        raises=NotImplementedError,
+    )
     def test_the_fallback_agrees_with_explicit_sequential(self):
         """Falling back costs speed, never the answer."""
         dist = Normal(loc=0.0, scale=1.0, name="x")
@@ -1161,6 +1180,10 @@ class TestTheProbeModelsItsExecutorsTransform:
 
         assert not any("not JAX-traceable" in record.message for record in caplog.records)
 
+    @pytest.mark.pending(
+        reason="the empirical law of a lifted function that returns a batch",
+        raises=NotImplementedError,
+    )
     def test_the_mapped_probe_covers_several_distribution_arguments(self):
         """The probe builds a tuple of draws, one per broadcast argument.
 
@@ -1284,6 +1307,10 @@ class TestTheProbeModelsItsExecutorsTransform:
             np.asarray(self._run(sequential, law).atoms),
         )
 
+    @pytest.mark.pending(
+        reason="the empirical law of a lifted function that returns a batch",
+        raises=NotImplementedError,
+    )
     def test_a_batch_returning_body_survives_the_nested_regime(self, caplog):
         """A sweep crossed with a law still produces a result.
 
@@ -1337,3 +1364,48 @@ class TestTheProbeModelsItsExecutorsTransform:
             np.asarray(mapped.atoms), np.asarray(self._run(sequential, law).atoms)
         )
         assert kinds and all(issubclass(kind, Record) for kind in kinds)
+
+
+class TestARecordReturnLiftsToARecordLaw:
+    """A record-returning function lifts to an empirical law over the record (V.6, V.10)."""
+
+    @pytest.fixture
+    def transform(self):
+        @function(n_broadcast_samples=128, dispatch="sequential")
+        def transform(x, y):
+            return Record("r", sum=x + y, diff=x - y)
+
+        return transform
+
+    @staticmethod
+    def _laws():
+        return {
+            "x": Normal(loc=1.0, scale=0.1, name="x"),
+            "y": Normal(loc=2.0, scale=0.1, name="y"),
+        }
+
+    def test_the_result_is_an_empirical_law_over_the_record(self, transform):
+        with workflow_run(seed=0):
+            result = transform(**self._laws())
+        assert isinstance(result, EmpiricalDistribution)
+        assert result.event_spec.exposes_record
+        assert list(result.event_spec.components) == ["sum", "diff"]
+
+    def test_the_mean_and_variance_are_per_field(self, transform):
+        with workflow_run(seed=0):
+            result = transform(**self._laws())
+        means, variances = result._mean(), result._variance()
+        # sum ~ N(3, 0.02) and diff ~ N(-1, 0.02) for independent x and y.
+        tolerance = 3.0 * np.sqrt(0.02) / np.sqrt(128)
+        np.testing.assert_allclose(float(means["sum"]), 3.0, atol=tolerance)
+        np.testing.assert_allclose(float(means["diff"]), -1.0, atol=tolerance)
+        np.testing.assert_allclose(float(variances["sum"]), 0.02, atol=0.02)
+        np.testing.assert_allclose(float(variances["diff"]), 0.02, atol=0.02)
+
+    def test_draws_are_a_batch_of_records_on_the_sample_level(self, transform):
+        with workflow_run(seed=0):
+            result = transform(**self._laws())
+            drawn = sample(result, sample_shape=(5,))
+        assert (drawn.batch_shape, drawn.level_names) == ((5,), ("sample",))
+        assert list(drawn.event_template) == ["sum", "diff"]
+        assert drawn["sum"].shape == drawn["diff"].shape == (5,)

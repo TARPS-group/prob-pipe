@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from probpipe import (
+    ApplicabilityError,
     NumericArrayBatch,
     NumericArraySpec,
     Record,
@@ -40,7 +41,7 @@ from probpipe.operations import (
     operation,
 )
 from probpipe.operations._moments import mean
-from probpipe.operations._operation import ApplicabilityError, _workflow_draws
+from probpipe.operations._operation import _workflow_draws
 from probpipe.operations._sample import sample
 from probpipe.values import Function
 
@@ -258,6 +259,13 @@ class TestRoles:
         assert isinstance(caught.value, TypeError)
         assert "NumericArraySpec" in str(caught.value)
 
+    def test_the_refusal_is_the_engines_applicability_error(self):
+        """One class, so a caller catching the engine's refusal catches an operation's."""
+        from probpipe.functions import ApplicabilityError as EngineRefusal
+
+        with pytest.raises(EngineRefusal):
+            center(jnp.zeros(2))
+
 
 # ---------------------------------------------------------------------------
 # The result rule and the applicability conditions
@@ -409,6 +417,13 @@ class TestSelection:
         toy.structural_route("direct", exact=False, **_route(True, 2.0))
         assert toy.check(Gaussian("g")).route == "direct"
 
+    def test_a_fallback_ranks_below_every_other_route_whatever_its_exactness(self):
+        toy = _toy()
+        toy.fallback_route("floor", exact=True, **_route(True, 1.0))
+        toy.structural_route("direct", exact=False, **_route(True, 2.0))
+        assert toy.check(Gaussian("g")).route == "direct"
+        assert float(jnp.asarray(toy(Gaussian("g")))) == 2.0
+
     def test_registration_order_breaks_the_remaining_ties(self):
         toy = _toy()
         toy.structural_route("first", exact=True, **_route(True, 1.0))
@@ -455,7 +470,7 @@ class TestSelection:
     def test_a_declining_guard_passes_to_the_fallback(self):
         report = center.check(GuardedMean("g", False))
         assert (report.route, report.exact) == ("monte_carlo", False)
-        declined = dict(report.routes)["closed_form"]
+        declined = {info.method_name: info for info in report.routes}["closed_form"]
         assert "The stand-in's answer admits the closed form" in declined.description
 
     def test_an_admitting_guard_selects_the_capability(self):
@@ -477,14 +492,63 @@ class TestSelection:
         )
         report = toy.check(Gaussian("g"))
         assert (report.feasible, report.route, report.exact) == (True, "guarded", True)
-        assert [name for name, _ in report.routes] == ["guarded"]
+        assert [info.method_name for info in report.routes] == ["guarded"]
+
+
+class TestNamingAMethod:
+    @staticmethod
+    def _two_registries() -> Any:
+        toy = _toy()
+        toy.registry_route("left", registry=_registry(nuts=(False, True, 1.0)))
+        toy.registry_route(
+            "right", registry=_registry(nuts=(False, True, 2.0), hmc=(False, True, 3.0))
+        )
+        return toy
+
+    def test_a_plain_name_matching_one_method_runs_it(self):
+        toy = self._two_registries().with_options(method="hmc")
+        assert float(jnp.asarray(toy(Gaussian("g")))) == 3.0
+
+    def test_a_name_held_by_two_registries_asks_for_route_slash_method(self):
+        toy = self._two_registries().with_options(method="nuts")
+        with pytest.raises(ResolutionError, match=r"left/nuts, right/nuts.*route/method"):
+            toy(Gaussian("g"))
+
+    def test_the_qualified_form_selects_the_method_within_its_route(self):
+        toy = self._two_registries().with_options(method="right/nuts")
+        assert toy.check(Gaussian("g")).route == "right"
+        assert float(jnp.asarray(toy(Gaussian("g")))) == 2.0
+
+    def test_a_name_matching_a_route_and_a_method_is_ambiguous(self):
+        toy = _toy()
+        toy.structural_route("nuts", exact=True, **_route(True, 1.0))
+        toy.registry_route("methods", registry=_registry(nuts=(False, True, 2.0)))
+        with pytest.raises(ResolutionError, match=r"nuts, methods/nuts"):
+            toy.with_options(method="nuts")(Gaussian("g"))
+
+    def test_routes_sharing_a_registry_each_take_the_named_method(self):
+        class _OnLaws(_Method):
+            def check(self, *args: Any, **options: Any) -> Feasibility:
+                return Feasibility(isinstance(args[0], Distribution), "the argument is no law")
+
+        registry: UnaryDispatchRegistry = UnaryDispatchRegistry()
+        registry.register(_OnLaws("nuts", exact=False, feasible=True, value=2.0))
+        toy = _toy()
+        toy.registry_route("first", registry=registry, arguments=lambda call: (object(),))
+        toy.registry_route("second", registry=registry)
+        report = toy.with_options(method="nuts").check(Gaussian("g"))
+        assert (report.route, report.method) == ("second", "nuts")
+
+    def test_a_qualified_name_no_route_holds_raises(self):
+        with pytest.raises(ResolutionError, match="no registry route 'left' holds"):
+            self._two_registries().with_options(method="left/hmc")(Gaussian("g"))
 
 
 class TestRegistryRoutes:
     def _operation(self, registry: UnaryDispatchRegistry, stand_in: Any = True) -> Any:
         toy = _toy()
         toy.structural_route("stand_in", exact=False, **_route(stand_in, 1.0))
-        toy.registry_route("methods", registry=registry, controls=("num_warmup",))
+        toy.registry_route("methods", registry=registry)
         return toy
 
     def test_an_exact_registered_method_outranks_an_approximate_route(self):
@@ -518,13 +582,13 @@ class TestRegistryRoutes:
         with pytest.raises(ResolutionError, match="exact_only"):
             toy(Gaussian("g"))
 
-    def test_budget_controls_reach_the_registered_methods(self):
+    def test_method_options_reach_the_registered_methods(self):
         registry = _registry(precise=(True, True, 2.0))
-        toy = self._operation(registry).with_options(num_warmup=7)
+        toy = self._operation(registry).with_options(method_options={"num_warmup": 7})
         toy(Gaussian("g"))
         assert registry.get_method("precise").options == [{"num_warmup": 7}]
 
-    def test_a_registry_route_admits_only_the_budgets_it_declares(self):
+    def test_a_budget_is_not_a_control_of_its_own(self):
         toy = _toy()
         toy.registry_route("methods", registry=_registry(precise=(True, True, 2.0)))
         with pytest.raises(TypeError, match="Unknown controls"):
@@ -578,27 +642,23 @@ class TestControls:
         with pytest.raises(TypeError):
             center.with_options(**controls)
 
-    def test_a_route_declares_the_budgets_it_reads(self):
+    def test_a_route_reads_its_budgets_from_method_options(self):
         seen: list[Any] = []
         toy = _toy()
 
         def execute(call: BoundCall, result: Any) -> Any:
-            seen.append(call.controls["tolerance"])
+            seen.append(call.controls["method_options"]["tolerance"])
             return jnp.float32(0.0)
 
         toy.structural_route(
-            "tolerant",
-            check=lambda call, result: True,
-            execute=execute,
-            exact=True,
-            controls=("tolerance",),
+            "tolerant", check=lambda call, result: True, execute=execute, exact=True
         )
-        toy.with_options(tolerance=0.5)(Gaussian("g"))
+        toy.with_options(method_options={"tolerance": 0.5})(Gaussian("g"))
         assert seen == [0.5]
         with pytest.raises(TypeError, match="Unknown controls"):
-            toy.with_options(patience=3)
+            toy.with_options(tolerance=0.5)
 
-    def test_a_capability_route_passes_its_budgets_to_the_capability_as_options(self):
+    def test_a_capability_route_passes_the_method_options_to_the_capability(self):
         class Tolerant(Gaussian):
             """A normal law whose closed-form mean records the options it receives."""
 
@@ -612,17 +672,33 @@ class TestControls:
 
         toy = _toy(result=_event)
         toy.capability_route(
-            "closed_form",
-            operand="d",
-            protocol=SupportsMean,
-            method="_mean",
-            exact=True,
-            controls=("tolerance",),
+            "estimate", operand="d", protocol=SupportsMean, method="_mean", exact=False
         )
         law = Tolerant("g")
-        assert float(jnp.asarray(toy.with_options(tolerance=0.5)(law))) == 1.5
+        assert float(jnp.asarray(toy.with_options(method_options={"tolerance": 0.5})(law))) == 1.5
         toy(law)
         assert law.options == [{"tolerance": 0.5}, {}]
+
+    def test_an_exact_capability_reads_no_budget(self):
+        class Tolerant(Gaussian):
+            def _mean(self, **options: Any) -> Any:
+                assert not options
+                return super()._mean()
+
+        toy = _toy(result=_event)
+        toy.capability_route(
+            "closed_form", operand="d", protocol=SupportsMean, method="_mean", exact=True
+        )
+        view = toy.with_options(method_options={"tolerance": 0.5})
+        assert float(jnp.asarray(view(Tolerant("g", 1.5)))) == 1.5
+
+    def test_the_selected_capability_rejects_an_option_it_does_not_read(self):
+        toy = _toy(result=_event)
+        toy.capability_route(
+            "estimate", operand="d", protocol=SupportsMean, method="_mean", exact=False
+        )
+        with pytest.raises(TypeError, match="patience"):
+            toy.with_options(method_options={"patience": 3})(Gaussian("g", 1.5))
 
     def test_a_route_registered_after_a_view_is_seen_by_the_view(self):
         toy = _toy()
@@ -655,7 +731,7 @@ class TestLiftedChecks:
         batch = _laws(Gaussian("g", 1.0), Gaussian("g", 2.0))
         report = center.check(batch)
         assert (report.feasible, report.route, report.exact) == (True, "closed_form", True)
-        assert report.lifted == (("d", "sweep"),)
+        assert report.lifted == ("d",)
         assert report.result == Gaussian("g").event_spec
         np.testing.assert_array_equal(np.asarray(center(batch).values), [1.0, 2.0])
 
@@ -684,7 +760,7 @@ class TestLiftedChecks:
             "laws", np.empty(0, object), "laws", element_spec=Gaussian("g").spec
         )
         report = center.check(empty)
-        assert (report.feasible, report.route, report.lifted) == (True, None, (("d", "sweep"),))
+        assert (report.feasible, report.route, report.lifted) == (True, None, ("d",))
 
     def test_a_plain_call_lifts_nothing(self):
         assert center.check(Gaussian("g")).lifted == ()

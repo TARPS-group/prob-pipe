@@ -15,7 +15,7 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 import probpipe.families as F
 from probpipe import (
     Distribution,
-    DistributionArray,
+    DistributionBatch,
     MathematicalDomainError,
     NumericArraySpec,
     NumericDistribution,
@@ -301,12 +301,10 @@ class TestVectorParameters:
         assert law.event_shape == ()
         assert not hasattr(law, "batch_shape")
 
-    def test_a_batch_of_separate_laws_is_built_from_batched_parameters(self):
-        batch = DistributionArray.from_batched_params(
-            F.Normal, loc=jnp.zeros(5), scale=1.0, name="x"
-        )
+    def test_a_batch_of_separate_laws_is_a_distribution_batch(self):
+        batch = DistributionBatch("x", [F.Normal("x", float(i), 1.0) for i in range(5)], "x")
         assert batch.batch_shape == (5,)
-        assert batch[0].name == "x_0"
+        assert batch[0].name == "x[x=0]"
         assert batch[0].event_shape == ()
 
 

@@ -12,7 +12,6 @@ import jax.numpy as jnp
 import pytest
 
 from probpipe import (
-    DistributionArray,
     Function,
     FunctionBatch,
     Normal,
@@ -270,13 +269,6 @@ class TestLevelsAreNamedForWhatMintsThem:
 
         assert drawn.level_names == ("sample",)
 
-    def test_a_sweep_mints_the_level_it_swept(self):
-        """A returned sequence ranges over nothing the call named, so the level
-        takes the function's own name."""
-        result = Function(fn=lambda: [1.0, 2.0], name="myfunc")()
-
-        assert result.level_names == ("myfunc",)
-
     @pytest.mark.parametrize(
         ("atoms", "expected"),
         [
@@ -399,44 +391,13 @@ class TestRawDrawNaming:
             pytest.param(lambda: {"x": 2.0}, Record, None, id="mapping"),
             pytest.param(lambda: "tag", Opaque, None, id="opaque"),
             pytest.param(lambda: lambda: 2.0, Function, None, id="callable"),
-            pytest.param(lambda: [], OpaqueBatch, ("sample",), id="empty-list"),
-            pytest.param(lambda: (), OpaqueBatch, ("sample",), id="empty-tuple"),
-            pytest.param(lambda: [1.0, 2.0], NumericArrayBatch, ("sample",), id="numeric-list"),
-            pytest.param(lambda: ("a", "b"), OpaqueBatch, ("sample",), id="opaque-tuple"),
-            pytest.param(lambda: [lambda: 1.0], FunctionBatch, ("sample",), id="callable-list"),
-            pytest.param(
-                lambda: [{"x": 1.0}, {"x": 2.0}],
-                NumericRecordBatch,
-                ("sample",),
-                id="numeric-record-list",
-            ),
-            pytest.param(
-                lambda: [{"x": "a"}, {"x": "b"}], RecordBatch, ("sample",), id="record-list"
-            ),
-            pytest.param(
-                lambda: [_named("NumericArrayBatch")],
-                NumericArrayBatch,
-                ("sample", "lvl"),
-                id="numeric-batch-list",
-            ),
-            pytest.param(
-                lambda: [_named("OpaqueBatch")],
-                OpaqueBatch,
-                ("sample", "lvl"),
-                id="opaque-batch-list",
-            ),
-            pytest.param(
-                lambda: [_named("NumericRecordBatch")],
-                NumericRecordBatch,
-                ("sample", "lvl"),
-                id="record-batch-list",
-            ),
-            pytest.param(
-                lambda: [Normal("component", 0.0, 1.0)],
-                DistributionArray,
-                None,
-                id="distribution-list",
-            ),
+            pytest.param(lambda: [], Opaque, None, id="empty-list"),
+            pytest.param(lambda: [1.0, 2.0], Opaque, None, id="numeric-list"),
+            pytest.param(lambda: ("a", "b"), Opaque, None, id="tuple"),
+            pytest.param(lambda: {1.0, 2.0}, Opaque, None, id="set"),
+            pytest.param(lambda: [{"x": 1.0}, {"x": 2.0}], Opaque, None, id="record-list"),
+            pytest.param(lambda: [_named("NumericArrayBatch")], Opaque, None, id="batch-list"),
+            pytest.param(lambda: [Normal("component", 0.0, 1.0)], Opaque, None, id="law-list"),
         ],
     )
     def test_a_draw_takes_the_functions_output_name_without_renaming_levels(

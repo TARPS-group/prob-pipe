@@ -541,11 +541,11 @@ class TestEmpiricalRootWeights:
             result = workflow(root, exponentiated)
 
         assert result.num_atoms == 2
-        np.testing.assert_allclose(result.samples, 0.0, atol=1e-6)
+        np.testing.assert_allclose(np.asarray(result.atoms["function"]), 0.0, atol=1e-6)
         np.testing.assert_allclose(result.weights, jnp.asarray([0.2, 0.8]))
         np.testing.assert_allclose(
-            result.input_samples["exp_base"],
-            jnp.exp(result.input_samples["base"]),
+            np.asarray(result.atoms["exp_base"]),
+            jnp.exp(np.asarray(result.atoms["base"])),
             rtol=1e-6,
         )
 
@@ -575,7 +575,7 @@ class TestEmpiricalRootWeights:
         result = workflow(root, x, exponentiated_x)
 
         assert result.num_atoms == 2
-        np.testing.assert_allclose(result.samples, 0.0, atol=1e-6)
+        np.testing.assert_allclose(np.asarray(result.atoms["function"]), 0.0, atol=1e-6)
         np.testing.assert_allclose(result.weights, jnp.asarray([0.3, 0.7]))
 
     def test_mixed_empirical_descendant_multiplies_root_weight_once(self):
@@ -600,10 +600,10 @@ class TestEmpiricalRootWeights:
 
         assert result.num_atoms == 12
         assert [shape for _key, shape in sampled_calls] == [(12,)]
-        np.testing.assert_allclose(result.samples[result.name][:, 0], 0.0, atol=1e-6)
+        np.testing.assert_allclose(np.asarray(result.atoms["function"])[:, 0], 0.0, atol=1e-6)
         np.testing.assert_allclose(
-            result.input_samples["exp_exact"],
-            jnp.exp(result.input_samples["exact"]),
+            np.asarray(result.atoms["exp_exact"]),
+            jnp.exp(np.asarray(result.atoms["exact"])),
             rtol=1e-6,
         )
         np.testing.assert_allclose(

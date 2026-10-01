@@ -66,18 +66,22 @@ class OpaqueBatch(_ObjectBatch[Any]):
     ProbPipe kind, yet the batch is specified all the same, at the family kind
     over it.
 
-    This batch **stores** its elements, so ``batch[i]`` is the object that was
-    put in — the same object, under whatever identity it already had, not a copy
-    renamed to its position. A sub-batch is a view and takes a derived name as any
-    view does.
+    This batch **stores** its elements, and ``batch[i]`` is a view of the
+    stored object: an :class:`~probpipe.Opaque` holding it under the name
+    derived from the position, or, for a stored tracked term, a copy of that
+    term under the derived name sharing its representation. Its provenance
+    records the batch and the stored term. A sub-batch is a view and takes a
+    derived name as any view does.
 
     Examples
     --------
     >>> batch = OpaqueBatch("labels", ["north", "south"], "site")
     >>> batch.batch_shape
     (2,)
-    >>> batch[0]
+    >>> batch[0].value
     'north'
+    >>> batch[0].name
+    'labels[site=0]'
     """
 
     __slots__ = ()
@@ -114,6 +118,10 @@ class OpaqueBatch(_ObjectBatch[Any]):
     def element_spec(self) -> OpaqueSpec:
         """The :class:`OpaqueSpec` every element satisfies — a view on ``spec``."""
         return cast(OpaqueSpec, self._spec.element_spec)
+
+    def _wrap_element(self, value: Any, name: str) -> Opaque:
+        """The stored *value* as an :class:`~probpipe.Opaque` named *name*."""
+        return Opaque(name, value, spec=self.element_spec)
 
 
 register_kind(OpaqueSpec, term_class=Opaque, batch_class=OpaqueBatch)

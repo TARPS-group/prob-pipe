@@ -81,7 +81,7 @@ class TestFullFactorial:
         assert not isinstance(ff, NumericRecordBatch)
         assert ff.batch_shape == (4,)
         # Insertion order: method outer, scale inner.
-        assert list(ff["method"]) == ["nutpie", "nutpie", "pymc", "pymc"]
+        assert [element.value for element in ff["method"]] == ["nutpie", "nutpie", "pymc", "pymc"]
         np.testing.assert_allclose(
             np.asarray(ff["scale"]),
             [0.5, 1.0, 0.5, 1.0],
@@ -231,7 +231,7 @@ class TestDesignAsSweep:
         # the elements are reached by position rather than by a field name.
         assert isinstance(out, OpaqueBatch)
         assert out.batch_shape == (4,)
-        assert [out[i] for i in range(4)] == [
+        assert [out[i].value for i in range(4)] == [
             "nutpie-0.5",
             "nutpie-1.0",
             "pymc-0.5",

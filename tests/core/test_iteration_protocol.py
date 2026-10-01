@@ -6,9 +6,9 @@ The rule (codified in STYLE_GUIDE.md §1.11):
 * :class:`Record` and :class:`NumericRecord` iterate field names dict-style.
 * :class:`RecordBatch` / :class:`NumericRecordBatch` are collections: they
   iterate leading-axis views, and fields are read from ``event_template``.
-* :class:`DistributionArray` is positional (access via ``da[i]``);
-  ``len(da)`` is the leading-axis size, ``prod(da.batch_shape)`` is
-  the total cell count. Not generally treated as an iterable.
+* :class:`DistributionBatch` is a batch: ``len`` is the leading-axis size,
+  ``batch_size`` the total count of laws, and iteration visits views of
+  the laws along the leading axis.
 * Every other :class:`Distribution` subclass is non-iterable.
   An empirical law exposes its stored atoms on ``.atoms`` with
   ``.num_atoms`` reporting the count, and an inference result its
@@ -56,10 +56,8 @@ def _make_transformed():
 
 
 # User-constructible Distribution subclasses, parametrised here to pin
-# the non-iterable rule. WF-output classes (BroadcastDistribution and the
-# _MixtureMarginal / _ListMarginal output marginals) are produced by the
-# Function layer rather than user code; they inherit non-iterability from
-# Distribution and don't need direct parametrisation here.
+# the non-iterable rule. A lifted call's result is an EmpiricalDistribution,
+# which is parametrised with the others.
 DISTRIBUTIONS = [
     pytest.param(lambda: Normal(loc=0.0, scale=1.0, name="x"), id="Normal"),
     pytest.param(lambda: Beta(alpha=1.0, beta=1.0, name="x"), id="Beta"),
@@ -138,7 +136,7 @@ def test_distribution_is_not_iterable(make_dist):
 
     The rule: distributions represent a single random variable, not a
     collection. An empirical law exposes ``.atoms`` and ``.num_atoms``;
-    ``DistributionArray`` covers batched cases.
+    ``DistributionBatch`` covers batched cases.
 
     Python's iter-via-``__getitem__`` fallback returns a non-empty
     iterator object even on classes without ``__iter__``, so we

@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from probpipe import ApplicabilityError
 from probpipe.core._dispatch import ResolutionError
 from probpipe.core._specs import OutputSpec
 from probpipe.distributions._capabilities import SupportsSampling
@@ -17,7 +18,6 @@ from probpipe.distributions._conversion import (
 )
 from probpipe.distributions._distribution import Distribution, DistributionSpec
 from probpipe.operations._convert import convert
-from probpipe.operations._operation import ApplicabilityError
 
 from ._laws import REAL, Gaussian
 

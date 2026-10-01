@@ -9,7 +9,7 @@ import pytest
 
 import probpipe
 import probpipe.functions as node
-from probpipe import BroadcastDistribution, Function, Normal, function, workflow_run
+from probpipe import EmpiricalDistribution, Function, Normal, function, workflow_run
 
 
 def test_function_is_the_only_public_wrapper_api():
@@ -154,9 +154,9 @@ def test_with_options_controls_sample_count_and_include_inputs():
             include_inputs=True,
         )(Normal(loc=0.0, scale=1.0, name="x"))
 
-    assert isinstance(result, BroadcastDistribution)
+    assert isinstance(result, EmpiricalDistribution)
     assert result.num_atoms == 6
-    assert "x" in result.input_samples
+    assert "x" in result.event_spec.components
 
 
 def test_workflow_run_reproduces_one_lifted_call():
@@ -207,11 +207,8 @@ def test_workflow_seed_is_separate_from_user_seed_parameter():
     with workflow_run(seed=42):
         second = wf(normal, seed=7.0)
 
-    assert jnp.allclose(first.atoms["add_user_seed"], second.atoms["add_user_seed"])
-    assert jnp.allclose(
-        first.atoms["add_user_seed"],
-        base_result.atoms["identity"] + 7.0,
-    )
+    assert jnp.allclose(first._rows, second._rows)
+    assert jnp.allclose(first._rows, base_result._rows + 7.0)
 
 
 def test_workflow_control_names_are_user_parameters():

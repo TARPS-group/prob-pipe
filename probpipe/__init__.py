@@ -46,9 +46,7 @@ from probpipe.core._array_backend import (
     register_array_backend,
 )
 from probpipe.core._batch import Batch, BatchSpec
-from probpipe.core._broadcast_distributions import BroadcastDistribution
 from probpipe.core._dispatch import MathematicalDomainError, ResolutionError
-from probpipe.core._distribution_array import DistributionArray
 from probpipe.core._function_batch import FunctionBatch
 from probpipe.core._numeric import Numeric
 from probpipe.core._numeric_array import NumericArray
@@ -95,6 +93,7 @@ from probpipe.core.transition import (
     with_conversion,
     with_resampling,
 )
+from probpipe.distributions._batches import DistributionBatch
 from probpipe.distributions._capabilities import (
     SupportsApproximateConditioning,
     SupportsCovariance,
@@ -164,7 +163,7 @@ from probpipe.functions import (
     register_bijector,
     workflow_method,
 )
-from probpipe.functions._call import ApplicabilityError
+from probpipe.functions._call import ApplicabilityError, CallReport
 from probpipe.functions._context import workflow_run
 from probpipe.functions._errors import (
     ReplayCompatibilityError,
@@ -173,6 +172,7 @@ from probpipe.functions._errors import (
 )
 from probpipe.functions._replay import replay_run
 from probpipe.functions._result import ResultKindError, ResultSchemaError
+from probpipe.functions._rules import evaluation_rule_registry
 from probpipe.inference import (
     ApproximateDistribution,
     BayesFlowLikelihood,
@@ -214,7 +214,7 @@ __all__ = [
     "Binomial",
     "BootstrapDistribution",
     "BootstrapReplicateDistribution",
-    "BroadcastDistribution",
+    "CallReport",
     "Categorical",
     "Cauchy",
     "Constraint",
@@ -224,7 +224,7 @@ __all__ = [
     "Design",
     "Dirichlet",
     "Distribution",
-    "DistributionArray",
+    "DistributionBatch",
     "DistributionSpec",
     "EmpiricalDistribution",
     "Exponential",
@@ -315,6 +315,7 @@ __all__ = [
     "condition_on_nutpie",
     "converter_registry",
     "elliptical_slice",
+    "evaluation_rule_registry",
     "expectation_method_registry",
     "function",
     "greater_than",

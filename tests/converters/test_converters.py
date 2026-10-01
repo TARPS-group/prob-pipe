@@ -19,12 +19,14 @@ from probpipe import (
     KDEDistribution,
     MultivariateNormal,
     Normal,
+    NumericArraySpec,
     NumericRecordBatch,
     NumericRecordSpec,
     OpaqueBatch,
     Poisson,
     converter_registry,
     from_distribution,
+    function,
 )
 from probpipe.families._continuous import (
     Cauchy,
@@ -129,6 +131,56 @@ class TestProbPipeConverter:
         n = Normal(loc=1.0, scale=2.0, name="x")
         result = converter_registry.convert(n, Normal)
         assert result is n
+
+
+class TestAnEmpiricalSourceAgainstTheTargetSupport:
+    """An empirical law's array atoms declare no support, so its atoms are checked instead."""
+
+    def test_atoms_outside_the_target_support_raise(self):
+        source = EmpiricalDistribution("x", jnp.array([-5.0, -1.0, 2.0, -3.0]))
+        with pytest.raises(ValueError, match="support"):
+            from_distribution(source, Exponential)
+
+    def test_atoms_inside_the_target_support_convert(self):
+        source = EmpiricalDistribution("x", jnp.array([0.5, 1.0, 2.0, 3.0]))
+        result = from_distribution(source, Exponential)
+        assert isinstance(result, Exponential)
+        np.testing.assert_allclose(float(result._mean()), 1.625, rtol=1e-6)
+
+    def test_the_check_can_be_overridden(self):
+        source = EmpiricalDistribution("x", jnp.array([-5.0, -1.0, 2.0, -3.0]))
+        assert isinstance(from_distribution(source, Exponential, check_support=False), Exponential)
+
+
+class TestARecordSourceWithOneLeaf:
+    """A record law's moments and draws arrive as nested mappings of raw leaves (D7)."""
+
+    @staticmethod
+    def _posterior() -> EmpiricalDistribution:
+        lam = jnp.array([2.2, 2.5, 2.7, 2.4])
+        spec = NumericRecordSpec(lam=NumericArraySpec((), lam.dtype))
+        atoms = NumericRecordBatch("atoms", {"lam": lam}, "draw", element_spec=spec)
+        return EmpiricalDistribution("posterior", atoms)
+
+    def test_its_moments_match_a_scalar_family(self):
+        result = from_distribution(self._posterior(), Normal)
+        lam = jnp.array([2.2, 2.5, 2.7, 2.4])
+        assert isinstance(result, Normal)
+        np.testing.assert_allclose(float(result._loc), float(jnp.mean(lam)), rtol=1e-6)
+        np.testing.assert_allclose(float(result._scale), float(jnp.std(lam)), rtol=1e-5)
+
+    def test_its_draws_fit_a_scalar_family(self):
+        result = from_distribution(self._posterior(), HalfCauchy, num_samples=200)
+        assert isinstance(result, HalfCauchy)
+        assert 2.2 <= float(result._scale) <= 2.7
+
+    def test_a_parameter_naming_the_family_converts_it(self):
+        @function
+        def location(d: Normal):
+            return d._loc
+
+        lam = jnp.array([2.2, 2.5, 2.7, 2.4])
+        np.testing.assert_allclose(float(location(self._posterior())), float(jnp.mean(lam)))
 
 
 # ---------------------------------------------------------------------------

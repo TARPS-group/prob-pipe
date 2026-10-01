@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import MultivariateNormal, Record, RecordSpec
+from probpipe import ApplicabilityError, MultivariateNormal, Record, RecordSpec
 from probpipe.core._dispatch import Feasibility, ResolutionError, UnaryDispatchRegistry
 from probpipe.core._specs import InputSpec, OutputSpec
 from probpipe.distributions._capabilities import (
@@ -30,14 +30,14 @@ from probpipe.distributions._conditional import (
 from probpipe.distributions._distribution import Distribution, DistributionSpec
 from probpipe.distributions._empirical import EmpiricalDistribution
 from probpipe.operations._condition import (
-    _INFERENCE_METHOD_CONTROLS,
+    _INFERENCE_METHOD_OPTIONS,
     InferenceMethod,
     _UnnormalizedConditional,
     condition_on,
     inference_method_registry,
 )
 from probpipe.operations._convert import convert
-from probpipe.operations._operation import ApplicabilityError, _RegistryRoute
+from probpipe.operations._operation import _RegistryRoute
 from probpipe.operations._sample import sample
 
 from ._laws import REAL, Amortized, Bare, ExactPosterior, Gaussian, Kernel, Unnormalized
@@ -284,10 +284,15 @@ class TestCurry:
         assert condition_on.check(joint, {"mu": 1.0, "y": 0.0}).route == "bayes"
 
 
+def _by_name(routes: Any) -> dict[str, Any]:
+    """Each probed route's report, by the route's name."""
+    return {info.method_name: info for info in routes}
+
+
 class TestSlice:
     def test_the_slice_route_declines_a_factored_law_with_a_reason(self):
         joint = Kernel("y", ("mu",)) * Gaussian("mu")
-        declined = dict(condition_on.check(joint, {"y": 0.3}).routes)["slice"]
+        declined = _by_name(condition_on.check(joint, {"y": 0.3}).routes)["slice"]
         assert declined.feasible is False
         assert "factors" in declined.description
 
@@ -319,38 +324,39 @@ class TestConditioningCapabilities:
         with pytest.raises(ResolutionError, match="exact_only"):
             condition_on.with_options(exact_only=True)(Amortized("model"), {"y": 0.3})
 
-    def test_the_approximate_capability_receives_the_budgets_it_declares(self):
+    def test_the_approximate_capability_receives_the_method_options(self):
         model = _RecordingAmortized("model")
-        view = condition_on.with_options(num_results=500, random_seed=3)
+        view = condition_on.with_options(method_options={"num_results": 500, "random_seed": 3})
         assert view(model, {"y": 0.3}).loc == 2.0
         assert model.options == [{"num_results": 500, "random_seed": 3}]
 
-    def test_a_budget_the_approximate_capability_does_not_read_stays_out_of_its_options(self):
-        model = _RecordingAmortized("model")
-        condition_on.with_options(num_warmup=10)(model, {"y": 0.3})
-        assert model.options == [{}]
-
-    def test_exact_conditioning_reads_no_budget(self):
+    def test_the_exact_capability_reads_no_budget(self):
         model = _RecordingPosterior("model")
-        condition_on.with_options(num_results=500)(model, {"y": 0.3})
+        condition_on.with_options(method_options={"num_results": 500})(model, {"y": 0.3})
         assert model.options == [{}]
 
+    def test_a_capability_rejects_an_option_it_does_not_read(self):
+        class _Budgeted(Amortized):
+            def _condition_on(self, given: Any, /, *, num_results: int = 100) -> Any:
+                return super()._condition_on(given)
 
-class TestBudgets:
-    def test_a_misspelled_budget_raises_type_error(self):
+        view = condition_on.with_options(method_options={"num_warmup": 10})
+        with pytest.raises(TypeError, match="num_warmup"):
+            view(_Budgeted("model"), {"y": 0.3})
+
+
+class TestMethodOptions:
+    def test_a_budget_is_not_a_control_of_its_own(self):
+        with pytest.raises(TypeError, match="num_results"):
+            condition_on.with_options(num_results=500)
+
+    def test_a_misspelled_option_is_refused_before_the_method_runs(self):
         with pytest.raises(TypeError, match="num_resluts"):
-            condition_on.with_options(num_resluts=500)
+            inference_method_registry.execute(object(), method="tfp_nuts", num_resluts=500)
 
-    def test_every_registered_inference_method_declares_the_controls_it_reads(self):
-        undeclared = set(inference_method_registry.list_methods()) - set(_INFERENCE_METHOD_CONTROLS)
-        assert not undeclared, sorted(undeclared)
-
-    def test_the_routes_that_normalize_declare_every_inference_method_control(self):
-        declared = {name for names in _INFERENCE_METHOD_CONTROLS.values() for name in names}
-        normalizing = [route for route in condition_on.routes if isinstance(route, _RegistryRoute)]
-        assert {route.name for route in normalizing} == {"curry", "bayes"}
-        assert all(route.controls == declared for route in normalizing)
-        condition_on.with_options(num_warmup=3, step_size=0.1, init={"theta": 0.0})
+    def test_every_registered_inference_method_states_the_options_it_reads(self):
+        unstated = set(inference_method_registry.list_methods()) - set(_INFERENCE_METHOD_OPTIONS)
+        assert not unstated, sorted(unstated)
 
 
 class TestBayes:
@@ -380,9 +386,9 @@ class TestBayes:
         with pytest.raises(ResolutionError):
             view(_AmortizedSimulator("model"), {"y": 0.3})
 
-    def test_method_parameters_are_controls_passed_to_the_method(self, suite_methods):
+    def test_method_options_are_passed_to_the_method(self, suite_methods):
         exact, _ = suite_methods
-        condition_on.with_options(num_warmup=3)(_Conjugate("model"), {"y": 0.3})
+        condition_on.with_options(method_options={"num_warmup": 3})(_Conjugate("model"), {"y": 0.3})
         assert exact.options == [{"num_warmup": 3}]
 
     def test_the_routes_delegate_to_the_inference_method_registry(self):
@@ -433,7 +439,7 @@ class TestTheExactStage:
     def test_unnormalized_is_selected_only_by_name(self, suite_methods):
         report = condition_on.check(_Conjugate("model"), {"y": 0.3})
         assert report.route == "bayes"
-        declined = dict(report.routes).get("unnormalized")
+        declined = _by_name(report.routes).get("unnormalized")
         assert declined is None or declined.feasible is False
 
     def test_the_exact_stage_is_exact_before_an_approximate_stand_in(self):
@@ -528,7 +534,7 @@ class TestTheNormalizationStage:
         )
         kernel = condition_on(StanModel("mean", str(program)), {"N": 3})
         assert set(kernel.given_spec) == {"y"}
-        view = condition_on.with_options(num_results=30, num_warmup=7)
+        view = condition_on.with_options(method_options={"num_results": 30, "num_warmup": 7})
         assert view(kernel, {"y": [1.0, 2.0, 3.0]}).loc == 4.0
         assert approximate_method.options == [{"num_results": 30, "num_warmup": 7}]
 
@@ -676,9 +682,10 @@ class TestApproximateKernels:
         with pytest.raises(ResolutionError, match="SupportsApproximateConditioning"):
             condition_on.with_options(exact_only=True)(_AmortizedKernel(), {"y": 0.3})
 
-    def test_an_approximate_kernel_receives_the_budgets_it_reads(self):
+    def test_an_approximate_kernel_receives_the_method_options(self):
         kernel = _AmortizedKernel()
-        condition_on.with_options(num_results=7, random_seed=3)(kernel, {"y": 0.3})
+        view = condition_on.with_options(method_options={"num_results": 7, "random_seed": 3})
+        view(kernel, {"y": 0.3})
         assert kernel.options == {"num_results": 7, "random_seed": 3}
 
 
@@ -785,7 +792,7 @@ class TestEndToEnd:
 
     def test_a_joint_conditioned_on_its_observation_is_normalized_by_a_method(self):
         joint, y = _logistic_joint(), {"y": jnp.array([1, 0, 1, 0])}
-        view = condition_on.with_options(**_MCMC)
+        view = condition_on.with_options(method_options=_MCMC)
         report = view.check(joint, y)
         assert (report.route, report.method, report.exact) == ("bayes", "blackjax_nuts", False)
         posterior = view(joint, y)
@@ -793,7 +800,7 @@ class TestEndToEnd:
         assert tuple(posterior.event_spec.components) == ("beta",)
 
     def test_an_unnormalized_distribution_conditioned_on_a_field_is_normalized(self):
-        view = condition_on.with_options(**_MCMC)
+        view = condition_on.with_options(method_options=_MCMC)
         posterior = view(_unnormalized_pair(), {"b": 1.0})
         assert _is_normalized(posterior)
         assert tuple(posterior.event_spec.components) == ("a",)
@@ -801,7 +808,7 @@ class TestEndToEnd:
 
     @pytest.mark.parametrize("kernel", [_UnnormalizedKernel(), _WholeTermKernel()])
     def test_a_curried_law_over_a_whole_term_is_normalized_under_that_term(self, kernel):
-        view = condition_on.with_options(**_MCMC)
+        view = condition_on.with_options(method_options=_MCMC)
         given = dict.fromkeys(kernel.given_spec, 1.0)
         assert view.check(kernel, given).method == "blackjax_nuts"
         posterior = view(kernel, given)
@@ -811,7 +818,7 @@ class TestEndToEnd:
         assert posterior.event_spec.spec.shape == kernel.event_spec.spec.shape
 
     def test_an_unnormalized_distribution_samples_through_a_method(self):
-        view = sample.with_options(**_MCMC)
+        view = sample.with_options(method_options=_MCMC)
         report = view.check(_unnormalized_vector())
         assert (report.route, report.method, report.exact) == ("normalize", "blackjax_nuts", False)
         assert jnp.shape(jnp.asarray(view(_unnormalized_vector()).value)) == (2,)
@@ -823,7 +830,7 @@ class TestEndToEnd:
             sample(Bare("b"))
 
     def test_an_unnormalized_distribution_converts_through_a_method(self):
-        view = convert.with_options(**_MCMC)
+        view = convert.with_options(method_options=_MCMC)
         law = _unnormalized_vector()
         assert view.check(law, EmpiricalDistribution).route == "normalize"
         empirical = view(law, EmpiricalDistribution)
@@ -845,7 +852,9 @@ class TestEndToEnd:
 
         kernel = PyMCModel("regression", regression)
         given = {"x": np.linspace(0.0, 1.0, 6), "y": np.linspace(0.0, 1.0, 6)}
-        view = condition_on.with_options(num_results=30, num_warmup=30, num_chains=1)
+        view = condition_on.with_options(
+            method_options={"num_results": 30, "num_warmup": 30, "num_chains": 1}
+        )
         report = view.check(kernel, given)
         assert report.route == "bayes"
         assert report.method in ("nutpie_nuts", "pymc_nuts")
@@ -867,7 +876,9 @@ class TestEndToEnd:
                 pm.Normal("y", beta * x, sigma, observed=y)
             return model
 
-        view = condition_on.with_options(num_results=30, num_warmup=30, num_chains=1)
+        view = condition_on.with_options(
+            method_options={"num_results": 30, "num_warmup": 30, "num_chains": 1}
+        )
         kernel = view(PyMCModel("regression", regression), {"y": np.linspace(0.0, 1.0, 6)})
         given = {"x": np.linspace(0.0, 1.0, 6), "beta": 0.3}
         with monkeypatch.context() as patched:
@@ -905,7 +916,9 @@ class TestEndToEnd:
             "data { int N; vector[N] y; } parameters { real mu; } "
             "model { mu ~ normal(0, 1); y ~ normal(mu, 1); }"
         )
-        view = condition_on.with_options(num_results=200, num_warmup=200, num_chains=1)
+        view = condition_on.with_options(
+            method_options={"num_results": 200, "num_warmup": 200, "num_chains": 1}
+        )
         posterior = view(StanModel("mean", str(program)), {"N": 3, "y": [1.0, 2.0, 3.0]})
         assert _is_normalized(posterior)
         assert tuple(posterior.event_spec.components) == ("mu",)
@@ -933,7 +946,7 @@ class TestEndToEnd:
     def test_provenance_names_both_stages(self, full_provenance_mode):
         from probpipe import provenance_ancestors
 
-        posterior = condition_on.with_options(**_MCMC)(
+        posterior = condition_on.with_options(method_options=_MCMC)(
             _logistic_joint(), {"y": jnp.array([1, 0, 1, 0])}
         )
         operations = {

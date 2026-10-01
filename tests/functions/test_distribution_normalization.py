@@ -14,7 +14,7 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
     Distribution,
-    DistributionArray,
+    DistributionBatch,
     EmpiricalDistribution,
     KDEDistribution,
     Normal,
@@ -124,57 +124,15 @@ class TestNormalizeDistributionValues:
 
         assert exc_info.value is error
 
-    def test_zero_dimensional_distribution_array_unwraps_to_scalar_component(self):
-        da = DistributionArray.from_batched_params(
-            Normal,
-            batch_shape=(),
-            loc=jnp.asarray(3.0),
-            scale=jnp.asarray(1.0),
-            name="zero_d",
-        )
+    def test_a_batch_of_one_law_remains_a_batch(self):
+        batch = DistributionBatch("one_cell", [Normal("x", 3.0, 1.0)], "cell")
 
         normalized = normalize_distribution_values(
-            values={"dist": da},
+            values={"dist": batch},
             signature_info=_signature_info(("dist",), {"dist": Normal}),
         )
 
-        assert isinstance(normalized["dist"], Normal)
-        assert float(normalized["dist"].loc) == 3.0
-
-    @pytest.mark.parametrize(
-        "hint", [DistributionArray, DistributionArray | None], ids=["class", "optional"]
-    )
-    def test_zero_dimensional_distribution_array_stays_whole_where_named(self, hint):
-        da = DistributionArray.from_batched_params(
-            Normal,
-            batch_shape=(),
-            loc=jnp.asarray(3.0),
-            scale=jnp.asarray(1.0),
-            name="zero_d",
-        )
-
-        normalized = normalize_distribution_values(
-            values={"dist": da},
-            signature_info=_signature_info(("dist",), {"dist": hint}),
-        )
-
-        assert normalized["dist"] is da
-
-    def test_size_one_distribution_array_remains_a_sweep(self):
-        da = DistributionArray.from_batched_params(
-            Normal,
-            batch_shape=(1,),
-            loc=jnp.asarray([3.0]),
-            scale=jnp.asarray([1.0]),
-            name="one_cell",
-        )
-
-        normalized = normalize_distribution_values(
-            values={"dist": da},
-            signature_info=_signature_info(("dist",), {"dist": Normal}),
-        )
-
-        assert normalized["dist"] is da
+        assert normalized["dist"] is batch
 
     def test_unhinted_external_distribution_converts_for_broadcast(
         self,
@@ -221,38 +179,15 @@ class TestHintedDistributionConversion:
         assert jnp.isfinite(jnp.asarray(result)).all()
 
 
-class TestDistributionArrayHandling:
-    def test_zero_dimensional_distribution_array_unwraps_to_scalar_component(
-        self,
-        mean_recorder,
-    ):
+class TestDistributionBatchHandling:
+    def test_a_batch_of_one_law_is_swept(self, mean_recorder):
         mean_of_normal, seen = mean_recorder
-        da = DistributionArray.from_batched_params(
-            Normal,
-            batch_shape=(),
-            loc=jnp.asarray(3.0),
-            scale=jnp.asarray(1.0),
-            name="zero_d",
-        )
+        batch = DistributionBatch("one_cell", [Normal("x", 3.0, 1.0)], "cell")
         wf = Function(name="mean_of_normal", fn=mean_of_normal, dispatch="sequential")
 
-        result = wf(dist=da)
+        result = wf(dist=batch)
 
         assert isinstance(seen[0], Normal)
-        assert float(result) == 3.0
-
-    def test_size_one_distribution_array_remains_a_sweep(self, mean_recorder):
-        mean_of_normal, _ = mean_recorder
-        da = DistributionArray.from_batched_params(
-            Normal,
-            batch_shape=(1,),
-            loc=jnp.asarray([3.0]),
-            scale=jnp.asarray([1.0]),
-            name="one_cell",
-        )
-        wf = Function(name="mean_of_normal", fn=mean_of_normal, dispatch="sequential")
-
-        result = wf(dist=da)
 
         assert isinstance(result, NumericArrayBatch)
         assert result.batch_shape == (1,)

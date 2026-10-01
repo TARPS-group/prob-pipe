@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from ..values import Function as Function
     from ..values import FunctionSpec as FunctionSpec
     from ._call import ApplicabilityError as ApplicabilityError
+    from ._call import CallReport as CallReport
     from ._context import workflow_run as workflow_run
     from ._function import function as function
     from ._module import (
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
     from ._replay import replay_run as replay_run
     from ._result import ResultKindError as ResultKindError
     from ._result import ResultSchemaError as ResultSchemaError
+    from ._rules import evaluation_rule_registry as evaluation_rule_registry
 
 _EXPORTS = {
     "Function": "probpipe.values",
@@ -44,10 +46,12 @@ _EXPORTS = {
     "workflow_method": "probpipe.functions._module",
     "abstract_workflow_method": "probpipe.functions._module",
     "ApplicabilityError": "probpipe.functions._call",
+    "CallReport": "probpipe.functions._call",
     "ResultKindError": "probpipe.functions._result",
     "ResultSchemaError": "probpipe.functions._result",
     "bijector_for": "probpipe.functions._reparameterization",
     "register_bijector": "probpipe.functions._reparameterization",
+    "evaluation_rule_registry": "probpipe.functions._rules",
 }
 __all__ = list(_EXPORTS)
 

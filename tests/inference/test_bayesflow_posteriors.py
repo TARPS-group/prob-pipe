@@ -309,7 +309,9 @@ class TestBayesFlowNPE:
             view(npe_model, {"observation": _observe(0.5, 0.0, 0)})
 
     def test_the_operation_passes_the_draw_count_and_seed(self, npe_model):
-        view = condition_on_operation.with_options(num_results=300, random_seed=11)
+        view = condition_on_operation.with_options(
+            method_options={"num_results": 300, "random_seed": 11}
+        )
         observation = {"observation": _observe(0.3, 0.1, 4)}
         first = np.asarray(view(npe_model, observation).draws()["a"]).reshape(-1)
         second = np.asarray(view(npe_model, observation).draws()["a"]).reshape(-1)

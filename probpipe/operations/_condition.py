@@ -93,11 +93,10 @@ from ..distributions._factored import SupportsFactors
 from ._convert import convert
 from ._operation import (
     BoundCall,
-    CallCheck,
     Operation,
     RouteSource,
-    _Candidate,
     _CheckedRoute,
+    _PointCheck,
     _RegistryRoute,
     _workflow_draws,
     operation_registry,
@@ -174,8 +173,23 @@ class _InferenceMethodRegistry(UnaryDispatchRegistry[UnaryDispatchMethod]):
     def execute(
         self, *args: Any, method: str | None = None, exact_only: bool = False, **kwargs: Any
     ) -> Any:
-        """The selected method's result; see :meth:`UnaryDispatchRegistry.execute`."""
-        return super().execute(*self._targets(args), method=method, exact_only=exact_only, **kwargs)
+        """The selected method's result; see :meth:`UnaryDispatchRegistry.execute`.
+
+        The keyword options are the call's ``method_options``, which the
+        selected method validates before it runs.
+
+        Raises
+        ------
+        TypeError
+            If an option is one the selected method does not read.
+        """
+        targets = self._targets(args)
+        if kwargs:
+            selected = method
+            if selected is None:
+                selected = super().check(*targets, exact_only=exact_only, **kwargs).method_name
+            _check_method_options(selected, kwargs)
+        return super().execute(*targets, method=method, exact_only=exact_only, **kwargs)
 
     @staticmethod
     def _targets(args: tuple[Any, ...]) -> tuple[Any, ...]:
@@ -198,8 +212,8 @@ class _InferenceMethodRegistry(UnaryDispatchRegistry[UnaryDispatchMethod]):
 inference_method_registry: UnaryDispatchRegistry[UnaryDispatchMethod] = _InferenceMethodRegistry()
 
 
-_MCMC_CONTROLS = ("init", "num_chains", "num_results", "num_warmup", "random_seed", "step_size")
-_SGMCMC_CONTROLS = (
+_MCMC_OPTIONS = ("init", "num_chains", "num_results", "num_warmup", "random_seed", "step_size")
+_SGMCMC_OPTIONS = (
     "batch_size",
     "init",
     "num_results",
@@ -208,15 +222,16 @@ _SGMCMC_CONTROLS = (
     "step_size",
     "with_replacement",
 )
-_BACKEND_NUTS_CONTROLS = ("num_chains", "num_results", "num_warmup", "random_seed")
+_BACKEND_NUTS_OPTIONS = ("num_chains", "num_results", "num_warmup", "random_seed")
 
-#: The parameters each inference method registered by :mod:`probpipe.inference`
-#: reads, by method name; the routes that normalize declare every one of them.
-_INFERENCE_METHOD_CONTROLS: Mapping[str, tuple[str, ...]] = MappingProxyType(
+#: The ``method_options`` entries each inference method registered by
+#: :mod:`probpipe.inference` reads, by method name, against which the
+#: registry validates a call's options before the method runs.
+_INFERENCE_METHOD_OPTIONS: Mapping[str, tuple[str, ...]] = MappingProxyType(
     {
-        "blackjax_nuts": (*_MCMC_CONTROLS, "num_integration_steps"),
-        "blackjax_hmc": (*_MCMC_CONTROLS, "num_integration_steps"),
-        "blackjax_rwmh": (*_MCMC_CONTROLS, "adapt", "n_windows", "proposal_cov"),
+        "blackjax_nuts": (*_MCMC_OPTIONS, "num_integration_steps"),
+        "blackjax_hmc": (*_MCMC_OPTIONS, "num_integration_steps"),
+        "blackjax_rwmh": (*_MCMC_OPTIONS, "adapt", "n_windows", "proposal_cov"),
         "blackjax_elliptical_slice": (
             "init",
             "num_chains",
@@ -224,13 +239,13 @@ _INFERENCE_METHOD_CONTROLS: Mapping[str, tuple[str, ...]] = MappingProxyType(
             "num_warmup",
             "random_seed",
         ),
-        "blackjax_sgld": _SGMCMC_CONTROLS,
-        "blackjax_sghmc": (*_SGMCMC_CONTROLS, "alpha", "beta", "num_integration_steps"),
-        "tfp_nuts": _MCMC_CONTROLS,
-        "tfp_hmc": _MCMC_CONTROLS,
-        "nutpie_nuts": _BACKEND_NUTS_CONTROLS,
-        "cmdstan_nuts": _BACKEND_NUTS_CONTROLS,
-        "pymc_nuts": (*_BACKEND_NUTS_CONTROLS, "cores"),
+        "blackjax_sgld": _SGMCMC_OPTIONS,
+        "blackjax_sghmc": (*_SGMCMC_OPTIONS, "alpha", "beta", "num_integration_steps"),
+        "tfp_nuts": _MCMC_OPTIONS,
+        "tfp_hmc": _MCMC_OPTIONS,
+        "nutpie_nuts": _BACKEND_NUTS_OPTIONS,
+        "cmdstan_nuts": _BACKEND_NUTS_OPTIONS,
+        "pymc_nuts": (*_BACKEND_NUTS_OPTIONS, "cores"),
         "pymc_advi": ("num_iterations", "num_results", "random_seed", "vi_method"),
         "pyabc_smcabc": (
             "distance_fn",
@@ -250,14 +265,27 @@ _INFERENCE_METHOD_CONTROLS: Mapping[str, tuple[str, ...]] = MappingProxyType(
     }
 )
 
-#: Every parameter of the registered inference methods.
-_NORMALIZATION_CONTROLS = frozenset(
-    name for names in _INFERENCE_METHOD_CONTROLS.values() for name in names
-)
 
-#: The parameters an amortized posterior's ``_condition_on`` reads, as the
-#: kernel :func:`~probpipe.inference.learn_amortized_posterior` returns does.
-_AMORTIZED_CONDITIONING_CONTROLS = ("num_results", "random_seed")
+def _check_method_options(method: str | None, options: Mapping[str, Any]) -> None:
+    """Refuse a ``method_options`` entry that the inference method *method* does not read.
+
+    A method outside the table of the registered methods' options validates its
+    own options.
+
+    Raises
+    ------
+    TypeError
+        Naming the method, the entries it does not read, and those it reads.
+    """
+    reads = _INFERENCE_METHOD_OPTIONS.get(method or "")
+    if reads is None:
+        return
+    unread = sorted(set(options) - set(reads))
+    if unread:
+        raise TypeError(
+            f"method_options {unread} are not options of the inference method {method!r}, "
+            f"which reads {sorted(reads)}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -766,17 +794,15 @@ def _can_curry(call: BoundCall) -> Feasibility:
 def _curry(call: BoundCall) -> Any:
     """The kernel's ``_condition_on`` at the given slots.
 
-    A kernel normalized per value also receives the inference methods' budgets
-    that the call sets, and any other kernel that claims
-    ``SupportsApproximateConditioning`` those an amortized posterior reads.
+    A kernel whose evaluation runs a method, one normalized per value or one
+    that claims ``SupportsApproximateConditioning``, receives the call's
+    ``method_options`` as the keyword options of ``_condition_on`` and
+    validates them; evaluating any other kernel is exact and reads no budget.
     """
     kernel = call.operands["d"]
-    budgets: Iterable[str] = ()
-    if isinstance(kernel, _PerValueNormalization):
-        budgets = sorted(_NORMALIZATION_CONTROLS)
-    elif isinstance(kernel, SupportsApproximateConditioning):
-        budgets = _AMORTIZED_CONDITIONING_CONTROLS
-    options = {name: call.controls[name] for name in budgets if name in call.controls}
+    options: dict[str, Any] = {}
+    if isinstance(kernel, (_PerValueNormalization, SupportsApproximateConditioning)):
+        options = dict(call.controls.get("method_options", {}))
     return _curried(kernel, call.operands["given"], **options)
 
 
@@ -915,7 +941,7 @@ class _NormalizingRoute(_RegistryRoute):
         stage: _ExactStage,
         registry: BaseDispatchRegistry[Any],
     ) -> None:
-        super().__init__(name, registry=registry, controls=_NORMALIZATION_CONTROLS)
+        super().__init__(name, registry=registry)
         self.source = source
         self._stage = stage
 
@@ -930,7 +956,7 @@ class _NormalizingRoute(_RegistryRoute):
 
     def _normalization(self, call: BoundCall, method: str | None, exact_only: bool) -> Any:
         return _Normalization(
-            self.registry, method, exact_only, MappingProxyType(self.budgets(call))
+            self.registry, method, exact_only, MappingProxyType(self.method_options(call))
         )
 
     def probe(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Feasibility:
@@ -976,7 +1002,7 @@ class _NormalizingRoute(_RegistryRoute):
             d = call.operands["d"]
             if isinstance(d, _PerValueNormalization) and not self._stage.yields_kernel(call):
                 return self._evaluation_report(call, d, exact)
-            return CallCheck(True, exact=exact)
+            return _PointCheck(True, exact=exact)
         normalization = self._normalization(call, method, exact_only)
         if self._stage.yields_kernel(call):
             return self._per_value_report(call, normalization, exact)
@@ -1012,9 +1038,9 @@ class _NormalizingRoute(_RegistryRoute):
                     f"{type(kernel.kernel).__name__} yields is the target, which a call computes",
                 ),
             )
-        info = kernel._normalization_report(call.operands["given"], self.budgets(call))
+        info = kernel._normalization_report(call.operands["given"], self.method_options(call))
         if not isinstance(info, MethodInfo):
-            return info if info.feasible is not True else CallCheck(True, exact=exact)
+            return info if info.feasible is not True else _PointCheck(True, exact=exact)
         if info.feasible is not True:
             return info
         return replace(info, exact=exact and info.exact)
@@ -1043,7 +1069,7 @@ class _NormalizingRoute(_RegistryRoute):
         if normalization.method is not None:
             method = self.registry.get_method(normalization.method)
             return MethodInfo(True, method_name=normalization.method, exact=exact and method.exact)
-        return CallCheck(True, exact=exact)
+        return _PointCheck(True, exact=exact)
 
     def run(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Any:
         """The exact stage's result, normalized as the declarations, or else its own, require."""
@@ -1062,17 +1088,17 @@ class _NormalizingRoute(_RegistryRoute):
 
 
 class _Conditioning(Operation):
-    """``condition_on``'s operation: a named method selects among the routes that normalize.
+    """``condition_on``'s operation, whose check computes no exact stage.
 
     The routes that normalize share the inference-method registry, so a
     ``method=`` control naming one of its methods selects each of those routes
     with that method, in selection order, and the first whose exact stage
-    applies runs. Every other control selects as for any operation. A check
-    probes the routes with no exact stage computed, and a call probes them
-    with the exact stage computable.
+    applies runs, as for any routes that share a registry. A check probes the
+    routes with no exact stage computed, and a call probes them with the exact
+    stage computable.
     """
 
-    def _check_point(self, values: Mapping[str, Any], *, select: bool = True) -> CallCheck:
+    def _check_point(self, values: Mapping[str, Any], *, select: bool = True) -> _PointCheck:
         token = _CHECKING.set(True)
         try:
             return super()._check_point(values, select=select)
@@ -1085,18 +1111,6 @@ class _Conditioning(Operation):
             return super()._invoke_resolved(values, context=context)
         finally:
             _CHECKING.reset(token)
-
-    def _candidates(self, controls: Mapping[str, Any]) -> list[_Candidate]:
-        method = controls["method"]
-        routes = list(self._route_table.routes)
-        if method is None or any(route.name == method for route in routes):
-            return super()._candidates(controls)
-        holders = [
-            _Candidate(route, None, index, method)
-            for index, route in enumerate(routes)
-            if isinstance(route, _RegistryRoute) and method in route.registry.list_methods()
-        ]
-        return holders or super()._candidates(controls)
 
 
 def _condition_on_result(d: TermSpec, given: TermSpec) -> OutputSpec:
@@ -1211,7 +1225,7 @@ def _exact_stage_by_name(call: BoundCall, result: OutputSpec | None) -> Any:
     for stage in (_CURRY, _EXACT_CONDITIONING, _BAYES):
         report = stage.check(call)
         if report.feasible is not False:
-            return report if report.feasible is None else CallCheck(True, exact=stage.exact(call))
+            return report if report.feasible is None else _PointCheck(True, exact=stage.exact(call))
         reports.append(report.description)
     return Feasibility(False, f"route {_UNNORMALIZED!r} declined: {'; '.join(reports)}")
 
@@ -1245,7 +1259,6 @@ condition_on.capability_route(
     method="_condition_on",
     exact=False,
     check=_conditioning_guard,
-    controls=_AMORTIZED_CONDITIONING_CONTROLS,
 )
 condition_on.register_route(
     _NormalizingRoute(
@@ -1295,7 +1308,7 @@ class _NormalizingThen(_RegistryRoute):
     The law is the target of a method the inference-method registry selects,
     as in ``condition_on``'s normalization stage, and the call is answered on
     the normalized result. The route's exactness is the selected method's, and
-    its budgets are the parameters of the registered methods.
+    the selected method reads the call's ``method_options``.
     """
 
     def __init__(
@@ -1305,7 +1318,7 @@ class _NormalizingThen(_RegistryRoute):
         admits: Callable[[BoundCall], Feasibility],
         answer: Callable[[BoundCall, Any], Any],
     ) -> None:
-        super().__init__(name, registry=inference_method_registry, controls=_NORMALIZATION_CONTROLS)
+        super().__init__(name, registry=inference_method_registry)
         self._admits = admits
         self._answer = answer
 
@@ -1326,12 +1339,14 @@ class _NormalizingThen(_RegistryRoute):
         admitted = self._admits(call)
         if admitted.feasible is not True:
             return admitted
-        return self.registry.check(law, method=method, exact_only=exact_only, **self.budgets(call))
+        return self.registry.check(
+            law, method=method, exact_only=exact_only, **self.method_options(call)
+        )
 
     def run(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Any:
         """The answer on the law the selected method returns."""
         normalized = self.registry.execute(
-            call.operands["d"], method=method, exact_only=exact_only, **self.budgets(call)
+            call.operands["d"], method=method, exact_only=exact_only, **self.method_options(call)
         )
         return self._answer(call, normalized)
 

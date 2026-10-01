@@ -10,7 +10,6 @@ import numpy as np
 import pytest
 
 from probpipe import (
-    BroadcastDistribution,
     EmpiricalDistribution,
     MultivariateNormal,
     Normal,
@@ -38,7 +37,7 @@ class TestBroadcastingBasic:
         g = Normal(loc=1.0, scale=0.5, name="x")
         with workflow_run(seed=0):
             result = w(x=g)
-        assert not isinstance(result, BroadcastDistribution)
+        assert isinstance(result, EmpiricalDistribution)
         assert hasattr(result, "atoms")
         assert result.num_atoms == 50
 
@@ -63,7 +62,7 @@ class TestBroadcastingBasic:
         mvn = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="x")
         with workflow_run(seed=2):
             result = w(x=mvn)
-        assert not isinstance(result, BroadcastDistribution)
+        assert isinstance(result, EmpiricalDistribution)
         assert result.event_spec.spec.vector_size == 1
 
     def test_positional_args(self):
@@ -100,7 +99,7 @@ class TestBroadcastingBasic:
         g = Normal(loc=1.0, scale=0.5, name="x")
         with workflow_run(seed=0):
             result = w(x=g)
-        assert not hasattr(result, "input_samples")
+        assert list(result.event_spec.components) == ["double_it"]
 
 
 class TestBroadcastingMultipleArgs:
@@ -324,13 +323,12 @@ class TestBroadcastingEnumeration:
 
         w = Function(name="identity", fn=identity, n_broadcast_samples=100, dispatch="sequential")
         result = w.with_options(include_inputs=True)(x=ed)
-        assert isinstance(result, BroadcastDistribution)
-        assert "x" in result.input_samples
+        assert isinstance(result, EmpiricalDistribution)
+        assert "x" in result.event_spec.components
         # Each draw of the array law is an array, and stays one in the joint.
-        assert result.input_samples["x"].shape == (3, 1)
+        assert result._rows["x"].shape == (3, 1)
         # Output should match input (identity function)
-        marginal = result.marginalize()
-        np.testing.assert_allclose(result.input_samples["x"], np.asarray(marginal.atoms), atol=1e-5)
+        np.testing.assert_allclose(result._rows["x"], result._rows["identity"], atol=1e-5)
 
 
 # ---------------------------------------------------------------------------
@@ -347,10 +345,10 @@ class TestBroadcastingNonNumeric:
         g = Normal(loc=0.0, scale=1.0, name="x")
         with workflow_run(seed=11):
             result = w(x=g)
-        # Non-numeric results still return a marginal (ListMarginal)
-        assert not isinstance(result, BroadcastDistribution)
-        assert len(result.items) == 5
-        assert all(isinstance(r, str) for r in result.items)
+        # Non-numeric results are the atoms of an empirical law over opaque values.
+        assert isinstance(result, EmpiricalDistribution)
+        assert result.num_atoms == 5
+        assert all(isinstance(r, str) for r in result.atoms._store)
 
 
 # ---------------------------------------------------------------------------
@@ -367,7 +365,7 @@ class TestBroadcastingJAX:
         g = Normal(loc=1.0, scale=0.5, name="x")
         with workflow_run(seed=20):
             result = w(x=g)
-        assert not isinstance(result, BroadcastDistribution)
+        assert isinstance(result, EmpiricalDistribution)
         assert result.num_atoms == 50
 
     def test_vmap_values_correct(self):
@@ -426,14 +424,11 @@ class TestBroadcastingJAX:
         g = Normal(loc=1.0, scale=0.5, name="x")
         with workflow_run(seed=20):
             result = w.with_options(include_inputs=True)(x=g)
-        assert isinstance(result, BroadcastDistribution)
-        assert "x" in result.input_samples
-        assert result.input_samples["x"].shape[0] == 30
+        assert isinstance(result, EmpiricalDistribution)
+        assert "x" in result.event_spec.components
+        assert result._rows["x"].shape[0] == 30
         # Output should be 2x input
-        marginal = result.marginalize()
-        np.testing.assert_allclose(
-            np.asarray(marginal.atoms), result.input_samples["x"] * 2, atol=1e-5
-        )
+        np.testing.assert_allclose(result._rows["double_it"], result._rows["x"] * 2, atol=1e-5)
 
 
 # ---------------------------------------------------------------------------
@@ -450,7 +445,7 @@ class TestAutoDispatch:
         g = Normal(loc=0.0, scale=1.0, name="x")
         with workflow_run(seed=30):
             result = w(x=g)
-        assert not isinstance(result, BroadcastDistribution)
+        assert isinstance(result, EmpiricalDistribution)
         assert not hasattr(w, "_resolved_dispatch")
 
     def test_auto_falls_back_to_sequential_for_non_traceable(self):
@@ -463,7 +458,7 @@ class TestAutoDispatch:
         g = Normal(loc=2.0, scale=0.1, name="x")
         with workflow_run(seed=31):
             result = w(x=g)
-        assert not isinstance(result, BroadcastDistribution)
+        assert isinstance(result, EmpiricalDistribution)
         assert not hasattr(w, "_resolved_dispatch")
 
     def test_jax_dispatch_rejects_non_traceable_function_with_clear_error(self):
@@ -559,8 +554,8 @@ class TestIncludeInputsArgument:
         g = Normal(loc=1.0, scale=0.5, name="x")
         with workflow_run(seed=0):
             result = w(x=g)
-        assert isinstance(result, BroadcastDistribution)
-        assert "x" in result.input_samples
+        assert isinstance(result, EmpiricalDistribution)
+        assert "x" in result.event_spec.components
         assert result.num_atoms == 20
 
     def test_include_inputs_at_call_time(self):
@@ -571,8 +566,8 @@ class TestIncludeInputsArgument:
         g = Normal(loc=1.0, scale=0.5, name="x")
         with workflow_run(seed=0):
             result = w.with_options(include_inputs=True)(x=g)
-        assert isinstance(result, BroadcastDistribution)
-        assert "x" in result.input_samples
+        assert isinstance(result, EmpiricalDistribution)
+        assert "x" in result.event_spec.components
 
     def test_default_no_input_samples(self):
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
@@ -582,8 +577,8 @@ class TestIncludeInputsArgument:
         g = Normal(loc=1.0, scale=0.5, name="x")
         with workflow_run(seed=0):
             result = w(x=g)
-        assert not isinstance(result, BroadcastDistribution)
-        assert not hasattr(result, "input_samples")
+        assert isinstance(result, EmpiricalDistribution)
+        assert "x" not in result.event_spec.components
 
     def test_include_inputs_has_named_components(self):
         def add_them(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
@@ -594,10 +589,8 @@ class TestIncludeInputsArgument:
         g2 = Normal(loc=2.0, scale=0.1, name="b")
         with workflow_run(seed=0):
             result = w.with_options(include_inputs=True)(a=g1, b=g2)
-        assert isinstance(result, BroadcastDistribution)
-        assert "a" in result.fields
-        assert "b" in result.fields
-        assert "_output" in result.fields
+        assert isinstance(result, EmpiricalDistribution)
+        assert list(result.event_spec.components) == ["a", "b", "add_them"]
 
 
 # ---------------------------------------------------------------------------
@@ -615,9 +608,7 @@ class TestNamedComponents:
         g2 = Normal(loc=2.0, scale=0.1, name="b")
         with workflow_run(seed=0):
             result = w.with_options(include_inputs=True)(a=g1, b=g2)
-        assert "a" in result.fields
-        assert "b" in result.fields
-        assert "_output" in result.fields
+        assert list(result.event_spec.components) == ["a", "b", "add_them"]
 
     def test_getitem_input(self):
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
@@ -627,7 +618,7 @@ class TestNamedComponents:
         g = Normal(loc=1.0, scale=0.5, name="x")
         with workflow_run(seed=0):
             result = w.with_options(include_inputs=True)(x=g)
-        x_marginal = result["x"]
+        x_marginal = result._marginal("x")
         assert isinstance(x_marginal, EmpiricalDistribution)
         assert x_marginal.num_atoms == 20
 
@@ -639,8 +630,9 @@ class TestNamedComponents:
         g = Normal(loc=1.0, scale=0.5, name="x")
         with workflow_run(seed=0):
             result = w.with_options(include_inputs=True)(x=g)
-        out = result["_output"]
-        assert hasattr(out, "atoms")
+        out = result._marginal("double_it")
+        assert isinstance(out, EmpiricalDistribution)
+        assert out.num_atoms == 20
 
 
 # ---------------------------------------------------------------------------

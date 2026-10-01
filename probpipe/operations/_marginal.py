@@ -17,7 +17,8 @@ from ..distributions._conditional import ConditionalDistributionSpec
 from ..distributions._distribution import Distribution, DistributionSpec
 from ..distributions._factored import SupportsFactors
 from ..distributions._views import _node_at
-from ._operation import ApplicabilityError, BoundCall, operation
+from ..functions._call import ApplicabilityError
+from ._operation import BoundCall, operation
 
 __all__ = ["factor", "marginal"]
 

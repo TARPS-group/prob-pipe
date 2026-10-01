@@ -10,7 +10,7 @@ from typing import cast
 
 import numpy as np
 
-from ..values._function_base import FunctionSpec
+from ..values._function_base import Function, FunctionSpec
 from ._kinds import register_kind
 from ._object_batch import _ObjectBatch
 from .provenance import Provenance
@@ -64,17 +64,21 @@ class FunctionBatch(_ObjectBatch[Callable]):
     function, and a ``Function`` are all admitted, the wrapper being one such
     element and not the required type.
 
-    This batch **stores** its elements, so ``batch[i]`` is the callable that was
-    put in — the same object, under its own name and lineage, not a copy renamed
-    to its position. A sub-batch is a view and takes a derived name as any view
-    does.
+    This batch **stores** its elements, and ``batch[i]`` is a view of the
+    stored callable: a :class:`~probpipe.Function` wrapping it under the name
+    derived from the position and the batch's declarations, or, for a stored
+    ``Function``, a copy under the derived name sharing its callable. Its
+    provenance records the batch and the stored term. A callable whose
+    signature cannot be inspected, as for some builtins, has no ``Function``
+    view and raises ``ValueError`` when indexed. A sub-batch is a view and
+    takes a derived name as any view does.
 
     Examples
     --------
     >>> batch = FunctionBatch("f", [lambda x: x, lambda x: 2 * x], "variant")
     >>> batch.batch_shape
     (2,)
-    >>> batch[1](3)
+    >>> batch[1].apply(3)
     6
     """
 
@@ -113,6 +117,18 @@ class FunctionBatch(_ObjectBatch[Callable]):
     def element_spec(self) -> FunctionSpec:
         """The :class:`FunctionSpec` every element satisfies — a view on ``spec``."""
         return cast(FunctionSpec, self._spec.element_spec)
+
+    def _wrap_element(self, value: Callable, name: str) -> Function:
+        """The stored callable *value* as a ``Function`` named *name* under the batch's declarations.
+
+        Raises
+        ------
+        ValueError
+            If the callable's signature cannot be inspected, or does not match the
+            declared input slots.
+        """
+        spec = self.element_spec
+        return Function(name, value, input_spec=spec.input_spec, output_spec=spec.output_spec)
 
 
 register_kind(FunctionSpec, batch_class=FunctionBatch)

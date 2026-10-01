@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import probpipe
@@ -492,10 +493,7 @@ class TestWorkflowCallableAnchor:
         ):
             replayed = workflow(value=Normal(loc=0.0, scale=1.0, name="value"))
 
-        assert jnp.array_equal(
-            replayed.atoms[replayed.name],
-            original.atoms[original.name],
-        )
+        assert jnp.array_equal(np.asarray(replayed.atoms), np.asarray(original.atoms))
         assert replayed.provenance is None
         capture.assert_called_once_with(workflow)
 

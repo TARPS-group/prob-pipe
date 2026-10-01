@@ -272,6 +272,6 @@ def test_auto_probe_detects_nested_randomness_caught_by_user_code():
     def following_samples(workflow):
         with workflow_run(seed=7):
             workflow(outer_dist)
-            return following_identity(outer_dist).atoms["following_identity"]
+            return following_identity(outer_dist)._rows
 
     assert jnp.array_equal(following_samples(auto), following_samples(sequential))

@@ -390,7 +390,7 @@ class TestColumnBatchForms:
         )
         column = batch["site"]
         assert isinstance(column, OpaqueBatch)
-        assert column[0] == "north"
+        assert column[0].value == "north"
         assert column.level_names == ("row",)
 
     def test_a_field_with_no_batch_form_is_refused_at_construction(self):
@@ -985,7 +985,7 @@ class TestLevels:
             batch._columns["site"][0] = "MUTATED"
         # Nor can the caller's own handle reach in after construction.
         column[0] = "MUTATED"
-        assert batch["site"][0] == "a"
+        assert batch["site"][0].value == "a"
 
     def test_a_slice_keeps_the_level_and_its_values(self):
         batch = nested_batch(4)
@@ -1275,7 +1275,7 @@ class TestStack:
         ]
         batch = RecordBatch.stack(records, level_name="draw")
         assert isinstance(batch["tag"], OpaqueBatch)
-        assert batch["tag"][1] == 1
+        assert batch["tag"][1].value == 1
         assert batch[0]["tag"] == 0
         assert not isinstance(batch[0]["tag"], jnp.ndarray)
 
@@ -1298,7 +1298,7 @@ class TestStack:
         ]
         batch = RecordBatch.stack(records, level_name="row")
         assert isinstance(batch["site"], OpaqueBatch)
-        assert batch["site"][1] == "south"
+        assert batch["site"][1].value == "south"
 
     def test_stack_converts_a_leaf_by_its_registered_backend(self, clean_registry):
         """Stacking goes through ``_to_jax_array``, the one conversion every

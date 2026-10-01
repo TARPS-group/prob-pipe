@@ -26,7 +26,9 @@ import math
 import warnings
 from collections.abc import Callable, Generator, Mapping
 from contextlib import AbstractContextManager, contextmanager
+from dataclasses import dataclass, field
 from functools import partial
+from types import MappingProxyType
 from typing import Any, overload
 
 import jax
@@ -40,6 +42,7 @@ except ImportError:
     task = flow = None
 
 from ..core._batch import Batch
+from ..core._dispatch import MethodInfo, ResolutionError
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._record_batch import RecordBatch
 from ..core._spec_base import NumericSpec, TermSpec
@@ -69,9 +72,10 @@ from . import (
     _recipe,
     _replay,
     _result,
-    _rules,  # noqa: F401 - importing it registers the evaluation-rule floors
+    _rules,
     _sweep,
 )
+from ._call import CallReport
 from ._contract import _bind_planned_function_inputs
 from ._result import _output_record_spec, _wrap_declared_function_output
 
@@ -292,15 +296,22 @@ def _call_with_options_in_context(
         values=call.values,
         signature_info=function._signature_info,
     )
-    _call.admit_arguments(function._signature_info, values)
+    _call.admit_arguments(
+        function._signature_info,
+        values,
+        input_spec=function.input_spec,
+        function_name=function._name,
+    )
     broadcast_plan = _plan.build_broadcast_plan(
         values=values,
         signature_info=function._signature_info,
     )
+    route = _resolve_route(function, values, broadcast_plan, call.overrides)
     stochastic_plan = _plan.build_stochastic_plan(
         values,
         broadcast_plan,
         call.overrides.n_broadcast_samples,
+        enumerate_every_group=route.name != "sampling_lift",
     )
     stochastic_sample_shape = None if stochastic_plan is None else stochastic_plan.sample_shape
 
@@ -339,7 +350,6 @@ def _call_with_options_in_context(
     concrete_output_template = (
         _output_record_spec(concrete_output_spec) if concrete_output_spec is not None else None
     )
-    _resolve_route(function)
     provenance_parents: list[TrackedTerm] = [function]
     provenance_inputs: dict[str, Any] = {}
     seen_parent_ids = {id(function)}
@@ -352,14 +362,21 @@ def _call_with_options_in_context(
             provenance_inputs[ref.label] = value
 
     def invoke_point(**point_values: Any) -> Any:
-        _, point_bindings = _bind_function_inputs(
-            function_name=function._name,
-            input_spec=function.input_spec,
-            values=point_values,
-            bindings=invocation_bindings,
-        )
+        try:
+            _, point_bindings = _bind_function_inputs(
+                function_name=function._name,
+                input_spec=function.input_spec,
+                values=point_values,
+                bindings=invocation_bindings,
+            )
+        except ValueError as error:
+            raise _call.ApplicabilityError(str(error)) from error
         context = _FunctionInvocationContext(point_bindings)
-        result = function._invoke_resolved(point_values, context=context)
+        result = _result._batch_from_declared_sequence(
+            function._invoke_resolved(point_values, context=context),
+            function_name=function.output_name,
+            output_spec=function.output_spec,
+        )
         try:
             point_output_spec = _validate_function_output(
                 function_name=function._name,
@@ -425,6 +442,7 @@ def _call_with_options_in_context(
         logical_unit: _plan.LogicalUnit,
         include_inputs: bool = call.overrides.include_inputs,
         record_recipe: bool = True,
+        route_metadata: Mapping[str, Any] = route.metadata,
     ):
         return _broadcast.execute_distribution_broadcast(
             func=invoke_point,
@@ -445,8 +463,11 @@ def _call_with_options_in_context(
             provenance_parents=provenance_parents,
             provenance_inputs=provenance_inputs,
             record_recipe=record_recipe,
+            route=route_metadata,
         )
 
+    if route.rule is not None and route.name not in _rules._ENGINE_RULES:
+        return _run_registered_rule(function, route, provenance_parents, provenance_inputs)
     if broadcast_plan.regime == "distribution":
         if stochastic_plan is None:  # pragma: no cover - planner contract guard
             raise RuntimeError("distribution broadcast is missing its stochastic plan")
@@ -463,12 +484,18 @@ def _call_with_options_in_context(
             logical_unit: _plan.LogicalUnit,
             include_inputs: bool,
         ):
+            # Each element's lift is realized as its own plan says.
+            inner = _Route(
+                "empirical_enumeration" if plan.evaluation_mode == "exact" else "sampling_lift",
+                plan.evaluation_mode == "exact",
+            )
             return execute_distribution_broadcast(
                 row_values=row_values,
                 plan=plan,
                 logical_unit=logical_unit,
                 include_inputs=include_inputs,
                 record_recipe=False,
+                route_metadata=inner.metadata,
             )
 
         return _sweep.execute_sweep(
@@ -489,6 +516,7 @@ def _call_with_options_in_context(
             provenance_parents=provenance_parents,
             provenance_inputs=provenance_inputs,
             workflow_kind=workflow_kind,
+            route=route.metadata,
         )
 
     # Non-broadcast call — one function invocation, then wrap. TrackedTerm
@@ -517,7 +545,7 @@ def _call_with_options_in_context(
     provenance = Provenance.create(
         f"workflow.{name}",
         parents=provenance_parents,
-        metadata={"func": name},
+        metadata={"func": name, **route.metadata},
         inputs=provenance_inputs,
         controls=controls,
         diagnostics=diagnostics,
@@ -794,22 +822,255 @@ def _resolve_dispatch(
         return "sequential"
 
 
-def _resolve_route(function: Function) -> None:
+@dataclass(frozen=True)
+class _Route:
+    """The route selected for one call (step 6).
+
+    Attributes
+    ----------
+    name : str
+        The route's name: ``"body"`` for a plain call, and otherwise the name of
+        the evaluation rule selected for the lifted call.
+    exact : bool or None
+        Whether the route's result denotes the call's mathematical result.
+    rule : BinaryDispatchMethod or None
+        The selected evaluation rule of a lifted call.
+    operand : Any
+        The lifted argument the rule dispatched on.
+    parameter : str or None
+        The parameter the operand binds.
+    fixed_args : Mapping[str, Any]
+        The call's other arguments, by parameter name.
+    controls : Mapping[str, Any]
+        The resolved controls the rule received.
+    """
+
+    name: str
+    exact: bool | None
+    rule: Any = None
+    operand: Any = None
+    parameter: str | None = None
+    fixed_args: Mapping[str, Any] = field(default_factory=dict)
+    controls: Mapping[str, Any] = field(default_factory=dict)
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """The route's name and exactness, as provenance records them."""
+        return {"route": self.name, "exact": self.exact}
+
+
+#: The one route of a plain call: the function's body, which is exact.
+_BODY = "body"
+
+#: The name a check gives the selection that waits on a planned conversion.
+_PLANNED = "the route of the converted call"
+
+
+def _resolve_route(
+    function: Function,
+    values: Mapping[str, Any],
+    broadcast_plan: _plan.BroadcastPlan,
+    overrides: _call.WorkflowCallOverrides,
+) -> _Route:
     """Select the route that realizes the call (step 6).
 
-    A plain call has its body as its one route, and a lifted call takes its
-    floor, which is the sampling lift or the elementwise sweep, and the engine
-    runs it directly. The routes registered in :data:`._rules.evaluation_rule_registry`
-    above the floors, and selection by the ``method`` and ``exact_only``
-    controls, are not consulted yet.
+    A plain call has its body as its one candidate, which is exact, so
+    ``exact_only`` admits it and a ``method`` name matches nothing. A lifted call
+    resolves through the evaluation-rule registry on the function and the first
+    lifted argument, a swept batch before a law, with the call's other arguments
+    as the fixed arguments; ``method`` names a rule and ``exact_only`` excludes
+    the approximate ones.
 
     Raises
     ------
-    NotImplementedError
-        If the ``method`` or ``exact_only`` control is set.
+    ResolutionError
+        If ``method`` names no route, or no rule is feasible under the controls,
+        naming each rule tried and what it lacked.
     """
-    if function.options["method"] is not None or function.options["exact_only"]:
-        raise NotImplementedError("Function.__call__: route selection by method and exact_only")
+    info, route = _route_report(function, values, broadcast_plan, overrides)
+    if route is None:
+        if broadcast_plan.regime == "none":
+            raise ResolutionError(info.description)
+        ref = (broadcast_plan.array_args or broadcast_plan.dist_args)[0]
+        detail = (
+            f"pending: {', '.join(info.pending)}" if info.feasible is None else info.description
+        )
+        restriction = " with exact_only" if function.options["exact_only"] else ""
+        raise ResolutionError(
+            f"{function.name}: no evaluation rule realizes the call lifting {ref.label!r}"
+            f"{restriction}. {detail}"
+        )
+    return route
+
+
+def _route_report(
+    function: Function,
+    values: Mapping[str, Any],
+    broadcast_plan: _plan.BroadcastPlan,
+    overrides: _call.WorkflowCallOverrides,
+) -> tuple[MethodInfo, _Route | None]:
+    """The report of the route that realizes the call, and the route when it is selected.
+
+    The report probes without executing, as :func:`_resolve_route` states the
+    selection; the route is ``None`` unless the report is feasible.
+    """
+    method, exact_only = function.options["method"], function.options["exact_only"]
+    if broadcast_plan.regime == "none":
+        if method is not None:
+            return MethodInfo(
+                False,
+                f"{function.name}: a call that lifts nothing has its body as its one route, "
+                f"so method={method!r} names no route; a method names an evaluation rule of a "
+                f"call that lifts an argument",
+            ), None
+        return MethodInfo(True, method_name=_BODY, exact=True), _Route(_BODY, True)
+    ref = (broadcast_plan.array_args or broadcast_plan.dist_args)[0]
+    operand = _binding.input_ref_value(values, ref)
+    parameter = ref.parameter_name
+    variadic = ref.subscript is not None
+    fixed_args = {name: value for name, value in values.items() if variadic or name != parameter}
+    controls = {
+        **function.options,
+        "n_broadcast_samples": overrides.n_broadcast_samples,
+        "include_inputs": overrides.include_inputs,
+    }
+    registry = _rules.evaluation_rule_registry
+    info = registry.check(
+        function,
+        operand,
+        method=method,
+        exact_only=exact_only,
+        parameter=parameter,
+        fixed_args=fixed_args,
+        controls=controls,
+    )
+    if info.feasible is not True:
+        return info, None
+    return info, _Route(
+        info.method_name,
+        info.exact,
+        registry.get_method(info.method_name),
+        operand,
+        parameter,
+        fixed_args,
+        controls,
+    )
+
+
+def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any]) -> CallReport:
+    """Probe steps 1 to 6 of a call, executing neither the body nor a conversion.
+
+    Binding, admission, and planning raise as the call's would. A conversion is
+    planned and reported, not constructed, and where the call lifts the law a
+    conversion constructs, selection waits on that law and is unresolved.
+
+    Raises
+    ------
+    TypeError
+        If the arguments do not bind to the signature.
+    ApplicabilityError
+        If an argument's kind is not accepted, or the declarations conflict.
+    ResolutionError
+        If a conversion has no converter.
+    """
+    call = _call.resolve_workflow_call(
+        function._signature_info,
+        args,
+        kwargs,
+        bind=function._bind,
+        module=function._module,
+        dependency_type=Node,
+        workflow_name=function._name,
+        default_n_broadcast_samples=function.options["n_broadcast_samples"],
+        default_include_inputs=function.options["include_inputs"],
+        options=_call.WorkflowCallOptions(),
+    )
+    if function.options["conversions"]:
+        raise NotImplementedError("Function.check: the conversions control")
+    values, conversions, waiting = _normalization.plan_distribution_values(
+        values=call.values, signature_info=function._signature_info
+    )
+    _call.admit_arguments(
+        function._signature_info,
+        values,
+        input_spec=function.input_spec,
+        function_name=function._name,
+    )
+    broadcast_plan = _plan.build_broadcast_plan(
+        values=values, signature_info=function._signature_info
+    )
+    lifted_refs = (*broadcast_plan.array_args, *broadcast_plan.dist_args)
+    _, bindings = _bind_planned_function_inputs(
+        function_name=function._name,
+        input_spec=function.input_spec,
+        values=values,
+        lifted_names={ref.parameter_name for ref in lifted_refs},
+    )
+    result = (
+        function.output_spec.with_dim_sizes(**bindings)
+        if function.output_spec is not None
+        else None
+    )
+    deferred = ()
+    if result is None or result.spec is None:
+        deferred = ("the result's type is completed from the returned value",)
+    lifted = tuple(dict.fromkeys(ref.parameter_name for ref in lifted_refs))
+    if waiting:
+        # The lift of a converted argument is decided by the law the conversion
+        # constructs, so the selection waits on it.
+        pending = MethodInfo(None, pending=waiting, method_name=_PLANNED, exact=False)
+        return CallReport(
+            routes=(pending,),
+            deferred=deferred,
+            result=result,
+            lifted=lifted,
+            conversions=MappingProxyType(conversions),
+        )
+    info, _ = _route_report(function, values, broadcast_plan, call.overrides)
+    return CallReport(
+        routes=(info,),
+        selected=None if info.feasible is None else info,
+        deferred=deferred,
+        result=result,
+        lifted=lifted,
+        conversions=MappingProxyType(conversions),
+    )
+
+
+def _run_registered_rule(
+    function: Function,
+    route: _Route,
+    provenance_parents: list[TrackedTerm],
+    provenance_inputs: Mapping[str, Any],
+) -> Any:
+    """Execute a registered evaluation rule and give its result the call's identity.
+
+    The rule returns the result over raw forms, and the return step wraps it at
+    its kind under the function's output name, with provenance recording the
+    function, its inputs, and the rule.
+    """
+    result = route.rule.execute(
+        function,
+        route.operand,
+        parameter=route.parameter,
+        fixed_args=route.fixed_args,
+        controls=route.controls,
+    )
+    controls, diagnostics = _recipe.provenance_recipe_fields(None)
+    provenance = Provenance.create(
+        f"workflow.{function._name}",
+        parents=provenance_parents,
+        metadata={"func": function._name, **route.metadata},
+        inputs=provenance_inputs,
+        controls=controls,
+        diagnostics=diagnostics,
+    )
+    return _result._coerce_output(
+        result,
+        broadcast_mode=_result.BROADCAST_WRAP,
+        provenance=provenance,
+        field_name=function.output_name,
+    )
 
 
 @contextmanager
@@ -832,12 +1093,17 @@ class _CallEngine:
         return _result._detach(result) if function.options["raw"] else result
 
     @staticmethod
+    def check(function: Function, *args: Any, **kwargs: Any) -> CallReport:
+        """The probe of steps 1 to 6 that :meth:`Function.check` returns."""
+        return _check_call(function, args, kwargs)
+
+    @staticmethod
     def apply_scope() -> AbstractContextManager[None]:
         """The scope plain evaluation runs in: workflow admission and RNG ownership."""
         return _apply_scope()
 
 
-#: The installed engine. It provides no probe yet, so Function.check stays unimplemented.
+#: The installed engine.
 _call_engine = _CallEngine()
 
 install_call_engine(_call_engine)

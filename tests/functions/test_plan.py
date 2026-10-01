@@ -8,12 +8,14 @@ from typing import Any
 from unittest.mock import patch
 
 import jax.numpy as jnp
+import numpy as np
 import pytest
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
+    ApplicabilityError,
     Distribution,
-    DistributionArray,
+    DistributionBatch,
     EmpiricalDistribution,
     Normal,
     NumericRecord,
@@ -133,16 +135,10 @@ class TestHintClassification:
 
     def test_array_hints_skip_array_sweep(self):
         ra = _numeric_record_batch("x", range(4))
-        da = DistributionArray.from_batched_params(
-            Normal,
-            batch_shape=(2,),
-            loc=jnp.asarray([0.0, 1.0]),
-            scale=1.0,
-            name="d",
-        )
+        laws = DistributionBatch("d", [Normal("x", 0.0, 1.0), Normal("x", 1.0, 1.0)], "law")
 
         record_plan = _plan({"p": ra}, {"p": NumericRecordBatch})
-        dist_plan = _plan({"d": da}, {"d": DistributionArray})
+        dist_plan = _plan({"d": laws}, {"d": DistributionBatch})
         any_plan = _plan({"p": ra}, {"p": Any})
 
         assert record_plan.regime == "none"
@@ -207,19 +203,16 @@ class TestArrayGrouping:
         ra_a = _numeric_record_batch("a", range(3))
         ra_b = _numeric_record_batch("b", range(2))
 
-        with pytest.raises(ValueError, match="batched differently"):
+        with pytest.raises(ApplicabilityError, match="batched differently"):
             _plan({"a": ra_a.select("a")["a"], "b": ra_b.select("b")["b"]})
 
-    def test_distribution_array_uses_sweep_group(self):
-        da = DistributionArray.from_batched_params(
-            Normal,
-            batch_shape=(2, 3),
-            loc=jnp.arange(6.0).reshape(2, 3),
-            scale=1.0,
-            name="d",
-        )
+    def test_a_distribution_batch_sweeps_on_its_own_levels(self):
+        store = np.empty(6, dtype=object)
+        for position in range(6):
+            store[position] = Normal("x", float(position), 1.0)
+        laws = DistributionBatch("d", store.reshape(2, 3), ("row", "col"))
 
-        plan = _plan({"d": da})
+        plan = _plan({"d": laws})
 
         assert plan.regime == "sweep"
         assert plan.array_args == (_ref("d"),)
@@ -228,8 +221,8 @@ class TestArrayGrouping:
                 arg_refs=(_ref("d"),),
                 batch_shape=(2, 3),
                 size=6,
-                level_names=("d",),
-                axis_groups=((2, 3),),
+                level_names=("row", "col"),
+                axis_groups=((2,), (3,)),
             ),
         )
         assert plan.sweep_batch_shape == (2, 3)
@@ -656,7 +649,7 @@ class TestBatchGrouping:
         so disagreeing about its size is a mistake rather than a product."""
         import pytest
 
-        with pytest.raises(ValueError, match="batched differently"):
+        with pytest.raises(ApplicabilityError, match="batched differently"):
             _plan({"a": _batch("draw", 3), "b": _batch("draw", 2)})
 
 
@@ -672,10 +665,10 @@ class TestAnnotationDispatch:
         assert plan.regime == "none"
 
     def test_another_container_class_does_not_skip_it(self):
-        """A batch passed where a DistributionArray was declared is not what the
+        """A batch passed where a DistributionBatch was declared is not what the
         body said it takes whole, so it sweeps."""
         batch = _batch()
-        plan = _plan({"p": batch}, hints={"p": DistributionArray})
+        plan = _plan({"p": batch}, hints={"p": DistributionBatch})
 
         assert plan.regime == "sweep"
         assert plan.array_args == (_ref("p"),)
@@ -697,33 +690,8 @@ class TestPartialLevelOverlap:
         )
         one = _batch("draw", 3)
 
-        with pytest.raises(ValueError, match="share the level 'draw'"):
+        with pytest.raises(ApplicabilityError, match="share the level 'draw'"):
             _plan({"a": two, "b": one})
-
-    def test_a_levelless_operand_does_not_own_its_parameter_name_as_a_level(self):
-        """An operand with no levels of its own cannot share one.
-
-        Its multiplicity is anonymous, so it aligns with nothing by name and
-        products with everything. Standing the parameter's name in for the levels
-        it does not have collides with a real level of that name on another
-        operand — and refuses a call whose two axes are simply independent, on
-        the strength of a level neither operand disagrees about.
-
-        A ``DistributionArray`` is the levelless operand that outlives the
-        cutover: it is swept by its ``batch_shape`` without being a ``Batch``, so
-        it carries no level names of its own either before or after the batch
-        types stop being records.
-        """
-        levelless = DistributionArray.from_batched_params(
-            Normal, batch_shape=(2,), loc=jnp.asarray([0.0, 1.0]), scale=1.0, name="d"
-        )
-        batch = _batch("draw", 3)
-
-        plan = _plan({"draw": levelless, "other": batch})
-
-        assert plan.regime == "sweep"
-        # Two independent multiplicities: a product, not a zip.
-        assert len(plan.array_groups) == 2
 
     def test_the_same_levels_at_different_geometries_are_refused(self):
         """The flat shape can agree while the partition does not; zipping would
@@ -745,7 +713,9 @@ class TestPartialLevelOverlap:
             axes_per_level=(2, 1),
         )
 
-        with pytest.raises(ValueError, match="same levels but are batched differently"):
+        with pytest.raises(
+            ApplicabilityError, match=r"same levels \('a', 'b'\) but are batched differently"
+        ):
             _plan({"a": ga, "b": gb})
 
 
