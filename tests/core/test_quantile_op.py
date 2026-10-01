@@ -9,10 +9,10 @@ import pytest
 
 from probpipe import (
     EmpiricalDistribution,
-    Normal,
     NumericArrayBatch,
     NumericRecord,
     NumericRecordBatch,
+    Poisson,
     RecordSpec,
     SupportsQuantile,
     quantile,
@@ -100,7 +100,7 @@ class TestQuantileOp:
 
     def test_raises_on_unsupported_distribution(self):
         with pytest.raises(TypeError, match="quantile"):
-            quantile(Normal(loc=0.0, scale=1.0, name="x"), 0.5)
+            quantile(Poisson("x", 2.0), 0.5)
 
     def test_raises_on_out_of_range_q(self):
         emp = EmpiricalDistribution("x", jnp.arange(10.0))

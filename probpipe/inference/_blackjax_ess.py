@@ -85,12 +85,8 @@ def _gaussian_prior_params(prior: Distribution) -> tuple[Array, Array] | None:
     Gamma / Beta / Dirichlet / non-Gaussian priors, and improper
     priors (which have no ``_sample`` to draw the auxiliary from).
     """
-    from ..distributions import (
-        JointGaussian,
-        MultivariateNormal,
-        Normal,
-        ProductDistribution,
-    )
+    from ..distributions import JointGaussian, ProductDistribution
+    from ..families import MultivariateNormal, Normal
 
     if isinstance(prior, MultivariateNormal):
         loc = jnp.atleast_1d(jnp.asarray(prior.loc))

@@ -596,6 +596,9 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         from ..core.record import _pack_fields
 
         fields = getattr(self, "fields", None)
+        if fields is None and _declares_numeric_event(self):
+            # A numeric law outside the record laws names its fields by its components.
+            fields = tuple(self.event_spec.components)
         if not fields:
             raise TypeError(
                 f"{type(self).__name__} does not support the keyword form of "

@@ -49,15 +49,9 @@ _SECTION_MODULES = {
 
 #: Where each declared class that ``families/`` does not define is today.
 _CURRENT_MODULES = {
-    "TFPDistribution": "probpipe.distributions._tfp_base",
-    "Normal": "probpipe.distributions.continuous",
     "BootstrapReplicateDistribution": "probpipe.core._empirical",
     "BootstrapDistribution": "probpipe.core._numeric_record_distribution",
     "KDEDistribution": "probpipe.distributions.kde",
-    "RandomFunction": "probpipe.core._random_functions",
-    "RandomMeasure": "probpipe.core._random_measures",
-    "GaussianRandomFunction": "probpipe.distributions.gaussian_random_function",
-    "LinearBasisFunction": "probpipe.distributions.gaussian_random_function",
 }
 
 #: Declarations of these sections that the distribution layer owns and checks.
@@ -65,7 +59,6 @@ _OTHER_PACKAGES = frozenset({"EmpiricalDistribution"})
 
 #: Declarations the implementation does not match yet, with the change each awaits.
 _PENDING = {
-    "TFPDistribution": "the adapter takes the wrapped backend distribution as backend_dist",
     "BootstrapReplicateDistribution": (
         "replicate_size is positional-or-keyword, and event_spec names the replicate's component"
     ),
@@ -74,12 +67,6 @@ _PENDING = {
     ),
     "KDEDistribution": (
         "the KDE takes atoms, bandwidth, weights, and a SmoothingKernel class, in that order"
-    ),
-    "GaussianRandomFunction": (
-        "predict_covariance and __call__ take the stacked inputs only, without the joint flags"
-    ),
-    "LinearBasisFunction": (
-        "the basis-function model takes basis and weights, with output_spec and event_spec"
     ),
 }
 
@@ -137,6 +124,14 @@ def _cases() -> list:
     return cases
 
 
+def _listed_families() -> list[str]:
+    """The parametric families VII.1 lists in its prose, which its code block declares by example."""
+    text = _CATALOG.read_text()
+    section = text[text.index("## VII.1") : text.index("## VII.2")]
+    listing = section[section.index("continuous (") : section.index("Each family derives")]
+    return re.findall(r"`([A-Z]\w+)`", listing)
+
+
 def _new_declarations() -> dict[str, str]:
     """Each declared name that ``families/`` defines, with its section."""
     return {
@@ -183,15 +178,8 @@ class TestDeclarationsAreImplemented:
 class TestTheParametricFamilies:
     """VII.1: every family is a thin constructor taking its name first and an event_spec."""
 
-    @staticmethod
-    def _listed_families() -> list[str]:
-        text = _CATALOG.read_text()
-        section = text[text.index("## VII.1") : text.index("## VII.2")]
-        listing = section[section.index("continuous (") : section.index("Each family derives")]
-        return re.findall(r"`([A-Z]\w+)`", listing)
-
     def test_the_listing_names_every_family(self):
-        assert len(self._listed_families()) == 24
+        assert len(_listed_families()) == 24
 
     @pytest.mark.parametrize(
         "name",
@@ -223,9 +211,9 @@ class TestTheParametricFamilies:
         ],
     )
     def test_a_family_takes_its_name_first_and_a_keyword_event_spec(self, name):
-        assert name in self._listed_families()
-        family = getattr(probpipe.distributions, name)
-        assert issubclass(family, probpipe.distributions.TFPDistribution)
+        assert name in _listed_families()
+        family = getattr(probpipe.families, name)
+        assert issubclass(family, probpipe.families.TFPDistribution)
         parameters = list(inspect.signature(family.__init__).parameters.values())[1:]
         assert parameters[0].name == "name"
         assert parameters[0].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
@@ -245,12 +233,12 @@ class TestThePackage:
         assert present == listed
 
     def test_every_export_is_a_part_vii_declaration(self):
-        """A public name the catalog does not declare is drift."""
-        undeclared = set(families.__all__) - set(_new_declarations())
+        """A public name the catalog does not declare, in a code block or the VII.1 listing, is drift."""
+        undeclared = set(families.__all__) - set(_new_declarations()) - set(_listed_families())
         assert not undeclared, sorted(undeclared)
 
     def test_every_new_declaration_is_exported(self):
-        assert set(_new_declarations()) == set(families.__all__)
+        assert set(_new_declarations()) | set(_listed_families()) == set(families.__all__)
 
     def test_no_export_clashes_with_the_top_level_namespace(self):
         """A name both namespaces export is one object, which the top level re-exports."""

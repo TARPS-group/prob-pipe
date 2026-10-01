@@ -70,8 +70,6 @@ from probpipe.core._numeric_record_distribution import (
 )
 from probpipe.core._opaque import Opaque, OpaqueSpec
 from probpipe.core._opaque_batch import OpaqueBatch
-from probpipe.core._random_functions import ArrayRandomFunction, RandomFunction
-from probpipe.core._random_measures import NumericRandomMeasure, RandomMeasure
 from probpipe.core._record_batch import RecordBatch
 from probpipe.core._record_distribution import RecordDistribution
 from probpipe.core._specs import (
@@ -112,50 +110,14 @@ from probpipe.core.transition import (
     with_resampling,
 )
 from probpipe.distributions import (
-    # Discrete
-    Bernoulli,
-    Beta,
-    Binomial,
-    Categorical,
-    Cauchy,
-    Dirichlet,
-    Exponential,
-    Gamma,
-    # Gaussian random functions
-    GaussianRandomFunction,
-    HalfCauchy,
-    HalfNormal,
-    InverseGamma,
     JointEmpirical,
     JointGaussian,
     # KDE
     KDEDistribution,
-    Laplace,
-    LinearBasisFunction,
-    LogNormal,
-    Multinomial,
-    # Multivariate
-    MultivariateNormal,
-    NegativeBinomial,
-    # Continuous
-    Normal,
     NumericJointEmpirical,
-    Pareto,
-    Poisson,
     # Joint
     ProductDistribution,
     SequentialJointDistribution,
-    StudentT,
-    # TFP base
-    TFPDistribution,
-    # Transformed
-    TransformedDistribution,
-    TruncatedNormal,
-    Uniform,
-    VonMisesFisher,
-    Wishart,
-    bijector_for,
-    register_bijector,
 )
 from probpipe.distributions._capabilities import (
     SupportsApproximateConditioning,
@@ -178,12 +140,46 @@ from probpipe.distributions._distribution import (
     NumericDistribution,
     set_default_num_evaluations,
 )
-from probpipe.families import UnnormalizedDistribution
+from probpipe.families import (
+    Bernoulli,
+    Beta,
+    BijectorTransformedDistribution,
+    Binomial,
+    Categorical,
+    Cauchy,
+    Dirichlet,
+    Exponential,
+    Gamma,
+    GaussianRandomFunction,
+    HalfCauchy,
+    HalfNormal,
+    InverseGamma,
+    Laplace,
+    LinearBasisFunction,
+    LogNormal,
+    Multinomial,
+    MultivariateNormal,
+    NegativeBinomial,
+    Normal,
+    Pareto,
+    Poisson,
+    RandomFunction,
+    RandomMeasure,
+    StudentT,
+    TFPDistribution,
+    TruncatedNormal,
+    Uniform,
+    UnnormalizedDistribution,
+    VonMisesFisher,
+    Wishart,
+)
 from probpipe.functions import (
     AbstractModule,
     Module,
     abstract_workflow_method,
+    bijector_for,
     function,
+    register_bijector,
     workflow_method,
 )
 from probpipe.functions._call import ApplicabilityError
@@ -236,13 +232,13 @@ __all__ = [
     "ApplicabilityError",
     "ApproximateDistribution",
     "ArrayBackend",
-    "ArrayRandomFunction",
     "Batch",
     "BatchSpec",
     "BayesFlowLikelihood",
     "BayesFlowRatio",
     "Bernoulli",
     "Beta",
+    "BijectorTransformedDistribution",
     "Binomial",
     "BootstrapDistribution",
     "BootstrapReplicateDistribution",
@@ -297,7 +293,6 @@ __all__ = [
     "NumericArraySpec",
     "NumericDistribution",
     "NumericJointEmpirical",
-    "NumericRandomMeasure",
     "NumericRecord",
     "NumericRecordBatch",
     "NumericRecordDistribution",
@@ -351,7 +346,6 @@ __all__ = [
     "TFPDistribution",
     "TermSpec",
     "TrackedTerm",
-    "TransformedDistribution",
     "TruncatedNormal",
     "Uniform",
     "UnmanagedConcurrentWorkflowEntryError",

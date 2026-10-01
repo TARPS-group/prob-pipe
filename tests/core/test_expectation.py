@@ -11,6 +11,7 @@ import probpipe.distributions._distribution as dist_mod
 from probpipe import (
     Bernoulli,
     Beta,
+    BijectorTransformedDistribution,
     Binomial,
     BootstrapDistribution,
     BootstrapReplicateDistribution,
@@ -22,7 +23,6 @@ from probpipe import (
     NumericArray,
     NumericRecord,
     RecordEmpiricalDistribution,
-    TransformedDistribution,
     expectation,
     from_distribution,
     mean,
@@ -317,11 +317,13 @@ class TestIsApproximate:
 
     def test_transformed_propagates(self):
         exact_base = Normal(loc=0.0, scale=1.0, name="x")
-        t_exact = TransformedDistribution("t_exact", exact_base, tfb.Exp())
+        t_exact = BijectorTransformedDistribution("t_exact", exact_base, tfb.Exp())
         assert not t_exact.is_approximate
 
-        approx_base = EmpiricalDistribution("x", jnp.array([1.0, 2.0]))
-        t_approx = TransformedDistribution("t_approx", approx_base, tfb.Exp())
+        approx_base = from_distribution(
+            EmpiricalDistribution("x", jnp.array([1.0, 2.0, 4.0])), Normal
+        )
+        t_approx = BijectorTransformedDistribution("t_approx", approx_base, tfb.Exp())
         assert t_approx.is_approximate
 
     def test_from_distribution_same_class_exact(self):

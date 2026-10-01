@@ -40,7 +40,7 @@ from ._capabilities import (
     SupportsSampling,
     SupportsVariance,
 )
-from ._distribution import Distribution
+from ._distribution import Distribution, NumericDistribution
 from ._joint_utils import (
     KeyPath,
     _parse_condition_args,
@@ -86,7 +86,7 @@ def _product_class_for_components(components: dict) -> type:
         (SupportsLogProb, SupportsMean, SupportsVariance),
     )
     all_tfp = all(hasattr(leaf, "_tfp_dist") for leaf in leaves)
-    all_numeric = all(isinstance(leaf, NumericRecordDistribution) for leaf in leaves)
+    all_numeric = all(isinstance(leaf, NumericDistribution) for leaf in leaves)
 
     key = (frozenset(extra_bases), all_tfp, all_numeric)
     if key in _PRODUCT_CLASS_CACHE:
@@ -405,7 +405,7 @@ class ProductDistribution(
     @property
     def components(self):
         """Read-only view of the component distributions."""
-        if all(isinstance(v, NumericRecordDistribution) for v in self._components.values()):
+        if all(isinstance(v, Distribution) for v in self._components.values()):
             return MappingProxyType(self._components)
         return self._components
 

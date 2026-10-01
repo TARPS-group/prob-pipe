@@ -19,10 +19,12 @@ from typing import Any
 import jax.numpy as jnp
 
 from ..core._empirical import EmpiricalDistribution, RecordEmpiricalDistribution
+from ..core._numeric_record_distribution import NumericRecordDistribution
 from ..core.provenance import Provenance
-from ..distributions._distribution import Distribution
-from ..distributions._tfp_base import _allow_batched_tfp_init
-from ..distributions.transformed import TransformedDistribution
+from ..distributions._capabilities import SupportsMean
+from ..distributions._distribution import Distribution, NumericDistribution
+from ..families._backend import _allow_batched_tfp_init
+from ..families._transformed import BijectorTransformedDistribution
 from ._registry import (
     _PROBPIPE_PROVIDER_ABI,
     ConversionInfo,
@@ -88,8 +90,8 @@ class _SampledMomentBatch:
 def _requires_sampled_moments(source: Any, target_name: str) -> bool:
     """Return whether a known ProbPipe moment implementation uses MC."""
     return (
-        isinstance(source, TransformedDistribution)
-        and source._tfp_transformed is None
+        isinstance(source, BijectorTransformedDistribution)
+        and not isinstance(source, SupportsMean)
         and target_name in _MOMENT_MATCH_TARGETS
     )
 
@@ -224,7 +226,7 @@ def _point_estimate(x):
 
 
 def _convert_to_normal(source, key, **kw):
-    from ..distributions.continuous import Normal
+    from ..families._continuous import Normal
 
     if isinstance(source, Normal):
         return source
@@ -237,7 +239,7 @@ def _convert_to_normal(source, key, **kw):
 
 
 def _convert_to_beta(source, key, **kw):
-    from ..distributions.continuous import Beta
+    from ..families._continuous import Beta
 
     if isinstance(source, Beta):
         return source
@@ -253,7 +255,7 @@ def _convert_to_beta(source, key, **kw):
 
 
 def _convert_to_gamma(source, key, **kw):
-    from ..distributions.continuous import Gamma
+    from ..families._continuous import Gamma
 
     if isinstance(source, Gamma):
         return source
@@ -266,7 +268,7 @@ def _convert_to_gamma(source, key, **kw):
 
 
 def _convert_to_inverse_gamma(source, key, **kw):
-    from ..distributions.continuous import InverseGamma
+    from ..families._continuous import InverseGamma
 
     if isinstance(source, InverseGamma):
         return source
@@ -281,7 +283,7 @@ def _convert_to_inverse_gamma(source, key, **kw):
 
 
 def _convert_to_exponential(source, key, **kw):
-    from ..distributions.continuous import Exponential
+    from ..families._continuous import Exponential
 
     if isinstance(source, Exponential):
         return source
@@ -294,7 +296,7 @@ def _convert_to_exponential(source, key, **kw):
 
 
 def _convert_to_lognormal(source, key, **kw):
-    from ..distributions.continuous import LogNormal
+    from ..families._continuous import LogNormal
 
     if isinstance(source, LogNormal):
         return source
@@ -309,7 +311,7 @@ def _convert_to_lognormal(source, key, **kw):
 
 
 def _convert_to_studentt(source, key, **kw):
-    from ..distributions.continuous import StudentT
+    from ..families._continuous import StudentT
 
     if isinstance(source, StudentT):
         return source
@@ -326,7 +328,7 @@ def _convert_to_studentt(source, key, **kw):
 
 
 def _convert_to_uniform(source, key, **kw):
-    from ..distributions.continuous import Uniform
+    from ..families._continuous import Uniform
 
     if isinstance(source, Uniform):
         return source
@@ -340,7 +342,7 @@ def _convert_to_uniform(source, key, **kw):
 
 
 def _convert_to_cauchy(source, key, **kw):
-    from ..distributions.continuous import Cauchy
+    from ..families._continuous import Cauchy
 
     if isinstance(source, Cauchy):
         return source
@@ -353,7 +355,7 @@ def _convert_to_cauchy(source, key, **kw):
 
 
 def _convert_to_laplace(source, key, **kw):
-    from ..distributions.continuous import Laplace
+    from ..families._continuous import Laplace
 
     if isinstance(source, Laplace):
         return source
@@ -366,7 +368,7 @@ def _convert_to_laplace(source, key, **kw):
 
 
 def _convert_to_halfnormal(source, key, **kw):
-    from ..distributions.continuous import HalfNormal
+    from ..families._continuous import HalfNormal
 
     if isinstance(source, HalfNormal):
         return source
@@ -380,7 +382,7 @@ def _convert_to_halfnormal(source, key, **kw):
 
 
 def _convert_to_halfcauchy(source, key, **kw):
-    from ..distributions.continuous import HalfCauchy
+    from ..families._continuous import HalfCauchy
 
     if isinstance(source, HalfCauchy):
         return source
@@ -392,7 +394,7 @@ def _convert_to_halfcauchy(source, key, **kw):
 
 
 def _convert_to_pareto(source, key, **kw):
-    from ..distributions.continuous import Pareto
+    from ..families._continuous import Pareto
 
     if isinstance(source, Pareto):
         return source
@@ -406,7 +408,7 @@ def _convert_to_pareto(source, key, **kw):
 
 
 def _convert_to_truncatednormal(source, key, **kw):
-    from ..distributions.continuous import TruncatedNormal
+    from ..families._continuous import TruncatedNormal
 
     if isinstance(source, TruncatedNormal):
         return source
@@ -433,7 +435,7 @@ def _convert_to_truncatednormal(source, key, **kw):
 
 
 def _convert_to_bernoulli(source, key, **kw):
-    from ..distributions.discrete import Bernoulli
+    from ..families._discrete import Bernoulli
 
     if isinstance(source, Bernoulli):
         return source
@@ -444,7 +446,7 @@ def _convert_to_bernoulli(source, key, **kw):
 
 
 def _convert_to_binomial(source, key, **kw):
-    from ..distributions.discrete import Binomial
+    from ..families._discrete import Binomial
 
     if isinstance(source, Binomial):
         return source
@@ -461,7 +463,7 @@ def _convert_to_binomial(source, key, **kw):
 
 
 def _convert_to_poisson(source, key, **kw):
-    from ..distributions.discrete import Poisson
+    from ..families._discrete import Poisson
 
     if isinstance(source, Poisson):
         return source
@@ -472,7 +474,7 @@ def _convert_to_poisson(source, key, **kw):
 
 
 def _convert_to_categorical(source, key, **kw):
-    from ..distributions.discrete import Categorical
+    from ..families._discrete import Categorical
 
     if isinstance(source, Categorical):
         return source
@@ -486,7 +488,7 @@ def _convert_to_categorical(source, key, **kw):
 
 
 def _convert_to_negativebinomial(source, key, **kw):
-    from ..distributions.discrete import NegativeBinomial
+    from ..families._discrete import NegativeBinomial
 
     if isinstance(source, NegativeBinomial):
         return source
@@ -507,7 +509,7 @@ def _convert_to_negativebinomial(source, key, **kw):
 
 
 def _convert_to_multivariatenormal(source, key, **kw):
-    from ..distributions.multivariate import MultivariateNormal
+    from ..families._multivariate import MultivariateNormal
 
     kw.pop("num_samples", None)
     name = kw.get("name") or source.name
@@ -537,7 +539,7 @@ def _convert_to_multivariatenormal(source, key, **kw):
 
 
 def _convert_to_dirichlet(source, key, **kw):
-    from ..distributions.multivariate import Dirichlet
+    from ..families._multivariate import Dirichlet
 
     if isinstance(source, Dirichlet):
         return source
@@ -553,7 +555,7 @@ def _convert_to_dirichlet(source, key, **kw):
 
 
 def _convert_to_multinomial(source, key, **kw):
-    from ..distributions.multivariate import Multinomial
+    from ..families._multivariate import Multinomial
 
     if isinstance(source, Multinomial):
         return source
@@ -573,7 +575,7 @@ def _convert_to_multinomial(source, key, **kw):
 
 
 def _convert_to_wishart(source, key, **kw):
-    from ..distributions.multivariate import Wishart
+    from ..families._multivariate import Wishart
 
     if isinstance(source, Wishart):
         return source
@@ -592,7 +594,7 @@ def _convert_to_wishart(source, key, **kw):
 
 
 def _convert_to_vonmisesfisher(source, key, **kw):
-    from ..distributions.multivariate import VonMisesFisher
+    from ..families._multivariate import VonMisesFisher
 
     if isinstance(source, VonMisesFisher):
         return source
@@ -869,15 +871,12 @@ class ProbPipeConverter(Converter):
 
         # Post-construction support check. Per-field ``supports`` is
         # instance state, so the check has to run after the target is
-        # built. Targets that aren't ``NumericRecordDistribution``
-        # don't carry the method (skipped via the ``getattr`` fallback);
-        # sources that don't expose per-field ``supports`` raise
-        # ``AttributeError``, which counts as "unknown".
-        if check_support:
-            check = getattr(result, "_check_support_compatible", None)
-            if check is not None:
-                with contextlib.suppress(AttributeError):
-                    check(source)
+        # built. Only a numeric target declares supports; sources that
+        # don't expose per-field ``supports`` raise ``AttributeError``,
+        # which counts as "unknown".
+        if check_support and isinstance(result, NumericDistribution):
+            with contextlib.suppress(AttributeError):
+                NumericRecordDistribution._check_support_compatible(result, source)
 
         # Mark approximate if source is approximate or conversion used sampling.
         # Written through ``object.__setattr__``: the result is a tracked term,

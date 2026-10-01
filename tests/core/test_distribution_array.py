@@ -760,7 +760,7 @@ class TestFromBatchedParams:
 
     def test_normal_uses_tfp_backend(self):
         from probpipe import DistributionArray, Normal
-        from probpipe.distributions._tfp_base import _TFPArrayBackend
+        from probpipe.families._backend import _TFPArrayBackend
 
         da = DistributionArray.from_batched_params(
             Normal,
@@ -860,7 +860,7 @@ class TestFromBatchedParams:
         their per-param event ranks differ (``loc`` is
         ``(*batch, d)``, ``scale_tril`` is ``(*batch, d, d)``)."""
         from probpipe import DistributionArray, MultivariateNormal
-        from probpipe.distributions._tfp_base import _TFPArrayBackend
+        from probpipe.families._backend import _TFPArrayBackend
 
         d = 3
         da = DistributionArray.from_batched_params(
@@ -978,7 +978,7 @@ class TestDistributionFromBatchedParamsAlias:
 
     def test_alias_dispatches_to_distribution_array_factory(self):
         from probpipe import DistributionArray, Normal
-        from probpipe.distributions._tfp_base import _TFPArrayBackend
+        from probpipe.families._backend import _TFPArrayBackend
 
         da = Normal.from_batched_params(
             loc=jnp.arange(5.0),

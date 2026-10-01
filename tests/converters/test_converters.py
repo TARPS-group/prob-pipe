@@ -23,7 +23,7 @@ from probpipe import (
     converter_registry,
     from_distribution,
 )
-from probpipe.distributions.continuous import (
+from probpipe.families._continuous import (
     Cauchy,
     HalfCauchy,
     HalfNormal,
@@ -35,8 +35,8 @@ from probpipe.distributions.continuous import (
     TruncatedNormal,
     Uniform,
 )
-from probpipe.distributions.discrete import Binomial, NegativeBinomial
-from probpipe.distributions.multivariate import Dirichlet, Multinomial, VonMisesFisher, Wishart
+from probpipe.families._discrete import Binomial, NegativeBinomial
+from probpipe.families._multivariate import Dirichlet, Multinomial, VonMisesFisher, Wishart
 
 # ---------------------------------------------------------------------------
 # Registry basics

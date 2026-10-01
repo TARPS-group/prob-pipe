@@ -51,7 +51,6 @@ from probpipe import (
     RecordSpec,
     SequentialJointDistribution,
     StudentT,
-    TransformedDistribution,
     TruncatedNormal,
     Uniform,
     VonMisesFisher,
@@ -72,17 +71,20 @@ from probpipe import (
     sphere,
     unit_interval,
 )
+from probpipe.core._numeric_record_distribution import NumericRecordDistributionView
 from probpipe.core._opaque import OpaqueSpec
 from probpipe.core._specs import NumericArraySpec
 from probpipe.core.provenance import Provenance, provenance_ancestors
+from probpipe.distributions import _empirical
 from probpipe.distributions.kde import KDEDistribution
+from probpipe.families import BijectorTransformedDistribution
 from probpipe.functions._normalization import DISTRIBUTION_HINT_PROTOCOLS
 
 
 def _make_transformed():
     import tensorflow_probability.substrates.jax.bijectors as tfb
 
-    return TransformedDistribution(
+    return BijectorTransformedDistribution(
         "transformed",
         Normal(loc=0.0, scale=1.0, name="x"),
         tfb.Exp(),
@@ -92,7 +94,7 @@ def _make_transformed():
 # Distribution-instance factories used by ``TestNoBatchShape``. Mirrors
 # the ``DISTRIBUTIONS`` table in ``tests/core/test_iteration_protocol.py`` but with
 # a smaller set covering the canonical TFP-backed scalars + the most
-# distinct subclasses (TransformedDistribution / KDEDistribution /
+# distinct subclasses (BijectorTransformedDistribution / KDEDistribution /
 # RecordEmpiricalDistribution).
 _NO_BATCH_SHAPE_DISTS = [
     pytest.param(lambda: Normal(loc=0.0, scale=1.0, name="x"), id="Normal"),
@@ -101,7 +103,7 @@ _NO_BATCH_SHAPE_DISTS = [
         lambda: MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z"),
         id="MultivariateNormal",
     ),
-    pytest.param(_make_transformed, id="TransformedDistribution"),
+    pytest.param(_make_transformed, id="BijectorTransformedDistribution"),
     pytest.param(
         lambda: KDEDistribution("kde", jnp.zeros((20, 3))),
         id="KDEDistribution",
@@ -616,9 +618,10 @@ class TestDerivedNames:
                 id="bootstrap-replicate",
             ),
             pytest.param(
-                lambda: MultivariateNormal(
-                    "law", jnp.zeros(2), cov=jnp.eye(2)
-                ).as_record_distribution(template=NumericRecordSpec(a=(), b=())),
+                lambda: NumericRecordDistributionView(
+                    MultivariateNormal("law", jnp.zeros(2), cov=jnp.eye(2)),
+                    NumericRecordSpec(a=(), b=()),
+                ),
                 lambda x: x["a"],
                 id="record-view",
             ),
@@ -1215,26 +1218,21 @@ class TestDerivedDeclarations:
     def test_a_transformed_law_declares_the_image(self):
         import tensorflow_probability.substrates.jax.bijectors as tfb
 
-        law = TransformedDistribution("t", Normal("x", 0.0, 1.0), tfb.Exp())
+        law = BijectorTransformedDistribution("t", Normal("x", 0.0, 1.0), tfb.Exp())
         assert law.event_spec == OutputSpec(
             t=NumericArraySpec((), jnp.asarray(0.0).dtype, positive)
         )
-        over_atoms = TransformedDistribution(
-            "u", EmpiricalDistribution("e", jnp.ones((4, 2))), tfb.Exp()
+        over_atoms = BijectorTransformedDistribution(
+            "u", _empirical.EmpiricalDistribution("e", jnp.ones((4, 2))), tfb.Exp()
         )
         assert over_atoms.event_shape == (2,)
 
-    def test_a_random_function_draws_an_unspecified_callable(self):
+    def test_a_random_function_draws_a_callable_with_a_named_output(self):
         from probpipe import FunctionSpec, LinearBasisFunction
 
         weights = MultivariateNormal("w", loc=jnp.zeros(2), cov=jnp.eye(2))
-        f = LinearBasisFunction(
-            "f",
-            feature_map=lambda X: jnp.concatenate([X, X**2], -1),
-            weights=weights,
-            input_shape=(1,),
-        )
-        assert f.event_spec == OutputSpec(f=FunctionSpec())
+        f = LinearBasisFunction("f", lambda X: jnp.concatenate([X, X**2], -1), weights)
+        assert f.event_spec == OutputSpec(f=FunctionSpec(output_spec=OutputSpec(f=None)))
         # A derived function keeps its base's component; its label is not one.
         shifted = f + 1.0
         assert shifted.name == "shift(f)"
@@ -1295,9 +1293,9 @@ class TestViewAndWrapperDeclarations:
         from probpipe import real
 
         template = NumericRecordSpec(a=(2,), b=())
-        dirichlet = Dirichlet("d", jnp.ones(3)).as_record_distribution(template=template)
-        normal = MultivariateNormal("m", jnp.zeros(3), cov=jnp.eye(3)).as_record_distribution(
-            template=template
+        dirichlet = NumericRecordDistributionView(Dirichlet("d", jnp.ones(3)), template)
+        normal = NumericRecordDistributionView(
+            MultivariateNormal("m", jnp.zeros(3), cov=jnp.eye(3)), template
         )
         # simplex holds for the whole vector, and for no piece of it.
         assert dirichlet.supports == {"a": None, "b": None}
@@ -1350,7 +1348,7 @@ class TestViewAndWrapperDeclarations:
 
     def test_a_record_view_of_a_vector_draws_its_template(self):
         mvn = MultivariateNormal("theta", loc=jnp.zeros(3), cov=jnp.eye(3))
-        view = mvn.as_record_distribution(template=NumericRecordSpec(a=(), b=(2,)))
+        view = NumericRecordDistributionView(mvn, NumericRecordSpec(a=(), b=(2,)))
         dtype = jnp.asarray(0.0).dtype
         assert view.event_spec == OutputSpec(
             RecordSpec(a=NumericArraySpec((), dtype, real), b=NumericArraySpec((2,), dtype, real))

@@ -96,7 +96,7 @@ class JointGaussian(
         self._component_shapes = dict(component_shapes)
 
         # Build slices and component MultivariateNormal distributions
-        from .multivariate import MultivariateNormal as MVN
+        from ..families._multivariate import MultivariateNormal as MVN
 
         slices = {}
         components = {}
@@ -138,7 +138,7 @@ class JointGaussian(
         key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ):
-        from .multivariate import MultivariateNormal as MVN
+        from ..families._multivariate import MultivariateNormal as MVN
 
         full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat, name="_jg_internal")
         flat = full_mvn._sample(key, sample_shape)
@@ -167,7 +167,7 @@ class JointGaussian(
 
         if not isinstance(value, (Record, RecordBatch)):
             value = Record(self.name, value)
-        from .multivariate import MultivariateNormal as MVN
+        from ..families._multivariate import MultivariateNormal as MVN
 
         full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat, name="_jg_internal")
         # A record, and a batch of them, carry their own structure, so the

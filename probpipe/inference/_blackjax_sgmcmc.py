@@ -33,8 +33,8 @@ import jax
 import jax.numpy as jnp
 
 from ..core._dispatch import Feasibility
-from ..core._random_measures import RandomMeasure
 from ..custom_types import PRNGKey
+from ..families._random_functions import RandomMeasure
 from ..operations._condition import InferenceMethod
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._inference_utils import as_prng_key, get_init_state, is_simple_model, observed_parts

@@ -145,7 +145,7 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
             "_approximator": approximator,
             "_prior": prior,
             "_simulator": simulator,
-            "_theta_dim": int(prior.event_size),
+            "_theta_dim": int(prior.event_spec.spec.vector_size),
             "_data_dim": data_dim,
             "_bound": {},
         }

@@ -23,7 +23,7 @@ from probpipe.core.constraints import (
     sphere,
     unit_interval,
 )
-from probpipe.distributions import (
+from probpipe.families import (
     Bernoulli,
     Beta,
     Binomial,

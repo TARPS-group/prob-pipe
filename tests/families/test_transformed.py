@@ -1,13 +1,41 @@
-"""Contracts of the evaluation-result families (VII.4), pending their implementation."""
+"""Contracts of the evaluation-result families (VII.4)."""
 
 from __future__ import annotations
+
+import pickle
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+import tensorflow_probability.substrates.jax.bijectors as tfb
+import tensorflow_probability.substrates.jax.distributions as tfd
 
-from probpipe import Function, MultivariateNormal, Normal, ResolutionError
+from probpipe import (
+    Function,
+    MultivariateNormal,
+    Normal,
+    NumericDistribution,
+    ResolutionError,
+    bijector_for,
+    greater_than,
+    interval,
+    log_prob,
+    mean,
+    positive,
+    real,
+    sample,
+    simplex,
+    unit_interval,
+)
+from probpipe.distributions._capabilities import (
+    SupportsCovariance,
+    SupportsLogProb,
+    SupportsMean,
+    SupportsSampling,
+    SupportsVariance,
+)
+from probpipe.distributions._empirical import EmpiricalDistribution
 from probpipe.families import BijectorTransformedDistribution, LinearPushforwardDistribution
 from probpipe.linalg import DenseLinOp, LinOp
 
@@ -35,6 +63,16 @@ def base():
 @pytest.fixture
 def op():
     return DenseLinOp(jnp.array([[1.0, 2.0], [0.0, 1.0], [3.0, -1.0]]))
+
+
+@pytest.fixture
+def key():
+    return jax.random.PRNGKey(42)
+
+
+@pytest.fixture
+def standard():
+    return Normal("x", 0.0, 1.0)
 
 
 class TestTheLinearPushforward:
@@ -65,10 +103,14 @@ class TestTheLinearPushforward:
 
 
 class TestTheBijectorTransform:
-    @pytest.mark.pending(reason="the transform checks the bijector's claims at construction")
-    def test_a_map_without_an_inverse_raises(self):
-        with pytest.raises(ResolutionError):
-            BijectorTransformedDistribution("y", Normal("x", 0.0, 1.0), Function("exp", jnp.exp))
+    def test_a_map_without_an_inverse_raises(self, standard):
+        with pytest.raises(ResolutionError, match="SupportsInverse"):
+            BijectorTransformedDistribution("y", standard, Function("exp", jnp.exp))
+
+    def test_a_base_drawing_records_raises(self, standard):
+        joint = standard * Normal("z", 0.0, 1.0)
+        with pytest.raises(TypeError, match="draws are arrays"):
+            BijectorTransformedDistribution("y", joint, tfb.Exp())
 
     def test_the_change_of_variables_bijector_claims_its_inverse_and_log_jacobian(self):
         bijector = _Exp()
@@ -77,9 +119,201 @@ class TestTheBijectorTransform:
         derivative = jax.vmap(jax.grad(bijector.apply))(x)
         np.testing.assert_allclose(bijector._log_det_jacobian(x), jnp.log(derivative), rtol=1e-6)
 
-    @pytest.mark.pending(reason="the transform's density is the change of variables")
-    def test_the_log_density_is_the_change_of_variables(self):
-        transformed = BijectorTransformedDistribution("y", Normal("x", 0.0, 1.0), _Exp())
+    def test_the_log_density_is_the_change_of_variables(self, standard):
+        transformed = BijectorTransformedDistribution("y", standard, _Exp())
         y = jnp.asarray(2.0)
-        expected = Normal("x", 0.0, 1.0)._log_prob(jnp.log(y)) - jnp.log(y)
+        expected = standard._log_prob(jnp.log(y)) - jnp.log(y)
         np.testing.assert_allclose(transformed._log_prob(y), expected, rtol=1e-6)
+
+    def test_a_backend_bijector_enters_as_a_function(self, standard):
+        transformed = BijectorTransformedDistribution("y", standard, tfb.Exp())
+        assert isinstance(transformed.bijector, Function)
+
+    def test_the_log_density_matches_the_backend_transform(self, standard):
+        transformed = BijectorTransformedDistribution("td", standard, tfb.Exp())
+        reference = tfd.TransformedDistribution(distribution=standard.raw(), bijector=tfb.Exp())
+        ys = jnp.array([0.1, 1.0, 5.0])
+        np.testing.assert_allclose(
+            transformed._log_prob(ys), reference.log_prob(ys), rtol=1e-5, atol=1e-6
+        )
+
+    def test_the_label_names_the_event_and_the_base_is_its_parent(self, standard):
+        transformed = BijectorTransformedDistribution("log_normal", standard, tfb.Exp())
+        assert transformed.name == "log_normal"
+        assert list(transformed.event_spec.components) == ["log_normal"]
+        assert transformed.base is standard
+        assert transformed.provenance.operation == "transform"
+        assert transformed.provenance.parents[0].name == "x"
+
+    def test_the_repr_names_the_class_the_base_and_the_bijector(self, standard):
+        r = repr(BijectorTransformedDistribution("td", standard, tfb.Exp()))
+        assert "BijectorTransformedDistribution" in r
+        assert "Normal" in r
+        assert "exp" in r
+
+    def test_it_is_a_numeric_law_of_the_base_dtype(self, standard):
+        transformed = BijectorTransformedDistribution("td", standard, tfb.Exp())
+        assert isinstance(transformed, NumericDistribution)
+        assert transformed.dtype == jnp.zeros((), dtype=float).dtype
+        assert not hasattr(transformed, "batch_shape")
+
+    def test_it_pickles(self, standard):
+        transformed = BijectorTransformedDistribution("td", standard, tfb.Exp())
+        restored = pickle.loads(pickle.dumps(transformed))
+        np.testing.assert_allclose(restored._log_prob(2.0), transformed._log_prob(2.0))
+
+
+class TestSampling:
+    def test_exp_samples_are_positive(self, standard, key):
+        transformed = BijectorTransformedDistribution("td", standard, tfb.Exp())
+        draws = jnp.asarray(sample(transformed, key=key, sample_shape=(100,)))
+        assert draws.shape == (100,)
+        assert jnp.all(draws > 0)
+        assert transformed.event_shape == ()
+
+    def test_the_log_density_keeps_the_leading_axes(self, standard, key):
+        transformed = BijectorTransformedDistribution("td", standard, tfb.Exp())
+        draws = sample(transformed, key=key, sample_shape=(5,))
+        densities = log_prob(transformed, draws)
+        assert densities.shape == (5,)
+        assert jnp.all(jnp.isfinite(densities))
+
+    @pytest.mark.parametrize(
+        ("bijector", "low", "high"),
+        [(tfb.Sigmoid(), 0.0, 1.0), (tfb.Softplus(), 0.0, jnp.inf)],
+        ids=["sigmoid", "softplus"],
+    )
+    def test_draws_lie_in_the_image(self, standard, key, bijector, low, high):
+        transformed = BijectorTransformedDistribution("td", standard, bijector)
+        draws = jnp.asarray(sample(transformed, key=key, sample_shape=(100,)))
+        assert jnp.all(draws >= low) and jnp.all(draws <= high)
+
+    def test_a_multivariate_base(self, key):
+        base = MultivariateNormal("z", jnp.zeros(3), cov=jnp.eye(3))
+        transformed = BijectorTransformedDistribution("td", base, tfb.Exp())
+        draws = jnp.asarray(sample(transformed, key=key, sample_shape=(10,)))
+        assert draws.shape == (10, 3)
+        assert jnp.all(draws > 0)
+
+    def test_a_dimension_changing_bijector(self, key):
+        base = MultivariateNormal("z", jnp.zeros(2), cov=jnp.eye(2))
+        transformed = BijectorTransformedDistribution("p", base, bijector_for(simplex))
+        assert transformed.event_shape == (3,)
+        draw = transformed._sample(key)
+        assert float(jnp.sum(draw)) == pytest.approx(1.0, rel=1e-5)
+        assert jnp.isfinite(transformed._log_prob(jnp.array([0.2, 0.3, 0.5])))
+
+    def test_an_empirical_base(self, key):
+        atoms = jax.random.normal(key, (50, 2))
+        transformed = BijectorTransformedDistribution(
+            "td", EmpiricalDistribution("x", atoms), tfb.Exp()
+        )
+        draws = jnp.asarray(transformed._sample(key, (10,)))
+        assert draws.shape == (10, 2)
+        assert jnp.all(draws > 0)
+
+    def test_a_chain_of_bijectors(self, standard, key):
+        chain = tfb.Chain([tfb.Exp(), tfb.Shift(jnp.array(1.0)), tfb.Scale(jnp.array(2.0))])
+        transformed = BijectorTransformedDistribution("td", standard, chain)
+        draws = jnp.asarray(sample(transformed, key=key, sample_shape=(10,)))
+        assert draws.shape == (10,)
+        assert jnp.all(draws > 0)
+        assert jnp.all(jnp.isfinite(log_prob(transformed, draws)))
+
+    def test_the_identity_keeps_draws_and_densities(self, key):
+        base = Normal("x", 2.0, 0.5)
+        transformed = BijectorTransformedDistribution("td", base, tfb.Identity())
+        np.testing.assert_allclose(
+            np.asarray(sample(transformed, key=key, sample_shape=(100,))),
+            np.asarray(sample(base, key=key, sample_shape=(100,))),
+            atol=1e-6,
+        )
+        xs = jnp.array([-1.0, 0.0, 1.0, 2.5])
+        np.testing.assert_allclose(
+            np.asarray(log_prob(transformed, xs)), np.asarray(log_prob(base, xs)), atol=1e-5
+        )
+
+
+class TestTheCapabilities:
+    def test_a_density_base_gives_a_density(self, standard):
+        assert isinstance(
+            BijectorTransformedDistribution("td", standard, tfb.Exp()), SupportsLogProb
+        )
+
+    def test_a_base_without_a_density_gives_none(self):
+        empirical = EmpiricalDistribution("x", jnp.array([1.0, 2.0, 3.0]))
+        transformed = BijectorTransformedDistribution("td", empirical, tfb.Exp())
+        assert isinstance(transformed, SupportsSampling)
+        assert not isinstance(transformed, SupportsLogProb)
+
+    def test_a_nonlinear_map_claims_no_moment(self, standard):
+        transformed = BijectorTransformedDistribution("td", standard, tfb.Exp())
+        for protocol in (SupportsMean, SupportsVariance, SupportsCovariance):
+            assert not isinstance(transformed, protocol)
+
+    @pytest.mark.pending(reason="the moment operations' routes", raises=TypeError)
+    def test_the_mean_of_a_nonlinear_map_is_estimated(self, key):
+        atoms = jax.random.normal(key, (50, 2))
+        transformed = BijectorTransformedDistribution(
+            "td", EmpiricalDistribution("x", atoms), tfb.Exp()
+        )
+        assert jnp.all(jnp.isfinite(mean(transformed)))
+
+    def test_a_shift_moves_the_mean(self, standard):
+        transformed = BijectorTransformedDistribution("td", standard, tfb.Shift(jnp.array(5.0)))
+        assert isinstance(transformed, SupportsMean)
+        assert float(transformed._mean()) == pytest.approx(5.0, abs=1e-6)
+
+    def test_a_scale_scales_the_variance(self, standard):
+        transformed = BijectorTransformedDistribution("td", standard, tfb.Scale(jnp.array(2.0)))
+        assert float(transformed._variance()) == pytest.approx(4.0, abs=1e-6)
+
+    def test_the_identity_keeps_the_moments(self):
+        base = Normal("x", 2.0, 0.5)
+        transformed = BijectorTransformedDistribution("td", base, tfb.Identity())
+        assert float(transformed._mean()) == pytest.approx(2.0, abs=1e-6)
+        assert float(transformed._variance()) == pytest.approx(0.25, abs=1e-6)
+
+    def test_an_affine_map_pushes_the_covariance(self, base):
+        matrix = jnp.array([[2.0, 0.0], [1.0, 1.0]])
+        shift = jnp.array([1.0, -2.0])
+        affine = tfb.Chain([tfb.Shift(shift), tfb.ScaleMatvecTriL(matrix)])
+        transformed = BijectorTransformedDistribution("y", base, affine)
+        np.testing.assert_allclose(transformed._mean(), matrix @ base._mean() + shift, rtol=1e-6)
+        covariance = transformed._cov()
+        assert isinstance(covariance, LinOp)
+        np.testing.assert_allclose(
+            covariance.to_dense(), matrix @ base._cov().to_dense() @ matrix.T, rtol=1e-5
+        )
+
+
+class TestTheSupport:
+    """The support is the image of the bijector, when it is known."""
+
+    @pytest.mark.parametrize(
+        ("bijector", "support"),
+        [
+            (tfb.Exp(), positive),
+            (tfb.Sigmoid(), unit_interval),
+            (tfb.Softplus(), positive),
+            (tfb.Chain([tfb.Exp(), tfb.Shift(1.0)]), positive),
+            (tfb.Shift(1.0), real),
+        ],
+        ids=["exp", "sigmoid", "softplus", "chain", "shift"],
+    )
+    def test_a_backend_bijector_declares_its_image(self, standard, bijector, support):
+        transformed = BijectorTransformedDistribution("td", standard, bijector)
+        assert transformed.support == support
+
+    @pytest.mark.parametrize(
+        "constraint",
+        [positive, unit_interval, interval(2.0, 5.0), greater_than(3.0)],
+        ids=repr,
+    )
+    def test_the_factory_bijector_declares_its_constraint(self, standard, constraint):
+        transformed = BijectorTransformedDistribution("td", standard, bijector_for(constraint))
+        assert transformed.support == constraint
+
+    def test_an_unknown_image_leaves_the_support_undeclared(self, standard):
+        transformed = BijectorTransformedDistribution("td", standard, tfb.Tanh())
+        assert transformed.support is None

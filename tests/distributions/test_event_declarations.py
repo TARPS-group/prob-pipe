@@ -66,7 +66,6 @@ from probpipe import (
     SimpleModel,
     StudentT,
     TFPDistribution,
-    TransformedDistribution,
     TruncatedNormal,
     Uniform,
     VonMisesFisher,
@@ -88,7 +87,6 @@ from probpipe.core._numeric_record_distribution import (
     FlattenedDistributionView,
     NumericRecordDistributionView,
 )
-from probpipe.core._random_measures import RandomMeasure
 from probpipe.core._record_distribution import _RecordDistributionView
 from probpipe.core._specs import RecordSpec
 from probpipe.distributions import (
@@ -102,21 +100,22 @@ from probpipe.distributions._factored import _SoleField
 from probpipe.distributions._joint_empirical import NumericJointEmpirical
 from probpipe.distributions._product import TFPProductDistribution
 from probpipe.distributions._views import _RenamedDistribution
-from probpipe.distributions.gaussian_random_function import (
+from probpipe.families import (
+    BijectorTransformedDistribution,
+    FactoredMultivariateGaussian,
+    GaussianProcess,
+    LinearPushforwardDistribution,
+    MixtureDistribution,
+    PoissonFamily,
+    RandomMeasure,
+)
+from probpipe.families._conditional import _LogRatePoisson
+from probpipe.families._gaussian import (
     _IndependentSumGRF,
     _LinearMapGRF,
     _ScaledGRF,
     _ShiftedGRF,
 )
-from probpipe.families import (
-    BijectorTransformedDistribution,
-    FactoredMultivariateGaussian,
-    GaussianFamily,
-    GaussianProcess,
-    LinearPushforwardDistribution,
-    MixtureDistribution,
-)
-from probpipe.families._conditional import _IndependentObservations
 from probpipe.families._programs import (
     PyMCModel,
     StanModel,
@@ -157,11 +156,7 @@ def _basis_function(name: str = "f", output_shape: tuple[int, ...] = ()) -> Line
     width = 2 * max(1, int(np.prod(output_shape)))
     weights = MultivariateNormal("w", loc=jnp.zeros(width), cov=jnp.eye(width))
     return LinearBasisFunction(
-        name,
-        feature_map=functools.partial(_features, output_shape=output_shape),
-        weights=weights,
-        input_shape=(1,),
-        output_shape=output_shape,
+        name, functools.partial(_features, output_shape=output_shape), weights
     )
 
 
@@ -232,10 +227,6 @@ def _squared_exponential(X, Y):
     return jnp.exp(-0.5 * (X[:, None, 0] - Y[None, :, 0]) ** 2)
 
 
-def _exp(x):
-    return jnp.exp(x)
-
-
 # One construction per concrete class, keyed by the class it represents.
 _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     Normal: lambda: Normal("x", 0.0, 1.0),
@@ -263,7 +254,6 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     Wishart: lambda: Wishart("x", 4.0, scale_tril=jnp.eye(2)),
     VonMisesFisher: lambda: VonMisesFisher("x", jnp.array([0.0, 1.0]), 2.0),
     KDEDistribution: lambda: KDEDistribution("k", jnp.zeros((10, 2))),
-    TransformedDistribution: lambda: TransformedDistribution("t", Normal("x", 0.0, 1.0), tfb.Exp()),
     EmpiricalDistribution: lambda: EmpiricalDistribution("e", ["a", "b"]),
     RecordEmpiricalDistribution: lambda: EmpiricalDistribution("r", jnp.zeros((5, 2))),
     BootstrapReplicateDistribution: lambda: BootstrapReplicateDistribution(
@@ -301,9 +291,9 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     FlattenedDistributionView: lambda: ProductDistribution(
         a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)
     ).as_flat_distribution(),
-    NumericRecordDistributionView: lambda: MultivariateNormal(
-        "theta", jnp.zeros(3), cov=jnp.eye(3)
-    ).as_record_distribution(template=NumericRecordSpec(a=(), b=(2,))),
+    NumericRecordDistributionView: lambda: NumericRecordDistributionView(
+        MultivariateNormal("theta", jnp.zeros(3), cov=jnp.eye(3)), NumericRecordSpec(a=(), b=(2,))
+    ),
     _RecordDistributionView: lambda: ProductDistribution(
         a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)
     )["a"],
@@ -343,7 +333,7 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     _UnnormalizedConditional: lambda: _unnormalized_conditional(
         Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0), Record("given", {"a": 0.0})
     ),
-    _IndependentObservations: lambda: GaussianFamily().build("y", jnp.zeros(3), 1.0),
+    _LogRatePoisson: lambda: PoissonFamily()._build_canonical("y", jnp.zeros(3)),
     MixtureDistribution: lambda: MixtureDistribution(
         "m",
         [
@@ -356,7 +346,7 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
         "y", MultivariateNormal("x", jnp.zeros(2), cov=jnp.eye(2)), DenseLinOp(jnp.eye(2))
     ),
     BijectorTransformedDistribution: lambda: BijectorTransformedDistribution(
-        "y", Normal("x", 0.0, 1.0), probpipe.Function("exp", _exp)
+        "y", Normal("x", 0.0, 1.0), tfb.Exp()
     ),
     FactoredMultivariateGaussian: lambda: FactoredMultivariateGaussian(
         "g", [MultivariateNormal("x", jnp.zeros(2), cov=jnp.eye(2))]
@@ -377,9 +367,7 @@ _STUB_CONSTRUCTIONS = {
     for cls in (
         MixtureDistribution,
         LinearPushforwardDistribution,
-        BijectorTransformedDistribution,
         FactoredMultivariateGaussian,
-        GaussianProcess,
     )
 }
 
@@ -474,8 +462,7 @@ _PICKLE_FAILURES = {
     _ShiftedGRF: _TFP_BACKEND,
     _ScaledGRF: _TFP_BACKEND,
     _IndependentSumGRF: _TFP_BACKEND,
-    _IndependentObservations: _TFP_BACKEND,
-    TransformedDistribution: _RUNTIME_CLASS,
+    _LogRatePoisson: _TFP_BACKEND,
     SequentialJointDistribution: _RUNTIME_CLASS,
     _MixtureMarginal: _RUNTIME_CLASS,
     FlattenedDistributionView: _RUNTIME_CLASS,

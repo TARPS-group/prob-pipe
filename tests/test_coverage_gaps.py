@@ -9,7 +9,7 @@ Covers:
 - BootstrapDistribution: weighted sampling, variance, repr, support, evaluations
 - EmpiricalDistribution: weighted subsampled expectation
 - TFPDistribution._cov: scalar and multivariate
-- TransformedDistribution non-TFP paths
+- BijectorTransformedDistribution over a base outside the backend
 - SupportsUnnormalizedLogProb._unnormalized_prob default
 """
 
@@ -20,17 +20,17 @@ import pytest
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
 from probpipe import (
+    BijectorTransformedDistribution,
     BootstrapDistribution,
-    EmpiricalDistribution,
     Normal,
     RecordEmpiricalDistribution,
-    TransformedDistribution,
     cov,
     mean,
     sample,
     variance,
 )
-from probpipe.distributions.multivariate import MultivariateNormal
+from probpipe.distributions import _empirical
+from probpipe.families._multivariate import MultivariateNormal
 
 # ---------------------------------------------------------------------------
 # BootstrapDistribution
@@ -171,22 +171,22 @@ class TestTFPDistributionCov:
 
 
 # ---------------------------------------------------------------------------
-# TransformedDistribution non-TFP paths
+# BijectorTransformedDistribution over a base outside the backend
 # ---------------------------------------------------------------------------
 
 
 class TestTransformedNonTFP:
-    """Cover TransformedDistribution with non-TFP base (EmpiricalDistribution)."""
+    """Cover BijectorTransformedDistribution over an empirical base."""
 
     @pytest.fixture
     def td(self):
         key = jax.random.PRNGKey(0)
         samples = jax.random.normal(key, (100, 2))
-        emp = RecordEmpiricalDistribution("x", samples)
-        return TransformedDistribution("transformed", emp, tfb.Exp())
+        emp = _empirical.EmpiricalDistribution("x", samples)
+        return BijectorTransformedDistribution("transformed", emp, tfb.Exp())
 
     def test_base_property(self, td):
-        assert isinstance(td.base, EmpiricalDistribution)
+        assert isinstance(td.base, _empirical.EmpiricalDistribution)
 
     def test_bijector_property(self, td):
         assert td.bijector is not None
@@ -208,7 +208,7 @@ class TestTransformedNonTFP:
 
     def test_repr(self, td):
         r = repr(td)
-        assert "TransformedDistribution" in r
+        assert "BijectorTransformedDistribution" in r
 
 
 # ---------------------------------------------------------------------------

@@ -6,8 +6,8 @@ import numpy as np
 import pytest
 import scipy.stats as _scipy
 
-from probpipe import NumericRecordDistribution, log_prob, mean, sample, variance
-from probpipe.distributions import (
+from probpipe import NumericDistribution, TFPDistribution, log_prob, mean, sample, variance
+from probpipe.families import (
     Beta,
     Cauchy,
     Exponential,
@@ -70,7 +70,8 @@ def continuous_dist(request):
 
 class TestContinuousGeneric:
     def test_is_distribution(self, continuous_dist):
-        assert isinstance(continuous_dist, NumericRecordDistribution)
+        assert isinstance(continuous_dist, TFPDistribution)
+        assert isinstance(continuous_dist, NumericDistribution)
 
     def test_event_shape(self, continuous_dist):
         assert isinstance(continuous_dist.event_shape, tuple)

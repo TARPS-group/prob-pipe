@@ -27,7 +27,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..core._dispatch import Feasibility
+from ..core._dispatch import Feasibility, MathematicalDomainError, ResolutionError
 from ..core._numeric_record import _reconstruct_from_vector
 from ..core._spec_base import NumericArraySpec
 from ..core._specs import _components_record
@@ -41,6 +41,7 @@ from ..distributions._capabilities import (
 from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution
 from ..functions import function
+from ..values import Function
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._bayesflow_common import (
     _OBSERVATION_KEY,
@@ -54,9 +55,7 @@ from ._bayesflow_common import (
 )
 
 if TYPE_CHECKING:
-    # Type-only: bayesflow/keras load at runtime in _import_bayesflow; tfp is a
-    # hard dependency but is only needed here for bijector annotations.
-    import tensorflow_probability.substrates.jax.bijectors as tfb
+    # Type-only: bayesflow/keras load at runtime in _import_bayesflow.
     from bayesflow import Adapter, ContinuousApproximator
     from bayesflow.networks import InferenceNetwork
     from keras.optimizers import Optimizer as KerasOptimizer
@@ -107,7 +106,7 @@ def _build_adapter(bf: ModuleType, internal_keys: tuple[str, ...]) -> Adapter:
     )
 
 
-def _field_bijectors(prior: Distribution, keys: tuple[str, ...]) -> dict[str, tfb.Bijector]:
+def _field_bijectors(prior: Distribution, keys: tuple[str, ...]) -> dict[str, Function]:
     """Per-leaf bijector mapping each parameter's unconstrained R^d to its support.
 
     ``keys`` are the prior's numeric leaves (slash paths like ``"outer/a"`` for a
@@ -116,15 +115,15 @@ def _field_bijectors(prior: Distribution, keys: tuple[str, ...]) -> dict[str, tf
 
     BayesFlow's ``ContinuousApproximator`` operates in unconstrained, real space, so a
     constrained prior (positive, an interval, ...) is trained on the *unconstrained*
-    parameters (``bijector.inverse``) and the network's draws are mapped back to the
-    support (``bijector.forward``). For a real-valued prior every bijector is the
+    parameters (the bijector's inverse) and the network's draws are mapped back to the
+    support (its forward map). For a real-valued prior every bijector is the
     identity, so the round-trip is a no-op. Discrete priors have no smooth bijector and
     are rejected here with a clear error.
     """
-    from ..distributions import bijector_for  # lazy: inference/ -> distributions/
+    from ..functions import bijector_for
 
     supports = prior.supports
-    bijectors: dict[str, tfb.Bijector] = {}
+    bijectors: dict[str, Function] = {}
     for k in keys:
         constraint = supports[k]
         if constraint is None:
@@ -135,7 +134,7 @@ def _field_bijectors(prior: Distribution, keys: tuple[str, ...]) -> dict[str, tf
             )
         try:
             bijectors[k] = bijector_for(constraint)
-        except NotImplementedError as e:
+        except (MathematicalDomainError, ResolutionError) as e:
             raise ValueError(
                 f"learn_amortized_posterior cannot handle prior parameter {k!r} with "
                 f"support {constraint!r}: {e}. Amortized SBI requires a continuous prior "
@@ -143,6 +142,16 @@ def _field_bijectors(prior: Distribution, keys: tuple[str, ...]) -> dict[str, tf
                 "interval); discrete priors are not supported."
             ) from e
     return bijectors
+
+
+def _unconstrained_shape(bijector: Function, shape: tuple[int, ...]) -> tuple[int, ...]:
+    """The shape of the unconstrained point the inverse of *bijector* gives at a point of *shape*.
+
+    A dimension-shifting bijector changes it: a point of a ``d``-simplex has
+    ``d - 1`` unconstrained coordinates.
+    """
+    point = jax.ShapeDtypeStruct(tuple(shape), jnp.float32)
+    return tuple(jax.eval_shape(bijector._inverse, point).shape)
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +190,7 @@ class _AmortizedPosterior(
         The default number of draws of the law at an observation.
     random_seed : int
         The default seed of those draws.
-    bijectors : dict of str to tfb.Bijector, optional
+    bijectors : dict of str to Function, optional
         The forward bijector of each constrained leaf.
     """
 
@@ -195,7 +204,7 @@ class _AmortizedPosterior(
         data_dim: int,
         num_results: int = 2000,
         random_seed: int = 0,
-        bijectors: dict[str, tfb.Bijector] | None = None,
+        bijectors: dict[str, Function] | None = None,
     ):
         slot = _observation_slot(prior)
         super().__init__(
@@ -274,7 +283,7 @@ class _AmortizedPosterior(
             draws = jnp.asarray(out[k])[0]
             bij = self._bijectors.get(leaf)
             if bij is not None:
-                draws = bij.forward(draws)
+                draws = bij.apply(draws)
             cols.append(jnp.reshape(draws, (num_results, -1)))
         return jnp.concatenate(cols, axis=-1)
 
@@ -466,7 +475,7 @@ def learn_amortized_posterior(
     # The network trains on *unconstrained* widths, which differ from the prior's
     # event sizes for dimension-shifting bijectors (a d-simplex contributes d-1).
     unconstrained_size = sum(
-        int(np.prod(tuple(bijectors[k].inverse_event_shape(leaf_shapes[k])), dtype=int))
+        int(np.prod(_unconstrained_shape(bijectors[k], leaf_shapes[k]), dtype=int))
         for k in leaf_keys
     )
 

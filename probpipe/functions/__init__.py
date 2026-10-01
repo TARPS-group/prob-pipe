@@ -27,6 +27,8 @@ if TYPE_CHECKING:
     from ._module import (
         workflow_method as workflow_method,
     )
+    from ._reparameterization import bijector_for as bijector_for
+    from ._reparameterization import register_bijector as register_bijector
     from ._replay import replay_run as replay_run
     from ._result import ResultKindError as ResultKindError
     from ._result import ResultSchemaError as ResultSchemaError
@@ -44,6 +46,8 @@ _EXPORTS = {
     "ApplicabilityError": "probpipe.functions._call",
     "ResultKindError": "probpipe.functions._result",
     "ResultSchemaError": "probpipe.functions._result",
+    "bijector_for": "probpipe.functions._reparameterization",
+    "register_bijector": "probpipe.functions._reparameterization",
 }
 __all__ = list(_EXPORTS)
 

@@ -31,9 +31,7 @@ from ..custom_types import Array, PRNGKey
 from ..distributions._distribution import Distribution, NumericDistribution
 
 if TYPE_CHECKING:
-    # Type-only: tfp is a hard dependency but is only needed here for
-    # bijector annotations.
-    import tensorflow_probability.substrates.jax.bijectors as tfb
+    from ..values import Function
 
 # Offline-simulation execution backend; values mirror ``Function``'s
 # dispatch names ("jax" = vmap the simulator, "sequential" = eager per-draw loop).
@@ -160,7 +158,7 @@ def _simulate_offline(
     key: PRNGKey,
     *,
     sim_backend: SimBackend,
-    bijectors: dict[str, tfb.Bijector] | None,
+    bijectors: dict[str, Function] | None,
 ) -> tuple[dict[str, np.ndarray], np.ndarray]:
     """Draw ``(theta, y)`` pairs offline: ``theta ~ prior``, ``y ~ simulator(theta)``.
 
@@ -198,7 +196,7 @@ def _simulate_offline(
     for leaf in leaf_keys:
         arr = jnp.asarray(record[leaf])
         if bijectors is not None:
-            arr = bijectors[leaf].inverse(arr)
+            arr = bijectors[leaf]._inverse(arr)
         named[leaf] = np.asarray(jnp.reshape(arr, (num_simulations, -1)), dtype="float32")
     sim_keys = jax.random.split(k_sim, num_simulations)
 

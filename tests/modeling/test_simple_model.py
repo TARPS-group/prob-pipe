@@ -17,6 +17,7 @@ from probpipe import (
     ApproximateDistribution,
     MultivariateNormal,
     NumericArraySpec,
+    NumericRecordDistributionView,
     NumericRecordSpec,
     Record,
     RecordSpec,
@@ -297,7 +298,7 @@ class TestSimpleModelWithValues:
     def prior_with_template(self):
         # A record view of the vector, whose declaration names its two entries.
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params")
-        return prior.as_record_distribution(template=NumericRecordSpec(a=(), b=()))
+        return NumericRecordDistributionView(prior, NumericRecordSpec(a=(), b=()))
 
     @pytest.fixture
     def likelihood(self):
@@ -359,7 +360,7 @@ class TestSimpleModelWithValues:
     def test_field_overlap_raises(self):
         """SimpleModel rejects overlapping prior and data field names."""
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params")
-        prior = prior.as_record_distribution(template=NumericRecordSpec(X=(), y=()))
+        prior = NumericRecordDistributionView(prior, NumericRecordSpec(X=(), y=()))
 
         class _OverlapLikelihood:
             def log_likelihood(self, params, data):

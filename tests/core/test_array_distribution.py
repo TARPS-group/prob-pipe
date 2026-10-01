@@ -61,17 +61,8 @@ def matrix_mvn():
 
 
 class TestHierarchy:
-    def test_arraydist_is_pytreearraydist(self, scalar_normal):
-        assert isinstance(scalar_normal, NumericRecordDistribution)
-
     def test_arraydist_is_distribution(self, scalar_normal):
         assert isinstance(scalar_normal, Distribution)
-
-    def test_pytreearraydist_is_distribution(self, scalar_normal):
-        """NumericRecordDistribution inherits NumericRecordDistribution which inherits Distribution."""
-        assert isinstance(scalar_normal, Distribution)
-        assert isinstance(scalar_normal, NumericRecordDistribution)
-        assert isinstance(scalar_normal, NumericRecordDistribution)
 
 
 # ---------------------------------------------------------------------------
@@ -122,41 +113,6 @@ class TestDistributionBase:
 
 
 # ---------------------------------------------------------------------------
-# NumericRecordDistribution trivial pytree interface
-# ---------------------------------------------------------------------------
-
-
-class TestArrayDistributionPyTreeInterface:
-    def test_treedef_scalar(self, scalar_normal):
-        td = scalar_normal.treedef
-        assert td == jax.tree.structure(None)
-
-    def test_treedef_vector(self, vector_mvn):
-        td = vector_mvn.treedef
-        assert td == jax.tree.structure(None)
-
-    def test_event_shapes_dict(self, scalar_normal):
-        assert scalar_normal.event_shapes == {"x": ()}
-
-    def test_event_shapes_vector(self, vector_mvn):
-        assert vector_mvn.event_shapes == {"z": (3,)}
-        assert vector_mvn.event_shape == (3,)
-
-    def test_flat_event_shapes_scalar(self, scalar_normal):
-        fes = scalar_normal.flat_event_shapes
-        assert fes == [()]
-
-    def test_event_size_scalar(self, scalar_normal):
-        assert scalar_normal.event_size == 1
-
-    def test_event_size_vector(self, vector_mvn):
-        assert vector_mvn.event_size == 3
-
-    def test_event_size_4d(self, matrix_mvn):
-        assert matrix_mvn.event_size == 4
-
-
-# ---------------------------------------------------------------------------
 # flatten_value / unflatten_value on NumericRecordDistribution
 # ---------------------------------------------------------------------------
 
@@ -164,14 +120,14 @@ class TestArrayDistributionPyTreeInterface:
 class TestArrayDistFlattenUnflatten:
     def test_flatten_vector_sample(self, vector_mvn, key):
         s = sample(vector_mvn, key=key)
-        flat = vector_mvn.flatten_value(s, event_shape=vector_mvn.event_shape)
+        flat = NumericRecordDistribution.flatten_value(s, event_shape=vector_mvn.event_shape)
         assert flat.shape == (3,)
         np.testing.assert_allclose(flat, s, atol=1e-6)
 
     def test_unflatten_vector_sample(self, vector_mvn, key):
         s = sample(vector_mvn, key=key)
-        flat = vector_mvn.flatten_value(s, event_shape=vector_mvn.event_shape)
-        restored = vector_mvn.unflatten_value(
+        flat = NumericRecordDistribution.flatten_value(s, event_shape=vector_mvn.event_shape)
+        restored = NumericRecordDistribution.unflatten_value(
             flat,
             template=vector_mvn.event_spec.spec,
         )
@@ -179,12 +135,12 @@ class TestArrayDistFlattenUnflatten:
 
     def test_flatten_unflatten_roundtrip_batched(self, vector_mvn, key):
         samples = jnp.asarray(sample(vector_mvn, key=key, sample_shape=(5,)))
-        flat = vector_mvn.flatten_value(
+        flat = NumericRecordDistribution.flatten_value(
             samples,
             event_shape=vector_mvn.event_shape,
         )
         assert flat.shape == (5, 3)
-        restored = vector_mvn.unflatten_value(
+        restored = NumericRecordDistribution.unflatten_value(
             flat,
             template=vector_mvn.event_spec.spec,
         )
@@ -192,9 +148,9 @@ class TestArrayDistFlattenUnflatten:
 
     def test_flatten_unflatten_4d(self, matrix_mvn, key):
         s = sample(matrix_mvn, key=key)
-        flat = matrix_mvn.flatten_value(s, event_shape=matrix_mvn.event_shape)
+        flat = NumericRecordDistribution.flatten_value(s, event_shape=matrix_mvn.event_shape)
         assert flat.shape == (4,)
-        restored = matrix_mvn.unflatten_value(
+        restored = NumericRecordDistribution.unflatten_value(
             flat,
             template=matrix_mvn.event_spec.spec,
         )
@@ -208,7 +164,7 @@ class TestArrayDistFlattenUnflatten:
 
 class TestFlattenedDistributionView:
     def test_as_flat_returns_flattened_view(self, vector_mvn):
-        flat_dist = vector_mvn.as_flat_distribution()
+        flat_dist = FlattenedDistributionView(vector_mvn)
         assert isinstance(flat_dist, FlattenedDistributionView)
         assert isinstance(flat_dist, NumericRecordDistribution)
         # The view satisfies the FlatNumericRecordDistribution contract
@@ -217,23 +173,23 @@ class TestFlattenedDistributionView:
         assert isinstance(flat_dist, FlatNumericRecordDistribution)
 
     def test_event_shape(self, vector_mvn):
-        flat_dist = vector_mvn.as_flat_distribution()
+        flat_dist = FlattenedDistributionView(vector_mvn)
         assert flat_dist.event_shape == (3,)
 
     def test_sample_shape(self, vector_mvn, key):
-        flat_dist = vector_mvn.as_flat_distribution()
+        flat_dist = FlattenedDistributionView(vector_mvn)
         s = sample(flat_dist, key=key)
         assert s.shape == (3,)
 
     def test_sample_batched(self, vector_mvn, key):
-        flat_dist = vector_mvn.as_flat_distribution()
+        flat_dist = FlattenedDistributionView(vector_mvn)
         samples = sample(flat_dist, key=key, sample_shape=(10,))
         assert samples.shape == (10, 3)
 
     def test_log_prob_matches(self, vector_mvn, key):
-        flat_dist = vector_mvn.as_flat_distribution()
+        flat_dist = FlattenedDistributionView(vector_mvn)
         s = sample(vector_mvn, key=key)
-        flat_sample = vector_mvn.flatten_value(
+        flat_sample = NumericRecordDistribution.flatten_value(
             s,
             event_shape=vector_mvn.event_shape,
         )
@@ -243,16 +199,16 @@ class TestFlattenedDistributionView:
         np.testing.assert_allclose(lp_flat, lp_original, atol=1e-5)
 
     def test_base_distribution(self, vector_mvn):
-        flat_dist = vector_mvn.as_flat_distribution()
+        flat_dist = FlattenedDistributionView(vector_mvn)
         assert flat_dist.base_distribution is vector_mvn
 
     def test_unflatten_sample(self, vector_mvn, key):
-        flat_dist = vector_mvn.as_flat_distribution()
+        flat_dist = FlattenedDistributionView(vector_mvn)
         flat_sample = sample(flat_dist, key=key)
         restored = flat_dist.unflatten_sample(flat_sample)
         np.testing.assert_allclose(
             restored,
-            vector_mvn.unflatten_value(
+            NumericRecordDistribution.unflatten_value(
                 flat_sample,
                 template=vector_mvn.event_spec.spec,
             ),
@@ -260,19 +216,19 @@ class TestFlattenedDistributionView:
         )
 
     def test_repr(self, vector_mvn):
-        flat_dist = vector_mvn.as_flat_distribution()
+        flat_dist = FlattenedDistributionView(vector_mvn)
         r = repr(flat_dist)
         assert "FlattenedDistributionView" in r
         assert "MultivariateNormal" in r
 
     def test_4d_event_shape(self, matrix_mvn):
-        flat_dist = matrix_mvn.as_flat_distribution()
+        flat_dist = FlattenedDistributionView(matrix_mvn)
         assert flat_dist.event_shape == (4,)
 
     def test_log_prob_roundtrip_4d(self, matrix_mvn, key):
-        flat_dist = matrix_mvn.as_flat_distribution()
+        flat_dist = FlattenedDistributionView(matrix_mvn)
         s = sample(matrix_mvn, key=key)
-        flat_sample = matrix_mvn.flatten_value(
+        flat_sample = NumericRecordDistribution.flatten_value(
             s,
             event_shape=matrix_mvn.event_shape,
         )
@@ -396,7 +352,7 @@ class TestCanonicalConvenience:
             ValueError,
             match=r"TwoField field 'a' \(support=real\)",
         ):
-            target._check_support_compatible(multi_leaf_dist)
+            NumericRecordDistribution._check_support_compatible(target, multi_leaf_dist)
 
     def test_check_support_compatible_multi_field_target_field_count_mismatch(
         self,
@@ -519,11 +475,9 @@ class TestCanonicalConvenience:
 
             # Plain object — accessing ``.supports`` raises ``AttributeError``.
 
-        scalar_normal._check_support_compatible(_NoSupportsSource())  # no raise
-
-    def test_treedef_leaf_for_single_leaf(self, scalar_normal):
-        """Single-leaf: ``treedef`` is the leaf treedef (one-leaf pytree)."""
-        assert scalar_normal.treedef == jax.tree.structure(None)
+        NumericRecordDistribution._check_support_compatible(
+            scalar_normal, _NoSupportsSource()
+        )  # no raise
 
     def test_treedef_record_for_multi_leaf(self, multi_leaf_dist):
         """Multi-leaf: ``treedef`` matches an operation-derived

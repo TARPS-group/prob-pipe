@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import jax
 
-from ..core._numeric_record_distribution import NumericRecordDistribution
 from ..core._record_distribution import RecordDistribution
 from ..custom_types import ArrayLike
+from ._distribution import Distribution
 
 # ---------------------------------------------------------------------------
 # Key-path helpers
@@ -101,7 +101,7 @@ def _component_key_paths(components) -> tuple:
     """
     # Check if the dict is flat (all values are NumericRecordDistribution leaves)
     is_flat = isinstance(components, dict) and all(
-        isinstance(v, NumericRecordDistribution) for v in components.values()
+        isinstance(v, Distribution) for v in components.values()
     )
     if is_flat:
         return tuple(components.keys())
@@ -171,7 +171,7 @@ def _collect_observed_leaves(
 
         if isinstance(obs_val, dict):
             # User provided a nested dict — component must also be a dict
-            if isinstance(comp_node, NumericRecordDistribution):
+            if isinstance(comp_node, Distribution):
                 raise TypeError(
                     f"Key path '{path_str}' resolves to a component "
                     f"distribution ({type(comp_node).__name__}), but a "
@@ -197,7 +197,7 @@ def _collect_observed_leaves(
                     f"component distributions, e.g.: "
                     f"condition_on({key}={{'{leaf_names[0]}': ...}})"
                 )
-            if not isinstance(comp_node, NumericRecordDistribution):
+            if not isinstance(comp_node, Distribution):
                 raise TypeError(
                     f"Key path '{path_str}' resolves to "
                     f"{type(comp_node).__name__}, not a component "

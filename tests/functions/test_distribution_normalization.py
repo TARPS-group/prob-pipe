@@ -19,7 +19,7 @@ from probpipe import (
     KDEDistribution,
     Normal,
     NumericArrayBatch,
-    NumericRecordDistribution,
+    NumericDistribution,
     OpaqueSpec,
     converter_registry,
     log_prob,
@@ -185,7 +185,7 @@ class TestNormalizeDistributionValues:
             signature_info=_signature_info(("x",)),
         )
 
-        assert isinstance(normalized["x"], NumericRecordDistribution)
+        assert isinstance(normalized["x"], NumericDistribution)
         assert normalized["x"] is not normal_external
 
 
