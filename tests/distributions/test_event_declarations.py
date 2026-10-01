@@ -397,12 +397,8 @@ def _library_classes() -> set[type]:
     }
 
 
-# ``sample`` stacks a tuple draw as rows instead of wrapping it as one opaque
-# value, and wraps a batch-valued draw as an array.
+# ``sample`` wraps a batch-valued draw as an array.
 _DRAW_FAILURES = {
-    SimpleGenerativeModel: pytest.mark.xfail(
-        raises=ValueError, strict=True, reason="sample stacks a tuple draw as rows"
-    ),
     BootstrapReplicateDistribution: pytest.mark.pending(
         reason="the exported sample wraps a batch-valued draw as an array, not as its declared batch",
         raises=AssertionError,

@@ -370,7 +370,11 @@ def _call_with_options_in_context(
         except ValueError as error:
             raise _call.ApplicabilityError(str(error)) from error
         context = _FunctionInvocationContext(point_bindings)
-        result = function._invoke_resolved(point_values, context=context)
+        result = _result._batch_from_declared_sequence(
+            function._invoke_resolved(point_values, context=context),
+            function_name=function.output_name,
+            output_spec=function.output_spec,
+        )
         try:
             point_output_spec = _validate_function_output(
                 function_name=function._name,

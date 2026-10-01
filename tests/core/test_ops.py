@@ -85,16 +85,6 @@ def no_protocols():
 # ---------------------------------------------------------------------------
 
 
-#: The draws of an empirical law whose atoms are tuples, which the exported sample unpacks.
-_TUPLE_DRAWS = pytest.mark.pending(
-    reason=(
-        "the exported sample wraps a drawn tuple by its elements, not by the law's opaque "
-        "event declaration"
-    ),
-    raises=(AssertionError, ValueError),
-)
-
-
 class TestSample:
     def test_sample_scalar(self, normal):
         s = ops.sample(normal, key=jax.random.PRNGKey(0))
@@ -168,15 +158,7 @@ class TestSample:
         s = ops.sample(empirical, key=jax.random.PRNGKey(0), sample_shape=(5,))
         assert s.shape == (5, 2)
 
-    @pytest.mark.parametrize(
-        "sample_shape",
-        [
-            pytest.param((), marks=_TUPLE_DRAWS),
-            pytest.param((3,), marks=_TUPLE_DRAWS),
-            pytest.param((2, 3), marks=_TUPLE_DRAWS),
-            (0,),
-        ],
-    )
+    @pytest.mark.parametrize("sample_shape", [(), (3,), (2, 3), (0,)])
     @pytest.mark.parametrize(
         "event", [("a", "b"), (("a", "b"), ("c", "d")), ()], ids=["pair", "matrix", "empty"]
     )
@@ -198,7 +180,7 @@ class TestSample:
             assert result.axis_groups == (sample_shape,)
             assert result.name == ops.sample.output_name
             for index in np.ndindex(sample_shape):
-                np.testing.assert_array_equal(result[index], expected)
+                np.testing.assert_array_equal(result[index].value, expected)
 
     @pytest.mark.parametrize("explicit_key", [False, True], ids=["automatic-key", "explicit-key"])
     def test_sample_keeps_object_values_with_mismatched_sample_axes(self, explicit_key):

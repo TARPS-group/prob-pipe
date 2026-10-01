@@ -23,6 +23,7 @@ from probpipe import (
     NumericArraySpec,
     NumericRecordBatch,
     Opaque,
+    OpaqueBatch,
     OpaqueSpec,
     OutputSpec,
     Record,
@@ -273,9 +274,9 @@ class TestLiftedNames:
         assert tuple(result.event_spec.components) == ("value",)
         assert result.num_atoms == 8
 
-    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax", "auto"])
+    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "auto"])
     @pytest.mark.parametrize("renamed", [None, "renamed", "M.pair"])
-    def test_list_sweep_levels_use_output_name(self, dispatch, renamed):
+    def test_list_rows_are_opaque_elements_under_output_name(self, dispatch, renamed):
         rows = NumericRecordBatch(
             "inputs", {"x": jnp.arange(3.0)}, "rows", element_spec=RecordSpec(x=())
         )
@@ -287,13 +288,19 @@ class TestLiftedNames:
         if renamed is not None:
             wrapped = wrapped.with_name(renamed)
         result = wrapped.with_options(dispatch=dispatch)(rows)
-        assert isinstance(result, NumericArrayBatch)
+        assert isinstance(result, OpaqueBatch)
         assert result.name == "outs"
-        assert result.level_names == ("rows", "outs")
-        np.testing.assert_array_equal(
-            result.values,
-            [[0.0, 1.0], [1.0, 2.0], [2.0, 3.0]],
+        assert result.level_names == ("rows",)
+        assert [float(value) for value in result[1].value] == [1.0, 2.0]
+
+    def test_the_mapped_dispatch_refuses_a_list_row(self):
+        rows = NumericRecordBatch(
+            "inputs", {"x": jnp.arange(3.0)}, "rows", element_spec=RecordSpec(x=())
         )
+        wrapped = Function("pair", lambda x: [x["x"], x["x"] + 1.0], dispatch="jax")
+
+        with pytest.raises(ValueError, match="dispatch='jax'"):
+            wrapped(rows)
 
 
 class TestCompletedOutputDeclarations:
@@ -504,5 +511,4 @@ class TestModuleReturnInference:
         assert result.name == method.output_name == "numbers"
         assert type(result) is type(expected)
         assert result.spec == expected.spec
-        if sequence:
-            np.testing.assert_array_equal(result.values, expected.values)
+        assert result.value == expected.value == sequence

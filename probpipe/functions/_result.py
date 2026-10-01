@@ -19,7 +19,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..core._array_backend import _event_shape_of, _to_jax_array
-from ..core._batch import _ranks_of
+from ..core._batch import BatchSpec, _ranks_of
 from ..core._function_batch import FunctionBatch
 from ..core._kinds import batch_class_for_spec
 from ..core._numeric_array import NumericArray
@@ -27,6 +27,7 @@ from ..core._numeric_array_batch import NumericArrayBatch, _MappedBatchStore
 from ..core._numeric_record import _is_numeric_leaf
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._object_batch import _from_iterable, _is_object_array, _ObjectBatch
+from ..core._opaque import Opaque
 from ..core._opaque_batch import OpaqueBatch
 from ..core._record_batch import RecordBatch, _batch_class_for, _MappedBatchColumns
 from ..core._spec_base import _full_array_shape_or_none
@@ -41,6 +42,9 @@ BroadcastMode = Literal["wrap", "stack", "nested"]
 BROADCAST_WRAP: BroadcastMode = "wrap"
 BROADCAST_STACK: BroadcastMode = "stack"
 BROADCAST_NESTED: BroadcastMode = "nested"
+
+#: The hosts an undeclared return reads as one ``Opaque`` rather than a batch.
+_SEQUENCES = (list, tuple, set, frozenset)
 
 
 class ResultKindError(TypeError):
@@ -157,11 +161,9 @@ def _wrap_as_term(
     """Wrap a raw host as its tracked kind under the caller's result label.
 
     Mappings become records, numeric values become NumericArray, callables
-    become Function, and other values become Opaque. Existing tracked terms
-    are retained here and copied by the public result boundary.
-
-    Interim implementation detail: undeclared sequences use the existing batch
-    assembler. An explicitly declared OpaqueSpec keeps a sequence atomic.
+    become Function, and other values, a list, a tuple, or a set among them,
+    become Opaque, since a batch is declared through ``output_spec``. Existing
+    tracked terms are retained here and copied by the public result boundary.
     """
     result_name = field_name if name is None else name
     if output_spec is not None and output_spec.spec is not None:
@@ -173,18 +175,6 @@ def _wrap_as_term(
             return value
         case Mapping():
             return Record(result_name, dict(value))
-        case list() | tuple():
-            if not value:
-                from ..core._opaque_batch import OpaqueBatch
-
-                return OpaqueBatch(result_name, [], field_name)
-            return _make_stack(
-                list(value),
-                n=len(value),
-                level_names=(field_name,),
-                field_name=field_name,
-                name=result_name,
-            )
         case _ if _is_numeric_leaf(value):
             from ..core._numeric_array import NumericArray
 
@@ -486,25 +476,59 @@ def _agreeing_batch_rows(outs: list, *, field_name: str) -> Any:
 def _row_at_its_kind(row: Any, field_name: str) -> Any:
     """One swept row as the tracked term of its own kind.
 
-    Only the two *structural* hosts are converted here. A numeric, opaque, or
-    callable row already reaches a branch below that batches it at its kind, and
-    converting it early would cost the vectorized path for no gain.
+    Only the two hosts the branches below would misread are converted here. A
+    numeric or callable row already reaches a branch that batches it at its
+    kind, and converting it early would cost the vectorized path for no gain.
 
     - a ``Mapping`` is a tree, so it becomes a ``Record`` and the rows stack into
       a batch of records;
-    - a non-empty sequence is a multiplicity, so it becomes a batch of its own and
-      the rows stack with that level inside the sweep's.
+    - a list, a tuple, or a set is an ``Opaque``, as ``_wrap_as_term`` reads one
+      returned on its own, so the rows store one opaque element each rather than
+      stacking the sequence's items as an event axis.
     """
     if isinstance(row, Mapping):
         return Record(field_name, dict(row))
-    if isinstance(row, (list, tuple)):
-        if not row:
-            # A batch of nothing, exactly as ``_wrap_as_term`` reads an empty
-            # sequence returned on its own: no element to read a kind off, and the
-            # level still counts zero of them.
-            return OpaqueBatch(field_name, [], field_name)
-        return _make_stack(list(row), n=len(row), level_names=(field_name,), field_name=field_name)
+    if isinstance(row, _SEQUENCES):
+        return Opaque(field_name, row)
     return row
+
+
+def _batch_from_declared_sequence(
+    result: Any, *, function_name: str, output_spec: OutputSpec | None
+) -> Any:
+    """A raw sequence returned under a batch declaration, as the declared batch.
+
+    A batch is declared through ``output_spec``, so a list or tuple returned
+    under a ``BatchSpec`` holds the batch's elements in row-major order over its
+    declared axes. A declared axis of symbolic size takes the sequence's length
+    when it is the only axis. Any other result is returned as it is.
+    """
+    spec = None if output_spec is None else output_spec.spec
+    if not isinstance(spec, BatchSpec) or not isinstance(result, (list, tuple)):
+        return result
+    sizes = [size for group in spec.axis_groups for size in group]
+    if len(sizes) == 1:
+        batch_shape: tuple[int, ...] = (len(result),)
+        axis_groups: tuple[tuple[int, ...], ...] = (batch_shape,)
+    elif all(isinstance(size, int) for size in sizes):
+        batch_shape = tuple(sizes)
+        axis_groups = tuple(tuple(group) for group in spec.axis_groups)
+    else:
+        return result
+    element = spec.element_spec
+    is_record = isinstance(element, RecordSpec)
+    return _make_stack(
+        list(result),
+        batch_shape=batch_shape,
+        level_names=tuple(spec.level_names),
+        axis_groups=axis_groups,
+        name=function_name,
+        field_name=function_name,
+        output_template=element if is_record else None,
+        # The aggregator reads only the declared element spec, so the component
+        # name of this declaration is never read.
+        output_spec=None if is_record else OutputSpec.default(element, component="element"),
+    )
 
 
 def _make_stack(

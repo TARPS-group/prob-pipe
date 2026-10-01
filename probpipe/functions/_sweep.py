@@ -25,6 +25,7 @@ except ImportError:
 from ..core._numeric_array import NumericArray
 from ..core._numeric_array_batch import NumericArrayBatch, _MappedBatchStore
 from ..core._object_batch import _ObjectBatch
+from ..core._opaque import Opaque
 from ..core._record_batch import RecordBatch, _MappedBatchColumns
 from ..core._specs import OutputSpec, RecordSpec
 from ..core.config import WorkflowKind, prefect_config
@@ -342,6 +343,12 @@ def mapped_row_body(
                 # As a batch row is carried, but with no level of its own: the
                 # axis the map adds is the only one the aggregate will have.
                 return _MappedBatchColumns.of_record(out)
+            if isinstance(out, Opaque):
+                raise TypeError(
+                    f"{field_name}: a row returned a {type(out.value).__name__}, which is "
+                    f"an Opaque, and the mapped dispatch stacks arrays, records, and "
+                    f"batches; an opaque row runs row-wise"
+                )
         if isinstance(out, RecordBatch):
             return _MappedBatchColumns.of(out)
         if isinstance(out, (NumericArray, NumericArrayBatch)):
