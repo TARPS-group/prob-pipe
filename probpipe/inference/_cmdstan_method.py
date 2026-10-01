@@ -16,6 +16,7 @@ from ..core._specs import OutputSpec
 from ..families._programs import _StanPosterior
 from ..operations._condition import InferenceMethod
 from ._approximate_distribution import ApproximateDistribution, make_posterior
+from ._inference_utils import integer_seed, run_seed
 
 
 def _import_cmdstanpy():
@@ -79,7 +80,7 @@ class CmdStanNutsMethod(InferenceMethod):
         num_results = kwargs.get("num_results", 1000)
         num_warmup = kwargs.get("num_warmup", 1000)
         num_chains = kwargs.get("num_chains", 4)
-        random_seed = kwargs.get("random_seed", 0)
+        random_seed = integer_seed(run_seed(kwargs, self.name))
 
         model = cmdstanpy.CmdStanModel(stan_file=target.stan_file)
         fit = model.sample(

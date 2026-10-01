@@ -68,6 +68,7 @@ __all__ = [
     "flat_unflatten",
     "flat_vector",
     "get_init_state",
+    "integer_seed",
     "is_jax_traceable",
     "joint_and_given",
     "likelihood_flat",
@@ -78,6 +79,7 @@ __all__ = [
     "parameter_given",
     "posterior_var_order",
     "run_chain_scan",
+    "run_seed",
 ]
 
 
@@ -188,6 +190,46 @@ def as_prng_key(seed: int | Array) -> Array:
     the gradient-MCMC backends.
     """
     return jax.random.PRNGKey(seed) if isinstance(seed, int) else seed
+
+
+#: The sampling ABI of the key that seeds an inference method's run.
+_RUN_SEED_ABI = "probpipe.inference.run_seed/v1"
+
+
+def run_seed(options: Mapping[str, Any], method: str) -> int | Array:
+    """The seed of one run of the inference method *method*: its ``random_seed``, or a workflow key.
+
+    A ``random_seed`` the call's options set is returned as it is. Otherwise
+    the run's randomness is a workflow-owned random event (V.8), whose key the
+    enclosing scope derives from its root seed and the call's structure, so
+    ``workflow_run(seed=...)`` reproduces the run, and scopes with different
+    seeds, or two unscoped calls, run different chains.
+    """
+    seed = options.get("random_seed")
+    if seed is not None:
+        return seed
+    from ..functions import _broker
+
+    return _broker._resolve_automatic_key(
+        None,
+        _broker._singleton_effect_plan(
+            operation_kind="inference",
+            execution_mode="sampled",
+            sample_shape=None,
+            sampling_abi=_RUN_SEED_ABI,
+            provider_abi=f"probpipe.inference.{method}/v1",
+        ),
+    )
+
+
+def integer_seed(seed: int | Array) -> int:
+    """*seed* as the non-negative 32-bit integer a backend's own seed argument takes.
+
+    An integer is returned as it is, and a key gives an integer drawn from it.
+    """
+    if isinstance(seed, int | np.integer):
+        return int(seed)
+    return int(jax.random.randint(as_prng_key(seed), (), 0, np.iinfo(np.int32).max))
 
 
 # ---------------------------------------------------------------------------

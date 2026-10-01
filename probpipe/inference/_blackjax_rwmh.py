@@ -45,6 +45,7 @@ from ..distributions._distribution import Distribution
 from ..operations._condition import InferenceMethod
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._inference_utils import (
+    as_prng_key,
     build_mcmc_datatree,
     extract_event_spec,
     flat_density,
@@ -53,6 +54,7 @@ from ._inference_utils import (
     observed_parts,
     parallel_chain_map,
     run_chain_scan,
+    run_seed,
 )
 
 logger = logging.getLogger(__name__)
@@ -499,7 +501,7 @@ def _run_blackjax_rwmh(
     Python-loop execution (per chain).
     """
     traceable = is_jax_traceable(target_log_prob_fn, init_state)
-    key = jax.random.PRNGKey(random_seed)
+    key = as_prng_key(random_seed)
     chain_keys = jax.random.split(key, num_chains)
 
     if traceable:
@@ -578,7 +580,7 @@ def rwmh(
     n_windows: int = 4,
     proposal_cov: ArrayLike | None = None,
     init: ArrayLike | None = None,
-    random_seed: int = 0,
+    random_seed: int | None = None,
 ) -> ApproximateDistribution:
     """Gradient-free random-walk Metropolis-Hastings (BlackJAX-backed).
 
@@ -634,7 +636,9 @@ def rwmh(
         :func:`~probpipe.inference._inference_utils.get_init_state`
         when ``None``.
     random_seed
-        Seed for chain initialisation, warmup, and sampling RNG.
+        Seed for chain initialisation, warmup, and sampling RNG. Omitted,
+        the run's seed is a workflow-owned random event, which
+        ``workflow_run`` fixes.
 
     Returns
     -------
@@ -699,6 +703,7 @@ def rwmh(
     else:
         target_log_prob = flat_density(dist)
 
+    random_seed = run_seed({"random_seed": random_seed}, "blackjax_rwmh")
     init_state = get_init_state(dist, init, random_seed=random_seed)
     proposal_sigma_override = None
     if proposal_cov is not None:
@@ -803,7 +808,7 @@ class BlackJAXRWMHMethod(InferenceMethod):
         """Random-walk chains on the target's parameters, scored by its prior and likelihood."""
         self._check_options(kwargs)
         dist, observed = observed_parts(target)
-        random_seed = kwargs.get("random_seed", 0)
+        random_seed = run_seed(kwargs, self.name)
         init = kwargs.get("init")
         if init is None:
             init = get_init_state(dist, None, random_seed=random_seed)

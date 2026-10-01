@@ -20,6 +20,7 @@ from probpipe import (
     NumericRecordSpec,
     OpaqueSpec,
     condition_on,
+    workflow_run,
 )
 from probpipe.distributions import FactoredDistribution
 from probpipe.distributions._capabilities import SupportsSampling
@@ -416,6 +417,43 @@ class TestGetInitState:
         np.testing.assert_array_equal(np.asarray(a), np.asarray(b))
         c = get_init_state(dist, init=None, random_seed=8)
         assert not bool(jnp.all(a == c))
+
+
+# ---------------------------------------------------------------------------
+# The seed of a run
+# ---------------------------------------------------------------------------
+
+
+_SEEDED_METHODS = ["blackjax_rwmh", "blackjax_nuts", "tfp_nuts"]
+
+
+def _first_draws(method, seed, **options):
+    """The first chain's draws of *method* on a Gaussian mean, in a scope seeded by *seed*."""
+    model = _gaussian_mean(Normal("mu", 0.0, 1.0), 4)
+    data = jnp.array([0.3, -0.2, 0.5, 0.1])
+    with workflow_run(seed=seed):
+        posterior = condition_on(
+            model, y=data, method=method, num_results=8, num_warmup=4, **options
+        )
+    return np.asarray(posterior.chains[0])
+
+
+class TestRunSeed:
+    """A run is seeded by the workflow scope unless its options set ``random_seed``."""
+
+    @pytest.mark.parametrize("method", _SEEDED_METHODS)
+    def test_a_seeded_scope_reproduces_the_run(self, method):
+        np.testing.assert_array_equal(_first_draws(method, 0), _first_draws(method, 0))
+
+    @pytest.mark.parametrize("method", _SEEDED_METHODS)
+    def test_scopes_with_different_seeds_run_different_chains(self, method):
+        assert not np.array_equal(_first_draws(method, 0), _first_draws(method, 1))
+
+    @pytest.mark.parametrize("method", _SEEDED_METHODS)
+    def test_an_explicit_random_seed_wins_over_the_scope(self, method):
+        np.testing.assert_array_equal(
+            _first_draws(method, 0, random_seed=3), _first_draws(method, 1, random_seed=3)
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -61,6 +61,7 @@ from ._inference_utils import (
     observed_parts,
     parallel_chain_map,
     run_chain_scan,
+    run_seed,
 )
 
 __all__ = ["BlackJAXHmcMethod", "BlackJAXNutsMethod"]
@@ -341,7 +342,7 @@ class _BlackJAXMCMCMethod(InferenceMethod):
     def execute(self, target: Any, /, **kwargs: Any) -> ApproximateDistribution:
         """Chains of the BlackJAX kernel on the flat form of the target's unnormalized density."""
         self._check_options(kwargs)
-        random_seed: int = kwargs.get("random_seed", 0)
+        random_seed = run_seed(kwargs, self.name)
         model, observed = observed_parts(target)
         target_flat, flat_init, event_spec = build_target_log_prob_flat(
             model,
