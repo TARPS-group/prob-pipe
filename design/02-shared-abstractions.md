@@ -173,7 +173,7 @@ The `spec` slot is the term's type, stored once. Each kind narrows it to its own
 
 Every tracked term exposes `raw()` as the single access point to the representation layer. It returns the term **detached** from the workflow. Detachment removes provenance, annotations, and any reference to a container or parent, and it keeps the spec and the name. A kind whose representation is not itself a ProbPipe object has a **raw host**, which `raw()` returns — for example, a backing array object or a wrapped callable. A kind whose representation is a ProbPipe object, such as a distribution, returns that object detached.
 
-Accessing a container returns a **view**, for example a record field or a batch element. A view is a tracked term named from the accessor, which is the field key for a record and the selected levels for a batch; its provenance records the container and the source term where one was supplied.
+Accessing a container returns a **view**, for example a record field or a batch element. A container's view is a tracked term named from the accessor, which is the field key for a record and the selected levels for a batch; its provenance records the container and the source term where one was supplied.
 
 **A tracked term is immutable.** `TrackedTerm` carries an immutability guard automatically, so assignment and deletion raise an error. Immutability requires that every transformation, including each `with_*` method, returns a new term that shares the representation.
 
