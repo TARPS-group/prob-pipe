@@ -72,6 +72,18 @@ class TestTheTrigger:
     def test_a_distribution_at_a_value_annotated_parameter_is_lifted(self, annotation):
         assert isinstance(_kind_of(annotation, standard_normal()), Distribution)
 
+    def test_a_parameter_annotated_any_passes_a_law_whole(self):
+        seen = []
+
+        def accept(x: Any):
+            seen.append(x)
+            return 0.0
+
+        law = standard_normal()
+        Function("accept", accept)(law)
+
+        assert seen == [law]
+
     @pytest.mark.parametrize(
         "annotation",
         [Distribution, Normal, SupportsMarginals, Distribution | None],

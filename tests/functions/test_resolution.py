@@ -248,14 +248,14 @@ class TestTheFloorsAgreeWithTheDirectCall:
         [
             (None, standard_normal, True),
             (Distribution, standard_normal, False),
-            (Any, standard_normal, True),
+            (Any, standard_normal, False),
             (None, _normals, False),
             (Any, _normals, False),
         ],
         ids=[
             "unannotated",
             "consumes-the-law",
-            "any",
+            "any-passes-the-law-whole",
             "distribution-batch",
             "distribution-batch-at-any",
         ],

@@ -201,11 +201,12 @@ def is_broadcast(value: Any, expected: Any) -> bool:
 
     A distribution is broadcast unless it is batched, in which case the call
     sweeps it or passes it whole, or the annotation names a distribution, which
-    consumes it.
+    consumes it, or is ``Any``, which accepts every kind as it arrives.
     """
     return (
         isinstance(value, Distribution)
         and not _is_batched(value)
+        and expected is not Any
         and not _normalization.is_distribution_hint(expected)
     )
 

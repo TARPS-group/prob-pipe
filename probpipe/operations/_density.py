@@ -122,7 +122,7 @@ def _random_unnormalized_log_prob_result(M: DistributionSpec) -> OutputSpec:
 
 
 @operation(result=_log_prob_result)
-def log_prob(d: Distribution, value: Any):
+def log_prob(d: Distribution, value):
     """The normalized log-density of *value* under *d*.
 
     Parameters
@@ -131,7 +131,9 @@ def log_prob(d: Distribution, value: Any):
         A law claiming ``SupportsLogProb``.
     value : Any
         One value conforming to ``d.event_spec.spec``, or a batch of them; a
-        scored value binds the law's symbolic dimensions for this call only.
+        scored value binds the law's symbolic dimensions for this call only. A
+        law over such values lifts the call, which then returns the law of the
+        log-density at its draws.
 
     Returns
     -------
@@ -153,7 +155,7 @@ log_prob.capability_route(
 
 
 @operation(result=_unnormalized_log_prob_result)
-def unnormalized_log_prob(d: Distribution, value: Any):
+def unnormalized_log_prob(d: Distribution, value):
     """The log-density of *value* under *d* up to an additive constant.
 
     Parameters
@@ -161,7 +163,9 @@ def unnormalized_log_prob(d: Distribution, value: Any):
     d : Distribution
         A law claiming ``SupportsUnnormalizedLogProb``.
     value : Any
-        One value conforming to ``d.event_spec.spec``, or a batch of them.
+        One value conforming to ``d.event_spec.spec``, or a batch of them. A law
+        over such values lifts the call, which then returns the law of the
+        log-density at its draws.
 
     Returns
     -------
@@ -197,7 +201,7 @@ def _unnormalized_log_prob_applies(d: Any, value: Any) -> CallCheck:
 
 
 @operation(result=_prob_result, identity_check=_log_prob_applies)
-def prob(d: Distribution, value: Any):
+def prob(d: Distribution, value):
     """The density of *value* under *d*, defined as ``exp ∘ log_prob``.
 
     Returns
@@ -216,7 +220,7 @@ def prob(d: Distribution, value: Any):
 
 
 @operation(result=_unnormalized_prob_result, identity_check=_unnormalized_log_prob_applies)
-def unnormalized_prob(d: Distribution, value: Any):
+def unnormalized_prob(d: Distribution, value):
     """The density of *value* under *d* up to a factor, defined as ``exp ∘ unnormalized_log_prob``.
 
     Returns
