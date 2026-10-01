@@ -103,9 +103,13 @@ def _stan_toolchain(tmp_path_factory):
     tests/modeling/ and tests/inference/.
     """
     bridgestan = pytest.importorskip("bridgestan")
+    from probpipe.families._programs import _BRIDGESTAN_MAKE_ARGS
+
     probe = tmp_path_factory.mktemp("stan_probe") / "probe.stan"
     probe.write_text("parameters { real x; } model { x ~ normal(0, 1); }")
     try:
-        bridgestan.StanModel(str(probe))
+        # Built as the adapter builds model libraries, without TBB's malloc proxy,
+        # which would break JAX's allocations for the rest of the process.
+        bridgestan.StanModel(str(probe), make_args=list(_BRIDGESTAN_MAKE_ARGS))
     except Exception as exc:
         pytest.skip(f"Stan compilation unavailable: {exc}")

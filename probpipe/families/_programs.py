@@ -40,8 +40,10 @@ from ..core.record import Record
 from ..custom_types import Array, ArrayLike
 from ..distributions._capabilities import (
     SupportsConditionalLogProb,
+    SupportsConditionalSampling,
     SupportsConditionalUnnormalizedLogProb,
     SupportsLogProb,
+    SupportsSampling,
     SupportsUnnormalizedLogProb,
     _capability_subclass,
 )
@@ -49,6 +51,10 @@ from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution
 
 __all__ = ["PyMCModel", "StanModel", "UnnormalizedDistribution"]
+
+
+#: Make arguments for a Stan model library: TBB without its malloc proxy.
+_BRIDGESTAN_MAKE_ARGS: tuple[str, ...] = ("TBB_LIBRARIES=tbb",)
 
 
 def _given_values(owner: str, given: Any, kwargs: Mapping[str, Any], slots: Any) -> dict[str, Any]:
@@ -399,8 +405,13 @@ class _StanPosterior(Distribution, SupportsUnnormalizedLogProb):
                     "bridgestan is required for a Stan model's density. Install it with: "
                     "pip install bridgestan"
                 ) from e
+            # Stan links TBB's malloc proxy by default, which replaces the process
+            # allocator and makes JAX's zero-size allocations fail afterwards, so the
+            # model library links TBB without it.
             memo["bridgestan"] = bridgestan.StanModel(
-                self.stan_file, data={k: _to_numpy(v) for k, v in self._data.items()} or None
+                self.stan_file,
+                data={k: _to_numpy(v) for k, v in self._data.items()} or None,
+                make_args=list(_BRIDGESTAN_MAKE_ARGS),
             )
         return memo["bridgestan"]
 
@@ -672,6 +683,26 @@ def _pymc_density(self: PyMCModel, value: Any) -> Array:
     )
 
 
+def _pymc_sample(self: PyMCModel, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
+    """Draws of every free variable from the prior predictive, as a record.
+
+    One draw for ``sample_shape=()``; otherwise each field carries the sample
+    axes before its shape. The key seeds PyMC's sampler.
+    """
+    import pymc as pm
+
+    n = int(np.prod(sample_shape)) if sample_shape else 1
+    seed = int(jax.random.randint(key, (), 0, 2**31 - 1))
+    prior = pm.sample_prior_predictive(draws=n, model=self._program.build(), random_seed=seed).prior
+    fields = {}
+    for name in self.event_spec.components:
+        values = jnp.asarray(prior[name].values[0])
+        fields[name] = (
+            values[0] if not sample_shape else values.reshape(*sample_shape, *values.shape[1:])
+        )
+    return Record(self.name, fields)
+
+
 class _PyMCModelMeta(type(Distribution)):
     """The metaclass of ``PyMCModel``: a function with a given slot defines a kernel."""
 
@@ -691,9 +722,10 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
     build without its data gives. Any other argument is a given slot, so a
     model with covariates constructs the kernel over them, whose curried law is
     a ``PyMCModel``. It claims sampling, which draws from the prior predictive,
-    and a normalized density, or the unnormalized density when the model has a
-    potential or an improper prior. Conditioning on observed values is Bayes'
-    rule, which the PyMC methods of the inference-method registry normalize.
+    and a normalized density. A model with a potential or an improper prior
+    claims the unnormalized density alone, since its prior predictive does not
+    draw from its law. Conditioning on observed values is Bayes' rule, which the
+    PyMC methods of the inference-method registry normalize.
 
     Parameters
     ----------
@@ -714,14 +746,19 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
     _capability_table: ClassVar = {
         SupportsLogProb: {"_log_prob": _pymc_density},
         SupportsUnnormalizedLogProb: {"_unnormalized_log_prob": _pymc_density},
+        SupportsSampling: {"_sample": _pymc_sample},
     }
     #: The compiled density, built on first use, is not state.
     _transient_state = ("_memo",)
 
     def __new__(cls, name: str, model_fn: Callable[..., Any]) -> Any:
         program = model_fn if isinstance(model_fn, _PyMCProgram) else _PyMCProgram(model_fn)
-        density = SupportsLogProb if program.normalized else SupportsUnnormalizedLogProb
-        return object.__new__(_capability_subclass(PyMCModel, (density,)))
+        claimed = (
+            (SupportsLogProb, SupportsSampling)
+            if program.normalized
+            else (SupportsUnnormalizedLogProb,)
+        )
+        return object.__new__(_capability_subclass(PyMCModel, claimed))
 
     def __init__(self, name: str, model_fn: Callable[..., Any]) -> None:
         try:
@@ -750,14 +787,15 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
         """The PyMC model at the observed values *data*.
 
         *data* is ``None`` for the build without data, a mapping or record
-        keyed by observed variables, or a bare array for the first of them.
+        keyed by observed variables, or a bare array for the first of them. A
+        value that a mapping or record holds for a parameter fixes it: the
+        model observes the parameter at that value, as conditioning on it
+        requires.
         """
         from ..core._record_batch import RecordBatch
 
         if data is None:
             return self._program.build()
-        if isinstance(data, Mapping):
-            return self._program.build(data)
         if isinstance(data, RecordBatch):
             return self._program.build(
                 {
@@ -767,25 +805,39 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
                 }
             )
         if isinstance(data, Record):
-            return self._program.build(
-                {name: data[name] for name in self._observed_names if name in data.fields}
-            )
-        return self._program.build({self._observed_names[0]: data})
+            values = {name: data[name] for name in data.fields}
+            arguments = {name: values[name] for name in self._observed_names if name in values}
+        elif isinstance(data, Mapping):
+            values = dict(data)
+            arguments = {
+                name: value for name, value in values.items() if name not in self._param_names
+            }
+        else:
+            return self._program.build({self._observed_names[0]: data})
+        model = self._program.build(arguments)
+        fixed = {name: _to_numpy(values[name]) for name in self._param_names if name in values}
+        if not fixed:
+            return model
+        import pymc as pm
+
+        return pm.observe(model, fixed)
 
     def _conditioned_param_names(self, model: Any) -> tuple[str, ...]:
         """The free variables to infer in a data-conditioned *model*, in order.
 
-        They are the parameters and any observed variable the data left free.
+        They are the parameters the data leave free and any observed variable
+        the data left free.
 
         Raises
         ------
         ValueError
             If *model*'s free variables differ from the build without data by a
-            variable that is not observed, since the set of random variables
-            must not change with the data.
+            variable that the data neither observe nor fix, since the set of
+            random variables must not change with the data.
         """
         free = {rv.name for rv in model.free_RVs}
-        missing = [n for n in self._param_names if n not in free]
+        fixed = {rv.name for rv in model.observed_RVs}
+        missing = [n for n in self._param_names if n not in free and n not in fixed]
         extra = free - set(self._param_names) - set(self._observed_names)
         if missing or extra:
             raise ValueError(
@@ -794,7 +846,9 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
                 f"whose set of free random variables changes with the data (dynamic random "
                 f"variables); only per-variable shapes may depend on data size."
             )
-        return tuple(self._param_names) + tuple(n for n in self._observed_names if n in free)
+        return tuple(n for n in self._param_names if n in free) + tuple(
+            n for n in self._observed_names if n in free
+        )
 
     def _parameter_record_for(self, model: Any, names: Sequence[str]) -> NumericRecordSpec:
         """The record of *names*, shaped as a build *model* shapes them.
@@ -816,29 +870,6 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
             fields[name] = tuple(int(s) for s in shape)
         return NumericRecordSpec(**fields)
 
-    # -- sampling -----------------------------------------------------------------
-
-    def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
-        """Draws of every free variable from the prior predictive, as a record.
-
-        One draw for ``sample_shape=()``; otherwise each field carries the
-        sample axes before its shape. The key seeds PyMC's sampler.
-        """
-        import pymc as pm
-
-        n = int(np.prod(sample_shape)) if sample_shape else 1
-        seed = int(jax.random.randint(key, (), 0, 2**31 - 1))
-        prior = pm.sample_prior_predictive(
-            draws=n, model=self._program.build(), random_seed=seed
-        ).prior
-        fields = {}
-        for name in self.event_spec.components:
-            values = jnp.asarray(prior[name].values[0])
-            fields[name] = (
-                values[0] if not sample_shape else values.reshape(*sample_shape, *values.shape[1:])
-            )
-        return Record(self.name, fields)
-
     def __repr__(self) -> str:
         return f"PyMCModel(variables=[{', '.join(self._program.shapes)}])"
 
@@ -853,13 +884,21 @@ def _pymc_kernel_log_prob(self: _PyMCKernel, given: Any, value: Any) -> Array:
     return self._condition_on(given)._log_prob(value)
 
 
+def _pymc_kernel_sample(
+    self: _PyMCKernel, given: Any, key: Any, sample_shape: tuple[int, ...] = ()
+) -> Any:
+    """Prior predictive draws of the free variables, the given slots bound."""
+    return self._condition_on(given)._sample(key, sample_shape)
+
+
 class _PyMCKernel(ConditionalDistribution):
     """The kernel from a PyMC model's given arguments to the joint law of its free variables.
 
     Binding every given slot yields the ``PyMCModel`` of the function with those
     arguments bound. Its event dimensions are symbolic, since the given values
-    may set them, and it claims conditional sampling and the conditional twin of
-    the model's density.
+    may set them, and it claims the conditional twins of the capabilities that
+    model claims: conditional sampling and the normalized density, or the
+    unnormalized density alone.
     """
 
     _capability_table: ClassVar = {
@@ -867,15 +906,16 @@ class _PyMCKernel(ConditionalDistribution):
         SupportsConditionalUnnormalizedLogProb: {
             "_conditional_unnormalized_log_prob": _pymc_kernel_density
         },
+        SupportsConditionalSampling: {"_conditional_sample": _pymc_kernel_sample},
     }
 
     def __new__(cls, name: str, program: _PyMCProgram) -> Any:
-        density = (
-            SupportsConditionalLogProb
+        claimed = (
+            (SupportsConditionalLogProb, SupportsConditionalSampling)
             if program.normalized
-            else SupportsConditionalUnnormalizedLogProb
+            else (SupportsConditionalUnnormalizedLogProb,)
         )
-        return object.__new__(_capability_subclass(_PyMCKernel, (density,)))
+        return object.__new__(_capability_subclass(_PyMCKernel, claimed))
 
     def __init__(self, name: str, program: _PyMCProgram) -> None:
         super().__init__(
@@ -897,12 +937,6 @@ class _PyMCKernel(ConditionalDistribution):
         """
         values = _given_values(self.name, given, kwargs, self.given_spec)
         return PyMCModel(self.name, self._program.bind(values))
-
-    def _conditional_sample(
-        self, given: Record | Mapping[str, Any], key: Any, sample_shape: tuple[int, ...] = ()
-    ) -> Any:
-        """Prior predictive draws of the free variables, the given slots bound."""
-        return self._condition_on(given)._sample(key, sample_shape)
 
     def __repr__(self) -> str:
         return (

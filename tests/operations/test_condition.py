@@ -221,6 +221,16 @@ class _UnnormalizedKernel(ConditionalDistribution, SupportsConditionalUnnormaliz
         return Unnormalized(self.name)._unnormalized_log_prob(value)
 
 
+class _UndeclaredKernel(ConditionalDistribution):
+    """A kernel whose laws are unnormalized, which it implements without declaring a capability."""
+
+    def __init__(self, name: str = "theta") -> None:
+        super().__init__(name, {"data": REAL}, REAL)
+
+    def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
+        return Unnormalized(self.name)
+
+
 class _AmortizedKernel(
     ConditionalDistribution, SupportsApproximateConditioning, SupportsConditionalSampling
 ):
@@ -445,6 +455,24 @@ class TestTheNormalizationStage:
         (target,) = exact.targets
         assert isinstance(target, Unnormalized)
 
+    def test_the_target_of_a_curried_law_records_the_curry(self, suite_methods):
+        exact, _ = suite_methods
+        kernel = _UnnormalizedKernel()
+        condition_on(kernel, {"data": 1.0})
+        (target,) = exact.targets
+        assert target.provenance.operation == "condition_on"
+        assert target.provenance.metadata == {"stage": "exact", "route": "curry"}
+        (parent,) = target.provenance.parents
+        assert (parent.type_name, parent.name) == ("_UnnormalizedKernel", kernel.name)
+
+    def test_the_target_of_bayes_rule_records_the_curry_of_its_slots(self, approximate_method):
+        joint = Kernel("y", ("mu",)) * Kernel("z", ("mu",))
+        condition_on(joint, {"mu": 1.0, "y": 0.0})
+        (target,) = approximate_method.targets
+        assert target.provenance.metadata == {"stage": "exact", "route": "bayes"}
+        (law,) = target.provenance.parents
+        assert law.provenance.metadata == {"stage": "exact", "route": "curry"}
+
     def test_check_reports_the_exact_route_and_the_normalization_method(self, suite_methods):
         view = condition_on.with_options(method="operations_suite_approximate")
         curried = view.check(_UnnormalizedKernel(), {"data": 1.0})
@@ -489,6 +517,66 @@ class TestTheNormalizationStage:
         draws = kernel._conditional_sample({"b": 2.0}, jax.random.PRNGKey(0), (3,))
         assert draws.shape == (3,)
 
+    def test_a_per_value_kernel_passes_the_budgets_to_its_method_only(
+        self, approximate_method, tmp_path
+    ):
+        from probpipe.families import StanModel
+
+        program = tmp_path / "mean.stan"
+        program.write_text(
+            "data { int N; vector[N] y; } parameters { real mu; } model { y ~ normal(mu, 1); }"
+        )
+        kernel = condition_on(StanModel("mean", str(program)), {"N": 3})
+        assert set(kernel.given_spec) == {"y"}
+        view = condition_on.with_options(num_results=30, num_warmup=7)
+        assert view(kernel, {"y": [1.0, 2.0, 3.0]}).loc == 4.0
+        assert approximate_method.options == [{"num_results": 30, "num_warmup": 7}]
+
+    def test_check_names_the_method_that_normalizes_the_bound_law(self, approximate_method):
+        kernel = condition_on(_UnnormalizedKernel("theta", ("a", "b")), {"a": 1.0})
+        report = condition_on.check(kernel, {"b": 2.0})
+        assert (report.route, report.method, report.exact) == (
+            "curry",
+            "operations_suite_factored",
+            False,
+        )
+        assert approximate_method.targets == []
+
+    def test_exact_only_declines_a_per_value_kernel_no_exact_method_normalizes(self, monkeypatch):
+        _normalize_with(
+            monkeypatch, _SuiteMethod("operations_suite_approximate", False, (Unnormalized,), 9.0)
+        )
+        view = condition_on.with_options(exact_only=True)
+        report = view.check(_UnnormalizedKernel("theta", ("a", "b")), {"a": 1.0})
+        assert report.feasible is False
+        assert 'method="unnormalized"' in report.description
+        with pytest.raises(ResolutionError, match='method="unnormalized"'):
+            view(_UnnormalizedKernel("theta", ("a", "b")), {"a": 1.0})
+
+    def test_binding_the_rest_of_an_exact_per_value_kernel_reports_its_method(self, suite_methods):
+        view = condition_on.with_options(exact_only=True)
+        kernel = view(_UnnormalizedKernel("theta", ("a", "b")), {"a": 1.0})
+        report = condition_on.check(kernel, {"b": 2.0})
+        assert (report.route, report.method, report.exact) == (
+            "curry",
+            "operations_suite_exact",
+            True,
+        )
+        assert condition_on(kernel, {"b": 2.0}).loc == 0.5
+
+    def test_binding_the_rest_raises_up_front_when_no_exact_method_applies(self, monkeypatch):
+        _normalize_with(
+            monkeypatch, _SuiteMethod("operations_suite_exact", True, (_Conjugate,), 0.5)
+        )
+        kernel = condition_on.with_options(exact_only=True)(
+            _UnnormalizedKernel("theta", ("a", "b")), {"a": 1.0}
+        )
+        report = condition_on.check(kernel, {"b": 2.0})
+        assert report.feasible is False
+        assert 'method="unnormalized"' in report.description
+        with pytest.raises(ResolutionError, match='method="unnormalized"'):
+            condition_on(kernel, {"b": 2.0})
+
     def test_conditioning_a_produced_field_of_a_kernel_keeps_it_a_kernel(self, approximate_method):
         joint = Kernel("y", ("mu",)) * Kernel("z", ("mu",))
         kernel = condition_on(joint, {"y": 0.0})
@@ -500,6 +588,36 @@ class TestTheNormalizationStage:
         assert isinstance(target, _UnnormalizedConditional)
         assert set(target.event_spec.components) == {"z"}
 
+    def test_check_on_mixed_keys_of_a_per_value_kernel_runs_no_method(self, approximate_method):
+        joint = Kernel("y", ("mu",)) * Kernel("z", ("mu",)) * Kernel("w", ("mu",))
+        kernel = condition_on(joint, {"y": 0.0})
+        report = condition_on.check(kernel, {"mu": 1.0, "z": 0.5})
+        assert (report.route, report.method) == ("bayes", "operations_suite_factored")
+        assert approximate_method.targets == []
+
+    def test_mixed_keys_of_a_per_value_kernel_bind_its_slots_then_condition_once(
+        self, approximate_method
+    ):
+        joint = Kernel("y", ("mu",)) * Kernel("z", ("mu",)) * Kernel("w", ("mu",))
+        kernel = condition_on(joint, {"y": 0.0})
+        assert condition_on(kernel, {"mu": 1.0, "z": 0.5}).loc == 4.0
+        (target,) = approximate_method.targets
+        assert isinstance(target, _UnnormalizedConditional)
+        assert set(target.event_spec.components) == {"w"}
+        assert set(target.joint.event_spec.components) == {"y", "z", "w"}
+        assert set(target.given.fields) == {"y", "z"}
+
+    def test_conditioning_a_per_value_kernel_on_a_field_conditions_its_unnormalized_laws(
+        self, approximate_method
+    ):
+        joint = Kernel("y", ("mu",)) * Kernel("z", ("mu",)) * Kernel("w", ("mu",))
+        kernel = condition_on(condition_on(joint, {"y": 0.0}), {"z": 0.5})
+        assert approximate_method.targets == []
+        assert condition_on(kernel, {"mu": 1.0}).loc == 4.0
+        (target,) = approximate_method.targets
+        assert set(target.joint.event_spec.components) == {"y", "z", "w"}
+        assert set(target.given.fields) == {"y", "z"}
+
     def test_the_target_of_a_law_that_samples_claims_its_density(self, approximate_method):
         joint = Kernel("y", ("mu",)) * Kernel("z", ("mu",))
         law = condition_on(joint, {"mu": 1.0, "y": 0.0})
@@ -507,6 +625,45 @@ class TestTheNormalizationStage:
         (target,) = approximate_method.targets
         assert isinstance(target, SupportsUnnormalizedLogProb)
         assert not isinstance(target, SupportsSampling)
+
+
+class TestAKernelThatDeclaresNothingAboutItsLaws:
+    def test_check_reports_the_curry_unresolved(self, suite_methods):
+        report = condition_on.check(Kernel(), {"mu": 1.0})
+        assert report.feasible is None
+        assert (report.route, report.method) == (None, None)
+        assert any("declares no conditional capability" in entry for entry in report.pending)
+        assert suite_methods[0].targets == suite_methods[1].targets == []
+
+    def test_the_call_returns_a_normalized_law_without_inference(self, suite_methods):
+        exact, approximate = suite_methods
+        law = condition_on(Kernel(), {"mu": 1.0})
+        assert isinstance(law, Gaussian)
+        assert law.loc == 1.0
+        assert exact.targets == approximate.targets == []
+
+    def test_exact_only_returns_a_normalized_law(self):
+        assert condition_on.with_options(exact_only=True)(Kernel(), {"mu": 1.0}).loc == 1.0
+
+    def test_a_named_method_does_not_run_on_a_normalized_law(self, suite_methods):
+        view = condition_on.with_options(method="operations_suite_approximate")
+        assert view.check(Kernel(), {"mu": 1.0}).feasible is None
+        with pytest.raises(ResolutionError, match="normalized"):
+            view(Kernel(), {"mu": 1.0})
+        assert suite_methods[1].targets == []
+
+    def test_the_call_normalizes_an_unnormalized_law_by_a_method(self, suite_methods):
+        exact, _ = suite_methods
+        assert condition_on.check(_UndeclaredKernel(), {"data": 1.0}).feasible is None
+        assert condition_on(_UndeclaredKernel(), {"data": 1.0}).loc == 0.5
+        (target,) = exact.targets
+        assert isinstance(target, Unnormalized)
+
+    def test_binding_some_slots_returns_the_curried_kernel(self, suite_methods):
+        curried = condition_on(Kernel("y", ("a", "b")), {"a": 1.0})
+        assert type(curried) is Kernel
+        assert set(curried.given_spec) == {"b"}
+        assert condition_on(curried, {"b": 2.0}).loc == 3.0
 
 
 class TestApproximateKernels:
@@ -589,6 +746,30 @@ def _unnormalized_vector():
     )
 
 
+def _refuse_to_execute(*args: Any, **kwargs: Any) -> Any:
+    raise AssertionError("check ran an inference method")
+
+
+class _WholeTermKernel(ConditionalDistribution, SupportsConditionalUnnormalizedLogProb):
+    """``theta | s``, whose laws are unnormalized over the whole-term event ``theta`` in R²."""
+
+    def __init__(self) -> None:
+        from probpipe import NumericArraySpec
+
+        super().__init__("theta", {"s": REAL}, OutputSpec(theta=NumericArraySpec((2,))))
+
+    def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
+        from probpipe.families import UnnormalizedDistribution
+
+        s = float(given["s"])
+        return UnnormalizedDistribution(
+            "theta", lambda x: -0.5 * jnp.sum((jnp.asarray(x) - s) ** 2), self.event_spec
+        )
+
+    def _conditional_unnormalized_log_prob(self, given: Any, value: Any) -> Any:
+        return self._condition_on(given)._unnormalized_log_prob(value)
+
+
 class TestEndToEnd:
     def test_a_normal_kernel_bound_to_a_value_needs_no_inference(self):
         from probpipe.families import GaussianFamily, glm_likelihood
@@ -617,6 +798,17 @@ class TestEndToEnd:
         assert _is_normalized(posterior)
         assert tuple(posterior.event_spec.components) == ("a",)
         assert view.check(_unnormalized_pair(), {"b": 1.0}).method == "blackjax_nuts"
+
+    @pytest.mark.parametrize("kernel", [_UnnormalizedKernel(), _WholeTermKernel()])
+    def test_a_curried_law_over_a_whole_term_is_normalized_under_that_term(self, kernel):
+        view = condition_on.with_options(**_MCMC)
+        given = dict.fromkeys(kernel.given_spec, 1.0)
+        assert view.check(kernel, given).method == "blackjax_nuts"
+        posterior = view(kernel, given)
+        assert _is_normalized(posterior)
+        assert not posterior.event_spec.exposes_record
+        assert tuple(posterior.event_spec.components) == ("theta",)
+        assert posterior.event_spec.spec.shape == kernel.event_spec.spec.shape
 
     def test_an_unnormalized_distribution_samples_through_a_method(self):
         view = sample.with_options(**_MCMC)
@@ -661,6 +853,32 @@ class TestEndToEnd:
         assert _is_normalized(posterior)
         assert set(posterior.event_spec.components) == {"beta", "sigma"}
 
+    def test_a_pymc_kernel_conditioned_on_its_observation_binds_a_covariate_and_a_parameter(
+        self, monkeypatch
+    ):
+        pm = pytest.importorskip("pymc")
+        from probpipe.families import PyMCModel
+
+        def regression(x=None, y=None):
+            x = np.zeros(3) if x is None else np.asarray(x)
+            with pm.Model() as model:
+                beta = pm.Normal("beta", 0, 1)
+                sigma = pm.HalfNormal("sigma", 1)
+                pm.Normal("y", beta * x, sigma, observed=y)
+            return model
+
+        view = condition_on.with_options(num_results=30, num_warmup=30, num_chains=1)
+        kernel = view(PyMCModel("regression", regression), {"y": np.linspace(0.0, 1.0, 6)})
+        given = {"x": np.linspace(0.0, 1.0, 6), "beta": 0.3}
+        with monkeypatch.context() as patched:
+            patched.setattr(inference_method_registry, "execute", _refuse_to_execute)
+            report = view.check(kernel, given)
+        assert report.route == "bayes"
+        assert report.method in ("nutpie_nuts", "pymc_nuts")
+        posterior = view(kernel, given)
+        assert _is_normalized(posterior)
+        assert set(posterior.event_spec.components) == {"sigma"}
+
     def test_a_stan_model_bound_to_its_data_is_normalized_by_a_stan_method(self, tmp_path):
         from probpipe.families import StanModel
 
@@ -687,9 +905,12 @@ class TestEndToEnd:
             "data { int N; vector[N] y; } parameters { real mu; } "
             "model { mu ~ normal(0, 1); y ~ normal(mu, 1); }"
         )
-        view = condition_on.with_options(num_results=30, num_warmup=30, num_chains=1)
+        view = condition_on.with_options(num_results=200, num_warmup=200, num_chains=1)
         posterior = view(StanModel("mean", str(program)), {"N": 3, "y": [1.0, 2.0, 3.0]})
         assert _is_normalized(posterior)
+        assert tuple(posterior.event_spec.components) == ("mu",)
+        # mu ~ N(0, 1) and y_i ~ N(mu, 1) give mu | y ~ N(1.5, 0.25).
+        assert float(np.mean(np.asarray(posterior.draws()["mu"]))) == pytest.approx(1.5, abs=0.3)
 
     def test_unnormalized_returns_the_exact_stage_of_a_joint(self):
         target = condition_on.with_options(method="unnormalized")(

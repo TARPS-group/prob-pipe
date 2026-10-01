@@ -212,6 +212,19 @@ def structured_model(_stan_toolchain, tmp_path_factory):
     return StanModel("structured", str(stan_file))
 
 
+class TestTheModelLibrary:
+    def test_a_loaded_model_leaves_jax_able_to_allocate_empty_arrays(self, conjugate_model):
+        """The model library links TBB without its malloc proxy.
+
+        The proxy replaces the process allocator, after which JAX's zero-size
+        allocations fail with RESOURCE_EXHAUSTED for the rest of the process.
+        """
+        conjugate_model._bridgestan_model()
+        empty = jnp.zeros((0,)) + 1.0
+        assert empty.shape == (0,)
+        assert float(jnp.ones((3,)).sum()) == 3.0
+
+
 class TestStanPosteriorDensity:
     """The posterior's density against the conjugate program's closed form.
 

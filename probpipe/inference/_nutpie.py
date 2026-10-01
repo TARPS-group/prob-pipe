@@ -5,7 +5,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import numpy as np
+
 from ..core._dispatch import Feasibility
+from ..core._record_spec import NumericRecordSpec
 from ..core._specs import OutputSpec
 from ..custom_types import ArrayLike
 from ..functions import function
@@ -40,6 +43,36 @@ def condition_on_nutpie(
     to *data* when it is a kernel, or a :class:`~probpipe.families.PyMCModel`
     at the observed values *data*.
     """
+    return _nutpie_posterior(
+        model,
+        data,
+        model,
+        num_results=num_results,
+        num_warmup=num_warmup,
+        num_chains=num_chains,
+        random_seed=random_seed,
+        **kwargs,
+    )
+
+
+def _nutpie_posterior(
+    model: Any,
+    data: Any,
+    parent: Any,
+    *,
+    num_results: int = 1000,
+    num_warmup: int = 500,
+    num_chains: int = 4,
+    random_seed: int = 0,
+    **kwargs: Any,
+) -> ApproximateDistribution:
+    """nutpie's posterior of *model* at *data*, whose provenance names *parent*.
+
+    Raises
+    ------
+    ImportError
+        If nutpie is not installed.
+    """
     try:
         import nutpie
     except ImportError as e:
@@ -51,13 +84,14 @@ def condition_on_nutpie(
 
     # Build the parameter record in canonical field order from the
     # conditioned build before sampling (fail fast on a dynamic-RV /
-    # non-concrete model). A Stan model declares its own parameters.
+    # non-concrete model). A Stan model declares its parameter blocks, whose
+    # shapes the trace gives.
     if pymc_build is not None:
         param_names = list(model._conditioned_param_names(pymc_build))
         event_spec = OutputSpec(model._parameter_record_for(pymc_build, param_names))
     else:
-        param_names = None
-        event_spec = getattr(model, "event_spec", None)
+        param_names = list(model.event_spec.components)
+        event_spec = None
 
     trace = nutpie.sample(
         compiled,
@@ -67,20 +101,23 @@ def condition_on_nutpie(
         seed=random_seed,
         **kwargs,
     )
+    if event_spec is None:
+        event_spec = OutputSpec(
+            NumericRecordSpec(
+                **{name: np.shape(trace.posterior[name].values)[2:] for name in param_names}
+            )
+        )
 
-    # Extract in nutpie's natural ``data_vars`` order (it sorts
-    # alphabetically); ``field_order`` lets make_posterior realign columns
-    # to the parameters by name, so we don't depend on the orders matching.
-    if param_names is not None:
-        field_order = posterior_var_order(trace, param_names)
-        chains, _ = _extract_chains(trace, num_chains, keep_names=field_order)
-    else:
-        field_order = None
-        chains, _ = _extract_chains(trace, num_chains)
+    # Extract the parameters alone, in nutpie's natural ``data_vars`` order
+    # (it sorts alphabetically); ``field_order`` lets make_posterior realign
+    # columns to the parameters by name, so we don't depend on the orders
+    # matching.
+    field_order = posterior_var_order(trace, param_names)
+    chains, _ = _extract_chains(trace, num_chains, keep_names=field_order)
 
     return make_posterior(
         chains,
-        parents=(model,),
+        parents=(parent,),
         algorithm="nutpie_nuts",
         annotations=trace,
         event_spec=event_spec,
@@ -102,17 +139,23 @@ def _compile_for_nutpie(model: Any, data: Any) -> tuple[Any, Any | None]:
     Returns ``(compiled, pymc_build)``. ``pymc_build`` is the
     data-conditioned ``pm.Model`` for PyMCModel targets (so the caller
     can derive a matching parameter record), and ``None`` for Stan
-    targets.
+    targets, which nutpie compiles from the program's file and then gives
+    the program's data.
     """
-    from ..families._programs import StanModel
+    from ..families._programs import StanModel, _StanPosterior, _to_numpy
 
     if isinstance(model, StanModel) and isinstance(data, dict):
         # Binding a Stan program's data curries it to the posterior.
         model, data = model._condition_on(data), None
-    if hasattr(model, "_bridgestan_model"):
+    if isinstance(model, _StanPosterior):
         import nutpie
 
-        return nutpie.compile_stan_model(model._bridgestan_model()), None
+        from ..families._programs import _BRIDGESTAN_MAKE_ARGS
+
+        compiled = nutpie.compile_stan_model(
+            filename=model.stan_file, extra_compile_args=list(_BRIDGESTAN_MAKE_ARGS)
+        )
+        return compiled.with_data(**{k: _to_numpy(v) for k, v in model.data.items()}), None
 
     if hasattr(model, "_pymc_model"):
         import nutpie
@@ -143,8 +186,9 @@ def _extract_chains(
     keep_names : list of str or None
         If given, extract exactly these variables, in this order, instead
         of ``posterior.data_vars`` order (which nutpie sorts
-        alphabetically). PyMC callers pass the param names so chain
-        columns align with the template; Stan callers pass ``None``.
+        alphabetically). Callers pass the parameter names, so the chain
+        columns align with the template and omit a Stan program's
+        transformed and generated variables.
 
     Returns
     -------
@@ -182,6 +226,7 @@ class NutpieNutsMethod(InferenceMethod):
     def __init__(self) -> None:
         from ..families._programs import PyMCModel, _StanPosterior
 
+        self._pymc_model_type = PyMCModel
         self._supported = (_StanPosterior, PyMCModel)
 
     @property
@@ -196,10 +241,15 @@ class NutpieNutsMethod(InferenceMethod):
         return 88
 
     def check(self, target: Any, /, **kwargs: Any) -> Feasibility:
-        """Whether the target is a Stan or PyMC program, or one at its observed values."""
-        dist, _ = joint_and_given(target)
+        """Whether the target is a Stan or PyMC program, or a PyMC one at its observed values."""
+        dist, given = joint_and_given(target)
         if not isinstance(dist, self._supported):
             return Feasibility(feasible=False, description="Requires StanModel or PyMCModel")
+        if given is not None and not isinstance(dist, self._pymc_model_type):
+            return Feasibility(
+                feasible=False,
+                description="nutpie samples a Stan program at its data, which fixes no parameter",
+            )
         try:
             import nutpie  # noqa: F401
         except ImportError:
@@ -207,6 +257,9 @@ class NutpieNutsMethod(InferenceMethod):
         return Feasibility(feasible=True)
 
     def execute(self, target: Any, /, **kwargs: Any) -> ApproximateDistribution:
-        """nutpie's NUTS on the program the target carries, at the observed values it binds."""
+        """nutpie's NUTS on the program the target carries, at the observed values it binds.
+
+        The posterior's provenance names the target as its parent.
+        """
         dist, observed = joint_and_given(target)
-        return condition_on_nutpie.apply(dist, observed, **kwargs)
+        return _nutpie_posterior(dist, observed, target, **kwargs)
