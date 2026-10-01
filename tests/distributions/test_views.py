@@ -32,10 +32,12 @@ import pytest
 
 import probpipe
 from probpipe import (
+    KDEDistribution,
     MultivariateNormal,
     Normal,
     NumericArraySpec,
     NumericRecordBatch,
+    NumericRecordSpec,
     NumericSpec,
     OpaqueSpec,
     OutputSpec,
@@ -71,6 +73,7 @@ from probpipe.distributions._capabilities import (
     _marginal_claims,
 )
 from probpipe.distributions._empirical import EmpiricalDistribution
+from probpipe.inference import ApproximateDistribution
 from probpipe.linalg import DenseLinOp, LinOp
 
 # -- Declarations -------------------------------------------------------------
@@ -1094,6 +1097,47 @@ class TestDerivedBehavior:
         assert parent.marginal_calls == ["model/theta/mu"]
         assert not isinstance(raw, FieldView)
         assert (raw.name, raw.spec, raw.provenance) == (view.name, view.spec, None)
+
+
+class TestTheViewOfAWeightedLaw:
+    """A field view of a weighted law takes the weighted moments at its path.
+
+    The atoms of ``a`` are 0, 1, 2, and 3 with weights 0.7, 0.1, 0.1, and 0.1,
+    so the weighted mean is 0.6 and the weighted variance 1.04, where the
+    unweighted ones are 1.5 and 1.25.
+    """
+
+    _WEIGHTS = jnp.array([0.7, 0.1, 0.1, 0.1])
+    _A = jnp.array([0.0, 1.0, 2.0, 3.0])
+    _B = jnp.array([10.0, 20.0, 30.0, 40.0])
+
+    def _record_atoms(self):
+        return NumericRecordBatch(
+            "atoms",
+            {"a": self._A, "b": self._B},
+            "obs",
+            element_spec=NumericRecordSpec(a=(), b=()),
+        )
+
+    def test_a_weighted_posterior(self):
+        prior = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
+        chain = jnp.stack([self._A, self._B], axis=1)
+        posterior = ApproximateDistribution(
+            [chain], weights=self._WEIGHTS, event_spec=prior.event_spec
+        )
+        view = posterior["a"]
+        assert float(probpipe.mean(view)) == pytest.approx(0.6)
+        assert float(probpipe.variance(view)) == pytest.approx(1.04)
+
+    def test_a_weighted_record_empirical_law(self):
+        view = EmpiricalDistribution("d", self._record_atoms(), self._WEIGHTS)["a"]
+        assert float(probpipe.mean(view)) == pytest.approx(0.6)
+        assert float(probpipe.variance(view)) == pytest.approx(1.04)
+
+    def test_a_weighted_record_kde(self):
+        # A KDE's mean is its atoms' weighted mean, whatever the bandwidth.
+        law = KDEDistribution("kde", self._record_atoms(), weights=self._WEIGHTS)
+        assert float(probpipe.mean(law["a"])) == pytest.approx(0.6)
 
 
 class TestSelections:
