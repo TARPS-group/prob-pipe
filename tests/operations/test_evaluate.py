@@ -10,6 +10,7 @@ from probpipe import (
     EmpiricalDistribution,
     NumericArrayBatch,
     NumericArraySpec,
+    ResolutionError,
     workflow_run,
 )
 from probpipe.functions import _rules
@@ -68,3 +69,41 @@ def test_a_batch_is_swept_elementwise():
     swept = evaluate(Function("f", lambda x: x + 1.0), rows)
     assert isinstance(swept, NumericArrayBatch)
     assert swept.level_names == ("row",)
+
+
+def _weighted_atoms():
+    return EmpiricalDistribution(
+        "e", jnp.array([0.0, 1.0, 2.0]), weights=jnp.array([0.2, 0.3, 0.5])
+    )
+
+
+@pytest.mark.parametrize("method", ["sampling_lift", "evaluation_rules/sampling_lift"])
+def test_a_named_rule_runs_as_the_direct_call_runs_it(method):
+    square = Function("square", lambda t: t * t)
+    with workflow_run(seed=0):
+        evaluated = evaluate.with_options(method=method, n_broadcast_samples=8)(
+            square, _weighted_atoms()
+        )
+    with workflow_run(seed=0):
+        direct = square.with_options(method="sampling_lift", n_broadcast_samples=8)(
+            _weighted_atoms()
+        )
+    assert evaluated.num_atoms == direct.num_atoms == 8
+
+
+def test_check_reports_the_rule_a_method_names():
+    square = Function("square", lambda t: t * t)
+    report = evaluate.with_options(method="sampling_lift").check(square, _weighted_atoms())
+    assert (report.route, report.method, report.exact) == (
+        "evaluation_rules",
+        "sampling_lift",
+        False,
+    )
+
+
+def test_a_rule_named_for_a_value_is_refused_as_the_direct_call_refuses_it():
+    square = Function("square", lambda t: t * t)
+    with pytest.raises(ResolutionError, match="lifts nothing"):
+        square.with_options(method="sampling_lift")(3.0)
+    with pytest.raises(ResolutionError, match="lifts nothing"):
+        evaluate.with_options(method="sampling_lift")(square, 3.0)
