@@ -758,6 +758,48 @@ class TestNestedRecordHashing:
         assert fingerprint(r1) != fingerprint(r2)
 
 
+class TestEmpiricalAtoms:
+    """An empirical law is hashed by its stored rows, its levels, and its weights."""
+
+    @staticmethod
+    def _opaque(labels, level="site"):
+        from probpipe import EmpiricalDistribution, OpaqueBatch
+
+        return EmpiricalDistribution("o", OpaqueBatch("o", list(labels), level))
+
+    def test_equal_opaque_atoms_give_equal_strong_digests(self):
+        first, second = self._opaque(["north", "south"]), self._opaque(["north", "south"])
+        digest, weak = _fingerprint_with_strength(first)
+        assert (digest, weak) == (fingerprint(second), False)
+
+    def test_different_opaque_atoms_differ(self):
+        assert fingerprint(self._opaque(["north", "south"])) != fingerprint(
+            self._opaque(["north", "east"])
+        )
+
+    def test_the_level_names_enter_the_digest(self):
+        from probpipe import EmpiricalDistribution
+
+        atoms = jnp.arange(3.0)
+        assert fingerprint(EmpiricalDistribution("x", atoms, level="a")) != fingerprint(
+            EmpiricalDistribution("x", atoms, level="b")
+        )
+        assert fingerprint(self._opaque(["n", "s"], "a")) != fingerprint(
+            self._opaque(["n", "s"], "b")
+        )
+
+    def test_the_batch_shape_enters_the_digest(self):
+        from probpipe import EmpiricalDistribution, NumericArrayBatch
+
+        def law(shape):
+            values = jnp.arange(6.0).reshape(shape)
+            spec = NumericArraySpec((), jnp.float32)
+            atoms = NumericArrayBatch("x", values, ("chain", "draw"), element_spec=spec)
+            return EmpiricalDistribution("x", atoms)
+
+        assert fingerprint(law((2, 3))) != fingerprint(law((3, 2)))
+
+
 class TestEmpiricalReweighting:
     """Empirical laws over the same atoms are distinguished by their weights."""
 
