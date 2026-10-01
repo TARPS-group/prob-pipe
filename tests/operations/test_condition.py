@@ -30,7 +30,6 @@ from probpipe.distributions._conditional import (
 from probpipe.distributions._distribution import Distribution, DistributionSpec
 from probpipe.distributions._empirical import EmpiricalDistribution
 from probpipe.operations._condition import (
-    _INFERENCE_METHOD_OPTIONS,
     InferenceMethod,
     _UnnormalizedConditional,
     condition_on,
@@ -351,12 +350,29 @@ class TestMethodOptions:
             condition_on.with_options(num_results=500)
 
     def test_a_misspelled_option_is_refused_before_the_method_runs(self):
-        with pytest.raises(TypeError, match="num_resluts"):
-            inference_method_registry.execute(object(), method="tfp_nuts", num_resluts=500)
+        target = condition_on.with_options(method="unnormalized")(_Conjugate("model"), {"y": 0.3})
+        with pytest.raises(TypeError, match=r"\['num_resluts'\].*'tfp_nuts'.*num_results"):
+            inference_method_registry.execute(target, method="tfp_nuts", num_resluts=500)
+
+    def test_the_selected_method_refuses_an_option_it_does_not_read(self):
+        target = condition_on.with_options(method="unnormalized")(_Conjugate("model"), {"y": 0.3})
+        with pytest.raises(TypeError, match="'blackjax_rwmh', which reads"):
+            inference_method_registry.execute(
+                target, method="blackjax_rwmh", num_integration_steps=5
+            )
+
+    def test_a_probe_reads_no_option_it_does_not_read(self):
+        target = condition_on.with_options(method="unnormalized")(_Conjugate("model"), {"y": 0.3})
+        report = inference_method_registry.check(target, num_integration_steps=5)
+        assert report.feasible is True
 
     def test_every_registered_inference_method_states_the_options_it_reads(self):
-        unstated = set(inference_method_registry.list_methods()) - set(_INFERENCE_METHOD_OPTIONS)
-        assert not unstated, sorted(unstated)
+        unstated = [
+            name
+            for name in inference_method_registry.list_methods()
+            if inference_method_registry.get_method(name)._method_options is None
+        ]
+        assert not unstated, unstated
 
 
 class TestBayes:

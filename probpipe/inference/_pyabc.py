@@ -131,6 +131,22 @@ class PyABCSMCMethod(InferenceMethod):
     tolerance, so it ranks below every likelihood-based method.
     """
 
+    _method_options = (
+        "distance_fn",
+        "eps",
+        "eps_alpha",
+        "max_populations",
+        "max_total_nr_simulations",
+        "max_walltime",
+        "min_acceptance_rate",
+        "minimum_epsilon",
+        "n_particles",
+        "random_seed",
+        "sampler",
+        "summary_fn",
+        "transitions",
+    )
+
     @property
     def name(self) -> str:
         return "pyabc_smcabc"
@@ -236,7 +252,13 @@ class PyABCSMCMethod(InferenceMethod):
             convergence trajectory (epsilon schedule, sample / particle counts,
             acceptance rate) is attached as a ``smc_diagnostics`` group on
             ``arviz_data``.
+
+        Raises
+        ------
+        TypeError
+            If a keyword is none of the options above.
         """
+        self._check_options(kwargs)
         factors = model_factors(target)
         prior = factors.prior
         simulator = factors.likelihood

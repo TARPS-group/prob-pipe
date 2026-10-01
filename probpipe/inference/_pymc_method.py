@@ -25,6 +25,8 @@ class PyMCNutsMethod(InferenceMethod):
     ``PyMCModel`` too when nutpie is installed.
     """
 
+    _method_options = ("cores", "num_chains", "num_results", "num_warmup", "random_seed")
+
     def __init__(self) -> None:
         from ..families._programs import PyMCModel
 
@@ -50,6 +52,7 @@ class PyMCNutsMethod(InferenceMethod):
 
     def execute(self, target: Any, /, **kwargs: Any) -> ApproximateDistribution:
         """PyMC inference on the model the target carries, at the observed values it binds."""
+        self._check_options(kwargs)
         import pymc as pm
 
         dist, observed = joint_and_given(target)
@@ -114,6 +117,8 @@ class PyMCADVIMethod(InferenceMethod):
     ``pymc_nuts`` fails would silently substitute VI for MCMC.
     """
 
+    _method_options = ("num_iterations", "num_results", "random_seed", "vi_method")
+
     def __init__(self) -> None:
         from ..families._programs import PyMCModel
 
@@ -139,6 +144,7 @@ class PyMCADVIMethod(InferenceMethod):
 
     def execute(self, target: Any, /, **kwargs: Any) -> ApproximateDistribution:
         """PyMC inference on the model the target carries, at the observed values it binds."""
+        self._check_options(kwargs)
         import pymc as pm
 
         dist, observed = joint_and_given(target)

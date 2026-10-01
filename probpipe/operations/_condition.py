@@ -45,14 +45,13 @@ conditional capabilities state whether its laws are normalized. ``check``
 computes no exact stage, so it reports a curry unresolved when the kernel's
 capabilities do not state it, and the call reads the computed law's own.
 
-The inference methods' own parameters, such as warmup lengths, are controls set
-through ``with_options``. Each route declares the controls it reads: the routes
-that normalize pass the parameters of the registered inference methods to the
-selected method, or, when they curry a kernel normalized per value, to the
-method that normalizes the law it yields; ``approximate_conditioning`` passes
-an amortized posterior's sample count and seed to its ``_condition_on`` as
-keyword options, and the other routes read none. A control that no route
-declares raises ``TypeError`` at ``with_options``.
+The inference methods' budgets, such as warmup lengths, are the entries of the
+``method_options`` control. The routes that normalize pass them to the selected
+method, or, when they curry a kernel normalized per value, to the method that
+normalizes the law it yields; ``approximate_conditioning`` passes them to the
+law's ``_condition_on`` as keyword options, and the other routes read none. The
+method that runs validates them: an inference method refuses an entry it does
+not read with ``TypeError``, naming the entries it reads.
 """
 
 from __future__ import annotations
@@ -130,6 +129,10 @@ class InferenceMethod(UnaryDispatchMethod):
     requires of the target, such as an unnormalized density, a backend program,
     or the joint and the given values to simulate from.
 
+    A method validates the ``method_options`` entries it receives when it runs:
+    a subclass names the entries its ``execute`` reads in ``_method_options``
+    and calls :meth:`_check_options` before it computes anything.
+
     Notes
     -----
     Every inference method is approximate: a finite MCMC, SG-MCMC, slice,
@@ -139,9 +142,33 @@ class InferenceMethod(UnaryDispatchMethod):
     representation of the conditional law itself overrides ``exact``.
     """
 
+    #: The ``method_options`` entries the method reads; ``None`` names none, for a
+    #: method that validates its entries itself.
+    _method_options: ClassVar[tuple[str, ...] | None] = None
+
     @property
     def exact(self) -> bool:
         return False
+
+    def _check_options(self, options: Mapping[str, Any]) -> None:
+        """Refuse a ``method_options`` entry that the method does not read.
+
+        A method whose ``_method_options`` is ``None`` admits every entry.
+
+        Raises
+        ------
+        TypeError
+            Naming the method, the entries it does not read, and those it reads.
+        """
+        reads = self._method_options
+        if reads is None:
+            return
+        unread = sorted(set(options) - set(reads))
+        if unread:
+            raise TypeError(
+                f"method_options {unread} are not options of the inference method "
+                f"{self.name!r}, which reads {sorted(reads)}"
+            )
 
 
 #: The builder of the target of a model and its observed data, which
@@ -176,20 +203,14 @@ class _InferenceMethodRegistry(UnaryDispatchRegistry[UnaryDispatchMethod]):
         """The selected method's result; see :meth:`UnaryDispatchRegistry.execute`.
 
         The keyword options are the call's ``method_options``, which the
-        selected method validates before it runs.
+        selected method validates when it runs.
 
         Raises
         ------
         TypeError
-            If an option is one the selected method does not read.
+            If the selected method refuses an option it does not read.
         """
-        targets = self._targets(args)
-        if kwargs:
-            selected = method
-            if selected is None:
-                selected = super().check(*targets, exact_only=exact_only, **kwargs).method_name
-            _check_method_options(selected, kwargs)
-        return super().execute(*targets, method=method, exact_only=exact_only, **kwargs)
+        return super().execute(*self._targets(args), method=method, exact_only=exact_only, **kwargs)
 
     @staticmethod
     def _targets(args: tuple[Any, ...]) -> tuple[Any, ...]:
@@ -210,82 +231,6 @@ class _InferenceMethodRegistry(UnaryDispatchRegistry[UnaryDispatchMethod]):
 #: The registry of the normalization stage, keyed on the target's type; the
 #: methods of ``probpipe.inference`` register here.
 inference_method_registry: UnaryDispatchRegistry[UnaryDispatchMethod] = _InferenceMethodRegistry()
-
-
-_MCMC_OPTIONS = ("init", "num_chains", "num_results", "num_warmup", "random_seed", "step_size")
-_SGMCMC_OPTIONS = (
-    "batch_size",
-    "init",
-    "num_results",
-    "num_warmup",
-    "random_seed",
-    "step_size",
-    "with_replacement",
-)
-_BACKEND_NUTS_OPTIONS = ("num_chains", "num_results", "num_warmup", "random_seed")
-
-#: The ``method_options`` entries each inference method registered by
-#: :mod:`probpipe.inference` reads, by method name, against which the
-#: registry validates a call's options before the method runs.
-_INFERENCE_METHOD_OPTIONS: Mapping[str, tuple[str, ...]] = MappingProxyType(
-    {
-        "blackjax_nuts": (*_MCMC_OPTIONS, "num_integration_steps"),
-        "blackjax_hmc": (*_MCMC_OPTIONS, "num_integration_steps"),
-        "blackjax_rwmh": (*_MCMC_OPTIONS, "adapt", "n_windows", "proposal_cov"),
-        "blackjax_elliptical_slice": (
-            "init",
-            "num_chains",
-            "num_results",
-            "num_warmup",
-            "random_seed",
-        ),
-        "blackjax_sgld": _SGMCMC_OPTIONS,
-        "blackjax_sghmc": (*_SGMCMC_OPTIONS, "alpha", "beta", "num_integration_steps"),
-        "tfp_nuts": _MCMC_OPTIONS,
-        "tfp_hmc": _MCMC_OPTIONS,
-        "nutpie_nuts": _BACKEND_NUTS_OPTIONS,
-        "cmdstan_nuts": _BACKEND_NUTS_OPTIONS,
-        "pymc_nuts": (*_BACKEND_NUTS_OPTIONS, "cores"),
-        "pymc_advi": ("num_iterations", "num_results", "random_seed", "vi_method"),
-        "pyabc_smcabc": (
-            "distance_fn",
-            "eps",
-            "eps_alpha",
-            "max_populations",
-            "max_total_nr_simulations",
-            "max_walltime",
-            "min_acceptance_rate",
-            "minimum_epsilon",
-            "n_particles",
-            "random_seed",
-            "sampler",
-            "summary_fn",
-            "transitions",
-        ),
-    }
-)
-
-
-def _check_method_options(method: str | None, options: Mapping[str, Any]) -> None:
-    """Refuse a ``method_options`` entry that the inference method *method* does not read.
-
-    A method outside the table of the registered methods' options validates its
-    own options.
-
-    Raises
-    ------
-    TypeError
-        Naming the method, the entries it does not read, and those it reads.
-    """
-    reads = _INFERENCE_METHOD_OPTIONS.get(method or "")
-    if reads is None:
-        return
-    unread = sorted(set(options) - set(reads))
-    if unread:
-        raise TypeError(
-            f"method_options {unread} are not options of the inference method {method!r}, "
-            f"which reads {sorted(reads)}"
-        )
 
 
 # ---------------------------------------------------------------------------

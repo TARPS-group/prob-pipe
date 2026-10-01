@@ -229,21 +229,23 @@ class TestBayesFlowNPE:
         assert mean_a_hi > 0 > mean_a_lo
 
     def test_contract(self, npe_model):
-        """``condition_on`` honours ``num_results`` (and its model default) and
-        ignores the MCMC-only kwargs; the result is a named
-        ``ApproximateDistribution``."""
-        post = condition_on.apply(
-            npe_model, _observe(0.0, 0.0, 1), num_results=300, num_warmup=99, num_chains=4
-        )
+        """``condition_on`` honours ``num_results`` (and its model default); the
+        result is a named ``ApproximateDistribution``."""
+        post = condition_on.apply(npe_model, _observe(0.0, 0.0, 1), num_results=300)
         assert isinstance(post, ApproximateDistribution)
         assert post.algorithm == "bayesflow_npe"
         draws = post.draws()
-        # Fields named by the prior's declaration, 300 draws, no warmup/chains effect.
+        # Fields named by the prior's declaration, 300 draws.
         assert np.asarray(draws["a"]).reshape(-1).shape[0] == 300
         assert np.isfinite(np.asarray(draws["b"])).all()
         # Omitting num_results falls back to the model default (500 here).
         default_post = condition_on(npe_model, _observe(0.0, 0.0, 1))
         assert np.asarray(default_post.draws()["a"]).reshape(-1).shape[0] == 500
+
+    def test_an_mcmc_option_is_refused(self, npe_model):
+        """The posterior reads its sample count and seed, and refuses the options it does not."""
+        with pytest.raises(TypeError, match=r"\['num_chains', 'num_warmup'\].*num_results"):
+            condition_on.apply(npe_model, _observe(0.0, 0.0, 1), num_warmup=99, num_chains=4)
 
     def test_observation_dim_mismatch(self, npe_model):
         """Conditioning on wrong-size observed data raises a clear error rather

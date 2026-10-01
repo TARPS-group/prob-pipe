@@ -761,6 +761,18 @@ class BlackJAXRWMHMethod(InferenceMethod):
     below every gradient-based method.
     """
 
+    _method_options = (
+        "adapt",
+        "init",
+        "n_windows",
+        "num_chains",
+        "num_results",
+        "num_warmup",
+        "proposal_cov",
+        "random_seed",
+        "step_size",
+    )
+
     @property
     def name(self) -> str:
         return "blackjax_rwmh"
@@ -789,6 +801,7 @@ class BlackJAXRWMHMethod(InferenceMethod):
 
     def execute(self, target: Any, /, **kwargs: Any) -> ApproximateDistribution:
         """Random-walk chains on the target's parameters, scored by its prior and likelihood."""
+        self._check_options(kwargs)
         dist, observed = observed_parts(target)
         random_seed = kwargs.get("random_seed", 0)
         init = kwargs.get("init")

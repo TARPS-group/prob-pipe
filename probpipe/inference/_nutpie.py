@@ -223,6 +223,8 @@ class NutpieNutsMethod(InferenceMethod):
     class, so it ranks above all of them.
     """
 
+    _method_options = ("num_chains", "num_results", "num_warmup", "random_seed")
+
     def __init__(self) -> None:
         from ..families._programs import PyMCModel, _StanPosterior
 
@@ -261,5 +263,6 @@ class NutpieNutsMethod(InferenceMethod):
 
         The posterior's provenance names the target as its parent.
         """
+        self._check_options(kwargs)
         dist, observed = joint_and_given(target)
         return _nutpie_posterior(dist, observed, target, **kwargs)
