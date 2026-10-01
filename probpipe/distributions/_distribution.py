@@ -15,9 +15,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Self
 
 if TYPE_CHECKING:
-    from ..core._distribution_array import DistributionArray
     from ..core.constraints import Constraint
     from ..diagnostics.views import DiagnosticsView
+    from ._batches import DistributionBatch
     from ._conditional import ConditionalDistribution
     from ._factored import FactoredConditionalDistribution, FactoredDistribution
 
@@ -728,7 +728,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
 
         return DiagnosticsView(aux["diagnostics"])
 
-    # -- batched-construction alias ----------------------------------------
+    # -- batched construction -----------------------------------------------
 
     @classmethod
     def from_batched_params(
@@ -736,40 +736,29 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         *,
         name: str,
         batch_shape: tuple[int, ...] | None = None,
-        **batched_params,
-    ) -> DistributionArray:
-        """Class-method alias for :meth:`DistributionArray.from_batched_params`.
+        **batched_params: Any,
+    ) -> DistributionBatch:
+        """The separate laws of this class at batched parameters, one per batch position.
 
-        Lets users write the ergonomic per-class form::
+        Each parameter's leading axes are the batch axes, and the law at a
+        position is this class at that position's parameters. The form of the
+        result is not yet decided, so the method raises.
 
-            Normal.from_batched_params(loc=jnp.zeros(5), scale=1.0, name="x")
+        Parameters
+        ----------
+        name : str
+            The batch's name.
+        batch_shape : tuple of int, optional
+            The batch axes, inferred from the parameters when omitted.
+        **batched_params
+            This class's constructor arguments, with the batch axes leading.
 
-        instead of the universal entry point::
-
-            DistributionArray.from_batched_params(
-                Normal, loc=jnp.zeros(5), scale=1.0, name="x",
-            )
-
-        Both produce the same ``DistributionArray`` — the alias is a
-        thin classmethod that calls the universal factory with
-        ``cls`` bound. Subclasses inherit the alias automatically;
-        no per-family override is needed.
-
-        See :meth:`DistributionArray.from_batched_params` for the full
-        contract (dispatch on
-        :class:`~probpipe.core.protocols.SupportsArrayBackend`,
-        ``batch_shape`` inference, per-cell name suffixing).
+        Raises
+        ------
+        NotImplementedError
+            Always.
         """
-        # Local import: ``DistributionArray`` inherits from ``Distribution``,
-        # so importing it at module top would create a cycle.
-        from ..core._distribution_array import DistributionArray
-
-        return DistributionArray.from_batched_params(
-            cls,
-            name=name,
-            batch_shape=batch_shape,
-            **batched_params,
-        )
+        raise NotImplementedError("Distribution.from_batched_params")
 
     # -- repr ---------------------------------------------------------------
 

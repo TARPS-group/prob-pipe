@@ -231,6 +231,23 @@ class TestPredictiveCheckBroker:
         commit.assert_not_called()
 
 
+class _FakeConditionOn:
+    """A stand-in for ``condition_on`` that records each fit's seed and returns zero draws.
+
+    A fit reads its budgets from ``method_options``, as the operation's methods do.
+    """
+
+    def __init__(self):
+        self.seeds = []
+
+    def with_options(self, *, method=None, method_options):
+        def fit(model, data):
+            self.seeds.append(method_options["random_seed"])
+            return EmpiricalDistribution("beta", jnp.zeros((method_options["num_results"], 1)))
+
+        return fit
+
+
 class TestSimulationBasedCalibrationBroker:
     @staticmethod
     def _model():
@@ -239,24 +256,8 @@ class TestSimulationBasedCalibrationBroker:
         return glm_likelihood("y", GaussianFamily(), X=x, dispersion=1.0) * prior
 
     def test_seeded_sbc_claims_one_event_and_derives_inference_seeds(self, monkeypatch):
-        inference_seeds = []
-
-        def fake_condition_on(
-            model,
-            data,
-            *,
-            method,
-            num_results,
-            random_seed,
-            **kwargs,
-        ):
-            del model, data, method, kwargs
-            inference_seeds.append(random_seed)
-            return EmpiricalDistribution(
-                "beta",
-                jnp.zeros((num_results, 1)),
-            )
-
+        fake_condition_on = _FakeConditionOn()
+        inference_seeds = fake_condition_on.seeds
         monkeypatch.setattr(
             "probpipe.validation._calibration.condition_on",
             fake_condition_on,
@@ -301,22 +302,9 @@ class TestSimulationBasedCalibrationBroker:
         explicit_commit.assert_not_called()
 
     def test_numpy_integer_counts_are_normalized_before_event_commit(self, monkeypatch):
-        def fake_condition_on(
-            model,
-            data,
-            *,
-            num_results,
-            **kwargs,
-        ):
-            del model, data, kwargs
-            return EmpiricalDistribution(
-                "beta",
-                jnp.zeros((num_results, 1)),
-            )
-
         monkeypatch.setattr(
             "probpipe.validation._calibration.condition_on",
-            fake_condition_on,
+            _FakeConditionOn(),
         )
 
         with (

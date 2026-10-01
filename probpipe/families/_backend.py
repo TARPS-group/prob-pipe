@@ -59,10 +59,9 @@ __all__ = ["TFPDistribution"]
 #
 # Inside ``_allow_batched_tfp_init`` a family given parameters with axes keeps
 # the backend's batch axes as the axes of separate laws: one draw is an array
-# of draws of separate laws, and the density is per law. The fused storage of a
-# ``DistributionArray`` reads that form, as do the moment-matching converters
-# and a sequential joint's components given batched parents. Outside it, a
-# scalar family's batch axes are the axes of one event.
+# of draws of separate laws, and the density is per law. The fused storage of
+# laws at batched parameters below reads that form, as do the moment-matching
+# converters. Outside it, a scalar family's batch axes are the axes of one event.
 
 _BATCHED_INIT_BYPASS: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "_BATCHED_INIT_BYPASS",
@@ -331,7 +330,7 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
     def __repr__(self) -> str:
         return f"{type(self).__name__}(name={self.name!r}, event_shape={self.event_shape})"
 
-    # -- the fused storage of a DistributionArray ------------------------------
+    # -- the fused storage of laws at batched parameters ------------------------
 
     @classmethod
     def _make_array_backend(
@@ -341,7 +340,7 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
         batch_shape: tuple[int, ...],
         **batched_params: Any,
     ) -> _TFPArrayBackend:
-        """Construct the fused storage of a DistributionArray of this family.
+        """Construct the fused storage of this family's laws at batched parameters.
 
         The storage holds one backend over the batched parameters in the
         separate-laws form, and builds each cell with the family's constructor
@@ -356,7 +355,7 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
 
 
 # ---------------------------------------------------------------------------
-# Fused storage backend for DistributionArray
+# The fused storage of a family's laws at batched parameters
 # ---------------------------------------------------------------------------
 
 
@@ -387,7 +386,7 @@ def _construct_batched_dist(
 
 
 class _TFPArrayBackend:
-    """Fused TFP-batched backend for ``DistributionArray``.
+    """The fused storage of a family's laws at batched parameters, over one TFP batch.
 
     Owns one ``tfd.Distribution`` instance with TFP's native
     ``batch_shape != ()`` plus the constructor params used to make it,
@@ -402,8 +401,7 @@ class _TFPArrayBackend:
     constructor with a suffixed name.
 
     Not a :class:`Distribution` itself — the backend exists only as
-    the contract between :meth:`TFPDistribution._make_array_backend`
-    and :class:`~probpipe.DistributionArray`. See
+    the contract of :meth:`TFPDistribution._make_array_backend`. See
     :class:`probpipe.core.protocols._DistributionArrayBackend`.
 
     Parameters
@@ -436,9 +434,8 @@ class _TFPArrayBackend:
         # Single pass: validate every higher-rank param's leading
         # axes against the declared ``batch_shape``, broadcasting
         # 0-D scalars up to ``batch_shape`` so callers can mix
-        # scalars with arrays —
-        # ``from_batched_params(Normal, loc=0.0, scale=1.0,
-        # batch_shape=(5,))`` constructs five identical Normals. The
+        # scalars with arrays — ``loc=0.0, scale=1.0`` at
+        # ``batch_shape=(5,)`` stores five identical Normals. The
         # leading-axes check raises with a per-parameter message
         # before TFP gets to raise its generic "Arguments ... must
         # have compatible shapes".
@@ -523,10 +520,8 @@ class _TFPArrayBackend:
         (``batch_shape == ()``) — no caching; each call re-runs the
         ordinary ``dist_cls(**scalar_params, name=...)`` constructor.
 
-        ``batch_shape`` is non-empty by construction (
-        :func:`DistributionArray._infer_batch_shape` rejects scalar-
-        only param sets), so we never have to handle a degenerate
-        zero-axis backend here.
+        A zero-axis backend has a single law, which needs no fused
+        storage, so ``batch_shape`` is taken to be non-empty here.
         """
         multi, flat = self._normalize_index(index)
         scalar_params = {
