@@ -90,13 +90,14 @@ class MethodProfile:
     consistent : bool
         Whether the method's draws converge to the posterior, which selects the
         contract it is held to.
-    controls : Mapping[str, Any]
-        The controls ``condition_on.with_options`` receives, budgets and seed included.
+    method_options : Mapping[str, Any]
+        The ``method_options`` control ``condition_on.with_options`` receives,
+        budgets and seed included.
     """
 
     representation: str
     consistent: bool
-    controls: Mapping[str, Any]
+    method_options: Mapping[str, Any]
 
 
 #: The budget of a gradient-based sampler: two chains of 2000 draws after 1000
@@ -433,7 +434,7 @@ def _params(name: str, profile: MethodProfile) -> list[Any]:
 
 
 def validate_method(
-    name: str, *, representation: str | None = None, **controls: Any
+    name: str, *, representation: str | None = None, **method_options: Any
 ) -> Callable[..., None]:
     """The test function that validates the inference method *name* on every canonical case.
 
@@ -444,8 +445,8 @@ def validate_method(
     representation : str, optional
         The model representation, overriding the profile's: ``"probpipe"``,
         ``"pymc"``, or ``"stan"``.
-    **controls
-        Controls that override the profile's.
+    **method_options
+        Method options that override the profile's.
 
     Returns
     -------
@@ -456,7 +457,7 @@ def validate_method(
     profile = replace(
         profile,
         representation=representation or profile.representation,
-        controls={**profile.controls, **controls},
+        method_options={**profile.method_options, **method_options},
     )
 
     @pytest.mark.parametrize("case_name", _params(name, profile))
@@ -465,7 +466,7 @@ def validate_method(
             pytest.skip(f"{name} is not registered here, since its backend is not installed")
         case = canonical.case(case_name)
         model, data = _model_and_data(case, profile.representation, request)
-        view = condition_on.with_options(method=name, **profile.controls)
+        view = condition_on.with_options(method=name, method_options=profile.method_options)
         report = view.check(model, data)
         if report.feasible is not True:
             pytest.skip(f"{name} does not apply to {case_name}: {_skip_reason(report)}")
@@ -497,7 +498,7 @@ def calibration_ranks(
     *,
     replications: int,
     draws: int,
-    controls: Mapping[str, Any] | None = None,
+    method_options: Mapping[str, Any] | None = None,
 ) -> np.ndarray:
     """The SBC ranks of *method* on *case*: one row per replication, one column per coordinate.
 
@@ -517,7 +518,8 @@ def calibration_ranks(
         view = condition_on
         if method is not None:
             view = condition_on.with_options(
-                method=method, **{**(controls or {}), "random_seed": replication}
+                method=method,
+                method_options={**(method_options or {}), "random_seed": replication},
             )
         posterior = view(case.model, given)
         ranks = []

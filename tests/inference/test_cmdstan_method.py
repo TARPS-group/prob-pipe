@@ -113,7 +113,9 @@ def test_condition_on_a_stan_model_returns_its_parameter_record(
             monkeypatch.setattr(route, "registry", registry)
     program = tmp_path / "program.stan"
     program.write_text(_PROGRAM)
-    view = condition_on.with_options(num_results=3, num_warmup=1, num_chains=2)
+    view = condition_on.with_options(
+        method_options={"num_results": 3, "num_warmup": 1, "num_chains": 2}
+    )
     posterior = view(StanModel("program", str(program)), {"N": 2, "y": [1.0, 2.0]})
     assert tuple(posterior.event_spec.components) == ("mu", "theta")
 

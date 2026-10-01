@@ -36,6 +36,7 @@ _FRAMEWORK_CONTROLS = {
     "method": None,
     "exact_only": False,
     "conversions": {},
+    "method_options": {},
     "raw": False,
     "dispatch": "auto",
     "max_workers": None,
@@ -225,12 +226,11 @@ class TestAdmissibility:
 
         assert float(wrapped(1.0).value) == float(add(1.0).value) == 3.0
 
-    @pytest.mark.pending(
-        reason="a control that a registered method declares is admitted", raises=TypeError
-    )
-    def test_a_control_a_registered_method_defines_is_admitted(self, monkeypatch):
+    def test_a_registered_rule_reads_its_budget_from_method_options(self, monkeypatch):
+        seen: list[dict[str, Any]] = []
+
         class _Quadrature(BinaryDispatchMethod):
-            """A rule that declares its own numerical budget, the number of nodes."""
+            """A rule whose numerical budget, the number of nodes, is a method option."""
 
             @property
             def name(self) -> str:
@@ -244,10 +244,6 @@ class TestAdmissibility:
             def priority(self) -> int:
                 return 0
 
-            @property
-            def controls(self) -> dict[str, Any]:
-                return {"n_nodes": 16}
-
             def supported_types(self) -> tuple[tuple[type, ...], tuple[type, ...]]:
                 return ((Function,), (Distribution,))
 
@@ -255,16 +251,25 @@ class TestAdmissibility:
                 return Feasibility(True)
 
             def execute(self, f: Any, operand: Any, /, **call: Any) -> Any:
-                return None
+                seen.append(dict(call["controls"]["method_options"]))
+                return jnp.float32(0.0)
 
         registry = type(_rules.evaluation_rule_registry)()
         registry.register(_Quadrature())
         monkeypatch.setattr(_rules, "evaluation_rule_registry", registry)
 
-        wrapped = Function("identity", _identity, n_nodes=32)
+        wrapped = Function("identity", _identity, method_options={"n_nodes": 32})
+        wrapped.with_options(method="quadrature")(standard_normal())
 
-        assert wrapped.options["n_nodes"] == 32
-        assert wrapped.with_options(n_nodes=8).options["n_nodes"] == 8
+        assert wrapped.options["method_options"] == {"n_nodes": 32}
+        assert seen == [{"n_nodes": 32}]
+        with pytest.raises(TypeError, match="n_nodes"):
+            Function("identity", _identity, n_nodes=32)
+
+    @pytest.mark.parametrize("method_options", [{"": 1}, [("n_nodes", 1)]], ids=["empty", "list"])
+    def test_method_options_map_option_names_to_values(self, method_options):
+        with pytest.raises(TypeError, match="method_options"):
+            Function("identity", _identity, method_options=method_options)
 
 
 class TestControlsThatSelectTheRoute:

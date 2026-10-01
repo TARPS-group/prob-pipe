@@ -376,13 +376,16 @@ _CONTROL_DEFAULTS: Mapping[str, Any] = MappingProxyType(
         "method": None,
         "exact_only": False,
         "conversions": MappingProxyType({}),
+        "method_options": MappingProxyType({}),
         "raw": False,
     }
 )
 
 #: The controls a construction keyword of None leaves at their default; None is
 #: inadmissible for every other control.
-_DEFAULTED_BY_NONE = frozenset({"n_broadcast_samples", "max_workers", "method", "conversions"})
+_DEFAULTED_BY_NONE = frozenset(
+    {"n_broadcast_samples", "max_workers", "method", "conversions", "method_options"}
+)
 
 #: Removed construction keywords, which warn: ``func`` aliases ``fn``, and the rest are ignored.
 _REMOVED_KEYWORDS = frozenset({"seed", "input_template", "output_template", "func"})
@@ -458,6 +461,10 @@ class Function(Node, TrackedTerm, Annotated):
           routes, False by default.
         - ``conversions`` (Mapping or None): per-parameter conversion settings,
           keyed by parameter name, each a mapping of the converter's settings.
+        - ``method_options`` (Mapping or None): the numerical budgets the
+          selected method reads, keyed by option name, such as an MCMC
+          method's warmup and draw counts; the selected method validates the
+          entries when it runs. Empty by default.
         - ``raw`` (bool): whether a call returns its result detached from the
           workflow, False by default.
 
@@ -482,7 +489,7 @@ class Function(Node, TrackedTerm, Annotated):
     Use ``workflow_run(seed=...)`` for workflow randomness or ``bind`` for a
     wrapped callable's seed parameter. ``name`` and ``fn`` remain required.
     Only the engine's controls are admitted, since a registered method declares
-    no controls of its own.
+    no controls of its own: its budgets are entries of ``method_options``.
 
     ``spec`` contains only input/output declarations. ``with_name`` changes the
     function label and callable metadata; output_name and component names are
@@ -829,10 +836,16 @@ def _validate_options(options: Mapping[str, Any], signature: inspect.Signature) 
     unknown = set(conversions).difference(signature.parameters)
     if unknown:
         raise ValueError(f"conversions name parameters the signature lacks: {sorted(unknown)}")
+    method_options = options["method_options"]
+    if not isinstance(method_options, Mapping) or not all(
+        isinstance(name, str) and name for name in method_options
+    ):
+        raise TypeError("method_options must map option names to their values")
     return dict(options) | {
         "conversions": MappingProxyType(
             {name: MappingProxyType(dict(settings)) for name, settings in conversions.items()}
-        )
+        ),
+        "method_options": MappingProxyType(dict(method_options)),
     }
 
 

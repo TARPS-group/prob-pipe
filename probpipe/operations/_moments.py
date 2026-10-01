@@ -696,5 +696,4 @@ expectation.registry_route(
     registry=expectation_method_registry,
     arguments=_integration_arguments,
     options=_integration_options,
-    controls=(),
 )

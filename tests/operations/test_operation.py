@@ -484,7 +484,7 @@ class TestRegistryRoutes:
     def _operation(self, registry: UnaryDispatchRegistry, stand_in: Any = True) -> Any:
         toy = _toy()
         toy.structural_route("stand_in", exact=False, **_route(stand_in, 1.0))
-        toy.registry_route("methods", registry=registry, controls=("num_warmup",))
+        toy.registry_route("methods", registry=registry)
         return toy
 
     def test_an_exact_registered_method_outranks_an_approximate_route(self):
@@ -518,13 +518,13 @@ class TestRegistryRoutes:
         with pytest.raises(ResolutionError, match="exact_only"):
             toy(Gaussian("g"))
 
-    def test_budget_controls_reach_the_registered_methods(self):
+    def test_method_options_reach_the_registered_methods(self):
         registry = _registry(precise=(True, True, 2.0))
-        toy = self._operation(registry).with_options(num_warmup=7)
+        toy = self._operation(registry).with_options(method_options={"num_warmup": 7})
         toy(Gaussian("g"))
         assert registry.get_method("precise").options == [{"num_warmup": 7}]
 
-    def test_a_registry_route_admits_only_the_budgets_it_declares(self):
+    def test_a_budget_is_not_a_control_of_its_own(self):
         toy = _toy()
         toy.registry_route("methods", registry=_registry(precise=(True, True, 2.0)))
         with pytest.raises(TypeError, match="Unknown controls"):
@@ -578,27 +578,23 @@ class TestControls:
         with pytest.raises(TypeError):
             center.with_options(**controls)
 
-    def test_a_route_declares_the_budgets_it_reads(self):
+    def test_a_route_reads_its_budgets_from_method_options(self):
         seen: list[Any] = []
         toy = _toy()
 
         def execute(call: BoundCall, result: Any) -> Any:
-            seen.append(call.controls["tolerance"])
+            seen.append(call.controls["method_options"]["tolerance"])
             return jnp.float32(0.0)
 
         toy.structural_route(
-            "tolerant",
-            check=lambda call, result: True,
-            execute=execute,
-            exact=True,
-            controls=("tolerance",),
+            "tolerant", check=lambda call, result: True, execute=execute, exact=True
         )
-        toy.with_options(tolerance=0.5)(Gaussian("g"))
+        toy.with_options(method_options={"tolerance": 0.5})(Gaussian("g"))
         assert seen == [0.5]
         with pytest.raises(TypeError, match="Unknown controls"):
-            toy.with_options(patience=3)
+            toy.with_options(tolerance=0.5)
 
-    def test_a_capability_route_passes_its_budgets_to_the_capability_as_options(self):
+    def test_a_capability_route_passes_the_method_options_to_the_capability(self):
         class Tolerant(Gaussian):
             """A normal law whose closed-form mean records the options it receives."""
 
@@ -612,17 +608,33 @@ class TestControls:
 
         toy = _toy(result=_event)
         toy.capability_route(
-            "closed_form",
-            operand="d",
-            protocol=SupportsMean,
-            method="_mean",
-            exact=True,
-            controls=("tolerance",),
+            "estimate", operand="d", protocol=SupportsMean, method="_mean", exact=False
         )
         law = Tolerant("g")
-        assert float(jnp.asarray(toy.with_options(tolerance=0.5)(law))) == 1.5
+        assert float(jnp.asarray(toy.with_options(method_options={"tolerance": 0.5})(law))) == 1.5
         toy(law)
         assert law.options == [{"tolerance": 0.5}, {}]
+
+    def test_an_exact_capability_reads_no_budget(self):
+        class Tolerant(Gaussian):
+            def _mean(self, **options: Any) -> Any:
+                assert not options
+                return super()._mean()
+
+        toy = _toy(result=_event)
+        toy.capability_route(
+            "closed_form", operand="d", protocol=SupportsMean, method="_mean", exact=True
+        )
+        view = toy.with_options(method_options={"tolerance": 0.5})
+        assert float(jnp.asarray(view(Tolerant("g", 1.5)))) == 1.5
+
+    def test_the_selected_capability_rejects_an_option_it_does_not_read(self):
+        toy = _toy(result=_event)
+        toy.capability_route(
+            "estimate", operand="d", protocol=SupportsMean, method="_mean", exact=False
+        )
+        with pytest.raises(TypeError, match="patience"):
+            toy.with_options(method_options={"patience": 3})(Gaussian("g", 1.5))
 
     def test_a_route_registered_after_a_view_is_seen_by_the_view(self):
         toy = _toy()

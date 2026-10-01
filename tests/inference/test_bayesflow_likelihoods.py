@@ -105,7 +105,9 @@ def _score(lik, theta, rows):
 
 def _posterior(lik, prior, y):
     """The posterior of ``lik * prior`` at the observation rows *y*, by the registry's method."""
-    view = condition_on_operation.with_options(num_results=1500, num_warmup=500, random_seed=0)
+    view = condition_on_operation.with_options(
+        method_options={"num_results": 1500, "num_warmup": 500, "random_seed": 0}
+    )
     return view(lik * prior, {"observation": jnp.asarray(y)})
 
 

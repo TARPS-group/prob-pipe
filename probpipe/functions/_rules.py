@@ -71,6 +71,7 @@ _FORWARDED_CONTROLS = (
     "include_inputs",
     "workflow_kind",
     "exact_only",
+    "method_options",
 )
 
 
