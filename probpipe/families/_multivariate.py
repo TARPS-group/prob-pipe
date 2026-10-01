@@ -4,8 +4,12 @@
 ``VonMisesFisher`` each derive their event term spec from their parameters and
 take an ``event_spec`` declaration that names the event's component.
 
-A family's parameters describe one law over an array; a batch of separate laws
-is a ``DistributionBatch``. Each family claims the moments it computes in
+Parameters with more axes than one law needs give one law over independent
+rows, whose leading event axes are those axes: a ``MultivariateNormal`` whose
+``loc`` has shape ``(n, d)`` draws an ``(n, d)`` array of n independent rows,
+its density sums the rows' densities, and its covariance over the flattened
+draw is block-diagonal. Separate laws form a ``DistributionBatch``. Each family
+claims the moments it computes in
 closed form: all but the Wishart claim the covariance, and every family claims
 the variance, the von Mises-Fisher's as the diagonal of its backend's
 covariance. The multivariate normal also claims the quantile of each
@@ -37,7 +41,7 @@ from ..distributions._capabilities import (
     SupportsVariance,
 )
 from ..linalg import CholeskyLinOp, DenseLinOp, LinOp, TriangularLinOp
-from ._backend import TFPDistribution
+from ._backend import TFPDistribution, _block_diagonal, _coordinates
 
 __all__ = [
     "Dirichlet",
@@ -62,10 +66,11 @@ def _rank_tolerant_factor(cov: Array) -> Array:
     nonnegative.
     """
     eigenvalues, vectors = jnp.linalg.eigh(cov)
-    root = vectors * jnp.sqrt(jnp.clip(eigenvalues, 0.0))
-    _, upper = jnp.linalg.qr(root.T)
-    signs = jnp.where(jnp.diagonal(upper) < 0, -1.0, 1.0).astype(upper.dtype)
-    return (upper * signs[:, None]).T
+    root = vectors * jnp.sqrt(jnp.clip(eigenvalues, 0.0))[..., None, :]
+    _, upper = jnp.linalg.qr(jnp.swapaxes(root, -1, -2))
+    diagonal = jnp.diagonal(upper, axis1=-2, axis2=-1)
+    signs = jnp.where(diagonal < 0, -1.0, 1.0).astype(upper.dtype)
+    return jnp.swapaxes(upper * signs[..., :, None], -1, -2)
 
 
 def _covariance_factor(cov: Array) -> tuple[Array, bool | Array]:
@@ -94,7 +99,7 @@ def _covariance_factor(cov: Array) -> tuple[Array, bool | Array]:
 
 def _nonsingular_factor(scale_tril: Array) -> bool | Array:
     """Whether the triangular *scale_tril* is nonsingular, a traced boolean when it is traced."""
-    nonsingular = jnp.all(jnp.diagonal(scale_tril) != 0)
+    nonsingular = jnp.all(jnp.diagonal(scale_tril, axis1=-2, axis2=-1) != 0)
     return nonsingular if isinstance(nonsingular, jax.core.Tracer) else bool(nonsingular)
 
 
@@ -118,17 +123,25 @@ class MultivariateNormal(TFPDistribution):
     traced covariance chooses its factor when the computation runs, and its
     log-density is NaN where the covariance is singular.
 
+    **Independent rows.** Parameters with axes beyond one law's, a *loc* of
+    shape ``(n, d)`` or a covariance or factor of shape ``(n, d, d)``, give one
+    law over an ``(n, d)`` array of n independent rows. Its density sums the
+    rows' densities, its mean and variance have the shape ``(n, d)``, its
+    covariance over the flattened draw is the block-diagonal matrix of the
+    rows' covariances, and its quantiles are per coordinate.
+
     Parameters
     ----------
     name : str
         Distribution name.
-    loc : array-like, shape ``(d,)``
-        Mean vector.
-    scale_tril : array-like, shape ``(d, d)``, optional
-        Lower-triangular Cholesky factor of the covariance.  Exactly one of
-        *scale_tril* or *cov* must be provided.
-    cov : LinOp or array-like, shape ``(d, d)``, optional
-        Covariance, as an operator or a matrix, factored for the backend.
+    loc : array-like, shape ``(..., d)``
+        Mean vector, or one per row.
+    scale_tril : array-like, shape ``(..., d, d)``, optional
+        Lower-triangular Cholesky factor of the covariance, or one per row.
+        Exactly one of *scale_tril* or *cov* must be provided.
+    cov : LinOp or array-like, shape ``(..., d, d)``, optional
+        Covariance, as an operator or a matrix, or one matrix per row, factored
+        for the backend.
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
@@ -140,8 +153,8 @@ class MultivariateNormal(TFPDistribution):
         If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
         record.
     ValueError
-        If not exactly one of *scale_tril* and *cov* is given, *cov* does not
-        match the length of *loc*, *loc* has more than one axis, or
+        If not exactly one of *scale_tril* and *cov* is given, the trailing axes
+        of *cov* are not ``(d, d)`` for the length ``d`` of *loc*, or
         *event_spec* declares a type that one draw does not conform to.
     """
 
@@ -175,8 +188,12 @@ class MultivariateNormal(TFPDistribution):
             loc = loc.reshape(1)
 
         if cov is not None:
-            if cov.shape != (loc.shape[0], loc.shape[0]):
-                raise ValueError(f"cov shape {cov.shape} does not match loc length {loc.shape[0]}.")
+            d = loc.shape[-1]
+            if cov.ndim < 2 or cov.shape[-2:] != (d, d):
+                raise ValueError(
+                    f"cov shape {cov.shape} does not match loc length {d}: its trailing axes "
+                    f"must be ({d}, {d})"
+                )
             scale_tril, positive_definite = _covariance_factor(cov)
         else:
             positive_definite = _nonsingular_factor(scale_tril)
@@ -206,14 +223,15 @@ class MultivariateNormal(TFPDistribution):
 
     @property
     def cov(self) -> Array:
-        """The covariance matrix: the one given, or ``L Lᵀ`` for a given factor ``L``."""
+        """The covariance matrix of a row: the one given, or ``L Lᵀ`` for a given factor ``L``."""
         if self._dense_cov is not None:
             return self._dense_cov
-        return self._scale_tril @ self._scale_tril.T
+        return self._scale_tril @ jnp.swapaxes(self._scale_tril, -1, -2)
 
     @property
     def dim(self) -> int:
-        return self._loc.shape[0]
+        """The length ``d`` of a row."""
+        return self._loc.shape[-1]
 
     # -- support ------------------------------------------------------------
 
@@ -243,11 +261,18 @@ class MultivariateNormal(TFPDistribution):
         return jnp.where(positive_definite, log_density, jnp.nan)
 
     def _variance(self) -> Array:
-        """The variance of each coordinate, the covariance's diagonal."""
-        return jnp.diagonal(self.cov)
+        """The variance of each coordinate, the diagonal of its row's covariance."""
+        return jnp.broadcast_to(jnp.diagonal(self.cov, axis1=-2, axis2=-1), self.event_shape)
 
     def _cov(self) -> LinOp:
-        """The covariance operator, with the structure it was given."""
+        """The covariance operator over the flattened draw.
+
+        One row's keeps the structure it was given, and independent rows have
+        the block-diagonal matrix of the rows' covariances.
+        """
+        if len(self.event_shape) > 1:
+            rows = jnp.broadcast_to(self.cov, (*self.event_shape, self.dim))
+            return DenseLinOp(_block_diagonal(rows))
         given = self._given_cov
         if isinstance(given, LinOp):
             return given
@@ -256,10 +281,11 @@ class MultivariateNormal(TFPDistribution):
         return CholeskyLinOp(TriangularLinOp(self._scale_tril, lower=True))
 
     def _quantile(self, q: ArrayLike) -> Array:
-        """The quantile of each coordinate's normal marginal, of shape ``(*q.shape, d)``."""
+        """The quantile of each coordinate's normal marginal, ``(*q.shape, *event_shape)``."""
         levels = jnp.asarray(q, dtype=self._loc.dtype)
-        scale = jnp.sqrt(jnp.diagonal(self.cov))
-        return self._loc + scale * jax.scipy.special.ndtri(levels)[..., None]
+        standard = jax.scipy.special.ndtri(levels)
+        standard = jnp.reshape(standard, standard.shape + (1,) * len(self.event_shape))
+        return self._tfp_dist.mean() + jnp.sqrt(self._variance()) * standard
 
 
 # ---------------------------------------------------------------------------
@@ -275,8 +301,8 @@ class Dirichlet(TFPDistribution):
     ----------
     name : str
         Distribution name.
-    concentration : array-like, shape ``(k,)``
-        Positive concentration (alpha) parameters.
+    concentration : array-like, shape ``(..., k)``
+        Positive concentration (alpha) parameters, or one vector per row.
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
@@ -288,8 +314,8 @@ class Dirichlet(TFPDistribution):
         If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
         record.
     ValueError
-        If *concentration* is a scalar or has more than one axis, or
-        *event_spec* declares a type that one draw does not conform to.
+        If *concentration* is a scalar, or *event_spec* declares a type that one
+        draw does not conform to.
     """
 
     _backend_capabilities = frozenset({SupportsMean, SupportsVariance, SupportsCovariance})
@@ -337,11 +363,11 @@ class Multinomial(TFPDistribution):
     name : str
         Distribution name.
     total_count : int or array-like
-        Number of trials.
-    probs : array-like, shape ``(k,)``, optional
-        Event probabilities (need not be normalised).
-    logits : array-like, shape ``(k,)``, optional
-        Log-odds of each event.
+        Number of trials, or one per row.
+    probs : array-like, shape ``(..., k)``, optional
+        Event probabilities (need not be normalised), or one vector per row.
+    logits : array-like, shape ``(..., k)``, optional
+        Log-odds of each event, or one vector per row.
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
@@ -353,9 +379,8 @@ class Multinomial(TFPDistribution):
         If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
         record.
     ValueError
-        If not exactly one of *probs* and *logits* is given, the parameters
-        describe more than one law, or *event_spec* declares a type that one
-        draw does not conform to.
+        If not exactly one of *probs* and *logits* is given, or *event_spec*
+        declares a type that one draw does not conform to.
     """
 
     _backend_capabilities = frozenset({SupportsMean, SupportsVariance, SupportsCovariance})
@@ -422,11 +447,11 @@ class Wishart(TFPDistribution):
     name : str
         Distribution name.
     df : float or array-like
-        Degrees of freedom (must be >= dimension).
-    scale_tril : array-like, shape ``(d, d)``, optional
-        Lower-triangular Cholesky factor of the scale matrix.
-    scale : array-like, shape ``(d, d)``, optional
-        Full scale matrix (Cholesky-decomposed internally).
+        Degrees of freedom (must be >= dimension), or one per row.
+    scale_tril : array-like, shape ``(..., d, d)``, optional
+        Lower-triangular Cholesky factor of the scale matrix, or one per row.
+    scale : array-like, shape ``(..., d, d)``, optional
+        Full scale matrix (Cholesky-decomposed internally), or one per row.
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
@@ -438,9 +463,8 @@ class Wishart(TFPDistribution):
         If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
         record.
     ValueError
-        If not exactly one of *scale_tril* and *scale* is given, the parameters
-        describe more than one law, or *event_spec* declares a type that one
-        draw does not conform to.
+        If not exactly one of *scale_tril* and *scale* is given, or *event_spec*
+        declares a type that one draw does not conform to.
     """
 
     _backend_capabilities = frozenset({SupportsMean, SupportsVariance})
@@ -483,7 +507,7 @@ class Wishart(TFPDistribution):
     @property
     def scale(self) -> Array:
         """Full scale matrix (computed from Cholesky factor)."""
-        return self._scale_tril @ self._scale_tril.T
+        return self._scale_tril @ jnp.swapaxes(self._scale_tril, -1, -2)
 
     @property
     def dim(self) -> int:
@@ -510,10 +534,10 @@ class VonMisesFisher(TFPDistribution):
     ----------
     name : str
         Distribution name.
-    mean_direction : array-like, shape ``(d,)``
-        Unit vector giving the mean direction.
+    mean_direction : array-like, shape ``(..., d)``
+        Unit vector giving the mean direction, or one per row.
     concentration : float or array-like
-        Scalar concentration parameter (kappa >= 0).
+        Scalar concentration parameter (kappa >= 0), or one per row.
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
@@ -525,8 +549,7 @@ class VonMisesFisher(TFPDistribution):
         If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
         record.
     ValueError
-        If the parameters describe more than one law, or *event_spec* declares
-        a type that one draw does not conform to.
+        If *event_spec* declares a type that one draw does not conform to.
     """
 
     _backend_capabilities = frozenset({SupportsMean, SupportsVariance, SupportsCovariance})
@@ -566,5 +589,5 @@ class VonMisesFisher(TFPDistribution):
         return sphere
 
     def _variance(self) -> Array:
-        """The variance of each coordinate, the diagonal of the covariance."""
-        return jnp.diagonal(self._tfp_dist.covariance(), axis1=-2, axis2=-1)
+        """The variance of each coordinate, the diagonal of its row's covariance."""
+        return jnp.diagonal(_coordinates(self._tfp_dist).covariance(), axis1=-2, axis2=-1)

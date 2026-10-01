@@ -287,12 +287,14 @@ class TestVectorParameters:
         assert law._mean().shape == (2, 3)
         assert law._quantile(jnp.array([0.5, 0.9])).shape == (2, 2, 3)
 
-    def test_a_multivariate_family_takes_the_parameters_of_one_law(self):
+    def test_a_multivariate_family_given_parameters_for_rows_draws_independent_rows(self):
         d = 3
-        with pytest.raises(ValueError, match="DistributionBatch"):
-            F.MultivariateNormal(
-                "z", jnp.zeros((2, d)), scale_tril=jnp.broadcast_to(jnp.eye(d), (2, d, d))
-            )
+        law = F.MultivariateNormal(
+            "z", jnp.zeros((2, d)), scale_tril=jnp.broadcast_to(jnp.eye(d), (2, d, d))
+        )
+        assert law.event_shape == (2, d)
+        assert law._sample(jax.random.PRNGKey(0), (4,)).shape == (4, 2, d)
+        assert law._log_prob(jnp.zeros((2, d))).shape == ()
 
     def test_scalar_parameters_draw_a_scalar(self):
         law = F.Normal("x", 0.0, 1.0)

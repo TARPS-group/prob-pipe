@@ -12,10 +12,11 @@ the method that realizes each one unless the family defines its own. A moment
 is the backend's, the covariance is a linear operator over the flattened draw,
 and the quantiles are per coordinate with the level axes leading.
 
-A scalar family given parameters with axes draws one array of independent
-coordinates, one per entry of the broadcast parameters, so the backend's batch
-axes become the event's axes. A family whose draws are themselves arrays takes
-parameters for one law; a batch of separate laws is a ``DistributionBatch``.
+Parameters with more axes than one law needs give one law whose extra leading
+axes are event axes of independent coordinates, so the backend's batch axes
+become the event's leading axes: a scalar family draws one coordinate per entry
+of the broadcast parameters, and a family whose draws are arrays draws one
+independent row per entry. Separate laws form a ``DistributionBatch``.
 """
 
 from __future__ import annotations
@@ -94,8 +95,17 @@ def _allow_batched_tfp_init() -> Generator[None, None, None]:
 
 
 def _coordinates(backend: tfd.Distribution) -> tfd.Distribution:
-    """The backend of one coordinate, whose batch axes the event of independent coordinates reinterprets."""
+    """The backend of one coordinate or row, whose batch axes the event's leading axes reinterpret."""
     return backend.distribution if isinstance(backend, tfd.Independent) else backend
+
+
+def _block_diagonal(blocks: Array) -> Array:
+    """The block-diagonal matrix of *blocks* ``(*rows, k, k)`` over the rows' row-major order."""
+    k = blocks.shape[-1]
+    flat = jnp.reshape(blocks, (-1, k, k))
+    n = flat.shape[0]
+    joint = jnp.einsum("ij,iab->iajb", jnp.eye(n, dtype=flat.dtype), flat)
+    return jnp.reshape(joint, (n * k, n * k))
 
 
 def _backend_mean(self: TFPDistribution) -> Array:
@@ -111,13 +121,17 @@ def _backend_variance(self: TFPDistribution) -> Array:
 def _backend_cov(self: TFPDistribution) -> LinOp:
     """The covariance of the flattened draw, a ``(d, d)`` operator.
 
-    Independent coordinates have the diagonal operator of their variances, and
-    a law over a vector has the backend's dense covariance.
+    Independent coordinates have the diagonal operator of their variances, a
+    law over a vector has the backend's dense covariance, and independent rows
+    have the block-diagonal matrix of the rows' covariances.
     """
     backend = self._tfp_dist
-    if isinstance(backend, tfd.Independent) or tuple(backend.event_shape) == ():
+    row = _coordinates(backend)
+    if tuple(row.event_shape) == ():
         return DiagonalLinOp(jnp.reshape(backend.variance(), (-1,)))
-    return DenseLinOp(backend.covariance())
+    if row is backend:
+        return DenseLinOp(backend.covariance())
+    return DenseLinOp(_block_diagonal(row.covariance()))
 
 
 def _backend_quantile(self: TFPDistribution, q: ArrayLike) -> Array:
@@ -191,8 +205,8 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
     family's support, declared as a whole term, so every instance is a
     :class:`~probpipe.NumericDistribution`. Its component defaults to the law's
     name, and an ``event_spec`` declaration names another. A backend whose
-    draws are scalars and whose parameters have axes is reinterpreted as one
-    array of independent coordinates along those axes.
+    parameters have axes beyond one law's is reinterpreted as one law whose
+    leading event axes are those axes, over independent coordinates or rows.
 
     Parameters
     ----------
@@ -213,9 +227,7 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
         If *backend_dist* is not a backend distribution, or *event_spec* is
         not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
-        If the backend's draws are arrays and its parameters have axes, since
-        a batch of separate laws is a ``DistributionBatch``, or *event_spec*
-        declares a type that one draw does not conform to.
+        If *event_spec* declares a type that one draw does not conform to.
 
     Notes
     -----
@@ -273,22 +285,10 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
         super().__init__(name, declaration)
 
     def _reinterpreted(self, backend: tfd.Distribution) -> tfd.Distribution:
-        """*backend* with its batch axes as the event's, for draws of independent coordinates.
-
-        Raises
-        ------
-        ValueError
-            If the backend's draws are arrays and its parameters have axes.
-        """
+        """*backend* with its batch axes leading the event's, over independent coordinates or rows."""
         batch = tuple(backend.batch_shape)
         if not batch or _BATCHED_INIT_BYPASS.get():
             return backend
-        if tuple(backend.event_shape) != ():
-            raise ValueError(
-                f"{type(self).__name__} parameters imply {batch} separate laws over arrays "
-                f"of shape {tuple(backend.event_shape)}; a batch of separate laws is a "
-                f"DistributionBatch"
-            )
         return tfd.Independent(backend, reinterpreted_batch_ndims=len(batch))
 
     # -- the event declaration ----------------------------------------------
