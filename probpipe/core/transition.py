@@ -6,7 +6,7 @@ filtering, active learning, etc.
 
 The central pattern is a **fold over distributions**: starting from an
 initial distribution, a step function is applied repeatedly with
-successive inputs, producing a sequence of distributions.
+successive inputs, producing the batch of the distributions the fold visits.
 
 Core API::
 
@@ -24,6 +24,7 @@ from collections.abc import Callable, Iterable
 from typing import Any
 
 from .._weights import Weights, weighted_choice
+from ..distributions._batches import DistributionBatch
 from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution, _batch_form
 from ..functions import function
@@ -42,6 +43,10 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
+#: The level of the batch ``iterate`` returns, named after the operation that mints it.
+_ITERATE_LEVEL = "iterate"
+
+
 @function
 def iterate[S](
     step_fn: Callable[[Distribution, S], Distribution],
@@ -49,24 +54,24 @@ def iterate[S](
     inputs: Iterable[S],
     *,
     callback: Callable[[int, Distribution], Any] | None = None,
-) -> list[Distribution]:
-    """Fold a step function over inputs, accumulating a distribution sequence.
+) -> DistributionBatch:
+    """Fold a step function over inputs, returning the batch of the laws the fold visits.
 
-    Starting from *initial*, applies ``step_fn(dist, inp)`` for each
-    element of *inputs*, collecting the resulting distributions into a
-    list.  The returned list includes the initial distribution at
-    index 0.
+    Starting from *initial*, applies ``step_fn(dist, inp)`` for each element
+    of *inputs*. The laws visited, *initial* first, are the elements of a
+    ``DistributionBatch`` on one level named ``iterate``, so they share one
+    event declaration. Each element is a view of the law the fold produced at
+    that step, and its provenance records the batch and that law.
 
-    Provenance is automatically attached to each output distribution
-    (linking it to the previous distribution) unless the step function
-    has already set provenance.
+    A step's law that has no provenance receives a record of the step, whose
+    parent is the previous law and whose metadata holds the step's index; a
+    law that already has provenance keeps it.
 
     Parameters
     ----------
     step_fn : callable
-        ``(Distribution, S) -> Distribution``.
-        Any callable matching this signature — plain functions,
-        :class:`Function` instances, or bound methods.
+        ``(Distribution, S) -> Distribution``: a plain function, a
+        :class:`Function`, or a bound method.
     initial : Distribution
         The starting distribution.
     inputs : Iterable[S]
@@ -78,10 +83,16 @@ def iterate[S](
 
     Returns
     -------
-    list[Distribution]
-        The full sequence: ``[initial, dist_1, dist_2, ...]``.
+    DistributionBatch
+        The laws ``[initial, dist_1, dist_2, ...]`` on the level ``iterate``.
+
+    Raises
+    ------
+    TypeError
+        If a step returns something other than a ``Distribution``, or a law
+        whose event declaration does not match *initial*'s.
     """
-    dists: list[Distribution] = [initial]
+    laws: list[Distribution] = [initial]
     current = initial
 
     for i, inp in enumerate(inputs):
@@ -104,7 +115,7 @@ def iterate[S](
                     )
                 )
 
-        dists.append(result)
+        laws.append(result)
         current = result
 
         if callback is not None:
@@ -112,7 +123,7 @@ def iterate[S](
             if cont is False:
                 break
 
-    return dists
+    return DistributionBatch(_ITERATE_LEVEL, laws, _ITERATE_LEVEL)
 
 
 # ---------------------------------------------------------------------------
