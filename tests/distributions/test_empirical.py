@@ -194,8 +194,35 @@ class TestEventCompletion:
     def test_a_bare_array_is_stored_as_a_batch_of_atoms(self):
         law = _array_law()
         assert isinstance(law.atoms, NumericArrayBatch)
-        assert law.atoms.level_names == ("atom",)
         assert jnp.array_equal(law.atoms.values, _VALUES)
+
+    def test_a_bare_arrays_level_defaults_to_the_law_component(self):
+        assert _array_law().atoms.level_names == ("theta",)
+
+    def test_a_bare_arrays_level_defaults_to_the_declared_component(self):
+        law = EmpiricalDistribution("posterior", _VALUES, event_spec=OutputSpec(beta=None))
+        assert law.atoms.level_names == ("beta",)
+
+    def test_level_names_a_bare_arrays_level(self):
+        law = EmpiricalDistribution("theta", _VALUES, level="draw")
+        assert law.atoms.level_names == ("draw",)
+        assert list(law.event_spec.components) == ["theta"]
+
+    def test_level_is_refused_with_a_batch(self):
+        atoms = NumericArrayBatch("draws", _VALUES, "draw", element_spec=NumericArraySpec(()))
+        with pytest.raises(TypeError, match="with_level_names"):
+            EmpiricalDistribution("x", atoms, level="atom")
+
+    @pytest.mark.parametrize(
+        ("level", "error"),
+        [
+            pytest.param(3, TypeError, id="not-a-string"),
+            pytest.param("not a name", ValueError, id="not-an-identifier"),
+        ],
+    )
+    def test_an_invalid_level_raises(self, level, error):
+        with pytest.raises(error, match="level"):
+            EmpiricalDistribution("theta", _VALUES, level=level)
 
     @pytest.mark.parametrize(
         ("atoms", "numeric"),
