@@ -21,7 +21,7 @@ The six cases span the regimes the harness stresses:
   and quantile.
 
 Every reference is computed in double precision from the observed values the
-model holds, so it is the posterior of exactly the data the method sees.
+model holds, so it is the posterior of the data the method sees.
 """
 
 from __future__ import annotations

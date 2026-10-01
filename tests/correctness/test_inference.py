@@ -69,12 +69,12 @@ def _regression_case() -> ModelTestCase:
     """The exactly conditioned regression as a case, with its closed-form reference."""
     model = _regression()
     y = _observation(model)
-    mean, cov = model.posterior_moments(y)
+    posterior_mean, posterior_cov = model.posterior_moments(y)
     return ModelTestCase(
         name="exact_regression",
         model=model,
         data={"y": y},
-        reference=exact_reference(mean, np.diag(cov)),
+        reference=exact_reference(posterior_mean, np.diag(posterior_cov)),
         tags=frozenset({"gaussian"}),
     )
 
@@ -153,8 +153,7 @@ class TestCalibration:
 
         Each replication draws the coefficients and the responses from the
         case's joint and fits the posterior with the method, which compiles its
-        kernel anew for each dataset, so the test takes twenty to thirty
-        seconds.
+        kernel anew for each dataset, so the test takes twenty to forty seconds.
         """
         if method not in inference_method_registry.list_methods():
             pytest.skip(f"{method} is not registered here")
@@ -265,3 +264,22 @@ class TestExactness:
             case.reference.leaves["beta"].mean,
             rtol=1e-4,
         )
+
+
+class TestInitialState:
+    @pytest.mark.pending(
+        reason=(
+            "bug: the initial state of a factored joint's conditional reads .children of the "
+            "joint's draw, a raw mapping, and falls back to a Uniform(-2, 2) draw"
+        ),
+        raises=AssertionError,
+    )
+    def test_a_joints_conditional_starts_at_a_draw_of_the_joint(self):
+        """The chain of the Beta-Bernoulli posterior starts inside the unit interval, at a joint draw."""
+        from probpipe.inference._inference_utils import get_init_state
+
+        case = canonical.case("beta_bernoulli")
+        target = condition_on.with_options(method="unnormalized")(case.model, case.data)
+        init = np.asarray(get_init_state(target, None, random_seed=0))
+        assert init.shape == (1,)
+        assert 0.0 < float(init[0]) < 1.0

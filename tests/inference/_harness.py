@@ -92,15 +92,11 @@ class MethodProfile:
         contract it is held to.
     controls : Mapping[str, Any]
         The controls ``condition_on.with_options`` receives, budgets and seed included.
-    excluded : Mapping[str, str]
-        The cases the method is not held to, each with the reason, which the
-        skip reports.
     """
 
     representation: str
     consistent: bool
     controls: Mapping[str, Any]
-    excluded: Mapping[str, str] = field(default_factory=dict)
 
 
 #: The budget of a gradient-based sampler: two chains of 2000 draws after 1000
@@ -465,8 +461,6 @@ def validate_method(
     def test(case_name: str, request: pytest.FixtureRequest) -> None:
         if name not in inference_method_registry.list_methods():
             pytest.skip(f"{name} is not registered here, since its backend is not installed")
-        if case_name in profile.excluded:
-            pytest.skip(f"{name} is not held to {case_name}: {profile.excluded[case_name]}")
         case = canonical.case(case_name)
         model, data = _model_and_data(case, profile.representation, request)
         view = condition_on.with_options(method=name, **profile.controls)
