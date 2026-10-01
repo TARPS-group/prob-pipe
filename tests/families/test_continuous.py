@@ -6,7 +6,17 @@ import numpy as np
 import pytest
 import scipy.stats as _scipy
 
-from probpipe import NumericDistribution, TFPDistribution, log_prob, mean, sample, variance
+from probpipe import (
+    MathematicalDomainError,
+    NumericDistribution,
+    TFPDistribution,
+    cov,
+    log_prob,
+    mean,
+    sample,
+    variance,
+)
+from probpipe.distributions._capabilities import _capability_guard
 from probpipe.families import (
     Beta,
     Cauchy,
@@ -23,6 +33,8 @@ from probpipe.families import (
     TruncatedNormal,
     Uniform,
 )
+from tests._ops import mean as modeled_mean
+from tests._ops import variance as modeled_variance
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -87,17 +99,17 @@ class TestContinuousGeneric:
 
     def test_mean_finite(self, continuous_dist):
         if isinstance(continuous_dist, (Cauchy, HalfCauchy)):
-            pytest.skip("Cauchy/HalfCauchy have no finite mean")
+            with pytest.raises(MathematicalDomainError, match="mean"):
+                mean(continuous_dist)
+            return
         m = mean(continuous_dist)
         assert jnp.all(jnp.isfinite(m))
 
     def test_variance_finite(self, continuous_dist):
         if isinstance(continuous_dist, (Cauchy, HalfCauchy)):
-            pytest.skip("Cauchy/HalfCauchy have no finite variance")
-        if isinstance(continuous_dist, StudentT):
-            # StudentT with df <= 2 has infinite variance
-            if float(continuous_dist.df) <= 2.0:
-                pytest.skip("StudentT with df<=2 has no finite variance")
+            with pytest.raises(MathematicalDomainError, match="variance"):
+                variance(continuous_dist)
+            return
         v = variance(continuous_dist)
         assert jnp.all(jnp.isfinite(v))
 
@@ -108,6 +120,96 @@ class TestContinuousGeneric:
 
     def test_name(self, continuous_dist):
         assert continuous_dist.name == "x"
+
+
+# ---------------------------------------------------------------------------
+# Moments that do not exist
+# ---------------------------------------------------------------------------
+
+#: A law with a moment known not to exist, and that moment.
+_NONEXISTENT = {
+    "cauchy-mean": (lambda: Cauchy("x", 0.0, 1.0), "mean"),
+    "cauchy-variance": (lambda: Cauchy("x", 0.0, 1.0), "variance"),
+    "half-cauchy-mean": (lambda: HalfCauchy("x", 0.0, 1.0), "mean"),
+    "half-cauchy-variance": (lambda: HalfCauchy("x", 0.0, 1.0), "variance"),
+    "student-t-mean-at-df-1": (lambda: StudentT("x", 1.0, 0.0, 1.0), "mean"),
+    "student-t-variance-at-df-0.5": (lambda: StudentT("x", 0.5, 0.0, 1.0), "variance"),
+    "student-t-variance-at-df-1.5": (lambda: StudentT("x", 1.5, 0.0, 1.0), "variance"),
+    "student-t-variance-at-df-2": (lambda: StudentT("x", 2.0, 0.0, 1.0), "variance"),
+    "student-t-mean-of-one-coordinate": (
+        lambda: StudentT("x", jnp.array([0.5, 3.0]), 0.0, 1.0),
+        "mean",
+    ),
+    "inverse-gamma-mean-at-1": (lambda: InverseGamma("x", 1.0, 1.0), "mean"),
+    "inverse-gamma-variance-at-2": (lambda: InverseGamma("x", 2.0, 1.0), "variance"),
+    "pareto-mean-at-1": (lambda: Pareto("x", 1.0, 1.0), "mean"),
+    "pareto-variance-at-2": (lambda: Pareto("x", 2.0, 1.0), "variance"),
+}
+
+#: The exported operation, the operation model's, and the capability of each moment.
+_MOMENTS = {
+    "mean": (mean, modeled_mean, "_mean"),
+    "variance": (variance, modeled_variance, "_variance"),
+}
+
+
+class TestMomentsThatDoNotExist:
+    """A moment known not to exist raises ``MathematicalDomainError`` (II.7)."""
+
+    @pytest.mark.parametrize("case", list(_NONEXISTENT))
+    def test_the_moment_raises(self, case):
+        make, moment = _NONEXISTENT[case]
+        exported, modeled, capability = _MOMENTS[moment]
+        for compute in (exported, modeled, lambda law: getattr(law, capability)()):
+            with pytest.raises(MathematicalDomainError, match=moment):
+                compute(make())
+
+    @pytest.mark.parametrize(
+        "case", [case for case, (_, moment) in _NONEXISTENT.items() if moment == "variance"]
+    )
+    def test_the_covariance_raises_where_the_variance_does(self, case):
+        make, _ = _NONEXISTENT[case]
+        with pytest.raises(MathematicalDomainError, match="variance"):
+            make()._cov()
+        with pytest.raises(MathematicalDomainError, match="variance"):
+            cov(make())
+
+    def test_the_operation_does_not_estimate_the_moment_by_sampling(self):
+        law = Cauchy("x", 0.0, 1.0)
+        object.__setattr__(law, "_sample", lambda *args, **kwargs: pytest.fail("sampled"))
+        with pytest.raises(MathematicalDomainError, match="mean"):
+            modeled_mean(law)
+
+    @pytest.mark.parametrize(
+        ("make", "expected_mean", "expected_variance"),
+        [
+            (lambda: StudentT("x", 3.0, 2.0, 2.0), 2.0, 12.0),
+            (lambda: InverseGamma("x", 3.0, 2.0), 1.0, 1.0),
+            (lambda: Pareto("x", 3.0, 2.0), 3.0, 3.0),
+        ],
+        ids=["student-t", "inverse-gamma", "pareto"],
+    )
+    def test_the_moments_that_exist_are_computed(self, make, expected_mean, expected_variance):
+        assert float(mean(make())) == pytest.approx(expected_mean, rel=1e-5)
+        assert float(variance(make())) == pytest.approx(expected_variance, rel=1e-5)
+
+    def test_a_student_t_has_a_mean_where_its_variance_does_not_exist(self):
+        law = StudentT("x", 1.5, 2.0, 1.0)
+        assert float(mean(law)) == pytest.approx(2.0)
+        with pytest.raises(MathematicalDomainError, match="variance"):
+            variance(law)
+
+    def test_a_traced_parameter_leaves_existence_to_the_computation(self):
+        reports = []
+
+        def mean_of(df):
+            law = StudentT("x", df, 0.0, 1.0)
+            reports.append(_capability_guard(law, "_mean"))
+            return law._mean()
+
+        assert float(jax.jit(mean_of)(3.0)) == 0.0
+        assert reports[0].feasible is None
+        assert "needs values not yet known" in reports[0].pending[0]
 
 
 # ---------------------------------------------------------------------------

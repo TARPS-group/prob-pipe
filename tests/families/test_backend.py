@@ -16,6 +16,7 @@ import probpipe.families as F
 from probpipe import (
     Distribution,
     DistributionArray,
+    MathematicalDomainError,
     NumericArraySpec,
     NumericDistribution,
     OutputSpec,
@@ -104,6 +105,14 @@ _EXPECTED = {
     "VonMisesFisher": {SupportsMean, SupportsCovariance},
 }
 
+#: The families whose mean, variance, and covariance do not exist at any parameters.
+_WITHOUT_MOMENTS = {"Cauchy", "HalfCauchy"}
+
+
+def _dense_or_array(moment):
+    return moment.to_dense() if isinstance(moment, LinOp) else moment
+
+
 _PROTOCOLS = {
     "_mean": SupportsMean,
     "_variance": SupportsVariance,
@@ -166,7 +175,12 @@ class TestTheAdapter:
         law = _families()[name]
         if not isinstance(law, _PROTOCOLS[method]):
             pytest.skip(f"{name} does not claim {method}")
-        getattr(law, method)()
+        if name in _WITHOUT_MOMENTS:
+            # The claim answers that the moment does not exist (II.7).
+            with pytest.raises(MathematicalDomainError):
+                getattr(law, method)()
+            return
+        assert np.all(np.isfinite(np.asarray(_dense_or_array(getattr(law, method)()))))
 
     @pytest.mark.parametrize("name", [n for n in _NAMES if SupportsQuantile in _EXPECTED[n]])
     def test_the_quantiles_put_the_levels_first(self, name):

@@ -42,6 +42,7 @@ from ..distributions._capabilities import (
     SupportsQuantile,
     SupportsSampling,
     SupportsVariance,
+    _implements,
 )
 from ..distributions._distribution import Distribution, NumericDistribution
 from ..linalg import DenseLinOp, DiagonalLinOp, LinOp
@@ -233,13 +234,15 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Give a family the method realizing each capability its table lists.
 
-        A family's own constructor is wrapped to record the arguments it is
-        called with, which :meth:`__reduce__` rebuilds the family from.
+        A method the family implements, in its body or through a base it
+        inherits, is kept. A family's own constructor is wrapped to record the
+        arguments it is called with, which :meth:`__reduce__` rebuilds the
+        family from.
         """
         super().__init_subclass__(**kwargs)
         for protocol in vars(cls).get("_backend_capabilities", ()):
             for method, implementation in _BACKEND_METHODS[protocol].items():
-                if method not in vars(cls):
+                if not _implements(cls, method):
                     setattr(cls, method, implementation)
         if "__init__" in vars(cls):
             cls.__init__ = _recording_arguments(vars(cls)["__init__"])
