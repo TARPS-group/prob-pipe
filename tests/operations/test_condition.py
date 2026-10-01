@@ -589,6 +589,26 @@ def _unnormalized_vector():
     )
 
 
+class _WholeTermKernel(ConditionalDistribution, SupportsConditionalUnnormalizedLogProb):
+    """``theta | s``, whose laws are unnormalized over the whole-term event ``theta`` in R²."""
+
+    def __init__(self) -> None:
+        from probpipe import NumericArraySpec
+
+        super().__init__("theta", {"s": REAL}, OutputSpec(theta=NumericArraySpec((2,))))
+
+    def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
+        from probpipe.families import UnnormalizedDistribution
+
+        s = float(given["s"])
+        return UnnormalizedDistribution(
+            "theta", lambda x: -0.5 * jnp.sum((jnp.asarray(x) - s) ** 2), self.event_spec
+        )
+
+    def _conditional_unnormalized_log_prob(self, given: Any, value: Any) -> Any:
+        return self._condition_on(given)._unnormalized_log_prob(value)
+
+
 class TestEndToEnd:
     def test_a_normal_kernel_bound_to_a_value_needs_no_inference(self):
         from probpipe.families import GaussianFamily, glm_likelihood
@@ -617,6 +637,17 @@ class TestEndToEnd:
         assert _is_normalized(posterior)
         assert tuple(posterior.event_spec.components) == ("a",)
         assert view.check(_unnormalized_pair(), {"b": 1.0}).method == "blackjax_nuts"
+
+    @pytest.mark.parametrize("kernel", [_UnnormalizedKernel(), _WholeTermKernel()])
+    def test_a_curried_law_over_a_whole_term_is_normalized_under_that_term(self, kernel):
+        view = condition_on.with_options(**_MCMC)
+        given = dict.fromkeys(kernel.given_spec, 1.0)
+        assert view.check(kernel, given).method == "blackjax_nuts"
+        posterior = view(kernel, given)
+        assert _is_normalized(posterior)
+        assert not posterior.event_spec.exposes_record
+        assert tuple(posterior.event_spec.components) == ("theta",)
+        assert posterior.event_spec.spec.shape == kernel.event_spec.spec.shape
 
     def test_an_unnormalized_distribution_samples_through_a_method(self):
         view = sample.with_options(**_MCMC)

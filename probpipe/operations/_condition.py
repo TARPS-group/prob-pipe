@@ -467,6 +467,25 @@ _NO_EXACT_METHOD = (
 )
 
 
+def _packaged_alike(declared: OutputSpec, expected: OutputSpec) -> bool:
+    """Whether *declared* packages its event as *expected* does, under the same components."""
+    return declared.exposes_record == expected.exposes_record and tuple(
+        declared.components
+    ) == tuple(expected.components)
+
+
+def _as_declared(source: Any, law: Any) -> EmpiricalDistribution:
+    """The atoms and weights of the normalized *law* under *source*'s event declaration.
+
+    The result is an ``EmpiricalDistribution`` carrying *law*'s provenance,
+    since a posterior over a whole-term event draws a one-field record of it.
+    """
+    empirical = EmpiricalDistribution(
+        source.name, law.draws(), law.weights, event_spec=source.event_spec
+    )
+    return empirical.with_provenance(law.provenance)
+
+
 @dataclass(frozen=True)
 class _Normalization:
     """How the normalization stage normalizes a target: the registry, the method, and its budgets.
@@ -502,12 +521,19 @@ class _Normalization:
         return report
 
     def normalize(self, law: Any) -> Any:
-        """*law* as it is when it is normalized, and the selected method's result otherwise."""
+        """*law* as it is when it is normalized, and otherwise the selected method's result.
+
+        The result carries *law*'s event declaration, as the result rule of
+        currying requires.
+        """
         if _is_normalized(law):
             return law
-        return self.registry.execute(
+        posterior = self.registry.execute(
             law, method=self.method, exact_only=self.exact_only, **self.options
         )
+        if _packaged_alike(posterior.event_spec, law.event_spec):
+            return posterior
+        return _as_declared(law, posterior)
 
 
 def _per_value_sample(
@@ -1094,16 +1120,12 @@ def _declared_as_source(call: BoundCall, law: Any) -> Any:
     """The normalized *law* under the source's event declaration.
 
     A law that declares the source's event is returned as it is; otherwise its
-    atoms and weights form an ``EmpiricalDistribution`` under the source's
-    declaration, since a posterior over a whole-term event draws a one-field
-    record of it.
+    atoms and weights are declared as the source's event.
     """
     source = call.operands["d"]
     if law.event_spec == source.event_spec:
         return law
-    return EmpiricalDistribution(
-        source.name, law.draws(), law.weights, event_spec=source.event_spec
-    )
+    return _as_declared(source, law)
 
 
 def _draws_of(call: BoundCall, law: Any) -> Any:
