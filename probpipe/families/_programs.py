@@ -750,14 +750,15 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
         """The PyMC model at the observed values *data*.
 
         *data* is ``None`` for the build without data, a mapping or record
-        keyed by observed variables, or a bare array for the first of them.
+        keyed by observed variables, or a bare array for the first of them. A
+        value that a mapping or record holds for a parameter fixes it: the
+        model observes the parameter at that value, as conditioning on it
+        requires.
         """
         from ..core._record_batch import RecordBatch
 
         if data is None:
             return self._program.build()
-        if isinstance(data, Mapping):
-            return self._program.build(data)
         if isinstance(data, RecordBatch):
             return self._program.build(
                 {
@@ -767,25 +768,39 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
                 }
             )
         if isinstance(data, Record):
-            return self._program.build(
-                {name: data[name] for name in self._observed_names if name in data.fields}
-            )
-        return self._program.build({self._observed_names[0]: data})
+            values = {name: data[name] for name in data.fields}
+            arguments = {name: values[name] for name in self._observed_names if name in values}
+        elif isinstance(data, Mapping):
+            values = dict(data)
+            arguments = {
+                name: value for name, value in values.items() if name not in self._param_names
+            }
+        else:
+            return self._program.build({self._observed_names[0]: data})
+        model = self._program.build(arguments)
+        fixed = {name: _to_numpy(values[name]) for name in self._param_names if name in values}
+        if not fixed:
+            return model
+        import pymc as pm
+
+        return pm.observe(model, fixed)
 
     def _conditioned_param_names(self, model: Any) -> tuple[str, ...]:
         """The free variables to infer in a data-conditioned *model*, in order.
 
-        They are the parameters and any observed variable the data left free.
+        They are the parameters the data leave free and any observed variable
+        the data left free.
 
         Raises
         ------
         ValueError
             If *model*'s free variables differ from the build without data by a
-            variable that is not observed, since the set of random variables
-            must not change with the data.
+            variable that the data neither observe nor fix, since the set of
+            random variables must not change with the data.
         """
         free = {rv.name for rv in model.free_RVs}
-        missing = [n for n in self._param_names if n not in free]
+        fixed = {rv.name for rv in model.observed_RVs}
+        missing = [n for n in self._param_names if n not in free and n not in fixed]
         extra = free - set(self._param_names) - set(self._observed_names)
         if missing or extra:
             raise ValueError(
@@ -794,7 +809,9 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
                 f"whose set of free random variables changes with the data (dynamic random "
                 f"variables); only per-variable shapes may depend on data size."
             )
-        return tuple(self._param_names) + tuple(n for n in self._observed_names if n in free)
+        return tuple(n for n in self._param_names if n in free) + tuple(
+            n for n in self._observed_names if n in free
+        )
 
     def _parameter_record_for(self, model: Any, names: Sequence[str]) -> NumericRecordSpec:
         """The record of *names*, shaped as a build *model* shapes them.

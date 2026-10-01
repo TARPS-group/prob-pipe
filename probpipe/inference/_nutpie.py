@@ -182,6 +182,7 @@ class NutpieNutsMethod(InferenceMethod):
     def __init__(self) -> None:
         from ..families._programs import PyMCModel, _StanPosterior
 
+        self._pymc_model_type = PyMCModel
         self._supported = (_StanPosterior, PyMCModel)
 
     @property
@@ -196,10 +197,15 @@ class NutpieNutsMethod(InferenceMethod):
         return 88
 
     def check(self, target: Any, /, **kwargs: Any) -> Feasibility:
-        """Whether the target is a Stan or PyMC program, or one at its observed values."""
-        dist, _ = joint_and_given(target)
+        """Whether the target is a Stan or PyMC program, or a PyMC one at its observed values."""
+        dist, given = joint_and_given(target)
         if not isinstance(dist, self._supported):
             return Feasibility(feasible=False, description="Requires StanModel or PyMCModel")
+        if given is not None and not isinstance(dist, self._pymc_model_type):
+            return Feasibility(
+                feasible=False,
+                description="nutpie samples a Stan program at its data, which fixes no parameter",
+            )
         try:
             import nutpie  # noqa: F401
         except ImportError:

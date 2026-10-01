@@ -94,6 +94,24 @@ class TestCompileForNutpie:
         with pytest.raises(TypeError, match="does not support"):
             _compile_for_nutpie(model, data=None)
 
+    def test_a_stan_posterior_conditioned_on_a_parameter_is_declined(self, tmp_path):
+        """nutpie samples a Stan program at its data, so it cannot fix a parameter."""
+        from probpipe.families import StanModel
+        from probpipe.inference._nutpie import NutpieNutsMethod
+        from probpipe.operations._condition import condition_on
+
+        program = tmp_path / "program.stan"
+        program.write_text(
+            "data { int N; vector[N] y; } parameters { real mu; real<lower=0> sigma; } "
+            "model { y ~ normal(mu, sigma); }"
+        )
+        posterior = StanModel("program", str(program), data={"N": 2, "y": [1.0, 2.0]})
+        target = condition_on.with_options(method="unnormalized")(posterior, {"mu": 0.3})
+        report = NutpieNutsMethod().check(target)
+        assert report.feasible is False
+        assert "parameter" in report.description
+        assert NutpieNutsMethod().check(posterior).feasible is True
+
 
 class TestImportError:
     """When nutpie is missing, condition_on_nutpie raises a helpful

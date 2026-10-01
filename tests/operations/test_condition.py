@@ -570,6 +570,36 @@ class TestTheNormalizationStage:
         assert isinstance(target, _UnnormalizedConditional)
         assert set(target.event_spec.components) == {"z"}
 
+    def test_check_on_mixed_keys_of_a_per_value_kernel_runs_no_method(self, approximate_method):
+        joint = Kernel("y", ("mu",)) * Kernel("z", ("mu",)) * Kernel("w", ("mu",))
+        kernel = condition_on(joint, {"y": 0.0})
+        report = condition_on.check(kernel, {"mu": 1.0, "z": 0.5})
+        assert (report.route, report.method) == ("bayes", "operations_suite_factored")
+        assert approximate_method.targets == []
+
+    def test_mixed_keys_of_a_per_value_kernel_bind_its_slots_then_condition_once(
+        self, approximate_method
+    ):
+        joint = Kernel("y", ("mu",)) * Kernel("z", ("mu",)) * Kernel("w", ("mu",))
+        kernel = condition_on(joint, {"y": 0.0})
+        assert condition_on(kernel, {"mu": 1.0, "z": 0.5}).loc == 4.0
+        (target,) = approximate_method.targets
+        assert isinstance(target, _UnnormalizedConditional)
+        assert set(target.event_spec.components) == {"w"}
+        assert set(target.joint.event_spec.components) == {"y", "z", "w"}
+        assert set(target.given.fields) == {"y", "z"}
+
+    def test_conditioning_a_per_value_kernel_on_a_field_conditions_its_unnormalized_laws(
+        self, approximate_method
+    ):
+        joint = Kernel("y", ("mu",)) * Kernel("z", ("mu",)) * Kernel("w", ("mu",))
+        kernel = condition_on(condition_on(joint, {"y": 0.0}), {"z": 0.5})
+        assert approximate_method.targets == []
+        assert condition_on(kernel, {"mu": 1.0}).loc == 4.0
+        (target,) = approximate_method.targets
+        assert set(target.joint.event_spec.components) == {"y", "z", "w"}
+        assert set(target.given.fields) == {"y", "z"}
+
     def test_the_target_of_a_law_that_samples_claims_its_density(self, approximate_method):
         joint = Kernel("y", ("mu",)) * Kernel("z", ("mu",))
         law = condition_on(joint, {"mu": 1.0, "y": 0.0})
@@ -698,6 +728,10 @@ def _unnormalized_vector():
     )
 
 
+def _refuse_to_execute(*args: Any, **kwargs: Any) -> Any:
+    raise AssertionError("check ran an inference method")
+
+
 class _WholeTermKernel(ConditionalDistribution, SupportsConditionalUnnormalizedLogProb):
     """``theta | s``, whose laws are unnormalized over the whole-term event ``theta`` in R²."""
 
@@ -800,6 +834,32 @@ class TestEndToEnd:
         posterior = view(kernel, given)
         assert _is_normalized(posterior)
         assert set(posterior.event_spec.components) == {"beta", "sigma"}
+
+    def test_a_pymc_kernel_conditioned_on_its_observation_binds_a_covariate_and_a_parameter(
+        self, monkeypatch
+    ):
+        pm = pytest.importorskip("pymc")
+        from probpipe.families import PyMCModel
+
+        def regression(x=None, y=None):
+            x = np.zeros(3) if x is None else np.asarray(x)
+            with pm.Model() as model:
+                beta = pm.Normal("beta", 0, 1)
+                sigma = pm.HalfNormal("sigma", 1)
+                pm.Normal("y", beta * x, sigma, observed=y)
+            return model
+
+        view = condition_on.with_options(num_results=30, num_warmup=30, num_chains=1)
+        kernel = view(PyMCModel("regression", regression), {"y": np.linspace(0.0, 1.0, 6)})
+        given = {"x": np.linspace(0.0, 1.0, 6), "beta": 0.3}
+        with monkeypatch.context() as patched:
+            patched.setattr(inference_method_registry, "execute", _refuse_to_execute)
+            report = view.check(kernel, given)
+        assert report.route == "bayes"
+        assert report.method in ("nutpie_nuts", "pymc_nuts")
+        posterior = view(kernel, given)
+        assert _is_normalized(posterior)
+        assert set(posterior.event_spec.components) == {"sigma"}
 
     def test_a_stan_model_bound_to_its_data_is_normalized_by_a_stan_method(self, tmp_path):
         from probpipe.families import StanModel
