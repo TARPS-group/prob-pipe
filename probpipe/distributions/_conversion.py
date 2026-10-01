@@ -25,6 +25,8 @@ from abc import abstractmethod
 from dataclasses import dataclass, replace
 from typing import Any
 
+import numpy as np
+
 from ..core._dispatch import (
     BinaryDispatchMethod,
     BinaryDispatchRegistry,
@@ -226,13 +228,16 @@ def _term_difference(
     actual: TermSpec | None,
     path: str,
     sides: tuple[str, str] = _CONVERSION_SIDES,
+    dtypes: bool = True,
 ) -> str | None:
-    """How the term *actual* departs from *expected* in kind or shape at *path*, or ``None``.
+    """How the term *actual* departs from *expected* at *path*, or ``None``.
 
-    Dtypes and supports are representation and are not compared: a family's own
-    dtype and support replace the source's. A type hole in *expected*, which a
-    backend declaration may leave for the converter to fill, matches any term.
-    *sides* names the two declarations in the message.
+    The kinds and shapes are compared, and with *dtypes* a set dtype of *actual*
+    must cast to one *expected* sets by the same-kind rule, as a law matches a
+    ``DistributionSpec``. Supports are not compared, since a family's own
+    support replaces the source's. A type hole in *expected*, which a backend
+    declaration may leave for the converter to fill, matches any term. *sides*
+    names the two declarations in the message.
     """
     first, second = sides
     if expected is None:
@@ -244,6 +249,16 @@ def _term_difference(
             _unify_array_shape(expected.shape, actual.shape, {}, path)
         except ValueError as error:
             return f"{path} has shape {expected.shape} in {first}: {error}"
+        if (
+            dtypes
+            and expected.dtype is not None
+            and actual.dtype is not None
+            and not np.can_cast(actual.dtype, expected.dtype, casting="same_kind")
+        ):
+            return (
+                f"{path} has dtype {expected.dtype} in {first} and {actual.dtype} in {second}, "
+                f"which does not cast to it"
+            )
         return None
     if isinstance(expected, RecordSpec) or isinstance(actual, RecordSpec):
         if not (isinstance(expected, RecordSpec) and isinstance(actual, RecordSpec)):
@@ -254,7 +269,9 @@ def _term_difference(
                 f"{list(actual.children)} in {second}"
             )
         for name, child in expected.children.items():
-            difference = _term_difference(child, actual.children[name], f"{path}/{name}", sides)
+            difference = _term_difference(
+                child, actual.children[name], f"{path}/{name}", sides, dtypes
+            )
             if difference is not None:
                 return difference
         return None
@@ -272,13 +289,17 @@ def _kind(spec: TermSpec | None) -> str:
 
 
 def _event_difference(
-    expected: OutputSpec, actual: OutputSpec, sides: tuple[str, str] = _CONVERSION_SIDES
+    expected: OutputSpec,
+    actual: OutputSpec,
+    sides: tuple[str, str] = _CONVERSION_SIDES,
+    dtypes: bool = True,
 ) -> str | None:
     """How the declaration *actual* departs from *expected*, or ``None``.
 
     A conversion preserves the packaging, the component names, and each
-    component's kind and shape. *sides* names the two declarations in the
-    message, the source's and the result's by default.
+    component's kind and shape, and a dtype it sets casts to the source's (see
+    :func:`_term_difference`, which *dtypes* passes to). *sides* names the two
+    declarations in the message, the source's and the result's by default.
     """
     first, second = sides
     if expected.exposes_record != actual.exposes_record:
@@ -289,7 +310,7 @@ def _event_difference(
             f"{list(actual.components)}"
         )
     for name, spec in expected.components.items():
-        difference = _term_difference(spec, actual.components[name], name, sides)
+        difference = _term_difference(spec, actual.components[name], name, sides, dtypes)
         if difference is not None:
             return difference
     return None

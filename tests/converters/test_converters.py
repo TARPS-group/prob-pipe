@@ -286,10 +286,11 @@ class TestAllCrossFamilyConversions:
         with pytest.raises(ValueError, match="total_count"):
             converter_registry.convert(p, Binomial, check_support=False)
 
-    def test_poisson_from_bernoulli(self):
+    def test_poisson_from_bernoulli_does_not_carry_the_integer_declaration(self):
+        """A Poisson draws floats, which do not cast to the Bernoulli's integers."""
         b = Bernoulli(probs=0.3, name="b")
-        result = converter_registry.convert(b, Poisson, check_support=False)
-        assert isinstance(result, Poisson)
+        with pytest.raises(ValueError, match="does not cast"):
+            converter_registry.convert(b, Poisson, check_support=False)
 
     def test_categorical_from_bernoulli(self):
         b = Bernoulli(probs=0.7, name="b")
