@@ -131,6 +131,25 @@ class TestProbPipeConverter:
         assert result is n
 
 
+class TestAnEmpiricalSourceAgainstTheTargetSupport:
+    """An empirical law's array atoms declare no support, so its atoms are checked instead."""
+
+    def test_atoms_outside_the_target_support_raise(self):
+        source = EmpiricalDistribution("x", jnp.array([-5.0, -1.0, 2.0, -3.0]))
+        with pytest.raises(ValueError, match="support"):
+            from_distribution(source, Exponential)
+
+    def test_atoms_inside_the_target_support_convert(self):
+        source = EmpiricalDistribution("x", jnp.array([0.5, 1.0, 2.0, 3.0]))
+        result = from_distribution(source, Exponential)
+        assert isinstance(result, Exponential)
+        np.testing.assert_allclose(float(result._mean()), 1.625, rtol=1e-6)
+
+    def test_the_check_can_be_overridden(self):
+        source = EmpiricalDistribution("x", jnp.array([-5.0, -1.0, 2.0, -3.0]))
+        assert isinstance(from_distribution(source, Exponential, check_support=False), Exponential)
+
+
 # ---------------------------------------------------------------------------
 # Cross-family moment-matching (exercises all _convert_to_* functions)
 # ---------------------------------------------------------------------------

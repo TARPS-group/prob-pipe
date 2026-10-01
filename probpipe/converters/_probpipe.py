@@ -669,6 +669,42 @@ def _convert_to_kde(source, key, **kw):
     return r
 
 
+def _check_atoms_in_support(target: Any, source: Any) -> None:
+    """Refuse an empirical source whose atoms lie outside the target's support.
+
+    An empirical law's array atoms declare no support, so the declared check
+    has nothing to compare at such a leaf; its atoms are what the law is
+    supported on, and each must lie in the support the target's leaves share.
+    A target whose leaves differ in support, or a leaf whose support the source
+    declares, is left to the declared check.
+
+    Raises
+    ------
+    ValueError
+        If an atom of a leaf without a declared support lies outside the
+        target's support.
+    """
+    if not isinstance(source, EmpiricalDistribution):
+        return
+    if not isinstance(source.event_spec.spec, NumericSpec):
+        return
+    support = target.support
+    if support is None:
+        return
+    declared = source.supports
+    rows = source._rows
+    columns = rows if isinstance(rows, dict) else dict.fromkeys(declared, rows)
+    for path, column in columns.items():
+        if declared.get(path) is not None:
+            continue
+        if not bool(jnp.all(support.check(jnp.asarray(column)))):
+            raise ValueError(
+                f"Cannot convert {type(source).__name__} {source.name!r} to "
+                f"{type(target).__name__} (support={support}): atoms of {path!r} lie "
+                f"outside that support. Pass check_support=False to override."
+            )
+
+
 # ---------------------------------------------------------------------------
 # Dispatch table: target class name -> conversion function
 # ---------------------------------------------------------------------------
@@ -870,6 +906,7 @@ class ProbPipeConverter(Converter):
         if check_support and isinstance(result, NumericDistribution):
             with contextlib.suppress(AttributeError):
                 NumericRecordDistribution._check_support_compatible(result, source)
+            _check_atoms_in_support(result, source)
 
         return result
 
