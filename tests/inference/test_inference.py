@@ -299,6 +299,18 @@ class TestApproximateDistributionValuesTemplate:
     def test_the_target_names_the_fields(self, posterior_with_template, template):
         assert posterior_with_template.fields == template.fields
 
+    @pytest.mark.parametrize("shape", [(), (2,)])
+    def test_a_one_field_target_declares_the_fields_shape(self, shape):
+        """A posterior over a one-field record declares the field's shape, as its draws have it."""
+        width = int(np.prod(shape))
+        chains = [jnp.zeros((5, width)), jnp.ones((5, width))]
+        post = make_posterior(
+            chains, parents=(), algorithm="test", event_spec=RecordSpec(theta=shape)
+        )
+        assert post.event_spec.spec["theta"].shape == shape
+        assert post.draws()["theta"].shape == (10, *shape)
+        assert jnp.shape(post._mean()["theta"]) == shape
+
     def test_field_order_reassembles_by_name(self):
         """field_order maps chain column-blocks to template fields by name.
 

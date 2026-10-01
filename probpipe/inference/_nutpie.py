@@ -5,7 +5,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import numpy as np
+
 from ..core._dispatch import Feasibility
+from ..core._record_spec import NumericRecordSpec
 from ..core._specs import OutputSpec
 from ..custom_types import ArrayLike
 from ..functions import function
@@ -81,13 +84,14 @@ def _nutpie_posterior(
 
     # Build the parameter record in canonical field order from the
     # conditioned build before sampling (fail fast on a dynamic-RV /
-    # non-concrete model). A Stan model declares its own parameters.
+    # non-concrete model). A Stan model declares its parameter blocks, whose
+    # shapes the trace gives.
     if pymc_build is not None:
         param_names = list(model._conditioned_param_names(pymc_build))
         event_spec = OutputSpec(model._parameter_record_for(pymc_build, param_names))
     else:
-        param_names = None
-        event_spec = getattr(model, "event_spec", None)
+        param_names = list(model.event_spec.components)
+        event_spec = None
 
     trace = nutpie.sample(
         compiled,
@@ -97,16 +101,19 @@ def _nutpie_posterior(
         seed=random_seed,
         **kwargs,
     )
+    if event_spec is None:
+        event_spec = OutputSpec(
+            NumericRecordSpec(
+                **{name: np.shape(trace.posterior[name].values)[2:] for name in param_names}
+            )
+        )
 
-    # Extract in nutpie's natural ``data_vars`` order (it sorts
-    # alphabetically); ``field_order`` lets make_posterior realign columns
-    # to the parameters by name, so we don't depend on the orders matching.
-    if param_names is not None:
-        field_order = posterior_var_order(trace, param_names)
-        chains, _ = _extract_chains(trace, num_chains, keep_names=field_order)
-    else:
-        field_order = None
-        chains, _ = _extract_chains(trace, num_chains)
+    # Extract the parameters alone, in nutpie's natural ``data_vars`` order
+    # (it sorts alphabetically); ``field_order`` lets make_posterior realign
+    # columns to the parameters by name, so we don't depend on the orders
+    # matching.
+    field_order = posterior_var_order(trace, param_names)
+    chains, _ = _extract_chains(trace, num_chains, keep_names=field_order)
 
     return make_posterior(
         chains,
@@ -132,17 +139,19 @@ def _compile_for_nutpie(model: Any, data: Any) -> tuple[Any, Any | None]:
     Returns ``(compiled, pymc_build)``. ``pymc_build`` is the
     data-conditioned ``pm.Model`` for PyMCModel targets (so the caller
     can derive a matching parameter record), and ``None`` for Stan
-    targets.
+    targets, which nutpie compiles from the program's file and then gives
+    the program's data.
     """
-    from ..families._programs import StanModel
+    from ..families._programs import StanModel, _StanPosterior, _to_numpy
 
     if isinstance(model, StanModel) and isinstance(data, dict):
         # Binding a Stan program's data curries it to the posterior.
         model, data = model._condition_on(data), None
-    if hasattr(model, "_bridgestan_model"):
+    if isinstance(model, _StanPosterior):
         import nutpie
 
-        return nutpie.compile_stan_model(model._bridgestan_model()), None
+        compiled = nutpie.compile_stan_model(filename=model.stan_file)
+        return compiled.with_data(**{k: _to_numpy(v) for k, v in model.data.items()}), None
 
     if hasattr(model, "_pymc_model"):
         import nutpie

@@ -905,9 +905,12 @@ class TestEndToEnd:
             "data { int N; vector[N] y; } parameters { real mu; } "
             "model { mu ~ normal(0, 1); y ~ normal(mu, 1); }"
         )
-        view = condition_on.with_options(num_results=30, num_warmup=30, num_chains=1)
+        view = condition_on.with_options(num_results=200, num_warmup=200, num_chains=1)
         posterior = view(StanModel("mean", str(program)), {"N": 3, "y": [1.0, 2.0, 3.0]})
         assert _is_normalized(posterior)
+        assert tuple(posterior.event_spec.components) == ("mu",)
+        # mu ~ N(0, 1) and y_i ~ N(mu, 1) give mu | y ~ N(1.5, 0.25).
+        assert float(np.mean(np.asarray(posterior.draws()["mu"]))) == pytest.approx(1.5, abs=0.3)
 
     def test_unnormalized_returns_the_exact_stage_of_a_joint(self):
         target = condition_on.with_options(method="unnormalized")(

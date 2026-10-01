@@ -25,43 +25,87 @@ from probpipe.inference._nutpie import (
 # ---------------------------------------------------------------------------
 
 
+class _CompiledStanModel:
+    """A stand-in for nutpie's CompiledStanModel, whose data ``with_data`` sets."""
+
+    def __init__(self, filename, data=None):
+        self.filename, self.data = filename, data
+
+    def with_data(self, *, seed=None, **updates):
+        return _CompiledStanModel(self.filename, {**(self.data or {}), **updates})
+
+
+def _compile_stan_model(*, code=None, filename=None, **kwargs):
+    """nutpie 0.16's compile_stan_model, which takes every argument by keyword."""
+    return _CompiledStanModel(filename)
+
+
 class TestCompileForNutpie:
     """_compile_for_nutpie dispatch — still uses mocks since we only test
     which nutpie function is called, not that it produces a runnable model."""
 
-    def test_bridgestan_path(self):
+    def test_a_stan_posterior_compiles_from_its_file_with_its_data(self, tmp_path):
         """A Stan posterior compiles through nutpie.compile_stan_model from its
-        own BridgeStan model, which holds its data."""
-        model = MagicMock()
-        model._bridgestan_model.return_value = "bs_model"
-        with patch.object(nutpie, "compile_stan_model", return_value="compiled") as compile_stan:
-            compiled, pymc_build = _compile_for_nutpie(model, data=None)
-        compile_stan.assert_called_once_with("bs_model")
-        model._bridgestan_model.assert_called_once_with()
-        assert compiled == "compiled"
+        program's file, and nutpie's compiled model takes its data."""
+        from probpipe.families import StanModel
+        from probpipe.families._programs import _StanPosterior
+
+        program = tmp_path / "program.stan"
+        program.write_text("data { int N; } parameters { real mu; } model { }")
+        posterior = StanModel("program", str(program), data={"N": 3})
+        with (
+            patch.object(_StanPosterior, "_bridgestan_model", lambda self: "bs_model"),
+            patch.object(nutpie, "compile_stan_model", _compile_stan_model),
+        ):
+            compiled, pymc_build = _compile_for_nutpie(posterior, data=None)
+        assert (compiled.filename, compiled.data) == (str(program), {"N": 3})
         assert pymc_build is None  # Stan target — no PyMC build to thread
 
     def test_a_stan_kernel_curries_to_its_posterior_at_the_data(self, tmp_path):
         """A StanModel given its remaining data curries to the posterior first,
         whose data are the construction data and the conditioning data together."""
         from probpipe.families import StanModel
-        from probpipe.families._programs import _StanPosterior
 
         program = tmp_path / "program.stan"
         program.write_text("data { int N; vector[N] y; } parameters { real mu; } model { }")
         kernel = StanModel("program", str(program), data={"N": 2})
-        seen = []
+        with patch.object(nutpie, "compile_stan_model", _compile_stan_model):
+            compiled, _ = _compile_for_nutpie(kernel, data={"y": [1.0, 2.0]})
+        assert compiled.data == {"N": 2, "y": [1.0, 2.0]}
 
-        def bridgestan_model(posterior):
-            seen.append(dict(posterior.data))
-            return "bs_model"
+    def test_a_stan_posterior_keeps_its_parameter_record(self, tmp_path):
+        """The posterior holds the parameter blocks alone, each in its own shape."""
+        import xarray as xr
 
+        from probpipe.families import StanModel
+
+        program = tmp_path / "program.stan"
+        program.write_text(
+            "data { int N; } parameters { real mu; vector[2] theta; } model { } "
+            "generated quantities { real twice = 2 * mu; }"
+        )
+        posterior = StanModel("program", str(program), data={"N": 3})
+        mu = np.array([[0.0, 1.0, 2.0], [10.0, 11.0, 12.0]])
+        trace = xr.DataTree.from_dict(
+            {
+                "posterior": xr.Dataset(
+                    {
+                        "mu": (("chain", "draw"), mu),
+                        "theta": (("chain", "draw", "dim"), np.stack([100 + mu, 1000 + mu], -1)),
+                        "twice": (("chain", "draw"), 2 * mu),
+                    }
+                )
+            }
+        )
         with (
-            patch.object(_StanPosterior, "_bridgestan_model", bridgestan_model),
-            patch.object(nutpie, "compile_stan_model", return_value="compiled"),
+            patch.object(nutpie, "compile_stan_model", _compile_stan_model),
+            patch.object(nutpie, "sample", return_value=trace),
         ):
-            _compile_for_nutpie(kernel, data={"y": [1.0, 2.0]})
-        assert seen == [{"N": 2, "y": [1.0, 2.0]}]
+            result = condition_on_nutpie.apply(posterior, num_results=3, num_chains=2)
+        assert tuple(result.event_spec.components) == ("mu", "theta")
+        np.testing.assert_array_equal(
+            np.asarray(result.chains[1]), [[10, 110, 1010], [11, 111, 1011], [12, 112, 1012]]
+        )
 
     def test_a_posterior_builds_its_bridgestan_model_once(self, tmp_path):
         """The posterior's BridgeStan model is built at its data on first use and reused."""

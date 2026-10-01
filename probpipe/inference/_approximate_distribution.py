@@ -285,10 +285,19 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
             super().__init__(label, Record(label, fields), weights=weights)
         else:
             # One component or none: the component (default ``name``, then
-            # ``"posterior"``) becomes the auto-wrapped field name.
+            # ``"posterior"``) becomes the auto-wrapped field name, and a
+            # numeric component's draws take the shape it declares, so a scalar
+            # component's draws are scalars.
             field_name = name or "posterior"
             if record is not None and len(record.fields) == 1:
                 field_name = record.fields[0]
+                spec = record.children[field_name]
+                if (
+                    isinstance(spec, NumericArraySpec)
+                    and all(isinstance(size, int) for size in spec.shape)
+                    and flat.shape[-1] == prod(spec.shape)
+                ):
+                    flat = flat.reshape(*flat.shape[:-1], *spec.shape)
             super().__init__(field_name, flat, weights=weights)
 
     def _concat_chains(self) -> Array:
