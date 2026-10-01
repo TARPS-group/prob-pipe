@@ -38,6 +38,10 @@ approximate conditioning capability and the approximate methods alike, which
 raises ``ResolutionError`` for a call whose exact stage leaves an unnormalized
 result. ``check`` reports both stages: its route is the exact stage's, and its
 method the normalization's, which is ``None`` for a result that needs none.
+Whether a result needs normalization is read from the declarations: a kernel's
+conditional capabilities state whether its laws are normalized. ``check``
+computes no exact stage, so it reports a curry unresolved when the kernel's
+capabilities do not state it, and the call reads the computed law's own.
 
 The inference methods' own parameters, such as warmup lengths, are controls set
 through ``with_options``. Each route declares the controls it reads: the routes
@@ -51,6 +55,7 @@ routes read none. A control that no route declares raises ``TypeError`` at
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, ClassVar
@@ -103,6 +108,9 @@ _PATH_SEP = "/"
 
 #: The name of the route that returns the exact stage's result.
 _UNNORMALIZED = "unnormalized"
+
+#: Whether the routes are probed for ``check``, which computes no exact stage.
+_CHECKING: ContextVar[bool] = ContextVar("condition_on_checking", default=False)
 
 
 # ---------------------------------------------------------------------------
@@ -521,13 +529,11 @@ class _Normalization:
         return report
 
     def normalize(self, law: Any) -> Any:
-        """*law* as it is when it is normalized, and otherwise the selected method's result.
+        """The selected method's normalized law for the target *law*.
 
         The result carries *law*'s event declaration, as the result rule of
         currying requires.
         """
-        if _is_normalized(law):
-            return law
         posterior = self.registry.execute(
             law, method=self.method, exact_only=self.exact_only, **self.options
         )
@@ -585,16 +591,44 @@ class _PerValueNormalization(ConditionalDistribution):
         self, given: Record | Mapping[str, Any], /, **kwargs: Any
     ) -> Distribution | ConditionalDistribution:
         """The normalized law at a value of every given slot, or a kernel over the rest."""
-        return _normalized(self._kernel._condition_on(given, **kwargs), self._normalization)
+        result = self._kernel._condition_on(given, **kwargs)
+        if not _needs_normalization(result):
+            return result
+        return _normalized(result, self._normalization)
 
     _conditional_sample = _per_value_sample
 
 
-def _normalized(result: Any, normalization: _Normalization) -> Any:
-    """*result* normalized: a law by the registry, and a kernel per value."""
+def _laws_are_normalized(kernel: ConditionalDistribution) -> bool | None:
+    """Whether *kernel*'s laws are normalized, as its declarations state, or None if they do not.
+
+    A kernel that claims the conditional twin of a normalizing capability has
+    normalized laws. One that claims the twin of an unnormalized density and no
+    normalizing twin, or that forms unnormalized conditionals, has unnormalized
+    laws. A kernel that claims neither states nothing about its laws.
+    """
+    if _kernel_is_normalized(kernel):
+        return True
+    if isinstance(kernel, (SupportsConditionalUnnormalizedLogProb, _UnnormalizedConditionalKernel)):
+        return False
+    return None
+
+
+def _needs_normalization(result: Any) -> bool:
+    """Whether the computed *result* needs the normalization stage, as its own declarations state.
+
+    A law needs it unless it is normalized, and a kernel when its laws are
+    unnormalized. A kernel that states nothing about its laws is returned as
+    it is, and each law it yields is classified once a call binds it.
+    """
     if isinstance(result, ConditionalDistribution):
-        if _kernel_is_normalized(result):
-            return result
+        return _laws_are_normalized(result) is False
+    return not _is_normalized(result)
+
+
+def _normalized(result: Any, normalization: _Normalization) -> Any:
+    """*result* normalized: a law by the registry's method, and a kernel per value."""
+    if isinstance(result, ConditionalDistribution):
         return _PerValueNormalization(result, normalization)
     return normalization.normalize(result)
 
@@ -619,13 +653,17 @@ class _ExactStage:
         than a stand-in for it.
     normalized : callable
         ``normalized(call)``, whether the result is normalized, read from the
-        declarations.
+        declarations, or ``None`` when they do not state it.
+    yields_kernel : callable
+        ``yields_kernel(call)``, whether the result is a kernel, since a given
+        slot stays unbound.
     """
 
     check: Callable[[BoundCall], Feasibility]
     compute: Callable[[BoundCall], Any]
     exact: Callable[[BoundCall], bool]
-    normalized: Callable[[BoundCall], bool]
+    normalized: Callable[[BoundCall], bool | None]
+    yields_kernel: Callable[[BoundCall], bool]
 
 
 def _can_curry(call: BoundCall) -> Feasibility:
@@ -670,9 +708,15 @@ def _evaluation_is_exact(call: BoundCall) -> bool:
     return not isinstance(call.operands["d"], SupportsApproximateConditioning)
 
 
-def _curried_is_normalized(call: BoundCall) -> bool:
-    """The kernel's laws are normalized, as its conditional capabilities declare."""
-    return _kernel_is_normalized(call.operands["d"])
+def _curried_is_normalized(call: BoundCall) -> bool | None:
+    """Whether the kernel's laws are normalized, as its conditional capabilities declare."""
+    return _laws_are_normalized(call.operands["d"])
+
+
+def _leaves_a_slot(call: BoundCall) -> bool:
+    """The given leaves a given slot of the conditioned object unbound."""
+    bound = {_head(key) for key in _given_keys(call.operands["given"]) or ()}
+    return bool(_slots_of(call.operands["d"]) - bound)
 
 
 def _can_form_the_unnormalized_conditional(call: BoundCall) -> Feasibility:
@@ -733,12 +777,14 @@ _CURRY = _ExactStage(
     compute=_curry,
     exact=_evaluation_is_exact,
     normalized=_curried_is_normalized,
+    yields_kernel=_leaves_a_slot,
 )
 _BAYES = _ExactStage(
     check=_can_form_the_unnormalized_conditional,
     compute=_bayes,
     exact=_always,
     normalized=_never,
+    yields_kernel=_leaves_a_slot,
 )
 
 
@@ -752,11 +798,15 @@ class _NormalizingRoute(_RegistryRoute):
 
     A result that is normalized is returned as it is, a law that is not is the
     target of the registry's selected method, and a kernel is normalized per
-    value. The route's exactness is that of its exact stage combined with the
-    selected method's, so it is ranked twice, as every registry route is: its
-    exact candidate applies when the result needs no approximate step, and its
-    approximate candidate otherwise. The report of a normalized result names no
-    method, and that of a normalized target names the method that normalizes it.
+    value. Whether the result is normalized is read from the exact stage's
+    declarations, and, where they do not state it, from the computed result's
+    own: ``check`` computes nothing, so it reports such a route unresolved,
+    while a call computes the result to decide. The route's exactness is that
+    of its exact stage combined with the selected method's, so it is ranked
+    twice, as every registry route is: its exact candidate applies when the
+    result needs no approximate step, and its approximate candidate otherwise.
+    The report of a normalized result names no method, and that of a
+    normalized target names the method that normalizes it.
     """
 
     def __init__(
@@ -786,7 +836,11 @@ class _NormalizingRoute(_RegistryRoute):
         )
 
     def probe(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Feasibility:
-        """The exact stage's report, then the normalization's, under the controls."""
+        """The exact stage's report, then the normalization's, under the controls.
+
+        A check reports the route unresolved where the declarations do not state
+        whether the exact stage's result is normalized.
+        """
         report = self._stage.check(call)
         if report.feasible is not True:
             return report
@@ -797,7 +851,21 @@ class _NormalizingRoute(_RegistryRoute):
                 f"route {self.name!r} declined: the kernel claims "
                 f"SupportsApproximateConditioning, so evaluating it is approximate",
             )
-        if self._stage.normalized(call):
+        result = None
+        normalized = self._stage.normalized(call)
+        if normalized is None:
+            if _CHECKING.get():
+                return Feasibility(
+                    None,
+                    pending=(
+                        f"route {self.name!r}: {type(call.operands['d']).__name__} declares no "
+                        f"conditional capability that states whether its laws are normalized, "
+                        f"so a call reads the computed law's own",
+                    ),
+                )
+            result = self._stage.compute(call)
+            normalized = not _needs_normalization(result)
+        if normalized:
             if method is not None:
                 return Feasibility(
                     False,
@@ -805,29 +873,22 @@ class _NormalizingRoute(_RegistryRoute):
                     f"so no inference method runs on it",
                 )
             return CallCheck(True, exact=exact)
-        target = self._stage.compute(call)
         normalization = self._normalization(call, method, exact_only)
-        if isinstance(target, ConditionalDistribution):
-            return self._per_value_report(call, target, normalization, exact)
-        info = normalization.report(target)
+        if self._stage.yields_kernel(call):
+            return self._per_value_report(call, normalization, exact)
+        info = normalization.report(self._stage.compute(call) if result is None else result)
         if info.feasible is not True or exact or not isinstance(info, MethodInfo):
             return info
         return replace(info, exact=False)
 
     def _per_value_report(
-        self,
-        call: BoundCall,
-        target: ConditionalDistribution,
-        normalization: _Normalization,
-        exact: bool,
+        self, call: BoundCall, normalization: _Normalization, exact: bool
     ) -> Feasibility:
         """The report of normalizing a kernel per value, whose method is selected once bound.
 
         Its laws are exact only when the caller requires exact methods, which
         then normalize each law.
         """
-        if _kernel_is_normalized(target):
-            return CallCheck(True, exact=exact)
         if normalization.exact_only and not call.controls["exact_only"]:
             return Feasibility(
                 False,
@@ -841,9 +902,12 @@ class _NormalizingRoute(_RegistryRoute):
         return CallCheck(True, exact=exact)
 
     def run(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Any:
-        """The exact stage's result, normalized."""
+        """The exact stage's result, normalized as the declarations, or else its own, require."""
         result = self._stage.compute(call)
-        if self._stage.normalized(call):
+        normalized = self._stage.normalized(call)
+        if normalized is None:
+            normalized = not _needs_normalization(result)
+        if normalized:
             return result
         return _normalized(result, self._normalization(call, method, exact_only))
 
@@ -859,8 +923,24 @@ class _Conditioning(Operation):
     The routes that normalize share the inference-method registry, so a
     ``method=`` control naming one of its methods selects each of those routes
     with that method, in selection order, and the first whose exact stage
-    applies runs. Every other control selects as for any operation.
+    applies runs. Every other control selects as for any operation. A check
+    probes the routes with no exact stage computed, and a call probes them
+    with the exact stage computable.
     """
+
+    def _check_point(self, values: Mapping[str, Any], *, select: bool = True) -> CallCheck:
+        token = _CHECKING.set(True)
+        try:
+            return super()._check_point(values, select=select)
+        finally:
+            _CHECKING.reset(token)
+
+    def _invoke_resolved(self, values: Mapping[str, Any], *, context: Any) -> Any:
+        token = _CHECKING.set(False)
+        try:
+            return super()._invoke_resolved(values, context=context)
+        finally:
+            _CHECKING.reset(token)
 
     def _candidates(self, controls: Mapping[str, Any]) -> list[_Candidate]:
         method = controls["method"]
@@ -1056,6 +1136,7 @@ _EXACT_CONDITIONING = _ExactStage(
     compute=_condition_exactly,
     exact=_always,
     normalized=_always,
+    yields_kernel=_leaves_a_slot,
 )
 
 

@@ -221,6 +221,16 @@ class _UnnormalizedKernel(ConditionalDistribution, SupportsConditionalUnnormaliz
         return Unnormalized(self.name)._unnormalized_log_prob(value)
 
 
+class _UndeclaredKernel(ConditionalDistribution):
+    """A kernel whose laws are unnormalized, which it implements without declaring a capability."""
+
+    def __init__(self, name: str = "theta") -> None:
+        super().__init__(name, {"data": REAL}, REAL)
+
+    def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
+        return Unnormalized(self.name)
+
+
 class _AmortizedKernel(
     ConditionalDistribution, SupportsApproximateConditioning, SupportsConditionalSampling
 ):
@@ -507,6 +517,45 @@ class TestTheNormalizationStage:
         (target,) = approximate_method.targets
         assert isinstance(target, SupportsUnnormalizedLogProb)
         assert not isinstance(target, SupportsSampling)
+
+
+class TestAKernelThatDeclaresNothingAboutItsLaws:
+    def test_check_reports_the_curry_unresolved(self, suite_methods):
+        report = condition_on.check(Kernel(), {"mu": 1.0})
+        assert report.feasible is None
+        assert (report.route, report.method) == (None, None)
+        assert any("declares no conditional capability" in entry for entry in report.pending)
+        assert suite_methods[0].targets == suite_methods[1].targets == []
+
+    def test_the_call_returns_a_normalized_law_without_inference(self, suite_methods):
+        exact, approximate = suite_methods
+        law = condition_on(Kernel(), {"mu": 1.0})
+        assert isinstance(law, Gaussian)
+        assert law.loc == 1.0
+        assert exact.targets == approximate.targets == []
+
+    def test_exact_only_returns_a_normalized_law(self):
+        assert condition_on.with_options(exact_only=True)(Kernel(), {"mu": 1.0}).loc == 1.0
+
+    def test_a_named_method_does_not_run_on_a_normalized_law(self, suite_methods):
+        view = condition_on.with_options(method="operations_suite_approximate")
+        assert view.check(Kernel(), {"mu": 1.0}).feasible is None
+        with pytest.raises(ResolutionError, match="normalized"):
+            view(Kernel(), {"mu": 1.0})
+        assert suite_methods[1].targets == []
+
+    def test_the_call_normalizes_an_unnormalized_law_by_a_method(self, suite_methods):
+        exact, _ = suite_methods
+        assert condition_on.check(_UndeclaredKernel(), {"data": 1.0}).feasible is None
+        assert condition_on(_UndeclaredKernel(), {"data": 1.0}).loc == 0.5
+        (target,) = exact.targets
+        assert isinstance(target, Unnormalized)
+
+    def test_binding_some_slots_returns_the_curried_kernel(self, suite_methods):
+        curried = condition_on(Kernel("y", ("a", "b")), {"a": 1.0})
+        assert type(curried) is Kernel
+        assert set(curried.given_spec) == {"b"}
+        assert condition_on(curried, {"b": 2.0}).loc == 3.0
 
 
 class TestApproximateKernels:
