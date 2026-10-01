@@ -88,7 +88,8 @@ probpipe/
 │   ├── _evaluate.py           #   evaluate (VI.1); its registry is functions/_rules.py
 │   ├── _inverse.py            #   inverse, log_det_jacobian (VI.2)
 │   ├── _sample.py             #   sample (VI.3)
-│   ├── _density.py            #   log_prob, unnormalized_log_prob (VI.4)
+│   ├── _density.py            #   log_prob, unnormalized_log_prob, prob, unnormalized_prob,
+│   │                          #     random_log_prob, random_unnormalized_log_prob (VI.4)
 │   ├── _moments.py            #   mean, variance, cov, quantile, expectation (VI.5)
 │   ├── _condition.py          #   condition_on, the inference registry (VI.6)
 │   ├── _joint.py              #   joint (VI.7)
