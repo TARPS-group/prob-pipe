@@ -27,6 +27,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from ..core._dispatch import Feasibility
 from ..core._numeric_record import _reconstruct_from_vector
 from ..core._spec_base import NumericArraySpec
 from ..core._specs import _components_record
@@ -233,13 +234,20 @@ class _AmortizedPosterior(
 
         Raises
         ------
+        KeyError
+            If a mapping or record *given* names a key other than the
+            observation slot, or not that slot.
         ValueError
             If the observation's size is not the trained one.
         """
         if isinstance(given, Record):
             given = given.children
-        observed = given[self._slot] if isinstance(given, Mapping) else given
-        obs_flat = np.ravel(np.asarray(observed, dtype="float32"))
+        if isinstance(given, Mapping):
+            others = sorted(set(given) - {self._slot})
+            if others:
+                raise KeyError(f"{others} are not the given slot {self._slot!r} of {self.name!r}")
+            given = given[self._slot]
+        obs_flat = np.ravel(np.asarray(given, dtype="float32"))
         if obs_flat.size != self._data_dim:
             raise ValueError(
                 f"observed data has {obs_flat.size} values but the estimator was "
@@ -270,6 +278,16 @@ class _AmortizedPosterior(
             cols.append(jnp.reshape(draws, (num_results, -1)))
         return jnp.concatenate(cols, axis=-1)
 
+    def _condition_on_guard(self, paths: tuple[str, ...]) -> Feasibility:
+        """Every path names the observation slot, since a parameter is conditioned by Bayes' rule."""
+        others = [path for path in paths if path != self._slot]
+        if others:
+            return Feasibility(
+                False,
+                f"{others} are not the given slot {self._slot!r} of the amortized posterior",
+            )
+        return Feasibility(True)
+
     def _condition_on(self, given: Any, /, **kwargs: Any) -> ApproximateDistribution:
         """The network's draws at the observation *given* binds, as an empirical posterior.
 
@@ -279,6 +297,8 @@ class _AmortizedPosterior(
 
         Raises
         ------
+        KeyError
+            If *given* names a key other than the observation slot.
         ValueError
             If ``num_results`` is not positive, or the observation's size is not
             the trained one.

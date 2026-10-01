@@ -340,6 +340,25 @@ class TestBayesFlowNPE:
         assert _is_normalized(law)
         assert tuple(law.event_spec.components) == ("a", "b")
 
+    def test_a_parameter_given_with_the_observation_is_not_left_free(self, npe_model):
+        """Conditioning a parameter is Bayes' rule on the network's draws, which no
+        method normalizes, so the call raises rather than drop the parameter."""
+        given = {"observation": _observe(0.5, 0.0, 0), "a": 0.5}
+        report = condition_on_operation.check(npe_model, given)
+        assert report.route != "approximate_conditioning"
+        with pytest.raises(ResolutionError):
+            condition_on_operation(npe_model, given)
+
+    @pytest.mark.parametrize("keys", [("observation", "typo"), ("obsrevation",)])
+    def test_a_key_that_names_no_field_raises(self, npe_model, keys):
+        given = dict.fromkeys(keys, _observe(0.5, 0.0, 0))
+        with pytest.raises(ResolutionError):
+            condition_on_operation(npe_model, given)
+
+    def test_its_conditioning_reads_the_observation_slot_alone(self, npe_model):
+        with pytest.raises(KeyError, match="typo"):
+            npe_model._condition_on({"observation": _observe(0.5, 0.0, 0), "typo": 1.0})
+
     def test_exact_only_refuses_it(self, npe_model):
         view = condition_on_operation.with_options(exact_only=True)
         with pytest.raises(ResolutionError, match="SupportsApproximateConditioning"):
