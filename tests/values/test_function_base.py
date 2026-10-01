@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import ast
 import inspect
-from pathlib import Path
 from functools import partial
+from pathlib import Path
 
 import jax.numpy as jnp
 import numpy as np
@@ -16,6 +16,7 @@ from probpipe import (
     EmpiricalDistribution,
     Function,
     FunctionSpec,
+    Gamma,
     InputSpec,
     Module,
     Normal,
@@ -26,13 +27,14 @@ from probpipe import (
     Opaque,
     OpaqueSpec,
     OutputSpec,
+    ProductDistribution,
     Record,
     RecordSpec,
     function,
     workflow_method,
     workflow_run,
 )
-from probpipe.core.constraints import positive
+from probpipe.core.constraints import positive, real
 
 
 class TestFunctionDeclarations:
@@ -80,7 +82,7 @@ class TestFunctionDeclarations:
         assert first.output_name == second.output_name == "value"
         assert float(first()) == 1
         assert float(second()) == 2
-        
+
     @pytest.fixture(params=["partial", "instance"])
     def unnamed_callable(self, request):
         def add(a, b):
@@ -93,14 +95,14 @@ class TestFunctionDeclarations:
         if request.param == "partial":
             return partial(add, 1)
         return AddOne()
-    
+
     def test_decorator_accepts_unnamed_callable_with_explicit_name(self, unnamed_callable):
         wrapped = function(name="add1")(unnamed_callable)
         assert wrapped.name == "add1"
         assert wrapped.output_name == "add1"
         assert wrapped.raw() is unnamed_callable
         assert wrapped.apply(114514) == 114515
-        
+
     @pytest.mark.parametrize("with_parentheses", [True, False])
     def test_decorator_requires_name_for_unnamed_callable(self, unnamed_callable, with_parentheses):
         decorate = function() if with_parentheses else function
@@ -321,8 +323,8 @@ class TestLiftedNames:
             result.values,
             [[0.0, 1.0], [1.0, 2.0], [2.0, 3.0]],
         )
-        
-        
+
+
 class TestLiftedInputDeclarations:
     @pytest.mark.parametrize("dispatch", ["sequential", "thread", "auto"])
     def test_declared_array_input_accepts_single_leaf_empirical(self, dispatch):
@@ -337,8 +339,7 @@ class TestLiftedInputDeclarations:
         result = predict(theta=law)
         assert result.num_atoms == 3
         np.testing.assert_array_equal(result.samples["predict"], 2 * values)
-        
-    
+
     @pytest.mark.parametrize("dispatch", ["sequential", "thread", "auto"])
     def test_declared_functions_compose_over_a_law(self, dispatch):
         F = Function(
@@ -374,9 +375,9 @@ class TestCompletedOutputDeclarations:
 
     @pytest.mark.parametrize("mode", ["plain", "sweep", "broadcast"])
     def test_returned_laws_use_declaration_unification_across_paths(self, rows, mode):
-        stored = Normal("y", jnp.asarray(0.0, dtype="float32"), 1.0)
+        stored = Gamma("y", jnp.asarray(1.0, dtype="float32"), 1.0)
         declaration = DistributionSpec(
-            OutputSpec(y=NumericArraySpec((), dtype="float64", support=positive))
+            OutputSpec(y=NumericArraySpec((), dtype="float64", support=real))
         )
         factory = Function(
             "factory",
@@ -392,7 +393,50 @@ class TestCompletedOutputDeclarations:
         for law in laws:
             assert law.spec is stored.spec
             assert law.event_spec.components["y"].dtype == np.dtype("float32")
-            assert law.event_spec.components["y"].support != positive
+            assert law.event_spec.components["y"].support == positive
+
+    @pytest.mark.parametrize("mode", ["apply", "plain", "sweep", "broadcast"])
+    def test_returned_law_rejects_incompatible_declared_support(self, rows, mode):
+        stored = Normal("y", 0.0, 1.0)
+        factory = Function(
+            "factory",
+            lambda x: stored,
+            output_spec=DistributionSpec(OutputSpec(y=NumericArraySpec((), support=positive))),
+            dispatch="sequential",
+            n_broadcast_samples=8,
+        )
+        operand = {
+            "apply": rows[0],
+            "plain": rows[0],
+            "sweep": rows,
+            "broadcast": Normal("x", 0.0, 1.0),
+        }[mode]
+        invoke = factory.apply if mode == "apply" else factory
+
+        with (
+            workflow_run(seed=0),
+            pytest.raises(
+                ValueError, match=r"output/factory/y support real does not conform to positive"
+            ),
+        ):
+            invoke(operand)
+        assert stored.event_spec.components["y"].support == real
+
+    @pytest.mark.parametrize("whole_record", [False, True])
+    def test_returned_law_checks_nested_component_support(self, whole_record):
+        stored = ProductDistribution(params=ProductDistribution(y=Normal("y", 0.0, 1.0)))
+        declared = RecordSpec(params=RecordSpec(y=NumericArraySpec((), support=positive)))
+        if whole_record:
+            from probpipe import Distribution
+
+            stored = Distribution("bundle", OutputSpec(bundle=stored.event_spec.spec))
+            event_spec = OutputSpec(bundle=declared)
+        else:
+            event_spec = OutputSpec(declared)
+        factory = Function("factory", lambda: stored, output_spec=DistributionSpec(event_spec))
+
+        with pytest.raises(ValueError, match=r"params/y support real does not conform to positive"):
+            factory.apply()
 
     @pytest.mark.parametrize("dispatch", ["sequential", "thread"])
     def test_swept_returned_functions_enforce_the_declared_contract(self, rows, dispatch):

@@ -209,12 +209,20 @@ def _validate_function_output(
 def _validate_declared_support(expected: TermSpec, actual: TermSpec, path: str) -> None:
     from ..core._batch import BatchSpec
     from ..core.constraints import _supports_compatible
+    from ..distributions import DistributionSpec
 
     if isinstance(expected, RecordSpec) and isinstance(actual, RecordSpec):
         for key, child in expected.items():
             _validate_declared_support(child, actual[key], f"{path}/{key}")
     elif isinstance(expected, BatchSpec) and isinstance(actual, BatchSpec):
         _validate_declared_support(expected.element_spec, actual.element_spec, path)
+    elif isinstance(expected, DistributionSpec) and isinstance(actual, DistributionSpec):
+        actual_components = actual.event_spec.components
+        for name, child in expected.event_spec.components.items():
+            actual_child = actual_components[name]
+            if child is None or actual_child is None:
+                raise ValueError(f"{path}/{name} requires concrete expected and actual term specs")
+            _validate_declared_support(child, actual_child, f"{path}/{name}")
     elif isinstance(expected, NumericArraySpec) and isinstance(actual, NumericArraySpec):
         if (
             expected.support is not None
