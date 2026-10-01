@@ -16,9 +16,7 @@ import pytest
 from probpipe import (
     Normal,
 )
-from probpipe.core._record_distribution import (
-    _RecordDistributionView,
-)
+from probpipe.distributions import FieldView
 from probpipe.distributions.joint import ProductDistribution
 
 # ---------------------------------------------------------------------------
@@ -52,12 +50,12 @@ class TestViewParentField:
 
     def test_view_parent_is_dist(self, multi_field_dist):
         view = multi_field_dist["x"]
-        assert isinstance(view, _RecordDistributionView)
+        assert isinstance(view, FieldView)
         assert view.parent is multi_field_dist
 
-    def test_view_field_is_key(self, multi_field_dist):
-        assert multi_field_dist["x"].field == "x"
-        assert multi_field_dist["y"].field == "y"
+    def test_view_path_is_key(self, multi_field_dist):
+        assert multi_field_dist["x"].path == "x"
+        assert multi_field_dist["y"].path == "y"
 
     def test_select_all_views_share_parent(self, multi_field_dist):
         cols = multi_field_dist.select_all()
@@ -97,11 +95,8 @@ class TestSingleFieldShapeShim:
         assert ".dtypes" not in str(excinfo.value)
         assert ".event_shapes" in str(excinfo.value)
 
-    def test_view_shape_matches_event_shape(self, multi_field_dist):
-        view = multi_field_dist["x"]
-        # Scalar Normal component → event_shape = (), batch_shape = ().
-        assert view.shape == ()
-        assert view.ndim == 0
+    def test_view_event_shape_is_the_fields(self, multi_field_dist):
+        assert multi_field_dist["x"].event_shape == ()
 
 
 # ---------------------------------------------------------------------------

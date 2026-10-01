@@ -166,7 +166,7 @@ class TestFieldExtraction:
             axes_per_level=(1,),
         )
 
-        assert np.allclose(joint["a"]._extract(batch), batch["a"])
+        assert np.allclose(joint["a"]._project(batch), batch["a"])
 
 
 class TestFlatVectorBoundary:

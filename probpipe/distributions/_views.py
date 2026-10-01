@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
 
-from ..core._dispatch import Feasibility
+from ..core._dispatch import Feasibility, ResolutionError
 from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
 from ..core._spec_base import NumericSpec, TermSpec
@@ -51,13 +51,19 @@ from ._capabilities import (
     _capability_guard,
     _capability_subclass,
     _claimed,
+    _marginal_claims,
 )
 from ._conditional import (
     ConditionalDistribution,
     _given_leaf_specs,
     _install_renamed_kernel,
 )
-from ._distribution import Distribution, _install_renamed_law, _whole_term_component
+from ._distribution import (
+    Distribution,
+    _install_field_view,
+    _install_renamed_law,
+    _whole_term_component,
+)
 from ._factored import (
     FactoredConditionalDistribution,
     FactoredDistribution,
@@ -122,17 +128,18 @@ def _view_declaration(declaration: OutputSpec, path: str | tuple[str, ...]) -> O
     TypeError
         If *path* is neither a string nor a tuple of strings.
     KeyError
-        If a path is not a path of *declaration*, or the tuple is empty.
+        If a path is not a path of *declaration*.
     ValueError
-        If two selected paths share their final segment, so their components
-        would collide.
+        If the tuple is empty, since an empty selection is malformed, or two
+        selected paths share their final segment, so their components would
+        collide.
     """
     if isinstance(path, str):
         return OutputSpec(**{_final_segment(path): _node_at(declaration, path)})
     if not isinstance(path, tuple) or not all(isinstance(each, str) for each in path):
         raise TypeError(f"a view's path is a string or a tuple of strings, got {path!r}")
     if not path:
-        raise KeyError(path)
+        raise ValueError("a selection of event paths names at least one path")
     nodes: dict[str, TermSpec] = {}
     for each in path:
         node = _node_at(declaration, each)
@@ -227,6 +234,47 @@ def _extract(value: Any, segments: tuple[str, ...]) -> Any:
     return value
 
 
+def _projector(declaration: OutputSpec, path: str | tuple[str, ...]) -> Callable[[Any], Any]:
+    """pi for a law declared by *declaration*: the extraction of its node at *path*.
+
+    A tuple of paths extracts the record of the selected nodes, keyed by
+    component. The paths are read now, so the extraction does not follow a later
+    change to whatever supplied them. A ``Record`` holding draws, as the lift
+    holds a record law's draws, gives its node at the path, or a ``Record`` of
+    the selected nodes, and any other value is read in its raw form and gives
+    the raw node, or the mapping of the selected nodes. Leading batch axes stay
+    on every leaf.
+    """
+    single = isinstance(path, str)
+    paths = (path,) if single else tuple(path)
+    segments = [_draw_segments(declaration, each) for each in paths]
+    components = [_final_segment(each) for each in paths]
+
+    def project(value: Any) -> Any:
+        if isinstance(value, Record):
+            nodes = [value.at_path(*each) if each else value for each in segments]
+            if single:
+                return nodes[0]
+            return Record(
+                value.name,
+                {component: _raw_record(node) for component, node in zip(components, nodes)},
+            )
+        raw = _raw_record(value)
+        nodes = [_extract(raw, each) for each in segments]
+        return nodes[0] if single else dict(zip(components, nodes))
+
+    return project
+
+
+def _detached(law: Distribution, name: str) -> Distribution:
+    """*law* detached from the workflow under *name*: no provenance and no annotations."""
+    clone = law._shallow_copy()
+    object.__setattr__(clone, "_name", name)
+    object.__setattr__(clone, "_provenance", None)
+    object.__setattr__(clone, "_annotations", None)
+    return clone
+
+
 def _named_as(law: Distribution, components: Sequence[str]) -> Distribution:
     """*law* with its components renamed, in order, to *components*."""
     renames = {
@@ -314,10 +362,25 @@ def _view_log_prob(self: FieldView, value: Any) -> Array:
     return marginal._log_prob(value)
 
 
+def _view_unnormalized_log_prob(self: FieldView, value: Any) -> Array:
+    """The unnormalized log-density of the parent's detached marginal at the path.
+
+    Raises
+    ------
+    TypeError
+        If that marginal has no density.
+    """
+    marginal = self._parent._marginal(self._path)
+    if not isinstance(marginal, SupportsUnnormalizedLogProb):
+        raise TypeError(f"the marginal of {self._parent.name!r} at {self._path!r} has no density")
+    return marginal._unnormalized_log_prob(value)
+
+
 def _view_log_prob_guard(self: FieldView) -> Feasibility:
     """The parent's marginal guard at the view's path.
 
-    Whether that marginal scores is decided when the marginal is built.
+    The parent's report of that marginal's capabilities, read when the view was
+    constructed, decides whether the view claims the density.
     """
     return _capability_guard(self._parent, "_marginal", self._path)
 
@@ -361,6 +424,21 @@ def _view_marginal_guard(self: FieldView, path: str | tuple[str, ...]) -> Feasib
         return Feasibility(False, f"the paths {list(paths)} share a final segment")
     return _capability_guard(
         self._parent, "_marginal", parent_paths[0] if isinstance(path, str) else tuple(parent_paths)
+    )
+
+
+def _view_marginal_capabilities(self: FieldView, path: str | tuple[str, ...]) -> frozenset[type]:
+    """The parent's report of its marginal at the parent's paths for *path*, paths of the view.
+
+    Raises
+    ------
+    KeyError
+        If a path is not an event path of the view.
+    """
+    paths = (path,) if isinstance(path, str) else tuple(path)
+    parent_paths = self._parent_paths(paths)
+    return _marginal_claims(
+        self._parent, parent_paths[0] if isinstance(path, str) else tuple(parent_paths)
     )
 
 
@@ -434,7 +512,15 @@ _VIEW_CAPABILITIES: dict[type, Mapping[str, Callable[..., Any]]] = {
         "_expectation_guard": _parent_guard("_expectation"),
     },
     SupportsLogProb: {"_log_prob": _view_log_prob, "_log_prob_guard": _view_log_prob_guard},
-    SupportsMarginals: {"_marginal": _view_marginal, "_marginal_guard": _view_marginal_guard},
+    SupportsUnnormalizedLogProb: {
+        "_unnormalized_log_prob": _view_unnormalized_log_prob,
+        "_unnormalized_log_prob_guard": _view_log_prob_guard,
+    },
+    SupportsMarginals: {
+        "_marginal": _view_marginal,
+        "_marginal_guard": _view_marginal_guard,
+        "_marginal_capabilities": _view_marginal_capabilities,
+    },
     SupportsExactConditioning: {
         "_condition_on": _view_condition_on,
         "_condition_on_guard": _view_condition_on_guard,
@@ -446,8 +532,16 @@ _VIEW_CAPABILITIES: dict[type, Mapping[str, Callable[..., Any]]] = {
 }
 
 
-def _derived_protocols(parent: Distribution, node: TermSpec) -> set[type]:
-    """The capabilities a view of *parent* derives, over the event declared by *node*."""
+def _derived_protocols(
+    parent: Distribution, node: TermSpec, path: str | tuple[str, ...]
+) -> set[type]:
+    """The capabilities a view of *parent* at *path* derives, over the event declared by *node*.
+
+    The projection rows derive from the parent's own capabilities. The density
+    rows derive from the parent's report of its marginal at *path*, read once,
+    here: the view claims the normalized density when the report includes it,
+    and otherwise the unnormalized one when the report includes that.
+    """
     numeric = isinstance(node, NumericSpec)
     derived: set[type] = set()
     for protocol in (SupportsSampling, SupportsMean, SupportsVariance, SupportsExpectation):
@@ -457,7 +551,12 @@ def _derived_protocols(parent: Distribution, node: TermSpec) -> set[type]:
         if isinstance(parent, protocol) and numeric:
             derived.add(protocol)
     if isinstance(parent, SupportsMarginals):
-        derived |= {SupportsLogProb, SupportsMarginals}
+        derived.add(SupportsMarginals)
+        report = _marginal_claims(parent, path)
+        if SupportsLogProb in report:
+            derived.add(SupportsLogProb)
+        elif SupportsUnnormalizedLogProb in report:
+            derived.add(SupportsUnnormalizedLogProb)
     for conditioning in (SupportsExactConditioning, SupportsApproximateConditioning):
         if isinstance(parent, conditioning):
             derived.add(conditioning)
@@ -490,15 +589,23 @@ class FieldView(Distribution):
     ``_mean``, ``_variance``                the parent has the moment
     ``_cov``, ``_quantile``                 the parent has it and the node is numeric
     ``_expectation``                        the parent has it
-    ``_log_prob``                           the parent has marginals; its guard asks
-                                            that the marginal at the path be exact
+    ``_log_prob``, ``_unnormalized_log_prob``  the parent has marginals and reports the
+                                            density for its marginal at the path; the
+                                            guard asks that marginal be exact
     ``_marginal`` at a sub-path             the parent has marginals
     ``_condition_on`` a sub-field           the parent's conditioning capability
     ======================================  ========================================
 
     Each derived capability carries the parent's guard for the call it makes.
     The projection rows are exact whenever the parent's answer is, and only
-    sampling requires the parent to sample.
+    sampling requires the parent to sample. The parent reports what its
+    marginal at the path claims through ``_marginal_capabilities``, and a
+    parent that defines none reports its own claims; the view reads the report
+    once, at construction.
+
+    The view's ``raw()`` is the parent's detached marginal at the path, and
+    ``with_dim_sizes`` and ``with_dim_names`` apply to the parent and return
+    the view of the result at the same path.
 
     Parameters
     ----------
@@ -511,12 +618,12 @@ class FieldView(Distribution):
     Raises
     ------
     KeyError
-        If a path is not an event path of *parent*, or the tuple is empty.
+        If a path is not an event path of *parent*.
     TypeError
         If *parent* is not a ``Distribution``, or *path* is neither a string
         nor a tuple of strings.
     ValueError
-        If two selected paths share their final segment.
+        If the tuple is empty, or two selected paths share their final segment.
     """
 
     _capability_table = _VIEW_CAPABILITIES
@@ -526,7 +633,7 @@ class FieldView(Distribution):
             raise TypeError(f"a field view reads a Distribution, got {type(parent).__name__}")
         declaration = _view_declaration(parent.event_spec, path)
         return object.__new__(
-            _capability_subclass(FieldView, _derived_protocols(parent, declaration.spec))
+            _capability_subclass(FieldView, _derived_protocols(parent, declaration.spec, path))
         )
 
     def __init__(self, parent: Distribution, path: str | tuple[str, ...]) -> None:
@@ -609,14 +716,7 @@ class FieldView(Distribution):
         by component. Leading batch axes stay on every leaf. A ``Record`` or a
         batch of records is read through that raw form.
         """
-        raw = _raw_record(value)
-        declaration = self._parent.event_spec
-        if isinstance(self._path, str):
-            return _extract(raw, _draw_segments(declaration, self._path))
-        return {
-            component: _extract(raw, _draw_segments(declaration, path))
-            for component, path in self._component_paths().items()
-        }
+        return _projector(self._parent.event_spec, self._path)(_raw_record(value))
 
     def _coordinates(self) -> list[int]:
         """The view's coordinates of the parent's flat vector, in the view's order.
@@ -644,7 +744,8 @@ class FieldView(Distribution):
         KeyError
             If *key* is not an event path of the view, or a tuple of them.
         ValueError
-            If two selected paths share their final segment.
+            If *key* is an empty tuple, or two selected paths share their final
+            segment.
         """
         if isinstance(key, str):
             parent_path = self._parent_path(key)
@@ -653,10 +754,89 @@ class FieldView(Distribution):
             if parent_path == self._path:
                 return self
             return FieldView(self._parent, parent_path)
-        if not isinstance(key, tuple) or not key or not all(isinstance(each, str) for each in key):
+        if not isinstance(key, tuple) or not all(isinstance(each, str) for each in key):
             raise KeyError(key)
+        if not key:
+            raise ValueError("a selection of event paths names at least one path")
         selection = FieldView(self._parent, tuple(self._parent_paths(key)))
         return _named_as(selection, [_final_segment(each) for each in key])
+
+    def raw(self) -> Distribution:
+        """The parent's detached marginal at the path, under the view's name.
+
+        Returns
+        -------
+        Distribution
+            A standalone law with no reference to the parent, and no provenance
+            or annotations.
+
+        Raises
+        ------
+        ResolutionError
+            If the parent has no exact marginal at the path.
+        """
+        parent = self._parent
+        if not isinstance(parent, SupportsMarginals):
+            raise ResolutionError(
+                f"{parent.name!r} has no marginals, so the view {self.name!r} has no detached law"
+            )
+        report = _capability_guard(parent, "_marginal", self._path)
+        if report.feasible is not True:
+            reason = report.description or "; ".join(report.pending)
+            raise ResolutionError(
+                f"{parent.name!r} has no exact marginal at {self._path!r}: {reason}"
+            )
+        return _detached(parent._marginal(self._path), self.name)
+
+    def with_dim_sizes(self, **sizes: int) -> FieldView:
+        """Bind named symbolic dimensions in the parent, and view the result at the same path.
+
+        The view's declaration is the parent's schema at the path, and a schema
+        is one dimension scope, so a dimension binds wherever the parent
+        declares it.
+
+        Parameters
+        ----------
+        **sizes : int
+            Sizes for free dimensions of the view's declaration.
+
+        Returns
+        -------
+        FieldView
+            The view, under the same name, of the parent with the sizes bound.
+
+        Raises
+        ------
+        ValueError
+            If a name is not a free dimension of the view's declaration.
+        """
+        unbound = set(sizes) - self.event_spec.spec.free_dims
+        if unbound:
+            raise ValueError(
+                f"the view {self.name!r} has no free dimensions {sorted(unbound)} to bind"
+            )
+        return self._viewed(self._parent.with_dim_sizes(**sizes))
+
+    def with_dim_names(self, **names: str) -> FieldView:
+        """Rename symbolic dimensions in the parent, and view the result at the same path.
+
+        Parameters
+        ----------
+        **names : str
+            New names keyed by old; names that are not free are ignored.
+
+        Returns
+        -------
+        FieldView
+            The view, under the same name, of the parent with the dimensions
+            renamed.
+        """
+        return self._viewed(self._parent.with_dim_names(**names))
+
+    def _viewed(self, parent: Distribution) -> FieldView:
+        """The view of *parent* at this view's path, under this view's name."""
+        view = FieldView(parent, self._path)
+        return view if view.name == self.name else view.with_name(self.name)
 
     def __repr__(self) -> str:
         return f"FieldView(parent={self._parent.name!r}, path={self._path!r})"
@@ -1130,6 +1310,25 @@ def _renamed_marginal_guard(self: _RenamedDistribution, path: str | tuple[str, .
     )
 
 
+def _renamed_marginal_capabilities(
+    self: _RenamedDistribution, path: str | tuple[str, ...]
+) -> frozenset[type]:
+    """The parent's report of its marginal at the original nodes for *path*.
+
+    Raises
+    ------
+    KeyError
+        If a path is not an event path of this law.
+    ValueError
+        If a path holds no single node of the parent.
+    """
+    paths = (path,) if isinstance(path, str) else tuple(path)
+    originals = self._originals(paths)
+    return _marginal_claims(
+        self._parent, originals[0] if isinstance(path, str) else tuple(originals)
+    )
+
+
 def _renamed_condition_on(
     self: _RenamedDistribution, given: Any, /, **options: Any
 ) -> Distribution:
@@ -1189,7 +1388,11 @@ _RENAMED_CAPABILITIES: dict[type, Mapping[str, Callable[..., Any]]] = {
         "_unnormalized_log_prob": _renamed_unnormalized_log_prob,
         "_unnormalized_log_prob_guard": _parent_guard("_unnormalized_log_prob", _RENAMED),
     },
-    SupportsMarginals: {"_marginal": _renamed_marginal, "_marginal_guard": _renamed_marginal_guard},
+    SupportsMarginals: {
+        "_marginal": _renamed_marginal,
+        "_marginal_guard": _renamed_marginal_guard,
+        "_marginal_capabilities": _renamed_marginal_capabilities,
+    },
     SupportsExactConditioning: {
         "_condition_on": _renamed_condition_on,
         "_condition_on_guard": _renamed_condition_on_guard,
@@ -1749,5 +1952,6 @@ def _renamed_kernel(
     return kernel
 
 
+_install_field_view(FieldView)
 _install_renamed_law(_renamed_law)
 _install_renamed_kernel(_renamed_kernel)

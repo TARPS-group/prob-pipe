@@ -246,6 +246,12 @@ class SupportsMarginals(Protocol):
     tuple of paths selects several nodes, returned as an exposed record of
     them. Support may depend on the path, so a class whose marginal is exact
     only at some paths defines the guard ``_marginal_guard(path)``.
+
+    A class may define the companion ``_marginal_capabilities(path)``, which
+    returns the capabilities its exact marginal at ``path`` claims, read from
+    its declarations without building the marginal; :func:`_marginal_claims`
+    reads it. The marginals of a law that defines none claim what the law
+    claims itself.
     """
 
     def _marginal(self, path: str | tuple[str, ...]) -> Distribution: ...
@@ -376,6 +382,42 @@ _CONDITIONAL_TWINS: dict[type, type] = {
     SupportsExpectation: SupportsConditionalExpectation,
     SupportsMarginals: SupportsConditionalMarginals,
 }
+
+
+#: The capabilities a law may claim, which a report of a marginal's claims ranges over.
+_LAW_CAPABILITIES: tuple[type, ...] = (
+    *_CONDITIONAL_TWINS,
+    SupportsExactConditioning,
+    SupportsApproximateConditioning,
+)
+
+
+def _claims(law: Any) -> frozenset[type]:
+    """The capabilities among :data:`_LAW_CAPABILITIES` that *law* claims."""
+    return frozenset(protocol for protocol in _LAW_CAPABILITIES if isinstance(law, protocol))
+
+
+def _kernel_claims(kernel: Any) -> frozenset[type]:
+    """Each unconditional capability whose conditional twin *kernel* claims.
+
+    They are the claims of the law the kernel yields at a given value.
+    """
+    return frozenset(
+        protocol for protocol, twin in _CONDITIONAL_TWINS.items() if isinstance(kernel, twin)
+    )
+
+
+def _marginal_claims(law: Any, path: str | tuple[str, ...]) -> frozenset[type]:
+    """The capabilities *law*'s exact marginal at *path* claims, as *law* reports them.
+
+    A law that defines ``_marginal_capabilities(path)`` reports them from its
+    declarations, and the marginals of any other law claim what the law claims
+    itself.
+    """
+    report = getattr(law, "_marginal_capabilities", None)
+    if report is None:
+        return _claims(law)
+    return frozenset(report(path))
 
 
 # ---------------------------------------------------------------------------

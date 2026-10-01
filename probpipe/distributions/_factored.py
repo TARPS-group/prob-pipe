@@ -43,7 +43,10 @@ from ._capabilities import (
     _capability_guard,
     _capability_subclass,
     _claimed,
+    _claims,
     _conjunction,
+    _kernel_claims,
+    _marginal_claims,
 )
 from ._conditional import (
     ConditionalDistribution,
@@ -695,6 +698,15 @@ def _sole_field_marginal_guard(self: _SoleField, path: str | tuple[str, ...]) ->
     return _capability_guard(self._law, "_marginal", path)
 
 
+def _sole_field_marginal_capabilities(
+    self: _SoleField, path: str | tuple[str, ...]
+) -> frozenset[type]:
+    """This law's claims at its component, and the record law's report at any other path."""
+    if path == self._component:
+        return _claims(self)
+    return _marginal_claims(self._law, path)
+
+
 #: Each capability a :class:`_SoleField` takes from its record law, with its methods.
 _SOLE_FIELD_CAPABILITIES: dict[type, Mapping[str, Callable[..., Any]]] = {
     SupportsSampling: {
@@ -729,6 +741,7 @@ _SOLE_FIELD_CAPABILITIES: dict[type, Mapping[str, Callable[..., Any]]] = {
     SupportsMarginals: {
         "_marginal": _sole_field_marginal,
         "_marginal_guard": _sole_field_marginal_guard,
+        "_marginal_capabilities": _sole_field_marginal_capabilities,
     },
 }
 
@@ -1124,6 +1137,66 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
     return FactoredDistribution(label, kept)
 
 
+def _kept_claims(factor: Factor, requested: tuple[str, ...]) -> frozenset[type]:
+    """The claims of *factor* as a marginal keeps it: whole, or reduced to *requested*.
+
+    A conditional factor's claims are those of the law it yields at a given
+    value, and a factor reduced to part of its event reports its own marginal
+    there.
+    """
+    if isinstance(factor, ConditionalDistribution):
+        return _kernel_claims(factor)
+    if _kept_whole(factor, requested):
+        return _claims(factor)
+    return _marginal_claims(factor, _factor_request(requested))
+
+
+def _joint_marginal_capabilities(self: Any, path: str | tuple[str, ...]) -> frozenset[type]:
+    """The claims of the factors that the marginal at *path* keeps, read from their declarations.
+
+    One kept factor reports its own claims, since the marginal is that factor
+    or its reduction. Several report what the joint of them claims: sampling
+    and each density when every kept factor has it, a moment when no kept
+    factor conditions on another and every one has the moment, and marginals.
+
+    Raises
+    ------
+    KeyError
+        If a path is not an event path of the joint.
+    TypeError
+        If a path is not a string.
+    ValueError
+        If a selection names no path, or two of its paths share a final segment.
+    """
+    graph: _FactorGraph = self._graph
+    requests = _requests(graph, _requested_paths(self, path))
+    reports = [
+        _kept_claims(graph.factors[index], requested) for index, requested in requests.items()
+    ]
+    if len(reports) == 1:
+        return reports[0]
+
+    def every(protocol: type) -> bool:
+        return all(protocol in report for report in reports)
+
+    claims = {SupportsMarginals}
+    if every(SupportsSampling):
+        claims.add(SupportsSampling)
+    if every(SupportsLogProb):
+        claims |= {SupportsLogProb, SupportsUnnormalizedLogProb}
+    elif every(SupportsUnnormalizedLogProb):
+        claims.add(SupportsUnnormalizedLogProb)
+    if not any(
+        consumer in requests and producer in requests for consumer, producer, _ in graph.edges
+    ):
+        claims.update(
+            moment
+            for moment in (SupportsMean, SupportsVariance, SupportsCovariance, SupportsQuantile)
+            if every(moment)
+        )
+    return frozenset(claims)
+
+
 def _all_claim(factors: Sequence[Factor], protocol: type) -> bool:
     """Whether every factor claims *protocol*, a conditional factor through its twin."""
     twin = _CONDITIONAL_TWINS[protocol]
@@ -1206,6 +1279,7 @@ def _joint_table(owner: str, *, conditional: bool) -> dict[type, Mapping[str, Ca
         table[SupportsMarginals] = {
             "_marginal": _JOINT_IMPLEMENTATIONS["_marginal"],
             "_marginal_guard": _marginal_guard,
+            "_marginal_capabilities": _joint_marginal_capabilities,
         }
     return table
 

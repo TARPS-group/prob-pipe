@@ -712,9 +712,17 @@ class TestComponentAccess:
     def test_a_whole_term_is_itself_under_its_component(self, make):
         law = make()
         assert law["x"] is law
-        assert law[("x",)] is law
         with pytest.raises(KeyError):
             law["y"]
+
+    def test_a_tuple_selects_its_paths_as_an_exposed_record(self):
+        from probpipe.distributions import FieldView
+
+        law = _DeclaredLaw("x", NumericArraySpec(()))
+        selection = law[("x",)]
+        assert isinstance(selection, FieldView)
+        assert selection.parent is law
+        assert selection.event_spec == OutputSpec(RecordSpec(x=NumericArraySpec(())))
 
     def test_the_component_addresses_a_renamed_law(self):
         renamed = _DeclaredLaw("x", NumericArraySpec(())).with_name("y")
@@ -1326,31 +1334,29 @@ class TestViewAndWrapperDeclarations:
         assert list(out["*args[0]"].event_spec.components) == ["*args[0]"]
 
     def test_a_nested_view_joins_a_path_into_its_group(self):
-        product = ProductDistribution(a={"b": {"c": Normal("c", 0.0, 1.0)}}, name="p")
-        expected = product["a/b/c"].event_spec
-        assert product["a"]["b/c"].event_spec == expected
-        assert product["a"][("b", "c")].event_spec == expected
-        assert product["a"]["a"] is not None
+        law = _DeclaredLaw("p", RecordSpec(a=RecordSpec(b=RecordSpec(c=NumericArraySpec(())))))
+        group = law["a"]
+        assert group["a/b/c"].event_spec == law["a/b/c"].event_spec
+        assert group["a"] is group
         with pytest.raises(KeyError):
-            product["a"]["missing"]
+            group["missing"]
+        with pytest.raises(KeyError):
+            group["b/c"]
 
     def test_a_field_view_is_a_whole_term_under_its_last_segment(self):
-        product = ProductDistribution(
-            a=Normal("a", 0.0, 1.0), b={"c": Gamma("c", 2.0, 1.0)}, name="p"
-        )
         dtype = jnp.asarray(0.0).dtype
-        assert product["a"].event_spec == OutputSpec(a=NumericArraySpec((), dtype, real))
-        nested = product["b"]["c"]
+        a, c = NumericArraySpec((), dtype, real), NumericArraySpec((), dtype, positive)
+        law = _DeclaredLaw("p", RecordSpec(a=a, b=RecordSpec(c=c)))
+        assert law["a"].event_spec == OutputSpec(a=a)
+        nested = law["b"]["b/c"]
         assert nested.name == "b/c"
-        assert nested.event_spec == OutputSpec(c=NumericArraySpec((), dtype, positive))
+        assert nested.event_spec == OutputSpec(c=c)
 
     def test_a_slash_path_selects_the_field_it_names(self):
-        product = ProductDistribution(
-            a=Normal("a", 0.0, 1.0), b={"c": Gamma("c", 2.0, 1.0)}, name="p"
-        )
-        view = product["b/c"]
+        law = _DeclaredLaw("p", RecordSpec(a=(), b=RecordSpec(c=())))
+        view = law["b/c"]
         assert view.name == "b/c"
-        assert view.event_spec == product[("b", "c")].event_spec
+        assert view.event_spec == law["b"]["b/c"].event_spec
 
     def test_the_flat_view_draws_one_real_vector(self):
         product = ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0))

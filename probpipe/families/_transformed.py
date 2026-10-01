@@ -20,6 +20,7 @@ import jax
 import jax.numpy as jnp
 
 from ..core._dispatch import ResolutionError
+from ..core._fingerprint import fingerprint
 from ..core._spec_base import NumericArraySpec
 from ..core.provenance import Provenance
 from ..custom_types import Array, ArrayLike, PRNGKey
@@ -33,6 +34,7 @@ from ..distributions._capabilities import (
     _capability_subclass,
 )
 from ..distributions._distribution import Distribution
+from ..functions._descendants import _Descent, _register_descendant_type
 from ..functions._reparameterization import _as_bijector, _image, _is_affine
 from ..linalg import DenseLinOp, LinOp
 from ..values import Function, SupportsLogDetJacobian, is_invertible
@@ -266,3 +268,21 @@ class BijectorTransformedDistribution(Distribution):
             f"BijectorTransformedDistribution(name={self.name!r}, base={type(self._base).__name__}, "
             f"bijector={self._bijector.name!r}, event_shape={self.event_shape})"
         )
+
+
+def _descent(law: BijectorTransformedDistribution) -> _Descent:
+    """The base a transformed law reads, and its bijector applied to each of the base's draws.
+
+    The base and the bijector are read now, so the map does not follow a later
+    change to the law. A lift groups the law with its base, so ``f(base, law)``
+    evaluates ``f`` on one base draw and its image.
+    """
+    bijector, rank = law.bijector, _event_rank(law.base)
+
+    def forward(draws: Any) -> Array:
+        return _per_point(bijector.apply, jnp.asarray(draws), rank)
+
+    return _Descent(law.base, forward, ("bijector", fingerprint(bijector)))
+
+
+_register_descendant_type(BijectorTransformedDistribution, _descent)

@@ -281,9 +281,9 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     NumericRecordDistributionView: lambda: NumericRecordDistributionView(
         MultivariateNormal("theta", jnp.zeros(3), cov=jnp.eye(3)), NumericRecordSpec(a=(), b=(2,))
     ),
-    _RecordDistributionView: lambda: ProductDistribution(
-        a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)
-    )["a"],
+    _RecordDistributionView: lambda: _RecordDistributionView(
+        ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)), "a"
+    ),
     RandomMeasure: lambda: RandomMeasure("m"),
     MinibatchedDistribution: _measure,
     _FixedMinibatchDistribution: lambda: _measure()._draw_one(jax.random.PRNGKey(0)),

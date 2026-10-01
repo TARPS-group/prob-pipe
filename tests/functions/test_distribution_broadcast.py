@@ -194,7 +194,7 @@ class TestExecuteDistributionBroadcast:
             nested={"leaf": Normal(loc=0.0, scale=1.0, name="leaf")},
             other=Normal(loc=3.0, scale=1.0, name="other"),
         )
-        values = {"root": joint, "leaf": joint["nested"]["leaf"]}
+        values = {"root": joint, "leaf": joint["nested/leaf"]}
 
         plan = _stochastic_plan(values, 8)
         result = _broadcast.execute_distribution_broadcast(

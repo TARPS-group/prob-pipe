@@ -450,9 +450,9 @@ class TestStochasticSourceGrouping:
 
         plan = _stochastic_plan(
             {
-                "left": joint["nested"]["left"],
+                "left": joint["nested/left"],
                 "root": joint,
-                "right": joint["nested"]["right"],
+                "right": joint["nested/right"],
                 "top": joint["top"],
             }
         )

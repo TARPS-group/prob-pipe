@@ -1,45 +1,33 @@
-"""Closed capture and validation for stochastic realization descendants."""
+"""The root-ancestor capture of lifted arguments (V.5).
+
+A lifted argument is a law, and the law whose draws it reads, transitively, is
+its **root**. A field view reads its parent's draw and projects its node, and a
+law registered as a descendant type reads its ancestor's draw and maps it, as a
+bijector-transformed law pushes its base's draw through its bijector. The lift
+groups the arguments by root, so each group contributes one root draw per
+repetition and every member evaluates on it: sibling views co-sample, and so do
+a law and its own transform.
+
+The capture of an argument records its root, the root's sampler, the event
+path a projection reads, a canonical descriptor of the descendant graph between
+the root and the argument, and the evaluator that maps one root draw to the
+argument's draw. It reads the graph once, so a later change to a view or a
+transform does not reach a captured plan.
+"""
 
 from __future__ import annotations
 
-import base64
 import hashlib
-import operator
-import struct
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-import numpy as np
-import tensorflow_probability.substrates.jax.bijectors as tfb
-
-from ..core._record_distribution import _RecordDistributionView
 from ..distributions._distribution import Distribution
+from ..distributions._views import FieldView, _projector
 
-_DESCENDANT_ADAPTER_ABI = "probpipe.transformed_descendant/v1"
-_DESCENDANT_PROVIDER_ABI = "tensorflow_probability.substrates.jax.bijector.forward/v1"
 _DISTRIBUTION_SAMPLING_ABI = "probpipe.distribution_sampling/v1"
 _DESCRIPTOR_DOMAIN = b"ProbPipe-descendant-descriptor-v1\0"
-
-_TRANSFORMED_DISTRIBUTION_TYPES: set[type] = set()
-_UNSUPPORTED_DESCENDANT_TYPES: dict[type, str] = {}
-
-_APPROVED_BIJECTOR_PARAMETERS: dict[type, tuple[str, ...]] = {
-    tfb.Identity: (),
-    tfb.Exp: (),
-    tfb.Square: (),
-    tfb.Shift: ("shift",),
-    tfb.Scale: ("scale", "log_scale"),
-    tfb.Softplus: ("hinge_softness", "low"),
-    tfb.Sigmoid: ("low", "high"),
-}
-_APPROVED_BIJECTOR_TYPES = (*_APPROVED_BIJECTOR_PARAMETERS, tfb.Chain)
-_FORWARD_OVERRIDE_NAMES = (
-    "forward",
-    "_forward",
-    "forward_event_shape",
-    "_forward_event_shape",
-)
+_PATH_SEP = "/"
 
 
 @dataclass(frozen=True)
@@ -58,11 +46,47 @@ class CapturedStochasticConsumer:
 
 
 @dataclass(frozen=True)
-class _FrozenBijectorCapture:
-    """One validated descriptor and evaluator bound to its frozen snapshot."""
+class _Descent:
+    """How a law reads another law's draws: the ancestor, the map, and the map's descriptor.
 
+    Attributes
+    ----------
+    ancestor : Distribution
+        The law whose draws the descendant reads.
+    forward : Callable[[Any], Any]
+        The map from a batch of the ancestor's draws, the batch axes leading, to
+        the descendant's draws at them.
+    descriptor : tuple
+        The canonical descriptor of the map, built from tuples, strings, and
+        integers, which identifies it within the plan.
+    """
+
+    ancestor: Distribution = field(compare=False, hash=False, repr=False)
+    forward: Callable[[Any], Any] = field(compare=False, hash=False, repr=False)
     descriptor: tuple[Any, ...]
-    evaluator: Callable[[Any], Any] = field(compare=False, hash=False, repr=False)
+
+
+#: Each registered descendant type, with the function that gives an instance's
+#: descent. A layer above this one registers its types at import.
+_DESCENDANT_TYPES: dict[type, Callable[[Any], _Descent]] = {}
+
+
+def _register_descendant_type(distribution_type: type, descend: Callable[[Any], _Descent]) -> None:
+    """Register *distribution_type*, whose instances read the draws *descend* names.
+
+    An instance of a subclass is a descendant by the nearest registered class
+    in its method-resolution order.
+    """
+    _DESCENDANT_TYPES[distribution_type] = descend
+
+
+def _descent_rule(value: Distribution) -> tuple[type, Callable[[Any], _Descent]] | None:
+    """The registered class nearest *value*'s class, with its rule, or None."""
+    for klass in type(value).__mro__:
+        rule = _DESCENDANT_TYPES.get(klass)
+        if rule is not None:
+            return klass, rule
+    return None
 
 
 @dataclass(frozen=True)
@@ -84,7 +108,6 @@ class _StochasticCaptureSession:
     consumers: dict[int, tuple[Distribution, CapturedStochasticConsumer]] = field(
         default_factory=dict
     )
-    bijectors: dict[int, tuple[tfb.Bijector, _FrozenBijectorCapture]] = field(default_factory=dict)
     active_descendants: set[int] = field(default_factory=set)
 
     def capture_consumer(self, value: Distribution) -> CapturedStochasticConsumer:
@@ -101,34 +124,9 @@ class _StochasticCaptureSession:
         self.consumers[identity] = (value, captured)
         return captured
 
-    def capture_bijector(self, bijector: tfb.Bijector) -> _FrozenBijectorCapture:
-        """Capture one bijector snapshot, reusing a completed identical object."""
-        identity = id(bijector)
-        cached = self.bijectors.get(identity)
-        if cached is not None:
-            source, captured = cached
-            if source is not bijector:
-                raise RuntimeError("bijector capture identity cache collision")
-            return captured
-
-        descriptor, evaluator = _capture_bijector(bijector, active_bijectors=set())
-        captured = _FrozenBijectorCapture(descriptor, evaluator)
-        self.bijectors[identity] = (bijector, captured)
-        return captured
-
-
-def _register_transformed_distribution_type(distribution_type: type) -> None:
-    """Register one ProbPipe-owned concrete transformed implementation."""
-    _TRANSFORMED_DISTRIBUTION_TYPES.add(distribution_type)
-
-
-def _register_unsupported_descendant_type(distribution_type: type, label: str) -> None:
-    """Register one known ProbPipe descendant form that must fail closed."""
-    _UNSUPPORTED_DESCENDANT_TYPES[distribution_type] = label
-
 
 def capture_stochastic_consumer(value: Distribution) -> CapturedStochasticConsumer:
-    """Capture a supported root/projection/transform graph without executing it."""
+    """Capture a law's root and its descendant path without executing either."""
     return _StochasticCaptureSession().capture_consumer(value)
 
 
@@ -200,99 +198,17 @@ def canonical_descriptor_bytes(descriptor: tuple[Any, ...]) -> bytes:
     return _DESCRIPTOR_DOMAIN + _encode_descriptor_value(descriptor)
 
 
-def encode_semantic_value(value: Any) -> tuple[Any, ...]:
-    """Strongly encode one bijector semantic value into tuple-only data."""
-    match value:
-        case None:
-            return ("none",)
-        case bool() | np.bool_():
-            return ("bool", bool(value))
-        case int():
-            return ("python-int", value)
-        case float():
-            return ("python-float64-le", base64.b64encode(struct.pack("<d", value)).decode("ascii"))
-        case np.generic():
-            array = np.asarray(value)
-            return (
-                "numpy-scalar",
-                _little_endian_dtype(array.dtype).str,
-                base64.b64encode(_little_endian_array_bytes(array)).decode("ascii"),
-            )
-        case _ if hasattr(value, "dtype") and hasattr(value, "shape"):
-            array = np.asarray(value)
-            dtype = _little_endian_dtype(array.dtype)
-            return (
-                "array",
-                ("dtype", dtype.str),
-                ("shape", tuple(int(axis) for axis in array.shape)),
-                (
-                    "data_base64",
-                    base64.b64encode(_little_endian_array_bytes(array)).decode("ascii"),
-                ),
-            )
-        case _:
-            raise TypeError(
-                "Unsupported transformed-descendant semantic state of type "
-                f"{type(value).__module__}.{type(value).__qualname__}; pass an explicit key "
-                "or use a supported immutable numeric parameter."
-            )
-
-
 def _capture_stochastic_consumer(
     value: Distribution,
     *,
     session: _StochasticCaptureSession,
 ) -> CapturedStochasticConsumer:
-    value_type = type(value)
-    unsupported_label = _UNSUPPORTED_DESCENDANT_TYPES.get(value_type)
-    if unsupported_label is not None:
-        raise TypeError(
-            f"Automatic stochastic lifting does not support {unsupported_label}; "
-            "pass an explicit key to its direct sampling API or lift its approved root."
-        )
-
-    if value_type in _TRANSFORMED_DISTRIBUTION_TYPES:
-        return _capture_transformed_distribution(value, session=session)
-
-    if any(isinstance(value, known) for known in _TRANSFORMED_DISTRIBUTION_TYPES):
-        raise TypeError(
-            "Automatic stochastic lifting rejects TransformedDistribution subclasses; "
-            f"got {value_type.__module__}.{value_type.__qualname__}."
-        )
-    if any(isinstance(value, known) for known in _UNSUPPORTED_DESCENDANT_TYPES):
-        raise TypeError(
-            "Automatic stochastic lifting rejects subclasses of known unsupported "
-            f"descendants; got {value_type.__module__}.{value_type.__qualname__}."
-        )
-
-    if isinstance(value, _RecordDistributionView):
-        identity = id(value)
-        if identity in session.active_descendants:
-            raise TypeError("Cyclic record distribution view graph is unsupported")
-        parent = value.parent
-        record_path = tuple(value._key_path)
-        session.active_descendants.add(identity)
-        try:
-            captured_parent = session.capture_consumer(parent)
-            projection = _RecordDistributionView(parent, record_path)
-        finally:
-            session.active_descendants.remove(identity)
-        evaluator = _compose(captured_parent.evaluator, projection._extract)
-        descriptor = captured_parent.descendant_descriptor
-        if descriptor is not None:
-            descriptor = (
-                "record-projection-after-descendant",
-                ("base", descriptor),
-                ("path", record_path),
-            )
-        return CapturedStochasticConsumer(
-            root=captured_parent.root,
-            sample_root=captured_parent.sample_root,
-            record_path=record_path,
-            descendant_descriptor=descriptor,
-            evaluator=evaluator,
-        )
-
+    """The capture of *value*: a field view's or a registered descendant's, or its own root."""
+    if isinstance(value, FieldView):
+        return _capture_field_view(value, session=session)
+    rule = _descent_rule(value)
+    if rule is not None:
+        return _capture_descendant(value, *rule, session=session)
     return CapturedStochasticConsumer(
         root=value,
         sample_root=value._sample,
@@ -302,212 +218,89 @@ def _capture_stochastic_consumer(
     )
 
 
-def _capture_transformed_distribution(
-    value: Distribution,
+def _capture_field_view(
+    view: FieldView,
     *,
     session: _StochasticCaptureSession,
 ) -> CapturedStochasticConsumer:
-    identity = id(value)
-    if identity in session.active_descendants:
-        raise TypeError("Cyclic TransformedDistribution descendant graph is unsupported")
-    _reject_instance_overrides(value, ("_sample", "base", "bijector"))
+    """A field view's capture: its parent's root, and the projection of the view's nodes.
 
+    A view of one path records the path's segments, and a view of a root needs
+    no descriptor beyond them. A selection of several paths records them in its
+    descriptor.
+
+    Raises
+    ------
+    TypeError
+        If the view graph is cyclic.
+    """
+    identity = id(view)
+    if identity in session.active_descendants:
+        raise TypeError("Cyclic field view graph is unsupported")
+    parent, path = view.parent, view.path
     session.active_descendants.add(identity)
     try:
-        captured_base = session.capture_consumer(value.base)
-        captured_bijector = session.capture_bijector(value.bijector)
+        captured_parent = session.capture_consumer(parent)
+        projection = _projector(parent.event_spec, path)
     finally:
         session.active_descendants.remove(identity)
+    base = captured_parent.descendant_descriptor
+    if isinstance(path, str):
+        record_path = tuple(path.split(_PATH_SEP))
+        descriptor = (
+            None
+            if base is None
+            else ("record-projection-after-descendant", ("base", base), ("path", record_path))
+        )
+    else:
+        record_path = ()
+        descriptor = ("field-selection", ("base", base or ("root",)), ("paths", tuple(path)))
+    return CapturedStochasticConsumer(
+        root=captured_parent.root,
+        sample_root=captured_parent.sample_root,
+        record_path=record_path,
+        descendant_descriptor=descriptor,
+        evaluator=_compose(captured_parent.evaluator, projection),
+    )
 
+
+def _capture_descendant(
+    value: Distribution,
+    registered: type,
+    descend: Callable[[Any], _Descent],
+    *,
+    session: _StochasticCaptureSession,
+) -> CapturedStochasticConsumer:
+    """A registered descendant's capture: its ancestor's root, then its map.
+
+    Raises
+    ------
+    TypeError
+        If the descendant graph is cyclic.
+    """
+    identity = id(value)
+    if identity in session.active_descendants:
+        raise TypeError(f"Cyclic {registered.__name__} descendant graph is unsupported")
+    session.active_descendants.add(identity)
+    try:
+        descent = descend(value)
+        captured_ancestor = session.capture_consumer(descent.ancestor)
+    finally:
+        session.active_descendants.remove(identity)
     descriptor = (
         "transformed-descendant",
-        (
-            "descendant_type",
-            "probpipe.distributions.transformed.TransformedDistribution",
-        ),
-        ("descendant_adapter_abi", _DESCENDANT_ADAPTER_ABI),
+        ("descendant_type", f"{registered.__module__}.{registered.__qualname__}"),
         ("sampling_abi", _DISTRIBUTION_SAMPLING_ABI),
-        ("provider_abi", _DESCENDANT_PROVIDER_ABI),
-        ("base", captured_base.descendant_descriptor or ("root",)),
-        ("bijector", captured_bijector.descriptor),
+        ("base", captured_ancestor.descendant_descriptor or ("root",)),
+        ("map", descent.descriptor),
     )
     return CapturedStochasticConsumer(
-        root=captured_base.root,
-        sample_root=captured_base.sample_root,
-        record_path=captured_base.record_path,
+        root=captured_ancestor.root,
+        sample_root=captured_ancestor.sample_root,
+        record_path=captured_ancestor.record_path,
         descendant_descriptor=descriptor,
-        evaluator=_compose(captured_base.evaluator, captured_bijector.evaluator),
+        evaluator=_compose(captured_ancestor.evaluator, descent.forward),
     )
-
-
-def _capture_bijector(
-    bijector: tfb.Bijector,
-    *,
-    active_bijectors: set[int],
-) -> tuple[tuple[Any, ...], Callable[[Any], Any]]:
-    descriptor, _ = _capture_bijector_graph(
-        bijector,
-        active_bijectors=active_bijectors,
-    )
-    try:
-        snapshot = _copy_bijector_graph(bijector, active_bijectors=set())
-    except Exception as error:
-        raise TypeError(
-            "Automatic transformed-descendant lifting could not snapshot "
-            f"{type(bijector).__module__}.{type(bijector).__qualname__}."
-        ) from error
-    if type(snapshot) is not type(bijector):
-        raise TypeError(
-            "Automatic transformed-descendant lifting requires a bijector snapshot "
-            "with the same exact type as its source."
-        )
-    snapshot_descriptor, forward = _capture_bijector_graph(
-        snapshot,
-        active_bijectors=set(),
-    )
-    if snapshot_descriptor != descriptor:
-        raise TypeError(
-            "The approved bijector snapshot changed its semantic descriptor; "
-            "pass an explicit key or use immutable bijector parameters."
-        )
-    return snapshot_descriptor, forward
-
-
-def _copy_bijector_graph(
-    bijector: tfb.Bijector,
-    *,
-    active_bijectors: set[int],
-) -> tfb.Bijector:
-    """Copy an approved bijector graph without retaining live child references."""
-    identity = id(bijector)
-    if identity in active_bijectors:
-        raise TypeError("Cyclic TFP Chain descendant graph is unsupported")
-    if type(bijector) is not tfb.Chain:
-        return bijector.copy()
-
-    active_bijectors.add(identity)
-    try:
-        children = tuple(
-            _copy_bijector_graph(child, active_bijectors=active_bijectors)
-            for child in tuple(bijector.bijectors)
-        )
-        return bijector.copy(bijectors=children)
-    finally:
-        active_bijectors.remove(identity)
-
-
-def _capture_bijector_graph(
-    bijector: tfb.Bijector,
-    *,
-    active_bijectors: set[int],
-) -> tuple[tuple[Any, ...], Callable[[Any], Any]]:
-    """Validate one bijector graph and capture its descriptor and forward method."""
-    bijector_type = type(bijector)
-    if bijector_type not in _APPROVED_BIJECTOR_TYPES:
-        if isinstance(bijector, _APPROVED_BIJECTOR_TYPES):
-            reason = "subclasses of approved bijectors"
-        else:
-            reason = "this bijector type"
-        raise TypeError(
-            f"Automatic transformed-descendant lifting does not support {reason}: "
-            f"{bijector_type.__module__}.{bijector_type.__qualname__}."
-        )
-
-    identity = id(bijector)
-    if identity in active_bijectors:
-        raise TypeError("Cyclic TFP Chain descendant graph is unsupported")
-    _reject_instance_overrides(bijector, _FORWARD_OVERRIDE_NAMES)
-
-    raw_event_ndims = bijector.forward_min_event_ndims
-    if isinstance(raw_event_ndims, (bool, np.bool_)):
-        raise TypeError("Bijector forward_min_event_ndims must be a concrete non-boolean integer")
-    try:
-        event_ndims = operator.index(raw_event_ndims)
-    except TypeError as exc:
-        raise TypeError(
-            "Bijector forward_min_event_ndims must be a concrete non-boolean integer"
-        ) from exc
-    if event_ndims != 0:
-        raise TypeError(
-            "Automatic transformed-descendant lifting requires "
-            f"forward_min_event_ndims == 0; got {event_ndims}."
-        )
-
-    _validate_parameter_surface(bijector)
-    active_bijectors.add(identity)
-    try:
-        if bijector_type is tfb.Chain:
-            child_descriptors = tuple(
-                _capture_bijector_graph(child, active_bijectors=active_bijectors)[0]
-                for child in tuple(bijector.bijectors)
-            )
-            settings = (
-                ("validate_args", encode_semantic_value(bijector.validate_args)),
-                (
-                    "validate_event_size",
-                    encode_semantic_value(bijector.validate_event_size),
-                ),
-                (
-                    "parameters",
-                    encode_semantic_value(bijector.parameters.get("parameters")),
-                ),
-            )
-            semantic_parameters: tuple[tuple[str, tuple[Any, ...]], ...] = ()
-        else:
-            child_descriptors = ()
-            settings = (("validate_args", encode_semantic_value(bijector.validate_args)),)
-            semantic_parameters = tuple(
-                (name, encode_semantic_value(getattr(bijector, name)))
-                for name in _APPROVED_BIJECTOR_PARAMETERS[bijector_type]
-            )
-    finally:
-        active_bijectors.remove(identity)
-
-    descriptor = (
-        "tfp-bijector",
-        ("type", f"{bijector_type.__module__}.{bijector_type.__qualname__}"),
-        ("forward_min_event_ndims", event_ndims),
-        ("settings", settings),
-        ("semantic_parameters", semantic_parameters),
-        ("children_native_order", child_descriptors),
-    )
-    return descriptor, bijector.forward
-
-
-def _validate_parameter_surface(bijector: tfb.Bijector) -> None:
-    parameter_names = set(bijector.parameters) - {"name"}
-    if type(bijector) is tfb.Chain:
-        expected = {"bijectors", "validate_args", "validate_event_size", "parameters"}
-    else:
-        expected = {"validate_args", *_APPROVED_BIJECTOR_PARAMETERS[type(bijector)]}
-    if parameter_names != expected:
-        raise TypeError(
-            "Installed TFP bijector parameter surface is incompatible with "
-            f"{_DESCENDANT_ADAPTER_ABI}: expected {sorted(expected)!r}, "
-            f"got {sorted(parameter_names)!r}."
-        )
-
-
-def _reject_instance_overrides(value: Any, names: tuple[str, ...]) -> None:
-    overridden = tuple(name for name in names if name in vars(value))
-    if overridden:
-        raise TypeError(
-            "Automatic transformed-descendant lifting rejects instance method/property "
-            f"overrides {overridden!r} on {type(value).__name__}."
-        )
-
-
-def _little_endian_dtype(dtype: np.dtype) -> np.dtype:
-    dtype = np.dtype(dtype)
-    if dtype.hasobject or dtype.kind not in "biufc":
-        raise TypeError(f"Unsupported bijector parameter dtype {dtype!s}")
-    return dtype.newbyteorder("<")
-
-
-def _little_endian_array_bytes(array: np.ndarray) -> bytes:
-    dtype = _little_endian_dtype(array.dtype)
-    normalized = np.ascontiguousarray(array.astype(dtype, copy=False))
-    return normalized.tobytes(order="C")
 
 
 def _encode_descriptor_value(value: Any) -> bytes:

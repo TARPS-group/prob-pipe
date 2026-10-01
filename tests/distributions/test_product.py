@@ -25,9 +25,9 @@ from probpipe import (
 )
 from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._record_batch import RecordBatch
-from probpipe.core._record_distribution import _RecordDistributionView
 from probpipe.core._specs import RecordSpec
 from probpipe.core.record import Record
+from probpipe.distributions import FieldView
 from probpipe.values._function_base import Function
 
 
@@ -184,12 +184,12 @@ class TestProductDistribution:
     def test_values(self, joint_xy):
         vals = list(joint_xy.values())
         assert len(vals) == 2
-        assert all(isinstance(v, _RecordDistributionView) for v in vals)
+        assert all(isinstance(v, FieldView) for v in vals)
 
     def test_items(self, joint_xy):
         items = dict(joint_xy.items())
         assert set(items.keys()) == {"x", "y"}
-        assert all(isinstance(v, _RecordDistributionView) for v in items.values())
+        assert all(isinstance(v, FieldView) for v in items.values())
 
     def test_supports_per_field(self):
         """``supports`` maps each field to its component's support constraint
@@ -379,7 +379,7 @@ class TestNestedSampleFlatten:
 class TestDistributionView:
     def test_view_type(self, joint_xy):
         view = joint_xy["x"]
-        assert isinstance(view, _RecordDistributionView)
+        assert isinstance(view, FieldView)
 
     def test_event_shape_matches_component(self, joint_xz):
         view_x = joint_xz["x"]
@@ -418,7 +418,7 @@ class TestDistributionView:
 
     def test_key(self, joint_xy):
         view = joint_xy["y"]
-        assert view._key == "y"
+        assert view.path == "y"
 
     def test_keyerror_invalid_component(self, joint_xy):
         with pytest.raises(KeyError, match="not_a_component"):
@@ -427,8 +427,8 @@ class TestDistributionView:
     def test_repr(self, joint_xy):
         view = joint_xy["x"]
         r = repr(view)
-        assert "_RecordDistributionView" in r
-        assert "ProductDistribution" in r
+        assert "FieldView" in r
+        assert repr(joint_xy.name) in r
         assert "'x'" in r
 
 
@@ -989,7 +989,7 @@ class TestPositionalAndAutoRename:
 class TestDistributionViewFromDistribution:
     def test_from_distribution_raises(self, joint_xy):
         with pytest.raises(TypeError):
-            from_distribution(Normal(loc=0.0, scale=1.0, name="x"), _RecordDistributionView)
+            from_distribution(Normal(loc=0.0, scale=1.0, name="x"), FieldView)
 
 
 class TestEnumerateWithDistributionViews:
@@ -1165,14 +1165,14 @@ class TestNestedProductDistribution:
 
     def test_getitem_top_level(self, nested_joint):
         view = nested_joint["observation"]
-        assert isinstance(view, _RecordDistributionView)
-        assert view._key == "observation"
+        assert isinstance(view, FieldView)
+        assert view.path == "observation"
 
     def test_getitem_nested_field_returns_view(self, nested_joint):
         """Indexing a nested field returns a _RecordDistributionView."""
         view = nested_joint["physics"]
-        assert isinstance(view, _RecordDistributionView)
-        assert view._key == "physics"
+        assert isinstance(view, FieldView)
+        assert view.path == "physics"
 
     def test_getitem_invalid_raises(self, nested_joint):
         with pytest.raises(KeyError, match="nonexistent"):
@@ -1188,10 +1188,10 @@ class TestNestedProductDistribution:
             p="physics",
             o="observation",
         )
-        assert isinstance(views["p"], _RecordDistributionView)
-        assert isinstance(views["o"], _RecordDistributionView)
-        assert views["p"]._key == "physics"
-        assert views["o"]._key == "observation"
+        assert isinstance(views["p"], FieldView)
+        assert isinstance(views["o"], FieldView)
+        assert views["p"].path == "physics"
+        assert views["o"].path == "observation"
 
     # -- condition_on -------------------------------------------------------
 
@@ -1413,6 +1413,6 @@ class TestNestedWithMVN:
 
     def test_getitem_top_level(self, nested_mvn):
         view = nested_mvn["label"]
-        assert isinstance(view, _RecordDistributionView)
-        assert view._key == "label"
+        assert isinstance(view, FieldView)
+        assert view.path == "label"
         assert view.event_shape == ()

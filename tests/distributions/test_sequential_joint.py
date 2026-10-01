@@ -21,7 +21,7 @@ from probpipe import (
     unnormalized_log_prob,
     workflow_run,
 )
-from probpipe.core._record_distribution import _RecordDistributionView
+from probpipe.distributions import FieldView
 from probpipe.values._function_base import Function
 
 # ---------------------------------------------------------------------------
@@ -218,8 +218,8 @@ class TestDistributionView:
             x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         view = joint["z"]
-        assert isinstance(view, _RecordDistributionView)
-        assert view._key == "z"
+        assert isinstance(view, FieldView)
+        assert view.path == "z"
 
     def test_view_event_shape(self):
         joint = SequentialJointDistribution(

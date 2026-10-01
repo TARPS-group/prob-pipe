@@ -55,7 +55,6 @@ from ..distributions._capabilities import (
     SupportsVariance,
 )
 from ..distributions._distribution import Distribution, NumericDistribution
-from ..functions import _descendants
 from ._record_distribution import (
     RecordDistribution,
     _field_event_shape,
@@ -593,10 +592,6 @@ def _flattened_distribution_view_class_for_base(base: Distribution) -> type:
         (FlattenedDistributionView, *extra_bases),
         extra_methods,
     )
-    _descendants._register_unsupported_descendant_type(
-        new_cls,
-        "FlattenedDistributionView",
-    )
     _FLATTENED_VIEW_CLASS_CACHE[key] = new_cls
     return new_cls
 
@@ -757,10 +752,6 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
             tuple(bases),
             methods,
         )
-        _descendants._register_unsupported_descendant_type(
-            cls,
-            "NumericRecordDistributionView",
-        )
     else:
         cls = NumericRecordDistributionView
 
@@ -843,13 +834,3 @@ class NumericRecordDistributionView(NumericRecordDistribution):
             f"NumericRecordDistributionView(base={type(self._base).__name__}, "
             f"event_spec={self.event_spec.spec!r})"
         )
-
-
-_descendants._register_unsupported_descendant_type(
-    FlattenedDistributionView,
-    "FlattenedDistributionView",
-)
-_descendants._register_unsupported_descendant_type(
-    NumericRecordDistributionView,
-    "NumericRecordDistributionView",
-)
