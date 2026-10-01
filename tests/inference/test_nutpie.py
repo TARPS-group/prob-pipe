@@ -273,7 +273,7 @@ class TestNutpieStanIntegration:
         the regression signal.  nutpie's inference accuracy itself is covered
         by the PyMC integration tests below.
         """
-        from probpipe.modeling import StanModel
+        from probpipe import StanModel
 
         stan_file = tmp_path_factory.mktemp("stan_models") / "linreg.stan"
         stan_file.write_text(
@@ -332,7 +332,7 @@ class TestNutpieStanIntegration:
 
 pm = pytest.importorskip("pymc")
 
-from probpipe.modeling import PyMCModel
+from probpipe import PyMCModel
 
 
 def _gaussian_pymc_fn(y=None):

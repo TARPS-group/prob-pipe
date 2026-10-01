@@ -12,16 +12,18 @@ import pyabc
 from pyabc.sampler import SingleCoreSampler
 
 from ..core._dispatch import Feasibility
-from ..core.ops import log_prob, sample
 from ..custom_types import PRNGKey
+from ..distributions._capabilities import SupportsConditionalSampling
+from ..distributions._conditional import ConditionalDistribution
 from ..operations._condition import InferenceMethod, _UnnormalizedConditional
 from ._approximate_distribution import ApproximateDistribution, make_posterior
-from ._inference_utils import joint_and_given
+from ._inference_utils import flat_unflatten, flat_vector, model_factors, parameter_given
 
 if TYPE_CHECKING:
     from xarray import DataTree
 
-    from .. import NumericRecordDistribution
+    from ..distributions._distribution import Distribution
+
 
 # Key under which the simulated/observed vector lives in pyabc's sumstat dict.
 _DATA_KEY = "y"
@@ -41,38 +43,38 @@ class PyABCDistribution(pyabc.Distribution):
     """A pyabc prior that samples and scores a ProbPipe prior jointly over its
     *flattened* parameter vector.
 
-    Sampling (:meth:`rvs`) and density (:meth:`pdf`) go through
-    ``prior.as_flat_distribution()``, so correlated and multivariate priors are
-    supported. The object is a dict-like, picklable ``pyabc.Distribution`` keyed
+    Sampling (:meth:`rvs`) and density (:meth:`pdf`) read the prior's draws
+    and density through its flat vector, the layout III.7 fixes for a numeric
+    law, so correlated and multivariate priors are supported. The object is a dict-like, picklable ``pyabc.Distribution`` keyed
     by flat ``pN`` names, which give pyabc the parameter names and the flat
     columns its perturbation kernel operates on.
     """
 
-    def __init__(self, prior: NumericRecordDistribution, key: PRNGKey):
+    def __init__(self, prior: Distribution, key: PRNGKey):
         """Wrap *prior* as a joint pyabc prior over its flat parameter vector.
 
         ``key`` is the JAX key threaded through :meth:`rvs` (split per draw). The
         per-position ``pN`` keys give pyabc the parameter names
         (``get_parameter_names``) and the flat columns its perturbation kernel
-        operates on; sampling and scoring go through the joint flat view.
+        operates on; sampling and scoring go through the prior's flat vector.
         """
         self._prior = prior
-        self._flat = prior.as_flat_distribution()
+        self._unflatten = flat_unflatten(prior)
         self._key = key
-        self._d = self._flat.vector_size
+        self._d = prior.event_spec.spec.vector_size
         super().__init__(**{_flat_key(i): pyabc.RV("uniform", 0, 1) for i in range(self._d)})
 
     def rvs(self, *args: Any, **kwargs: Any) -> pyabc.Parameter:
         """One joint draw from the prior, as a flat-keyed pyabc ``Parameter``."""
         self._key, sub = jax.random.split(self._key)
-        vec = np.asarray(sample(self._flat, key=sub)).ravel()
+        vec = np.asarray(flat_vector(self._prior._sample(sub)))
         return pyabc.Parameter(**{_flat_key(i): float(vec[i]) for i in range(self._d)})
 
     def pdf(self, x: Mapping[str, float]) -> float:
         """Joint prior density at *x*, the flat parameter vector reassembled
-        from its ``pN`` keys and scored through the flat view's ``log_prob``."""
+        from its ``pN`` keys and scored as the prior's draw it lays out."""
         vec = jnp.asarray([x[_flat_key(i)] for i in range(self._d)])
-        return float(np.exp(np.asarray(log_prob(self._flat, vec))))
+        return float(np.exp(np.asarray(self._prior._log_prob(self._unflatten(vec)))))
 
 
 def _euclidean_distance(x: _SumStat, x0: _SumStat) -> float:
@@ -119,8 +121,9 @@ def _smc_diagnostics(history: Any) -> DataTree:
 class PyABCSMCMethod(InferenceMethod):
     """pyabc SMC-ABC, registered as ``pyabc_smcabc`` at priority 6.
 
-    Applies to a :class:`~probpipe.modeling.SimpleGenerativeModel` whose
-    prior can flatten, sample, and score jointly.
+    Applies to the unnormalized conditional of a factored joint at observed
+    fields, whose likelihood is a kernel that samples, the simulator, and
+    whose prior can flatten, sample, and score jointly.
 
     Notes
     -----
@@ -140,20 +143,33 @@ class PyABCSMCMethod(InferenceMethod):
         return 6
 
     def check(self, target: Any, /, **kwargs: Any) -> Feasibility:
-        """Whether the target conditions a generative model whose prior flattens, samples, and scores."""
-        # lazy: avoid an inference->modeling import cycle
-        from ..modeling._simple_generative import SimpleGenerativeModel
-
-        dist, _ = joint_and_given(target)
-        if not isinstance(dist, SimpleGenerativeModel):
-            return Feasibility(feasible=False, description="Requires SimpleGenerativeModel")
-        prior = dist["parameters"]
+        """Whether the target conditions a joint whose likelihood simulates and whose prior scores."""
+        factors = model_factors(target)
+        if factors is None:
+            return Feasibility(
+                feasible=False,
+                description=(
+                    "Requires a factored joint at observed values of its fields, whose other "
+                    "factors form the prior"
+                ),
+            )
+        if not (
+            isinstance(factors.likelihood, ConditionalDistribution)
+            and isinstance(factors.likelihood, SupportsConditionalSampling)
+        ):
+            return Feasibility(
+                feasible=False,
+                description=(
+                    "Requires a likelihood kernel that samples, the simulator; got "
+                    f"{type(factors.likelihood).__name__}"
+                ),
+            )
         # Feasible means the prior can flatten, sample, *and* score jointly.
         # Build the backing distribution, then score one in-support draw — this
         # exercises log_prob, so a sampleable-but-density-less prior is caught
         # here rather than crashing later in pyabc's weight computation.
         try:
-            pyabc_prior = PyABCDistribution(prior, jax.random.PRNGKey(0))
+            pyabc_prior = PyABCDistribution(factors.prior, jax.random.PRNGKey(0))
             density = pyabc_prior.pdf(pyabc_prior.rvs())
         except Exception as e:
             return Feasibility(feasible=False, description=str(e))
@@ -170,11 +186,11 @@ class PyABCSMCMethod(InferenceMethod):
         Parameters
         ----------
         target : Distribution
-            The unnormalized conditional of a ``SimpleGenerativeModel`` at its
-            observed data: the joint, a prior that flattens to a parameter
-            vector and carries a joint density with a ``GenerativeLikelihood``
-            simulator, and the data, flattened (after ``summary_fn``) to the
-            target vector.
+            The unnormalized conditional of a factored joint at its observed
+            fields: a prior that flattens to a parameter vector and carries a
+            joint density, a likelihood kernel that samples, the simulator, and
+            the observed value, flattened (after ``summary_fn``) to the target
+            vector.
         n_particles : int, default 100
             SMC population size.
         max_populations : int, default 4
@@ -221,9 +237,9 @@ class PyABCSMCMethod(InferenceMethod):
             acceptance rate) is attached as a ``smc_diagnostics`` group on
             ``arviz_data``.
         """
-        dist, observed = joint_and_given(target)
-        prior = dist["parameters"]
-        simulator = dist["data"]
+        factors = model_factors(target)
+        prior = factors.prior
+        simulator = factors.likelihood
 
         n_particles = int(kwargs.get("n_particles", 100))
         max_populations = int(kwargs.get("max_populations", 4))
@@ -241,14 +257,16 @@ class PyABCSMCMethod(InferenceMethod):
         pyabc_prior = PyABCDistribution(prior, prior_key)
         d = pyabc_prior._d
 
-        x0 = {_DATA_KEY: _summarize(jnp.atleast_1d(jnp.asarray(observed))[None, :], summary_fn)}
+        x0 = {_DATA_KEY: _summarize(flat_vector(factors.observed)[None, :], summary_fn)}
+        unflatten = flat_unflatten(prior)
 
         sim_key = [sim_key0]  # threaded per simulator call (no numpy reseed)
 
         def model_fn(parameters: Mapping[str, float]) -> _SumStat:
             vec = jnp.asarray([float(parameters[_flat_key(i)]) for i in range(d)])
             sim_key[0], sub = jax.random.split(sim_key[0])
-            raw = jnp.atleast_2d(simulator.generate_data(vec, 1, key=sub)[0])
+            given = parameter_given(factors, unflatten(vec))
+            raw = flat_vector(simulator._conditional_sample(given, sub))[None, :]
             return {_DATA_KEY: _summarize(raw, summary_fn)}
 
         # Known limitation: pyabc perturbs in the prior's *constrained* space, so
@@ -291,14 +309,14 @@ class PyABCSMCMethod(InferenceMethod):
         flat = df.reindex(columns=[_flat_key(i) for i in range(d)]).to_numpy(dtype=float)
         weights = np.asarray(weights, dtype=float)
 
-        # Lift the flat columns back to name-keyed Records via the prior's declaration.
+        # Lift the flat columns back to name-keyed Records via the target's declaration.
         return make_posterior(
             [jnp.asarray(flat)],
             parents=(target,),
             algorithm="pyabc_smcabc",
             weights=jnp.asarray(weights / weights.sum()),
-            event_spec=prior.event_spec,
-            field_order=list(prior.event_shapes),
+            event_spec=target.event_spec,
+            field_order=list(target.event_spec.components),
             annotations=_smc_diagnostics(history),
             n_particles=n_particles,
             max_populations=max_populations,

@@ -9,79 +9,64 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
 import pytest
+import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
     Normal,
     NumericArraySpec,
     NumericRecord,
     OpaqueSpec,
-    ProductDistribution,
-    SimpleModel,
     condition_on,
 )
+from probpipe.distributions import FactoredDistribution
 from probpipe.distributions._capabilities import SupportsSampling
 from probpipe.distributions._distribution import Distribution
 from probpipe.inference._inference_utils import (
     as_prng_key,
-    build_likelihood_flat,
     build_target_log_prob,
     build_target_log_prob_flat,
     extract_event_spec,
     get_init_state,
-    get_prior,
     is_jax_traceable,
+    likelihood_flat,
+    model_factors,
+    observed_target,
     posterior_var_order,
     run_chain_scan,
 )
-from probpipe.modeling._likelihood import Likelihood
+from tests.inference.canonical import ObservationKernel
 
 
-class _IdentityLikelihood(Likelihood):
-    """Trivial likelihood for unit-test fixtures: ``log p(y | theta) = 0``."""
-
-    def log_likelihood(self, params, data) -> float:
-        return jnp.asarray(0.0)
-
-
-class _GaussianMeanLikelihood(Likelihood):
-    """Gaussian likelihood with known scale, mean = flat parameter vector.
-
-    ``log p(y | theta) = sum_i log N(y_i; mu, scale^2)`` with ``mu`` the
-    (scalar) flat parameter. Used to check ``build_likelihood_flat``
-    against an independently computed value.
-    """
-
-    def __init__(self, scale: float = 2.0):
-        self.scale = scale
-
-    def log_likelihood(self, params, data):
-        mu = jnp.reshape(jnp.asarray(params), ())
-        s = self.scale
-        return jnp.sum(
-            -0.5 * ((jnp.asarray(data) - mu) / s) ** 2 - jnp.log(s) - 0.5 * jnp.log(2 * jnp.pi)
-        )
+def _gaussian_mean(prior, n, scale=1.0):
+    """``y_i ~ N(mu, scale^2)`` for ``n`` observations, times *prior* over ``mu``."""
+    likelihood = ObservationKernel(
+        "y",
+        dict(prior.event_spec.components),
+        NumericArraySpec((n,)),
+        lambda mu: tfd.Independent(tfd.Normal(jnp.broadcast_to(mu, (n,)), scale), 1),
+    )
+    return likelihood * prior
 
 
 @pytest.fixture
-def small_model() -> SimpleModel:
-    """SimpleModel with a 2-field ProductDistribution prior."""
-    prior = ProductDistribution(
-        a=Normal(loc=0.0, scale=1.0, name="a"),
-        b=Normal(loc=2.0, scale=0.5, name="b"),
+def small_model():
+    """The unnormalized conditional of a joint with a 2-field factored prior."""
+    prior = Normal(loc=0.0, scale=1.0, name="a") * Normal(loc=2.0, scale=0.5, name="b")
+    likelihood = ObservationKernel(
+        "y",
+        dict(prior.event_spec.components),
+        NumericArraySpec((4,)),
+        lambda a, b: tfd.Independent(tfd.Normal(jnp.zeros(4), 1.0), 1),
     )
-    return SimpleModel(prior, _IdentityLikelihood(), name="m")
+    return observed_target(likelihood * prior, {"y": jnp.zeros((4,))})
 
 
 class TestBuildTargetLogProbFlat:
     """Characterise the flat-vector target builder used by BlackJAX backends."""
 
     def test_flat_target_matches_record_target(self, small_model):
-        observed = jnp.zeros((4,))
-        target_record = build_target_log_prob(small_model, observed)
-        target_flat, flat_init, event_spec = build_target_log_prob_flat(
-            small_model,
-            observed,
-        )
+        target_record = build_target_log_prob(small_model, None)
+        target_flat, flat_init, event_spec = build_target_log_prob_flat(small_model, None)
         # Round-trip: unflatten the flat init back to a Record and confirm
         # the two callables agree.
         record_init = NumericRecord.from_vector("nr", event_spec.spec, flat_init)
@@ -102,7 +87,7 @@ class TestBuildTargetLogProbFlat:
 
     def test_the_declared_component_order_is_preserved(self, small_model):
         _, _, event_spec = build_target_log_prob_flat(small_model, observed=None)
-        # Insertion order from the ProductDistribution constructor.
+        # The order of the joint's factors.
         assert tuple(event_spec.components) == ("a", "b")
 
     def test_bare_distribution_falls_through_unwrapped(self):
@@ -148,8 +133,8 @@ class _FlatTarget(Distribution):
 
 
 class TestExtractEventSpec:
-    def test_a_prior_with_a_flat_view_gives_its_declaration(self, small_model):
-        assert extract_event_spec(small_model) == small_model.prior.event_spec
+    def test_a_target_over_a_record_gives_its_declaration(self, small_model):
+        assert extract_event_spec(small_model) == small_model.event_spec
 
     def test_a_target_with_no_flat_view_gives_none(self):
         assert extract_event_spec(_FlatTarget()) is None
@@ -168,17 +153,6 @@ class TestExtractEventSpec:
         )
         assert list(posterior.event_spec.components) == ["posterior"]
         assert isinstance(posterior.draws(), jax.Array)
-
-
-class TestGetPrior:
-    """``get_prior`` returns the SimpleModel's prior or the dist itself."""
-
-    def test_simple_model_returns_prior(self, small_model):
-        assert get_prior(small_model) is small_model._prior
-
-    def test_bare_distribution_returns_self(self):
-        d = Normal(loc=0.0, scale=1.0, name="x")
-        assert get_prior(d) is d
 
 
 # ---------------------------------------------------------------------------
@@ -292,45 +266,37 @@ class TestIsJaxTraceable:
         assert is_jax_traceable(host_side, init) is False
 
 
-class TestBuildLikelihoodFlat:
-    """``build_likelihood_flat`` returns the *likelihood alone* as a flat-
-    vector callable (the ESS entry point).
-    """
+class TestModelFactors:
+    """The prior and likelihood of a joint at observed fields, and the flat log-likelihood."""
 
     @pytest.fixture
-    def gaussian_model(self):
-        prior = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"))
-        return SimpleModel(prior, _GaussianMeanLikelihood(scale=2.0), name="g")
-
-    def test_returns_scalar_log_likelihood(self, gaussian_model):
-        data = jnp.array([1.0, -1.0, 0.5])
-        llf = build_likelihood_flat(
-            gaussian_model._prior,
-            gaussian_model._likelihood,
-            data,
+    def gaussian_target(self):
+        prior = FactoredDistribution("prior", [Normal(loc=0.0, scale=1.0, name="mu")])
+        return observed_target(
+            _gaussian_mean(prior, 3, scale=2.0), {"y": jnp.array([1.0, -1.0, 0.5])}
         )
-        assert callable(llf)
-        out = llf(jnp.array([0.3]))
-        # Scalar (rank-0) log-likelihood.
-        assert jnp.ndim(out) == 0
 
-    def test_matches_independent_gaussian(self, gaussian_model):
-        data = jnp.array([1.0, -1.0, 0.5])
-        llf = build_likelihood_flat(
-            gaussian_model._prior,
-            gaussian_model._likelihood,
-            data,
-        )
+    def test_the_factors_split_at_the_observed_fields(self, gaussian_target):
+        factors = model_factors(gaussian_target)
+        assert list(factors.prior.event_spec.components) == ["mu"]
+        assert list(factors.likelihood.event_spec.components) == ["y"]
+        np.testing.assert_allclose(factors.observed, [1.0, -1.0, 0.5])
+
+    def test_a_target_that_is_no_conditioned_joint_has_no_factors(self):
+        assert model_factors(Normal(loc=0.0, scale=1.0, name="x")) is None
+
+    def test_returns_scalar_log_likelihood(self, gaussian_target):
+        llf = likelihood_flat(model_factors(gaussian_target))
+        assert jnp.ndim(llf(jnp.array([0.3]))) == 0
+
+    def test_matches_independent_gaussian(self, gaussian_target):
+        llf = likelihood_flat(model_factors(gaussian_target))
+        data = np.array([1.0, -1.0, 0.5])
         mu, scale = 0.3, 2.0
         expected = np.sum(
-            -0.5 * ((np.asarray(data) - mu) / scale) ** 2 - np.log(scale) - 0.5 * np.log(2 * np.pi)
+            -0.5 * ((data - mu) / scale) ** 2 - np.log(scale) - 0.5 * np.log(2 * np.pi)
         )
-        np.testing.assert_allclose(
-            float(llf(jnp.array([mu]))),
-            expected,
-            rtol=0,
-            atol=1e-5,
-        )
+        np.testing.assert_allclose(float(llf(jnp.array([mu]))), expected, rtol=0, atol=1e-5)
 
 
 # ---------------------------------------------------------------------------

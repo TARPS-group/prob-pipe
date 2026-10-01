@@ -10,7 +10,6 @@ from probpipe import (
     EmpiricalDistribution,
     Normal,
     OpaqueSpec,
-    ProductDistribution,
     Provenance,
     Record,
     RecordBatch,
@@ -741,22 +740,19 @@ class TestRecordBatchMarginal:
 
     @pytest.fixture
     def prior(self):
-        return ProductDistribution(
-            Normal(loc=1.0, scale=0.1, name="x"),
-            Normal(loc=2.0, scale=0.1, name="y"),
-        )
+        return Normal(loc=1.0, scale=0.1, name="x") * Normal(loc=2.0, scale=0.1, name="y")
 
     def test_record_output_produces_record_batch_marginal(
         self,
         record_workflow,
         prior,
     ):
-        result = record_workflow(**prior.select("x", "y"))
+        result = record_workflow(x=prior["x"], y=prior["y"])
         assert isinstance(result, EmpiricalDistribution)
 
     def test_mean_per_field(self, record_workflow, prior):
         with workflow_run(seed=0):
-            result = record_workflow(**prior.select("x", "y"))
+            result = record_workflow(x=prior["x"], y=prior["y"])
         m = mean(result)
         assert isinstance(m, Record)
         # sum = x + y ~ N(3, sqrt(0.02)); diff = x - y ~ N(-1, sqrt(0.02))
@@ -766,7 +762,7 @@ class TestRecordBatchMarginal:
 
     def test_variance_per_field(self, record_workflow, prior):
         with workflow_run(seed=0):
-            result = record_workflow(**prior.select("x", "y"))
+            result = record_workflow(x=prior["x"], y=prior["y"])
         v = variance(result)
         assert isinstance(v, Record)
         # Var(x+y) = Var(x) + Var(y) = 0.02 when jointly sampled independently.
@@ -778,7 +774,7 @@ class TestRecordBatchMarginal:
         self, record_workflow, prior, key
     ):
         """The draws are a multiplicity, and the level says what they range over."""
-        result = record_workflow(**prior.select("x", "y"))
+        result = record_workflow(x=prior["x"], y=prior["y"])
 
         s = sample(result, key=key, sample_shape=(5,))
 
@@ -788,7 +784,7 @@ class TestRecordBatchMarginal:
         assert s["diff"].shape == (5,)
 
     def test_the_record_names_the_fields(self, record_workflow, prior):
-        result = record_workflow(**prior.select("x", "y"))
+        result = record_workflow(x=prior["x"], y=prior["y"])
         assert list(result.event_spec.components) == ["sum", "diff"]
 
 

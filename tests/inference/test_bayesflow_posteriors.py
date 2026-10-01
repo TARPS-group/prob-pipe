@@ -22,11 +22,11 @@ from probpipe import (
     ApproximateDistribution,
     Normal,
     NumericRecord,
-    ProductDistribution,
     condition_on,
     learn_amortized_posterior,
 )
 from probpipe.core._dispatch import ResolutionError
+from probpipe.core._specs import NumericArraySpec, OutputSpec
 from probpipe.distributions import ConditionalDistribution
 from probpipe.distributions._capabilities import (
     SupportsApproximateConditioning,
@@ -34,125 +34,93 @@ from probpipe.distributions._capabilities import (
     SupportsSampling,
     _is_normalized,
 )
-from probpipe.modeling import GenerativeLikelihood, Likelihood
 from probpipe.operations._condition import condition_on as condition_on_operation
 
-from ._bayesflow_helpers import theta_vec
+from ._bayesflow_helpers import SimulatorKernel, theta_vec
 
 
-class _ToyLikelihood(Likelihood, GenerativeLikelihood):
+def _toy(params, key):
     """Identifiable 2-parameter model: ``y = [a + b, a - b] + small noise``."""
+    t = theta_vec(params)  # structured record (training) or raw array (direct)
+    a, b = t[0], t[1]
+    return jnp.stack([a + b, a - b]) + 0.1 * jax.random.normal(key, (2,))
 
-    # ``log_likelihood`` is unused by the amortized path (only ``generate_data``
-    # is called); stubbed here just to satisfy the ``Likelihood`` protocol.
-    def log_likelihood(self, params, data):
-        return jnp.array(0.0)
 
-    def generate_data(self, params, num_observations, *, key=None):
-        t = theta_vec(params)  # structured record (training) or raw array (direct)
-        a, b = t[0], t[1]
-        key = key if key is not None else jax.random.PRNGKey(0)
-        mean = jnp.stack([a + b, a - b])
-        return mean[None, :] + 0.1 * jax.random.normal(key, (num_observations, 2))
+def _toy_simulator():
+    return SimulatorKernel(_prior(), (2,), _toy)
+
+
+class _UniformBelowKernel(ConditionalDistribution, SupportsConditionalSampling):
+    """``x | z ~ Uniform(0, z)``, whose support depends on ``z`` and so is not declared."""
+
+    def __init__(self):
+        spec = NumericArraySpec((), "float32")
+        super().__init__("x", {"z": spec}, OutputSpec(x=spec))
+
+    def _condition_on(self, given, /, **options):
+        return pp.Uniform("x", 0.0, given["z"])
+
+    def _conditional_sample(self, given, key, sample_shape=()):
+        return pp.Uniform("x", 0.0, given["z"])._sample(key, sample_shape)
 
 
 def _prior():
-    return ProductDistribution(
-        Normal(loc=0.0, scale=1.0, name="a"),
-        Normal(loc=0.0, scale=1.0, name="b"),
-    )
+    return Normal(loc=0.0, scale=1.0, name="a") * Normal(loc=0.0, scale=1.0, name="b")
 
 
 def _observe(a, b, seed):
-    return _ToyLikelihood().generate_data(jnp.array([a, b]), 1, key=jax.random.PRNGKey(seed))[0]
+    return _toy(jnp.array([a, b]), jax.random.PRNGKey(seed))
 
 
-class _VecLikelihood(Likelihood, GenerativeLikelihood):
+def _vec(params, key):
     """Vector + scalar params [m0, m1, s]; y = [m0 + s, m1 - s] + small noise."""
-
-    # ``log_likelihood`` is unused by the amortized path (see ``_ToyLikelihood``).
-    def log_likelihood(self, params, data):
-        return jnp.array(0.0)
-
-    def generate_data(self, params, num_observations, *, key=None):
-        t = theta_vec(params)
-        m0, m1, s = t[0], t[1], t[2]
-        key = key if key is not None else jax.random.PRNGKey(0)
-        mean = jnp.stack([m0 + s, m1 - s])
-        return mean[None, :] + 0.1 * jax.random.normal(key, (num_observations, 2))
+    t = theta_vec(params)
+    m0, m1, s = t[0], t[1], t[2]
+    return jnp.stack([m0 + s, m1 - s]) + 0.1 * jax.random.normal(key, (2,))
 
 
 def _vec_prior():
-    return ProductDistribution(
-        pp.MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="m"),
-        Normal(loc=0.0, scale=1.0, name="s"),
+    return pp.MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="m") * Normal(
+        loc=0.0, scale=1.0, name="s"
     )
 
 
-class _SingleFieldLikelihood(Likelihood, GenerativeLikelihood):
+def _single_field(params, key):
     """Single (vector) parameter field: ``y = theta + small noise``."""
-
-    # ``log_likelihood`` is unused by the amortized path (see ``_ToyLikelihood``).
-    def log_likelihood(self, params, data):
-        return jnp.array(0.0)
-
-    def generate_data(self, params, num_observations, *, key=None):
-        t = theta_vec(params)
-        key = key if key is not None else jax.random.PRNGKey(0)
-        return t[None, :] + 0.1 * jax.random.normal(key, (num_observations, 2))
+    return theta_vec(params) + 0.1 * jax.random.normal(key, (2,))
 
 
-class _NonJaxLikelihood(Likelihood, GenerativeLikelihood):
+def _non_jax(params, key):
     """A deliberately non-vmappable simulator: it concretizes the parameters
     (``float(...)``) and draws noise with numpy, so it runs only on the eager
     path (``sim_backend="sequential"``) -- ``jax.vmap`` would raise a tracer error."""
-
-    def log_likelihood(self, params, data):
-        return jnp.array(0.0)
-
-    def generate_data(self, params, num_observations, *, key=None):
-        t = np.asarray(theta_vec(params))
-        a, b = float(t[0]), float(t[1])
-        seed = 0 if key is None else int(jax.random.randint(key, (), 0, 2**16))
-        noise = np.random.default_rng(seed).standard_normal((num_observations, 2))
-        return np.array([a + b, a - b]) + 0.1 * noise
+    t = np.asarray(theta_vec(params))
+    a, b = float(t[0]), float(t[1])
+    seed = int(jax.random.randint(key, (), 0, 2**16))
+    noise = np.random.default_rng(seed).standard_normal(2)
+    return np.array([a + b, a - b]) + 0.1 * noise
 
 
-class _ScalarLikelihood(Likelihood, GenerativeLikelihood):
+def _scalar(params, key):
     """One-parameter model: ``y = a + small noise`` (a single scalar param)."""
-
-    # ``log_likelihood`` is unused by the amortized path (see ``_ToyLikelihood``).
-    def log_likelihood(self, params, data):
-        return jnp.array(0.0)
-
-    def generate_data(self, params, num_observations, *, key=None):
-        a = theta_vec(params)[0]
-        key = key if key is not None else jax.random.PRNGKey(0)
-        return a + 0.1 * jax.random.normal(key, (num_observations, 1))
+    return theta_vec(params)[:1] + 0.1 * jax.random.normal(key, (1,))
 
 
-class _MultiFieldLikelihood(Likelihood, GenerativeLikelihood):
+def _multi_field(params, key):
     """Three-field params (flat ``[a, b0, b1, c]``) -> an 8-d observation built
     from several param combinations, to exercise multiple mixed-shape parameter
     fields and higher-dimensional data."""
-
-    # ``log_likelihood`` is unused by the amortized path (see ``_ToyLikelihood``).
-    def log_likelihood(self, params, data):
-        return jnp.array(0.0)
-
-    def generate_data(self, params, num_observations, *, key=None):
-        t = theta_vec(params)
-        a, b0, b1, c = t[0], t[1], t[2], t[3]
-        key = key if key is not None else jax.random.PRNGKey(0)
-        mean = jnp.stack([a + b0, a - b0, b1 + c, b1 - c, a + c, b0 * b1, a, c])
-        return mean[None, :] + 0.1 * jax.random.normal(key, (num_observations, mean.shape[0]))
+    t = theta_vec(params)
+    a, b0, b1, c = t[0], t[1], t[2], t[3]
+    mean = jnp.stack([a + b0, a - b0, b1 + c, b1 - c, a + c, b0 * b1, a, c])
+    return mean + 0.1 * jax.random.normal(key, mean.shape)
 
 
 def _multi_field_prior():
-    return ProductDistribution(
-        Normal(loc=0.0, scale=1.0, name="a"),
-        pp.MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="b"),
-        Normal(loc=0.0, scale=1.0, name="c"),
+    return (
+        Normal(loc=0.0, scale=1.0, name="a")
+        * pp.MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="b")
+        * Normal(loc=0.0, scale=1.0, name="c")
     )
 
 
@@ -160,79 +128,55 @@ def _multi_field_prior():
 _CONJ_SIGMA = 0.5
 
 
-class _ConjugateGaussianLikelihood(Likelihood, GenerativeLikelihood):
+def _conjugate(params, key):
     """Conjugate model (any dimension): prior ``theta ~ N(0, I)``, ``y = theta +
     sigma * noise``. The posterior is analytic -- ``N(y / (1 + sigma^2), sigma^2 /
     (1 + sigma^2) I)`` -- so the amortized posterior's mean *and* spread can be
     checked against it. The observation dimension follows the parameter dimension,
-    so one likelihood serves both the 2-D and 1-D calibration tests."""
-
-    def log_likelihood(self, params, data):
-        return jnp.array(0.0)
-
-    def generate_data(self, params, num_observations, *, key=None):
-        key = key if key is not None else jax.random.PRNGKey(0)
-        t = theta_vec(params)
-        return t[None, :] + _CONJ_SIGMA * jax.random.normal(key, (num_observations, t.shape[-1]))
+    so one simulator serves both the 2-D and 1-D calibration tests."""
+    t = theta_vec(params)
+    return t + _CONJ_SIGMA * jax.random.normal(key, t.shape)
 
 
-class _NamedFieldLikelihood(Likelihood, GenerativeLikelihood):
+def _conjugate_simulator(prior):
+    return SimulatorKernel(prior, (prior.event_spec.spec.vector_size,), _conjugate)
+
+
+def _named_field(params, key):
     """Accesses params strictly by field name (``params["a"]``), never positionally
-    -- locks the ``GenerativeLikelihood`` contract that training passes the prior's
+    -- locks the contract that training passes the simulator the prior's
     structured per-draw record (a flattened-vector regression raises here)."""
-
-    def log_likelihood(self, params, data):
-        return jnp.array(0.0)
-
-    def generate_data(self, params, num_observations, *, key=None):
-        a, b = params["a"], params["b"]
-        key = key if key is not None else jax.random.PRNGKey(0)
-        mean = jnp.stack([a + b, a - b])
-        return mean[None, :] + 0.1 * jax.random.normal(key, (num_observations, 2))
+    a, b = params["a"], params["b"]
+    return jnp.stack([a + b, a - b]) + 0.1 * jax.random.normal(key, (2,))
 
 
-class _PositiveLikelihood(Likelihood, GenerativeLikelihood):
+def _positive(params, key):
     """Simulator for a constrained prior (positive ``r``, real ``m``):
     ``y = [r + m, r - m] + small noise``."""
-
-    def log_likelihood(self, params, data):
-        return jnp.array(0.0)
-
-    def generate_data(self, params, num_observations, *, key=None):
-        t = theta_vec(params)
-        r, m = t[0], t[1]
-        key = key if key is not None else jax.random.PRNGKey(0)
-        mean = jnp.stack([r + m, r - m])
-        return mean[None, :] + 0.1 * jax.random.normal(key, (num_observations, 2))
+    t = theta_vec(params)
+    r, m = t[0], t[1]
+    return jnp.stack([r + m, r - m]) + 0.1 * jax.random.normal(key, (2,))
 
 
 def _nested_prior():
-    """Nested ``ProductDistribution``: a sub-record ``outer`` (a
+    """Nested joint: a sub-record ``outer`` (a
     positive leaf ``r`` and a real leaf ``m``) plus a top-level real ``c`` --
     leaves ``outer/r``, ``outer/m``, ``c``. The ``Gamma`` leaf exercises a
     per-leaf bijector *under* nesting; ``flatten`` order is ``[r, m, c]``."""
-    return ProductDistribution(
-        name="joint",
-        outer={"r": pp.Gamma("r", 3.0, 1.0), "m": Normal(loc=0.0, scale=1.0, name="m")},
-        c=Normal(loc=0.0, scale=1.0, name="c"),
+    outer = (pp.Gamma("r", 3.0, 1.0) * Normal(loc=0.0, scale=1.0, name="m")).with_path_names(
+        {"r": "outer/r", "m": "outer/m"}
     )
+    return (outer * Normal(loc=0.0, scale=1.0, name="c")).with_name("joint")
 
 
-class _NestedLikelihood(Likelihood, GenerativeLikelihood):
+def _nested(params, key):
     """Nested params (``outer={r, m}``, ``c``) -> ``y = [r + c, m - c, r - m]`` +
     small noise. Reads the per-draw record by *leaf path* (``params["outer/r"]``)
     -- the leaf-keyed access the redesigned Record requires -- locking the
     structured-record contract under nesting; a flattened-vector regression
     would raise here."""
-
-    def log_likelihood(self, params, data):
-        return jnp.array(0.0)
-
-    def generate_data(self, params, num_observations, *, key=None):
-        r, m, c = params["outer/r"], params["outer/m"], params["c"]
-        key = key if key is not None else jax.random.PRNGKey(0)
-        mean = jnp.stack([r + c, m - c, r - m])
-        return mean[None, :] + 0.1 * jax.random.normal(key, (num_observations, 3))
+    r, m, c = params["outer/r"], params["outer/m"], params["c"]
+    return jnp.stack([r + c, m - c, r - m]) + 0.1 * jax.random.normal(key, (3,))
 
 
 def _nested_observe(r, m, c, seed):
@@ -240,7 +184,7 @@ def _nested_observe(r, m, c, seed):
     per-draw record via ``from_vector`` (leaf order ``[r, m, c]``) -- the same
     structured object the offline simulator passes the simulator at train time."""
     rec = NumericRecord.from_vector("nr", _nested_prior().event_spec.spec, jnp.array([r, m, c]))
-    return _NestedLikelihood().generate_data(rec, 1, key=jax.random.PRNGKey(seed))[0]
+    return _nested(rec, jax.random.PRNGKey(seed))
 
 
 @pytest.fixture(scope="module")
@@ -248,7 +192,7 @@ def npe_model():
     """A briefly-trained NPE estimator, shared across the NPE tests."""
     return learn_amortized_posterior(
         _prior(),
-        _ToyLikelihood(),
+        _toy_simulator(),
         method="npe",
         num_simulations=3000,
         epochs=6,
@@ -320,7 +264,7 @@ class TestBayesFlowNPE:
         was trained on."""
         assert not isinstance(npe_model, SupportsSampling)
         assert tuple(npe_model.prior.event_spec.components) == ("a", "b")
-        assert isinstance(npe_model.simulator, _ToyLikelihood)
+        assert isinstance(npe_model.simulator, SimulatorKernel)
 
     def test_it_is_a_kernel_from_the_observation_to_the_parameters(self, npe_model):
         assert isinstance(npe_model, ConditionalDistribution)
@@ -379,8 +323,9 @@ class TestBayesFlowNPE:
 
     def test_provenance_names_the_joint_it_was_trained_on(self, npe_model):
         record = npe_model.provenance
-        assert npe_model.prior.name in [parent.name for parent in record.parents]
-        assert record.inputs["simulator"].type_name == "_ToyLikelihood"
+        parents = [parent.name for parent in record.parents]
+        assert npe_model.prior.name in parents
+        assert npe_model.simulator.name in parents
 
     def test_condition_random_seed_reproducible(self, npe_model):
         """The amortized path honours ``random_seed`` at condition time: the same
@@ -405,7 +350,7 @@ class TestBayesFlowMethods:
         """Each amortized method trains and conditions, returning named draws."""
         model = learn_amortized_posterior(
             _prior(),
-            _ToyLikelihood(),
+            _toy_simulator(),
             method=method,
             num_simulations=1500,
             epochs=3,
@@ -425,7 +370,7 @@ class TestBayesFlowMethods:
         reshape/concatenate and returns named draws of the right shape."""
         model = learn_amortized_posterior(
             _vec_prior(),
-            _VecLikelihood(),
+            SimulatorKernel(_vec_prior(), (2,), _vec),
             method="npe",
             num_simulations=2000,
             epochs=4,
@@ -434,9 +379,7 @@ class TestBayesFlowMethods:
             random_seed=0,
             verbose=0,
         )
-        obs = _VecLikelihood().generate_data(
-            jnp.array([0.5, -0.5, 0.2]), 1, key=jax.random.PRNGKey(5)
-        )[0]
+        obs = _vec(jnp.array([0.5, -0.5, 0.2]), jax.random.PRNGKey(5))
         draws = condition_on(model, obs).draws()
         m = np.asarray(draws["m"]).reshape(200, -1)
         s = np.asarray(draws["s"]).reshape(200, -1)
@@ -452,7 +395,7 @@ class TestBayesFlowMethods:
         net = bf.networks.CouplingFlow()
         model = learn_amortized_posterior(
             _prior(),
-            _ToyLikelihood(),
+            _toy_simulator(),
             method="npe",
             inference_network=net,
             num_simulations=1500,
@@ -468,14 +411,14 @@ class TestBayesFlowMethods:
         assert np.asarray(post.draws()["a"]).reshape(-1).shape[0] == 200
 
     def test_single_field_prior(self):
-        """A single-field prior (not a ProductDistribution) is supported: its
+        """A single-field prior (not a factored joint) is supported: its
         draws are not field-indexable, but the canonical flat layout drives the
         per-field split, so it round-trips end-to-end to named draws."""
 
         prior = pp.MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="theta")
         model = learn_amortized_posterior(
             prior,
-            _SingleFieldLikelihood(),
+            SimulatorKernel(prior, (2,), _single_field),
             method="npe",
             num_simulations=1500,
             epochs=3,
@@ -484,9 +427,7 @@ class TestBayesFlowMethods:
             random_seed=0,
             verbose=0,
         )
-        obs = _SingleFieldLikelihood().generate_data(
-            jnp.array([0.5, -0.5]), 1, key=jax.random.PRNGKey(4)
-        )[0]
+        obs = _single_field(jnp.array([0.5, -0.5]), jax.random.PRNGKey(4))
         draws = condition_on(model, obs).draws()
         assert np.asarray(draws["theta"]).reshape(200, -1).shape == (200, 2)
         assert np.isfinite(np.asarray(draws["theta"])).all()
@@ -497,7 +438,7 @@ class TestBayesFlowMethods:
         would fail on it, so success proves the eager loop ran."""
         model = learn_amortized_posterior(
             _prior(),
-            _NonJaxLikelihood(),
+            SimulatorKernel(_prior(), (2,), _non_jax),
             method="npe",
             sim_backend="sequential",
             num_simulations=800,
@@ -519,7 +460,7 @@ class TestBayesFlowMethods:
         coupling flow) has no >= 2-parameter requirement."""
         model = learn_amortized_posterior(
             Normal(loc=0.0, scale=1.0, name="a"),
-            _ScalarLikelihood(),
+            SimulatorKernel(Normal(loc=0.0, scale=1.0, name="a"), (1,), _scalar),
             method="fmpe",
             num_simulations=1500,
             epochs=3,
@@ -528,7 +469,7 @@ class TestBayesFlowMethods:
             random_seed=0,
             verbose=0,
         )
-        obs = _ScalarLikelihood().generate_data(jnp.array([0.7]), 1, key=jax.random.PRNGKey(4))[0]
+        obs = _scalar(jnp.array([0.7]), jax.random.PRNGKey(4))
         draws = condition_on(model, obs).draws()
         assert np.asarray(draws["a"]).reshape(-1).shape[0] == 200
         assert np.isfinite(np.asarray(draws["a"])).all()
@@ -550,7 +491,7 @@ class TestBayesFlowMethods:
         prior = Normal(loc=0.0, scale=1.0, name="a")  # event_size 1 -> FlowMatching
         model = learn_amortized_posterior(
             prior,
-            _ConjugateGaussianLikelihood(),
+            _conjugate_simulator(prior),
             method="npe",
             num_simulations=5000,
             epochs=40,
@@ -562,11 +503,10 @@ class TestBayesFlowMethods:
         assert isinstance(model._approximator.inference_network, bf.networks.FlowMatching)
         s2 = _CONJ_SIGMA**2
         post_std = (s2 / (1 + s2)) ** 0.5  # analytic posterior std
-        sim = _ConjugateGaussianLikelihood()
         mean_errs, std_ratios = [], []
         for i in range(6):
             theta = jax.random.normal(jax.random.PRNGKey(100 + i), (1,))
-            obs = sim.generate_data(theta, 1, key=jax.random.PRNGKey(900 + i))[0]
+            obs = _conjugate(theta, jax.random.PRNGKey(900 + i))
             x = np.asarray(condition_on(model, obs).draws()["a"]).reshape(-1)
             mean_errs.append(abs(float(x.mean()) - float(obs[0]) / (1 + s2)))
             std_ratios.append(float(x.std()) / post_std)
@@ -583,7 +523,7 @@ class TestBayesFlowMethods:
         fields and bigger data, and checks the posterior responds to the data."""
         model = learn_amortized_posterior(
             _multi_field_prior(),
-            _MultiFieldLikelihood(),
+            SimulatorKernel(_multi_field_prior(), (8,), _multi_field),
             method="npe",
             num_simulations=2500,
             epochs=5,
@@ -592,8 +532,7 @@ class TestBayesFlowMethods:
             random_seed=0,
             verbose=0,
         )
-        sim = _MultiFieldLikelihood()
-        obs = sim.generate_data(jnp.array([0.5, -0.5, 0.3, -0.2]), 1, key=jax.random.PRNGKey(6))[0]
+        obs = _multi_field(jnp.array([0.5, -0.5, 0.3, -0.2]), jax.random.PRNGKey(6))
         assert obs.shape == (8,)  # higher-dimensional observation
         draws = condition_on(model, obs).draws()
         assert np.asarray(draws["a"]).reshape(200, -1).shape == (200, 1)
@@ -601,10 +540,8 @@ class TestBayesFlowMethods:
         assert np.asarray(draws["c"]).reshape(200, -1).shape == (200, 1)
         assert all(np.isfinite(np.asarray(draws[f])).all() for f in ("a", "b", "c"))
         # Amortized response: the posterior mean of `a` tracks the observation.
-        obs_hi = sim.generate_data(jnp.array([1.0, 0.0, 0.0, 0.0]), 1, key=jax.random.PRNGKey(1))[0]
-        obs_lo = sim.generate_data(jnp.array([-1.0, 0.0, 0.0, 0.0]), 1, key=jax.random.PRNGKey(2))[
-            0
-        ]
+        obs_hi = _multi_field(jnp.array([1.0, 0.0, 0.0, 0.0]), jax.random.PRNGKey(1))
+        obs_lo = _multi_field(jnp.array([-1.0, 0.0, 0.0, 0.0]), jax.random.PRNGKey(2))
         mean_a_hi = float(np.mean(np.asarray(condition_on(model, obs_hi).draws()["a"])))
         mean_a_lo = float(np.mean(np.asarray(condition_on(model, obs_lo).draws()["a"])))
         assert mean_a_hi > mean_a_lo
@@ -615,12 +552,10 @@ class TestBayesFlowMethods:
         the analytic mean and its std matches the analytic std (averaged over
         several observations). Trains a bit longer than the smoke tests so the
         estimator is near-converged."""
-        prior = ProductDistribution(
-            Normal(loc=0.0, scale=1.0, name="a"), Normal(loc=0.0, scale=1.0, name="b")
-        )
+        prior = Normal(loc=0.0, scale=1.0, name="a") * Normal(loc=0.0, scale=1.0, name="b")
         model = learn_amortized_posterior(
             prior,
-            _ConjugateGaussianLikelihood(),
+            _conjugate_simulator(prior),
             method="npe",
             num_simulations=5000,
             epochs=40,
@@ -631,11 +566,10 @@ class TestBayesFlowMethods:
         )
         s2 = _CONJ_SIGMA**2
         post_std = (s2 / (1 + s2)) ** 0.5  # analytic posterior std
-        sim = _ConjugateGaussianLikelihood()
         mean_errs, std_ratios = [], []
         for i in range(6):
             theta = jax.random.normal(jax.random.PRNGKey(100 + i), (2,))
-            obs = sim.generate_data(theta, 1, key=jax.random.PRNGKey(900 + i))[0]
+            obs = _conjugate(theta, jax.random.PRNGKey(900 + i))
             draws = condition_on(model, obs).draws()
             for j, f in enumerate(("a", "b")):
                 x = np.asarray(draws[f]).reshape(-1)
@@ -658,7 +592,7 @@ class TestBayesFlowMethods:
         priors -- it lifts them via per-leaf bijectors and adapter keying."""
         model = learn_amortized_posterior(
             _nested_prior(),
-            _NestedLikelihood(),
+            SimulatorKernel(_nested_prior(), (3,), _nested),
             method="npe",
             num_simulations=3000,
             epochs=8,
@@ -692,17 +626,13 @@ class TestBayesFlowMethods:
         in flatten order (``outer/a``, ``outer/b``, ``m``); a mis-ordered column or
         a mis-keyed per-leaf bijector would land a leaf's mass on the wrong
         coordinate and fail here."""
-        prior = ProductDistribution(
-            name="joint",
-            outer={
-                "a": Normal(loc=0.0, scale=1.0, name="a"),
-                "b": Normal(loc=0.0, scale=1.0, name="b"),
-            },
-            m=Normal(loc=0.0, scale=1.0, name="m"),
-        )
+        outer = (
+            Normal(loc=0.0, scale=1.0, name="a") * Normal(loc=0.0, scale=1.0, name="b")
+        ).with_path_names({"a": "outer/a", "b": "outer/b"})
+        prior = (outer * Normal(loc=0.0, scale=1.0, name="m")).with_name("joint")
         model = learn_amortized_posterior(
             prior,
-            _ConjugateGaussianLikelihood(),
+            _conjugate_simulator(prior),
             method="npe",
             num_simulations=5000,
             epochs=40,
@@ -713,12 +643,11 @@ class TestBayesFlowMethods:
         )
         s2 = _CONJ_SIGMA**2
         post_std = (s2 / (1 + s2)) ** 0.5
-        sim = _ConjugateGaussianLikelihood()
         leaves = ("outer/a", "outer/b", "m")
         mean_errs, std_ratios = [], []
         for i in range(6):
             theta = jax.random.normal(jax.random.PRNGKey(100 + i), (3,))
-            obs = sim.generate_data(theta, 1, key=jax.random.PRNGKey(900 + i))[0]
+            obs = _conjugate(theta, jax.random.PRNGKey(900 + i))
             draws = condition_on(model, obs).draws()
             for j, leaf in enumerate(leaves):
                 x = np.asarray(draws[leaf]).reshape(-1)
@@ -736,17 +665,13 @@ class TestBayesFlowMethods:
         CholeskyOuterProduct chain), and the forward map at sample time returns
         SPD draws under the nested leaf name ``outer/cov`` -- the nested analogue
         of test_wishart_matrix_prior_round_trip."""
-        prior = ProductDistribution(
-            name="joint",
-            outer={
-                "cov": pp.Wishart(df=4.0, scale=jnp.eye(2), name="cov"),
-                "m": Normal(loc=0.0, scale=1.0, name="m"),
-            },
-            c=Normal(loc=0.0, scale=1.0, name="c"),
-        )
+        outer = (
+            pp.Wishart(df=4.0, scale=jnp.eye(2), name="cov") * Normal(loc=0.0, scale=1.0, name="m")
+        ).with_path_names({"cov": "outer/cov", "m": "outer/m"})
+        prior = (outer * Normal(loc=0.0, scale=1.0, name="c")).with_name("joint")
         model = learn_amortized_posterior(
             prior,
-            _ConjugateGaussianLikelihood(),
+            _conjugate_simulator(prior),
             method="fmpe",
             num_simulations=600,
             epochs=2,
@@ -762,13 +687,13 @@ class TestBayesFlowMethods:
         assert np.linalg.eigvalsh(cov).min() > 0  # positive definite
 
     def test_simulator_receives_named_record(self):
-        """generate_data receives the prior's structured per-draw sample (named
-        fields), per the GenerativeLikelihood contract -- the simulator uses
-        params["a"]/["b"] exclusively, so training succeeds only when the
-        structured record is passed."""
+        """The simulator kernel receives the prior's structured per-draw sample
+        (named fields) as its given values -- the simulator uses params["a"]/["b"]
+        exclusively, so training succeeds only when the structured record is
+        passed."""
         model = learn_amortized_posterior(
             _prior(),
-            _NamedFieldLikelihood(),
+            SimulatorKernel(_prior(), (2,), _named_field),
             method="npe",
             num_simulations=800,
             epochs=2,
@@ -785,10 +710,10 @@ class TestBayesFlowMethods:
         """A constrained (positive) prior field is trained in unconstrained space and
         its draws are mapped back through the forward bijector, so they land in the
         support -- here all positive. The accompanying real-valued field is unaffected."""
-        prior = ProductDistribution(pp.Gamma("r", 3.0, 1.0), Normal(loc=0.0, scale=1.0, name="m"))
+        prior = pp.Gamma("r", 3.0, 1.0) * Normal(loc=0.0, scale=1.0, name="m")
         model = learn_amortized_posterior(
             prior,
-            _PositiveLikelihood(),
+            SimulatorKernel(prior, (2,), _positive),
             method="npe",
             num_simulations=1500,
             epochs=5,
@@ -808,13 +733,12 @@ class TestBayesFlowMethods:
         ``"inference_variables"``) train and condition, with draws returned
         under the user's names.
         """
-        prior = ProductDistribution(
-            Normal(loc=0.0, scale=1.0, name="observation"),
-            Normal(loc=0.0, scale=1.0, name="inference_variables"),
+        prior = Normal(loc=0.0, scale=1.0, name="observation") * Normal(
+            loc=0.0, scale=1.0, name="inference_variables"
         )
         model = learn_amortized_posterior(
             prior,
-            _ToyLikelihood(),
+            SimulatorKernel(prior, (2,), _toy, name="y"),
             method="npe",
             num_simulations=800,
             epochs=2,
@@ -833,10 +757,10 @@ class TestBayesFlowMethods:
         """A bounded-interval prior field (Beta, unit-interval support) rounds
         through the Sigmoid bijector: trained unconstrained, every posterior
         draw lands strictly inside (0, 1)."""
-        prior = ProductDistribution(pp.Beta("q", 2.0, 2.0), Normal(loc=0.0, scale=1.0, name="m"))
+        prior = pp.Beta("q", 2.0, 2.0) * Normal(loc=0.0, scale=1.0, name="m")
         model = learn_amortized_posterior(
             prior,
-            _ConjugateGaussianLikelihood(),
+            _conjugate_simulator(prior),
             method="npe",
             num_simulations=800,
             epochs=2,
@@ -855,12 +779,12 @@ class TestBayesFlowMethods:
         shape at train time -- a flattened input would crash the
         CholeskyOuterProduct chain -- and the forward map at sample time returns
         draws that are symmetric positive definite."""
-        prior = ProductDistribution(
-            pp.Wishart(df=4.0, scale=jnp.eye(2), name="cov"), Normal(loc=0.0, scale=1.0, name="m")
+        prior = pp.Wishart(df=4.0, scale=jnp.eye(2), name="cov") * Normal(
+            loc=0.0, scale=1.0, name="m"
         )
         model = learn_amortized_posterior(
             prior,
-            _ConjugateGaussianLikelihood(),
+            _conjugate_simulator(prior),
             method="fmpe",
             num_simulations=600,
             epochs=2,
@@ -884,7 +808,7 @@ class TestBayesFlowMethods:
 
         model = learn_amortized_posterior(
             pp.Dirichlet("p", jnp.ones(2)),
-            _ConjugateGaussianLikelihood(),
+            _conjugate_simulator(pp.Dirichlet("p", jnp.ones(2))),
             method="npe",
             num_simulations=600,
             epochs=2,
@@ -906,7 +830,7 @@ class TestBayesFlowMethods:
         def _fit():
             return learn_amortized_posterior(
                 _prior(),
-                _ToyLikelihood(),
+                _toy_simulator(),
                 method="npe",
                 num_simulations=400,
                 epochs=1,
@@ -935,7 +859,7 @@ class TestBayesFlowMethods:
         pyrandom.seed(7)
         learn_amortized_posterior(
             _prior(),
-            _ToyLikelihood(),
+            _toy_simulator(),
             method="fmpe",
             num_simulations=256,
             epochs=1,
@@ -952,12 +876,12 @@ class TestBayesFlowValidation:
     """Train-time input validation -- each raises before any simulation runs."""
 
     def test_rejects_non_generative_simulator(self):
-        """A simulator without ``generate_data`` is rejected with a clear TypeError."""
+        """A simulator that is not a sampling kernel is rejected with a clear TypeError."""
 
         class _NoGenerate:
             pass
 
-        with pytest.raises(TypeError, match="generate_data"):
+        with pytest.raises(TypeError, match="ConditionalDistribution that samples"):
             learn_amortized_posterior(_prior(), _NoGenerate(), num_simulations=8, epochs=1)
 
     def test_rejects_a_prior_that_is_not_numeric(self):
@@ -966,7 +890,7 @@ class TestBayesFlowValidation:
         with pytest.raises(TypeError, match="requires a numeric prior"):
             learn_amortized_posterior(
                 jnp.zeros(2),
-                _ToyLikelihood(),
+                _toy_simulator(),
                 num_simulations=8,
                 epochs=1,
             )
@@ -976,7 +900,7 @@ class TestBayesFlowValidation:
         with pytest.raises(ValueError, match="Unknown amortized SBI method"):
             learn_amortized_posterior(
                 _prior(),
-                _ToyLikelihood(),
+                _toy_simulator(),
                 method="bogus",
                 num_simulations=8,
                 epochs=1,
@@ -987,7 +911,7 @@ class TestBayesFlowValidation:
         with pytest.raises(ValueError, match="Unknown sim_backend"):
             learn_amortized_posterior(
                 _prior(),
-                _ToyLikelihood(),
+                _toy_simulator(),
                 sim_backend="bogus",
                 num_simulations=8,
                 epochs=1,
@@ -1001,7 +925,7 @@ class TestBayesFlowValidation:
         """num_simulations / batch_size / epochs / num_results must be positive."""
         kwargs = {"num_simulations": 8, "epochs": 1, **override}
         with pytest.raises(ValueError, match="positive integer"):
-            learn_amortized_posterior(_prior(), _ToyLikelihood(), **kwargs)
+            learn_amortized_posterior(_prior(), _toy_simulator(), **kwargs)
 
     @pytest.mark.parametrize(
         "override",
@@ -1013,20 +937,18 @@ class TestBayesFlowValidation:
         or failing deep inside keras."""
         kwargs = {"num_simulations": 8, "epochs": 1, **override}
         with pytest.raises(TypeError, match="must be an integer"):
-            learn_amortized_posterior(_prior(), _ToyLikelihood(), **kwargs)
+            learn_amortized_posterior(_prior(), _toy_simulator(), **kwargs)
 
     def test_rejects_discrete_prior(self):
         """A discrete prior field has no smooth bijector to R^d and is rejected up
         front with a clear error (here a Poisson count parameter)."""
-        bad_prior = ProductDistribution(pp.Poisson("k", 3.0), Normal(loc=0.0, scale=1.0, name="m"))
+        bad_prior = pp.Poisson("k", 3.0) * Normal(loc=0.0, scale=1.0, name="m")
         with pytest.raises(ValueError, match="discrete"):
-            learn_amortized_posterior(bad_prior, _ToyLikelihood(), num_simulations=8, epochs=1)
+            learn_amortized_posterior(bad_prior, _toy_simulator(), num_simulations=8, epochs=1)
 
     def test_rejects_a_prior_parameter_whose_support_is_not_declared(self):
         """A support that depends on another parameter is not declared, so no
         bijector to R^d can be chosen for it."""
-        prior = pp.SequentialJointDistribution(
-            z=pp.Exponential("z", 1.0), x=lambda z: pp.Uniform("x", 0.0, z)
-        )
+        prior = _UniformBelowKernel() * pp.Exponential("z", 1.0)
         with pytest.raises(ValueError, match="'x': its support is not declared"):
-            learn_amortized_posterior(prior, _ToyLikelihood(), num_simulations=8, epochs=1)
+            learn_amortized_posterior(prior, _toy_simulator(), num_simulations=8, epochs=1)

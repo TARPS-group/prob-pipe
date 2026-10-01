@@ -410,47 +410,43 @@ class TestTheConstructionWindow:
             instance.left = 3
 
     def test_constructing_a_term_inside_another_leaves_both_correct(self):
-        from probpipe import Normal, ProductDistribution
+        from probpipe import Normal
+        from probpipe.distributions import FactoredDistribution
 
-        # Different instances rather than one nested in itself: the components
+        # Different instances rather than one nested in itself: the factors
         # are built first, and the joint's own window is unaffected by theirs.
         # (A distribution accepts assignment either way — see the exemption
         # above — so what is asserted is that both terms came out intact.)
-        joint = ProductDistribution(a=Normal("a", 0.0, 1.0), name="j")
+        joint = FactoredDistribution("j", [Normal("a", 0.0, 1.0)])
         assert joint.name == "j"
-        assert joint.components["a"].name == "a"
+        assert joint.factors[0].name == "a"
 
 
 class TestAClassBuiltAtRuntime:
     """What the round-trip does for a class that has no importable name.
 
     Some distribution families build a subclass per capability set, so the class
-    an instance reports exists only in memory. ``pickle`` stores a class by name
-    and therefore cannot store these; the mixin does not change that, since the
-    default protocol names the class too. These pin the behavior so a change to
-    it is deliberate.
+    an instance reports exists only in memory. ``pickle`` stores a class by name,
+    so these families reconstruct through a module-level factory instead. These
+    pin the behavior so a change to it is deliberate.
     """
 
     @staticmethod
-    def _sequential_joint():
-        from probpipe import Normal, SequentialJointDistribution
+    def _joint():
+        from probpipe import Gamma, Normal
 
-        return SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0, name="z"),
-            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
-        )
+        return Normal("a", 0.0, 1.0) * Gamma("b", 2.0, 1.0)
 
     @staticmethod
-    def _flattened_view():
-        from probpipe import Normal, ProductDistribution
+    def _field_view():
+        from probpipe import Gamma, Normal
 
-        joint = ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 1.0, 2.0), name="j")
-        return joint.as_flat_distribution()
+        return (Normal("a", 0.0, 1.0) * Gamma("b", 2.0, 1.0))["a"]
 
     @pytest.fixture(
         params=[
-            pytest.param("_sequential_joint", id="sequential-joint"),
-            pytest.param("_flattened_view", id="flattened-view"),
+            pytest.param("_joint", id="joint"),
+            pytest.param("_field_view", id="field-view"),
         ]
     )
     def runtime_classed(self, request):
@@ -462,10 +458,6 @@ class TestAClassBuiltAtRuntime:
         cls = type(runtime_classed)
         module = importlib.import_module(cls.__module__)
         assert getattr(module, cls.__qualname__, None) is not cls
-
-    def test_standard_pickle_refuses_it(self, runtime_classed):
-        with pytest.raises(pickle.PicklingError):
-            pickle.dumps(runtime_classed)
 
     def test_copy_and_deepcopy_still_work(self, runtime_classed):
         # They hold the class object rather than its name.
@@ -479,10 +471,6 @@ class TestAClassBuiltAtRuntime:
         restored = pickle.loads(cloudpickle.dumps(runtime_classed))
         assert type(restored).__name__ == type(runtime_classed).__name__
 
-    def test_a_family_that_reconstructs_through_a_factory_pickles(self):
-        # ``ProductDistribution`` keeps its own ``__reduce__`` naming a
-        # module-level rebuild, so its runtime class is never named in a pickle.
-        from probpipe import Normal, ProductDistribution
-
-        joint = ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 1.0, 2.0), name="j")
-        assert type(pickle.loads(pickle.dumps(joint))).__name__ == type(joint).__name__
+    def test_standard_pickle_rebuilds_it_through_the_factory(self, runtime_classed):
+        # The pickle names a module-level rebuild, never the runtime class.
+        assert type(pickle.loads(pickle.dumps(runtime_classed))) is type(runtime_classed)

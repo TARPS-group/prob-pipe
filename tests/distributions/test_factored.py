@@ -138,8 +138,8 @@ class NormalKernel(ConditionalDistribution):
     def _location(self, given: Any) -> Any:
         return jnp.asarray(self._loc({**self._bound, **dict(given.items())}))
 
-    def _condition_on(self, given, /, **kwargs):
-        values = {**self._bound, **dict(given.items()), **kwargs}
+    def _condition_on(self, given, /, **options):
+        values = {**self._bound, **dict(given.items())}
         rest = {slot: spec for slot, spec in self.given_spec.items() if slot not in values}
         if rest:
             return type(self)(
@@ -535,6 +535,15 @@ class TestEventDeclaration:
         joint = _likelihood() * _prior() * potential
         assert joint.factors[-1] is potential
         assert list(joint.event_spec.components) == ["y", "beta"]
+
+    def test_the_numeric_views_read_each_component_of_the_joint(self):
+        from probpipe import Gamma, positive, real
+
+        joint = Normal("a", 0.0, 1.0) * Gamma("g", 2.0, 1.0)
+        assert isinstance(joint, NumericDistribution)
+        assert joint.supports == {"a": real, "g": positive}
+        assert joint.support is None
+        assert set(joint.dtypes) == {"a", "g"}
 
 
 # -- Factors ------------------------------------------------------------------------
@@ -1026,9 +1035,27 @@ class TestConditioning:
         assert stepwise.spec == at_once.spec
         assert float(stepwise.factors[0].loc) == float(at_once.factors[0].loc) == 3.0
 
-    def test_givens_bind_by_keyword(self):
+    def test_every_given_value_arrives_in_the_given(self):
         _, _, joint = _sigma_model()
-        assert isinstance(joint._condition_on({}, sigma=1.0), FactoredDistribution)
+        assert isinstance(joint._condition_on({"sigma": 1.0}), FactoredDistribution)
+
+    def test_a_keyword_is_an_option_and_binds_no_slot(self):
+        _, _, joint = _sigma_model()
+        unbound = joint._condition_on({}, sigma=1.0)
+        assert isinstance(unbound, FactoredConditionalDistribution)
+        assert list(unbound.given_spec) == ["sigma"]
+
+    def test_an_option_reaches_the_primitive_of_each_bound_factor(self):
+        seen: list[dict[str, Any]] = []
+
+        class RecordingKernel(NormalKernel):
+            def _condition_on(self, given, /, **options):
+                seen.append(options)
+                return super()._condition_on(given)
+
+        lik = RecordingKernel("lik", {"beta": SCALAR, "sigma": SCALAR}, OutputSpec(y=SCALAR))
+        (lik * _prior())._condition_on({"sigma": 1.0}, budget=3)
+        assert seen == [{"budget": 3}]
 
     def test_a_bound_value_binds_the_factor_that_names_it(self):
         kernel = NormalKernel("k", {"x": SCALAR}, OutputSpec(a=SCALAR))
@@ -1176,7 +1203,6 @@ class TestDimensionTransforms:
 class TestPathRenames:
     """A joint renames a component through the factors that produce and consume it."""
 
-    @pytest.mark.pending(reason="a joint renames its paths through its factors")
     def test_renaming_a_component_renames_its_producer_and_its_consumers(self):
         renamed = (_likelihood() * _prior()).with_path_names(beta="theta")
         assert isinstance(renamed, FactoredDistribution)
@@ -1184,6 +1210,35 @@ class TestPathRenames:
         consumer, producer = renamed.factors
         assert list(consumer.given_spec) == ["theta"]
         assert list(producer.event_spec.components) == ["theta"]
+
+    def test_renaming_an_unmet_given_renames_it_in_every_factor_that_names_it(self):
+        lik = NormalKernel("lik", {"beta": SCALAR, "sigma": SCALAR}, OutputSpec(y=SCALAR))
+        noise = NormalKernel("noise", {"sigma": SCALAR}, OutputSpec(e=SCALAR))
+        renamed = (lik * noise * _prior()).with_path_names(sigma="s")
+        assert isinstance(renamed, FactoredConditionalDistribution)
+        assert list(renamed.given_spec) == ["s"]
+        assert [sorted(getattr(f, "given_spec", {})) for f in renamed.factors] == [
+            ["beta", "s"],
+            ["s"],
+            [],
+        ]
+
+    def test_a_rename_keeps_the_graph_and_the_label(self):
+        joint = _likelihood() * _prior()
+        renamed = joint.with_path_names(beta="theta", y="obs")
+        assert renamed.name == joint.name
+        assert [edge[:2] for edge in renamed._graph.edges] == [
+            edge[:2] for edge in joint._graph.edges
+        ]
+        assert [info.name for info in renamed.provenance.parents] == [joint.name]
+
+    def test_gathering_components_of_two_factors_renames_at_the_joint_boundary(self, key):
+        joint = Normal("a", 0.0, 1.0) * Normal("b", 2.0, 1.0)
+        renamed = joint.with_path_names({"a": "g/a", "b": "g/b"})
+        assert not isinstance(renamed, SupportsFactors)
+        assert list(renamed.event_spec.components) == ["g"]
+        draw, original = renamed._sample(key), joint._sample(key)
+        assert float(draw["g"]["b"]) == float(original["b"])
 
 
 # -- Round trips ----------------------------------------------------------------------

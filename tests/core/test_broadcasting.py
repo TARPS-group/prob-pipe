@@ -479,13 +479,12 @@ class TestAutoDispatch:
             w(x=g)
 
     def test_auto_falls_back_to_row_wise_for_multi_field_joint(self):
-        """A multi-field ``ProductDistribution`` broadcast argument
+        """A multi-field joint broadcast argument
         can't be probed with a single ``event_shape`` (the property
         raises ``NotImplementedError`` / ``TypeError`` on multi-leaf
         instances). The auto-detect path should catch that and
         fall back to row-wise dispatch rather than crash.
         """
-        from probpipe import ProductDistribution
 
         def consume(joint) -> jnp.ndarray:
             # The function works on a Record / dict; the probe never
@@ -498,10 +497,7 @@ class TestAutoDispatch:
             n_broadcast_samples=10,
             dispatch="auto",
         )
-        joint = ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0, name="x"),
-            y=Normal(loc=0.0, scale=1.0, name="y"),
-        )
+        joint = Normal(loc=0.0, scale=1.0, name="x") * Normal(loc=0.0, scale=1.0, name="y")
         # Probing fails gracefully (NotImplementedError caught inside
         # ``_resolve_dispatch``) and the call-local planner falls back.
         with workflow_run(seed=32), suppress(Exception):

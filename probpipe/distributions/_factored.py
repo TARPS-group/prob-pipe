@@ -43,7 +43,10 @@ from ._capabilities import (
     _capability_guard,
     _capability_subclass,
     _claimed,
+    _claims,
     _conjunction,
+    _kernel_claims,
+    _marginal_claims,
 )
 from ._conditional import (
     ConditionalDistribution,
@@ -695,6 +698,15 @@ def _sole_field_marginal_guard(self: _SoleField, path: str | tuple[str, ...]) ->
     return _capability_guard(self._law, "_marginal", path)
 
 
+def _sole_field_marginal_capabilities(
+    self: _SoleField, path: str | tuple[str, ...]
+) -> frozenset[type]:
+    """This law's claims at its component, and the record law's report at any other path."""
+    if path == self._component:
+        return _claims(self)
+    return _marginal_claims(self._law, path)
+
+
 #: Each capability a :class:`_SoleField` takes from its record law, with its methods.
 _SOLE_FIELD_CAPABILITIES: dict[type, Mapping[str, Callable[..., Any]]] = {
     SupportsSampling: {
@@ -729,6 +741,7 @@ _SOLE_FIELD_CAPABILITIES: dict[type, Mapping[str, Callable[..., Any]]] = {
     SupportsMarginals: {
         "_marginal": _sole_field_marginal,
         "_marginal_guard": _sole_field_marginal_guard,
+        "_marginal_capabilities": _sole_field_marginal_capabilities,
     },
 }
 
@@ -1124,6 +1137,66 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
     return FactoredDistribution(label, kept)
 
 
+def _kept_claims(factor: Factor, requested: tuple[str, ...]) -> frozenset[type]:
+    """The claims of *factor* as a marginal keeps it: whole, or reduced to *requested*.
+
+    A conditional factor's claims are those of the law it yields at a given
+    value, and a factor reduced to part of its event reports its own marginal
+    there.
+    """
+    if isinstance(factor, ConditionalDistribution):
+        return _kernel_claims(factor)
+    if _kept_whole(factor, requested):
+        return _claims(factor)
+    return _marginal_claims(factor, _factor_request(requested))
+
+
+def _joint_marginal_capabilities(self: Any, path: str | tuple[str, ...]) -> frozenset[type]:
+    """The claims of the factors that the marginal at *path* keeps, read from their declarations.
+
+    One kept factor reports its own claims, since the marginal is that factor
+    or its reduction. Several report what the joint of them claims: sampling
+    and each density when every kept factor has it, a moment when no kept
+    factor conditions on another and every one has the moment, and marginals.
+
+    Raises
+    ------
+    KeyError
+        If a path is not an event path of the joint.
+    TypeError
+        If a path is not a string.
+    ValueError
+        If a selection names no path, or two of its paths share a final segment.
+    """
+    graph: _FactorGraph = self._graph
+    requests = _requests(graph, _requested_paths(self, path))
+    reports = [
+        _kept_claims(graph.factors[index], requested) for index, requested in requests.items()
+    ]
+    if len(reports) == 1:
+        return reports[0]
+
+    def every(protocol: type) -> bool:
+        return all(protocol in report for report in reports)
+
+    claims = {SupportsMarginals}
+    if every(SupportsSampling):
+        claims.add(SupportsSampling)
+    if every(SupportsLogProb):
+        claims |= {SupportsLogProb, SupportsUnnormalizedLogProb}
+    elif every(SupportsUnnormalizedLogProb):
+        claims.add(SupportsUnnormalizedLogProb)
+    if not any(
+        consumer in requests and producer in requests for consumer, producer, _ in graph.edges
+    ):
+        claims.update(
+            moment
+            for moment in (SupportsMean, SupportsVariance, SupportsCovariance, SupportsQuantile)
+            if every(moment)
+        )
+    return frozenset(claims)
+
+
 def _all_claim(factors: Sequence[Factor], protocol: type) -> bool:
     """Whether every factor claims *protocol*, a conditional factor through its twin."""
     twin = _CONDITIONAL_TWINS[protocol]
@@ -1206,6 +1279,7 @@ def _joint_table(owner: str, *, conditional: bool) -> dict[type, Mapping[str, Ca
         table[SupportsMarginals] = {
             "_marginal": _JOINT_IMPLEMENTATIONS["_marginal"],
             "_marginal_guard": _marginal_guard,
+            "_marginal_capabilities": _joint_marginal_capabilities,
         }
     return table
 
@@ -1274,6 +1348,46 @@ def _each_factor(
 
 
 # ---------------------------------------------------------------------------
+# Refinements
+# ---------------------------------------------------------------------------
+
+#: Each registered refinement of the factored law: a more specific class and the
+#: predicate over the flattened factors that admits it, in registration order.
+_REFINEMENTS: list[tuple[type, Callable[[tuple[Factor, ...]], bool]]] = []
+
+
+def _register_refinement(cls: type, predicate: Callable[[tuple[Factor, ...]], bool]) -> None:
+    """Register *cls* as the class of an unconditional joint whose factors satisfy *predicate*.
+
+    A family registers its factored class at import. ``*``, a joint rebuilt by a
+    transform, and a conditional joint bound at its givens construct the most
+    specific registered class whose predicate holds for the flattened factors.
+
+    Raises
+    ------
+    TypeError
+        If *cls* is not a subclass of :class:`FactoredDistribution`.
+    """
+    if not (isinstance(cls, type) and issubclass(cls, FactoredDistribution)):
+        raise TypeError(f"a refinement is a subclass of FactoredDistribution, got {cls!r}")
+    _REFINEMENTS.append((cls, predicate))
+
+
+def _refined_class(factors: tuple[Factor, ...]) -> type:
+    """The most specific registered class whose predicate holds for *factors*.
+
+    A candidate replaces the class chosen so far when it subclasses it, so of
+    two unrelated candidates the earlier registration stands; with none, the
+    class is :class:`FactoredDistribution`.
+    """
+    chosen: type = FactoredDistribution
+    for cls, holds in _REFINEMENTS:
+        if issubclass(cls, chosen) and holds(factors):
+            chosen = cls
+    return chosen
+
+
+# ---------------------------------------------------------------------------
 # The factored kinds
 # ---------------------------------------------------------------------------
 
@@ -1292,7 +1406,9 @@ class FactoredDistribution(Distribution, SupportsFactors):
     factors'. The moment capabilities are decided at construction: an edge-free
     joint has a moment exactly when every factor does, and a dependent joint has
     none. The marginal is resolved per path, and its guard reports whether the
-    marginal at a path is exact.
+    marginal at a path is exact. Constructing the class itself gives the most
+    specific registered refinement whose predicate the factors satisfy, as a
+    family registers its factored class.
 
     A draw is a mapping from each component to its raw value, in canonical
     factor order, and so is each event-typed moment. Sampling is ancestral: the
@@ -1323,9 +1439,13 @@ class FactoredDistribution(Distribution, SupportsFactors):
     def __new__(
         cls, name: str, factors: Sequence[Factor], *, _scope: Mapping[str, int] | None = None
     ) -> FactoredDistribution:
-        protocols = _joint_protocols(_factor_graph(factors, _scope), conditional=False)
+        graph = _factor_graph(factors, _scope)
         base = vars(cls).get("_capability_base", cls)
-        return object.__new__(_capability_subclass(base, protocols))
+        if base is FactoredDistribution:
+            base = _refined_class(graph.factors)
+        return object.__new__(
+            _capability_subclass(base, _joint_protocols(graph, conditional=False))
+        )
 
     def __init__(
         self, name: str, factors: Sequence[Factor], *, _scope: Mapping[str, int] | None = None
@@ -1472,9 +1592,17 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
         return _rebuilt(self, "with_dim_names", names)
 
     def _condition_on(
-        self, given: Record | Mapping[str, Any], /, **kwargs: Any
+        self, given: Record | Mapping[str, Any], /, **options: Any
     ) -> Distribution | ConditionalDistribution:
         """Bind given slots in every factor that names them, and rebuild the joint.
+
+        Parameters
+        ----------
+        given : Record or Mapping[str, Any]
+            Values for some or all of the joint's given slots, by slot name;
+            every given value arrives here.
+        **options : Any
+            Options for the primitive of each factor that a value binds.
 
         Returns
         -------
@@ -1490,7 +1618,7 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
             not match the factor's.
         """
         top = given.children if hasattr(given, "children") else given
-        values = {**dict(top.items()), **kwargs}
+        values = dict(top.items())
         unknown = set(values) - set(self.given_spec)
         if unknown:
             raise KeyError(f"{sorted(unknown)} are not given slots of {self.name!r}")
@@ -1499,15 +1627,17 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
             if isinstance(factor, ConditionalDistribution):
                 bound = {slot: value for slot, value in values.items() if slot in factor.given_spec}
                 if bound:
-                    factor = _bound_factor(factor, bound)
+                    factor = _bound_factor(factor, bound, options)
             factors.append(factor)
         if set(values) == set(self.given_spec):
             return FactoredDistribution(self.name, factors)
         return FactoredConditionalDistribution(self.name, factors)
 
 
-def _bound_factor(factor: ConditionalDistribution, bound: Mapping[str, Any]) -> Factor:
-    """*factor* conditioned on *bound*, checked to keep the factor's declarations.
+def _bound_factor(
+    factor: ConditionalDistribution, bound: Mapping[str, Any], options: Mapping[str, Any]
+) -> Factor:
+    """*factor* conditioned on *bound* under *options*, checked to keep its declarations.
 
     Raises
     ------
@@ -1515,7 +1645,7 @@ def _bound_factor(factor: ConditionalDistribution, bound: Mapping[str, Any]) -> 
         If the primitive returns a law or kernel whose event declaration, or whose
         remaining given slots, differ from the factor's.
     """
-    result = factor._condition_on(bound)
+    result = factor._condition_on(bound, **options)
     remaining = {slot: spec for slot, spec in factor.given_spec.items() if slot not in bound}
     expected = (
         ConditionalDistributionSpec(remaining, factor.event_spec)

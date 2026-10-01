@@ -8,7 +8,6 @@ import pytest
 from probpipe import (
     Distribution,
     EmpiricalDistribution,
-    IncrementalConditioner,
     MultivariateNormal,
     Provenance,
     Weights,
@@ -17,12 +16,6 @@ from probpipe import (
     with_resampling,
 )
 from probpipe.values._function_base import Function
-
-#: The update that a KDE prior cannot take yet.
-_KDE_PRIOR = (
-    "SimpleModel requires a RecordDistribution prior, and the KDE an update converts "
-    "the posterior to is a Distribution"
-)
 
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
@@ -281,94 +274,6 @@ class TestWithResampling:
         # not whatever the post-resampling internal default would be.
         assert jnp.allclose(dists1[1].atoms.values, dists2[1].atoms.values)
         assert jnp.allclose(dists1[2].atoms.values, dists2[2].atoms.values)
-
-
-# ---------------------------------------------------------------------------
-# IncrementalConditioner
-# ---------------------------------------------------------------------------
-
-
-def _mock_condition_fn(model, data, **kwargs):
-    """Conditioning function for testing: return EmpiricalDistribution near data mean."""
-    data_mean = jnp.mean(jnp.asarray(data), axis=0)
-    key = jax.random.PRNGKey(0)
-    noise = jax.random.normal(key, shape=(50, data_mean.shape[0]))
-    samples = data_mean[None, :] + noise * 0.1
-    return EmpiricalDistribution("x", samples)
-
-
-class _SimpleLikelihood:
-    def log_likelihood(self, params, data):
-        return -0.5 * jnp.sum((data - params) ** 2)
-
-
-class TestIncrementalConditioner:
-    def test_update_single_batch(self):
-        """update() conditions on a single data batch, updates state."""
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10.0, name="prior")
-        conditioner = IncrementalConditioner(
-            prior,
-            _SimpleLikelihood(),
-            condition_fn=_mock_condition_fn,
-        )
-        assert conditioner.curr_posterior is prior
-
-        data = jnp.ones((10, 2)) * 2.0
-        posterior = conditioner.update(data=data)
-
-        assert isinstance(posterior, Distribution)
-        assert conditioner.curr_posterior is posterior
-
-    @pytest.mark.pending(reason=_KDE_PRIOR, raises=TypeError)
-    def test_update_successive(self):
-        """Successive update() calls chain posteriors."""
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10.0, name="prior")
-        conditioner = IncrementalConditioner(
-            prior,
-            _SimpleLikelihood(),
-            condition_fn=_mock_condition_fn,
-        )
-        post1 = conditioner.update(data=jnp.ones((10, 2)))
-        post2 = conditioner.update(data=jnp.ones((10, 2)) * 2.0)
-        assert conditioner.curr_posterior is post2
-        assert post1 is not post2
-
-    @pytest.mark.pending(reason=_KDE_PRIOR, raises=TypeError)
-    def test_update_all(self):
-        """update_all() iterates over batches, returns DistributionArray,
-        updates state."""
-        from probpipe import DistributionArray
-
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10.0, name="prior")
-        conditioner = IncrementalConditioner(
-            prior,
-            _SimpleLikelihood(),
-            condition_fn=_mock_condition_fn,
-        )
-        batches = [jnp.ones((10, 2)) * i for i in [1.0, 2.0, 3.0]]
-        dists = conditioner.update_all(data_batches=batches)
-
-        assert isinstance(dists, DistributionArray)
-        assert len(dists) == 4  # prior + 3 steps
-        assert dists[0] is prior
-        assert conditioner.curr_posterior is dists[-1]
-
-    @pytest.mark.pending(reason=_KDE_PRIOR, raises=TypeError)
-    def test_step_property(self):
-        """step property exposes the step function for use with iterate."""
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10.0, name="prior")
-        conditioner = IncrementalConditioner(
-            prior,
-            _SimpleLikelihood(),
-            condition_fn=_mock_condition_fn,
-        )
-        assert isinstance(conditioner.step, Function)
-
-        # Use .step with iterate
-        batches = [jnp.ones((10, 2)) * i for i in [1.0, 2.0]]
-        dists = iterate(conditioner.step, prior, batches)
-        assert len(dists) == 3
-        assert all(isinstance(d, Distribution) for d in dists)
 
 
 # ---------------------------------------------------------------------------

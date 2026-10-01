@@ -18,7 +18,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import Distribution, MultivariateNormal, NumericArraySpec, NumericRecordDistribution
+from probpipe import Distribution, MultivariateNormal, NumericArraySpec, NumericDistribution
 from probpipe.distributions._capabilities import SupportsLogProb
 from probpipe.inference import (
     inference_method_registry,
@@ -612,7 +612,7 @@ class TestProposalNeverCollapses:
 # ---------------------------------------------------------------------------
 
 
-class _NumpyLogProbDist(NumericRecordDistribution, SupportsLogProb):
+class _NumpyLogProbDist(NumericDistribution, SupportsLogProb):
     """A 2-D Gaussian whose log-density is *not* JAX-traceable.
 
     Uses numpy + Python control flow — the same shape as a likelihood

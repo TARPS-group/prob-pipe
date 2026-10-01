@@ -70,8 +70,8 @@ class NormalKernel(ConditionalDistribution):
         self._loc = loc
         self._bound = dict(bound or {})
 
-    def _condition_on(self, given, /, **kwargs):
-        values = {**self._bound, **dict(given.items()), **kwargs}
+    def _condition_on(self, given, /, **options):
+        values = {**self._bound, **dict(given.items())}
         rest = {slot: spec for slot, spec in self.given_spec.items() if slot not in values}
         if rest:
             return type(self)(self.name, rest, self.event_spec, loc=self._loc, bound=values)

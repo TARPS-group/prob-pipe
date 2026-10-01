@@ -5,10 +5,8 @@ The capability protocols of the distribution kinds are defined in
 
 - ``SupportsArrayBackend``, which a ``Distribution`` subclass implements to
   give ``DistributionArray`` a fused storage backend.
-- ``protocols_supported_by_all``, which returns the protocols every one of a
-  list of laws claims.
-- The likelihood protocols, ``Likelihood``, ``ConditionallyIndependentLikelihood``,
-  and ``GenerativeLikelihood``, which the simple models consume.
+- ``GenerativeLikelihood``, the simulator protocol that
+  :func:`~probpipe.validation.predictive_check` takes.
 """
 
 from __future__ import annotations
@@ -162,23 +160,6 @@ class SupportsArrayBackend(Protocol):
         ...
 
 
-def protocols_supported_by_all(
-    leaves: list,
-    candidates: tuple[type, ...],
-) -> tuple[type, ...]:
-    """Return the subset of *candidates* that every leaf satisfies.
-
-    Used by dynamic-protocol factories (``ProductDistribution``,
-    ``SequentialJointDistribution``, ``TransformedDistribution``,
-    ``_RecordDistributionView``, ``FlattenedDistributionView``) when building a
-    cached subclass whose protocol bases track the capabilities of the
-    underlying distribution(s). Pass in the leaves to check and the
-    tuple of ``SupportsFoo`` protocols to test against; get back the
-    protocols that are satisfied by every leaf, in the given order.
-    """
-    return tuple(p for p in candidates if all(isinstance(leaf, p) for leaf in leaves))
-
-
 # ---------------------------------------------------------------------------
 # Likelihoods and generative simulators
 # ---------------------------------------------------------------------------
@@ -192,89 +173,6 @@ class _WorkflowGenerativeProviderCertificate:
     generate_data: Callable[..., Any]
     provider_abi: str
     preflight: Callable[[Any, str], None]
-
-
-@runtime_checkable
-class Likelihood[P, D](Protocol):
-    """Protocol for computing log-likelihood of data given parameters.
-
-    Generic in ``P`` (parameter type) and ``D`` (data type).
-    Any class that defines ``log_likelihood(params, data) -> float``
-    satisfies this protocol.
-    """
-
-    def log_likelihood(self, params: P, data: D) -> float: ...
-
-
-@runtime_checkable
-class ConditionallyIndependentLikelihood[P, D](Likelihood[P, D], Protocol):
-    """Likelihood whose observations are conditionally independent given
-    the parameters.
-
-    Formally, for observations ``y_1, ..., y_N`` the joint log-density
-    factorises into a sum of per-observation log-densities:
-
-    .. math::
-
-        \\log p(y_1, \\ldots, y_N \\mid \\theta)
-            = \\sum_{i=1}^N \\log p(y_i \\mid \\theta).
-
-    The "conditionally" refers to conditioning on the parameters ``θ``:
-    the ``y_i`` are independent *given* ``θ``, not marginally. For
-    regression-style likelihoods each datum carries a covariate ``x_i``
-    that the per-observation density depends on; the factorisation then
-    reads ``Σ_i log p(y_i | x_i, θ)``, with the covariates treated as
-    fixed inputs rather than random variables. This is the "conditionally
-    independent" case rather than the stricter "i.i.d." (where every
-    ``p(y_i | θ)`` is identical).
-
-    Required by :class:`~probpipe.MinibatchedDistribution` for
-    stochastic-gradient inference, and useful independently for held-out
-    predictive log-likelihoods, leave-one-out cross-validation, and
-    PSIS-LOO. Implementations expose :meth:`per_datum_log_likelihood`;
-    :func:`_default_per_datum_log_likelihood` is a length-1-batch fallback
-    for likelihoods that prefer a default over an efficient override.
-    """
-
-    def per_datum_log_likelihood(self, params: P, datum: Any) -> Any:
-        """Log-density of a single datum given parameters.
-
-        Parameters
-        ----------
-        params : P
-            Model parameters.
-        datum : Any
-            One observation; its shape depends on the data format the
-            likelihood was built against (a row ``(x_i, y_i)`` for a
-            regression model, a single value for a scalar response).
-
-        Returns
-        -------
-        Array
-            Scalar log-density of the datum under ``params``.
-        """
-        ...
-
-
-def _default_per_datum_log_likelihood(
-    likelihood: Likelihood,
-    params: Any,
-    datum: Any,
-) -> Any:
-    """Default per-datum log-likelihood — evaluate ``log_likelihood`` on a length-1 batch.
-
-    Fallback for :class:`ConditionallyIndependentLikelihood`
-    implementations that don't have a row-specific shortcut. Adds a
-    leading axis to ``datum`` via ``jax.tree.map(lambda x: x[None, ...], datum)``
-    and calls ``likelihood.log_likelihood(params, batch)``. Less
-    efficient than an override that evaluates the family directly on
-    the un-reshaped datum (no length-1-batch wrap, no associated
-    broadcasting overhead inside ``log_likelihood``).
-    """
-    import jax
-
-    batch = jax.tree.map(lambda x: x[None, ...], datum)
-    return likelihood.log_likelihood(params, batch)
 
 
 @runtime_checkable
@@ -309,9 +207,6 @@ class GenerativeLikelihood[P, D](Protocol):
 
 
 __all__ = [
-    "ConditionallyIndependentLikelihood",
     "GenerativeLikelihood",
-    "Likelihood",
     "SupportsArrayBackend",
-    "protocols_supported_by_all",
 ]

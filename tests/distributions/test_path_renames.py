@@ -20,18 +20,21 @@ import jax.numpy as jnp
 import pytest
 
 from probpipe import (
-    JointGaussian,
+    MultivariateNormal,
     Normal,
     NumericArraySpec,
     NumericRecordBatch,
     OutputSpec,
-    ProductDistribution,
     Record,
     RecordBatch,
     RecordSpec,
 )
 from probpipe.core._dispatch import Feasibility
-from probpipe.distributions import ConditionalDistribution, Distribution
+from probpipe.distributions import (
+    ConditionalDistribution,
+    Distribution,
+    FactoredConditionalDistribution,
+)
 from probpipe.distributions._capabilities import (
     SupportsConditionalLogProb,
     SupportsConditionalMean,
@@ -272,7 +275,7 @@ class _ScoreKernel(ConditionalDistribution, SupportsConditionalLogProb):
 
 
 def _product() -> Distribution:
-    return ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 2.0, 3.0))
+    return Normal("a", 0.0, 1.0) * Normal("b", 2.0, 3.0)
 
 
 #: Three record atoms over ``a/x`` and ``b/y``.
@@ -312,7 +315,9 @@ class TestRenamedLawDeclaration:
         assert [info.name for info in renamed.provenance.parents] == [parent.name]
 
     def test_a_renamed_law_claims_the_capabilities_of_its_parent(self):
-        parent = JointGaussian(mean=_MEAN, cov=_COV, x=1, y=2)
+        parent = MultivariateNormal("x", _MEAN[:1], cov=_COV[:1, :1]) * MultivariateNormal(
+            "y", _MEAN[1:], cov=_COV[1:, 1:]
+        )
         renamed = parent.with_path_names(y="w")
         claims = (
             SupportsSampling,
@@ -347,7 +352,7 @@ class TestRenamedLawValues:
         assert jnp.array_equal(draws["obs"], parent._sample(key, (4,))["y"])
 
     def test_a_field_of_a_whole_record_term_is_renamed_in_its_draws(self, key):
-        parent = ProductDistribution(beta=Normal("beta", 0.0, 1.0), sigma=Normal("sigma", 1.0, 1.0))
+        parent = Normal("beta", 0.0, 1.0) * Normal("sigma", 1.0, 1.0)
         whole = _WholeRecordLaw(parent)
         renamed = whole.with_path_names({"parameters/beta": "parameters/b"}).with_path_names(
             parameters="theta"
@@ -693,11 +698,26 @@ class TestRenamedKernelMoves:
         assert law.event_spec == renamed.event_spec
 
     def test_a_factored_kernel_renames_through_its_factors(self):
+        first = _RecordingKernel("k1", {"x": _SCALAR}, OutputSpec(a=_SCALAR))
+        joint = first * _RecordingKernel("k2", {"w": _SCALAR}, OutputSpec(b=_SCALAR))
+        renamed = joint.with_path_names(x="u", b="c")
+        assert isinstance(renamed, FactoredConditionalDistribution)
+        assert set(renamed.given_spec) == {"u", "w"}
+        assert list(renamed.event_spec.components) == ["a", "c"]
+        assert list(renamed.factors[0].given_spec) == ["u"]
+        assert list(renamed.factors[1].event_spec.components) == ["c"]
+        renamed._condition_on({"u": 1.0, "w": 2.0})
+        assert first.calls == [{"x": 1.0}]
+
+    def test_a_rename_the_factors_cannot_carry_renames_at_the_joint_boundary(self):
+        """Moving a whole term's component into a group changes no factor, so the joint holds it."""
         joint = _RecordingKernel("k1", {"x": _SCALAR}, OutputSpec(a=_SCALAR)) * _RecordingKernel(
             "k2", {"w": _SCALAR}, OutputSpec(b=_SCALAR)
         )
-        with pytest.raises(NotImplementedError):
-            joint.with_path_names(x="u")
+        renamed = joint.with_path_names({"a": "g/a"})
+        assert not isinstance(renamed, FactoredConditionalDistribution)
+        assert renamed.event_spec == OutputSpec(RecordSpec(b=_SCALAR, g=RecordSpec(a=_SCALAR)))
+        assert set(renamed.given_spec) == {"x", "w"}
 
 
 class TestRenamedKernelCapabilities:

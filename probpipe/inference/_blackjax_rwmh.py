@@ -49,9 +49,7 @@ from ._inference_utils import (
     extract_event_spec,
     flat_density,
     get_init_state,
-    get_prior,
     is_jax_traceable,
-    is_simple_model,
     observed_parts,
     parallel_chain_map,
     run_chain_scan,
@@ -777,8 +775,7 @@ class BlackJAXRWMHMethod(InferenceMethod):
     def check(self, target: Any, /, **kwargs: Any) -> Feasibility:
         """Whether the target's parameters have an unnormalized density, from data not in a dict."""
         dist, observed = observed_parts(target)
-        prior = get_prior(dist)
-        if not isinstance(prior, SupportsUnnormalizedLogProb):
+        if not isinstance(dist, SupportsUnnormalizedLogProb):
             return Feasibility(
                 feasible=False,
                 description="Requires SupportsUnnormalizedLogProb",
@@ -793,23 +790,14 @@ class BlackJAXRWMHMethod(InferenceMethod):
     def execute(self, target: Any, /, **kwargs: Any) -> ApproximateDistribution:
         """Random-walk chains on the target's parameters, scored by its prior and likelihood."""
         dist, observed = observed_parts(target)
-        prior = get_prior(dist)
-        log_prob_fn = None
-        if is_simple_model(dist):
-            lik = dist._likelihood
-
-            def log_prob_fn(params, d):
-                return lik.log_likelihood(params=params, data=d)
-
         random_seed = kwargs.get("random_seed", 0)
         init = kwargs.get("init")
         if init is None:
             init = get_init_state(dist, None, random_seed=random_seed)
 
         return rwmh(
-            prior,
+            dist,
             observed,
-            log_prob_fn=log_prob_fn,
             num_results=kwargs.get("num_results", 1000),
             num_warmup=kwargs.get("num_warmup", 500),
             num_chains=kwargs.get("num_chains", 1),

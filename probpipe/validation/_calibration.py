@@ -14,9 +14,8 @@ model that generated the data:
 These orchestrate inference through a **Python loop over** :func:`condition_on`,
 so they work for every backend (blackjax, Stan, PyMC, …); they are therefore not
 themselves jit-compatible, though the per-fit MCMC inside the loop is
-JAX-accelerated where the backend allows. The model must expose a sampleable
-``prior``, a ``likelihood`` with ``generate_data``, and be conditionable — e.g. a
-:class:`~probpipe.SimpleModel` built with a :class:`~probpipe.GLMLikelihood`.
+JAX-accelerated where the backend allows. The model is a joint that samples
+and conditions on its observed fields, such as a GLM likelihood times its prior.
 """
 
 from __future__ import annotations
@@ -37,9 +36,8 @@ from ..distributions._distribution import _array_leaves
 from ..distributions._empirical import EmpiricalDistribution, _coordinates
 from ..distributions._factored import _raw_record
 from ..functions import _context
-from ._predictive_check import _supports_key_arg
+from ..functions._broker import _PROBPIPE_DISTRIBUTION_PROVIDER_ABI
 from ._workflow_rng import (
-    _require_certified_generative_provider,
     _resolve_validation_key,
     _validate_positive_int,
 )
@@ -178,34 +176,34 @@ class SBCResult:
 def simulation_based_calibration(
     model: Any,
     *,
+    observed: str | Sequence[str],
     num_simulations: int,
     num_posterior_draws: int,
-    num_observations: int,
     method: str | None = None,
     key: PRNGKey | None = None,
     **infer_kwargs: Any,
 ) -> SBCResult:
     """Simulation-based calibration of an inference method (Talts et al. 2018).
 
-    For each of ``num_simulations`` draws: sample ``θ★`` from ``model.prior``,
-    generate ``y`` from ``model.likelihood.generate_data(θ★, num_observations)``,
-    fit the posterior with :func:`condition_on`, and record the rank of each
-    flattened ``θ★`` component among the ``num_posterior_draws`` posterior draws.
-    Under correct calibration each rank is ``Uniform{0, …, L}``; the per-parameter
-    KS distance from uniform and its p-value summarize the fit.
+    For each of ``num_simulations`` draws of the joint *model*: split the draw
+    into the parameters ``θ★`` and the *observed* fields ``y``, fit the posterior
+    with :func:`condition_on` at ``y``, and record the rank of each flattened
+    ``θ★`` component among the ``num_posterior_draws`` posterior draws. Under
+    correct calibration each rank is ``Uniform{0, …, L}``; the per-parameter KS
+    distance from uniform and its p-value summarize the fit.
 
     Parameters
     ----------
     model
-        A conditionable generative model — sampleable ``prior``, a ``likelihood``
-        with ``generate_data``, and usable with :func:`condition_on` (e.g.
-        ``SimpleModel(prior, GLMLikelihood(...))``).
+        A joint that samples and that :func:`condition_on` conditions on its
+        observed fields, such as ``likelihood * prior``.
+    observed
+        The fields of a draw that the posterior conditions on; the others are the
+        parameters.
     num_simulations
         Number of ``(θ★, y, posterior)`` replications.
     num_posterior_draws
         Posterior draws per fit (``num_results`` passed to :func:`condition_on`).
-    num_observations
-        Observations per generated dataset.
     method
         Inference method name for :func:`condition_on` (``None`` = auto-select).
     key
@@ -219,6 +217,13 @@ def simulation_based_calibration(
     Returns
     -------
     SBCResult
+
+    Raises
+    ------
+    TypeError
+        If *model* does not sample.
+    ValueError
+        If an *observed* name is not a field of a draw, or no parameter is left.
     """
     _context._assert_workflow_admission()
     num_simulations = _validate_positive_int("num_simulations", num_simulations)
@@ -226,43 +231,39 @@ def simulation_based_calibration(
         "num_posterior_draws",
         num_posterior_draws,
     )
-    num_observations = _validate_positive_int("num_observations", num_observations)
     if "random_seed" in infer_kwargs:
         raise ValueError(
             "simulation_based_calibration manages the per-fit random_seed; "
             "do not pass random_seed in infer_kwargs"
         )
-    prior = model.prior
-    likelihood = model.likelihood
-    if not callable(getattr(prior, "_sample", None)):
-        raise TypeError(f"{type(prior).__name__} does not support SBC prior sampling")
-    generate = likelihood.generate_data
-    if not callable(generate):
-        raise TypeError("model.likelihood.generate_data must be callable")
-    gen_takes_key = _supports_key_arg(likelihood)
+    if not callable(getattr(model, "_sample", None)):
+        raise TypeError(f"{type(model).__name__} does not support SBC joint sampling")
+    observed = (observed,) if isinstance(observed, str) else tuple(observed)
+    components = tuple(model.event_spec.components)
+    unknown = [name for name in observed if name not in components]
+    if unknown:
+        raise ValueError(f"{unknown} are not fields of {model.name!r}; its fields are {components}")
+    parameters = tuple(name for name in components if name not in observed)
+    if not parameters:
+        raise ValueError(f"observing {list(observed)} leaves no parameter of {model.name!r}")
     if key is None:
-        provider_abi = _require_certified_generative_provider(
-            likelihood,
-            "simulation_based_calibration",
-        )
+        # The joint is a ProbPipe law, so its draws follow the distribution ABI.
         key = _resolve_validation_key(
             None,
             operation_kind="simulation-based-calibration",
             execution_mode="sampled",
             sample_shape=(num_simulations,),
-            provider_abi=provider_abi,
+            provider_abi=_PROBPIPE_DISTRIBUTION_PROVIDER_ABI,
         )
 
     rank_rows: list[np.ndarray] = []
     component_names: tuple[str, ...] | None = None
     draws = None
     for _ in range(num_simulations):
-        key, k_theta, k_data, k_mcmc = jax.random.split(key, 4)
-        theta_star = prior._sample(k_theta, ())
-        if gen_takes_key:
-            y = generate(theta_star, num_observations, key=k_data)
-        else:
-            y = generate(theta_star, num_observations)
+        key, k_draw, k_mcmc = jax.random.split(key, 3)
+        draw = _raw_record(model._sample(k_draw, ()))
+        theta_star = {name: draw[name] for name in parameters}
+        y = {name: draw[name] for name in observed}
         seed = int(jax.random.randint(k_mcmc, (), 0, 2_000_000_000))
         posterior = condition_on(
             model,
@@ -275,7 +276,11 @@ def simulation_based_calibration(
         draws = _coordinates(posterior)  # (L, p)
         if component_names is None:
             component_names = _component_names(posterior)
-        theta_flat = _flatten_point(theta_star, posterior.event_spec)  # (p,)
+        point = theta_star
+        if not posterior.event_spec.exposes_record and len(theta_star) == 1:
+            # A whole-term posterior's draw is its one parameter's value.
+            (point,) = theta_star.values()
+        theta_flat = _flatten_point(point, posterior.event_spec)  # (p,)
         rank_rows.append(np.asarray(_ranks(draws, theta_flat)))
 
     ranks = np.stack(rank_rows).astype(int)  # (num_simulations, p)

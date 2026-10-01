@@ -18,7 +18,6 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 import tensorflow_probability.substrates.jax.bijectors as tfb
-import tensorflow_probability.substrates.jax.glm as tfp_glm
 
 import probpipe
 from probpipe import (
@@ -34,13 +33,10 @@ from probpipe import (
     DistributionArray,
     EmpiricalDistribution,
     Exponential,
-    FlatNumericRecordDistribution,
     Gamma,
-    GLMLikelihood,
     HalfCauchy,
     HalfNormal,
     InverseGamma,
-    JointGaussian,
     KDEDistribution,
     Laplace,
     LinearBasisFunction,
@@ -51,19 +47,12 @@ from probpipe import (
     NegativeBinomial,
     Normal,
     NumericDistribution,
-    NumericRecordDistribution,
-    NumericRecordSpec,
     NumericSpec,
     OpaqueBatch,
     OutputSpec,
     Pareto,
     Poisson,
-    ProductDistribution,
     Record,
-    RecordDistribution,
-    SequentialJointDistribution,
-    SimpleGenerativeModel,
-    SimpleModel,
     StudentT,
     TFPDistribution,
     TruncatedNormal,
@@ -78,12 +67,6 @@ from probpipe.core._broadcast_distributions import (
     _make_mixture_marginal,
     _MixtureMarginal,
 )
-from probpipe.core._numeric_record_distribution import (
-    FlattenedDistributionView,
-    NumericRecordDistributionView,
-)
-from probpipe.core._record_distribution import _RecordDistributionView
-from probpipe.core._specs import RecordSpec
 from probpipe.distributions import (
     FactoredDistribution,
     FactoredNumericDistribution,
@@ -91,9 +74,9 @@ from probpipe.distributions import (
 )
 from probpipe.distributions._capabilities import SupportsSampling
 from probpipe.distributions._factored import _SoleField
-from probpipe.distributions._product import TFPProductDistribution
 from probpipe.distributions._views import _RenamedDistribution
 from probpipe.families import (
+    BernoulliFamily,
     BijectorTransformedDistribution,
     FactoredMultivariateGaussian,
     GaussianProcess,
@@ -101,6 +84,7 @@ from probpipe.families import (
     MixtureDistribution,
     PoissonFamily,
     RandomMeasure,
+    glm_likelihood,
 )
 from probpipe.families._conditional import _LogRatePoisson
 from probpipe.families._gaussian import (
@@ -133,7 +117,6 @@ from probpipe.inference._minibatch import (
     _RandomMinibatchLogProb,
 )
 from probpipe.linalg import DenseLinOp
-from probpipe.modeling._likelihood import GenerativeLikelihood
 from probpipe.operations._condition import _unnormalized_conditional, _UnnormalizedConditional
 
 # -- Constructions ------------------------------------------------------------
@@ -156,26 +139,13 @@ def _basis_function(name: str = "f", output_shape: tuple[int, ...] = ()) -> Line
 def _measure() -> MinibatchedDistribution:
     X = jax.random.normal(jax.random.PRNGKey(0), (20, 2))
     y = (X[:, 0] > 0).astype(jnp.float32)
-    prior = MultivariateNormal("theta", loc=jnp.zeros(2), cov=jnp.eye(2))
-    likelihood = GLMLikelihood(tfp_glm.Bernoulli(), x=X, fit_intercept=False)
-    return MinibatchedDistribution(
-        "measure", prior, likelihood, Record("r", X=X, y=y), batch_size=5
-    )
+    prior = MultivariateNormal("beta", loc=jnp.zeros(2), cov=jnp.eye(2))
+    likelihood = glm_likelihood("y", BernoulliFamily(), X=X)
+    return MinibatchedDistribution("measure", prior, likelihood, y, batch_size=5)
 
 
-class _Likelihood:
-    data_template = RecordSpec(y=(3,))
-
-    def log_likelihood(self, params, data):
-        return jnp.asarray(0.0)
-
-
-class _Simulator(GenerativeLikelihood):
-    def log_likelihood(self, params, data):
-        return jnp.asarray(0.0)
-
-    def generate_data(self, params, n_samples, *, key=None):
-        return jnp.zeros((n_samples, 1))
+class _Simulator:
+    """A stand-in for the simulator a learned kernel stores and never calls here."""
 
 
 def _pymc_model_fn(y=None):
@@ -206,10 +176,6 @@ def _stan_view() -> _UnconstrainedStanView:
 
 def _standard_normal_density(x):
     return -0.5 * jnp.sum(jnp.asarray(x) ** 2)
-
-
-def _conditional(z):
-    return Normal("x", z, 1.0)
 
 
 def _zero_mean(X):
@@ -254,17 +220,6 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
         "b", Normal("x", 0.0, 1.0), replicate_size=3
     ),
     BootstrapDistribution: lambda: BootstrapDistribution("measure", Normal("x", 0.0, 1.0), 3),
-    ProductDistribution: lambda: ProductDistribution(
-        a=Normal("a", 0.0, 1.0),
-        e=EmpiricalDistribution("e", OpaqueBatch("labels", ["x", "y"], "e")),
-    ),
-    TFPProductDistribution: lambda: ProductDistribution(
-        a=Normal("a", 0.0, 1.0), b=Gamma("b", 2.0, 1.0)
-    ),
-    SequentialJointDistribution: lambda: SequentialJointDistribution(
-        z=Normal("z", 0.0, 1.0), x=_conditional
-    ),
-    JointGaussian: lambda: JointGaussian(mean=jnp.zeros(3), cov=jnp.eye(3), x=1, y=2),
     DistributionArray: lambda: DistributionArray.from_batched_params(
         Normal, loc=jnp.zeros(3), scale=1.0, name="x"
     ),
@@ -275,15 +230,6 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
         [Normal("y", 0.0, 1.0), Normal("y", 1.0, 1.0)]
     ),
     _ListMarginal: lambda: _ListMarginal(["a", "b"]),
-    FlattenedDistributionView: lambda: ProductDistribution(
-        a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)
-    ).as_flat_distribution(),
-    NumericRecordDistributionView: lambda: NumericRecordDistributionView(
-        MultivariateNormal("theta", jnp.zeros(3), cov=jnp.eye(3)), NumericRecordSpec(a=(), b=(2,))
-    ),
-    _RecordDistributionView: lambda: ProductDistribution(
-        a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)
-    )["a"],
     RandomMeasure: lambda: RandomMeasure("m"),
     MinibatchedDistribution: _measure,
     _FixedMinibatchDistribution: lambda: _measure()._draw_one(jax.random.PRNGKey(0)),
@@ -299,8 +245,6 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
         parents=(MultivariateNormal("z", jnp.zeros(2), cov=jnp.eye(2)),),
         algorithm="test",
     ),
-    SimpleModel: lambda: SimpleModel(Normal("theta", 0.0, 1.0), _Likelihood()),
-    SimpleGenerativeModel: lambda: SimpleGenerativeModel(Normal("theta", 0.0, 1.0), _Simulator()),
     _LearnedDensity: lambda: BayesFlowLikelihood(
         None, Normal("theta", 0.0, 1.0), _Simulator(), data_dim=2
     )._condition_on({"theta": 0.0}),
@@ -313,10 +257,8 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     UnnormalizedDistribution: lambda: UnnormalizedDistribution(
         "u", _standard_normal_density, OutputSpec(x=probpipe.NumericArraySpec((2,)))
     ),
-    FieldView: lambda: FieldView(
-        ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)), "a"
-    ),
-    FactoredDistribution: lambda: Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0),
+    FieldView: lambda: FieldView(Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0), "a"),
+    FactoredDistribution: lambda: Normal("a", 0.0, 1.0) * Gamma("b", 2.0, 1.0),
     _UnnormalizedConditional: lambda: _unnormalized_conditional(
         Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0), Record("given", {"a": 0.0})
     ),
@@ -335,14 +277,12 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     BijectorTransformedDistribution: lambda: BijectorTransformedDistribution(
         "y", Normal("x", 0.0, 1.0), tfb.Exp()
     ),
-    FactoredMultivariateGaussian: lambda: FactoredMultivariateGaussian(
-        "g", [MultivariateNormal("x", jnp.zeros(2), cov=jnp.eye(2))]
-    ),
+    FactoredMultivariateGaussian: lambda: Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0),
     GaussianProcess: lambda: GaussianProcess("f", _zero_mean, _squared_exponential),
     _SoleField: lambda: _SoleField(FactoredDistribution("record", [Normal("beta", 0.0, 1.0)])),
-    _RenamedDistribution: lambda: ProductDistribution(
-        a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)
-    ).with_path_names(a="x"),
+    _RenamedDistribution: lambda: (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)).with_path_names(
+        {"a": "g/a"}
+    ),
 }
 
 # The catalog's families whose implementation has not merged construct by raising.
@@ -351,7 +291,6 @@ _STUB_CONSTRUCTIONS = {
     for cls in (
         MixtureDistribution,
         LinearPushforwardDistribution,
-        FactoredMultivariateGaussian,
     )
 }
 
@@ -361,9 +300,6 @@ _BASES = frozenset(
         NumericDistribution,
         FactoredNumericDistribution,
         TFPDistribution,
-        RecordDistribution,
-        NumericRecordDistribution,
-        FlatNumericRecordDistribution,
         _LearnedLaw,
     }
 )
@@ -417,9 +353,6 @@ def _library_classes() -> set[type]:
 # ``sample`` stacks a tuple draw as rows instead of wrapping it as one opaque
 # value, and wraps a batch-valued draw as an array.
 _DRAW_FAILURES = {
-    SimpleGenerativeModel: pytest.mark.xfail(
-        raises=ValueError, strict=True, reason="sample stacks a tuple draw as rows"
-    ),
     BootstrapReplicateDistribution: pytest.mark.pending(
         reason="the exported sample wraps a batch-valued draw as an array, not as its declared batch",
         raises=AssertionError,
@@ -433,11 +366,7 @@ _RUNTIME_CLASS = pytest.mark.xfail(
     reason="a class made at runtime does not pickle (#417)",
 )
 _PICKLE_FAILURES = {
-    SequentialJointDistribution: _RUNTIME_CLASS,
     _MixtureMarginal: _RUNTIME_CLASS,
-    FlattenedDistributionView: _RUNTIME_CLASS,
-    NumericRecordDistributionView: _RUNTIME_CLASS,
-    _RecordDistributionView: _RUNTIME_CLASS,
 }
 
 

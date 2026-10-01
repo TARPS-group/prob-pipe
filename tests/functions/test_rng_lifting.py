@@ -15,9 +15,9 @@ from probpipe import (
     Function,
     Normal,
     NumericArraySpec,
+    NumericDistribution,
     NumericRecord,
     NumericRecordBatch,
-    NumericRecordDistribution,
     SupportsSampling,
     function,
     workflow_run,
@@ -37,7 +37,7 @@ class _RecordingNormal(Normal):
         return super()._sample(key, sample_shape)
 
 
-class _GoldenBitsDistribution(NumericRecordDistribution, SupportsSampling):
+class _GoldenBitsDistribution(NumericDistribution, SupportsSampling):
     def __init__(self, sample_calls):
         self.sample_calls = sample_calls
         super().__init__("bits", NumericArraySpec((), "float32", real))

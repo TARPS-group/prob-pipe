@@ -18,7 +18,6 @@ from probpipe import (
     Normal,
     NumericRecord,
     NumericRecordBatch,
-    ProductDistribution,
 )
 from probpipe.distributions._capabilities import SupportsSampling
 from probpipe.functions._normalization import (
@@ -383,10 +382,7 @@ class TestStochasticSourceGrouping:
         assert len(stochastic_plan.random_events) == 6
 
     def test_record_views_share_their_known_parent_group(self):
-        joint = ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0, name="x"),
-            y=Normal(loc=1.0, scale=1.0, name="y"),
-        )
+        joint = Normal(loc=0.0, scale=1.0, name="x") * Normal(loc=1.0, scale=1.0, name="y")
 
         plan = _stochastic_plan(
             {
@@ -440,19 +436,17 @@ class TestStochasticSourceGrouping:
         assert plan.runtime_bindings[1].root is second
 
     def test_root_sibling_and_transitive_views_share_canonical_paths(self):
-        joint = ProductDistribution(
-            nested={
-                "left": Normal(loc=0.0, scale=1.0, name="left"),
-                "right": Normal(loc=1.0, scale=1.0, name="right"),
-            },
-            top=Normal(loc=2.0, scale=1.0, name="top"),
+        joint = (
+            Normal(loc=0.0, scale=1.0, name="left") * Normal(loc=1.0, scale=1.0, name="right")
+        ).with_path_names({"left": "nested/left", "right": "nested/right"}) * Normal(
+            loc=2.0, scale=1.0, name="top"
         )
 
         plan = _stochastic_plan(
             {
-                "left": joint["nested"]["left"],
+                "left": joint["nested/left"],
                 "root": joint,
-                "right": joint["nested"]["right"],
+                "right": joint["nested/right"],
                 "top": joint["top"],
             }
         )

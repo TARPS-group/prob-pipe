@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+import tensorflow_probability.substrates.jax.bijectors as tfb
 
 pytest.importorskip("pyabc")  # requires the [pyabc] extra; skipped otherwise
 
@@ -21,47 +22,64 @@ import probpipe.families._continuous as C
 from probpipe import (
     MultivariateNormal,
     Normal,
-    ProductDistribution,
+    NumericArraySpec,
+    OutputSpec,
+    Record,
     condition_on,
-    log_prob,
     mean,
 )
+from probpipe.distributions import (
+    ConditionalDistribution,
+    FactoredDistribution,
+    SupportsConditionalSampling,
+)
+from probpipe.families import BijectorTransformedDistribution
 from probpipe.inference import inference_method_registry
 from probpipe.inference._inference_utils import observed_target
 from probpipe.inference._pyabc import PyABCDistribution, PyABCSMCMethod
-from probpipe.modeling import GenerativeLikelihood, Likelihood
-from probpipe.modeling._simple_generative import SimpleGenerativeModel
 from tests.inference._harness import validate_method
 
 # Observation noise: small enough that the conjugate posterior concentrates.
 _SIGMA = 0.2
 
 
-class _ConjugateGaussianLikelihood(Likelihood, GenerativeLikelihood):
+class _Simulator(ConditionalDistribution, SupportsConditionalSampling):
+    """``y = theta + sigma * noise`` over the prior's fields, concatenated, which only samples."""
+
+    def __init__(self, prior):
+        width = prior.event_spec.spec.vector_size
+        super().__init__(
+            "y", dict(prior.event_spec.components), OutputSpec(y=NumericArraySpec((width,)))
+        )
+
+    def _condition_on(self, given, /, **options):
+        values = dict(given.children if isinstance(given, Record) else given)
+        theta = jnp.concatenate([jnp.ravel(values[slot]) for slot in self.given_spec])
+        return Normal("y", theta, _SIGMA)
+
+    def _conditional_sample(self, given, key, sample_shape=()):
+        return self._condition_on(given)._sample(key, sample_shape)
+
+
+def _model(prior):
     """Conjugate model (any dim): ``theta ~ N(0, tau^2 I)`` with ``tau = 3``,
-    ``y = theta + sigma * noise`` (``sigma = 0.2``). For a single observation the
-    posterior mean ~= y and std ~= 0.20."""
-
-    def log_likelihood(self, params, data):
-        return jnp.array(0.0)
-
-    def generate_data(self, params, num_observations, *, key=None):
-        key = key if key is not None else jax.random.PRNGKey(0)
-        t = jnp.asarray(params).flatten()
-        return t[None, :] + _SIGMA * jax.random.normal(key, (num_observations, t.shape[-1]))
+    ``y = theta + sigma * noise`` (``sigma = 0.2``), the simulator a kernel that
+    samples but has no density, composed with *prior*. For a single observation
+    the posterior mean ~= y and std ~= 0.20."""
+    return _Simulator(prior) * prior
 
 
-def _model(prior) -> SimpleGenerativeModel:
-    return SimpleGenerativeModel(prior, _ConjugateGaussianLikelihood())
+def _observed(*values: float) -> dict:
+    return {"y": jnp.array(values)}
 
 
 def _product(*names: str):
-    return ProductDistribution(*[Normal(loc=0.0, scale=3.0, name=n) for n in names])
+    return FactoredDistribution("prior", [Normal(loc=0.0, scale=3.0, name=n) for n in names])
 
 
 def _means(post) -> dict[str, np.ndarray]:
     m = mean(post)
-    return {f: np.asarray(m[f]).reshape(-1) for f in post.fields}
+    return {f: np.asarray(m[f]).reshape(-1) for f in post.event_spec.components}
 
 
 class TestPyABCCheck:
@@ -78,13 +96,13 @@ class TestPyABCCheck:
         """A bare (non-product) marginal flattens to a length-1 vector, so it's
         feasible — check() and execute() agree (no feasible-then-crash)."""
         model = _model(Normal(loc=0.0, scale=3.0, name="theta"))
-        assert PyABCSMCMethod().check(observed_target(model, jnp.array([2.0]))).feasible
+        assert PyABCSMCMethod().check(observed_target(model, _observed(2.0))).feasible
 
     def test_accepts_multivariate_prior(self):
         """A correlated/multivariate prior is feasible — the joint design isn't
         restricted to products of independent scalar marginals."""
         model = _model(MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 9.0, name="m"))
-        assert PyABCSMCMethod().check(observed_target(model, jnp.array([2.0, -1.0]))).feasible
+        assert PyABCSMCMethod().check(observed_target(model, _observed(2.0, -1.0))).feasible
 
     def test_rejects_prior_without_usable_density(self, monkeypatch):
         """check() scores one in-support draw, so a prior that samples/flattens
@@ -94,7 +112,13 @@ class TestPyABCCheck:
 
         monkeypatch.setattr(_pyabc.PyABCDistribution, "pdf", lambda self, x: float("nan"))
         model = _model(_product("theta"))
-        assert not PyABCSMCMethod().check(observed_target(model, jnp.array([2.0]))).feasible
+        assert not PyABCSMCMethod().check(observed_target(model, _observed(2.0))).feasible
+
+    def test_accepts_a_transformed_prior(self):
+        """A bijector-transformed prior flattens, samples, and scores, so it is feasible."""
+        prior = BijectorTransformedDistribution("theta", Normal("z", 0.0, 1.0), tfb.Exp())
+        model = _model(prior)
+        assert PyABCSMCMethod().check(observed_target(model, _observed(2.0))).feasible
 
 
 class TestPyABCRecovery:
@@ -105,7 +129,7 @@ class TestPyABCRecovery:
     def test_recovery_1d_mean_and_spread(self, seed):
         post = condition_on(
             _model(_product("theta")),
-            jnp.array([2.0]),
+            _observed(2.0),
             method="pyabc_smcabc",
             n_particles=300,
             max_populations=6,
@@ -118,7 +142,7 @@ class TestPyABCRecovery:
     def test_recovery_2d(self):
         post = condition_on(
             _model(_product("a", "b")),
-            jnp.array([1.5, -1.0]),
+            _observed(1.5, -1.0),
             method="pyabc_smcabc",
             n_particles=300,
             max_populations=6,
@@ -134,7 +158,7 @@ class TestPyABCRecovery:
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 9.0, name="m")
         post = condition_on(
             _model(prior),
-            jnp.array([1.5, -1.0]),
+            _observed(1.5, -1.0),
             method="pyabc_smcabc",
             n_particles=300,
             max_populations=6,
@@ -147,7 +171,7 @@ class TestPyABCRecovery:
     def test_auto_dispatch(self):
         post = condition_on.apply(
             _model(_product("theta")),
-            jnp.array([2.0]),
+            _observed(2.0),
             n_particles=200,
             max_populations=4,
             random_seed=0,
@@ -162,7 +186,7 @@ class TestPyABCWeightsAndDraws:
         chain — so the weighted mean actually means something."""
         post = condition_on(
             _model(_product("theta")),
-            jnp.array([2.0]),
+            _observed(2.0),
             method="pyabc_smcabc",
             n_particles=200,
             max_populations=4,
@@ -177,7 +201,7 @@ class TestPyABCWeightsAndDraws:
         posterior mean is not the equal-weight mean of the raw particles."""
         post = condition_on(
             _model(_product("theta")),
-            jnp.array([2.0]),
+            _observed(2.0),
             method="pyabc_smcabc",
             n_particles=200,
             max_populations=4,
@@ -189,8 +213,8 @@ class TestPyABCWeightsAndDraws:
 
     def test_reproducible_across_calls(self):
         kw = dict(method="pyabc_smcabc", n_particles=100, max_populations=3, random_seed=0)
-        a = condition_on(_model(_product("theta")), jnp.array([2.0]), **kw)
-        b = condition_on(_model(_product("theta")), jnp.array([2.0]), **kw)
+        a = condition_on(_model(_product("theta")), _observed(2.0), **kw)
+        b = condition_on(_model(_product("theta")), _observed(2.0), **kw)
         np.testing.assert_array_equal(
             np.asarray(a.draws()["theta"]), np.asarray(b.draws()["theta"])
         )
@@ -198,7 +222,7 @@ class TestPyABCWeightsAndDraws:
     def test_draws_are_name_keyed(self):
         post = condition_on(
             _model(_product("theta")),
-            jnp.array([2.0]),
+            _observed(2.0),
             method="pyabc_smcabc",
             n_particles=80,
             max_populations=3,
@@ -214,14 +238,14 @@ class TestPyABCWeightsAndDraws:
 
         post = condition_on(
             _model(_product("a", "b")),
-            jnp.array([2.0, -1.0]),
+            _observed(2.0, -1.0),
             method="pyabc_smcabc",
             summary_fn=summary_fn,
             n_particles=80,
             max_populations=3,
             random_seed=0,
         )
-        assert set(post.fields) == {"a", "b"}
+        assert set(post.event_spec.components) == {"a", "b"}
 
     def test_custom_distance_fn_is_used(self):
         """A user-supplied distance_fn over the {"y": vector} sumstats replaces
@@ -234,7 +258,7 @@ class TestPyABCWeightsAndDraws:
 
         post = condition_on(
             _model(_product("theta")),
-            jnp.array([2.0]),
+            _observed(2.0),
             method="pyabc_smcabc",
             distance_fn=distance_fn,
             n_particles=80,
@@ -252,7 +276,7 @@ class TestPyABCDiagnostics:
         acceptance rates in (0, 1], and the total simulation count."""
         post = condition_on(
             _model(_product("theta")),
-            jnp.array([2.0]),
+            _observed(2.0),
             method="pyabc_smcabc",
             n_particles=100,
             max_populations=4,
@@ -287,7 +311,7 @@ class TestPyABCDefaults:
         with pytest.raises(_Stop):
             condition_on(
                 _model(_product("theta")),
-                jnp.array([2.0]),
+                _observed(2.0),
                 method="pyabc_smcabc",
                 n_particles=10,
                 max_populations=1,
@@ -315,7 +339,7 @@ class TestPyABCDefaults:
         with pytest.raises(_Stop):
             condition_on(
                 _model(_product("theta")),
-                jnp.array([2.0]),
+                _observed(2.0),
                 method="pyabc_smcabc",
                 eps=my_eps,
                 transitions=my_transitions,
@@ -343,7 +367,7 @@ class TestPyABCDefaults:
         with pytest.raises(_Stop):
             condition_on(
                 _model(_product("theta")),
-                jnp.array([2.0]),
+                _observed(2.0),
                 method="pyabc_smcabc",
                 n_particles=10,
                 max_populations=1,
@@ -369,7 +393,7 @@ class TestPyABCDefaults:
         with pytest.raises(_Stop):
             condition_on(
                 _model(_product("theta")),
-                jnp.array([2.0]),
+                _observed(2.0),
                 method="pyabc_smcabc",
                 n_particles=10,
                 max_populations=2,
@@ -388,8 +412,7 @@ class TestPyABCDistributionBacking:
         prior = _product("a", "b")
         pd = PyABCDistribution(prior, jax.random.PRNGKey(0))
         assert len(pd.get_parameter_names()) == 2
-        flat = jnp.array([0.5, -0.3])
-        expected = float(np.exp(np.asarray(log_prob(prior.as_flat_distribution(), flat))))
+        expected = float(np.exp(np.asarray(prior._log_prob({"a": 0.5, "b": -0.3}))))
         assert pd.pdf({"p0": 0.5, "p1": -0.3}) == pytest.approx(expected, rel=1e-5)
 
     def test_pdf_uses_the_correlated_joint_density(self):
@@ -398,8 +421,7 @@ class TestPyABCDistributionBacking:
         cov = jnp.array([[2.0, 1.2], [1.2, 1.5]])
         prior = MultivariateNormal(loc=jnp.array([0.5, -0.5]), cov=cov, name="m")
         pd = PyABCDistribution(prior, jax.random.PRNGKey(0))
-        flat = jnp.array([0.3, -0.2])
-        expected = float(np.exp(np.asarray(log_prob(prior.as_flat_distribution(), flat))))
+        expected = float(np.exp(np.asarray(prior._log_prob(jnp.array([0.3, -0.2])))))
         assert pd.pdf({"p0": 0.3, "p1": -0.2}) == pytest.approx(expected, rel=1e-5)
 
     def test_rvs_samples_from_the_prior(self):
@@ -413,8 +435,10 @@ class TestPyABCDistributionBacking:
     def test_supports_non_converter_family(self):
         """Any sampleable marginal with a density works (no fixed family list):
         StudentT, which has no scipy-converter mapping, is feasible."""
-        model = _model(ProductDistribution(C.StudentT(df=5.0, loc=0.0, scale=3.0, name="t")))
-        assert PyABCSMCMethod().check(observed_target(model, jnp.array([2.0]))).feasible
+        model = _model(
+            FactoredDistribution("prior", [C.StudentT(df=5.0, loc=0.0, scale=3.0, name="t")])
+        )
+        assert PyABCSMCMethod().check(observed_target(model, _observed(2.0))).feasible
 
 
 # ---------------------------------------------------------------------------

@@ -13,15 +13,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-import tensorflow_probability.substrates.jax.glm as tfp_glm
+import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
-    GLMLikelihood,
     MultivariateNormal,
     NumericArraySpec,
-    NumericRecordBatch,
-    Record,
-    RecordSpec,
     random_unnormalized_log_prob,
 )
 from probpipe.core._specs import OpaqueSpec, OutputSpec
@@ -29,13 +25,14 @@ from probpipe.distributions._capabilities import (
     SupportsRandomUnnormalizedLogProb,
     SupportsUnnormalizedLogProb,
 )
-from probpipe.families import RandomFunction, RandomMeasure
+from probpipe.families import BernoulliFamily, RandomFunction, RandomMeasure, glm_likelihood
 from probpipe.inference._minibatch import (
     MinibatchedDistribution,
     _FixedMinibatchDistribution,
     _MinibatchLogProbAtPoint,
     _RandomMinibatchLogProb,
 )
+from tests.inference.canonical import ObservationKernel
 
 # -- Fixtures ------------------------------------------------------------------
 
@@ -51,49 +48,56 @@ def regression_data():
 
 @pytest.fixture
 def prior():
-    return MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="theta")
+    return MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="beta")
 
 
 @pytest.fixture
 def likelihood(regression_data):
     X, _ = regression_data
-    # ``fit_intercept=False``: this is a no-intercept 2-slope logistic
-    # regression — both prior dims are slopes paired with X's columns.
-    return GLMLikelihood(tfp_glm.Bernoulli(), x=X, fit_intercept=False)
+    # A no-intercept 2-slope logistic regression: both prior dims are slopes
+    # paired with X's columns.
+    return glm_likelihood("y", BernoulliFamily(), X=X)
 
 
 @pytest.fixture
-def data_record(regression_data):
-    X, y = regression_data
-    return Record("r", X=X, y=y)
+def response(regression_data):
+    return regression_data[1]
 
 
 @pytest.fixture
-def measure(prior, likelihood, data_record):
-    return MinibatchedDistribution("measure", prior, likelihood, data_record, batch_size=40)
+def measure(prior, likelihood, response):
+    return MinibatchedDistribution("measure", prior, likelihood, response, batch_size=40)
+
+
+def _log_density(prior, X, y, theta, rows=None, rescale=1.0):
+    """The prior's log-density plus *rescale* times the Bernoulli log-likelihood at *rows*."""
+    if rows is not None:
+        X, y = X[rows], y[rows]
+    per_datum = tfd.Bernoulli(logits=X @ theta).log_prob(y)
+    return prior._log_prob(theta) + rescale * jnp.sum(per_datum)
 
 
 # -- Construction --------------------------------------------------------------
 
 
 class TestConstruction:
-    def test_construction_basic(self, prior, likelihood, data_record):
-        m = MinibatchedDistribution("m", prior, likelihood, data_record, batch_size=32)
+    def test_construction_basic(self, prior, likelihood, response):
+        m = MinibatchedDistribution("m", prior, likelihood, response, batch_size=32)
         assert isinstance(m, MinibatchedDistribution)
         assert m.dataset_size == 200
         assert m.batch_size == 32
 
-    def test_construction_rejects_non_log_prob_prior(self, likelihood, data_record):
+    def test_construction_rejects_non_log_prob_prior(self, likelihood, response):
         """Prior must satisfy SupportsLogProb."""
 
         class _BarePrior:
             pass
 
         with pytest.raises(TypeError, match="SupportsLogProb"):
-            MinibatchedDistribution("measure", _BarePrior(), likelihood, data_record, batch_size=32)
+            MinibatchedDistribution("measure", _BarePrior(), likelihood, response, batch_size=32)
 
     def test_the_parameters_of_a_prior_that_is_no_distribution_are_opaque(
-        self, likelihood, data_record
+        self, likelihood, response
     ):
         """The measure and its draws declare them under one component."""
 
@@ -104,40 +108,33 @@ class TestConstruction:
             def _unnormalized_log_prob(self, value):
                 return jnp.asarray(0.0)
 
-        m = MinibatchedDistribution(
-            "measure", _LogDensity(), likelihood, data_record, batch_size=40
-        )
+        m = MinibatchedDistribution("measure", _LogDensity(), likelihood, response, batch_size=40)
         draw = m._draw_one(jax.random.PRNGKey(0))
         assert m.event_spec.spec.event_spec == draw.event_spec
         assert draw.event_spec == OutputSpec(parameters=OpaqueSpec())
 
-    def test_construction_rejects_non_cil_likelihood(self, prior, data_record):
-        """A bare ``Likelihood`` (no ``per_datum_log_likelihood``) is rejected."""
-
-        class _BareLikelihood:
-            def log_likelihood(self, params, data):
-                return jnp.asarray(0.0)
-
-        with pytest.raises(TypeError, match="ConditionallyIndependentLikelihood"):
-            MinibatchedDistribution("measure", prior, _BareLikelihood(), data_record, batch_size=32)
-
-    def test_construction_validates_batch_size_too_small(self, prior, likelihood, data_record):
-        with pytest.raises(ValueError, match="batch_size must be in"):
-            MinibatchedDistribution("measure", prior, likelihood, data_record, batch_size=0)
-
-    def test_construction_validates_batch_size_too_large(self, prior, likelihood, data_record):
-        with pytest.raises(ValueError, match="batch_size must be in"):
-            MinibatchedDistribution("measure", prior, likelihood, data_record, batch_size=999)
-
-    def test_construction_rejects_nested_records(self, prior, likelihood):
-        """Nested Records fail at construction with an actionable error."""
-        nested = Record(
-            "r",
-            features=Record("r", X=jnp.zeros((200, 2)), extra=jnp.zeros((200,))),
-            y=jnp.zeros((200,)),
+    def test_construction_rejects_a_likelihood_that_scores_no_subset(self, prior, response):
+        """A kernel that cannot score a subset of its observations is rejected."""
+        whole = ObservationKernel(
+            "y",
+            {"beta": prior.event_spec.spec},
+            NumericArraySpec((200,)),
+            lambda beta: tfd.Independent(tfd.Normal(jnp.zeros(200) + beta[0], 1.0), 1),
         )
-        with pytest.raises(ValueError, match="flat Record"):
-            MinibatchedDistribution("measure", prior, likelihood, nested, batch_size=32)
+        with pytest.raises(TypeError, match="scores a subset"):
+            MinibatchedDistribution("measure", prior, whole, response, batch_size=32)
+
+    def test_construction_validates_batch_size_too_small(self, prior, likelihood, response):
+        with pytest.raises(ValueError, match="batch_size must be in"):
+            MinibatchedDistribution("measure", prior, likelihood, response, batch_size=0)
+
+    def test_construction_validates_batch_size_too_large(self, prior, likelihood, response):
+        with pytest.raises(ValueError, match="batch_size must be in"):
+            MinibatchedDistribution("measure", prior, likelihood, response, batch_size=999)
+
+    def test_construction_rejects_data_without_a_leading_axis(self, prior, likelihood):
+        with pytest.raises(ValueError, match="leading axis"):
+            MinibatchedDistribution("measure", prior, likelihood, jnp.asarray(1.0), batch_size=1)
 
 
 # -- Property accessors -------------------------------------------------------
@@ -146,17 +143,12 @@ class TestConstruction:
 class TestAccessors:
     """The convenience properties exposed for inspection / debugging."""
 
-    def test_properties_match_constructor_args(
-        self,
-        prior,
-        likelihood,
-        data_record,
-    ):
+    def test_properties_match_constructor_args(self, prior, likelihood, response):
         m = MinibatchedDistribution(
             "custom_name",
             prior,
             likelihood,
-            data_record,
+            response,
             batch_size=25,
             with_replacement=True,
         )
@@ -165,7 +157,7 @@ class TestAccessors:
         assert m.with_replacement is True
         assert m.prior is prior
         assert m.likelihood is likelihood
-        assert m.data is data_record
+        assert m.data is response
         assert m.name == "custom_name"
 
 
@@ -206,79 +198,31 @@ class TestInnerDraw:
         assert isinstance(inner, _FixedMinibatchDistribution)
         assert isinstance(inner, SupportsUnnormalizedLogProb)
 
-    def test_batch_size_one(self, prior, likelihood, data_record):
-        """Exercise the vmap-over-1-element-axis edge case."""
-        m = MinibatchedDistribution("m", prior, likelihood, data_record, batch_size=1)
+    def test_batch_size_one(self, prior, likelihood, response):
+        """A minibatch of one observation."""
+        m = MinibatchedDistribution("m", prior, likelihood, response, batch_size=1)
         inner = m._draw_one(jax.random.PRNGKey(0))
-        assert inner.batch["X"].shape == (1, 2)
-        assert inner.batch["y"].shape == (1,)
-        # log_prob still works (vmap over a length-1 axis).
+        assert inner.rows.shape == (1,)
         lp = inner._unnormalized_log_prob(jnp.zeros(2))
         assert jnp.asarray(lp).shape == ()
         assert jnp.isfinite(lp)
 
-    def test_inner_log_prob_factorises(self, measure, prior, likelihood):
+    def test_inner_log_prob_factorises(self, measure, prior, regression_data):
         """For a fixed minibatch, log~D_B(theta) = log_prior(theta) + (N/b)*sum_batch."""
+        X, y = regression_data
         inner = measure._draw_one(jax.random.PRNGKey(7))
         theta = jnp.array([0.1, -0.2])
-
-        # Hand-compute the expected value from the captured batch.
-        batch = inner.batch
-        prior_lp = prior._log_prob(theta)
-        per_datum = jax.vmap(
-            likelihood.per_datum_log_likelihood,
-            in_axes=(None, 0),
-        )(theta, batch)
-        expected = prior_lp + measure._rescale_factor * jnp.sum(per_datum)
-
+        expected = _log_density(prior, X, y, theta, inner.rows, measure._rescale_factor)
         actual = inner._unnormalized_log_prob(theta)
         np.testing.assert_allclose(float(actual), float(expected), rtol=1e-5)
 
-    def test_record_and_record_batch_inputs_equivalent(
-        self,
-        prior,
-        likelihood,
-        regression_data,
-    ):
-        """``Record`` and ``NumericRecordBatch`` data inputs produce
-        identical log-densities given the same minibatch indices.
-
-        Locks the ``_index_along_leading`` RecordBatch-via-Record-subclass
-        path: indexing each leaf along the batch axis must give the same
-        per-minibatch surrogate regardless of which container type the
-        user passes.
-        """
-        from probpipe import NumericRecordBatch, NumericRecordSpec
-
-        X, y = regression_data
-        record_data = Record("r", X=X, y=y)
-        record_batch_data = NumericRecordBatch(
-            "batch",
-            {"X": jnp.asarray(X), "y": jnp.asarray(y)},
-            level_names="draw",
-            axes_per_level=(1,),
-            element_spec=NumericRecordSpec(X=(X.shape[1],), y=()),
-        )
-
-        m_rec = MinibatchedDistribution("m_rec", prior, likelihood, record_data, batch_size=20)
-        m_batch = MinibatchedDistribution(
-            "m_batch", prior, likelihood, record_batch_data, batch_size=20
-        )
-
-        # Same key → same minibatch indices → same log-density at theta.
-        key = jax.random.PRNGKey(13)
-        theta = jnp.array([0.1, -0.1])
-        lp_rec = float(m_rec._draw_one(key)._unnormalized_log_prob(theta))
-        lp_ra = float(m_batch._draw_one(key)._unnormalized_log_prob(theta))
-        np.testing.assert_allclose(lp_rec, lp_ra, rtol=1e-5)
-
-    def test_with_replacement_flag(self, prior, likelihood, data_record):
+    def test_with_replacement_flag(self, prior, likelihood, response):
         """``with_replacement=True`` allows repeated indices."""
         m_wr = MinibatchedDistribution(
             "m_wr",
             prior,
             likelihood,
-            data_record,
+            response,
             batch_size=5,
             with_replacement=True,
         )
@@ -286,21 +230,15 @@ class TestInnerDraw:
         # we should see at least one repeat (probability ~ 1 for many draws).
         repeats_seen = 0
         for k in jax.random.split(jax.random.PRNGKey(0), 50):
-            inner = m_wr._draw_one(k)
-            batch_X = inner.batch["X"]
-            unique = jnp.unique(batch_X, axis=0)
-            if unique.shape[0] < batch_X.shape[0]:
+            rows = m_wr._draw_one(k).rows
+            if jnp.unique(rows).shape[0] < rows.shape[0]:
                 repeats_seen += 1
         assert repeats_seen > 0, (
             "Expected at least one minibatch with repeats under with_replacement=True"
         )
 
     def test_batch_size_equals_dataset_size_matches_full(
-        self,
-        prior,
-        likelihood,
-        data_record,
-        regression_data,
+        self, prior, likelihood, response, regression_data
     ):
         """``batch_size == N`` is the degenerate full-batch case.
 
@@ -308,13 +246,13 @@ class TestInnerDraw:
         and the rescale factor is 1.0, so the surrogate exactly equals
         the full-data unnormalized log-density (up to FP).
         """
-        X, _ = regression_data
+        X, y = regression_data
         N = X.shape[0]
         m_full = MinibatchedDistribution(
             "m_full",
             prior,
             likelihood,
-            data_record,
+            response,
             batch_size=N,
             with_replacement=False,
         )
@@ -322,59 +260,10 @@ class TestInnerDraw:
         assert inner.rescale_factor == 1.0
 
         theta = jnp.array([0.2, -0.3])
-        # Full-data log-density
-        per_datum = jax.vmap(
-            likelihood.per_datum_log_likelihood,
-            in_axes=(None, 0),
-        )(theta, data_record)
-        full = prior._log_prob(theta) + jnp.sum(per_datum)
-
         actual = inner._unnormalized_log_prob(theta)
-        np.testing.assert_allclose(float(actual), float(full), rtol=1e-5)
-
-
-# -- Bare-array data path -----------------------------------------------------
-
-
-class TestBareArrayData:
-    """Bare ``jnp.ndarray`` data works when the CIL likelihood's
-    ``per_datum_log_likelihood`` accepts a scalar datum.
-
-    The canonical container is ``Record`` / ``RecordBatch`` (so covariates
-    have named-field provenance), but ``_data_size`` and
-    ``_index_along_leading`` also work on a leading-axis-arrayed
-    response-only dataset.
-    """
-
-    def test_bare_array_data_evaluates(self, prior, regression_data):
-        _, y = regression_data
-        N = y.shape[0]
-
-        class _ResponseOnlyLikelihood:
-            """CIL that handles bare-array datum (scalar y_i).
-
-            Defines ``log_likelihood`` and ``per_datum_log_likelihood``
-            so the protocol check (``isinstance(lik, CIL)``) succeeds.
-            """
-
-            def log_likelihood(self, params, data):
-                return -0.5 * jnp.sum(jnp.asarray(data) ** 2)
-
-            def per_datum_log_likelihood(self, params, datum):
-                return -0.5 * jnp.asarray(datum) ** 2
-
-        m = MinibatchedDistribution(
-            "m",
-            prior,
-            _ResponseOnlyLikelihood(),
-            y,
-            batch_size=20,
+        np.testing.assert_allclose(
+            float(actual), float(_log_density(prior, X, y, theta)), rtol=1e-5
         )
-        assert m.dataset_size == N
-
-        theta = jnp.zeros(2)
-        lp = m._draw_one(jax.random.PRNGKey(0))._unnormalized_log_prob(theta)
-        assert jnp.isfinite(lp)
 
 
 # -- Mathematical correctness --------------------------------------------------
@@ -383,7 +272,7 @@ class TestBareArrayData:
 class TestMathematicalCorrectness:
     """Unbiasedness of the minibatched stochastic-gradient estimator."""
 
-    def test_unbiased_log_density(self, measure, prior, likelihood, data_record):
+    def test_unbiased_log_density(self, measure, prior, regression_data):
         """Average of random log-densities at fixed theta ≈ full-data log-density.
 
         2000 minibatches at the test parameters gives MC SE ~0.15-0.3;
@@ -391,13 +280,9 @@ class TestMathematicalCorrectness:
         bugs (~N) and sign bugs (~|full_lp|), loose enough not to flake
         on the fixed PRNG seed.
         """
+        X, y = regression_data
         theta = jnp.array([0.3, -0.2])
-        # Full reference:
-        per_datum = jax.vmap(
-            likelihood.per_datum_log_likelihood,
-            in_axes=(None, 0),
-        )(theta, data_record)
-        full_lp = float(prior._log_prob(theta) + jnp.sum(per_datum))
+        full_lp = float(_log_density(prior, X, y, theta))
 
         # MC estimate over 2000 minibatches (vmapped for speed).
         rf = measure._random_unnormalized_log_prob()
@@ -407,23 +292,16 @@ class TestMathematicalCorrectness:
 
         np.testing.assert_allclose(mc_mean, full_lp, atol=0.5)
 
-    def test_unbiased_gradient(self, measure, prior, likelihood, data_record):
+    def test_unbiased_gradient(self, measure, prior, regression_data):
         """Average gradient over minibatches ≈ full-data gradient.
 
         2000 vmapped minibatches → per-coord SE ~0.3-0.5. atol=0.75 is
         ~1.5-2.5 SE; catches sign-flip and rescale bugs, tolerates the
         moderate MC noise from a stochastic-gradient estimator.
         """
+        X, y = regression_data
         theta = jnp.array([0.3, -0.2])
-
-        def full_log_density(t):
-            per_datum = jax.vmap(
-                likelihood.per_datum_log_likelihood,
-                in_axes=(None, 0),
-            )(t, data_record)
-            return prior._log_prob(t) + jnp.sum(per_datum)
-
-        full_grad = np.asarray(jax.grad(full_log_density)(theta))
+        full_grad = np.asarray(jax.grad(lambda t: _log_density(prior, X, y, t))(theta))
 
         rf = measure._random_unnormalized_log_prob()
         keys = jax.random.split(jax.random.PRNGKey(2), 2000)
@@ -498,17 +376,3 @@ class TestJITTraceability:
         # Re-call to confirm no retracing failure
         grad2 = step(theta + 0.01)
         assert grad2.shape == (2,)
-
-
-def test_a_multi_axis_batch_is_refused_at_construction(prior, likelihood):
-    """Rows are one axis. A grid's trailing axes have no per-datum reading, and
-    the check belongs where the distribution is built — otherwise ``dataset_size``
-    reports the leading axis and the first draw is what raises."""
-    grid = NumericRecordBatch(
-        "batch",
-        {"x": jnp.ones((4, 3))},
-        ("n", "k"),
-        element_spec=RecordSpec(x=NumericArraySpec(shape=())),
-    )
-    with pytest.raises(ValueError, match="rows are one axis"):
-        MinibatchedDistribution("measure", prior, likelihood, grid, batch_size=2)

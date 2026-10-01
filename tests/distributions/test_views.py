@@ -32,14 +32,15 @@ import pytest
 
 import probpipe
 from probpipe import (
-    JointGaussian,
+    KDEDistribution,
+    MultivariateNormal,
     Normal,
     NumericArraySpec,
     NumericRecordBatch,
+    NumericRecordSpec,
     NumericSpec,
     OpaqueSpec,
     OutputSpec,
-    ProductDistribution,
     Record,
     RecordSpec,
 )
@@ -48,8 +49,10 @@ from probpipe.distributions import (
     ConditionalDistribution,
     Distribution,
     DistributionSpec,
+    FactoredDistribution,
     FieldView,
     NumericDistribution,
+    SupportsConditionalLogProb,
     SupportsMarginals,
 )
 from probpipe.distributions._capabilities import (
@@ -67,8 +70,10 @@ from probpipe.distributions._capabilities import (
     SupportsVariance,
     _capability_guard,
     _capability_subclass,
+    _marginal_claims,
 )
 from probpipe.distributions._empirical import EmpiricalDistribution
+from probpipe.inference import ApproximateDistribution
 from probpipe.linalg import DenseLinOp, LinOp
 
 # -- Declarations -------------------------------------------------------------
@@ -137,19 +142,34 @@ class _UnguardedMarginalLaw(_Law, SupportsMarginals):
     The marginal at a tuple of paths is the product of standard normals named by
     their final segments. Each path whose marginal is requested is recorded in
     ``marginal_calls``. With ``scores=False`` the marginal at a path is a law
-    with no density instead.
+    with no density instead. The law reports that its marginals claim the
+    density when they score, or as ``reports`` states; each path whose report
+    is read is recorded in ``report_calls``.
     """
 
-    def __init__(self, name: str, event_spec: OutputSpec, *, scores: bool = True) -> None:
+    def __init__(
+        self,
+        name: str,
+        event_spec: OutputSpec,
+        *,
+        scores: bool = True,
+        reports: bool | None = None,
+    ) -> None:
         super().__init__(name, event_spec)
         self.scores = scores
+        self.reports = scores if reports is None else reports
         self.marginal_calls: list[Any] = []
+        self.report_calls: list[Any] = []
+
+    def _marginal_capabilities(self, path: str | tuple[str, ...]) -> frozenset[type]:
+        self.report_calls.append(path)
+        return frozenset({SupportsLogProb, SupportsUnnormalizedLogProb} if self.reports else ())
 
     def _marginal(self, path: str | tuple[str, ...]) -> Distribution:
         self.marginal_calls.append(path)
         if not isinstance(path, str):
             components = [each.rsplit("/", 1)[-1] for each in path]
-            return ProductDistribution(**{c: Normal(c, 0.0, 1.0) for c in components})
+            return FactoredDistribution("marginal", [Normal(c, 0.0, 1.0) for c in components])
         component = path.rsplit("/", 1)[-1]
         if self.scores:
             return Normal(component, 0.0, 1.0)
@@ -333,12 +353,22 @@ class _Kernel(ConditionalDistribution):
         return Normal("y", given["beta"], 1.0)
 
 
+class _ScoringKernel(_Kernel, SupportsConditionalLogProb):
+    """The kernel of :class:`_Kernel` with the normal density of ``y`` given ``beta``."""
+
+    def _conditional_log_prob(self, given: Any, value: Any) -> Any:
+        return Normal("y", given["beta"], 1.0)._log_prob(value)
+
+
 def _product() -> Distribution:
-    return ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 2.0, 3.0))
+    return Normal("a", 0.0, 1.0) * Normal("b", 2.0, 3.0)
 
 
 def _joint_gaussian() -> Distribution:
-    return JointGaussian(mean=_MEAN, cov=_COV, x=1, y=2)
+    """``x`` and ``y`` of the means ``_MEAN`` and the diagonal blocks of ``_COV``, independent."""
+    return MultivariateNormal("x", _MEAN[:1], cov=_COV[:1, :1]) * MultivariateNormal(
+        "y", _MEAN[1:], cov=_COV[1:, 1:]
+    )
 
 
 def _dependent_joint() -> Distribution:
@@ -375,7 +405,7 @@ _ROWS: dict[type, set[type]] = {
     SupportsCovariance: {SupportsCovariance},
     SupportsQuantile: {SupportsQuantile},
     SupportsExpectation: {SupportsExpectation},
-    SupportsMarginals: {SupportsLogProb, SupportsUnnormalizedLogProb, SupportsMarginals},
+    SupportsMarginals: {SupportsMarginals},
     SupportsExactConditioning: {SupportsExactConditioning},
     SupportsApproximateConditioning: {SupportsApproximateConditioning},
 }
@@ -389,12 +419,26 @@ def _claimed(term: Any) -> set[type]:
     return {protocol for protocol in _CAPABILITIES if isinstance(term, protocol)}
 
 
-def _derived(parent_claims: set[type], *, numeric: bool) -> set[type]:
-    """What the derivation table gives a view of a parent claiming *parent_claims*."""
+#: The density rows, which a view claims from its parent's report of its marginal.
+_DENSITIES = {SupportsLogProb, SupportsUnnormalizedLogProb}
+
+
+def _derived(parent_claims: set[type], report: frozenset[type], *, numeric: bool) -> set[type]:
+    """What the derivation table gives a view of a parent claiming *parent_claims*.
+
+    *report* is the parent's report of its marginal at the view's path, from
+    which a parent with marginals gives the view the normalized density, or
+    else the unnormalized one.
+    """
     derived: set[type] = set()
     for capability, gives in _ROWS.items():
         if capability in parent_claims and (numeric or capability not in _NUMERIC_ROWS):
             derived |= gives
+    if SupportsMarginals in parent_claims:
+        if SupportsLogProb in report:
+            derived |= _DENSITIES
+        elif SupportsUnnormalizedLogProb in report:
+            derived.add(SupportsUnnormalizedLogProb)
     return derived
 
 
@@ -482,9 +526,6 @@ class TestDeclaration:
         assert view.provenance is not None
         assert [info.name for info in view.provenance.parents] == [parent.name]
 
-    @pytest.mark.pending(
-        reason="a view binds a dimension in the schema of its parent", raises=AssertionError
-    )
     def test_binding_a_dimension_of_a_view_binds_it_in_the_parent(self):
         parent = _Law("parent", OutputSpec(RecordSpec(a=("n",), b=("n",))))
         bound = FieldView(parent, "a").with_dim_sizes(n=3)
@@ -619,22 +660,27 @@ class TestIndexing:
         assert view.parent is parent
         assert view.path == path
 
-    @pytest.mark.parametrize("key", [(), ("theta/mu", 3), ("theta/phi",), 3])
+    @pytest.mark.parametrize("key", [("theta/mu", 3), ("theta/phi",), 3])
     def test_a_key_that_is_not_a_selection_of_view_paths_raises_key_error(self, key):
         view = FieldView(_Law("parent", _EVENT), "model/theta")
         with pytest.raises(KeyError):
             view[key]
 
-    def test_an_empty_selection_raises_key_error(self):
-        with pytest.raises(KeyError):
-            FieldView(_Law("parent", _EVENT), ())
+    def test_an_empty_selection_raises_value_error(self):
+        """An empty tuple is malformed rather than an unknown path."""
+        parent = _Law("parent", _EVENT)
+        with pytest.raises(ValueError, match="at least one path"):
+            FieldView(parent, ())
+        with pytest.raises(ValueError, match="at least one path"):
+            parent[()]
+        with pytest.raises(ValueError, match="at least one path"):
+            FieldView(parent, "model/theta")[()]
 
     @pytest.mark.parametrize("path", [["y"], ("y", 0), 0])
     def test_a_path_that_is_neither_a_string_nor_a_tuple_of_them_raises_type_error(self, path):
         with pytest.raises((TypeError, AttributeError)):
             FieldView(_Law("parent", _EVENT), path)
 
-    @pytest.mark.pending(reason="indexing a law returns a field view", raises=AssertionError)
     def test_indexing_an_exposed_record_returns_a_field_view(self):
         parent = _product()
         view = parent["a"]
@@ -642,7 +688,6 @@ class TestIndexing:
         assert view.parent is parent
         assert view.path == "a"
 
-    @pytest.mark.pending(reason="indexing a law returns a field view", raises=KeyError)
     def test_indexing_a_whole_record_below_its_component_returns_a_field_view(self):
         parent = _Law("parent", _WHOLE)
         view = parent["parameters/beta"]
@@ -660,8 +705,38 @@ class TestCapabilityDerivation:
 
     def test_a_parent_claiming_every_row_gives_the_view_every_row(self):
         capabilities = set(_ROWS) - {SupportsApproximateConditioning}
-        view = FieldView(_parent(*capabilities), "model")
-        assert _claimed(view) == set().union(*(_ROWS[capability] for capability in capabilities))
+        view = FieldView(_parent(*capabilities, SupportsLogProb), "model")
+        expected = set().union(*(_ROWS[capability] for capability in capabilities))
+        assert _claimed(view) == expected | _DENSITIES
+
+    def test_a_parent_with_marginals_reports_its_own_density_by_default(self):
+        assert _claimed(FieldView(_parent(SupportsMarginals, SupportsLogProb), "y")) == {
+            SupportsMarginals,
+            *_DENSITIES,
+        }
+        unnormalized = _parent(SupportsMarginals, SupportsUnnormalizedLogProb)
+        assert _claimed(FieldView(unnormalized, "y")) == {
+            SupportsMarginals,
+            SupportsUnnormalizedLogProb,
+        }
+
+    def test_a_view_claims_the_density_its_parent_reports_for_the_marginal(self):
+        assert _claimed(FieldView(_UnguardedMarginalLaw("parent", _EVENT), "y")) >= _DENSITIES
+        silent = _UnguardedMarginalLaw("parent", _EVENT, scores=False)
+        assert not _DENSITIES & _claimed(FieldView(silent, "y"))
+
+    def test_a_view_reads_the_report_once_at_construction(self):
+        parent = _UnguardedMarginalLaw("parent", _EVENT)
+        view = FieldView(parent, "model/theta/mu")
+        view._log_prob(0.5)
+        view._log_prob(1.5)
+        assert parent.report_calls == ["model/theta/mu"]
+
+    def test_a_joint_reports_the_claims_of_the_factors_a_marginal_keeps(self):
+        joint = Normal("a", 0.0, 1.0) * EmpiricalDistribution("b", jnp.array([0.0, 1.0, 3.0]))
+        assert _claimed(joint["a"]) >= _DENSITIES
+        assert not _DENSITIES & _claimed(joint["b"])
+        assert SupportsSampling in _claimed(joint["b"])
 
     def test_a_parent_claiming_no_capability_gives_a_view_of_the_base_class(self):
         view = FieldView(_Law("parent", _EVENT), "y")
@@ -688,6 +763,7 @@ class TestCapabilityDerivation:
             SupportsMarginals, SupportsRandomLogProb, SupportsRandomUnnormalizedLogProb
         )
         assert _claimed(FieldView(parent, "y")) == _ROWS[SupportsMarginals]
+        assert _marginal_claims(parent, "y") >= {SupportsRandomLogProb}
 
     @pytest.mark.parametrize(
         ("make", "path"),
@@ -704,7 +780,8 @@ class TestCapabilityDerivation:
         parent = make()
         view = FieldView(parent, path)
         numeric = isinstance(view.event_spec.spec, NumericSpec)
-        assert _claimed(view) == _derived(_claimed(parent), numeric=numeric)
+        report = _marginal_claims(parent, path)
+        assert _claimed(view) == _derived(_claimed(parent), report, numeric=numeric)
 
     @pytest.mark.parametrize(
         ("paths", "numeric"), [(("x", "group/w"), True), (("x", "label"), False)]
@@ -737,11 +814,18 @@ class TestGuards:
 
     @pytest.mark.parametrize("path", ["y", "beta"])
     def test_the_density_guard_of_a_joint_view_is_the_joint_marginal_guard(self, path):
-        joint = _dependent_joint()
+        joint = _ScoringKernel("likelihood", {"beta": _REAL}, OutputSpec(y=_REAL)) * Normal(
+            "beta", 0.0, 1.0
+        )
         report = _capability_guard(FieldView(joint, path), "_log_prob")
         assert report == _capability_guard(joint, "_marginal", path)
         # The root factor's marginal is exact, and the child's integrates out its parent.
         assert report.feasible is (path == "beta")
+
+    def test_a_joint_view_of_a_factor_without_a_density_claims_none(self):
+        joint = _dependent_joint()
+        assert not _DENSITIES & _claimed(FieldView(joint, "y"))
+        assert _claimed(FieldView(joint, "beta")) >= _DENSITIES
 
     @pytest.mark.parametrize("method", ["_log_prob", "_unnormalized_log_prob", "_marginal"])
     def test_a_view_of_a_parent_without_marginals_has_no_density_or_marginal_to_guard(self, method):
@@ -749,13 +833,10 @@ class TestGuards:
         with pytest.raises(AttributeError):
             _capability_guard(view, method)
 
-    @pytest.mark.pending(
-        reason="the density guard asks that the parent's marginal at the path score",
-        raises=AssertionError,
-    )
-    def test_the_density_guard_declines_a_marginal_that_does_not_score(self):
+    def test_a_marginal_reported_without_a_density_gives_no_density_to_guard(self):
         parent = _UnguardedMarginalLaw("parent", _EVENT, scores=False)
-        assert _capability_guard(FieldView(parent, "model/theta/mu"), "_log_prob").feasible is False
+        with pytest.raises(AttributeError):
+            _capability_guard(FieldView(parent, "model/theta/mu"), "_log_prob")
 
     def test_the_marginal_guard_at_a_view_path_is_the_parent_guard_at_the_joined_path(self):
         declined = Feasibility(False, "no closed form at model/theta/mu")
@@ -923,9 +1004,7 @@ class TestDerivedBehavior:
         assert jnp.array_equal(draws["tau"], parent._sample(key, (4,))["model/theta/tau"])
 
     def test_a_view_of_a_mapping_parent_draws_its_node_of_the_mapping(self, key):
-        parent = ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 2.0, 3.0)) * Normal(
-            "c", 0.0, 1.0
-        )
+        parent = Normal("a", 0.0, 1.0) * Normal("b", 2.0, 3.0) * Normal("c", 0.0, 1.0)
         draws = FieldView(parent, ("c", "b"))._sample(key, (3,))
         parent_draws = parent._sample(key, (3,))
         assert isinstance(draws, dict) and list(draws) == ["c", "b"]
@@ -981,8 +1060,9 @@ class TestDerivedBehavior:
         quantiles = FieldView(_NumericLaw("parent"), "model/theta/tau")._quantile(0.5)
         assert jnp.allclose(quantiles, jnp.array([1.5, 2.5]))
 
-    def test_the_density_raises_when_the_marginal_does_not_score(self):
-        view = FieldView(_UnguardedMarginalLaw("parent", _EVENT, scores=False), "model/theta/mu")
+    def test_the_density_raises_when_the_reported_marginal_does_not_score(self):
+        parent = _UnguardedMarginalLaw("parent", _EVENT, scores=False, reports=True)
+        view = FieldView(parent, "model/theta/mu")
         with pytest.raises(TypeError, match="no normalized density"):
             view._log_prob(0.5)
 
@@ -1010,9 +1090,6 @@ class TestDerivedBehavior:
             FieldView(parent, "model/theta/tau")._condition_on({"tau": jnp.zeros(2)})
         assert parent.given_calls == []
 
-    @pytest.mark.pending(
-        reason="a view's raw form is its parent's detached marginal", raises=AttributeError
-    )
     def test_the_raw_form_of_a_view_is_the_detached_marginal(self):
         parent = _UnguardedMarginalLaw("parent", _EVENT)
         view = FieldView(parent, "model/theta/mu")
@@ -1020,6 +1097,47 @@ class TestDerivedBehavior:
         assert parent.marginal_calls == ["model/theta/mu"]
         assert not isinstance(raw, FieldView)
         assert (raw.name, raw.spec, raw.provenance) == (view.name, view.spec, None)
+
+
+class TestTheViewOfAWeightedLaw:
+    """A field view of a weighted law takes the weighted moments at its path.
+
+    The atoms of ``a`` are 0, 1, 2, and 3 with weights 0.7, 0.1, 0.1, and 0.1,
+    so the weighted mean is 0.6 and the weighted variance 1.04, where the
+    unweighted ones are 1.5 and 1.25.
+    """
+
+    _WEIGHTS = jnp.array([0.7, 0.1, 0.1, 0.1])
+    _A = jnp.array([0.0, 1.0, 2.0, 3.0])
+    _B = jnp.array([10.0, 20.0, 30.0, 40.0])
+
+    def _record_atoms(self):
+        return NumericRecordBatch(
+            "atoms",
+            {"a": self._A, "b": self._B},
+            "obs",
+            element_spec=NumericRecordSpec(a=(), b=()),
+        )
+
+    def test_a_weighted_posterior(self):
+        prior = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
+        chain = jnp.stack([self._A, self._B], axis=1)
+        posterior = ApproximateDistribution(
+            [chain], weights=self._WEIGHTS, event_spec=prior.event_spec
+        )
+        view = posterior["a"]
+        assert float(probpipe.mean(view)) == pytest.approx(0.6)
+        assert float(probpipe.variance(view)) == pytest.approx(1.04)
+
+    def test_a_weighted_record_empirical_law(self):
+        view = EmpiricalDistribution("d", self._record_atoms(), self._WEIGHTS)["a"]
+        assert float(probpipe.mean(view)) == pytest.approx(0.6)
+        assert float(probpipe.variance(view)) == pytest.approx(1.04)
+
+    def test_a_weighted_record_kde(self):
+        # A KDE's mean is its atoms' weighted mean, whatever the bandwidth.
+        law = KDEDistribution("kde", self._record_atoms(), weights=self._WEIGHTS)
+        assert float(probpipe.mean(law["a"])) == pytest.approx(0.6)
 
 
 class TestSelections:

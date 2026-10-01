@@ -12,8 +12,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..core._numeric_record_distribution import NumericRecordDistribution
 from ..core.provenance import Provenance
+from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
 from ..families._backend import TFPDistribution
 from ._registry import (
@@ -27,17 +27,17 @@ from ._registry import (
     _sampled_conversion_plan,
 )
 
-#: The numeric ProbPipe laws: the record laws and the parametric families.
-_NUMERIC_LAWS = (NumericRecordDistribution, TFPDistribution)
+#: The numeric ProbPipe laws a backend object converts to: the parametric families.
+_NUMERIC_LAWS = (TFPDistribution,)
 
 
 def _natural_target(pp_cls: type, target_type: type) -> bool:
     """Whether the family *pp_cls* of a backend object is a law of the class *target_type*.
 
-    A request for a numeric record law asks for the backend object's numeric
+    A request for any ``Distribution`` asks for the backend object's own
     ProbPipe law, which a parametric family is.
     """
-    return issubclass(pp_cls, target_type) or target_type is NumericRecordDistribution
+    return issubclass(pp_cls, target_type)
 
 
 try:
@@ -175,17 +175,19 @@ class ScipyConverter(Converter):
     def source_types(self) -> tuple[type, ...]:
         if not _HAS_SCIPY:
             return ()
-        return (_rv_frozen, NumericRecordDistribution, TFPDistribution, EmpiricalDistribution)
+        return (_rv_frozen, TFPDistribution, EmpiricalDistribution)
 
     def target_types(self) -> tuple[type, ...]:
         if not _HAS_SCIPY:
             return ()
-        return (NumericRecordDistribution, TFPDistribution, EmpiricalDistribution, _rv_frozen)
+        return (TFPDistribution, EmpiricalDistribution, _rv_frozen)
 
     @staticmethod
     def _is_probpipe_target(target_type: type) -> bool:
         return isinstance(target_type, type) and (
-            issubclass(target_type, _NUMERIC_LAWS) or issubclass(target_type, EmpiricalDistribution)
+            target_type is Distribution
+            or issubclass(target_type, _NUMERIC_LAWS)
+            or issubclass(target_type, EmpiricalDistribution)
         )
 
     def check(self, source: Any, target_type: type) -> ConversionInfo:

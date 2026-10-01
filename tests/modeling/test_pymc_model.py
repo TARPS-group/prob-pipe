@@ -14,9 +14,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from probpipe import ApproximateDistribution
+from probpipe import ApproximateDistribution, PyMCModel
 from probpipe.core._specs import NumericArraySpec
-from probpipe.modeling import PyMCModel
 
 
 @contextmanager

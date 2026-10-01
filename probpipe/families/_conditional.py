@@ -123,6 +123,12 @@ class _Link(Function, SupportsInverse):
         """The mean at the linear predictor *y*, ``g⁻¹(y)``."""
         return self._inverse_map(y)
 
+    def __reduce__(self) -> tuple[Any, ...]:
+        """A canonical link pickles as a reference to the module's own instance."""
+        if _CANONICAL_LINKS.get(self.name) is self:
+            return (_canonical_link, (self.name,))
+        return super().__reduce__()
+
     def __repr__(self) -> str:
         return f"link({self.name!r})"
 
@@ -142,6 +148,14 @@ def _log(mean: Array) -> Array:
 _IDENTITY_LINK = _Link("identity", _identity, _identity)
 _LOGIT_LINK = _Link("logit", _logit, jax.nn.sigmoid)
 _LOG_LINK = _Link("log", _log, jnp.exp)
+
+#: The canonical links by name, which a pickle of one names.
+_CANONICAL_LINKS = {link.name: link for link in (_IDENTITY_LINK, _LOGIT_LINK, _LOG_LINK)}
+
+
+def _canonical_link(name: str) -> _Link:
+    """The module's canonical link named *name*, which unpickling a canonical link returns."""
+    return _CANONICAL_LINKS[name]
 
 
 def _require_invertible(link: Any, owner: str) -> None:
@@ -614,15 +628,48 @@ class _GLMLikelihood(
         """
         self.given_spec.bind_dims_from_value(dict(values))
         every = {**self._fixed, **values}
-        predictor = every["X"] @ every["beta"]
+        return self._response_law(every, every["X"], self.event_spec)
+
+    def _response_law(
+        self, every: Mapping[str, Array], X: Array, event_spec: OutputSpec | None
+    ) -> Distribution:
+        """The law of the responses of the rows of *X*, at the values *every* gives."""
+        predictor = X @ every["beta"]
         dispersion = every.get("dispersion")
         if self._canonical:
             return self._family._build_canonical(
-                self.name, predictor, dispersion, event_spec=self.event_spec
+                self.name, predictor, dispersion, event_spec=event_spec
             )
         return self._family.build(
-            self.name, self._link._inverse(predictor), dispersion, event_spec=self.event_spec
+            self.name, self._link._inverse(predictor), dispersion, event_spec=event_spec
         )
+
+    def _observation_log_prob(
+        self, given: Record | Mapping[str, Any], value: Any, rows: Array
+    ) -> Array:
+        """The log-density of the observations of the response *value* at *rows*.
+
+        The observations are conditionally independent, so the log-density of a
+        subset of them is a sum over its rows, which is how a minibatched target
+        and a pointwise log-likelihood read the likelihood.
+
+        Parameters
+        ----------
+        given : Record or Mapping[str, Any]
+            A value of every given slot.
+        value : Array
+            The response vector.
+        rows : Array
+            The indices of the observations, along the response.
+
+        Raises
+        ------
+        KeyError
+            If a name is not a given slot, or a given slot has no value.
+        """
+        every = {**self._fixed, **self._complete_values(given)}
+        response = jnp.asarray(value)[rows]
+        return self._response_law(every, every["X"][rows], None)._log_prob(response)
 
     # -- the conditional capabilities ------------------------------------------
 

@@ -55,16 +55,9 @@ from probpipe.core._numeric_array import NumericArray
 from probpipe.core._numeric_array_batch import NumericArrayBatch
 from probpipe.core._numeric_record import NumericRecord
 from probpipe.core._numeric_record_batch import NumericRecordBatch
-from probpipe.core._numeric_record_distribution import (
-    FlatNumericRecordDistribution,
-    FlattenedDistributionView,
-    NumericRecordDistribution,
-    NumericRecordDistributionView,
-)
 from probpipe.core._opaque import Opaque, OpaqueSpec
 from probpipe.core._opaque_batch import OpaqueBatch
 from probpipe.core._record_batch import RecordBatch
-from probpipe.core._record_distribution import RecordDistribution
 from probpipe.core._specs import (
     InputSpec,
     NumericArraySpec,
@@ -101,12 +94,6 @@ from probpipe.core.transition import (
     iterate,
     with_conversion,
     with_resampling,
-)
-from probpipe.distributions import (
-    JointGaussian,
-    # Joint
-    ProductDistribution,
-    SequentialJointDistribution,
 )
 from probpipe.distributions._capabilities import (
     SupportsApproximateConditioning,
@@ -199,16 +186,6 @@ from probpipe.inference import (
     learn_amortized_ratio,
     rwmh,
 )
-from probpipe.modeling import (
-    ConditionallyIndependentLikelihood,
-    GenerativeLikelihood,
-    GLMLikelihood,
-    IncrementalConditioner,
-    Likelihood,
-    ProbabilisticModel,
-    SimpleGenerativeModel,
-    SimpleModel,
-)
 from probpipe.record import Design, FullFactorialDesign
 from probpipe.validation import predictive_check
 from probpipe.values import (
@@ -240,7 +217,6 @@ __all__ = [
     "BroadcastDistribution",
     "Categorical",
     "Cauchy",
-    "ConditionallyIndependentLikelihood",
     "Constraint",
     "ConversionInfo",
     "ConversionMethod",
@@ -252,25 +228,18 @@ __all__ = [
     "DistributionSpec",
     "EmpiricalDistribution",
     "Exponential",
-    "FlatNumericRecordDistribution",
-    "FlattenedDistributionView",
     "FullFactorialDesign",
     "Function",
     "FunctionBatch",
     "FunctionSpec",
-    "GLMLikelihood",
     "Gamma",
     "GaussianRandomFunction",
-    "GenerativeLikelihood",
     "HalfCauchy",
     "HalfNormal",
-    "IncrementalConditioner",
     "InputSpec",
     "InverseGamma",
-    "JointGaussian",
     "KDEDistribution",
     "Laplace",
-    "Likelihood",
     "LinearBasisFunction",
     "LogNormal",
     "MathematicalDomainError",
@@ -288,8 +257,6 @@ __all__ = [
     "NumericDistribution",
     "NumericRecord",
     "NumericRecordBatch",
-    "NumericRecordDistribution",
-    "NumericRecordDistributionView",
     "NumericRecordSpec",
     "NumericSpec",
     "Opaque",
@@ -299,24 +266,20 @@ __all__ = [
     "ParentInfo",
     "Pareto",
     "Poisson",
-    "ProbabilisticModel",
-    "ProductDistribution",
     "Provenance",
     "ProvenanceMode",
+    "PyMCModel",
     "RandomFunction",
     "RandomMeasure",
     "Record",
     "RecordBatch",
-    "RecordDistribution",
     "RecordSpec",
     "ReplayCompatibilityError",
     "ReplayUnsupportedCallableError",
     "ResolutionError",
     "ResultKindError",
     "ResultSchemaError",
-    "SequentialJointDistribution",
-    "SimpleGenerativeModel",
-    "SimpleModel",
+    "StanModel",
     "StudentT",
     "SupportsApproximateConditioning",
     "SupportsArrayBackend",
@@ -406,3 +369,12 @@ from probpipe.core.ops import (
     variance,
 )
 from probpipe.operations import expectation, expectation_method_registry
+
+
+def __getattr__(name: str):
+    """The program-defined families, which ``probpipe`` exports lazily."""
+    if name in ("PyMCModel", "StanModel"):
+        from probpipe.families import _programs
+
+        return getattr(_programs, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

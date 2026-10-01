@@ -153,8 +153,5 @@ def test_caller_owned_and_provider_local_seed_paths_remain():
     inference_source = "\n".join(
         path.read_text() for path in _python_sources(_PACKAGE_ROOT / "inference")
     )
-    glm_source = (_PACKAGE_ROOT / "modeling" / "_glm.py").read_text()
 
     assert "jax.random.PRNGKey(random_seed)" in inference_source
-    assert "self._key = jax.random.PRNGKey(seed)" in glm_source
-    assert "self._key, key = jax.random.split(self._key)" in glm_source

@@ -239,25 +239,6 @@ class TestResolveGenerativeLikelihood:
         gl = _FakeLikelihood()
         assert _resolve_generative_likelihood(None, gl) is gl
 
-    def test_subscript_data_path(self):
-        gl = _FakeLikelihood()
-
-        class _Model:
-            def __getitem__(self, k):
-                return gl if k == "data" else KeyError(k)
-
-        result = _resolve_generative_likelihood(_Model())
-        assert result is gl
-
-    def test_likelihood_attribute(self):
-        gl = _FakeLikelihood()
-
-        class _Posterior:
-            _likelihood = gl
-
-        result = _resolve_generative_likelihood(_Posterior())
-        assert result is gl
-
     def test_generative_likelihood_attribute(self):
         gl = _FakeLikelihood()
 

@@ -24,7 +24,6 @@ from typing import Any, Union, get_args, get_origin
 
 from ..converters import converter_registry
 from ..core._distribution_array import DistributionArray
-from ..core._numeric_record_distribution import NumericRecordDistribution
 from ..distributions._capabilities import (
     SupportsApproximateConditioning,
     SupportsCovariance,
@@ -40,7 +39,7 @@ from ..distributions._capabilities import (
     SupportsUnnormalizedLogProb,
     SupportsVariance,
 )
-from ..distributions._distribution import Distribution
+from ..distributions._distribution import Distribution, NumericDistribution
 from ..values import _binding
 
 DISTRIBUTION_HINT_PROTOCOLS: tuple[type, ...] = (
@@ -92,7 +91,7 @@ def normalize_distribution_values(
     Non-distribution values are copied through unchanged. Distribution
     values may be converted according to the function's type hints, and
     external distribution objects in non-distribution slots are converted
-    to ProbPipe ``NumericRecordDistribution`` so the distribution-broadcast
+    to their ProbPipe law so the distribution-broadcast
     path can sample them uniformly.
     """
     out = dict(values)
@@ -122,7 +121,7 @@ def normalize_distribution_values(
             out = _binding.replace_input_ref(
                 out,
                 ref,
-                converter_registry.convert(value, NumericRecordDistribution),
+                converter_registry.convert(value, Distribution),
             )
 
     return out
@@ -174,10 +173,10 @@ def _convert_hinted_distribution(value: Any, expected: Any, *, label: str) -> An
     (arm,) = arms
     if _is_concrete_distribution_hint(arm):
         target = _hint_class(arm)
-        if not isinstance(value, Distribution) and issubclass(NumericRecordDistribution, target):
-            # A backend object enters ProbPipe as the representation the registry
-            # converts it to, which is an instance of the class the parameter names.
-            target = NumericRecordDistribution
+        if not isinstance(value, Distribution) and issubclass(NumericDistribution, target):
+            # A backend object enters ProbPipe as the law the registry converts it
+            # to, which is an instance of the class the parameter names.
+            target = Distribution
         return converter_registry.convert(value, target)
     if arm in DISTRIBUTION_HINT_PROTOCOLS and isinstance(value, Distribution):
         try:

@@ -6,12 +6,10 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-import tensorflow_probability.substrates.jax.glm as tfp_glm
 
 from probpipe import (
     ApproximateDistribution,
     EmpiricalDistribution,
-    GLMLikelihood,
     MultivariateNormal,
     Normal,
     NumericArraySpec,
@@ -24,6 +22,7 @@ from probpipe.validation import predictive_check as pc_direct
 from probpipe.validation._predictive_check import (
     _supports_key_arg,
 )
+from tests._regression_provider import CertifiedRegression
 
 # ---------------------------------------------------------------------------
 # Helper: JAX-based generative likelihood
@@ -396,6 +395,19 @@ def _posteriors_of(draws, spec):
     return record, whole
 
 
+class _PoissonRegression:
+    """A Poisson regression with an intercept that generates every replicate in one call."""
+
+    def __init__(self, X):
+        self._X = X
+
+    def generate_data(self, params, num_observations, *, key=None):
+        beta = jnp.asarray(params["beta"] if hasattr(params, "keys") else params)
+        rate = jnp.exp(beta[..., :1] + beta[..., 1:] @ self._X.T)
+        key = jax.random.PRNGKey(0) if key is None else key
+        return jax.random.poisson(key, rate).astype(jnp.float32)
+
+
 class TestARecordPosterior:
     """A record posterior's draws reach the likelihood as records, as an array posterior's do."""
 
@@ -404,7 +416,7 @@ class TestARecordPosterior:
         X = jnp.asarray(rng.normal(size=(30, 2)), jnp.float32)
         y = jnp.asarray(rng.poisson(2.0, size=30), jnp.float32)
         draws = jnp.asarray(0.05 * rng.normal(size=(200, 3)), jnp.float32)
-        likelihood = GLMLikelihood(tfp_glm.Poisson(), X)
+        likelihood = _PoissonRegression(X)
         results = [
             predictive_check(
                 law, likelihood, jnp.mean, y, num_replications=40, key=jax.random.PRNGKey(0)
@@ -442,7 +454,7 @@ class TestARecordPosterior:
         X = jnp.asarray(rng.normal(size=(30, 2)), jnp.float32)
         y = jnp.asarray(rng.poisson(2.0, size=30), jnp.float32)
         draws = jnp.asarray(0.05 * rng.normal(size=(200, 3)), jnp.float32)
-        likelihood = GLMLikelihood(tfp_glm.Poisson(), X)
+        likelihood = _PoissonRegression(X)
         rows = NumericRecord("posterior", beta=np.asarray(draws))
         result = predictive_check(
             rows, likelihood, jnp.mean, y, num_replications=40, key=jax.random.PRNGKey(0)
@@ -566,7 +578,7 @@ class TestPredictiveCheckBatched:
         x = jnp.linspace(-1, 1, 20)
         X = jnp.asarray(x)[:, None]
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="beta")
-        lik = GLMLikelihood(tfp_glm.Poisson(), X)
+        lik = CertifiedRegression("poisson", X)
         return prior, lik
 
     def test_supports_key_arg_glm(self, glm_setup):
@@ -578,7 +590,7 @@ class TestPredictiveCheckBatched:
         assert not _supports_key_arg(likelihood)
 
     def test_batched_path_used_for_glm(self, glm_setup):
-        """GLMLikelihood triggers the batched path and produces correct results."""
+        """A keyed simulator triggers the batched path and produces correct results."""
         prior, lik = glm_setup
         result = predictive_check(
             prior,

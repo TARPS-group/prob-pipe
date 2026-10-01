@@ -10,11 +10,10 @@ Two target builders:
 - :func:`build_target_log_prob` returns a Record-shaped target
   (the TFP-flavoured interface).
 - :func:`build_target_log_prob_flat` returns a flat-vector target —
-  the BlackJAX entry point. It wraps the Record-shaped target through
-  the prior's
-  :meth:`~probpipe.core._numeric_record_distribution.NumericRecordDistribution.as_flat_distribution`
-  view so kernels that operate on flat parameter vectors plug in
-  without per-backend flatten / unflatten plumbing.
+  the BlackJAX entry point. It rebuilds the prior's event from each flat
+  vector, the layout III.7 fixes for a numeric law, so kernels that operate
+  on flat parameter vectors plug in without per-backend flatten / unflatten
+  plumbing.
 
 Scope: private to ``probpipe.inference``. Symbols are package-private
 utilities shared across the backend modules; not re-exported through
@@ -23,8 +22,8 @@ utilities shared across the backend modules; not re-exported through
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
-from typing import TYPE_CHECKING, Any
+from collections.abc import Callable, Iterable, Mapping
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 if TYPE_CHECKING:
     from xarray import DataTree
@@ -36,22 +35,29 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..core._numeric_record import _reconstruct_from_vector
-from ..core._numeric_record_distribution import FlattenedDistributionView
 from ..core._record_spec import NumericRecordSpec
+from ..core._spec_base import NumericArraySpec
 from ..core._specs import OutputSpec
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike
 from ..distributions._capabilities import SupportsSampling, _is_normalized
 from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution
+from ..distributions._factored import (
+    FactoredConditionalDistribution,
+    FactoredDistribution,
+    _children,
+    _components_of,
+    _event_of,
+    _factor_graph,
+)
 from ..families._backend import TFPDistribution
-from ..operations._condition import _UnnormalizedConditional
+from ..operations._condition import _unnormalized_conditional, _UnnormalizedConditional
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "as_prng_key",
-    "build_likelihood_flat",
     "build_mcmc_datatree",
     "build_target_log_prob",
     "build_target_log_prob_flat",
@@ -59,14 +65,17 @@ __all__ = [
     "extract_event_spec",
     "flat_density",
     "flat_record",
+    "flat_unflatten",
+    "flat_vector",
     "get_init_state",
-    "get_prior",
     "is_jax_traceable",
-    "is_simple_model",
     "joint_and_given",
+    "likelihood_flat",
+    "model_factors",
     "observed_parts",
     "observed_target",
     "parallel_chain_map",
+    "parameter_given",
     "posterior_var_order",
     "run_chain_scan",
 ]
@@ -190,41 +199,45 @@ def observed_target(model: Any, observed: Any) -> Any:
     """The target of normalizing *model* at *observed*, as ``probpipe.condition_on`` passes them.
 
     A model with no data, and an object that is not a law, is its own target.
-    A kernel binds the data its given slots name first, as currying does, when
-    the law it yields needs normalizing or observed data remain. Otherwise the
-    target is the unnormalized conditional of the model at the data, over the
-    parameters :func:`get_prior` declares, from which :func:`observed_parts`
-    reads the model and the data back.
+    Data keyed by the model's given slots and fields form the exact stage of
+    ``condition_on`` (VI.6): a kernel binds the slots its data name first, as
+    currying does, and the data of the fields it produces then form the
+    unnormalized conditional of the result, whose joint and given values a
+    method reads back. A law that currying leaves unnormalized, with no data
+    left, is the target itself. Data that name no field, such as one array for
+    a whole program, form the unnormalized conditional of the model at those
+    data, from which :func:`observed_parts` reads them back, and so do data
+    that only curry a kernel to a normalized law, which no method normalizes.
     """
     if observed is None or not isinstance(model, (Distribution, ConditionalDistribution)):
         return model
-    if isinstance(model, ConditionalDistribution) and isinstance(observed, (Record, dict)):
-        values = dict(observed.children if isinstance(observed, Record) else observed)
+    if not isinstance(observed, (Record, Mapping)):
+        return _UnnormalizedConditional(model, observed, model.event_spec, keyed=False)
+    values = dict(observed.children if isinstance(observed, Record) else observed)
+    law = model
+    if isinstance(model, ConditionalDistribution):
         slots = {key: value for key, value in values.items() if key in model.given_spec}
-        rest = {key: value for key, value in values.items() if key not in slots}
+        values = {key: value for key, value in values.items() if key not in slots}
         if slots:
             law = model._condition_on(slots)
-            if rest:
-                return _UnnormalizedConditional(law, rest, get_prior(law).event_spec, keyed=False)
-            if isinstance(law, Distribution) and not _is_normalized(law):
-                return law
-    return _UnnormalizedConditional(model, observed, get_prior(model).event_spec, keyed=False)
+    if not values:
+        if isinstance(law, Distribution) and not _is_normalized(law):
+            return law
+        return _UnnormalizedConditional(model, observed, model.event_spec, keyed=False)
+    if not set(values) <= set(law.event_spec.components):
+        return _UnnormalizedConditional(law, values, law.event_spec, keyed=False)
+    return _unnormalized_conditional(law, Record("given", values))
 
 
 def observed_parts(target: Any) -> tuple[Any, Any]:
     """The model and the observed data *target* binds, as the model-and-data helpers take them.
 
     An unnormalized conditional at data its joint does not declare as fields
-    is that joint and those data, and so is one of a ``SimpleModel`` at exactly
-    its likelihood's data fields. Any other target is its own model, with its
+    is that joint and those data. Any other target is its own model, with its
     data already bound.
     """
-    if isinstance(target, _UnnormalizedConditional):
-        joint, given = target.joint, target.given
-        if not target.keyed:
-            return joint, given
-        if is_simple_model(joint) and set(given.fields) == set(joint._data_fields):
-            return joint, given
+    if isinstance(target, _UnnormalizedConditional) and not target.keyed:
+        return target.joint, target.given
     return target, None
 
 
@@ -240,30 +253,44 @@ def joint_and_given(target: Any) -> tuple[Any, Any]:
 
 
 def _has_flat_view(prior: Any) -> bool:
-    """Whether *prior* has a flat view: one of its own, or a parametric family's."""
-    return getattr(prior, "as_flat_distribution", None) is not None or isinstance(
-        prior, TFPDistribution
-    )
+    """Whether *prior* is a parametric family, whose one array a flat vector lays out."""
+    return isinstance(prior, TFPDistribution)
 
 
-def _flat_view(prior: Any) -> Any | None:
-    """The flat view of *prior*, or ``None`` when it has none.
+def _one_array(law: Any) -> NumericArraySpec | None:
+    """The spec of the one numeric array of a concrete shape *law* draws, or None."""
+    declaration = getattr(law, "event_spec", None)
+    if not isinstance(law, Distribution) or declaration is None or declaration.exposes_record:
+        return None
+    spec = declaration.spec
+    return spec if isinstance(spec, NumericArraySpec) and spec.is_concrete else None
 
-    A parametric family draws one array, which the flattened view lays out as
-    one vector.
+
+def _reshape_to(shape: tuple[int, ...]) -> Callable[[Array], Array]:
+    """The map from a flat vector, in row-major order, to an array of *shape*."""
+
+    def unflatten(theta_flat: Array) -> Array:
+        return jnp.reshape(theta_flat, shape)
+
+    return unflatten
+
+
+def _flat_view(prior: Any) -> Callable[[Array], Array] | None:
+    """The map from a flat vector to a draw of *prior*, or ``None`` when it is no family.
+
+    A parametric family draws one array, which the flat vector lays out in
+    row-major order, so the map reshapes the vector to the event's shape.
     """
-    as_flat = getattr(prior, "as_flat_distribution", None)
-    if as_flat is not None:
-        return as_flat()
-    if isinstance(prior, TFPDistribution):
-        return FlattenedDistributionView(prior)
-    return None
+    if not _has_flat_view(prior):
+        return None
+    spec = prior.event_spec.spec
+    return _reshape_to(spec.shape if isinstance(spec, NumericArraySpec) else ())
 
 
 def flat_record(prior: Any) -> NumericRecordSpec | None:
-    """The numeric record a flat chain over *prior* unflattens to, when it has no flat view.
+    """The numeric record a flat chain over *prior* unflattens to, when it is no family.
 
-    ``None`` for a prior with a flat view, and for one that draws no exposed
+    ``None`` for a parametric family, and for a law that draws no exposed
     numeric record, such as a law over one array.
     """
     if _has_flat_view(prior):
@@ -273,6 +300,147 @@ def flat_record(prior: Any) -> NumericRecordSpec | None:
         return None
     spec = declaration.spec
     return spec if isinstance(spec, NumericRecordSpec) else None
+
+
+def flat_unflatten(law: Any) -> Callable[[Array], Any]:
+    """The map from a flat vector to a draw of the numeric *law*, the inverse of :func:`flat_vector`.
+
+    A draw of one array is the vector reshaped to the event, and an exposed
+    numeric record's is the record whose leaves the vector lays out in
+    canonical order.
+
+    Raises
+    ------
+    TypeError
+        If *law* draws neither one numeric array nor an exposed numeric record.
+    """
+    flat_prior = _flat_view(law)
+    if flat_prior is not None:
+        return flat_prior
+    array = _one_array(law)
+    if array is not None:
+        return _reshape_to(array.shape)
+    record = flat_record(law)
+    if record is None:
+        raise TypeError(f"{type(law).__name__} {law.name!r} draws no value a flat vector lays out")
+
+    def unflatten(theta_flat: Array) -> Any:
+        return _reconstruct_from_vector(law.name, record, theta_flat)
+
+    return unflatten
+
+
+def flat_vector(value: Any) -> Array:
+    """*value*, a draw of a numeric law, as one flat vector in canonical order.
+
+    A record, or the nested mapping of a record draw's raw leaves, gives its
+    leaves' coordinates in canonical order, and an array is raveled.
+    """
+    if isinstance(value, Mapping):
+        value = Record("draw", value)
+    if isinstance(value, Record):
+        return value.to_numeric().to_vector()
+    return jnp.ravel(jnp.asarray(value))
+
+
+class ModelFactors(NamedTuple):
+    """The prior and the likelihood of a factored joint at observed values of its fields.
+
+    Attributes
+    ----------
+    prior : Distribution
+        The law of the parameters, the joint of the factors that produce no
+        observed field.
+    likelihood : Distribution or ConditionalDistribution
+        The law of the observed fields given the parameters, the joint of the
+        factors that produce them.
+    observed : Any
+        The observed value of the likelihood's event.
+    """
+
+    prior: Distribution
+    likelihood: Distribution | ConditionalDistribution
+    observed: Any
+
+
+def _joint_of(name: str, factors: list[Any]) -> Any:
+    """The joint of *factors*, the one factor itself when there is one."""
+    if len(factors) == 1:
+        return factors[0]
+    if _factor_graph(tuple(factors)).unmet is None:
+        return FactoredDistribution(name, factors)
+    return FactoredConditionalDistribution(name, factors)
+
+
+def model_factors(target: Any) -> ModelFactors | None:
+    """The prior and the likelihood factors of the joint *target* carries, or None.
+
+    *target* is the unnormalized conditional of a factored joint at observed
+    values of some of its fields (VI.6). The likelihood is the joint of the
+    factors that produce the observed fields, and the prior is the joint of the
+    others. None when *target* is no such conditional, when a factor produces
+    observed and unobserved fields both, when the prior is not a law, or when the
+    likelihood conditions on anything but the prior's fields.
+    """
+    if not isinstance(target, _UnnormalizedConditional) or not target.keyed:
+        return None
+    joint, given = target.joint, target.given
+    factors = getattr(joint, "factors", None)
+    if not isinstance(joint, Distribution) or not factors:
+        return None
+    observed = set(given.fields)
+    prior_factors: list[Any] = []
+    likelihood_factors: list[Any] = []
+    for factor in factors:
+        produced = set(factor.event_spec.components)
+        if not produced & observed:
+            prior_factors.append(factor)
+        elif produced <= observed:
+            likelihood_factors.append(factor)
+        else:
+            return None
+    if not prior_factors or not likelihood_factors:
+        return None
+    prior = _joint_of(joint.name, prior_factors)
+    likelihood = _joint_of(joint.name, likelihood_factors)
+    if not isinstance(prior, Distribution):
+        return None
+    slots = set(likelihood.given_spec) if isinstance(likelihood, ConditionalDistribution) else set()
+    if not slots <= set(prior.event_spec.components):
+        return None
+    children = dict(given.children)
+    value = _event_of(
+        likelihood.event_spec,
+        {component: children[component] for component in likelihood.event_spec.components},
+    )
+    return ModelFactors(prior, likelihood, value)
+
+
+def parameter_given(factors: ModelFactors, draw: Any) -> dict[str, Any]:
+    """The likelihood's given values at *draw*, a draw of the prior."""
+    if not isinstance(factors.likelihood, ConditionalDistribution):
+        return {}
+    components = _components_of(factors.prior.event_spec, draw)
+    return {slot: components[slot] for slot in factors.likelihood.given_spec}
+
+
+def likelihood_flat(factors: ModelFactors) -> Callable[[Array], Array]:
+    """The log-likelihood at a flat parameter vector, up to a constant in the parameters.
+
+    The vector unflattens to a draw of the prior, whose values bind the
+    likelihood's given slots, and the likelihood's unnormalized density is read
+    at the observed value.
+    """
+    unflatten = flat_unflatten(factors.prior)
+    likelihood = factors.likelihood
+
+    def loglikelihood_fn(theta_flat: Array) -> Array:
+        if isinstance(likelihood, ConditionalDistribution):
+            given = parameter_given(factors, unflatten(theta_flat))
+            return likelihood._conditional_unnormalized_log_prob(given, factors.observed)
+        return likelihood._unnormalized_log_prob(factors.observed)
+
+    return loglikelihood_fn
 
 
 def flat_density(dist: Any) -> Callable[[Array], Array]:
@@ -304,7 +472,7 @@ def _joint_draw(target: Any, key: Array, record: NumericRecordSpec) -> Array | N
         return None
     try:
         if isinstance(joint, SupportsSampling):
-            children = joint._sample(key, sample_shape=()).children
+            children = dict(_children(joint._sample(key, sample_shape=())))
         else:
             children = {}
             laws = [
@@ -341,19 +509,16 @@ def get_init_state(
 ) -> jnp.ndarray:
     """Determine an initial chain state.
 
-    Pass the full target (a ``SimpleModel`` or a bare ``Distribution``);
-    this helper calls :func:`get_prior` internally and works against
-    the prior — that is the parameter-space distribution from which
-    init candidates should be drawn.
+    Pass the target, the law over the parameters from which init
+    candidates are drawn.
 
     Resolution order:
 
     1. Explicit ``init`` — trusted, returned verbatim (cast to the
        prior's dtype).
     2. **Prior sample** — if the prior implements ``SupportsSampling``,
-       draw a single sample with the supplied ``random_seed``. For a
-       ``RecordDistribution`` the sample is flattened to a numeric
-       vector via ``NumericRecord``.
+       draw a single sample with the supplied ``random_seed``. A record
+       draw is flattened to a numeric vector via ``NumericRecord``.
     3. **Joint draw** — if the prior is an unnormalized conditional
        over a numeric record, return the draw of its joint restricted
        to the unconditioned fields, flattened. A factored joint that
@@ -372,7 +537,7 @@ def get_init_state(
     pure location models. Callers that genuinely need a data-derived
     init should pass ``init=`` explicitly.
     """
-    prior = get_prior(dist)
+    prior = dist
 
     target_dtype = getattr(prior, "dtype", None)
     if not isinstance(target_dtype, jnp.dtype):
@@ -432,36 +597,22 @@ def get_init_state(
 
 
 # ---------------------------------------------------------------------------
-# SimpleModel detection and prior extraction
+# The declaration of the posterior
 # ---------------------------------------------------------------------------
-
-
-def is_simple_model(dist: Distribution) -> bool:
-    """Check whether *dist* is a SimpleModel (lazy import for circularity)."""
-    from ..modeling._simple import SimpleModel
-
-    return isinstance(dist, SimpleModel)
-
-
-def get_prior(dist: Distribution) -> Distribution:
-    """Return the prior of a model, or *dist* itself for non-model targets."""
-    return dist._prior if is_simple_model(dist) else dist
 
 
 def extract_event_spec(dist: Distribution) -> OutputSpec | None:
     """Return the declaration of *dist*'s prior, or ``None`` for a prior with no flat vector.
 
-    A ``SimpleModel``'s prior is read through :func:`get_prior`; any other
-    target is its own prior. A prior with neither ``as_flat_distribution`` nor
+    The target is its own prior. A prior that is neither a parametric family nor
     an exposed numeric record, such as a bare ``SupportsLogProb`` target over a
     flat array, gives ``None``. :func:`build_target_log_prob_flat` uses the
     same condition, so every method names and shapes the posterior of such a
     target alike.
     """
-    prior = get_prior(dist)
-    if not _has_flat_view(prior) and flat_record(prior) is None:
+    if not _has_flat_view(dist) and flat_record(dist) is None:
         return None
-    return prior.event_spec
+    return dist.event_spec
 
 
 # ---------------------------------------------------------------------------
@@ -475,17 +626,15 @@ def build_target_log_prob(
 ) -> Callable[[Any], Array]:
     """Build a ``target_log_prob_fn(params)`` from *dist* and *observed*.
 
-    Three cases, in the order the body dispatches them:
+    Two cases, in the order the body dispatches them:
 
-    1. **SimpleModel** (has prior + likelihood):
-       ``prior._log_prob(params) + likelihood.log_likelihood(params, data)``.
-    2. **Bare target with data**: joint over ``(params, data)``,
+    1. **Bare target with data**: joint over ``(params, data)``,
        evaluated as ``dist._unnormalized_log_prob((params, data))``.
-    3. **Bare target without data**: ``dist._unnormalized_log_prob``
-       returned directly (the caller is presumed to have already
-       folded the data into the distribution, e.g. via closure).
+    2. **Target without data**: ``dist._unnormalized_log_prob``
+       returned directly, the data already bound, as an unnormalized
+       conditional binds them.
 
-    The unnormalized accessor is used for cases 2 and 3 because MCMC
+    The unnormalized accessor is used because MCMC
     samplers do not require a normalized density. Distributions that
     only implement ``_log_prob`` are unaffected: the
     ``SupportsUnnormalizedLogProb`` protocol provides a default
@@ -495,19 +644,6 @@ def build_target_log_prob(
     raw array, a ``Record`` object, or a dict — the likelihood handles
     its own input types).
     """
-    if is_simple_model(dist):
-
-        def target_log_prob_fn(params):
-            lp = dist._prior._log_prob(params)
-            if observed is not None:
-                lp = lp + dist._likelihood.log_likelihood(
-                    params=params,
-                    data=observed,
-                )
-            return lp
-
-        return target_log_prob_fn
-
     if observed is not None:
         return lambda params: dist._unnormalized_log_prob((params, observed))
 
@@ -537,15 +673,14 @@ def build_target_log_prob_flat(
 
     Three cases:
 
-    1. **Record-shaped prior** (a :class:`~probpipe.core._numeric_record_distribution.NumericRecordDistribution`
-       — every ``SimpleModel`` prior is one). ``target_flat_fn``
-       composes :func:`build_target_log_prob` with the prior's
-       :meth:`~probpipe.core._numeric_record_distribution.FlatNumericRecordDistribution.unflatten_sample`,
-       and the prior's declaration is returned for downstream lift-back.
-    2. **Record-shaped target without a flat view**, such as the
-       unnormalized conditional of a factored joint: ``target_flat_fn``
-       unflattens the vector to the numeric record the target declares,
-       whose declaration is returned.
+    1. **A parametric family prior**: ``target_flat_fn`` composes
+       :func:`build_target_log_prob` with the reshape of the flat vector to
+       the family's event, and the prior's declaration is returned for
+       downstream lift-back.
+    2. **A record-shaped prior or target**, such as a factored joint or the
+       unnormalized conditional of one: ``target_flat_fn`` unflattens the
+       vector to the numeric record the target declares, whose declaration is
+       returned.
     3. **Bare ``SupportsLogProb`` target** with no Record-shaped prior
        (e.g., a hand-rolled ``Distribution`` subclass implementing
        ``_unnormalized_log_prob`` over a flat ``Array``). The target
@@ -554,7 +689,7 @@ def build_target_log_prob_flat(
 
     Intended for use by BlackJAX-flavoured MCMC / VI backends.
     """
-    prior = get_prior(dist)
+    prior = dist
     target_record = build_target_log_prob(dist, observed)
     flat_init = get_init_state(dist, init, random_seed=random_seed)
 
@@ -562,7 +697,7 @@ def build_target_log_prob_flat(
     if flat_prior is not None:
 
         def target_flat(theta_flat: Array) -> Array:
-            return target_record(flat_prior.unflatten_sample(theta_flat))
+            return target_record(flat_prior(theta_flat))
 
         return target_flat, flat_init, prior.event_spec
 
@@ -577,44 +712,6 @@ def build_target_log_prob_flat(
     # Bare array-shaped target: ``target_record`` already accepts a
     # flat array and no template is available to lift the chain.
     return target_record, flat_init, None
-
-
-def build_likelihood_flat(
-    prior: Distribution,
-    likelihood: Any,
-    data: ArrayLike | Record | None,
-) -> Callable[[Array], Array]:
-    """Build a flat-vector ``loglikelihood_fn(theta_flat)`` from a prior +
-    likelihood + data.
-
-    Unlike :func:`build_target_log_prob_flat` (which builds the *joint*
-    prior + likelihood density), this returns the *likelihood alone* as
-    a function of a flat parameter vector. Elliptical slice sampling
-    folds the Gaussian prior into the proposal mechanism, so it needs
-    the likelihood by itself.
-
-    Two cases:
-
-    - **Record-shaped prior** (any ``SimpleModel`` prior): the flat
-      vector unflattens through the prior's
-      :meth:`~probpipe.core._numeric_record_distribution.FlatNumericRecordDistribution.unflatten_sample`
-      so the likelihood sees structured ``Record``-shaped params.
-    - **Bare-array prior**: the likelihood already accepts a flat
-      vector, so it is called directly.
-    """
-    flat_prior = _flat_view(prior)
-    if flat_prior is not None:
-
-        def loglikelihood_fn(theta_flat: Array) -> Array:
-            params = flat_prior.unflatten_sample(theta_flat)
-            return likelihood.log_likelihood(params=params, data=data)
-
-        return loglikelihood_fn
-
-    def loglikelihood_fn(theta_flat: Array) -> Array:
-        return likelihood.log_likelihood(params=theta_flat, data=data)
-
-    return loglikelihood_fn
 
 
 # ---------------------------------------------------------------------------

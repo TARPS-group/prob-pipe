@@ -8,18 +8,13 @@ variables by those names, so a silent rename is a break. Both directions are
 pinned here with exact values against seeded chains.
 """
 
-from unittest.mock import patch
-
 import jax
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
-from probpipe import MultivariateNormal, NumericRecordSpec, RecordSpec
-from probpipe.core._numeric_record_batch import NumericRecordBatch
+from probpipe import MultivariateNormal, RecordSpec
 from probpipe.diagnostics._arviz_bridge import extract_draws
 from probpipe.diagnostics._datatree_store import to_named_posterior_dataset
-from probpipe.diagnostics._loo import _add_log_likelihood
 from probpipe.inference._approximate_distribution import make_posterior
 
 
@@ -86,102 +81,3 @@ def test_to_named_posterior_dataset_flat_names_unprefixed():
     per_chain = np.stack([np.asarray(c) for c in chains], axis=0)
     np.testing.assert_array_equal(ds["a"].values, per_chain[:, :, 0])
     np.testing.assert_array_equal(ds["b"].values, per_chain[:, :, 1])
-
-
-class _RecordDrawsPosterior:
-    """Posterior whose per-chain draws are reconstructed from a template.
-
-    Mirrors the surface ``_add_log_likelihood`` reads (``num_chains`` /
-    ``num_draws`` / ``draws(chain=)``). With a nested template the draws
-    expose full ``/``-path keys; the top-level ``.fields`` view would lose
-    the leaves, so this pins the leaf-keyed reconstruction.
-    """
-
-    def __init__(self, template, n_chains=2, n_draws=8):
-        self._annotations = None
-        self._n_chains = n_chains
-        self._n_draws = n_draws
-        self._template = template
-        self._chains = [
-            jnp.asarray(np.random.default_rng(i).standard_normal((n_draws, template.vector_size)))
-            for i in range(n_chains)
-        ]
-
-    @property
-    def num_chains(self):
-        return self._n_chains
-
-    @property
-    def num_draws(self):
-        return self._n_draws
-
-    def draws(self, *, chain):
-        return NumericRecordBatch.from_vector(
-            "nrb", self._template, self._chains[chain], level_names="draw"
-        )
-
-
-class _LinearModel:
-    """Likelihood reading intercept/slope leaves off the reconstructed params."""
-
-    def __init__(self, intercept_key, slope_key, n_obs=6):
-        self._x = np.random.default_rng(0).standard_normal((n_obs, 1))
-
-        class _Likelihood:
-            def __init__(self, x):
-                self._x = x
-
-            def per_datum_log_likelihood(self, params, datum):
-                # Leaf-path access — succeeds only if _flat_to_record rebuilt
-                # the record with the template's (possibly nested) keys.
-                intercept = float(np.asarray(params[intercept_key]))
-                slope = np.atleast_1d(np.asarray(params[slope_key]))
-                x_i = np.atleast_1d(np.asarray(datum["X"]))
-                y_i = float(np.asarray(datum["y"]))
-                eta = intercept + x_i @ slope
-                return float(-0.5 * (y_i - eta) ** 2)
-
-        self._likelihood = _Likelihood(self._x)
-
-
-@pytest.mark.parametrize(
-    ("template", "intercept_key", "slope_key"),
-    [
-        (
-            NumericRecordSpec(coeffs=NumericRecordSpec(intercept=(), slope=(1,))),
-            "coeffs/intercept",
-            "coeffs/slope",
-        ),
-        (NumericRecordSpec(intercept=(), slope=(1,)), "intercept", "slope"),
-    ],
-    ids=["nested", "flat"],
-)
-def test_add_log_likelihood_fallback_loop_values(template, intercept_key, slope_key):
-    """The fallback loop reconstructs draws by leaf key and computes the right values.
-
-    Forcing the Python fallback exercises ``_flat_to_record``. The result is
-    checked against an independent NumPy baseline, so a swapped leaf<->column
-    mapping (intercept <-> slope) fails — finiteness alone would not catch it.
-    """
-    n_obs = 6
-    n_chains, n_draws = 2, 8
-    post = _RecordDrawsPosterior(template, n_chains=n_chains, n_draws=n_draws)
-    model = _LinearModel(intercept_key, slope_key, n_obs=n_obs)
-    data = {"X": model._x, "y": np.random.default_rng(1).standard_normal(n_obs)}
-    with patch("jax.vmap", side_effect=Exception("no vmap")):
-        _add_log_likelihood(post, model, data)
-    ll = post._annotations["arviz"]["log_likelihood"].to_dataset()["y"]
-    assert ll.shape == (n_chains, n_draws, n_obs)
-
-    # Independent baseline: column 0 of the flat draw is the intercept, the
-    # rest the slope (the template's canonical leaf order).
-    expected = np.empty((n_chains, n_draws, n_obs))
-    x = model._x  # (n_obs, 1)
-    for c in range(n_chains):
-        flat = np.asarray(post._chains[c])  # (n_draws, 2)
-        for d in range(n_draws):
-            eta = flat[d, 0] + (x @ flat[d, 1:])  # (n_obs,)
-            expected[c, d] = -0.5 * (np.asarray(data["y"]) - eta) ** 2
-    # Draws are stored float32; observed max deviation vs the float64 baseline
-    # is ~7e-7, so 1e-5 is comfortably tight.
-    np.testing.assert_allclose(np.asarray(ll), expected, atol=1e-5)

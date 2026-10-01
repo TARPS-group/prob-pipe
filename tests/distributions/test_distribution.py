@@ -30,7 +30,6 @@ from probpipe import (
     HalfCauchy,
     HalfNormal,
     InverseGamma,
-    JointGaussian,
     KDEDistribution,
     Laplace,
     LogNormal,
@@ -45,20 +44,16 @@ from probpipe import (
     OutputSpec,
     Pareto,
     Poisson,
-    ProductDistribution,
     RandomFunction,
     RandomMeasure,
     RecordBatch,
-    RecordDistribution,
     RecordSpec,
-    SequentialJointDistribution,
     StudentT,
     TruncatedNormal,
     Uniform,
     VonMisesFisher,
     Wishart,
     boolean,
-    condition_on,
     expectation,
     greater_than,
     integer_interval,
@@ -74,7 +69,6 @@ from probpipe import (
     unit_interval,
 )
 from probpipe.core._batch import BatchSpec
-from probpipe.core._numeric_record_distribution import NumericRecordDistributionView
 from probpipe.core._opaque import OpaqueSpec
 from probpipe.core._specs import NumericArraySpec
 from probpipe.core.provenance import Provenance, provenance_ancestors
@@ -381,7 +375,7 @@ class TestMetaclassEnforcement:
         assert dist.name == "direct"
         assert dist.event_spec == OutputSpec(direct=OpaqueSpec())
 
-    @pytest.mark.parametrize("base", [Distribution, RecordDistribution])
+    @pytest.mark.parametrize("base", [Distribution, NumericDistribution])
     def test_a_law_that_leaves_its_event_undeclared_raises(self, base):
         """Construction checks the declaration after ``__init__``, naming
         the class, whichever base it bypasses."""
@@ -417,13 +411,8 @@ class TestWithNameTemplateRoundtrip:
         distribution's name, so renaming leaves them."""
         import jax.numpy as jnp
 
-        from probpipe import JointGaussian
-
-        jg = JointGaussian(
-            mean=jnp.zeros(2),
-            cov=jnp.eye(2),
-            x=1,
-            y=1,
+        jg = MultivariateNormal("x", jnp.zeros(1), cov=jnp.eye(1)) * MultivariateNormal(
+            "y", jnp.zeros(1), cov=jnp.eye(1)
         )
         original_fields = tuple(jg.event_spec.components)
         clone = jg.with_name("renamed_jg")
@@ -523,14 +512,6 @@ _RETIRING = {
     "ApproximateDistribution",
     "BroadcastDistribution",
     "DistributionArray",
-    "FlattenedDistributionView",
-    "JointGaussian",
-    "NumericRecordDistributionView",
-    "ProductDistribution",
-    "SequentialJointDistribution",
-    "SimpleGenerativeModel",
-    "SimpleModel",
-    "TFPProductDistribution",
 }
 _PUBLIC_CLASSES = _public_distribution_classes()
 
@@ -621,12 +602,9 @@ class TestDerivedNames:
                 id="bootstrap-replicate",
             ),
             pytest.param(
-                lambda: NumericRecordDistributionView(
-                    MultivariateNormal("law", jnp.zeros(2), cov=jnp.eye(2)),
-                    NumericRecordSpec(a=(), b=()),
-                ),
-                lambda x: x["a"],
-                id="record-view",
+                lambda: (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0))["a"],
+                lambda x: x,
+                id="field-view",
             ),
         ],
     )
@@ -712,9 +690,17 @@ class TestComponentAccess:
     def test_a_whole_term_is_itself_under_its_component(self, make):
         law = make()
         assert law["x"] is law
-        assert law[("x",)] is law
         with pytest.raises(KeyError):
             law["y"]
+
+    def test_a_tuple_selects_its_paths_as_an_exposed_record(self):
+        from probpipe.distributions import FieldView
+
+        law = _DeclaredLaw("x", NumericArraySpec(()))
+        selection = law[("x",)]
+        assert isinstance(selection, FieldView)
+        assert selection.parent is law
+        assert selection.event_spec == OutputSpec(RecordSpec(x=NumericArraySpec(())))
 
     def test_the_component_addresses_a_renamed_law(self):
         renamed = _DeclaredLaw("x", NumericArraySpec(())).with_name("y")
@@ -723,7 +709,7 @@ class TestComponentAccess:
             renamed["y"]
 
     def test_a_joint_field_is_a_view_declaring_the_field(self):
-        product = ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0))
+        product = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
         assert product["a"].event_spec.spec == product.event_spec.spec["a"]
 
     def test_indexing_does_not_make_a_law_iterable(self):
@@ -1040,70 +1026,36 @@ class TestFamilyDeclarations:
 class TestJointDeclarations:
     """A joint declares an exposed record of its components' declared terms."""
 
-    def test_a_conditional_component_keeps_only_a_support_every_draw_shares(self):
-        from probpipe import Exponential, positive, real
-
-        # x's bound is z, so a prototype's interval(0, z) holds for one draw of z only.
-        # u takes no parents, so its interval holds for every draw.
-        joint = SequentialJointDistribution(
-            z=Exponential("z", 1.0),
-            w=Normal("w", 0.0, 1.0),
-            x=lambda z: Uniform("x", 0.0, z),
-            y=lambda z: Normal("y", z, 1.0),
-            u=lambda: Uniform("u", 0.0, 1.0),
-            name="j",
-        )
-        unit = interval(0.0, 1.0)
-        assert joint.supports == {"z": positive, "w": real, "x": None, "y": real, "u": unit}
-        conditioned = condition_on(joint, w=0.0)
-        assert conditioned.supports == {"z": positive, "x": None, "y": real, "u": unit}
-
-    def test_a_product_keeps_each_component_dtype_and_support(self):
-        product = ProductDistribution(
-            a=Normal("a", 0.0, 1.0), b={"c": Gamma("c", 2.0, 1.0)}, name="p"
-        )
+    def test_a_joint_keeps_each_component_dtype_and_support(self):
+        joint = Normal("a", 0.0, 1.0) * Gamma("c", 2.0, 1.0)
         dtype = jnp.asarray(0.0).dtype
-        assert product.event_spec == OutputSpec(
+        assert joint.event_spec == OutputSpec(
             RecordSpec(
                 a=NumericArraySpec((), dtype, real),
-                b=RecordSpec(c=NumericArraySpec((), dtype, positive)),
+                c=NumericArraySpec((), dtype, positive),
             )
         )
-        assert product.dtypes == {"a": dtype, "b/c": dtype}
-        assert product.supports == {"a": real, "b/c": positive}
-        assert product.fields == ("a", "b")
+        assert joint.dtypes == {"a": dtype, "c": dtype}
+        assert joint.supports == {"a": real, "c": positive}
+        assert tuple(joint.event_spec.components) == ("a", "c")
         with pytest.raises(AttributeError, match="does not draw a single array"):
-            _ = product.event_shape
+            _ = joint.event_shape
 
-    def test_a_nested_product_declares_the_inner_record(self):
-        from probpipe import sample
+    def test_a_declared_component_is_keyed_by_the_joint(self):
+        from probpipe.distributions import FactoredDistribution
 
-        inner = ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0))
-        product = ProductDistribution(inner=inner)
-        leaf = NumericArraySpec((), jnp.asarray(0.0).dtype, real)
-        assert product.event_spec == OutputSpec(RecordSpec(inner=RecordSpec(a=leaf, b=leaf)))
-        assert sample(product, key=jax.random.PRNGKey(0))["inner/a"].shape == ()
+        growth = Normal("x", 0.0, 1.0, event_spec=OutputSpec(growth=None))
+        joint = FactoredDistribution("p", [growth])
+        assert tuple(joint.event_spec.components) == ("growth",)
 
-    def test_a_renamed_component_is_keyed_by_the_joint(self):
-        product = ProductDistribution(growth=Normal("x", 0.0, 1.0), name="p")
-        assert tuple(product.event_spec.components) == ("growth",)
-
-    def test_a_sequential_joint_declares_its_resolved_components(self):
-        joint = SequentialJointDistribution(
-            z=Normal("z", 0.0, 1.0), x=lambda z: Normal("x", z, 1.0), name="j"
+    def test_a_gaussian_joint_declares_its_blocks(self):
+        joint = MultivariateNormal("x", jnp.zeros(1), cov=jnp.eye(1)) * MultivariateNormal(
+            "y", jnp.zeros(2), cov=jnp.eye(2)
         )
-        assert tuple(joint.event_spec.components) == ("z", "x")
-        assert joint.supports == {"z": real, "x": real}
-        conditioned = condition_on(joint, z=0.5)
-        assert tuple(conditioned.event_spec.components) == ("x",)
-
-    def test_a_joint_gaussian_declares_its_blocks(self):
-        joint = JointGaussian(mean=jnp.zeros(3), cov=jnp.eye(3), x=1, y=2)
         assert joint.event_spec.spec == RecordSpec(
             x=NumericArraySpec((1,), jnp.asarray(0.0).dtype, real),
             y=NumericArraySpec((2,), jnp.asarray(0.0).dtype, real),
         )
-        assert joint.event_shapes == {"x": (1,), "y": (2,)}
 
     def test_an_empirical_law_over_records_declares_each_row(self):
         rows = RecordBatch(
@@ -1121,8 +1073,8 @@ class TestJointDeclarations:
 
     def test_array_cells_must_draw_the_same_record(self):
         cells = [
-            ProductDistribution(x=Normal("x", 0.0, 1.0), y=Normal("y", 0.0, 1.0)),
-            ProductDistribution(x=Normal("x", 0.0, 1.0), z=Normal("z", 0.0, 1.0)),
+            Normal("x", 0.0, 1.0) * Normal("y", 0.0, 1.0),
+            Normal("x", 0.0, 1.0) * Normal("z", 0.0, 1.0),
         ]
         with pytest.raises(ValueError, match="matching event_shape"):
             DistributionArray(cells)
@@ -1136,7 +1088,7 @@ class TestEmpiricalDeclarations:
         raises=AssertionError,
     )
     def test_a_replicate_of_a_record_valued_law_declares_a_batch_of_records(self):
-        source = ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0), name="p")
+        source = (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)).with_name("p")
         replicate = BootstrapReplicateDistribution("rep", source, replicate_size=3, level="row")
         spec = replicate.event_spec.spec
         assert isinstance(spec, BatchSpec)
@@ -1252,17 +1204,16 @@ class TestDerivedDeclarations:
         assert shifted.event_spec is f.event_spec
 
     def test_a_minibatched_measure_draws_laws_over_the_prior_parameters(self):
-        import tensorflow_probability.substrates.jax.glm as tfp_glm
-
-        from probpipe import GLMLikelihood, MinibatchedDistribution, Record
+        from probpipe import MinibatchedDistribution
+        from probpipe.families import BernoulliFamily, glm_likelihood
 
         X = jnp.eye(4)
-        prior = MultivariateNormal("theta", loc=jnp.zeros(4), cov=jnp.eye(4))
+        prior = MultivariateNormal("beta", loc=jnp.zeros(4), cov=jnp.eye(4))
         measure = MinibatchedDistribution(
             "measure",
             prior,
-            GLMLikelihood(tfp_glm.Bernoulli(), x=X),
-            Record("r", X=X, y=jnp.array([1.0, 0.0, 1.0, 0.0])),
+            glm_likelihood("y", BernoulliFamily(), X=X),
+            jnp.array([1.0, 0.0, 1.0, 0.0]),
             batch_size=2,
         )
         assert measure.event_spec == OutputSpec(measure=DistributionSpec(prior.event_spec))
@@ -1289,8 +1240,8 @@ class TestViewAndWrapperDeclarations:
 
     def test_the_array_repr_reads_the_declaration(self):
         cells = [
-            ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0), name="p"),
-            ProductDistribution(a=Normal("a", 1.0, 1.0), b=Normal("b", 0.0, 1.0), name="q"),
+            (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)).with_name("p"),
+            (Normal("a", 1.0, 1.0) * Normal("b", 0.0, 1.0)).with_name("q"),
         ]
         assert "event_shapes={'a': (), 'b': ()}" in repr(DistributionArray(cells, name="arr"))
         normals = DistributionArray([Normal("n", 0.0, 1.0), Normal("n", 1.0, 1.0)], name="arr")
@@ -1301,18 +1252,6 @@ class TestViewAndWrapperDeclarations:
 
         marginal = _make_mixture_marginal([])
         assert isinstance(marginal.event_spec.spec, OpaqueSpec)
-
-    def test_a_record_view_keeps_only_a_support_every_piece_satisfies(self):
-        from probpipe import real
-
-        template = NumericRecordSpec(a=(2,), b=())
-        dirichlet = NumericRecordDistributionView(Dirichlet("d", jnp.ones(3)), template)
-        normal = NumericRecordDistributionView(
-            MultivariateNormal("m", jnp.zeros(3), cov=jnp.eye(3)), template
-        )
-        # simplex holds for the whole vector, and for no piece of it.
-        assert dirichlet.supports == {"a": None, "b": None}
-        assert normal.supports == {"a": real, "b": real}
 
     def test_a_variadic_input_label_names_its_marginal(self):
         from probpipe import function
@@ -1326,46 +1265,29 @@ class TestViewAndWrapperDeclarations:
         assert list(out["*args[0]"].event_spec.components) == ["*args[0]"]
 
     def test_a_nested_view_joins_a_path_into_its_group(self):
-        product = ProductDistribution(a={"b": {"c": Normal("c", 0.0, 1.0)}}, name="p")
-        expected = product["a/b/c"].event_spec
-        assert product["a"]["b/c"].event_spec == expected
-        assert product["a"][("b", "c")].event_spec == expected
-        assert product["a"]["a"] is not None
+        law = _DeclaredLaw("p", RecordSpec(a=RecordSpec(b=RecordSpec(c=NumericArraySpec(())))))
+        group = law["a"]
+        assert group["a/b/c"].event_spec == law["a/b/c"].event_spec
+        assert group["a"] is group
         with pytest.raises(KeyError):
-            product["a"]["missing"]
+            group["missing"]
+        with pytest.raises(KeyError):
+            group["b/c"]
 
     def test_a_field_view_is_a_whole_term_under_its_last_segment(self):
-        product = ProductDistribution(
-            a=Normal("a", 0.0, 1.0), b={"c": Gamma("c", 2.0, 1.0)}, name="p"
-        )
         dtype = jnp.asarray(0.0).dtype
-        assert product["a"].event_spec == OutputSpec(a=NumericArraySpec((), dtype, real))
-        nested = product["b"]["c"]
+        a, c = NumericArraySpec((), dtype, real), NumericArraySpec((), dtype, positive)
+        law = _DeclaredLaw("p", RecordSpec(a=a, b=RecordSpec(c=c)))
+        assert law["a"].event_spec == OutputSpec(a=a)
+        nested = law["b"]["b/c"]
         assert nested.name == "b/c"
-        assert nested.event_spec == OutputSpec(c=NumericArraySpec((), dtype, positive))
+        assert nested.event_spec == OutputSpec(c=c)
 
     def test_a_slash_path_selects_the_field_it_names(self):
-        product = ProductDistribution(
-            a=Normal("a", 0.0, 1.0), b={"c": Gamma("c", 2.0, 1.0)}, name="p"
-        )
-        view = product["b/c"]
+        law = _DeclaredLaw("p", RecordSpec(a=(), b=RecordSpec(c=())))
+        view = law["b/c"]
         assert view.name == "b/c"
-        assert view.event_spec == product[("b", "c")].event_spec
-
-    def test_the_flat_view_draws_one_real_vector(self):
-        product = ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0))
-        flat = product.as_flat_distribution()
-        assert flat.event_spec == OutputSpec(
-            to_vector=NumericArraySpec((2,), jnp.asarray(0.0).dtype, real)
-        )
-
-    def test_a_record_view_of_a_vector_draws_its_template(self):
-        mvn = MultivariateNormal("theta", loc=jnp.zeros(3), cov=jnp.eye(3))
-        view = NumericRecordDistributionView(mvn, NumericRecordSpec(a=(), b=(2,)))
-        dtype = jnp.asarray(0.0).dtype
-        assert view.event_spec == OutputSpec(
-            RecordSpec(a=NumericArraySpec((), dtype, real), b=NumericArraySpec((2,), dtype, real))
-        )
+        assert view.event_spec == law["b"]["b/c"].event_spec
 
     def test_a_batched_array_declares_one_cell_under_its_name(self):
         array = DistributionArray.from_batched_params(Normal, loc=jnp.zeros(3), scale=1.0, name="x")
@@ -1398,8 +1320,8 @@ class TestViewAndWrapperDeclarations:
         assert mixed.event_spec == OutputSpec(m=NumericArraySpec(()))
         records = DistributionArray(
             [
-                ProductDistribution(a=Uniform("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)),
-                ProductDistribution(a=Uniform("a", 0.0, 2.0), b=Normal("b", 0.0, 1.0)),
+                Uniform("a", 0.0, 1.0) * Normal("b", 0.0, 1.0),
+                Uniform("a", 0.0, 2.0) * Normal("b", 0.0, 1.0),
             ],
             name="r",
         )
@@ -1415,50 +1337,7 @@ class TestViewAndWrapperDeclarations:
 
 
 class TestModelDeclarations:
-    """Models and posteriors declare what their templates or stored draws are."""
-
-    def test_a_simple_model_keeps_its_prior_dtypes_and_supports(self):
-        from probpipe import SimpleModel, positive, real
-
-        class _Likelihood:
-            def log_likelihood(self, params, data):
-                return 0.0
-
-        whole = SimpleModel(Gamma("sigma", 2.0, 1.0), _Likelihood(), name="m")
-        joint = SimpleModel(
-            ProductDistribution(a=Normal("a", 0.0, 1.0), s=Gamma("s", 2.0, 1.0), name="p"),
-            _Likelihood(),
-            name="m",
-        )
-        assert whole.supports == {"sigma": positive}
-        assert joint.supports == {"a": real, "s": positive}
-
-    def test_a_simple_model_declares_its_parameters_and_data(self):
-        from probpipe import SimpleModel
-
-        class _Likelihood:
-            data_template = RecordSpec(y=(3,))
-
-            def log_likelihood(self, params, data):
-                return jnp.asarray(0.0)
-
-        model = SimpleModel(Normal("theta", 0.0, 1.0), _Likelihood())
-        theta = NumericArraySpec((), jnp.asarray(0.0).dtype, real)
-        assert model.event_spec == OutputSpec(RecordSpec(theta=theta, y=(3,)))
-
-    def test_a_simple_generative_model_draws_an_opaque_pair(self):
-        from probpipe import SimpleGenerativeModel
-        from probpipe.modeling._likelihood import GenerativeLikelihood
-
-        class _Simulator(GenerativeLikelihood):
-            def log_likelihood(self, params, data):
-                return jnp.asarray(0.0)
-
-            def generate_data(self, params, n_samples, *, key=None):
-                return jnp.zeros((n_samples, 2))
-
-        model = SimpleGenerativeModel(Normal("theta", 0.0, 1.0), _Simulator(), name="gen")
-        assert model.event_spec == OutputSpec(gen=OpaqueSpec())
+    """Posteriors declare what their targets or stored draws are."""
 
     def test_a_posterior_declares_its_targets_event(self):
         from probpipe.inference._approximate_distribution import make_posterior

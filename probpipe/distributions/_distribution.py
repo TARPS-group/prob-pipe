@@ -173,6 +173,20 @@ def _install_renamed_law(factory: Callable[[Any, OutputSpec, Mapping[str, str]],
     _renamed_law_factory = factory
 
 
+#: The field view that indexing returns, installed by the views module at import.
+_field_view_factory: Callable[[Any, Any], Any] | None = None
+
+
+def _install_field_view(factory: Callable[[Any, Any], Any]) -> None:
+    """Install the factory of the field view that ``d[path]`` returns.
+
+    Called once, by the views module at import, so this module never imports the
+    module that imports it.
+    """
+    global _field_view_factory
+    _field_view_factory = factory
+
+
 def _compose_operands(left: Any, right: Any) -> Any:
     """*left* ``*`` *right* through the installed engine.
 
@@ -242,10 +256,8 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     :class:`~probpipe.core.tracked.Annotated` (free-form
     :attr:`~Annotated.annotations`).  A distribution's constructor takes
     its name as the required first argument, as ``Normal("x", 0.0, 1.0)``
-    does. A few classes, such as ``ProductDistribution`` and
-    ``DistributionArray``, take it as a keyword instead and derive one when it
-    is omitted. Every transform preserves the name; only ``with_name``
-    replaces it.
+    does; a joint that ``*`` composes is named by its operands' labels. Every
+    transform preserves the name; only ``with_name`` replaces it.
 
     Sampling and expectation capabilities are provided by the
     :class:`~probpipe.SupportsSampling` protocol.
@@ -512,27 +524,30 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     __iter__ = None
 
     def __getitem__(self, key: str | tuple[str, ...]) -> Distribution:
-        """The law of the component or field at *key*.
+        """The law itself at a whole term's component, or the field view at another event path.
 
-        A whole-term law is itself under its component, given as a string or a
-        one-element tuple, so ``d[name]`` returns ``d``. The component is fixed at
-        construction, so after ``with_name`` the law is still addressed by it. For
-        an exposed record, the result is today's field view, an interim
-        implementation detail.
+        A whole-term law is itself under its component, so ``d[name]`` returns
+        ``d``; the component is fixed at construction, so after ``with_name`` the
+        law is still addressed by it. Any other event path, a field of an exposed
+        record or a path below a whole record's component, gives the
+        ``FieldView`` of the node there, which holds a reference to this law, and
+        a tuple of paths gives the view of their selection.
 
         Raises
         ------
         KeyError
-            If a whole-term law's component is not *key*.
+            If *key* is not an event path of this law, or names one that is not.
+        TypeError
+            If *key* is neither a string nor a tuple of strings.
+        ValueError
+            If *key* is an empty tuple, or two selected paths share their final
+            segment.
         """
-        component = _whole_term_component(self.event_spec)
-        if component is not None:
-            if key == component or key == (component,):
-                return self
-            raise KeyError(key)
-        from ..core._record_distribution import _RecordDistributionView
-
-        return _RecordDistributionView(self, key)
+        if isinstance(key, str) and key == _whole_term_component(self.event_spec):
+            return self
+        if _field_view_factory is None:
+            raise RuntimeError("the field view is not installed; import probpipe")
+        return _field_view_factory(self, key)
 
     # -- composition ------------------------------------------------------------
 
@@ -578,8 +593,8 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
           built from the named fields.
 
         Distributions whose ``_log_prob`` consumes a Record but splits it
-        internally (e.g. ``SimpleModel`` → ``(params, data)``) keep this
-        default and do the split in ``_log_prob``. Override only when the
+        internally (e.g. a factored joint, which scores each factor's fields)
+        keep this default and do the split in ``_log_prob``. Override only when the
         value type is neither a bare array nor a flat Record (e.g.
         ``StanModel``'s single ``parameters=`` flat array).
 

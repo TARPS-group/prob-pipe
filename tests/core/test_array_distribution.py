@@ -1,24 +1,23 @@
-"""Tests for NumericRecordDistribution, FlattenedDistributionView, and shape semantics."""
+"""Tests for the distribution base, the views of a numeric law, and the support check."""
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from probpipe import (
     Distribution,
-    FlatNumericRecordDistribution,
-    FlattenedDistributionView,
-    MultivariateNormal,
     Normal,
     NumericArraySpec,
-    NumericRecordDistribution,
+    NumericDistribution,
     OpaqueSpec,
     from_distribution,
     log_prob,
-    sample,
+    positive,
+    real,
     unnormalized_log_prob,
 )
+from probpipe.converters._probpipe import _check_support_compatible
+from probpipe.core._specs import NumericRecordSpec
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -26,32 +25,8 @@ from probpipe import (
 
 
 @pytest.fixture
-def key():
-    return jax.random.PRNGKey(42)
-
-
-@pytest.fixture
 def scalar_normal():
     return Normal(loc=0.0, scale=1.0, name="x")
-
-
-@pytest.fixture
-def vector_mvn():
-    return MultivariateNormal(
-        loc=jnp.zeros(3),
-        cov=jnp.eye(3),
-        name="z",
-    )
-
-
-@pytest.fixture
-def matrix_mvn():
-    """MVN with event_shape (4,) to test flatten/unflatten with non-trivial shapes."""
-    return MultivariateNormal(
-        loc=jnp.zeros(4),
-        cov=jnp.eye(4),
-        name="w",
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -112,132 +87,6 @@ class TestDistributionBase:
 
 
 # ---------------------------------------------------------------------------
-# flatten_value / unflatten_value on NumericRecordDistribution
-# ---------------------------------------------------------------------------
-
-
-class TestArrayDistFlattenUnflatten:
-    def test_flatten_vector_sample(self, vector_mvn, key):
-        s = sample(vector_mvn, key=key)
-        flat = NumericRecordDistribution.flatten_value(s, event_shape=vector_mvn.event_shape)
-        assert flat.shape == (3,)
-        np.testing.assert_allclose(flat, s, atol=1e-6)
-
-    def test_unflatten_vector_sample(self, vector_mvn, key):
-        s = sample(vector_mvn, key=key)
-        flat = NumericRecordDistribution.flatten_value(s, event_shape=vector_mvn.event_shape)
-        restored = NumericRecordDistribution.unflatten_value(
-            flat,
-            template=vector_mvn.event_spec.spec,
-        )
-        np.testing.assert_allclose(restored, s, atol=1e-6)
-
-    def test_flatten_unflatten_roundtrip_batched(self, vector_mvn, key):
-        samples = jnp.asarray(sample(vector_mvn, key=key, sample_shape=(5,)))
-        flat = NumericRecordDistribution.flatten_value(
-            samples,
-            event_shape=vector_mvn.event_shape,
-        )
-        assert flat.shape == (5, 3)
-        restored = NumericRecordDistribution.unflatten_value(
-            flat,
-            template=vector_mvn.event_spec.spec,
-        )
-        np.testing.assert_allclose(restored, samples, atol=1e-6)
-
-    def test_flatten_unflatten_4d(self, matrix_mvn, key):
-        s = sample(matrix_mvn, key=key)
-        flat = NumericRecordDistribution.flatten_value(s, event_shape=matrix_mvn.event_shape)
-        assert flat.shape == (4,)
-        restored = NumericRecordDistribution.unflatten_value(
-            flat,
-            template=matrix_mvn.event_spec.spec,
-        )
-        np.testing.assert_allclose(restored, s, atol=1e-6)
-
-
-# ---------------------------------------------------------------------------
-# as_flat_distribution / FlattenedDistributionView
-# ---------------------------------------------------------------------------
-
-
-class TestFlattenedDistributionView:
-    def test_as_flat_returns_flattened_view(self, vector_mvn):
-        flat_dist = FlattenedDistributionView(vector_mvn)
-        assert isinstance(flat_dist, FlattenedDistributionView)
-        assert isinstance(flat_dist, NumericRecordDistribution)
-        # The view satisfies the FlatNumericRecordDistribution contract
-        # by construction; consumers (Pathfinder / Laplace / VI) rely
-        # on this membership for receiver-type dispatch.
-        assert isinstance(flat_dist, FlatNumericRecordDistribution)
-
-    def test_event_shape(self, vector_mvn):
-        flat_dist = FlattenedDistributionView(vector_mvn)
-        assert flat_dist.event_shape == (3,)
-
-    def test_sample_shape(self, vector_mvn, key):
-        flat_dist = FlattenedDistributionView(vector_mvn)
-        s = sample(flat_dist, key=key)
-        assert s.shape == (3,)
-
-    def test_sample_batched(self, vector_mvn, key):
-        flat_dist = FlattenedDistributionView(vector_mvn)
-        samples = sample(flat_dist, key=key, sample_shape=(10,))
-        assert samples.shape == (10, 3)
-
-    def test_log_prob_matches(self, vector_mvn, key):
-        flat_dist = FlattenedDistributionView(vector_mvn)
-        s = sample(vector_mvn, key=key)
-        flat_sample = NumericRecordDistribution.flatten_value(
-            s,
-            event_shape=vector_mvn.event_shape,
-        )
-
-        lp_original = log_prob(vector_mvn, s)
-        lp_flat = log_prob(flat_dist, flat_sample)
-        np.testing.assert_allclose(lp_flat, lp_original, atol=1e-5)
-
-    def test_base_distribution(self, vector_mvn):
-        flat_dist = FlattenedDistributionView(vector_mvn)
-        assert flat_dist.base_distribution is vector_mvn
-
-    def test_unflatten_sample(self, vector_mvn, key):
-        flat_dist = FlattenedDistributionView(vector_mvn)
-        flat_sample = sample(flat_dist, key=key)
-        restored = flat_dist.unflatten_sample(flat_sample)
-        np.testing.assert_allclose(
-            restored,
-            NumericRecordDistribution.unflatten_value(
-                flat_sample,
-                template=vector_mvn.event_spec.spec,
-            ),
-            atol=1e-6,
-        )
-
-    def test_repr(self, vector_mvn):
-        flat_dist = FlattenedDistributionView(vector_mvn)
-        r = repr(flat_dist)
-        assert "FlattenedDistributionView" in r
-        assert "MultivariateNormal" in r
-
-    def test_4d_event_shape(self, matrix_mvn):
-        flat_dist = FlattenedDistributionView(matrix_mvn)
-        assert flat_dist.event_shape == (4,)
-
-    def test_log_prob_roundtrip_4d(self, matrix_mvn, key):
-        flat_dist = FlattenedDistributionView(matrix_mvn)
-        s = sample(matrix_mvn, key=key)
-        flat_sample = NumericRecordDistribution.flatten_value(
-            s,
-            event_shape=matrix_mvn.event_shape,
-        )
-
-        lp_original = log_prob(matrix_mvn, s)
-        lp_flat = log_prob(flat_dist, flat_sample)
-        np.testing.assert_allclose(lp_flat, lp_original, atol=1e-5)
-
-
-# ---------------------------------------------------------------------------
 # supports property
 # ---------------------------------------------------------------------------
 
@@ -263,51 +112,31 @@ class TestSupports:
 
 
 # ---------------------------------------------------------------------------
-# Canonical / convenience accessor pairs on NumericRecordDistribution
+# Per-leaf and shared views of a numeric law
 # ---------------------------------------------------------------------------
 
 
+class _Declared(NumericDistribution):
+    """A numeric law that only declares its event, for the declaration's views."""
+
+    def __init__(self, name, spec):
+        super().__init__(name, spec)
+
+
+def _leaf(shape=(), dtype="float32", support=real):
+    return NumericArraySpec(shape, dtype, support)
+
+
 class TestCanonicalConvenience:
-    """Pin the canonical / convenience accessor split documented in
-    ``NumericRecordDistribution.__doc__``: canonical per-field
-    accessors (``event_shapes`` / ``dtypes`` / ``supports``) are the
-    source of truth; scalar convenience accessors (``event_shape`` /
-    ``dtype`` / ``support``) derive and raise (or return ``None``)
-    on multi-leaf templates.
+    """The per-leaf views (``dtypes``, ``supports``) are the source of truth, and
+    the shared views (``dtype``, ``support``) derive from them, returning None
+    when the leaves differ.
     """
 
     @pytest.fixture
     def multi_leaf_dist(self):
-        """A synthetic ``NumericRecordDistribution`` declaring a
-        multi-leaf record (two fields of different dtypes). Exercises the
-        convenience-accessor multi-leaf guards."""
-        from probpipe import NumericRecord, real
-        from probpipe.core._specs import RecordSpec
-
-        class TwoField(NumericRecordDistribution):
-            # A record draw has no ``event_shape``; callers read
-            # ``event_shapes`` instead.
-            def __init__(self, name):
-                super().__init__(
-                    name,
-                    RecordSpec(
-                        a=NumericArraySpec((), "float32", real),
-                        b=NumericArraySpec((2,), "int32", real),
-                    ),
-                )
-
-            def _sample(self, key, sample_shape=()):
-                # Multi-leaf templates return a ``NumericRecord``
-                # (or ``NumericRecordBatch`` for a non-empty sample shape).
-                # This stub returns zero placeholders sized from the
-                # template's per-field event shapes.
-                return NumericRecord(
-                    "nr",
-                    a=jnp.zeros(sample_shape),
-                    b=jnp.zeros((*sample_shape, 2)),
-                )
-
-        return TwoField(name="two_field")
+        """A law over a record of two fields with different dtypes."""
+        return _Declared("two_field", NumericRecordSpec(a=_leaf(), b=_leaf((2,), "int32")))
 
     def test_dtype_derives_from_dtypes_single_leaf(self, scalar_normal):
         """Single-leaf: ``dtype`` returns the sole dtype in ``dtypes``.
@@ -321,24 +150,20 @@ class TestCanonicalConvenience:
 
     def test_dtype_returns_none_when_dtypes_mixed(self, multi_leaf_dist):
         """Multi-leaf with mixed dtypes: ``dtype`` is ``None``."""
-        # Two fields, different dtypes → convenience returns None.
         assert multi_leaf_dist.dtype is None
 
     def test_support_is_the_support_every_leaf_shares(self, multi_leaf_dist):
         """Multi-leaf with one support: ``support`` is that support, as
         ``dtype`` is the dtype every leaf shares."""
-        from probpipe import real
-
         assert multi_leaf_dist.support == real
 
     def test_check_support_compatible_includes_field_name_on_multi_leaf(
         self,
         multi_leaf_dist,
     ):
-        """``_check_support_compatible`` reads canonical ``supports``
-        (per-leaf) on the source. For a multi-leaf source, the field
-        name appears in the error message — single-leaf sources get
-        the original message without a field prefix.
+        """The support check reads the per-leaf ``supports`` of the source. For a
+        multi-leaf source, the field name appears in the error message, and a
+        single-leaf source gets the message without a field prefix.
 
         Target: ``Gamma`` (``positive`` support); source fields are
         ``real`` → incompatible, so the first field that fails the
@@ -349,9 +174,9 @@ class TestCanonicalConvenience:
         target = Gamma(concentration=1.0, rate=1.0, name="gamma_target")
         with pytest.raises(
             ValueError,
-            match=r"TwoField field 'a' \(support=real\)",
+            match=r"_Declared field 'a' \(support=real\)",
         ):
-            NumericRecordDistribution._check_support_compatible(target, multi_leaf_dist)
+            _check_support_compatible(target, multi_leaf_dist)
 
     def test_check_support_compatible_multi_field_target_field_count_mismatch(
         self,
@@ -362,111 +187,54 @@ class TestCanonicalConvenience:
         via ``zip``. The error message names both arities so the
         caller can see which side is wrong.
         """
-        from probpipe.core._numeric_record_distribution import (
-            NumericRecordDistribution,
-        )
-        from probpipe.core._specs import RecordSpec
-
-        class ThreeField(NumericRecordDistribution):
-            """Multi-field target with three fields (source has two)."""
-
-            def __init__(self, name):
-                from probpipe import positive
-
-                leaf = NumericArraySpec((), "float32", positive)
-                super().__init__(name, RecordSpec(a=leaf, b=leaf, c=leaf))
-
-            def _sample(self, key, sample_shape=()):  # pragma: no cover
-                from probpipe import NumericRecord
-
-                return NumericRecord(
-                    "nr",
-                    a=jnp.zeros(sample_shape),
-                    b=jnp.zeros(sample_shape),
-                    c=jnp.zeros(sample_shape),
-                )
-
-        target = ThreeField(name="three_field")
+        leaf = _leaf(support=positive)
+        target = _Declared("three_field", NumericRecordSpec(a=leaf, b=leaf, c=leaf))
         with pytest.raises(
             ValueError,
             match=r"field-count mismatch",
         ):
-            target._check_support_compatible(multi_leaf_dist)
+            _check_support_compatible(target, multi_leaf_dist)
 
     def test_check_support_compatible_multi_field_target_paired_mismatch(self):
         """Multi-field target with matching field count compares
         positionally; the first incompatible pair raises with both
         field names in the message.
         """
-        from probpipe import NumericRecord, positive, real
-        from probpipe.core._numeric_record_distribution import (
-            NumericRecordDistribution,
-        )
-        from probpipe.core._specs import RecordSpec
-
-        class TwoFieldSource(NumericRecordDistribution):
-            def __init__(self, name):
-                leaf = NumericArraySpec((), "float32", real)
-                super().__init__(name, RecordSpec(s1=leaf, s2=leaf))
-
-            def _sample(self, key, sample_shape=()):  # pragma: no cover
-                return NumericRecord(
-                    "nr",
-                    s1=jnp.zeros(sample_shape),
-                    s2=jnp.zeros(sample_shape),
-                )
-
-        class TwoFieldTarget(NumericRecordDistribution):
-            def __init__(self, name):
-                leaf = NumericArraySpec((), "float32", positive)
-                super().__init__(name, RecordSpec(t1=leaf, t2=leaf))
-
-            def _sample(self, key, sample_shape=()):  # pragma: no cover
-                return NumericRecord(
-                    "nr",
-                    t1=jnp.zeros(sample_shape),
-                    t2=jnp.zeros(sample_shape),
-                )
-
-        source = TwoFieldSource(name="source")
-        target = TwoFieldTarget(name="target")
+        source = _Declared("source", NumericRecordSpec(s1=_leaf(), s2=_leaf()))
+        positive_leaf = _leaf(support=positive)
+        target = _Declared("target", NumericRecordSpec(t1=positive_leaf, t2=positive_leaf))
         with pytest.raises(
             ValueError,
             match=r"field 's1' \(support=real\).*field 't1' \(support=positive\)",
         ):
-            target._check_support_compatible(source)
+            _check_support_compatible(target, source)
 
     def test_check_support_compatible_pairs_a_flattened_group_with_its_leaves(self):
         """A source field that holds a flattened group, as a posterior holds a
         nested component, is checked against each target leaf under its path.
         """
-        from probpipe import Gamma, MultivariateNormal, ProductDistribution
 
-        def nested(leaf):
-            return ProductDistribution(
-                params=ProductDistribution(a=leaf("a"), b=leaf("b")), s=Normal("s", 0.0, 1.0)
-            )
+        def nested(support):
+            group = NumericRecordSpec(a=_leaf(support=support), b=_leaf(support=support))
+            return _Declared("nested", NumericRecordSpec(params=group, s=_leaf()))
 
         def flat(name):
-            return ProductDistribution(
-                **{name: MultivariateNormal(name, jnp.zeros(2), cov=jnp.eye(2))},
-                s=Normal("s", 0.0, 1.0),
-            )
+            return _Declared("flat", NumericRecordSpec(**{name: _leaf((2,))}, s=_leaf()))
 
-        nested(lambda n: Normal(n, 0.0, 1.0))._check_support_compatible(flat("params"))
+        _check_support_compatible(nested(real), flat("params"))
         with pytest.raises(
             ValueError,
             match=r"field 'params' \(support=real\).*field 'params/a' \(support=positive\)",
         ):
-            nested(lambda n: Gamma(n, 2.0, 1.0))._check_support_compatible(flat("params"))
+            _check_support_compatible(nested(positive), flat("params"))
         with pytest.raises(ValueError, match="field-count mismatch"):
-            nested(lambda n: Normal(n, 0.0, 1.0))._check_support_compatible(flat("x"))
+            _check_support_compatible(nested(real), flat("x"))
 
     def test_check_support_compatible_skips_non_nrd_source(self, scalar_normal):
-        """Sources without per-field ``supports`` (non-NRD endpoints
-        like an opaque ``EmpiricalDistribution`` with object-dtype
-        leaves) are treated as "unknown" — the check returns silently
-        rather than raising ``AttributeError``.
+        """Sources without per-field ``supports``, as an opaque
+        ``EmpiricalDistribution`` with object-dtype leaves has none, are treated
+        as unknown: the check returns silently rather than raising
+        ``AttributeError``.
         """
 
         class _NoSupportsSource:
@@ -474,48 +242,7 @@ class TestCanonicalConvenience:
 
             # Plain object — accessing ``.supports`` raises ``AttributeError``.
 
-        NumericRecordDistribution._check_support_compatible(
-            scalar_normal, _NoSupportsSource()
-        )  # no raise
-
-    def test_treedef_record_for_multi_leaf(self, multi_leaf_dist):
-        """Multi-leaf: ``treedef`` matches an operation-derived
-        ``NumericRecord`` skeleton with the same field names — locks the
-        relationship between the declaration and the sample pytree.
-        The pytree aux carries the record identity, so the skeleton must
-        use the distribution's own name (``"two_field"``), which the
-        treedef derives and marks auto."""
-        from probpipe.core.record import Record
-
-        expected = jax.tree.structure(
-            Record("two_field", {"a": jnp.zeros(()), "b": jnp.zeros((2,))})
-        )
-        assert multi_leaf_dist.treedef == expected
-
-    def test_treedef_is_cached(self, multi_leaf_dist):
-        """``treedef`` caches via ``object.__setattr__`` on first read;
-        the same object is returned on subsequent reads. Guards against
-        accidental removal of the cache."""
-        first = multi_leaf_dist.treedef
-        second = multi_leaf_dist.treedef
-        assert first is second
-
-    def test_flat_event_shapes_tree_walks_multi_leaf(self, multi_leaf_dist):
-        """``flat_event_shapes`` is one entry per leaf in template
-        field order — not a single-leaf-only ``[event_shape]``."""
-        assert multi_leaf_dist.flat_event_shapes == [(), (2,)]
-
-    def test_sample_returns_record_multi_leaf(self, multi_leaf_dist):
-        """A multi-leaf ``_sample`` returns a ``NumericRecord`` end-to-end
-        (matching the ``treedef`` derivation). Locks the class-docstring
-        contract: single-leaf → ``jax.Array``, multi-leaf →
-        ``NumericRecord``.
-        """
-        from probpipe import NumericRecord
-
-        out = multi_leaf_dist._sample(jax.random.PRNGKey(0), ())
-        assert isinstance(out, NumericRecord)
-        assert tuple(out.keys()) == ("a", "b")
+        _check_support_compatible(scalar_normal, _NoSupportsSource())  # no raise
 
 
 # ---------------------------------------------------------------------------

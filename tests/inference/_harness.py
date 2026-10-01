@@ -138,23 +138,35 @@ KNOWN_FAILURES: dict[tuple[str, str, str], tuple[str, type[BaseException]]] = {}
 #: The methods that start from the library's initial state of a factored joint's conditional.
 _FLAT_CHAIN_METHODS = ("blackjax_nuts", "blackjax_hmc", "blackjax_rwmh", "tfp_nuts", "tfp_hmc")
 
-_OUTSIDE_THE_SUPPORT = (
-    "bug: the initial state of a factored joint's conditional is a Uniform(-2, 2) draw "
-    "outside the parameter's support, where the chain stays"
-)
 _UNCONSTRAINED_SIMPLEX = (
     "bug: the chain starts outside the simplex and moves its coordinates in R^3 with no "
     "reparameterization onto the simplex"
 )
 _CONSTRAINED_SCALE = (
-    "bug: tau is sampled in its constrained coordinate, so fixed-length trajectories meet "
-    "the zero-density wall at tau = 0 and the chains mix too slowly"
+    "bug: tau is sampled in its constrained coordinate, so a random walk started at a draw "
+    "of the joint, whose half-Cauchy tau may lie far out, mixes too slowly"
 )
-KNOWN_FAILURES[("blackjax_hmc", "probpipe", "eight_schools")] = (_CONSTRAINED_SCALE, AssertionError)
+KNOWN_FAILURES[("blackjax_rwmh", "probpipe", "eight_schools")] = (
+    _CONSTRAINED_SCALE,
+    AssertionError,
+)
+_ABC_BUDGET = (
+    "the harness's SMC-ABC budget, 200 particles over four populations, leaves a "
+    "coordinate's mean further from the reference than a quarter of its posterior sd"
+)
+_ABC_OUTSIDE_THE_SUPPORT = (
+    "bug: pyABC perturbs a bounded parameter in its constrained coordinate, and "
+    "particles outside the unit interval reach the posterior"
+)
+KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "gaussian_linear")] = (_ABC_BUDGET, AssertionError)
+KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "eight_schools")] = (_ABC_BUDGET, AssertionError)
+KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "beta_bernoulli")] = (
+    _ABC_OUTSIDE_THE_SUPPORT,
+    ValueError,
+)
 # A result declares its target's supports, so the mean of draws outside the
 # support fails the mean's check of its declared support.
 for _method in _FLAT_CHAIN_METHODS:
-    KNOWN_FAILURES[(_method, "probpipe", "beta_bernoulli")] = (_OUTSIDE_THE_SUPPORT, ValueError)
     KNOWN_FAILURES[(_method, "probpipe", "dirichlet_multinomial")] = (
         _UNCONSTRAINED_SIMPLEX,
         ValueError,

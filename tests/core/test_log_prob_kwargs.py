@@ -16,13 +16,10 @@ import warnings
 import jax.numpy as jnp
 import numpy as np
 import pytest
-import tensorflow_probability.substrates.jax.glm as tfp_glm
 
 from probpipe import (
     Beta,
     Distribution,
-    GLMLikelihood,
-    JointGaussian,
     MinibatchedDistribution,
     MultivariateNormal,
     Normal,
@@ -30,10 +27,7 @@ from probpipe import (
     NumericRecord,
     NumericRecordBatch,
     OpaqueSpec,
-    ProductDistribution,
     Record,
-    SequentialJointDistribution,
-    SimpleModel,
     log_prob,
     prob,
     random_log_prob,
@@ -41,7 +35,8 @@ from probpipe import (
     unnormalized_log_prob,
     unnormalized_prob,
 )
-from probpipe.core._specs import RecordSpec
+from probpipe.core._specs import NumericArraySpec, OutputSpec
+from probpipe.distributions import ConditionalDistribution, SupportsConditionalLogProb
 
 
 class TestKwargFormScalar:
@@ -78,13 +73,13 @@ class TestKwargFormRecord:
     """Multi-field distributions: field kwargs pack to a Record."""
 
     def test_product_distribution(self):
-        p = ProductDistribution(Normal("a", 0.0, 1.0), Beta("b", 2.0, 3.0))
+        p = Normal("a", 0.0, 1.0) * Beta("b", 2.0, 3.0)
         assert jnp.allclose(log_prob(p, a=0.5, b=0.4), log_prob(p, Record("r", a=0.5, b=0.4)))
 
     def test_field_order_independent(self):
         # Distinguishable components (Normal vs Beta) so a field swap would
         # change the result — a symmetric pair could not detect mis-routing.
-        p = ProductDistribution(Normal("a", 0.0, 1.0), Beta("b", 2.0, 3.0))
+        p = Normal("a", 0.0, 1.0) * Beta("b", 2.0, 3.0)
         out_of_order = log_prob(p, b=0.4, a=0.5)
         baseline = log_prob(p, Record("r", a=0.5, b=0.4))
         assert jnp.allclose(out_of_order, baseline)
@@ -92,64 +87,32 @@ class TestKwargFormRecord:
         assert not jnp.allclose(out_of_order, log_prob(p, Record("r", a=0.4, b=0.5)))
 
     def test_joint_gaussian(self):
-        jg = JointGaussian(mean=jnp.zeros(3), cov=jnp.eye(3), u=2, v=1)
+        jg = MultivariateNormal("u", jnp.zeros(2), cov=jnp.eye(2)) * MultivariateNormal(
+            "v", jnp.zeros(1), cov=jnp.eye(1)
+        )
         u, v = jnp.array([0.1, 0.2]), jnp.array([0.3])
         assert jnp.allclose(log_prob(jg, u=u, v=v), log_prob(jg, Record("r", u=u, v=v)))
 
 
-class TestKwargFormSimpleModel:
-    """The headline case: ``log_prob(model, intercept=..., slope=..., X=..., y=...)``."""
+class TestKwargFormJoint:
+    """The headline case: ``log_prob(joint, beta=..., y=...)`` for a GLM joint."""
 
     @staticmethod
     def _glm_model():
-        X = np.array([0.1, 0.5, -0.3], dtype=np.float32)
-        y = np.array([1.0, 3.0, 0.0], dtype=np.float32)
-        lik = GLMLikelihood(tfp_glm.Poisson(), X)
-        prior = ProductDistribution(Normal("intercept", 0.0, 1.0), Normal("slope", 0.0, 1.0))
-        return SimpleModel(prior, lik, name="m"), X, y
+        from probpipe.families import PoissonFamily, glm_likelihood
 
-    def test_kwarg_matches_record_and_tuple(self):
-        model, X, y = self._glm_model()
-        kw = log_prob(model, intercept=0.3, slope=0.5, X=X, y=y)
-        rec = log_prob(model, Record("r", intercept=0.3, slope=0.5, X=X, y=y))
-        tup = model._log_prob((Record("r", intercept=0.3, slope=0.5), Record("r", X=X, y=y)))
+        x = np.array([0.1, 0.5, -0.3], dtype=np.float32)
+        X = jnp.asarray(np.stack([np.ones_like(x), x], axis=1))
+        y = jnp.array([1.0, 3.0, 0.0])
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="beta")
+        return glm_likelihood("y", PoissonFamily(), X=X) * prior, y
+
+    def test_kwarg_matches_record(self):
+        model, y = self._glm_model()
+        beta = jnp.array([0.3, 0.5])
+        kw = log_prob(model, beta=beta, y=y)
+        rec = log_prob(model, Record("r", beta=beta, y=y))
         assert jnp.allclose(kw, rec)
-        assert jnp.allclose(kw, tup)
-
-    def test_keyword_form_rejected_without_data_template(self):
-        """A likelihood with no named data fields cannot use the keyword/Record
-        form (data can't be supplied) — it must raise, not pass data=None."""
-
-        class _NoTemplateLikelihood:
-            def log_likelihood(self, params, data):
-                return jnp.asarray(0.0)
-
-        prior = ProductDistribution(Normal("a", 0.0, 1.0), Normal("b", 0.0, 1.0))
-        model = SimpleModel(prior, _NoTemplateLikelihood(), name="m")
-        with pytest.raises(TypeError, match="no named data fields"):
-            log_prob(model, a=0.5, b=0.5)
-        # The (params, data) tuple form remains available for such models.
-        lp = model._log_prob((Record("r", a=0.5, b=0.5), jnp.zeros(3)))
-        assert jnp.isfinite(lp)
-
-    def test_single_field_prior_packs_to_bare_array(self):
-        """A single-field prior's params repack to a bare array (not a 1-field
-        Record) in _split_log_prob_value — exercises the len(fields) == 1 branch."""
-
-        class _ScalarLikelihood:
-            data_template = RecordSpec(y=())
-
-            def log_likelihood(self, params, data):
-                # params is the bare scalar from the single-field prior
-                return -0.5 * jnp.sum((data["y"] - params) ** 2)
-
-        model = SimpleModel(Normal("theta", 0.0, 1.0), _ScalarLikelihood(), name="m")
-        y = jnp.array([0.2, -0.1, 0.4])
-        kw = log_prob(model, theta=0.5, y=y)
-        rec = log_prob(model, Record("r", theta=0.5, y=y))
-        tup = model._log_prob((0.5, Record("r", y=y)))  # single-field prior → bare scalar
-        assert jnp.allclose(kw, rec)
-        assert jnp.allclose(kw, tup)
 
 
 class TestStanViewsPackValue:
@@ -200,7 +163,7 @@ class TestStanViewsPackValue:
 
 class TestKwargErrors:
     def test_missing_field(self):
-        p = ProductDistribution(Normal("a", 0.0, 1.0), Normal("b", 0.0, 1.0))
+        p = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
         with pytest.raises(TypeError, match="missing"):
             log_prob(p, a=0.5)
 
@@ -234,11 +197,11 @@ class TestProbAndUnnormalizedKwargForm:
         assert jnp.allclose(unnormalized_prob(d, x=0.3), unnormalized_prob(d, 0.3))
 
     def test_prob_multifield_kwarg_matches_record(self):
-        p = ProductDistribution(Normal("a", 0.0, 1.0), Beta("b", 2.0, 3.0))
+        p = Normal("a", 0.0, 1.0) * Beta("b", 2.0, 3.0)
         assert jnp.allclose(prob(p, a=0.5, b=0.4), prob(p, Record("r", a=0.5, b=0.4)))
 
     def test_unnormalized_prob_multifield_kwarg_matches_record(self):
-        p = ProductDistribution(Normal("a", 0.0, 1.0), Beta("b", 2.0, 3.0))
+        p = Normal("a", 0.0, 1.0) * Beta("b", 2.0, 3.0)
         assert jnp.allclose(
             unnormalized_prob(p, a=0.5, b=0.4),
             unnormalized_prob(p, Record("r", a=0.5, b=0.4)),
@@ -319,12 +282,23 @@ class TestValueKeywordBackwardCompat:
         assert jnp.allclose(log_prob(d, value=1.5), log_prob(d, 1.5))
 
 
-class TestSequentialJointKwargForm:
+class _ShiftKernel(ConditionalDistribution, SupportsConditionalLogProb):
+    """``x | z ~ Normal(z, 0.5)``, the dependent factor of a joint."""
+
+    def __init__(self):
+        spec = NumericArraySpec(())
+        super().__init__("x", {"z": spec}, OutputSpec(x=spec))
+
+    def _condition_on(self, given, /, **options):
+        return Normal("x", given["z"], 0.5)
+
+    def _conditional_log_prob(self, given, value):
+        return Normal("x", given["z"], 0.5)._log_prob(value)
+
+
+class TestDependentJointKwargForm:
     def test_kwarg_matches_positional_record(self):
-        joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0, name="z"),
-            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
-        )
+        joint = _ShiftKernel() * Normal(loc=0.0, scale=1.0, name="z")
         kw = log_prob(joint, z=0.2, x=0.1)
         pos = log_prob(joint, Record("r", z=0.2, x=0.1))
         assert jnp.allclose(kw, pos)
@@ -355,13 +329,13 @@ class TestRandomMeasureKwargForm:
 
     @staticmethod
     def _measure():
-        import tensorflow_probability.substrates.jax.glm as tfp_glm
+        from probpipe.families import BernoulliFamily, glm_likelihood
 
         X = jnp.eye(4)
         y = jnp.array([1.0, 0.0, 1.0, 0.0])
-        prior = MultivariateNormal(loc=jnp.zeros(4), cov=jnp.eye(4), name="theta")
-        lik = GLMLikelihood(tfp_glm.Bernoulli(), x=X)
-        return MinibatchedDistribution("measure", prior, lik, Record("r", X=X, y=y), batch_size=2)
+        prior = MultivariateNormal(loc=jnp.zeros(4), cov=jnp.eye(4), name="beta")
+        lik = glm_likelihood("y", BernoulliFamily(), X=X)
+        return MinibatchedDistribution("measure", prior, lik, y, batch_size=2)
 
     def test_value_omitted_returns_callable_with_options(self):
         m = self._measure()
@@ -403,7 +377,7 @@ class TestFieldNameCollision:
     value."""
 
     def test_multifield_value_field_via_positional_record(self):
-        p = ProductDistribution(Normal("value", 0.0, 1.0), Beta("b", 2.0, 3.0))
+        p = Normal("value", 0.0, 1.0) * Beta("b", 2.0, 3.0)
         # the keyword form can't address the 'value' field (binds to the param):
         with pytest.raises(TypeError, match="not both"):
             log_prob(p, value=0.5, b=0.4)

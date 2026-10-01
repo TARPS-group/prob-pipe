@@ -3,7 +3,7 @@
 Covers:
 - ApproximateDistribution: chain access, warmup, inference_data, draws
 - ApproximateDistribution with Record template: named draws
-- _RecordDistributionView: component views, select, broadcasting
+- FieldView: component views, select, broadcasting
 - rwmh Function: basic sampling with SupportsLogProb
 """
 
@@ -19,7 +19,6 @@ from probpipe import (
     MultivariateNormal,
     Normal,
     NumericRecordBatch,
-    ProductDistribution,
     Record,
     RecordSpec,
     mean,
@@ -28,8 +27,8 @@ from probpipe import (
     workflow_run,
 )
 from probpipe.core._record_batch import RecordBatch
-from probpipe.core._record_distribution import _RecordDistributionView
 from probpipe.core._specs import NumericArraySpec, OutputSpec
+from probpipe.distributions import FieldView
 from probpipe.inference import rwmh
 from probpipe.inference._approximate_distribution import make_posterior
 from probpipe.inference._inference_utils import build_mcmc_datatree
@@ -533,10 +532,9 @@ class TestApproximateDistributionValuesTemplate:
         """A field view and a KDE of the posterior read its target record."""
         from probpipe import KDEDistribution, from_distribution
 
-        prior = ProductDistribution(
-            params=ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)),
-            s=Normal("s", 0.0, 1.0),
-        )
+        prior = (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)).with_path_names(
+            {"a": "params/a", "b": "params/b"}
+        ) * Normal("s", 0.0, 1.0)
         chain = jax.random.normal(jax.random.PRNGKey(0), (40, 3))
         post = make_posterior(
             [chain], parents=(prior,), algorithm="test", event_spec=prior.event_spec
@@ -759,9 +757,9 @@ class TestRWMH:
 
     def test_requires_log_prob(self):
         """RWMH raises for distributions without SupportsLogProb and no conversion path."""
-        from probpipe import NumericRecordDistribution
+        from probpipe import NumericDistribution
 
-        class NoLogProbNoSample(NumericRecordDistribution):
+        class NoLogProbNoSample(NumericDistribution):
             def __init__(self, name):
                 super().__init__(name, NumericArraySpec((2,)))
 
@@ -840,10 +838,10 @@ class TestRWMH:
 
     def test_non_supports_mean_init(self):
         """RWMH falls back to zeros init when dist has no SupportsMean."""
-        from probpipe import NumericRecordDistribution
+        from probpipe import NumericDistribution
         from probpipe.distributions._capabilities import SupportsLogProb
 
-        class LogProbOnlyDist(NumericRecordDistribution, SupportsLogProb):
+        class LogProbOnlyDist(NumericDistribution, SupportsLogProb):
             def __init__(self, name):
                 super().__init__(name, NumericArraySpec((2,), "float32"))
 
@@ -871,10 +869,10 @@ class TestRWMH:
 
     def test_mean_exception_fallback(self):
         """RWMH falls back to zeros init when _mean() raises."""
-        from probpipe import NumericRecordDistribution
+        from probpipe import NumericDistribution
         from probpipe.distributions._capabilities import SupportsLogProb, SupportsMean
 
-        class BrokenMeanLogProbDist(NumericRecordDistribution, SupportsLogProb, SupportsMean):
+        class BrokenMeanLogProbDist(NumericDistribution, SupportsLogProb, SupportsMean):
             def __init__(self, name):
                 super().__init__(name, NumericArraySpec((2,), "float32"))
 
@@ -905,12 +903,12 @@ class TestRWMH:
 
 
 # ---------------------------------------------------------------------------
-# _RecordDistributionView + select
+# FieldView + select
 # ---------------------------------------------------------------------------
 
 
-class TestRecordDistributionView:
-    """Component views from Record-based posteriors."""
+class TestPosteriorFieldView:
+    """Field views of a posterior over a record."""
 
     @pytest.fixture
     def template(self):
@@ -929,7 +927,8 @@ class TestRecordDistributionView:
 
     def test_getitem_returns_view(self, posterior):
         view = posterior["r"]
-        assert isinstance(view, _RecordDistributionView)
+        assert isinstance(view, FieldView)
+        assert view.parent is posterior
 
     def test_getitem_missing_field_raises(self, posterior):
         with pytest.raises(KeyError, match="nonexistent"):
@@ -989,8 +988,9 @@ class TestRecordDistributionView:
     def test_repr(self, posterior):
         view = posterior["r"]
         r = repr(view)
-        assert "ApproximateDistribution" in r
-        assert "r" in r
+        assert "FieldView" in r
+        assert repr(posterior.name) in r
+        assert "'r'" in r
 
     def test_view_mean_fallback_without_supports_mean(self):
         """_mean() falls back to _field_draws() when parent lacks SupportsMean."""
@@ -1013,27 +1013,23 @@ class TestRecordDistributionView:
         assert posterior["r"].name == "r"
 
     def test_view_name_from_product(self):
-        """View.name works on ProductDistribution views."""
-        p = ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0, name="x"),
-            y=Normal(loc=0.0, scale=1.0, name="y"),
-        )
+        """View.name works on the views of a factored joint."""
+        p = Normal(loc=0.0, scale=1.0, name="x") * Normal(loc=0.0, scale=1.0, name="y")
         assert p["x"].name == "x"
         assert p["y"].name == "y"
 
 
 class TestViewProtocolDuckTyping:
-    """_RecordDistributionView dynamically inherits protocol support from its parent.
+    """A field view claims the capabilities its parent's derive.
 
-    When the parent supports SupportsLogProb, the view's dynamic subclass
-    also inherits SupportsLogProb — so isinstance checks work correctly.
+    A joint's view claims the density its marginal at the path reports, and a
+    posterior, which has no density, gives its views none.
     """
 
-    def test_view_from_product_isinstance_log_prob(self):
-        """ProductDistribution supports SupportsLogProb → so does view."""
-        from probpipe import ProductDistribution, SupportsLogProb
+    def test_a_joint_view_claims_the_density_of_its_factor(self):
+        from probpipe import SupportsLogProb
 
-        joint = ProductDistribution(x=Normal("x", 0, 1), y=Normal("y", 3, 2))
+        joint = Normal("x", 0, 1) * Normal("y", 3, 2)
         view = joint["x"]
         assert isinstance(view, SupportsLogProb)
 
@@ -1049,10 +1045,10 @@ class TestViewProtocolDuckTyping:
         assert not isinstance(view, SupportsLogProb)
 
     def test_view_always_isinstance_sampling(self):
-        """Every view is SupportsSampling regardless of parent type."""
-        from probpipe import ProductDistribution, SupportsSampling
+        """A view samples when its parent does."""
+        from probpipe import SupportsSampling
 
-        joint = ProductDistribution(x=Normal("x", 0, 1), y=Normal("y", 3, 2))
+        joint = Normal("x", 0, 1) * Normal("y", 3, 2)
         assert isinstance(joint["x"], SupportsSampling)
 
         template = RecordSpec(a=())
@@ -1062,44 +1058,39 @@ class TestViewProtocolDuckTyping:
         assert isinstance(post["a"], SupportsSampling)
 
     def test_view_always_isinstance_mean_variance(self):
-        """Every view is SupportsMean and SupportsVariance."""
-        from probpipe import ProductDistribution, SupportsMean, SupportsVariance
+        """A view of a parent with moments has them."""
+        from probpipe import SupportsMean, SupportsVariance
 
-        joint = ProductDistribution(x=Normal("x", 0, 1), y=Normal("y", 3, 2))
+        joint = Normal("x", 0, 1) * Normal("y", 3, 2)
         view = joint["x"]
         assert isinstance(view, SupportsMean)
         assert isinstance(view, SupportsVariance)
 
     def test_view_log_prob_delegates_to_component(self):
-        """View _log_prob delegates to the underlying component distribution."""
+        """A joint view's density is its factor's, the joint's marginal at the path."""
         import scipy.stats
 
-        from probpipe import ProductDistribution
-
-        joint = ProductDistribution(x=Normal(loc=2.0, scale=0.5, name="x"), y=Normal("y", 0, 1))
+        joint = Normal(loc=2.0, scale=0.5, name="x") * Normal("y", 0, 1)
         view = joint["x"]
         lp = float(view._log_prob(jnp.array(2.0)))
         expected = scipy.stats.norm.logpdf(2.0, loc=2.0, scale=0.5)
         np.testing.assert_allclose(lp, expected, rtol=1e-5)
 
-    def test_view_no_cov_when_parent_lacks_it(self):
-        """View lacks SupportsCovariance when parent doesn't have it."""
-        from probpipe import ProductDistribution, SupportsCovariance
+    def test_view_covariance_follows_its_parent(self):
+        """A view claims a covariance exactly when its parent does."""
+        from probpipe import SupportsCovariance
 
-        joint = ProductDistribution(x=Normal("x", 0, 1), y=Normal("y", 3, 2))
-        view = joint["x"]
-        assert not isinstance(view, SupportsCovariance)
+        joint = Normal("x", 0, 1) * Normal("y", 3, 2)
+        assert isinstance(joint["x"], SupportsCovariance) == isinstance(joint, SupportsCovariance)
 
     def test_dynamic_protocol_depends_on_parent(self):
-        """Same _RecordDistributionView base, different isinstance results."""
-        from probpipe import ProductDistribution, SupportsLogProb
+        """One FieldView class, different claims by parent."""
+        from probpipe import SupportsLogProb
 
-        # ProductDistribution parent → isinstance True
-        joint = ProductDistribution(x=Normal("x", 0, 1), y=Normal("y", 3, 2))
+        joint = Normal("x", 0, 1) * Normal("y", 3, 2)
         view_with = joint["x"]
         assert isinstance(view_with, SupportsLogProb)
 
-        # ApproximateDistribution parent → isinstance False
         template = RecordSpec(a=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 1))
         prior = Normal("x", 0, 1)
@@ -1108,12 +1099,9 @@ class TestViewProtocolDuckTyping:
         assert not isinstance(view_without, SupportsLogProb)
 
     def test_view_still_isinstance_base_class(self):
-        """Dynamic subclass is still isinstance of _RecordDistributionView."""
-        from probpipe import ProductDistribution
-
-        joint = ProductDistribution(x=Normal("x", 0, 1), y=Normal("y", 3, 2))
-        view = joint["x"]
-        assert isinstance(view, _RecordDistributionView)
+        """A view of any parent is a FieldView."""
+        joint = Normal("x", 0, 1) * Normal("y", 3, 2)
+        assert isinstance(joint["x"], FieldView)
 
 
 class TestValuesSelect:
@@ -1167,18 +1155,21 @@ class TestEndToEndValuesPipeline:
     @pytest.fixture
     def posterior(self):
         """Run inference once for all end-to-end tests."""
+        import tensorflow_probability.substrates.jax.distributions as tfd
+
+        from probpipe import condition_on
+        from tests.inference.canonical import ObservationKernel
+
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params")
-
-        class _Lik:
-            def log_likelihood(self, params, data):
-                return -0.5 * jnp.sum((data - params) ** 2)
-
-        from probpipe import SimpleModel, condition_on
-
-        model = SimpleModel(prior, _Lik())
+        likelihood = ObservationKernel(
+            "y",
+            {"params": prior.event_spec.spec},
+            NumericArraySpec((2,)),
+            lambda params: tfd.Independent(tfd.Normal(params, 1.0), 1),
+        )
         return condition_on(
-            model,
-            jnp.array([1.0, 2.0]),
+            likelihood * prior,
+            {"y": jnp.array([1.0, 2.0])},
             num_results=500,
             num_warmup=200,
             step_size=0.3,
@@ -1186,10 +1177,10 @@ class TestEndToEndValuesPipeline:
         )
 
     def test_template_propagation(self, posterior):
-        """The prior's declaration is the posterior's: a whole term under its component."""
+        """The posterior is a law over the joint's unconditioned field, a record of params."""
         assert tuple(posterior.event_spec.components) == ("params",)
-        assert posterior.event_spec.spec.shape == (2,)
-        assert posterior.event_spec.spec.dtype == jnp.asarray(0.0).dtype
+        assert posterior.event_spec.components["params"].shape == (2,)
+        assert posterior.event_spec.components["params"].dtype == jnp.asarray(0.0).dtype
 
     def test_draws_are_named_values(self, posterior):
         """draws() returns Record with correct field names and shapes."""
@@ -1214,9 +1205,9 @@ class TestEndToEndValuesPipeline:
         np.testing.assert_allclose(post_std, analytical_std, atol=0.15)
 
     def test_view_values_match_draws(self, posterior):
-        """The law at the component is the posterior, whose mean matches the draws."""
+        """The view of the field is a law whose mean matches the draws."""
         view = posterior["params"]
-        assert view is posterior
+        assert isinstance(view, FieldView)
         assert view.event_shape == (2,)
 
         # Delegation check: view._mean() == draws().params.mean()
@@ -1287,7 +1278,7 @@ class TestEndToEndValuesPipeline:
 
         # Per-field views
         view_a = post["a"]
-        assert isinstance(view_a, _RecordDistributionView)
+        assert isinstance(view_a, FieldView)
         np.testing.assert_allclose(float(view_a._mean()), float(draws["a"].mean()), atol=1e-5)
 
     def test_workflow_mixed_posterior_and_independent(self, posterior):

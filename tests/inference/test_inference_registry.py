@@ -5,14 +5,12 @@ from typing import ClassVar
 import jax.numpy as jnp
 import numpy as np
 import pytest
+import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
-    GLMLikelihood,
     MultivariateNormal,
     Normal,
     NumericArraySpec,
-    ProductDistribution,
-    SimpleModel,
     condition_on,
     mean,
 )
@@ -21,7 +19,7 @@ from probpipe.distributions import Distribution
 from probpipe.distributions._capabilities import SupportsSampling
 from probpipe.inference import inference_method_registry
 from probpipe.inference._inference_utils import observed_target
-from probpipe.modeling._likelihood import Likelihood
+from tests.inference.canonical import ObservationKernel
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -30,17 +28,18 @@ from probpipe.modeling._likelihood import Likelihood
 
 @pytest.fixture
 def simple_model():
-    """A simple Poisson regression model."""
-    import tensorflow_probability.substrates.jax.glm as tfp_glm
+    """A Poisson regression with an intercept: the joint of y and beta."""
+    from probpipe.families import PoissonFamily, glm_likelihood
 
-    X = np.asarray(np.linspace(-1, 1, 20))[:, None].astype(np.float32)
+    x = np.asarray(np.linspace(-1, 1, 20)).astype(np.float32)
+    X = jnp.asarray(np.stack([np.ones_like(x), x], axis=1))
     prior = MultivariateNormal(loc=jnp.zeros(2), cov=5.0 * jnp.eye(2), name="beta")
-    return SimpleModel(prior, GLMLikelihood(tfp_glm.Poisson(), X))
+    return glm_likelihood("y", PoissonFamily(), X=X) * prior
 
 
 @pytest.fixture
 def data():
-    return jnp.ones(20, dtype=float)
+    return {"y": jnp.ones(20, dtype=float)}
 
 
 class TestInferenceMethodRegistry:
@@ -91,7 +90,7 @@ class TestInferenceMethodRegistry:
             num_warmup=20,
             random_seed=0,
         )
-        assert mean(posterior).shape == (2,)
+        assert mean(posterior)["beta"].shape == (2,)
 
     def test_exact_only_refuses_every_inference_method(self, simple_model, data):
         """Every registered method is approximate, so an exact-only call resolves to nothing."""
@@ -383,30 +382,28 @@ class TestUnnormalizedLogProbInference:
 # ---------------------------------------------------------------------------
 
 
-class _GaussianMeanLikelihood(Likelihood):
-    """JAX-traceable Gaussian likelihood: ``mu`` is the flat parameter."""
-
-    def log_likelihood(self, params, data):
-        mu = jnp.reshape(jnp.asarray(params), ())
-        return jnp.sum(-0.5 * (jnp.asarray(data) - mu) ** 2)
-
-
 @pytest.fixture
 def gaussian_model():
-    """Gaussian-prior, JAX-traceable SimpleModel.
+    """A Gaussian prior and a JAX-traceable Gaussian likelihood, ``y_i ~ N(mu, 1)``.
 
     Both ``blackjax_nuts`` (needs a traceable joint) and
     ``blackjax_elliptical_slice`` (needs a Gaussian prior + traceable
     likelihood + data) pass ``check()`` on this target — so it is the
     canonical case for testing the 85-vs-75 tier ordering.
     """
-    prior = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"))
-    return SimpleModel(prior, _GaussianMeanLikelihood(), name="gauss")
+    prior = Normal(loc=0.0, scale=1.0, name="mu")
+    likelihood = ObservationKernel(
+        "y",
+        {"mu": prior.event_spec.spec},
+        NumericArraySpec((3,)),
+        lambda mu: tfd.Independent(tfd.Normal(jnp.broadcast_to(mu, (3,)), 1.0), 1),
+    )
+    return likelihood * prior
 
 
 @pytest.fixture
 def gaussian_data():
-    return jnp.array([1.0, -1.0, 0.5])
+    return {"y": jnp.array([1.0, -1.0, 0.5])}
 
 
 class TestNutsEssDispatch:
@@ -478,12 +475,14 @@ class TestTargets:
         target = inference_method_registry.check(observed_target(simple_model, data))
         assert two_argument.method_name == target.method_name == "blackjax_nuts"
 
-    def test_the_target_of_a_model_and_its_data_reads_back_as_them(self, simple_model, data):
+    def test_the_target_of_a_joint_and_its_data_reads_back_as_them(self, simple_model, data):
         from probpipe.inference._inference_utils import joint_and_given, observed_parts
 
         target = observed_target(simple_model, data)
-        assert observed_parts(target) == (simple_model, data)
-        assert joint_and_given(target) == (simple_model, data)
+        assert observed_parts(target) == (target, None)
+        joint, given = joint_and_given(target)
+        assert joint is simple_model
+        assert set(given.fields) == {"y"}
         assert observed_target(simple_model, None) is simple_model
 
     def test_a_keyed_target_is_its_own_model(self):
@@ -522,7 +521,7 @@ class TestTargets:
     def test_a_target_without_a_density_is_refused_by_the_gradient_method(self):
         from probpipe.operations._condition import condition_on as condition_on_operation
 
-        simulator = ProductDistribution(theta=Normal("theta", 0.0, 1.0), y=Normal("y", 0.0, 1.0))
+        simulator = Normal("theta", 0.0, 1.0) * Normal("y", 0.0, 1.0)
         target = condition_on_operation.with_options(method="unnormalized")(
             _WithoutDensity(simulator), {"y": 0.3}
         )

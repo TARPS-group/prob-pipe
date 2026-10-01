@@ -32,7 +32,6 @@ from probpipe import (
     OpaqueBatch,
     OpaqueSpec,
     OutputSpec,
-    ProductDistribution,
     Record,
     RecordSpec,
     function,
@@ -153,11 +152,9 @@ class TestFieldExtraction:
     """A field view reads its column out of a batch."""
 
     def test_a_field_view_extracts_its_column_from_a_batch(self):
-        joint = ProductDistribution(
-            a=Normal(loc=0.0, scale=1.0, name="a"),
-            b=Normal(loc=0.0, scale=1.0, name="b"),
-            name="joint",
-        )
+        joint = (
+            Normal(loc=0.0, scale=1.0, name="a") * Normal(loc=0.0, scale=1.0, name="b")
+        ).with_name("joint")
         batch = NumericRecordBatch(
             "batch",
             {"a": jnp.arange(4.0), "b": jnp.ones(4)},
@@ -166,73 +163,7 @@ class TestFieldExtraction:
             axes_per_level=(1,),
         )
 
-        assert np.allclose(joint["a"]._extract(batch), batch["a"])
-
-
-class TestFlatVectorBoundary:
-    """The distribution-level flatten accepts a batch."""
-
-    def test_flatten_value_ravels_a_batch(self):
-        from probpipe.core._numeric_record_distribution import NumericRecordDistribution
-
-        batch = _draws(3)
-
-        flat = NumericRecordDistribution.flatten_value(batch)
-
-        assert np.allclose(flat, batch.to_vector())
-
-
-class TestMinibatching:
-    """Minibatching reads a batch's row count and gathers its rows."""
-
-    def test_data_size_reads_the_leading_axis(self):
-        from probpipe.inference._minibatch import _data_size
-
-        assert _data_size(_draws(7)) == 7
-
-    def test_indexing_gathers_the_named_columns_into_a_batch(self):
-        """A minibatch of records is a collection of them, so gathering rows
-        gives a *batch*. Handing back a plain ``Record`` of gathered columns
-        would state the batch's shape as one element's — the false type a
-        per-datum transform then reads."""
-        from probpipe.inference._minibatch import _index_along_leading
-
-        batch = _draws(5)
-
-        picked = _index_along_leading(batch, jnp.array([0, 2, 4]))
-
-        assert isinstance(picked, RecordBatch)
-        assert picked.batch_shape == (3,)
-        assert list(picked.event_template.keys()) == ["a", "b"]
-        assert np.allclose(picked["a"], jnp.array([0.0, 2.0, 4.0]))
-        # The element declaration is the source's, not one re-read off the rows.
-        assert picked.element_spec == batch.element_spec
-
-
-class TestDesignCoercion:
-    """A GLM design coerces a batch the way it coerces a record."""
-
-    def test_a_single_field_batch_coerces_to_its_column(self):
-        from probpipe.modeling._glm import _coerce_array
-
-        batch = _one_field(4)
-
-        assert np.allclose(_coerce_array(batch), batch["x"])
-
-    def test_a_multi_field_batch_stacks_its_columns(self):
-        from probpipe.modeling._glm import _coerce_array
-
-        batch = _one_field(4).merge(
-            NumericRecordBatch(
-                "batch",
-                {"y": jnp.ones(4)},
-                "draw",
-                element_spec=NumericRecordSpec(y=()),
-                axes_per_level=(1,),
-            )
-        )
-
-        assert _coerce_array(batch).shape == (4, 2)
+        assert np.allclose(joint["a"]._project(batch), batch["a"])
 
 
 class TestBroadcastComponents:
@@ -381,14 +312,6 @@ class TestOpaqueColumnsAreRearrangedRaw:
 
         assert list(gathered._raw_column("tag")) == ["c", "a"]
         np.testing.assert_array_equal(np.asarray(gathered._raw_column("x")), [2.0, 0.0])
-
-    def test_indexing_a_minibatch_keeps_an_opaque_column(self):
-        from probpipe.inference._minibatch import _index_along_leading
-
-        indexed = _index_along_leading(self._mixed(), jnp.array([1, 2]))
-
-        assert list(indexed["tag"]) == ["b", "c"]
-        np.testing.assert_array_equal(np.asarray(indexed["x"]), [1.0, 2.0])
 
 
 class TestRetypingADeclaredOutputKeepsColumnsWithTheirKeys:

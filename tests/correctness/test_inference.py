@@ -267,13 +267,6 @@ class TestExactness:
 
 
 class TestInitialState:
-    @pytest.mark.pending(
-        reason=(
-            "bug: the initial state of a factored joint's conditional reads .children of the "
-            "joint's draw, a raw mapping, and falls back to a Uniform(-2, 2) draw"
-        ),
-        raises=AssertionError,
-    )
     def test_a_joints_conditional_starts_at_a_draw_of_the_joint(self):
         """The chain of the Beta-Bernoulli posterior starts inside the unit interval, at a joint draw."""
         from probpipe.inference._inference_utils import get_init_state

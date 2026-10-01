@@ -814,11 +814,7 @@ class TestProtocolConversion:
         assert result.event_spec.spec.fields == ("intercept", "slope")
 
     def test_approximate_distribution_preserves_template_through_kde(self):
-        """An inference result converts to a KDE over its target's record.
-
-        An :class:`IncrementalConditioner` update beyond its first batch reads the
-        record's fields.
-        """
+        """An inference result converts to a KDE over its target's record."""
         from probpipe.inference._approximate_distribution import (
             ApproximateDistribution,
         )

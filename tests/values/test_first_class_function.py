@@ -34,7 +34,6 @@ from probpipe import (
     NumericRecord,
     NumericRecordBatch,
     OutputSpec,
-    ProductDistribution,
     Provenance,
     ProvenanceMode,
     Record,
@@ -484,10 +483,9 @@ class TestApplyContract:
             ).apply()
 
     def test_returned_law_with_nested_components_matches_distribution_spec(self):
-        law = ProductDistribution(
-            params=ProductDistribution(a=Normal("a", 0, 1), b=Normal("b", 0, 1)),
-            s=Normal("s", 0, 1),
-        )
+        law = (Normal("a", 0, 1) * Normal("b", 0, 1)).with_path_names(
+            {"a": "params/a", "b": "params/b"}
+        ) * Normal("s", 0, 1)
         nested = RecordSpec(params=RecordSpec(a=(), b=()), s=())
         assert Function("law", lambda: law, output_spec=DistributionSpec(nested)).apply() is law
         with pytest.raises(ValueError, match="does not conform"):

@@ -148,25 +148,20 @@ def _resolve_generative_likelihood(
     Resolution order:
 
     1. Explicitly passed ``generative_likelihood`` argument.
-    2. ``distribution["data"]`` — works for
-       :class:`~probpipe.modeling.SimpleGenerativeModel` where
-       ``__getitem__("data")`` returns a
-       :class:`~probpipe.modeling.GenerativeLikelihood`.
-    3. ``distribution._likelihood`` — direct attribute fallback.
-    4. ``distribution.generative_likelihood`` — future-proofing.
-    5. Raise a descriptive :class:`ValueError`.
+    2. ``distribution.generative_likelihood`` — an attribute a posterior may
+       carry.
+    3. Raise a descriptive :class:`ValueError`.
 
     Parameters
     ----------
     distribution : Distribution
-        Posterior or prior — typically a ``SimpleGenerativeModel``
-        or a conditioned posterior.
+        Posterior or prior whose replicated data are checked.
     generative_likelihood : optional
         Explicitly supplied likelihood; returned as-is if not ``None``.
 
     Returns
     -------
-    GenerativeLikelihood
+    Any
         Object with a ``generate_data(params, n_samples, *, key)`` method.
 
     Raises
@@ -178,29 +173,13 @@ def _resolve_generative_likelihood(
     if generative_likelihood is not None:
         return generative_likelihood
 
-    # 2. distribution["data"] — SimpleGenerativeModel path
-    try:
-        candidate = distribution["data"]
-        if hasattr(candidate, "generate_data"):
-            return candidate
-    except (KeyError, TypeError):
-        pass
-
-    # 3. distribution._likelihood — direct attribute
-    candidate = getattr(distribution, "_likelihood", None)
-    if candidate is not None and hasattr(candidate, "generate_data"):
-        return candidate
-
-    # 4. distribution.generative_likelihood — future-proofing
+    # 2. distribution.generative_likelihood
     candidate = getattr(distribution, "generative_likelihood", None)
     if candidate is not None and hasattr(candidate, "generate_data"):
         return candidate
 
-    # 5. Nothing found
+    # 3. Nothing found
     raise ValueError(
-        "Could not auto-detect a generative likelihood from the distribution.\n"
-        "Either:\n"
-        "  (a) pass `generative_likelihood` explicitly, or\n"
-        "  (b) use a SimpleGenerativeModel whose 'data' component "
-        "has a `generate_data()` method."
+        "Could not auto-detect a generative likelihood from the distribution; "
+        "pass `generative_likelihood` explicitly."
     )
