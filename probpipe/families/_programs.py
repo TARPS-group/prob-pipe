@@ -40,8 +40,10 @@ from ..core.record import Record
 from ..custom_types import Array, ArrayLike
 from ..distributions._capabilities import (
     SupportsConditionalLogProb,
+    SupportsConditionalSampling,
     SupportsConditionalUnnormalizedLogProb,
     SupportsLogProb,
+    SupportsSampling,
     SupportsUnnormalizedLogProb,
     _capability_subclass,
 )
@@ -672,6 +674,26 @@ def _pymc_density(self: PyMCModel, value: Any) -> Array:
     )
 
 
+def _pymc_sample(self: PyMCModel, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
+    """Draws of every free variable from the prior predictive, as a record.
+
+    One draw for ``sample_shape=()``; otherwise each field carries the sample
+    axes before its shape. The key seeds PyMC's sampler.
+    """
+    import pymc as pm
+
+    n = int(np.prod(sample_shape)) if sample_shape else 1
+    seed = int(jax.random.randint(key, (), 0, 2**31 - 1))
+    prior = pm.sample_prior_predictive(draws=n, model=self._program.build(), random_seed=seed).prior
+    fields = {}
+    for name in self.event_spec.components:
+        values = jnp.asarray(prior[name].values[0])
+        fields[name] = (
+            values[0] if not sample_shape else values.reshape(*sample_shape, *values.shape[1:])
+        )
+    return Record(self.name, fields)
+
+
 class _PyMCModelMeta(type(Distribution)):
     """The metaclass of ``PyMCModel``: a function with a given slot defines a kernel."""
 
@@ -691,9 +713,10 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
     build without its data gives. Any other argument is a given slot, so a
     model with covariates constructs the kernel over them, whose curried law is
     a ``PyMCModel``. It claims sampling, which draws from the prior predictive,
-    and a normalized density, or the unnormalized density when the model has a
-    potential or an improper prior. Conditioning on observed values is Bayes'
-    rule, which the PyMC methods of the inference-method registry normalize.
+    and a normalized density. A model with a potential or an improper prior
+    claims the unnormalized density alone, since its prior predictive does not
+    draw from its law. Conditioning on observed values is Bayes' rule, which the
+    PyMC methods of the inference-method registry normalize.
 
     Parameters
     ----------
@@ -714,14 +737,19 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
     _capability_table: ClassVar = {
         SupportsLogProb: {"_log_prob": _pymc_density},
         SupportsUnnormalizedLogProb: {"_unnormalized_log_prob": _pymc_density},
+        SupportsSampling: {"_sample": _pymc_sample},
     }
     #: The compiled density, built on first use, is not state.
     _transient_state = ("_memo",)
 
     def __new__(cls, name: str, model_fn: Callable[..., Any]) -> Any:
         program = model_fn if isinstance(model_fn, _PyMCProgram) else _PyMCProgram(model_fn)
-        density = SupportsLogProb if program.normalized else SupportsUnnormalizedLogProb
-        return object.__new__(_capability_subclass(PyMCModel, (density,)))
+        claimed = (
+            (SupportsLogProb, SupportsSampling)
+            if program.normalized
+            else (SupportsUnnormalizedLogProb,)
+        )
+        return object.__new__(_capability_subclass(PyMCModel, claimed))
 
     def __init__(self, name: str, model_fn: Callable[..., Any]) -> None:
         try:
@@ -833,29 +861,6 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
             fields[name] = tuple(int(s) for s in shape)
         return NumericRecordSpec(**fields)
 
-    # -- sampling -----------------------------------------------------------------
-
-    def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
-        """Draws of every free variable from the prior predictive, as a record.
-
-        One draw for ``sample_shape=()``; otherwise each field carries the
-        sample axes before its shape. The key seeds PyMC's sampler.
-        """
-        import pymc as pm
-
-        n = int(np.prod(sample_shape)) if sample_shape else 1
-        seed = int(jax.random.randint(key, (), 0, 2**31 - 1))
-        prior = pm.sample_prior_predictive(
-            draws=n, model=self._program.build(), random_seed=seed
-        ).prior
-        fields = {}
-        for name in self.event_spec.components:
-            values = jnp.asarray(prior[name].values[0])
-            fields[name] = (
-                values[0] if not sample_shape else values.reshape(*sample_shape, *values.shape[1:])
-            )
-        return Record(self.name, fields)
-
     def __repr__(self) -> str:
         return f"PyMCModel(variables=[{', '.join(self._program.shapes)}])"
 
@@ -870,13 +875,21 @@ def _pymc_kernel_log_prob(self: _PyMCKernel, given: Any, value: Any) -> Array:
     return self._condition_on(given)._log_prob(value)
 
 
+def _pymc_kernel_sample(
+    self: _PyMCKernel, given: Any, key: Any, sample_shape: tuple[int, ...] = ()
+) -> Any:
+    """Prior predictive draws of the free variables, the given slots bound."""
+    return self._condition_on(given)._sample(key, sample_shape)
+
+
 class _PyMCKernel(ConditionalDistribution):
     """The kernel from a PyMC model's given arguments to the joint law of its free variables.
 
     Binding every given slot yields the ``PyMCModel`` of the function with those
     arguments bound. Its event dimensions are symbolic, since the given values
-    may set them, and it claims conditional sampling and the conditional twin of
-    the model's density.
+    may set them, and it claims the conditional twins of the capabilities that
+    model claims: conditional sampling and the normalized density, or the
+    unnormalized density alone.
     """
 
     _capability_table: ClassVar = {
@@ -884,15 +897,16 @@ class _PyMCKernel(ConditionalDistribution):
         SupportsConditionalUnnormalizedLogProb: {
             "_conditional_unnormalized_log_prob": _pymc_kernel_density
         },
+        SupportsConditionalSampling: {"_conditional_sample": _pymc_kernel_sample},
     }
 
     def __new__(cls, name: str, program: _PyMCProgram) -> Any:
-        density = (
-            SupportsConditionalLogProb
+        claimed = (
+            (SupportsConditionalLogProb, SupportsConditionalSampling)
             if program.normalized
-            else SupportsConditionalUnnormalizedLogProb
+            else (SupportsConditionalUnnormalizedLogProb,)
         )
-        return object.__new__(_capability_subclass(_PyMCKernel, (density,)))
+        return object.__new__(_capability_subclass(_PyMCKernel, claimed))
 
     def __init__(self, name: str, program: _PyMCProgram) -> None:
         super().__init__(
@@ -914,12 +928,6 @@ class _PyMCKernel(ConditionalDistribution):
         """
         values = _given_values(self.name, given, kwargs, self.given_spec)
         return PyMCModel(self.name, self._program.bind(values))
-
-    def _conditional_sample(
-        self, given: Record | Mapping[str, Any], key: Any, sample_shape: tuple[int, ...] = ()
-    ) -> Any:
-        """Prior predictive draws of the free variables, the given slots bound."""
-        return self._condition_on(given)._sample(key, sample_shape)
 
     def __repr__(self) -> str:
         return (

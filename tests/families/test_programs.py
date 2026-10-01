@@ -181,6 +181,36 @@ def _with_potential(y=None):
     return model
 
 
+def _half_flat_prior(y=None):
+    import pymc as pm
+
+    with pm.Model() as model:
+        sigma = pm.HalfFlat("sigma")
+        pm.Normal("y", 0.0, sigma, observed=y)
+    return model
+
+
+def _flat_regression(x=None, y=None):
+    x = np.zeros(3) if x is None else np.asarray(x)
+    import pymc as pm
+
+    with pm.Model() as model:
+        beta = pm.Flat("beta")
+        pm.Normal("y", beta * x, 1.0, observed=y)
+    return model
+
+
+def _penalized_regression(x=None, y=None):
+    x = np.zeros(3) if x is None else np.asarray(x)
+    import pymc as pm
+
+    with pm.Model() as model:
+        beta = pm.Normal("beta", 0, 1)
+        pm.Potential("penalty", -(beta**2))
+        pm.Normal("y", beta * x, 1.0, observed=y)
+    return model
+
+
 class TestPyMCModel:
     @pytest.fixture(autouse=True)
     def _pymc(self):
@@ -221,6 +251,24 @@ class TestPyMCModel:
         model = PyMCModel("model", model_fn)
         assert isinstance(model, SupportsUnnormalizedLogProb)
         assert not isinstance(model, SupportsLogProb)
+
+    @pytest.mark.parametrize("model_fn", [_flat_prior, _half_flat_prior, _with_potential])
+    def test_a_potential_or_an_improper_prior_claims_no_sampling(self, model_fn):
+        model = PyMCModel("model", model_fn)
+        assert not isinstance(model, SupportsSampling)
+        assert not _is_normalized(model)
+
+    @pytest.mark.parametrize("model_fn", [_flat_regression, _penalized_regression])
+    def test_a_kernel_with_a_potential_or_an_improper_prior_claims_no_sampling(self, model_fn):
+        kernel = PyMCModel("regression", model_fn)
+        assert isinstance(kernel, ConditionalDistribution)
+        assert isinstance(kernel, SupportsConditionalUnnormalizedLogProb)
+        assert not isinstance(kernel, SupportsConditionalSampling)
+        assert not _kernel_is_normalized(kernel)
+        law = probpipe.operations._condition.condition_on.with_options(method="unnormalized")(
+            kernel, {"x": np.linspace(0, 1, 3)}
+        )
+        assert not _is_normalized(law)
 
     def test_a_model_with_a_covariate_is_a_kernel_over_it(self):
         kernel = PyMCModel("regression", _regression)
