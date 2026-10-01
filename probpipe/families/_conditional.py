@@ -42,7 +42,7 @@ from ..distributions._capabilities import (
 )
 from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
 from ..linalg import LinOp
-from ..values import Function
+from ..values import Function, SupportsInverse, is_invertible
 from ._backend import TFPDistribution
 from ._continuous import Normal
 from ._discrete import Bernoulli, Poisson
@@ -106,11 +106,11 @@ class LinearGaussianConditional(ConditionalDistribution):
 # ---------------------------------------------------------------------------
 
 
-class _Link(Function):
+class _Link(Function, SupportsInverse):
     """An elementwise invertible link ``g``, mapping a mean to the linear predictor.
 
-    The forward map is the function's own evaluation, and ``_inverse`` is the
-    inverse map ``g⁻¹``, which takes the linear predictor to the mean.
+    The forward map is the function's own evaluation, and the link claims
+    ``SupportsInverse`` with ``g⁻¹``, which takes the linear predictor to the mean.
     """
 
     def __init__(
@@ -144,11 +144,6 @@ _LOGIT_LINK = _Link("logit", _logit, jax.nn.sigmoid)
 _LOG_LINK = _Link("log", _log, jnp.exp)
 
 
-def _is_invertible(link: Any) -> bool:
-    """Whether *link* is a ``Function`` that provides its inverse map, ``_inverse``."""
-    return isinstance(link, Function) and callable(getattr(link, "_inverse", None))
-
-
 def _require_invertible(link: Any, owner: str) -> None:
     """Raise unless *link* is an invertible ``Function``.
 
@@ -157,13 +152,15 @@ def _require_invertible(link: Any, owner: str) -> None:
     TypeError
         If *link* is not a ``Function``.
     ResolutionError
-        If *link* does not provide its inverse map.
+        If *link* is not invertible: it does not claim ``SupportsInverse``, or
+        its guard declines.
     """
     if not isinstance(link, Function):
         raise TypeError(f"{owner} takes a link Function, got {type(link).__name__}")
-    if not _is_invertible(link):
+    if not is_invertible(link):
         raise ResolutionError(
-            f"the link {link.name!r} of {owner} is not invertible: it provides no inverse map"
+            f"the link {link.name!r} of {owner} is not invertible: it does not claim "
+            f"SupportsInverse"
         )
 
 

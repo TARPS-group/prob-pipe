@@ -125,8 +125,6 @@ from probpipe.distributions import (
     SequentialJointDistribution,
     # Transformed
     TransformedDistribution,
-    bijector_for,
-    register_bijector,
 )
 from probpipe.distributions._capabilities import (
     SupportsApproximateConditioning,
@@ -181,7 +179,9 @@ from probpipe.functions import (
     AbstractModule,
     Module,
     abstract_workflow_method,
+    bijector_for,
     function,
+    register_bijector,
     workflow_method,
 )
 from probpipe.functions._call import ApplicabilityError

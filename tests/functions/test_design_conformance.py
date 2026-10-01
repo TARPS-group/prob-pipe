@@ -16,8 +16,15 @@ import pytest
 
 import probpipe.functions as functions
 import probpipe.values as values
-from probpipe.distributions import _bijector_dispatch
-from probpipe.functions import _call, _context, _function, _replay, _result, _rules
+from probpipe.functions import (
+    _call,
+    _context,
+    _function,
+    _reparameterization,
+    _replay,
+    _result,
+    _rules,
+)
 from probpipe.values import _function_base
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -45,8 +52,7 @@ _SECTIONS = (
     "V.12",
 )
 
-#: The modules a declared name is looked up in, first match winning. The constraint-to-bijector
-#: factory of V.12 is still in the distribution layer, which is where it is checked.
+#: The modules a declared name is looked up in, first match winning.
 _MODULES = (
     _function_base,
     _function,
@@ -55,7 +61,7 @@ _MODULES = (
     _rules,
     _context,
     _replay,
-    _bijector_dispatch,
+    _reparameterization,
 )
 
 #: Names the code blocks define as worked examples rather than as declarations.
@@ -147,11 +153,6 @@ class TestExportsAreDeclared:
         assert values.is_invertible is _function_base.is_invertible
         assert values.is_differentiable is _function_base.is_differentiable
 
-    @pytest.mark.pending(
-        reason="the constraint-to-bijector factory is defined with the engine",
-        raises=ModuleNotFoundError,
-    )
     def test_the_bijector_factory_is_defined_with_the_engine(self):
-        import probpipe.functions._reparameterization as reparameterization
-
-        assert reparameterization.bijector_for is not None
+        assert functions.bijector_for is _reparameterization.bijector_for
+        assert functions.register_bijector is _reparameterization.register_bijector

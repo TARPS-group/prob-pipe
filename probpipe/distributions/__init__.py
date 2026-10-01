@@ -1,10 +1,6 @@
 from ..core._random_functions import ArrayRandomFunction, RandomFunction
 from . import _composition
 from ._batches import ConditionalDistributionBatch, DistributionBatch
-from ._bijector_dispatch import (
-    bijector_for,
-    register_bijector,
-)
 from ._capabilities import (
     SupportsConditionalCovariance,
     SupportsConditionalExpectation,
@@ -97,6 +93,4 @@ __all__ = [
     "SupportsMarginals",
     # Transformed
     "TransformedDistribution",
-    "bijector_for",
-    "register_bijector",
 ]
