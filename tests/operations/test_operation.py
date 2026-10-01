@@ -409,6 +409,13 @@ class TestSelection:
         toy.structural_route("direct", exact=False, **_route(True, 2.0))
         assert toy.check(Gaussian("g")).route == "direct"
 
+    def test_a_fallback_ranks_below_every_other_route_whatever_its_exactness(self):
+        toy = _toy()
+        toy.fallback_route("floor", exact=True, **_route(True, 1.0))
+        toy.structural_route("direct", exact=False, **_route(True, 2.0))
+        assert toy.check(Gaussian("g")).route == "direct"
+        assert float(jnp.asarray(toy(Gaussian("g")))) == 2.0
+
     def test_registration_order_breaks_the_remaining_ties(self):
         toy = _toy()
         toy.structural_route("first", exact=True, **_route(True, 1.0))
@@ -478,6 +485,55 @@ class TestSelection:
         report = toy.check(Gaussian("g"))
         assert (report.feasible, report.route, report.exact) == (True, "guarded", True)
         assert [name for name, _ in report.routes] == ["guarded"]
+
+
+class TestNamingAMethod:
+    @staticmethod
+    def _two_registries() -> Any:
+        toy = _toy()
+        toy.registry_route("left", registry=_registry(nuts=(False, True, 1.0)))
+        toy.registry_route(
+            "right", registry=_registry(nuts=(False, True, 2.0), hmc=(False, True, 3.0))
+        )
+        return toy
+
+    def test_a_plain_name_matching_one_method_runs_it(self):
+        toy = self._two_registries().with_options(method="hmc")
+        assert float(jnp.asarray(toy(Gaussian("g")))) == 3.0
+
+    def test_a_name_held_by_two_registries_asks_for_route_slash_method(self):
+        toy = self._two_registries().with_options(method="nuts")
+        with pytest.raises(ResolutionError, match=r"left/nuts, right/nuts.*route/method"):
+            toy(Gaussian("g"))
+
+    def test_the_qualified_form_selects_the_method_within_its_route(self):
+        toy = self._two_registries().with_options(method="right/nuts")
+        assert toy.check(Gaussian("g")).route == "right"
+        assert float(jnp.asarray(toy(Gaussian("g")))) == 2.0
+
+    def test_a_name_matching_a_route_and_a_method_is_ambiguous(self):
+        toy = _toy()
+        toy.structural_route("nuts", exact=True, **_route(True, 1.0))
+        toy.registry_route("methods", registry=_registry(nuts=(False, True, 2.0)))
+        with pytest.raises(ResolutionError, match=r"nuts, methods/nuts"):
+            toy.with_options(method="nuts")(Gaussian("g"))
+
+    def test_routes_sharing_a_registry_each_take_the_named_method(self):
+        class _OnLaws(_Method):
+            def check(self, *args: Any, **options: Any) -> Feasibility:
+                return Feasibility(isinstance(args[0], Distribution), "the argument is no law")
+
+        registry: UnaryDispatchRegistry = UnaryDispatchRegistry()
+        registry.register(_OnLaws("nuts", exact=False, feasible=True, value=2.0))
+        toy = _toy()
+        toy.registry_route("first", registry=registry, arguments=lambda call: (object(),))
+        toy.registry_route("second", registry=registry)
+        report = toy.with_options(method="nuts").check(Gaussian("g"))
+        assert (report.route, report.method) == ("second", "nuts")
+
+    def test_a_qualified_name_no_route_holds_raises(self):
+        with pytest.raises(ResolutionError, match="no registry route 'left' holds"):
+            self._two_registries().with_options(method="left/hmc")(Gaussian("g"))
 
 
 class TestRegistryRoutes:

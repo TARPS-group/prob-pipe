@@ -580,10 +580,11 @@ class _Candidate:
 
     @property
     def rank(self) -> tuple[int, int, int]:
-        """Exact before approximate, a fallback below the other sources, then registration order."""
+        """A fallback below every other source whatever its exactness, then exact before
+        approximate, then registration order."""
         return (
-            0 if self.exact is True else 1,
             1 if self.route.source is RouteSource.FALLBACK else 0,
+            0 if self.exact is True else 1,
             self.index,
         )
 
@@ -1476,51 +1477,91 @@ class Operation(Function):
     def _candidates(self, controls: Mapping[str, Any]) -> list[_Candidate]:
         """The ways the routes may realize a call under *controls*, in selection order.
 
+        A ``method`` name resolves as :meth:`_named_candidates` states.
+
         Raises
         ------
         ResolutionError
-            If ``method`` names neither a route nor a method of a registry route's
-            registry, or names an approximate route while ``exact_only`` is set.
+            If ``method`` names no route or registry method, matches several, or
+            names an approximate route while ``exact_only`` is set.
         """
-        routes = list(self._route_table.routes)
         method, exact_only = controls["method"], controls["exact_only"]
-        candidates: list[_Candidate] = []
-        if method is None:
-            for index, route in enumerate(routes):
+        if method is not None:
+            candidates = self._named_candidates(method, exact_only)
+        else:
+            candidates = []
+            for index, route in enumerate(self._route_table.routes):
                 if isinstance(route, _RegistryRoute):
                     candidates += [_Candidate(route, True, index), _Candidate(route, False, index)]
                 else:
                     candidates.append(_Candidate(route, route.exact, index))
-        else:
-            named = [(index, route) for index, route in enumerate(routes) if route.name == method]
-            holders = [
-                (index, route)
-                for index, route in enumerate(routes)
-                if isinstance(route, _RegistryRoute) and method in route.registry.list_methods()
-            ]
-            if named:
-                index, route = named[0]
-                if isinstance(route, _RegistryRoute):
-                    candidates = [_Candidate(route, True, index), _Candidate(route, False, index)]
-                else:
-                    candidates = [_Candidate(route, route.exact, index)]
-                    if exact_only and route.exact is not True:
-                        raise ResolutionError(
-                            f"{self.name}: route {method!r} is not exact and exact_only was "
-                            f"requested"
-                        )
-            elif holders:
-                index, route = holders[0]
-                candidates = [_Candidate(route, None, index, method)]
-            else:
-                available = ", ".join(route.name for route in routes) or "none"
-                raise ResolutionError(
-                    f"{self.name}: no route or registered method named {method!r}; routes: "
-                    f"{available}"
-                )
         if exact_only:
             candidates = [c for c in candidates if c.exact is True or c.method is not None]
         return sorted(candidates, key=lambda candidate: candidate.rank)
+
+    def _named_candidates(self, method: str, exact_only: bool) -> list[_Candidate]:
+        """The candidates a ``method`` name selects.
+
+        A plain name selects the route of that name, or the method of that name
+        in the registry of the registry routes holding it; routes that share one
+        registry are each a candidate with that method. The qualified form
+        ``route/method`` selects the method within the named registry route.
+
+        Raises
+        ------
+        ResolutionError
+            If the name matches nothing; if a plain name matches a route and a
+            registry method, or methods of different registries, naming each
+            candidate as ``route/method``; or if it names an approximate route
+            while ``exact_only`` is set.
+        """
+        routes = list(self._route_table.routes)
+        route_name, qualified, method_name = method.partition("/")
+        if qualified:
+            for index, route in enumerate(routes):
+                if (
+                    route.name == route_name
+                    and isinstance(route, _RegistryRoute)
+                    and method_name in route.registry.list_methods()
+                ):
+                    return [_Candidate(route, None, index, method_name)]
+            raise ResolutionError(
+                f"{self.name}: no registry route {route_name!r} holds a method named "
+                f"{method_name!r}; {self._names_available()}"
+            )
+        named = [(index, route) for index, route in enumerate(routes) if route.name == method]
+        holders = [
+            (index, route)
+            for index, route in enumerate(routes)
+            if isinstance(route, _RegistryRoute) and method in route.registry.list_methods()
+        ]
+        registries = {id(route.registry) for _, route in holders}
+        if (named and holders) or len(registries) > 1:
+            forms = [route.name for _, route in named]
+            forms += [f"{route.name}/{method}" for _, route in holders]
+            raise ResolutionError(
+                f"{self.name}: method={method!r} matches {', '.join(forms)}; name one of "
+                f"them, a registry method as route/method"
+            )
+        if named:
+            index, route = named[0]
+            if isinstance(route, _RegistryRoute):
+                return [_Candidate(route, True, index), _Candidate(route, False, index)]
+            if exact_only and route.exact is not True:
+                raise ResolutionError(
+                    f"{self.name}: route {method!r} is not exact and exact_only was requested"
+                )
+            return [_Candidate(route, route.exact, index)]
+        if holders:
+            return [_Candidate(route, None, index, method) for index, route in holders]
+        raise ResolutionError(
+            f"{self.name}: no route or registered method named {method!r}; "
+            f"{self._names_available()}"
+        )
+
+    def _names_available(self) -> str:
+        """The routes a ``method`` control may name, in words."""
+        return f"routes: {', '.join(route.name for route in self._route_table.routes) or 'none'}"
 
     def _select(
         self, call: BoundCall, result: OutputSpec | None

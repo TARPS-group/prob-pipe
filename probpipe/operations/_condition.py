@@ -96,7 +96,6 @@ from ._operation import (
     CallCheck,
     Operation,
     RouteSource,
-    _Candidate,
     _CheckedRoute,
     _RegistryRoute,
     _workflow_draws,
@@ -1089,14 +1088,14 @@ class _NormalizingRoute(_RegistryRoute):
 
 
 class _Conditioning(Operation):
-    """``condition_on``'s operation: a named method selects among the routes that normalize.
+    """``condition_on``'s operation, whose check computes no exact stage.
 
     The routes that normalize share the inference-method registry, so a
     ``method=`` control naming one of its methods selects each of those routes
     with that method, in selection order, and the first whose exact stage
-    applies runs. Every other control selects as for any operation. A check
-    probes the routes with no exact stage computed, and a call probes them
-    with the exact stage computable.
+    applies runs, as for any routes that share a registry. A check probes the
+    routes with no exact stage computed, and a call probes them with the exact
+    stage computable.
     """
 
     def _check_point(self, values: Mapping[str, Any], *, select: bool = True) -> CallCheck:
@@ -1112,18 +1111,6 @@ class _Conditioning(Operation):
             return super()._invoke_resolved(values, context=context)
         finally:
             _CHECKING.reset(token)
-
-    def _candidates(self, controls: Mapping[str, Any]) -> list[_Candidate]:
-        method = controls["method"]
-        routes = list(self._route_table.routes)
-        if method is None or any(route.name == method for route in routes):
-            return super()._candidates(controls)
-        holders = [
-            _Candidate(route, None, index, method)
-            for index, route in enumerate(routes)
-            if isinstance(route, _RegistryRoute) and method in route.registry.list_methods()
-        ]
-        return holders or super()._candidates(controls)
 
 
 def _condition_on_result(d: TermSpec, given: TermSpec) -> OutputSpec:
