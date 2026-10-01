@@ -112,48 +112,19 @@ from probpipe.core.transition import (
     with_resampling,
 )
 from probpipe.distributions import (
-    # Discrete
-    Bernoulli,
-    Beta,
-    Binomial,
-    Categorical,
-    Cauchy,
-    Dirichlet,
-    Exponential,
-    Gamma,
     # Gaussian random functions
     GaussianRandomFunction,
-    HalfCauchy,
-    HalfNormal,
-    InverseGamma,
     JointEmpirical,
     JointGaussian,
     # KDE
     KDEDistribution,
-    Laplace,
     LinearBasisFunction,
-    LogNormal,
-    Multinomial,
-    # Multivariate
-    MultivariateNormal,
-    NegativeBinomial,
-    # Continuous
-    Normal,
     NumericJointEmpirical,
-    Pareto,
-    Poisson,
     # Joint
     ProductDistribution,
     SequentialJointDistribution,
-    StudentT,
-    # TFP base
-    TFPDistribution,
     # Transformed
     TransformedDistribution,
-    TruncatedNormal,
-    Uniform,
-    VonMisesFisher,
-    Wishart,
     bijector_for,
     register_bijector,
 )
@@ -178,7 +149,34 @@ from probpipe.distributions._distribution import (
     NumericDistribution,
     set_default_num_evaluations,
 )
-from probpipe.families import UnnormalizedDistribution
+from probpipe.families import (
+    Bernoulli,
+    Beta,
+    Binomial,
+    Categorical,
+    Cauchy,
+    Dirichlet,
+    Exponential,
+    Gamma,
+    HalfCauchy,
+    HalfNormal,
+    InverseGamma,
+    Laplace,
+    LogNormal,
+    Multinomial,
+    MultivariateNormal,
+    NegativeBinomial,
+    Normal,
+    Pareto,
+    Poisson,
+    StudentT,
+    TFPDistribution,
+    TruncatedNormal,
+    Uniform,
+    UnnormalizedDistribution,
+    VonMisesFisher,
+    Wishart,
+)
 from probpipe.functions import (
     AbstractModule,
     Module,

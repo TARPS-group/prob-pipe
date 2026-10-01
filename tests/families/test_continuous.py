@@ -7,7 +7,7 @@ import pytest
 import scipy.stats as _scipy
 
 from probpipe import NumericRecordDistribution, log_prob, mean, sample, variance
-from probpipe.distributions import (
+from probpipe.families import (
     Beta,
     Cauchy,
     Exponential,

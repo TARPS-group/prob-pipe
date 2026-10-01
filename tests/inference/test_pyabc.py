@@ -17,7 +17,7 @@ import pytest
 
 pytest.importorskip("pyabc")  # requires the [pyabc] extra; skipped otherwise
 
-import probpipe.distributions.continuous as C
+import probpipe.families._continuous as C
 from probpipe import (
     MultivariateNormal,
     Normal,

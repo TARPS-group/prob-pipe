@@ -12,7 +12,7 @@ Provides:
   - ``GaussianProcess`` – the random function specified by a mean function and
     a covariance kernel.
 
-``MultivariateNormal`` is defined in :mod:`probpipe.distributions.multivariate`,
+``MultivariateNormal`` is defined in :mod:`probpipe.families._multivariate`,
 and ``GaussianRandomFunction`` and ``LinearBasisFunction`` in
 :mod:`probpipe.distributions.gaussian_random_function`.
 """

@@ -45,7 +45,7 @@ def _tfp_nonrandom_plan(
 
 def _build_tfp_to_probpipe() -> dict[type, tuple[str, callable]]:
     """Build mapping lazily to avoid circular imports."""
-    from ..distributions.continuous import (
+    from ..families._continuous import (
         Beta,
         Cauchy,
         Exponential,
@@ -60,12 +60,12 @@ def _build_tfp_to_probpipe() -> dict[type, tuple[str, callable]]:
         StudentT,
         Uniform,
     )
-    from ..distributions.discrete import (
+    from ..families._discrete import (
         Bernoulli,
         Categorical,
         Poisson,
     )
-    from ..distributions.multivariate import (
+    from ..families._multivariate import (
         Dirichlet,
         MultivariateNormal,
     )

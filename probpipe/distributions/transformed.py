@@ -18,9 +18,9 @@ from ..core.constraints import (
 )
 from ..core.provenance import Provenance
 from ..custom_types import Array, ArrayLike, PRNGKey
+from ..families._backend import TFPDistribution
 from ..functions import _descendants
 from ._capabilities import SupportsLogProb, SupportsSampling
-from ._tfp_base import TFPDistribution
 
 __all__ = ["TransformedDistribution"]
 

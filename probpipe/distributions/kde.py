@@ -25,7 +25,7 @@ from ..core._specs import NumericArraySpec, NumericRecordSpec, OutputSpec, Recor
 from ..core.constraints import Constraint, real
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike
-from ._tfp_base import TFPDistribution
+from ..families._backend import TFPDistribution
 
 __all__ = ["KDEDistribution"]
 

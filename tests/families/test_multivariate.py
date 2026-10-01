@@ -7,12 +7,7 @@ import pytest
 import scipy.stats
 
 from probpipe import NumericRecordDistribution, cov, log_prob, mean, sample, variance
-from probpipe.distributions import (
-    Dirichlet,
-    Multinomial,
-    VonMisesFisher,
-    Wishart,
-)
+from probpipe.families import Dirichlet, Multinomial, VonMisesFisher, Wishart
 
 # ---------------------------------------------------------------------------
 # Fixtures

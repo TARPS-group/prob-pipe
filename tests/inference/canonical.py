@@ -51,12 +51,12 @@ from probpipe import (
     Record,
 )
 from probpipe.core.constraints import Constraint, boolean, non_negative_integer, real
-from probpipe.distributions import ConditionalDistribution, Distribution, TFPDistribution
+from probpipe.distributions import ConditionalDistribution, Distribution
 from probpipe.distributions._capabilities import (
     SupportsConditionalLogProb,
     SupportsConditionalSampling,
 )
-from probpipe.families import GaussianFamily, PoissonFamily, glm_likelihood
+from probpipe.families import GaussianFamily, PoissonFamily, TFPDistribution, glm_likelihood
 from probpipe.validation import Reference
 
 __all__ = [

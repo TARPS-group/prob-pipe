@@ -212,7 +212,8 @@ class GaussianRandomFunction(ArrayRandomFunction):
         assembly (e.g. structured covariance representations).
         """
         from ..core._distribution_array import DistributionArray
-        from . import MultivariateNormal, Normal
+        from ..families._continuous import Normal
+        from ..families._multivariate import MultivariateNormal
 
         mean = self.predict_mean(X)  # (*eb, n, *out)
         extra_batch, n = self._parse_X(X)
@@ -335,7 +336,7 @@ class LinearBasisFunction(GaussianRandomFunction, SupportsSampling):
         output_shape: tuple[int, ...] = (),
         bias: ArrayLike | None = None,
     ) -> None:
-        from . import MultivariateNormal
+        from ..families._multivariate import MultivariateNormal
 
         if not isinstance(weights, MultivariateNormal):
             raise TypeError(f"weights must be a MultivariateNormal, got {type(weights).__name__}")

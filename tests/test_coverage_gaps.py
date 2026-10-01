@@ -30,7 +30,7 @@ from probpipe import (
     sample,
     variance,
 )
-from probpipe.distributions.multivariate import MultivariateNormal
+from probpipe.families._multivariate import MultivariateNormal
 
 # ---------------------------------------------------------------------------
 # BootstrapDistribution

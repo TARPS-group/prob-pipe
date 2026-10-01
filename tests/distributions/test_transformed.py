@@ -20,11 +20,8 @@ from probpipe.core.constraints import (
     real,
     unit_interval,
 )
-from probpipe.distributions import (
-    MultivariateNormal,
-    Normal,
-    TransformedDistribution,
-)
+from probpipe.distributions import TransformedDistribution
+from probpipe.families import MultivariateNormal, Normal
 
 
 @pytest.fixture

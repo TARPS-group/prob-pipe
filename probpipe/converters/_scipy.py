@@ -57,7 +57,7 @@ def _scipy_generator_from_key(key: Any) -> np.random.Generator:
 
 def _build_scipy_to_probpipe() -> dict[type, tuple[str, callable]]:
     """Build scipy.stats type → (ProbPipe class, kwargs extractor)."""
-    from ..distributions.continuous import (
+    from ..families._continuous import (
         Beta,
         Cauchy,
         Exponential,

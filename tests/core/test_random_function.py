@@ -20,7 +20,7 @@ from probpipe import (
 # error. Internal infra opts into the bypass — the fixtures here mock
 # library-internal code paths (RandomFunction subclasses), so the
 # bypass is appropriate.
-from probpipe.distributions._tfp_base import _allow_batched_tfp_init
+from probpipe.families._backend import _allow_batched_tfp_init
 
 # ---------------------------------------------------------------------------
 # Fixtures

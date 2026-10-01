@@ -7,13 +7,7 @@ import pytest
 import scipy.stats
 
 from probpipe import NumericRecordDistribution, integer_interval, log_prob, mean, sample, variance
-from probpipe.distributions import (
-    Bernoulli,
-    Binomial,
-    Categorical,
-    NegativeBinomial,
-    Poisson,
-)
+from probpipe.families import Bernoulli, Binomial, Categorical, NegativeBinomial, Poisson
 
 # ---------------------------------------------------------------------------
 # Fixtures

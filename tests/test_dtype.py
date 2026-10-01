@@ -56,7 +56,7 @@ def _run_x64(snippet: str) -> str:
 
 def test_x32_default_normal_is_float32():
     import probpipe.core.ops as ops
-    from probpipe.distributions.continuous import Normal
+    from probpipe.families._continuous import Normal
 
     n = Normal(loc=0.0, scale=1.0, name="n")
     assert n.dtype == jnp.float32
@@ -65,7 +65,7 @@ def test_x32_default_normal_is_float32():
 
 
 def test_x32_explicit_float32_array_preserved():
-    from probpipe.distributions.continuous import Normal
+    from probpipe.families._continuous import Normal
 
     loc = jnp.array(0.0, dtype=jnp.float32)
     scale = jnp.array(1.0, dtype=jnp.float32)
@@ -73,7 +73,7 @@ def test_x32_explicit_float32_array_preserved():
 
 
 def test_x32_int_inputs_promote_to_float32():
-    from probpipe.distributions.continuous import Normal
+    from probpipe.families._continuous import Normal
 
     # Integer inputs should not silently produce an int distribution;
     # they are promoted to JAX's default float dtype.

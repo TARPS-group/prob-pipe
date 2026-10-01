@@ -41,9 +41,9 @@ from ..distributions._capabilities import (
     SupportsConditionalVariance,
 )
 from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
-from ..distributions._tfp_base import TFPDistribution
 from ..linalg import DiagonalLinOp, LinOp
 from ..values import Function
+from ._backend import TFPDistribution
 
 if TYPE_CHECKING:
     from ..core.record import Record

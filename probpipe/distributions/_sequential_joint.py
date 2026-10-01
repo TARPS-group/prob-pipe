@@ -27,6 +27,7 @@ from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike, PRNGKey
+from ..families._backend import _allow_batched_tfp_init
 from ._capabilities import (
     SupportsExactConditioning,
     SupportsLogProb,
@@ -39,7 +40,6 @@ from ._joint_utils import (
     KeyPath,
     _parse_condition_args,
 )
-from ._tfp_base import _allow_batched_tfp_init
 
 
 def _resolve_callable_component(
