@@ -1,12 +1,13 @@
 """The root-ancestor capture of lifted arguments (V.5).
 
 A lifted argument is a law, and the law whose draws it reads, transitively, is
-its **root**. A field view reads its parent's draw and projects its node, and a
-law registered as a descendant type reads its ancestor's draw and maps it, as a
-bijector-transformed law pushes its base's draw through its bijector. The lift
-groups the arguments by root, so each group contributes one root draw per
-repetition and every member evaluates on it: sibling views co-sample, and so do
-a law and its own transform.
+its **root**. An element of a batch of laws reads its stored law's draw, a field
+view reads its parent's draw and projects its node, and a law registered as a
+descendant type reads its ancestor's draw and maps it, as a bijector-transformed
+law pushes its base's draw through its bijector. The lift groups the arguments
+by root, so each group contributes one root draw per repetition and every member
+evaluates on it. Hence sibling views co-sample, two accesses of one batch element
+co-sample, and a law co-samples with its own transform.
 
 The capture of an argument records its root, the root's sampler, the event
 path a projection reads, a canonical descriptor of the descendant graph between
@@ -22,6 +23,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..distributions._batches import _element_source
 from ..distributions._distribution import Distribution
 from ..distributions._views import FieldView, _projector
 
@@ -203,7 +205,13 @@ def _capture_stochastic_consumer(
     *,
     session: _StochasticCaptureSession,
 ) -> CapturedStochasticConsumer:
-    """The capture of *value*: a field view's or a registered descendant's, or its own root."""
+    """The capture of *value*: a batch element's, a field view's, or a registered descendant's.
+
+    A law that is none of these is its own root.
+    """
+    source = _element_source(value)
+    if source is not None:
+        return _capture_element(value, source, session=session)
     if isinstance(value, FieldView):
         return _capture_field_view(value, session=session)
     rule = _descent_rule(value)
@@ -216,6 +224,29 @@ def _capture_stochastic_consumer(
         descendant_descriptor=None,
         evaluator=_identity,
     )
+
+
+def _capture_element(
+    element: Distribution,
+    source: Distribution,
+    *,
+    session: _StochasticCaptureSession,
+) -> CapturedStochasticConsumer:
+    """A batch element's capture, which is its stored law's, since the element shares its draws.
+
+    Raises
+    ------
+    TypeError
+        If the element graph is cyclic.
+    """
+    identity = id(element)
+    if identity in session.active_descendants:
+        raise TypeError("Cyclic batch element graph is unsupported")
+    session.active_descendants.add(identity)
+    try:
+        return session.capture_consumer(source)
+    finally:
+        session.active_descendants.remove(identity)
 
 
 def _capture_field_view(
