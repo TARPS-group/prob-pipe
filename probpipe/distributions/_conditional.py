@@ -603,16 +603,18 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
 
     @abstractmethod
     def _condition_on(
-        self, given: Record | Mapping[str, Any], /, **kwargs: Any
+        self, given: Record | Mapping[str, Any], /, **options: Any
     ) -> Distribution | ConditionalDistribution:
         """The law ``K(given, ·)``, or a curried kernel for a partial given.
 
         Parameters
         ----------
         given : Record or Mapping[str, Any]
-            Values for some or all of the given slots, by slot name.
-        **kwargs : Any
-            Further given values, by slot name.
+            Values for some or all of the given slots, by slot name; every given
+            value arrives here.
+        **options : Any
+            Options that configure the kernel or the method that evaluates it,
+            such as a budget.
 
         Returns
         -------

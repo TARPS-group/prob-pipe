@@ -493,9 +493,9 @@ class SupportsExpectation(Protocol):
     def _expectation(self, f: Callable[[Any], Array]) -> Array: ...   # exact E[f(X)] for arbitrary f
 
 class SupportsExactConditioning(ABC):        # claimed by inheriting, not structurally
-    def _condition_on(self, given: Any, /, **kwargs: Any) -> Distribution: ...   # the conditional law given fixed values
+    def _condition_on(self, given: Record | Mapping[str, Any], /, **options: Any) -> Distribution: ...   # the conditional law given fixed values
 class SupportsApproximateConditioning(ABC):  # same primitive, returning a stand-in for that law
-    def _condition_on(self, given: Any, /, **kwargs: Any) -> Distribution: ...
+    def _condition_on(self, given: Record | Mapping[str, Any], /, **options: Any) -> Distribution: ...
 
 @runtime_checkable
 class SupportsMarginals(Protocol):
@@ -559,8 +559,8 @@ class ConditionalDistribution(TrackedTerm):
     @property
     def event_spec(self) -> OutputSpec: ...              # view on spec: the event declaration
     def with_dim_names(self, **names: str) -> Self: ...   # rename symbolic dimensions on both sides (II.1)
-    def _condition_on(self, given: Record | Mapping[str, Any], /, **kwargs) -> Distribution | ConditionalDistribution: ...
-    # the required primitive: the law K(given, ·), or a curried kernel for a partial given
+    def _condition_on(self, given: Record | Mapping[str, Any], /, **options: Any) -> Distribution | ConditionalDistribution: ...
+    # the required primitive: the law K(given, ·), or a curried kernel for a partial given; every given value arrives in given, and the keyword options configure the kernel or the method, such as a budget
 
 @runtime_checkable
 class SupportsConditionalSampling(Protocol):

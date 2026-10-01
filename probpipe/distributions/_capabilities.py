@@ -209,7 +209,9 @@ class SupportsExactConditioning(ABC):
     """
 
     @abstractmethod
-    def _condition_on(self, given: Any, /, **kwargs: Any) -> Any: ...
+    def _condition_on(
+        self, given: Record | Mapping[str, Any], /, **options: Any
+    ) -> Distribution: ...
 
 
 class SupportsApproximateConditioning(ABC):
@@ -224,7 +226,9 @@ class SupportsApproximateConditioning(ABC):
     """
 
     @abstractmethod
-    def _condition_on(self, given: Any, /, **kwargs: Any) -> Any: ...
+    def _condition_on(
+        self, given: Record | Mapping[str, Any], /, **options: Any
+    ) -> Distribution: ...
 
 
 # ---------------------------------------------------------------------------
