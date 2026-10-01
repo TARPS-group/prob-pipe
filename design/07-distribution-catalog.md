@@ -71,6 +71,7 @@ class BootstrapDistribution(Distribution):   # a random measure: a draw is an Em
     # the empirical measure of one replicate
 
 class SmoothingKernel(ABC):                # a bank of mean-zero kernel copies, one per center
+    variance: ClassVar[float]                  # the unit kernel's variance per coordinate
     @classmethod
     @abstractmethod
     def build_kernels(cls, centers: ArrayLike | NumericRecordBatch,
@@ -81,7 +82,7 @@ class SmoothingKernel(ABC):                # a bank of mean-zero kernel copies, 
     @abstractmethod
     def _log_density(self, x: Array) -> Array: ...            # (*batch, n) for x of shape (*batch, *event): one per copy
 class GaussianKernel(SmoothingKernel): ...
-class EpanechnikovKernel(SmoothingKernel): ...
+class EpanechnikovKernel(SmoothingKernel): ...   # the product kernel ∏ⱼ ¾(1 − uⱼ²); variance 1/5
 
 class KDEDistribution(Distribution):
     def __init__(self, name: str, atoms: Array | NumericRecordBatch, bandwidth: ArrayLike | str | None = None,

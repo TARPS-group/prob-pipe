@@ -239,6 +239,10 @@ Identity follows the workflow's logical structure: ordinals are fixed by program
 
 Scoped, structural randomness is `C6 – Traceable and reproducible workflows` made mechanical: one seed reproduces a workflow, one provenance record replays a call, and identity-derived keys make the result independent of execution order, so reproducibility survives parallelism and orchestration rather than trading off against them. Key management is `C3 – Computational detail hidden by default, available on demand` applied to randomness: draws are fresh by default and reproducible on demand through the scope's seed. Versioning the derivation makes reproduction exact: a run reproduces under the contract that produced it or refuses.
 
+### Open points
+
+- *The caching interface.* Caching is deferred past the first release; its intended form is a `cache=` parameter of `workflow_run`, keyed on the structural identities the scope holds.
+
 ## V.9 — Execution (step 7)
 
 ### Contract
