@@ -89,7 +89,7 @@ def test_x32_int_inputs_promote_to_float32():
 def test_x64_normal_full_pipeline():
     out = _run_x64(
         """
-        from probpipe.distributions.continuous import Normal
+        from probpipe.families._continuous import Normal
         import probpipe.core.ops as ops
         n = Normal(loc=0.0, scale=1.0, name='n')
         assert n.dtype == jnp.float64, n.dtype
@@ -105,7 +105,7 @@ def test_x64_normal_full_pipeline():
 def test_x64_uniform_beta_gamma():
     out = _run_x64(
         """
-        from probpipe.distributions.continuous import Uniform, Beta, Gamma
+        from probpipe.families._continuous import Uniform, Beta, Gamma
         import probpipe.core.ops as ops
         import jax
 
@@ -127,7 +127,7 @@ def test_x64_multivariate_normal_does_not_raise():
     """The original failure mode: log_prob raised TypeError under x64."""
     out = _run_x64(
         """
-        from probpipe.distributions.multivariate import MultivariateNormal
+        from probpipe.families._multivariate import MultivariateNormal
         import probpipe.core.ops as ops
         import jax
 
@@ -146,7 +146,7 @@ def test_x64_explicit_float32_input_preserved_under_x64():
     """User passing float32 explicitly under x64 should keep float32."""
     out = _run_x64(
         """
-        from probpipe.distributions.continuous import Normal
+        from probpipe.families._continuous import Normal
         loc = jnp.array(0.0, dtype=jnp.float32)
         scale = jnp.array(1.0, dtype=jnp.float32)
         n = Normal(loc=loc, scale=scale, name='n')
@@ -161,7 +161,7 @@ def test_x64_promotion_mixed_dtype():
     """Mixed float32 / float64 inputs promote to the wider dtype."""
     out = _run_x64(
         """
-        from probpipe.distributions.continuous import Normal
+        from probpipe.families._continuous import Normal
         loc32 = jnp.array(0.0, dtype=jnp.float32)
         scale64 = jnp.array(1.0, dtype=jnp.float64)
         n = Normal(loc=loc32, scale=scale64, name='n')
@@ -190,13 +190,13 @@ def test_x64_transformed_distribution_preserves_dtype():
     out = _run_x64(
         """
         import tensorflow_probability.substrates.jax.bijectors as tfb
-        from probpipe.distributions.continuous import Normal
-        from probpipe.distributions.transformed import TransformedDistribution
+        from probpipe.families._continuous import Normal
+        from probpipe.families import BijectorTransformedDistribution
         import probpipe.core.ops as ops
         import jax
 
         base = Normal(loc=0.0, scale=1.0, name='base')
-        td = TransformedDistribution('td', base, tfb.Exp())
+        td = BijectorTransformedDistribution('td', base, tfb.Exp())
         assert td.dtype == jnp.float64, td.dtype
         assert ops.log_prob(td, 1.0).dtype == jnp.float64
         assert ops.sample(td, key=jax.random.key(0)).dtype == jnp.float64
@@ -264,7 +264,7 @@ def test_x32_weights_default():
 def test_x64_discrete_distributions():
     out = _run_x64(
         """
-        from probpipe.distributions.discrete import (
+        from probpipe.families._discrete import (
             Bernoulli, Binomial, Poisson, Categorical, NegativeBinomial,
         )
         import probpipe.core.ops as ops
@@ -311,7 +311,7 @@ def test_x64_kde_distribution():
 def test_x64_gaussian_random_function():
     out = _run_x64(
         """
-        from probpipe.distributions import MultivariateNormal
+        from probpipe.families import MultivariateNormal
         from probpipe.distributions.gaussian_random_function import LinearBasisFunction
         import jax
 
@@ -339,7 +339,7 @@ def test_x64_product_distribution_promotes():
     out = _run_x64(
         """
         from probpipe.distributions import ProductDistribution
-        from probpipe.distributions.continuous import Normal
+        from probpipe.families._continuous import Normal
         import probpipe.core.ops as ops
         import jax
 

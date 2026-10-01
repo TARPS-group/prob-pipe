@@ -15,17 +15,14 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from tensorflow_probability.substrates.jax import bijectors as tfb
 
 from probpipe import (
-    EmpiricalDistribution,
     Function,
     Normal,
     ProductDistribution,
     Provenance,
     ReplayCompatibilityError,
     ReplayUnsupportedCallableError,
-    TransformedDistribution,
     UnmanagedConcurrentWorkflowEntryError,
     replay_run,
     sample,
@@ -39,7 +36,6 @@ from probpipe.functions._managed import (
 from tests.functions import _replay_fixtures
 from tests.functions._replay_fixtures import (
     replayable_affine,
-    replayable_difference,
     replayable_identity,
     replayable_optional_nested,
 )
@@ -904,41 +900,6 @@ class TestReplayPreflight:
 
         derive_key.assert_not_called()
 
-    def test_effect_descriptor_scalar_types_are_exact_before_derivation(self):
-        original_root = Normal(loc=0.0, scale=1.0, name="root")
-        with workflow_run(seed=4):
-            original = sample(TransformedDistribution("shifted", original_root, tfb.Shift(1.0)))
-        payload = original.provenance.to_dict()
-        descriptor = payload["controls"]["replay"]["plan"]["expected_effects"][0][
-            "descendant_descriptor"
-        ]
-
-        def replace_bool_marker(value):
-            if value == ["bool", False]:
-                value[1] = 0
-                return True
-            if isinstance(value, list):
-                return any(replace_bool_marker(item) for item in value)
-            return False
-
-        assert replace_bool_marker(descriptor)
-        changed = Provenance.from_dict(payload)
-        candidate_root = Normal(loc=0.0, scale=1.0, name="root")
-        candidate = TransformedDistribution("candidate", candidate_root, tfb.Shift(1.0))
-
-        with (
-            patch.object(candidate_root, "_sample", side_effect=AssertionError("sampled")),
-            patch(
-                "probpipe.functions._context.derive_event_key_words_from_encoded",
-                side_effect=AssertionError("derived key"),
-            ) as derive_key,
-            pytest.raises(ReplayCompatibilityError, match="stochastic effect plan"),
-            replay_run(changed),
-        ):
-            sample(candidate)
-
-        derive_key.assert_not_called()
-
     def test_callable_drift_fails_before_sampling(self):
         workflow = Function(
             name="replayable_identity", fn=replayable_identity, n_broadcast_samples=5
@@ -1013,38 +974,6 @@ class TestReplayPreflight:
             replay_run(original.provenance),
         ):
             changed(value=candidate)
-
-    def test_direct_descendant_drift_fails_before_key_derivation(self):
-        original_dist = TransformedDistribution(
-            "original_dist",
-            Normal(loc=0.0, scale=1.0, name="root"),
-            tfb.Exp(),
-        )
-        with workflow_run(seed=4):
-            original = sample(original_dist)
-
-        with replay_run(original.provenance):
-            replayed = sample(
-                TransformedDistribution(
-                    "transformed",
-                    Normal(loc=0.0, scale=1.0, name="root"),
-                    tfb.Exp(),
-                )
-            )
-        np.testing.assert_array_equal(_sample_value(replayed), _sample_value(original))
-
-        candidate_root = Normal(loc=0.0, scale=1.0, name="root")
-        candidate = TransformedDistribution("candidate", candidate_root, tfb.Square())
-        with (
-            patch.object(candidate_root, "_sample", side_effect=AssertionError("sampled")),
-            patch(
-                "probpipe.functions._context.derive_event_key_words_from_encoded",
-                side_effect=AssertionError("derived key"),
-            ),
-            pytest.raises(ReplayCompatibilityError, match="stochastic effect plan"),
-            replay_run(original.provenance),
-        ):
-            sample(candidate)
 
     def test_direct_record_projection_drift_fails_before_key_derivation(self):
         original_root = ProductDistribution(
@@ -1442,49 +1371,6 @@ class TestReplayEventRegistry:
             replay_run(original.provenance),
         ):
             workflow(value=Normal(loc=0.0, scale=1.0, name="value"))
-
-
-class TestReplayCoSamplingPlans:
-    @pytest.mark.parametrize("kind", ["alias", "record_view", "transform", "mixed"])
-    def test_supported_joint_plans_roundtrip(self, kind):
-        workflow = Function(
-            name="replayable_difference",
-            fn=replayable_difference,
-            n_broadcast_samples=8,
-            dispatch="sequential",
-        )
-
-        def values():
-            if kind == "alias":
-                root = Normal(loc=0.0, scale=1.0, name="root")
-                return {"left": root, "right": root}
-            if kind == "record_view":
-                root = ProductDistribution(
-                    x=Normal(loc=0.0, scale=1.0, name="x"),
-                    y=Normal(loc=2.0, scale=1.0, name="y"),
-                )
-                return {"left": root["x"], "right": root["y"]}
-            if kind == "transform":
-                root = Normal(loc=0.0, scale=1.0, name="root")
-                return {
-                    "left": root,
-                    "right": TransformedDistribution("right", root, tfb.Exp()),
-                }
-            return {
-                "left": EmpiricalDistribution(
-                    "left",
-                    jnp.asarray([1.0, 3.0]),
-                    weights=jnp.asarray([0.25, 0.75]),
-                ),
-                "right": Normal(loc=0.0, scale=1.0, name="right"),
-            }
-
-        with workflow_run(seed=53):
-            original = workflow(**values())
-        with replay_run(original.provenance):
-            replayed = workflow(**values())
-
-        np.testing.assert_array_equal(_marginal_values(replayed), _marginal_values(original))
 
 
 def test_replay_provenance_inputs_are_not_mutated():

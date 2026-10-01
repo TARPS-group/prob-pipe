@@ -21,9 +21,10 @@ import jax.numpy as jnp
 from ..core._empirical import EmpiricalDistribution, RecordEmpiricalDistribution
 from ..core._numeric_record_distribution import NumericRecordDistribution
 from ..core.provenance import Provenance
+from ..distributions._capabilities import SupportsMean
 from ..distributions._distribution import Distribution, NumericDistribution
-from ..distributions.transformed import TransformedDistribution
 from ..families._backend import _allow_batched_tfp_init
+from ..families._transformed import BijectorTransformedDistribution
 from ._registry import (
     _PROBPIPE_PROVIDER_ABI,
     ConversionInfo,
@@ -89,8 +90,8 @@ class _SampledMomentBatch:
 def _requires_sampled_moments(source: Any, target_name: str) -> bool:
     """Return whether a known ProbPipe moment implementation uses MC."""
     return (
-        isinstance(source, TransformedDistribution)
-        and source._tfp_transformed is None
+        isinstance(source, BijectorTransformedDistribution)
+        and not isinstance(source, SupportsMean)
         and target_name in _MOMENT_MATCH_TARGETS
     )
 

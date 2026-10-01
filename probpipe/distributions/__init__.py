@@ -45,7 +45,6 @@ from .joint import (
     SequentialJointDistribution,
 )
 from .kde import KDEDistribution
-from .transformed import TransformedDistribution
 
 __all__ = [
     "ArrayRandomFunction",
@@ -91,6 +90,4 @@ __all__ = [
     "SupportsConditionalVariance",
     "SupportsFactors",
     "SupportsMarginals",
-    # Transformed
-    "TransformedDistribution",
 ]

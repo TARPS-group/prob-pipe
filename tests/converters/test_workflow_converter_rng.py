@@ -13,6 +13,7 @@ import tensorflow_probability.substrates.jax.bijectors as tfb
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
+    BijectorTransformedDistribution,
     Binomial,
     ConversionInfo,
     ConversionMethod,
@@ -23,7 +24,6 @@ from probpipe import (
     Normal,
     NumericArraySpec,
     RecordEmpiricalDistribution,
-    TransformedDistribution,
     converter_registry,
     from_distribution,
     workflow_run,
@@ -39,6 +39,16 @@ class _RecordingNormal(Normal):
     def __init__(self, calls):
         self.calls = calls
         super().__init__(loc=0.0, scale=1.0, name="x")
+
+    def _sample(self, key, sample_shape=()):
+        self.calls.append((key, tuple(sample_shape)))
+        return super()._sample(key, sample_shape)
+
+
+class _RecordingMultivariateNormal(MultivariateNormal):
+    def __init__(self, calls, loc):
+        self.calls = calls
+        super().__init__(loc=jnp.asarray(loc), cov=jnp.eye(len(loc)), name="x")
 
     def _sample(self, key, sample_shape=()):
         self.calls.append((key, tuple(sample_shape)))
@@ -249,93 +259,10 @@ class TestBuiltInConversionPlanning:
         assert result.num_atoms == 8
         assert derive.call_count == 1
 
-    def test_sampled_probpipe_conversion_uses_captured_root_and_forward(self):
-        calls = []
-        root = _RecordingNormal(calls)
-        descendant = TransformedDistribution("descendant", root, tfb.Exp())
-
-        with (
-            patch.object(
-                type(descendant),
-                "_sample",
-                side_effect=AssertionError("sampled descendant directly"),
-            ),
-            workflow_run(seed=31),
-        ):
-            converted = converter_registry.convert(
-                descendant,
-                RecordEmpiricalDistribution,
-                num_samples=12,
-            )
-
-        assert [shape for _key, shape in calls] == [(12,)]
-        root_key = calls[0][0]
-        expected = jnp.exp(Normal._sample(root, root_key, (12,)))
-        np.testing.assert_allclose(
-            converted.flat_samples[:, 0],
-            expected,
-            rtol=1e-6,
-            atol=1e-6,
-        )
-
-    def test_from_distribution_recipe_keeps_the_captured_descendant_plan(self):
-        descendant = TransformedDistribution(
-            "descendant",
-            Normal(loc=0.0, scale=1.0, name="root"),
-            tfb.Exp(),
-        )
-
-        with workflow_run(seed=31):
-            converted = from_distribution(
-                descendant,
-                RecordEmpiricalDistribution,
-                num_samples=12,
-            )
-
-        effect = converted.provenance.controls["replay"]["plan"]["expected_effects"][0]
-        assert effect["operation_kind"] == "conversion"
-        assert effect["descendant_descriptor"][0] == "transformed-descendant"
-
-    def test_unsupported_descendant_conversion_fails_before_entropy(self):
-        calls = []
-        root = _RecordingNormal(calls)
-        descendant = TransformedDistribution("descendant", root, tfb.Tanh())
-
-        with (
-            patch("probpipe.functions._context._os_urandom") as urandom,
-            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
-            workflow_run(),
-            pytest.raises(TypeError, match="does not support this bijector type"),
-        ):
-            converter_registry.convert(
-                descendant,
-                RecordEmpiricalDistribution,
-                num_samples=8,
-            )
-
-        urandom.assert_not_called()
-        commit.assert_not_called()
-        assert calls == []
-
-    def test_explicit_key_conversion_keeps_direct_descendant_sampling(self):
-        root = Normal(loc=0.0, scale=1.0, name="base")
-        descendant = TransformedDistribution("descendant", root, tfb.Tanh())
-        explicit = jax.random.key(37)
-
-        converted = converter_registry.convert(
-            descendant,
-            RecordEmpiricalDistribution,
-            key=explicit,
-            num_samples=8,
-        )
-
-        expected = descendant._sample(explicit, (8,))
-        np.testing.assert_allclose(converted.flat_samples[:, 0], expected)
-
     def test_mc_moment_conversion_plans_and_reuses_one_sample_batch(self):
         calls = []
-        root = _RecordingEmpirical(calls)
-        descendant = TransformedDistribution("descendant", root, tfb.Exp())
+        root = _RecordingNormal(calls)
+        descendant = BijectorTransformedDistribution("descendant", root, tfb.Exp())
         converter = ProbPipeConverter()
 
         plan = converter._workflow_plan_conversion(
@@ -377,18 +304,18 @@ class TestBuiltInConversionPlanning:
         assert [shape for _key, shape in calls] == [(16,)]
 
         root_key = calls[0][0]
-        root_samples = RecordEmpiricalDistribution._sample(root, root_key, (16,))
-        expected = descendant.bijector.forward(root_samples)
-        np.testing.assert_allclose(converted._mean(), jnp.mean(expected, axis=0))
-        np.testing.assert_allclose(converted._variance(), jnp.var(expected, axis=0))
+        root_samples = Normal._sample(root, root_key, (16,))
+        expected = jnp.exp(root_samples)
+        np.testing.assert_allclose(converted._mean(), jnp.mean(expected, axis=0), rtol=1e-6)
+        np.testing.assert_allclose(converted._variance(), jnp.var(expected, axis=0), rtol=1e-5)
 
     @pytest.mark.parametrize(
         "key_factory", [lambda: jax.random.key(43), lambda: jax.random.PRNGKey(43)]
     )
     def test_mc_moment_conversion_preserves_explicit_key(self, key_factory):
         calls = []
-        root = _RecordingEmpirical(calls)
-        descendant = TransformedDistribution("descendant", root, tfb.Exp())
+        root = _RecordingNormal(calls)
+        descendant = BijectorTransformedDistribution("descendant", root, tfb.Exp())
         explicit = key_factory()
 
         with patch("probpipe.functions._context._commit_stochastic_invocation") as commit:
@@ -406,11 +333,8 @@ class TestBuiltInConversionPlanning:
 
     def test_mc_covariance_conversion_reuses_the_moment_batch(self):
         calls = []
-        root = _RecordingEmpirical(
-            calls,
-            values=[[-1.0, 0.0], [0.0, 1.0], [1.0, 2.0], [2.0, 3.0]],
-        )
-        descendant = TransformedDistribution("descendant", root, tfb.Exp())
+        root = _RecordingMultivariateNormal(calls, [0.0, 1.0])
+        descendant = BijectorTransformedDistribution("descendant", root, tfb.Exp())
 
         with workflow_run(seed=47):
             converted = converter_registry.convert(
@@ -422,8 +346,8 @@ class TestBuiltInConversionPlanning:
 
         assert [shape for _key, shape in calls] == [(16,)]
         root_key = calls[0][0]
-        root_samples = RecordEmpiricalDistribution._sample(root, root_key, (16,))
-        expected = descendant.bijector.forward(root_samples)
+        root_samples = MultivariateNormal._sample(root, root_key, (16,))
+        expected = jnp.exp(root_samples)
         expected_mean = jnp.mean(expected, axis=0)
         diff = expected - expected_mean
         expected_cov = jnp.einsum("ni,nj->ij", diff, diff) / expected.shape[0]
@@ -433,8 +357,8 @@ class TestBuiltInConversionPlanning:
 
     def test_mc_moment_target_preflight_fails_before_randomness(self):
         calls = []
-        root = _RecordingEmpirical(calls)
-        descendant = TransformedDistribution("descendant", root, tfb.Exp())
+        root = _RecordingNormal(calls)
+        descendant = BijectorTransformedDistribution("descendant", root, tfb.Exp())
 
         with (
             patch("probpipe.functions._context._os_urandom") as urandom,

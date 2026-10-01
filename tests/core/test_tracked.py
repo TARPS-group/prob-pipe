@@ -325,9 +325,9 @@ class TestWithNameOnCustomNewHosts:
     def test_transformed_distribution(self):
         import tensorflow_probability.substrates.jax.bijectors as tfb
 
-        from probpipe import TransformedDistribution
+        from probpipe import BijectorTransformedDistribution
 
-        t = TransformedDistribution("t", Normal(loc=0.0, scale=1.0, name="x"), tfb.Exp())
+        t = BijectorTransformedDistribution("t", Normal(loc=0.0, scale=1.0, name="x"), tfb.Exp())
         t2 = t.with_name("y")
         assert t2.name == "y"
         key = jax.random.PRNGKey(0)

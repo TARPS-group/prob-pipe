@@ -1,4 +1,4 @@
-"""Tests for discrete distributions in probpipe.distributions.discrete."""
+"""Tests for the discrete parametric families."""
 
 import jax
 import jax.numpy as jnp

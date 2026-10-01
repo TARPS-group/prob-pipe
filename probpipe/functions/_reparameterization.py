@@ -102,7 +102,7 @@ def _backend_is_affine(bijector: tfb.Bijector) -> bool:
 
 
 def _image(bijector: Function) -> Constraint | None:
-    """The support *bijector*'s forward map lands in, when it is recorded."""
+    """The support onto which *bijector* maps the real line, when it is recorded."""
     return getattr(bijector, "_image", None)
 
 
@@ -145,8 +145,20 @@ class _BackendBijector(Function, SupportsInverse, SupportsLogDetJacobian):
         x = jnp.asarray(x)
         return self._bijector.forward_log_det_jacobian(x, event_ndims=x.ndim)
 
+    def __reduce__(self) -> tuple[Any, ...]:
+        """Rebuild from the backend bijector, whose state pickles where a Function's controls do not."""
+        return (_rebuilt_backend_bijector, (self._bijector, self._image, self.name))
+
     def __repr__(self) -> str:
         return f"bijector({self.name!r})"
+
+
+def _rebuilt_backend_bijector(
+    bijector: tfb.Bijector, image: Constraint | None, name: str
+) -> _BackendBijector:
+    """The backend-bijector Function of *bijector* under the label *name*, for unpickling."""
+    rebuilt = _BackendBijector(bijector, image)
+    return rebuilt if rebuilt.name == name else rebuilt.with_name(name)
 
 
 def _as_bijector(value: Any, image: Constraint | None = None) -> Function:

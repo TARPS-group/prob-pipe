@@ -1,4 +1,4 @@
-"""Tests for probpipe.distributions.multivariate."""
+"""Tests for the multivariate parametric families."""
 
 import jax
 import jax.numpy as jnp

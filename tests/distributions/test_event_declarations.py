@@ -66,7 +66,6 @@ from probpipe import (
     SimpleModel,
     StudentT,
     TFPDistribution,
-    TransformedDistribution,
     TruncatedNormal,
     Uniform,
     VonMisesFisher,
@@ -232,10 +231,6 @@ def _squared_exponential(X, Y):
     return jnp.exp(-0.5 * (X[:, None, 0] - Y[None, :, 0]) ** 2)
 
 
-def _exp(x):
-    return jnp.exp(x)
-
-
 # One construction per concrete class, keyed by the class it represents.
 _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     Normal: lambda: Normal("x", 0.0, 1.0),
@@ -263,7 +258,6 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     Wishart: lambda: Wishart("x", 4.0, scale_tril=jnp.eye(2)),
     VonMisesFisher: lambda: VonMisesFisher("x", jnp.array([0.0, 1.0]), 2.0),
     KDEDistribution: lambda: KDEDistribution("k", jnp.zeros((10, 2))),
-    TransformedDistribution: lambda: TransformedDistribution("t", Normal("x", 0.0, 1.0), tfb.Exp()),
     EmpiricalDistribution: lambda: EmpiricalDistribution("e", ["a", "b"]),
     RecordEmpiricalDistribution: lambda: EmpiricalDistribution("r", jnp.zeros((5, 2))),
     BootstrapReplicateDistribution: lambda: BootstrapReplicateDistribution(
@@ -356,7 +350,7 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
         "y", MultivariateNormal("x", jnp.zeros(2), cov=jnp.eye(2)), DenseLinOp(jnp.eye(2))
     ),
     BijectorTransformedDistribution: lambda: BijectorTransformedDistribution(
-        "y", Normal("x", 0.0, 1.0), probpipe.Function("exp", _exp)
+        "y", Normal("x", 0.0, 1.0), tfb.Exp()
     ),
     FactoredMultivariateGaussian: lambda: FactoredMultivariateGaussian(
         "g", [MultivariateNormal("x", jnp.zeros(2), cov=jnp.eye(2))]
@@ -377,7 +371,6 @@ _STUB_CONSTRUCTIONS = {
     for cls in (
         MixtureDistribution,
         LinearPushforwardDistribution,
-        BijectorTransformedDistribution,
         FactoredMultivariateGaussian,
         GaussianProcess,
     )
@@ -475,7 +468,6 @@ _PICKLE_FAILURES = {
     _ScaledGRF: _TFP_BACKEND,
     _IndependentSumGRF: _TFP_BACKEND,
     _LogRatePoisson: _TFP_BACKEND,
-    TransformedDistribution: _RUNTIME_CLASS,
     SequentialJointDistribution: _RUNTIME_CLASS,
     _MixtureMarginal: _RUNTIME_CLASS,
     FlattenedDistributionView: _RUNTIME_CLASS,

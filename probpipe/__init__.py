@@ -123,8 +123,6 @@ from probpipe.distributions import (
     # Joint
     ProductDistribution,
     SequentialJointDistribution,
-    # Transformed
-    TransformedDistribution,
 )
 from probpipe.distributions._capabilities import (
     SupportsApproximateConditioning,
@@ -150,6 +148,7 @@ from probpipe.distributions._distribution import (
 from probpipe.families import (
     Bernoulli,
     Beta,
+    BijectorTransformedDistribution,
     Binomial,
     Categorical,
     Cauchy,
@@ -241,6 +240,7 @@ __all__ = [
     "BayesFlowRatio",
     "Bernoulli",
     "Beta",
+    "BijectorTransformedDistribution",
     "Binomial",
     "BootstrapDistribution",
     "BootstrapReplicateDistribution",
@@ -349,7 +349,6 @@ __all__ = [
     "TFPDistribution",
     "TermSpec",
     "TrackedTerm",
-    "TransformedDistribution",
     "TruncatedNormal",
     "Uniform",
     "UnmanagedConcurrentWorkflowEntryError",

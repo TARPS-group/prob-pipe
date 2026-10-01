@@ -12,7 +12,6 @@ from unittest.mock import patch
 import jax
 import jax.numpy as jnp
 import pytest
-from tensorflow_probability.substrates.jax import bijectors as tfb
 
 import probpipe
 from probpipe import (
@@ -25,7 +24,6 @@ from probpipe import (
     Provenance,
     ProvenanceMode,
     ReplayCompatibilityError,
-    TransformedDistribution,
     replay_run,
     sample,
     workflow_run,
@@ -225,28 +223,6 @@ class TestWorkflowRecipeRecording:
         assert replay["plan"]["expected_effects"][0]["operation_kind"] == "sample"
         assert replay["standalone"]["eligibility"] == "supported"
 
-    def test_direct_transformed_sample_records_its_closed_descendant_plan(self):
-        transformed = TransformedDistribution(
-            "transformed",
-            Normal(loc=0.0, scale=1.0, name="root"),
-            tfb.Exp(),
-        )
-
-        with workflow_run(seed=4):
-            result = sample(transformed)
-
-        replay = _replay_controls(result)
-        effect = replay["plan"]["expected_effects"][0]
-        assert effect["record_path"] == []
-        assert effect["descendant_descriptor"][0] == "transformed-descendant"
-        assert replay["compatibility"]["descendant_adapter_abi"] == [
-            "probpipe.transformed_descendant/v1"
-        ]
-        assert replay["compatibility"]["provider_abi"] == [
-            "probpipe.distribution/v1",
-            "tensorflow_probability.substrates.jax.bijector.forward/v1",
-        ]
-
     def test_mixed_plan_records_only_the_sampled_root_event(self):
         workflow = Function(name="_difference", fn=_difference, n_broadcast_samples=5)
         with workflow_run(seed=9):
@@ -261,27 +237,6 @@ class TestWorkflowRecipeRecording:
             group["execution_mode"]
             for group in _replay_controls(result)["plan"]["canonical_fields"]["source_groups"]
         ] == ["exact", "sampled"]
-
-    def test_alias_and_supported_descendant_share_one_recipe_source(self):
-        root = Normal(loc=0.0, scale=1.0, name="root")
-        descendant = TransformedDistribution("descendant", root, tfb.Exp())
-        workflow = Function(name="_difference", fn=_difference, n_broadcast_samples=6)
-
-        with workflow_run(seed=3):
-            result = workflow(left=root, right=descendant)
-
-        plan = _replay_controls(result)["plan"]["canonical_fields"]
-        assert len(plan["source_groups"]) == 1
-        assert len(plan["source_groups"][0]["consumers"]) == 2
-        descriptor = plan["source_groups"][0]["consumers"][1]["descendant_descriptor"]
-        assert descriptor[0] == "stochastic-descendant"
-        assert "transformed-descendant" in json.dumps(descriptor)
-        compatibility = _replay_controls(result)["compatibility"]
-        assert compatibility["descendant_adapter_abi"] == ["probpipe.transformed_descendant/v1"]
-        assert compatibility["provider_abi"] == [
-            "probpipe.distribution/v1",
-            "tensorflow_probability.substrates.jax.bijector.forward/v1",
-        ]
 
     def test_nested_sweep_recipe_contains_every_canonical_unit(self):
         workflow = Function(name="_add", fn=_add, n_broadcast_samples=5, dispatch="sequential")

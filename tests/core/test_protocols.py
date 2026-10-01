@@ -17,7 +17,6 @@ from probpipe import (
     ProductDistribution,
     RecordEmpiricalDistribution,
     SequentialJointDistribution,
-    TransformedDistribution,
 )
 from probpipe.distributions._capabilities import (
     SupportsApproximateConditioning,
@@ -30,6 +29,7 @@ from probpipe.distributions._capabilities import (
     SupportsUnnormalizedLogProb,
     SupportsVariance,
 )
+from probpipe.families import BijectorTransformedDistribution
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -510,14 +510,14 @@ class TestMixtureSamplingDispatch:
 
 
 class TestTransformedDistributionDynamicProtocols:
-    """TransformedDistribution inherits only protocols its base supports."""
+    """BijectorTransformedDistribution claims only the protocols its base supports."""
 
     def test_over_full_tfp_base_has_all_protocols(self):
         import tensorflow_probability.substrates.jax.bijectors as tfb
 
         from probpipe import Normal
 
-        td = TransformedDistribution("td", Normal(loc=0.0, scale=1.0, name="x"), tfb.Exp())
+        td = BijectorTransformedDistribution("td", Normal(loc=0.0, scale=1.0, name="x"), tfb.Exp())
         assert isinstance(td, SupportsSampling)
         assert isinstance(td, SupportsLogProb)
         assert not isinstance(td, SupportsMean)
@@ -540,7 +540,7 @@ class TestTransformedDistributionDynamicProtocols:
                 return jnp.asarray(0.0)
 
         base = _LogProbOnly()
-        td = TransformedDistribution("td", base, tfb.Identity())
+        td = BijectorTransformedDistribution("td", base, tfb.Identity())
         assert isinstance(td, SupportsLogProb)
         assert not isinstance(td, SupportsSampling)
 

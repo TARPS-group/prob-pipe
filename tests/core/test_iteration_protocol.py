@@ -37,12 +37,12 @@ from probpipe import (
     ProductDistribution,
     Record,
     RecordBatch,
-    TransformedDistribution,
 )
+from probpipe.families import BijectorTransformedDistribution
 
 
 def _make_transformed():
-    """Build a TransformedDistribution at parametrise time.
+    """Build a BijectorTransformedDistribution at parametrise time.
 
     Importing the bijector here keeps the test parametrisation
     side-effect-free at import — TFP's bijector module is heavy
@@ -50,7 +50,7 @@ def _make_transformed():
     """
     import tensorflow_probability.substrates.jax.bijectors as tfb
 
-    return TransformedDistribution(
+    return BijectorTransformedDistribution(
         "td",
         Normal(loc=0.0, scale=1.0, name="base"),
         tfb.Exp(),
@@ -85,7 +85,7 @@ DISTRIBUTIONS = [
     ),
     pytest.param(
         lambda: _make_transformed(),
-        id="TransformedDistribution",
+        id="BijectorTransformedDistribution",
     ),
     pytest.param(
         lambda: KDEDistribution("kde", jnp.zeros((20, 3))),

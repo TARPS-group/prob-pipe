@@ -21,7 +21,6 @@ from probpipe import (
     ProvenanceMode,
     RecordEmpiricalDistribution,
     SequentialJointDistribution,
-    TransformedDistribution,
     condition_on,
     from_distribution,
     provenance_ancestors,
@@ -29,6 +28,8 @@ from probpipe import (
     workflow_run,
 )
 from probpipe.core.provenance import ParentInfo
+from probpipe.distributions import _empirical
+from probpipe.families import BijectorTransformedDistribution
 from probpipe.values._function_base import Function
 
 # ===========================================================================
@@ -224,30 +225,30 @@ class TestFromDistributionProvenance:
 
 
 # ===========================================================================
-# 3. TransformedDistribution provenance
+# 3. BijectorTransformedDistribution provenance
 # ===========================================================================
 
 
-class TestTransformedDistributionProvenance:
+class TestBijectorTransformedDistributionProvenance:
     def test_transform_provenance_attached(self):
         base = Normal(loc=0.0, scale=1.0, name="base")
-        td = TransformedDistribution("td", base, tfb.Exp())
+        td = BijectorTransformedDistribution("td", base, tfb.Exp())
         assert td.provenance is not None
         assert td.provenance.operation == "transform"
         assert len(td.provenance.parents) == 1
         assert isinstance(td.provenance.parents[0], ParentInfo)
         assert td.provenance.parents[0].name == "base"
-        assert td.provenance.metadata["bijector"] == "Exp"
+        assert td.provenance.metadata["bijector"] == "exp"
 
     def test_transform_chain_provenance(self):
         base = Normal(loc=0.0, scale=1.0, name="base")
         bij = tfb.Chain([tfb.Exp(), tfb.Shift(1.0)])
-        td = TransformedDistribution("td", base, bij)
-        assert td.provenance.metadata["bijector"] == "Chain"
+        td = BijectorTransformedDistribution("td", base, bij)
+        assert td.provenance.metadata["bijector"] == "chain_of_exp_of_shift"
 
     def test_transform_with_empirical_base(self):
-        ed = RecordEmpiricalDistribution("x", jnp.array([1.0, 2.0, 3.0]))
-        td = TransformedDistribution("td", ed, tfb.Exp())
+        ed = _empirical.EmpiricalDistribution("x", jnp.array([1.0, 2.0, 3.0]))
+        td = BijectorTransformedDistribution("td", ed, tfb.Exp())
         assert td.provenance is not None
         assert td.provenance.operation == "transform"
         assert len(td.provenance.parents) == 1
@@ -467,7 +468,7 @@ class TestProvenanceChains:
     def test_transform_then_broadcast(self, full_provenance_mode):
         """transform → broadcast creates a 2-step chain."""
         base = Normal(loc=0.0, scale=1.0, name="base")
-        td = TransformedDistribution("positive", base, tfb.Exp())
+        td = BijectorTransformedDistribution("positive", base, tfb.Exp())
 
         def log_val(x: float) -> float:
             return jnp.log(x)
@@ -522,7 +523,7 @@ class TestSerialization:
     def test_to_dict_recursive(self):
         """Recursive serialization follows provenance chains."""
         src = Normal(loc=0.0, scale=1.0, name="src")
-        td = TransformedDistribution("transformed", src, tfb.Exp())
+        td = BijectorTransformedDistribution("transformed", src, tfb.Exp())
         p = Provenance.create("broadcast", parents=[td])
         d = p.to_dict(recurse=True)
         # td has source (transform), which should be serialized via ParentInfo.provenance
@@ -531,7 +532,7 @@ class TestSerialization:
 
     def test_to_dict_non_recursive(self):
         src = Normal(loc=0.0, scale=1.0, name="src")
-        td = TransformedDistribution("transformed", src, tfb.Exp())
+        td = BijectorTransformedDistribution("transformed", src, tfb.Exp())
         p = Provenance.create("broadcast", parents=[td])
         d = p.to_dict(recurse=False)
         assert "provenance" not in d["parents"][0]
@@ -664,7 +665,7 @@ class TestProvenanceAncestors:
 
     def test_single_parent(self):
         base = Normal(loc=0.0, scale=1.0, name="base")
-        td = TransformedDistribution("td", base, tfb.Exp())
+        td = BijectorTransformedDistribution("td", base, tfb.Exp())
         ancestors = provenance_ancestors(td)
         assert len(ancestors) == 1
         assert isinstance(ancestors[0], ParentInfo)
@@ -673,7 +674,7 @@ class TestProvenanceAncestors:
     def test_chain_of_ancestors(self, full_provenance_mode):
         """Function plus base → transform are all broadcast ancestors."""
         base = Normal(loc=0.0, scale=1.0, name="base")
-        td = TransformedDistribution("positive", base, tfb.Exp())
+        td = BijectorTransformedDistribution("positive", base, tfb.Exp())
 
         def identity(x: float) -> float:
             return x
@@ -756,7 +757,7 @@ class TestProvenanceDag:
 
     def test_basic_dag_has_correct_node_and_edge_count(self):
         base = Normal(loc=0.0, scale=1.0, name="base")
-        td = TransformedDistribution("positive", base, tfb.Exp())
+        td = BijectorTransformedDistribution("positive", base, tfb.Exp())
         dag = provenance_dag(td)
         # Two distributions -> 2 nodes, 1 transform edge.
         num_nodes, num_edges = _count_dag_entries(dag)
@@ -779,7 +780,7 @@ class TestProvenanceDag:
 
     def test_multi_step_dag_structure(self, full_provenance_mode):
         base = Normal(loc=0.0, scale=1.0, name="prior")
-        td = TransformedDistribution("positive", base, tfb.Exp())
+        td = BijectorTransformedDistribution("positive", base, tfb.Exp())
 
         def identity(x: float) -> float:
             return x

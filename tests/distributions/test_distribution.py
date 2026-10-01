@@ -51,7 +51,6 @@ from probpipe import (
     RecordSpec,
     SequentialJointDistribution,
     StudentT,
-    TransformedDistribution,
     TruncatedNormal,
     Uniform,
     VonMisesFisher,
@@ -76,14 +75,16 @@ from probpipe.core._numeric_record_distribution import NumericRecordDistribution
 from probpipe.core._opaque import OpaqueSpec
 from probpipe.core._specs import NumericArraySpec
 from probpipe.core.provenance import Provenance, provenance_ancestors
+from probpipe.distributions import _empirical
 from probpipe.distributions.kde import KDEDistribution
+from probpipe.families import BijectorTransformedDistribution
 from probpipe.functions._normalization import DISTRIBUTION_HINT_PROTOCOLS
 
 
 def _make_transformed():
     import tensorflow_probability.substrates.jax.bijectors as tfb
 
-    return TransformedDistribution(
+    return BijectorTransformedDistribution(
         "transformed",
         Normal(loc=0.0, scale=1.0, name="x"),
         tfb.Exp(),
@@ -93,7 +94,7 @@ def _make_transformed():
 # Distribution-instance factories used by ``TestNoBatchShape``. Mirrors
 # the ``DISTRIBUTIONS`` table in ``tests/core/test_iteration_protocol.py`` but with
 # a smaller set covering the canonical TFP-backed scalars + the most
-# distinct subclasses (TransformedDistribution / KDEDistribution /
+# distinct subclasses (BijectorTransformedDistribution / KDEDistribution /
 # RecordEmpiricalDistribution).
 _NO_BATCH_SHAPE_DISTS = [
     pytest.param(lambda: Normal(loc=0.0, scale=1.0, name="x"), id="Normal"),
@@ -102,7 +103,7 @@ _NO_BATCH_SHAPE_DISTS = [
         lambda: MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z"),
         id="MultivariateNormal",
     ),
-    pytest.param(_make_transformed, id="TransformedDistribution"),
+    pytest.param(_make_transformed, id="BijectorTransformedDistribution"),
     pytest.param(
         lambda: KDEDistribution("kde", jnp.zeros((20, 3))),
         id="KDEDistribution",
@@ -1217,12 +1218,12 @@ class TestDerivedDeclarations:
     def test_a_transformed_law_declares_the_image(self):
         import tensorflow_probability.substrates.jax.bijectors as tfb
 
-        law = TransformedDistribution("t", Normal("x", 0.0, 1.0), tfb.Exp())
+        law = BijectorTransformedDistribution("t", Normal("x", 0.0, 1.0), tfb.Exp())
         assert law.event_spec == OutputSpec(
             t=NumericArraySpec((), jnp.asarray(0.0).dtype, positive)
         )
-        over_atoms = TransformedDistribution(
-            "u", EmpiricalDistribution("e", jnp.ones((4, 2))), tfb.Exp()
+        over_atoms = BijectorTransformedDistribution(
+            "u", _empirical.EmpiricalDistribution("e", jnp.ones((4, 2))), tfb.Exp()
         )
         assert over_atoms.event_shape == (2,)
 
