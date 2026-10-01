@@ -140,6 +140,8 @@ class SupportsLogDetJacobian(Protocol):     # a map with a tractable Jacobian de
 def is_invertible(f: Any) -> bool: ...      # the claim together with its instance guard
 ```
 
+`is_invertible(f)` is `True` when `f` claims `SupportsInverse` and the instance guard establishes the claim, and `False` otherwise. An unresolved guard (II.7) therefore gives `False`, and a slot that needs the inverse raises `ResolutionError` (V.12).
+
 ### Rationale
 
 Defining the base in the value layer keeps the layering strict: the representation is fixed here, the call engine arrives by upward registration (`D2 – Generality first`), and `LinOp` and the specs reference `Function` downward — the split the package structure realizes as `values/_function_base.py` and `functions/`. Invertibility as a capability is `D3 – Capability-based operations`: an invertible map is an ordinary `Function` that additionally claims `SupportsInverse`, so it evaluates, composes, and pushes forward like any other, with *bijector* reserved for the mathematical statement. The Jacobian determinant is a separate claim for the same reason, since a map can be invertible without a tractable determinant, and change of variables asks for exactly the pair.
@@ -365,11 +367,11 @@ It claims only the batch axis and never the leaf-keyed `Mapping` contract, so a 
 
 A `Distribution` is a probability measure over the values its event declaration describes. Its `DistributionSpec` carries the draw's `OutputSpec` as `event_spec`, exposed as a view. The declaration determines both the returned kind and its component interface (II.2). It is the same declaration type a `Function` carries as `output_spec`; the names distinguish a draw from a function's return. A bare term spec is accepted and completed at construction: a `RecordSpec` exposes its fields, and any other spec is a whole-term event whose component defaults to the law's `name`, captured once at construction. An `OutputSpec`, such as the `event_spec` a family constructor takes, names the component otherwise, and a constructor fills its type hole from its parameters with `with_spec`, so the stored declaration is complete.
 
-It declares the operations it supports as **capabilities** (III.8), so operational support is decoupled from the class. Its `raw()` is the law detached (II.4), so a field view's `raw()` is the detached marginal rather than a reference into its parent. A draw is a tracked term of the kind the event declaration names, never wrapped in another kind to make draws uniform.
+It declares the operations it supports as **capabilities** (III.8), so operational support is decoupled from the class. Its `raw()` is the law detached (II.4), so the `raw()` of a field view `d[p]` is the detached marginal `d._marginal(p)` (III.8) rather than a reference into its parent. That `raw()` raises `ResolutionError` where `d` has no exact marginal at `p`. A draw is a tracked term of the kind the event declaration names, never wrapped in another kind to make draws uniform.
 
 **Components and fields.** The law's produced slots are exactly `event_spec.components`, and its event paths are the paths of its declaration, each starting with a component (II.2). `OutputSpec(beta=beta_spec)` and `OutputSpec(RecordSpec(beta=beta_spec))` both export `beta`, but the former draws an array and the latter a record. `d[path]` and `marginal` address event paths: for an exposed record, `d["beta"]` is the marginal law of that field under the component `beta`, and for a whole term named `beta` it is `d` itself, so a consumer addresses a law by component whatever its packaging. A projection onto one path returns the leaf or subtree whole, under a component named by the path's final segment; a selection of several paths returns an exposed record of those fields. A whole record declared as `OutputSpec(parameters=RecordSpec(beta=...))` has the output slot `parameters` and the event path `parameters/beta`, which addresses the field `beta` of each draw; composition extracts and reconstructs it using II.2.
 
-`with_path_names` returns the same law with `OutputSpec.with_path_names` (II.2) applied to its event declaration. `with_name` changes only the object label. A polymorphic law binds its dimensions as II.1 specifies.
+`with_path_names` returns the same law with `OutputSpec.with_path_names` (II.2) applied to its event declaration. `with_name` changes only the object label. A polymorphic law binds its dimensions as II.1 specifies. Dimension transforms commute with renames: `d.with_path_names(m).with_dim_sizes(n=3)` is `d.with_dim_sizes(n=3).with_path_names(m)`, and likewise for `with_dim_names` and for a kernel (III.9). A renamed law conditions as the original does on the given translated to the original paths, with each value's fields in the original node's declared order whatever order the caller wrote (VI.6).
 
 ```python
 class Distribution(TrackedTerm):
@@ -412,7 +414,7 @@ class NumericDistribution(Distribution):   # the event spec is a NumericSpec
     def support(self) -> Constraint | None: ...      # the support every array leaf shares, else None
 ```
 
-**Field views.** `d[path]` returns a `FieldView`: a `Distribution` over the field or field group at `path`, holding a reference to its parent rather than a detached law. Sibling views co-sample from one parent draw, so correlation between them is preserved. The capabilities a view offers are derived from its parent's, one by one (III.8).
+**Field views.** `d[path]` returns a `FieldView`: a `Distribution` over the field or field group at `path`, holding a reference to its parent rather than a detached law. Sibling views co-sample from one parent draw, so correlation between them is preserved. The capabilities a view offers are derived from its parent's, one by one (III.8). A selection of several paths is one `FieldView`, whose `path` is the tuple of the selected paths and whose label joins them with `", "`. Two selected paths with the same final segment raise `ValueError`, as a colliding rename does (II.6). On a view, `with_dim_sizes` and `with_dim_names` apply to the parent and return the view of the result at the same path, since the view's declaration is the parent's schema at that path and a schema is one dimension scope (II.1).
 
 **The flat view.** A numeric law's law over its coordinates is `evaluate(to_vector, d)`, with the map specialized to `d.event_spec.spec` and carrying an explicitly named array output declaration. Its inverse reconstructs that original event, including singleton and nested record packaging. The map claims the inverse and unit-Jacobian capabilities, so the change-of-variables rule preserves an available density (V.7). This changes the event space by a declared isomorphism; an ordinary representation conversion preserves the event declaration (IV.3). An inference method that works on ℝᵈ also applies the reparameterization of V.12.
 
@@ -422,7 +424,7 @@ class FieldView(Distribution):
     @property
     def parent(self) -> Distribution: ...
     @property
-    def path(self) -> str: ...
+    def path(self) -> str | tuple[str, ...]: ...
     # the declaration is the parent's schema at path; a view (II.4)
 ```
 
@@ -445,7 +447,7 @@ Including a `Distribution` class is necessary to satisfy `C1 – Uniform interfa
 
 ### Contract
 
-For each operation it supports, a distribution supplies a **capability**: an underscore implementation such as `_sample` or `_mean` that operates on raw forms (II.4). Where support is partial the capability carries a **guard**, the per-instance predicate that narrows the claim, as squareness narrows a `LinOp`'s invertibility (V.12). The matching operation calls the capability through its route (VI.0): protocol membership establishes that the implementation exists, and the guard establishes support for the requested call.
+For each operation it supports, a distribution supplies a **capability**: an underscore implementation such as `_sample` or `_mean` that operates on raw forms (II.4). Where support is partial the capability carries a **guard**, the per-instance predicate that narrows the claim, as squareness narrows a `LinOp`'s invertibility (V.12). The matching operation calls the capability through its route (VI.0): protocol membership establishes that the implementation exists, and the guard establishes support for the requested call. A capability called on a well-formed request that its guard declines raises `ResolutionError` (II.7), and a malformed request raises its own argument error, such as `KeyError` for an unknown path.
 
 ```python
 @runtime_checkable
@@ -500,7 +502,9 @@ class SupportsMarginals(Protocol):
     def _marginal(self, path: str | tuple[str, ...]) -> Distribution: ...   # the detached marginal of a field or field group
 ```
 
-Here `Key` is a PRNG key and `ArrayLike` an array-or-scalar input. `_expectation` must integrate an *arbitrary* function exactly, which in practice means finite support: its argument is an opaque callable, so a per-call feasibility check has nothing to inspect, and a law that is exact only for special maps must not advertise the capability. Exact moments of structured maps are instead computed by `evaluate`, which dispatches on the map's type.
+Here `Key` is a PRNG key and `ArrayLike` an array-or-scalar input. `_expectation` must integrate an *arbitrary* function exactly, which in practice means finite support: its argument is an opaque callable, so a per-call feasibility check has nothing to inspect, and a law that is exact only for special maps must not advertise the capability. Exact moments of structured maps are instead computed by `evaluate`, which dispatches on the map's type. A law of finite support, such as an empirical law, computes `_expectation(f)` by evaluating `f` at every atom whatever `f` is, in one vectorized call when `f` traces, as `auto` dispatch does (V.9), and one atom at a time otherwise.
+
+`_marginal` at a path returns a law labeled by the path and declared as the view at that path is (III.7). At a selection it is labeled by the paths joined with `", "`, and its fields follow the order of the paths.
 
 **Normalization.** A law is **normalized** when it claims a capability whose answer presupposes a probability law:
 
@@ -510,7 +514,7 @@ Here `Key` is a PRNG key and `ArrayLike` an array-or-scalar input. `_expectation
 
 A law that claims none of these is **unnormalized**, since no capability it claims fixes its normalizing constant. A kernel's laws are normalized when the kernel claims the conditional twin of one of these (III.9). The classification reads protocol membership alone, so a route decides it without evaluating a body (VI.0), and `condition_on` uses it to return a normalized law (VI.6).
 
-**View derivation.** A `FieldView` derives each capability from its parent's, so what a view supports is read off the parent. For a parent `d` and a view `v = d[p]`, with π the extraction of field `p` from an event:
+**View derivation.** A `FieldView` derives each capability from its parent's, so what a view supports is read off the parent. For a parent `d` and a view `v = d[p]`, with π the extraction of field `p` from an event and `c` the view's component, which is the final segment of `p`:
 
 | capability on `v` | derivation | available when |
 |---|---|---|
@@ -521,10 +525,12 @@ A law that claims none of these is **unnormalized**, since no capability it clai
 | `_quantile` | restriction of the parent's per-coordinate quantiles to `p` | parent `SupportsQuantile`, numeric field |
 | `_expectation` | composition: `d._expectation(f ∘ π)` | parent `SupportsExpectation` |
 | `_log_prob` / `_unnormalized_log_prob` | via the detached marginal `d._marginal(p)` | parent `SupportsMarginals`, exact at `p`, and the marginal at `p` reports the density |
-| `_marginal` at a sub-path `q` | path composition: `d._marginal(p/q)` | parent `SupportsMarginals`, exact at `p/q` |
-| `_condition_on` a sub-field `s ⊂ p` | conditioning commutes with marginalization: `d.condition_on(s)[p ∖ s]`, both sides the law of `p ∖ s` given `s` | parent conditioning available for `s` |
+| `_marginal` at `q = c/r` | path composition: `d._marginal(p/r)` | parent `SupportsMarginals`, exact at `p/r` |
+| `_condition_on` a proper sub-field `s ⊂ p` | conditioning commutes with marginalization: `d.condition_on(s)[p ∖ s]`, both sides the law of `p ∖ s` given `s` | parent conditioning available for `s` |
 
 The projection rows are exact whenever the parent's answer is, and the density rows are exact per path. Only sampling requires the parent to sample, so a view on a non-sampling parent still carries its projected moments.
+
+Each derived capability carries the parent's guard for the call that its derivation makes, such as the parent's quantile guard at the same levels for the quantile row. The sample row passes its key and sample shape to the parent unchanged, so `d[p]._sample(key, shape)` projects `d._sample(key, shape)` draw for draw, and views of one parent drawn with one key project one parent draw. A given that covers every field of the view is malformed, since no law remains, so the conditioning row's guard declines and `_condition_on` raises `ValueError`. A selection drops each node that the given covers and keeps the rest.
 
 **The marginal's capabilities.** A law claiming `SupportsMarginals` may define the companion `_marginal_capabilities(path)`, which returns the capabilities its exact marginal at `path` claims, read from its declarations without building the marginal. The marginals of a law that defines none claim what the law claims itself. A factored joint reports the claims of the factors a marginal keeps, and an empirical law reports sampling and its moments but no density, so a view of `Normal("a", 0.0, 1.0) * EmpiricalDistribution("b", atoms)` at `a` claims a density and one at `b` does not. A view reads the report once, at construction, since its path is fixed, and claims a density row when the report includes that density. The projection rows derive from the parent's own capabilities, since a view co-samples its parent.
 
@@ -538,7 +544,7 @@ Making each operation a *capability* rather than a base-class method follows `D3
 
 A `ConditionalDistribution` is a *probability kernel* `K : S → P(T)` — a family of distributions p(· | s) indexed by a *conditioning value* `s : S`. Supply a value for what it conditions on and it yields an ordinary `Distribution` over what it produces. A `Distribution` is the empty-given case, a kernel with nothing to condition on, so its marginal law exists and the unconditional operations apply; a kernel with a non-empty given has none. The two are distinct tracked types, and neither inherits from the other. A `ConditionalDistribution` and its spec always carry a non-empty `given_spec`, since binding the last given field returns a `Distribution` directly; the empty-given case is `DistributionSpec`'s.
 
-A `ConditionalDistribution` carries a `given_spec`, which is the `InputSpec` of independently bindable slots it conditions on (II.2), and an `event_spec`, which is the output declaration of one produced draw and is read as for a `Distribution` (III.7); both are views on its stored `ConditionalDistributionSpec`. Unlike a function's domain and codomain, a kernel's given and event are distinct *roles*, the value conditioned on and the law produced, so their given-slot and produced-component names stay disjoint even when the two spaces coincide. A Markov kernel with `S = T` uses names like `state → next_state` rather than `state → state`, for the same reason we write `K(x, dy)` rather than `K(x, dx)`. Symbolic dimensions are scoped over the two sides jointly, so a name shared between given and event fields is one dimension, bound by `with_dim_sizes` or, in the fused conditional paths, from the given value at call time. `with_path_names` renames or moves names across both sides, returning the same kernel: the event side behaves exactly as a `Distribution`'s, and on the given side a path-valued target may split or group slots, since a kernel carries no signature to fix its top level. A `Function`'s input slots are fixed by its signature instead (III.3), so restructuring across its top level is not a rename but a new signature, obtained by wrapping the callable in one that takes the parameters wanted.
+A `ConditionalDistribution` carries a `given_spec`, which is the `InputSpec` of independently bindable slots it conditions on (II.2), and an `event_spec`, which is the output declaration of one produced draw and is read as for a `Distribution` (III.7); both are views on its stored `ConditionalDistributionSpec`. Unlike a function's domain and codomain, a kernel's given and event are distinct *roles*, the value conditioned on and the law produced, so their given-slot and produced-component names stay disjoint even when the two spaces coincide. A Markov kernel with `S = T` uses names like `state → next_state` rather than `state → state`, for the same reason we write `K(x, dy)` rather than `K(x, dx)`. Symbolic dimensions are scoped over the two sides jointly, so a name shared between given and event fields is one dimension, bound by `with_dim_sizes` or, in the fused conditional paths, from the given value at call time. `with_path_names` renames or moves names across both sides, returning the same kernel: the event side behaves exactly as a `Distribution`'s, and on the given side a path-valued target may split or group slots, since a kernel carries no signature to fix its top level. The slots that a split makes bind independently: after `{"theta/a": "a"}` splits `theta`, binding `a` alone curries the kernel, and the original kernel is evaluated once the rest of `theta` is bound. A `Function`'s input slots are fixed by its signature instead (III.3), so restructuring across its top level is not a rename but a new signature, obtained by wrapping the callable in one that takes the parameters wanted.
 
 Users never call a method on the `ConditionalDistribution`. Instead, they use the existing operations. `condition_on(K, s)` binds the given fields and evaluates the kernel to a `Distribution`. The evaluation is exact unless the kernel claims `SupportsApproximateConditioning`, as an amortized posterior does, whose evaluation stands in for the posterior it was trained to approximate (VII.7), and `condition_on` normalizes a result that is unnormalized (VI.6). `sample(K, given=s)`, `log_prob(K, y, given=s)`, and `mean(K, given=s)` are the **fused conditional paths**, with the invariant `op(K, given=s) == op(condition_on(K, s))`: the same law for exact realizations, and equal in law for their random draws. Equality draw for draw needs the same sampling realization, random-event identity, and key derivation as well, which sharing a workflow scope alone does not provide (V.8). An approximate path records its route and assumptions; it does not promise equality in law merely because it targets the same conditional. Binding a subset of the given slots *curries* to a smaller `ConditionalDistribution` (VI.6).
 
@@ -573,6 +579,8 @@ class SupportsConditionalMean(Protocol):
 
 The conditional vocabulary is closed by one rule: every unconditional capability has a conditional counterpart whose method prepends the given to the unconditional signature. The two vocabularies stay mirrored by construction, and a capability added on the unconditional side names its conditional twin automatically.
 
+A conditional capability receives one given value, as its signature declares, so a caller with a batch of givens maps the capability over them. A joint samples a dependent factor this way, with one given and one key per draw of the factor's producers, vectorized for numeric givens and one draw at a time otherwise.
+
 **The numeric special cases.** A `ConditionalDistribution` has *two* sides, and either can be numeric, so the single `Numeric` prefix becomes positional: `Numeric` before `Conditional` marks the **given** side numeric, `Numeric` before `Distribution` marks the **event** side numeric, and `FullyNumeric*` marks both. Each is a marker only and adds no operations of its own, as `NumericDistribution` does not.
 
 ```python
@@ -582,7 +590,7 @@ class FullyNumericConditionalDistribution(
         NumericConditionalDistribution, ConditionalNumericDistribution): ...   # both sides numeric
 ```
 
-**The conditional distribution term specification.** `ConditionalDistributionSpec` is the conditional-distribution kind's term spec. As a leaf, it types a field holding a matching `ConditionalDistribution`. Its event side is a declaration, exactly as for `DistributionSpec`; the given side is always an `InputSpec`:
+**The conditional distribution term specification.** `ConditionalDistributionSpec` is the conditional-distribution kind's term spec. As a leaf, it types a field holding a matching `ConditionalDistribution`: one whose given slots have the declared names and no others, in any order, and whose slot specs each unify with the declared ones in the scope that the given side shares with the event side (II.1). Its event side is a declaration, as for `DistributionSpec`; the given side is always an `InputSpec`:
 
 ```python
 class ConditionalDistributionSpec(TermSpec):  # a ConditionalDistribution; is_valid accepts a match
