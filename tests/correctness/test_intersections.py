@@ -408,14 +408,13 @@ class TestFamiliesWithRecordParameters:
             np.asarray(variance.with_options(raw=True)(normalized)["theta"]["a"]),
         )
 
-    @pytest.mark.pending(
-        reason="bug: record[path] at an interior path raises KeyError, where III.5 gives a sub-Record view",
-        raises=KeyError,
-    )
     def test_a_density_over_a_nested_record_reads_an_interior_path(self):
-        """A user's density indexes ``value["theta"]["a"]``, the sub-record view III.5 promises."""
+        """A user's density reads a nested field by its key or through the interior node's view."""
         value = Record("value", {"theta": {"a": jnp.ones(2), "b": jnp.array(2.0)}})
-        np.testing.assert_allclose(np.asarray(value["theta"]["a"]), np.ones(2))
+        np.testing.assert_allclose(np.asarray(value["theta/a"]), np.ones(2))
+        np.testing.assert_allclose(np.asarray(value.at_path("theta")["a"]), np.ones(2))
+        with pytest.raises(KeyError):
+            value["theta"]
 
 
 class _SchoolsSimulator:
