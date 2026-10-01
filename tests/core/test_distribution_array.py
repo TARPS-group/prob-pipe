@@ -23,7 +23,6 @@ from probpipe import (
     NumericArrayBatch,
     NumericArraySpec,
     NumericRecordBatch,
-    ProductDistribution,
     Provenance,
     RecordSpec,
     log_prob,
@@ -174,10 +173,7 @@ class TestConstruction:
 
     def test_mismatched_event_shape_raises(self):
         c0 = Normal(loc=0.0, scale=1.0, name="d0")
-        c1 = ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0, name="x"),
-            y=Normal(loc=0.0, scale=1.0, name="y"),
-        )
+        c1 = Normal(loc=0.0, scale=1.0, name="x") * Normal(loc=0.0, scale=1.0, name="y")
         with pytest.raises(ValueError, match="event_shape"):
             _make_distribution_array([c0, c1])
 
@@ -472,10 +468,7 @@ class TestSampleViaSweep:
 
     def test_record_valued_components_scalar_sample(self):
         comps = [
-            ProductDistribution(
-                x=Normal(loc=float(i), scale=1e-3, name=f"x{i}"),
-                y=Normal(loc=-float(i), scale=1e-3, name=f"y{i}"),
-            )
+            Normal(loc=float(i), scale=1e-3, name="x") * Normal(loc=-float(i), scale=1e-3, name="y")
             for i in range(3)
         ]
         da = _make_distribution_array(comps)
@@ -496,10 +489,7 @@ class TestSampleViaSweep:
         axes with the inner return's shape.
         """
         comps = [
-            ProductDistribution(
-                x=Normal(loc=float(i), scale=1e-3, name=f"x{i}"),
-                y=Normal(loc=-float(i), scale=1e-3, name=f"y{i}"),
-            )
+            Normal(loc=float(i), scale=1e-3, name="x") * Normal(loc=-float(i), scale=1e-3, name="y")
             for i in range(3)
         ]
         da = _make_distribution_array(comps)
@@ -533,10 +523,7 @@ class TestMeanVianSweep:
 
     def test_record_components_mean_is_record_batch(self):
         comps = [
-            ProductDistribution(
-                x=Normal(loc=float(i), scale=1.0, name=f"x{i}"),
-                y=Normal(loc=-float(i), scale=1.0, name=f"y{i}"),
-            )
+            Normal(loc=float(i), scale=1.0, name="x") * Normal(loc=-float(i), scale=1.0, name="y")
             for i in range(3)
         ]
         da = _make_distribution_array(comps)

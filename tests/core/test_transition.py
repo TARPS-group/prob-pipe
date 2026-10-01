@@ -20,8 +20,8 @@ from probpipe.values._function_base import Function
 
 #: The update that a KDE prior cannot take yet.
 _KDE_PRIOR = (
-    "SimpleModel requires a RecordDistribution prior, and the KDE an update converts "
-    "the posterior to is a Distribution"
+    "SimpleModel requires a factored or TFP prior, and the KDE an update converts "
+    "the posterior to is neither"
 )
 
 # ---------------------------------------------------------------------------

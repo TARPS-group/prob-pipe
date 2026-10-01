@@ -509,8 +509,8 @@ def learn_amortized_likelihood(
     ----------
     prior : Distribution
         Prior over the model parameters; a numeric distribution whose
-        components name them, which may be nested (a ``ProductDistribution``
-        of named distributions, possibly nested). Sampled (only) to draw training thetas;
+        components name them, which may be nested (a factored joint of named
+        distributions). Sampled (only) to draw training thetas;
         constrained and discrete-valued parameter fields are both fine here,
         since theta is a network *input* (whether the downstream sampler can
         handle the prior is the sampler's concern).

@@ -32,14 +32,13 @@ import pytest
 
 import probpipe
 from probpipe import (
-    JointGaussian,
+    MultivariateNormal,
     Normal,
     NumericArraySpec,
     NumericRecordBatch,
     NumericSpec,
     OpaqueSpec,
     OutputSpec,
-    ProductDistribution,
     Record,
     RecordSpec,
 )
@@ -48,6 +47,7 @@ from probpipe.distributions import (
     ConditionalDistribution,
     Distribution,
     DistributionSpec,
+    FactoredDistribution,
     FieldView,
     NumericDistribution,
     SupportsConditionalLogProb,
@@ -166,7 +166,7 @@ class _UnguardedMarginalLaw(_Law, SupportsMarginals):
         self.marginal_calls.append(path)
         if not isinstance(path, str):
             components = [each.rsplit("/", 1)[-1] for each in path]
-            return ProductDistribution(**{c: Normal(c, 0.0, 1.0) for c in components})
+            return FactoredDistribution("marginal", [Normal(c, 0.0, 1.0) for c in components])
         component = path.rsplit("/", 1)[-1]
         if self.scores:
             return Normal(component, 0.0, 1.0)
@@ -358,11 +358,14 @@ class _ScoringKernel(_Kernel, SupportsConditionalLogProb):
 
 
 def _product() -> Distribution:
-    return ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 2.0, 3.0))
+    return Normal("a", 0.0, 1.0) * Normal("b", 2.0, 3.0)
 
 
 def _joint_gaussian() -> Distribution:
-    return JointGaussian(mean=_MEAN, cov=_COV, x=1, y=2)
+    """``x`` and ``y`` of the means ``_MEAN`` and the diagonal blocks of ``_COV``, independent."""
+    return MultivariateNormal("x", _MEAN[:1], cov=_COV[:1, :1]) * MultivariateNormal(
+        "y", _MEAN[1:], cov=_COV[1:, 1:]
+    )
 
 
 def _dependent_joint() -> Distribution:
@@ -998,9 +1001,7 @@ class TestDerivedBehavior:
         assert jnp.array_equal(draws["tau"], parent._sample(key, (4,))["model/theta/tau"])
 
     def test_a_view_of_a_mapping_parent_draws_its_node_of_the_mapping(self, key):
-        parent = ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 2.0, 3.0)) * Normal(
-            "c", 0.0, 1.0
-        )
+        parent = Normal("a", 0.0, 1.0) * Normal("b", 2.0, 3.0) * Normal("c", 0.0, 1.0)
         draws = FieldView(parent, ("c", "b"))._sample(key, (3,))
         parent_draws = parent._sample(key, (3,))
         assert isinstance(draws, dict) and list(draws) == ["c", "b"]

@@ -3,9 +3,9 @@
 Covers:
 
 * The Gaussian-prior detection helper (``_gaussian_prior_params``)
-  against the recognised shapes (``Normal``, ``MultivariateNormal``,
-  ``JointGaussian`` with cross-covariance, ``ProductDistribution`` over
-  them — with field-order-sensitive mean and covariance assertions) and
+  against the recognised shapes (``Normal``, ``MultivariateNormal``, and a
+  factored joint over them — with field-order-sensitive mean and covariance
+  assertions) and
   the rejected shapes (non-Gaussian families, batched-``Normal``
   ``DistributionArray``).
 * ``check()`` infeasibility messages for the three failure modes:
@@ -27,10 +27,8 @@ import pytest
 from probpipe import (
     Beta,
     Gamma,
-    JointGaussian,
     MultivariateNormal,
     Normal,
-    ProductDistribution,
     SimpleModel,
 )
 from probpipe.inference import (
@@ -69,8 +67,8 @@ class _ConcatGaussianLik(Likelihood):
 
     Observes noisy copies of the concatenation of all prior fields, in the
     order of the prior's components, so it is conjugate for any Gaussian
-    prior — used to exercise multi-field priors (``ProductDistribution``,
-    ``JointGaussian``). ``obs_var > 1`` weakens the likelihood so the
+    prior — used to exercise multi-field priors and correlated ones.
+    ``obs_var > 1`` weakens the likelihood so the
     prior covariance (its cross-field structure in particular) materially
     shapes the closed-form posterior.
     """
@@ -136,35 +134,6 @@ class TestGaussianPriorDetection:
         np.testing.assert_allclose(np.asarray(mean), np.asarray(loc_in))
         np.testing.assert_allclose(np.asarray(cov), np.asarray(cov_in))
 
-    def test_joint_gaussian_preserves_cross_covariance(self):
-        """``JointGaussian`` is recognised with its *full* covariance.
-
-        Unlike a ``ProductDistribution`` of Gaussians (block-diagonal,
-        independent fields), a ``JointGaussian`` carries cross-field
-        covariance. ``_gaussian_prior_params`` must return the dense
-        covariance verbatim — the off-diagonal ``a``-``b`` terms must
-        survive, in the order of the prior's components, ``[a, b]``.
-        """
-        cov_in = jnp.array(
-            [
-                [2.0, 0.5, 0.1],
-                [0.5, 1.0, 0.0],
-                [0.1, 0.0, 3.0],
-            ]
-        )
-        mean_in = jnp.array([1.0, -2.0, 3.0])
-        prior = JointGaussian(mean=mean_in, cov=cov_in, a=1, b=2)
-        params = _gaussian_prior_params(prior)
-        assert params is not None
-        mean, cov = params
-        assert mean.shape == (3,)
-        assert cov.shape == (3, 3)
-        np.testing.assert_allclose(np.asarray(mean), np.asarray(mean_in))
-        np.testing.assert_allclose(np.asarray(cov), np.asarray(cov_in))
-        # The distinguishing check vs. a ProductDistribution: the
-        # cross-field (a, b) covariance is *not* zeroed.
-        np.testing.assert_allclose(np.asarray(cov[0, 1:]), [0.5, 0.1])
-
     def test_normal_scalar_promoted_to_length_one(self):
         """A scalar ``Normal`` is promoted to a length-1 vector.
 
@@ -198,10 +167,7 @@ class TestGaussianPriorDetection:
         assert _gaussian_prior_params(da) is None
 
     def test_product_of_normals_block_diagonal(self):
-        prior = ProductDistribution(
-            a=Normal(loc=1.0, scale=0.5, name="a"),
-            b=Normal(loc=-2.0, scale=0.7, name="b"),
-        )
+        prior = Normal(loc=1.0, scale=0.5, name="a") * Normal(loc=-2.0, scale=0.7, name="b")
         params = _gaussian_prior_params(prior)
         assert params is not None
         mean, cov = params
@@ -221,13 +187,10 @@ class TestGaussianPriorDetection:
         diagonal away from the field-order concatenation
         ``[theta, beta_0, beta_1]``.
         """
-        prior = ProductDistribution(
-            theta=Normal(loc=3.0, scale=1.0, name="theta"),
-            beta=MultivariateNormal(
-                loc=jnp.array([5.0, -1.0]),
-                cov=jnp.diag(jnp.array([0.5, 2.0])),
-                name="beta",
-            ),
+        prior = Normal(loc=3.0, scale=1.0, name="theta") * MultivariateNormal(
+            loc=jnp.array([5.0, -1.0]),
+            cov=jnp.diag(jnp.array([0.5, 2.0])),
+            name="beta",
         )
         params = _gaussian_prior_params(prior)
         assert params is not None
@@ -254,10 +217,7 @@ class TestGaussianPriorDetection:
         assert _gaussian_prior_params(prior) is None
 
     def test_product_with_non_gaussian_component_returns_none(self):
-        prior = ProductDistribution(
-            a=Normal(loc=0.0, scale=1.0, name="a"),
-            b=Gamma(concentration=2.0, rate=1.0, name="b"),
-        )
+        prior = Normal(loc=0.0, scale=1.0, name="a") * Gamma(concentration=2.0, rate=1.0, name="b")
         assert _gaussian_prior_params(prior) is None
 
 
@@ -329,24 +289,6 @@ class TestFeasibilityCheck:
         info = BlackJAXESSMethod().check(observed_target(model, jnp.zeros((5, 2))))
         assert info.feasible
 
-    def test_accepts_joint_gaussian_prior(self):
-        """A ``JointGaussian`` prior (named fields, cross-covariance) is a
-        feasible ESS target — the gap this change closes."""
-        prior = JointGaussian(
-            mean=jnp.zeros(3),
-            cov=jnp.array([[1.0, 0.3, 0.0], [0.3, 1.0, 0.0], [0.0, 0.0, 2.0]]),
-            a=1,
-            b=2,
-        )
-
-        class _Lik(Likelihood):
-            def log_likelihood(self, params, data):
-                return jnp.asarray(0.0)
-
-        model = SimpleModel(prior, _Lik(), name="m")
-        info = BlackJAXESSMethod().check(observed_target(model, jnp.zeros((5, 3))))
-        assert info.feasible
-
 
 class _NonTraceableGaussianLik(Likelihood):
     """Gaussian-shaped likelihood whose body is *not* JAX-traceable.
@@ -407,9 +349,9 @@ class TestPosteriorRecovery:
     """ESS samples must match the closed-form Gaussian conjugate posterior.
 
     Exercises every supported prior shape for end-to-end correctness, not
-    just detection: scalar ``Normal``, dense ``MultivariateNormal``,
-    independent ``ProductDistribution``, and ``JointGaussian`` with
-    cross-covariance.
+    just detection: scalar ``Normal``, dense ``MultivariateNormal``, an
+    independent factored joint, and a strongly correlated
+    ``MultivariateNormal``.
     """
 
     def test_one_dim_normal_normal(self):
@@ -502,18 +444,15 @@ class TestPosteriorRecovery:
             0.15 * np.linalg.norm(sigma_post, ord="fro"),
         )
 
-    def test_product_distribution_prior(self):
-        """Independent ``ProductDistribution(N(0,1), N(0,4))`` prior.
+    def test_factored_joint_prior(self):
+        """Independent ``N(0,1) * N(0,4)`` prior.
 
         Block-diagonal prior + per-coordinate Gaussian observations:
         the posterior stays diagonal, so the recovered draws must have
         the closed-form per-coordinate spread and *no* cross-correlation.
         """
         sigma_prior = np.diag([1.0, 4.0])
-        prior = ProductDistribution(
-            a=Normal(loc=0.0, scale=1.0, name="a"),
-            b=Normal(loc=0.0, scale=2.0, name="b"),
-        )
+        prior = Normal(loc=0.0, scale=1.0, name="a") * Normal(loc=0.0, scale=2.0, name="b")
         n, obs_var = 15, 3.0
         rng = np.random.default_rng(1)
         truth = np.array([0.8, -1.2])
@@ -546,8 +485,8 @@ class TestPosteriorRecovery:
         sample_cov = np.cov(draws, rowvar=False)
         assert abs(sample_cov[0, 1]) < 0.04
 
-    def test_joint_gaussian_cross_covariance_prior(self):
-        """``JointGaussian`` prior with off-diagonal covariance.
+    def test_cross_covariance_prior(self):
+        """A ``MultivariateNormal`` prior with off-diagonal covariance.
 
         The prior correlation is strong (0.8) and the likelihood weak
         (``obs_var = 10``, ``n = 10``) so the prior's cross-covariance
@@ -559,12 +498,7 @@ class TestPosteriorRecovery:
         covariance is *sampled*, not merely detected.
         """
         sigma_prior = np.array([[1.0, 0.8], [0.8, 1.0]])
-        prior = JointGaussian(
-            mean=jnp.zeros(2),
-            cov=jnp.asarray(sigma_prior),
-            a=1,
-            b=1,
-        )
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.asarray(sigma_prior), name="theta")
         n, obs_var = 10, 10.0
         rng = np.random.default_rng(2)
         truth = np.array([0.5, -0.7])

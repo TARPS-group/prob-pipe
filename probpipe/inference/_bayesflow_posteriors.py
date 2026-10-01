@@ -381,8 +381,8 @@ def learn_amortized_posterior(
     ----------
     prior : Distribution
         Prior over the model parameters.  Must be a numeric distribution --
-        typically a ``ProductDistribution`` of named distributions (which may be
-        nested), or a single named distribution for a one-parameter model.  It is
+        typically a factored joint of named distributions, or a single named
+        distribution for a one-parameter model.  It is
         sampled via the :func:`~probpipe.sample` op to draw training thetas; it is
         *not* otherwise translated.  Constrained leaves (positive, an interval, a
         simplex, positive-definite matrices, ...) are trained in unconstrained space

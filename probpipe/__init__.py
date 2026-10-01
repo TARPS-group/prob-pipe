@@ -55,16 +55,9 @@ from probpipe.core._numeric_array import NumericArray
 from probpipe.core._numeric_array_batch import NumericArrayBatch
 from probpipe.core._numeric_record import NumericRecord
 from probpipe.core._numeric_record_batch import NumericRecordBatch
-from probpipe.core._numeric_record_distribution import (
-    FlatNumericRecordDistribution,
-    FlattenedDistributionView,
-    NumericRecordDistribution,
-    NumericRecordDistributionView,
-)
 from probpipe.core._opaque import Opaque, OpaqueSpec
 from probpipe.core._opaque_batch import OpaqueBatch
 from probpipe.core._record_batch import RecordBatch
-from probpipe.core._record_distribution import RecordDistribution
 from probpipe.core._specs import (
     InputSpec,
     NumericArraySpec,
@@ -101,12 +94,6 @@ from probpipe.core.transition import (
     iterate,
     with_conversion,
     with_resampling,
-)
-from probpipe.distributions import (
-    JointGaussian,
-    # Joint
-    ProductDistribution,
-    SequentialJointDistribution,
 )
 from probpipe.distributions._capabilities import (
     SupportsApproximateConditioning,
@@ -252,8 +239,6 @@ __all__ = [
     "DistributionSpec",
     "EmpiricalDistribution",
     "Exponential",
-    "FlatNumericRecordDistribution",
-    "FlattenedDistributionView",
     "FullFactorialDesign",
     "Function",
     "FunctionBatch",
@@ -267,7 +252,6 @@ __all__ = [
     "IncrementalConditioner",
     "InputSpec",
     "InverseGamma",
-    "JointGaussian",
     "KDEDistribution",
     "Laplace",
     "Likelihood",
@@ -288,8 +272,6 @@ __all__ = [
     "NumericDistribution",
     "NumericRecord",
     "NumericRecordBatch",
-    "NumericRecordDistribution",
-    "NumericRecordDistributionView",
     "NumericRecordSpec",
     "NumericSpec",
     "Opaque",
@@ -300,21 +282,18 @@ __all__ = [
     "Pareto",
     "Poisson",
     "ProbabilisticModel",
-    "ProductDistribution",
     "Provenance",
     "ProvenanceMode",
     "RandomFunction",
     "RandomMeasure",
     "Record",
     "RecordBatch",
-    "RecordDistribution",
     "RecordSpec",
     "ReplayCompatibilityError",
     "ReplayUnsupportedCallableError",
     "ResolutionError",
     "ResultKindError",
     "ResultSchemaError",
-    "SequentialJointDistribution",
     "SimpleGenerativeModel",
     "SimpleModel",
     "StudentT",

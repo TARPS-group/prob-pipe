@@ -19,7 +19,6 @@ from probpipe import (
     Normal,
     NumericArrayBatch,
     NumericArraySpec,
-    ProductDistribution,
     Record,
     RecordBatch,
     sample,
@@ -27,8 +26,13 @@ from probpipe import (
 )
 from probpipe.core._record_batch import _batch_class_for
 from probpipe.core._record_spec import _reshaped_template
+from probpipe.core._specs import OutputSpec
 from probpipe.core.config import WorkflowKind
-from probpipe.distributions import SequentialJointDistribution
+from probpipe.distributions import (
+    ConditionalDistribution,
+    FactoredDistribution,
+    SupportsConditionalSampling,
+)
 from probpipe.functions import (
     _broadcast,
     _context,
@@ -36,6 +40,20 @@ from probpipe.functions import (
 )
 from probpipe.functions._plan import build_broadcast_plan, build_stochastic_plan
 from probpipe.values import _binding
+
+
+class _ShiftKernel(ConditionalDistribution, SupportsConditionalSampling):
+    """``x | z ~ Normal(z, 0.01)``, the dependent factor of a joint."""
+
+    def __init__(self):
+        spec = NumericArraySpec((), "float32")
+        super().__init__("x", {"z": spec}, OutputSpec(x=spec))
+
+    def _condition_on(self, given, /, **options):
+        return Normal("x", given["z"], 0.01)
+
+    def _conditional_sample(self, given, key, sample_shape=()):
+        return Normal("x", given["z"], 0.01)._sample(key, sample_shape)
 
 
 def _empirical_of_rows(name: str, rows: Record, weights=None) -> EmpiricalDistribution:
@@ -190,10 +208,9 @@ class TestExecuteDistributionBroadcast:
         assert not np.array_equal(first_calls[0][0], second_calls[0][0])
 
     def test_root_and_nested_view_use_the_same_sampled_realization(self):
-        joint = ProductDistribution(
-            nested={"leaf": Normal(loc=0.0, scale=1.0, name="leaf")},
-            other=Normal(loc=3.0, scale=1.0, name="other"),
-        )
+        joint = (
+            Normal(loc=0.0, scale=1.0, name="leaf") * Normal(loc=3.0, scale=1.0, name="other")
+        ).with_path_names({"leaf": "nested/leaf"})
         values = {"root": joint, "leaf": joint["nested/leaf"]}
 
         plan = _stochastic_plan(values, 8)
@@ -503,10 +520,7 @@ class TestExecuteDistributionBroadcast:
         assert commits == []
 
     def test_same_parent_views_share_parent_sample(self):
-        joint = ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0, name="x"),
-            y=Normal(loc=10.0, scale=1.0, name="y"),
-        )
+        joint = Normal(loc=0.0, scale=1.0, name="x") * Normal(loc=10.0, scale=1.0, name="y")
         view_x = joint["x"]
         values = {"a": view_x, "b": view_x}
 
@@ -652,10 +666,7 @@ class TestCoSamplingGroups:
 
     @staticmethod
     def _joint():
-        return ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0, name="x"),
-            y=Normal(loc=10.0, scale=1.0, name="y"),
-        )
+        return Normal(loc=0.0, scale=1.0, name="x") * Normal(loc=10.0, scale=1.0, name="y")
 
     @staticmethod
     def _sample(values, names, *, n=8, seed=3):
@@ -826,10 +837,7 @@ class TestCoSamplingThroughACall:
         Its ``len`` is the field count and its ``shape`` raises, so the row count
         had to come from somewhere that means one thing for every batched value.
         """
-        joint = ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0, name="x"),
-            y=Normal(loc=10.0, scale=1.0, name="y"),
-        )
+        joint = Normal(loc=0.0, scale=1.0, name="x") * Normal(loc=10.0, scale=1.0, name="y")
         lifted = Function(
             name="function", fn=lambda a: a["x"], dispatch="sequential", n_broadcast_samples=8
         )
@@ -838,10 +846,7 @@ class TestCoSamplingThroughACall:
 
     def test_a_parent_and_its_own_view_lift_together(self):
         """The remaining IV.2 case, end to end: ``f(d, d["x"])`` is one draw."""
-        joint = ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0, name="x"),
-            y=Normal(loc=10.0, scale=1.0, name="y"),
-        )
+        joint = Normal(loc=0.0, scale=1.0, name="x") * Normal(loc=10.0, scale=1.0, name="y")
         lifted = Function(
             name="function",
             fn=lambda a, b: a["x"] - b,
@@ -963,12 +968,10 @@ class TestCoSamplingThroughACall:
     @pytest.mark.parametrize("dispatch", ["auto", "sequential", "thread"])
     def test_a_sampled_nested_record_valued_law_lifts_rowwise(self, dispatch):
         """Nested records are supported up to the row-wise dispatch boundary."""
-        nested = ProductDistribution(
-            group={
-                "x": Normal(loc=0.0, scale=1.0, name="x"),
-                "y": Normal(loc=10.0, scale=1.0, name="y"),
-            },
-            name="nested",
+        nested = (
+            (Normal(loc=0.0, scale=1.0, name="x") * Normal(loc=10.0, scale=1.0, name="y"))
+            .with_path_names({"x": "group/x", "y": "group/y"})
+            .with_name("nested")
         )
         lifted = Function(
             name="function",
@@ -981,12 +984,10 @@ class TestCoSamplingThroughACall:
 
     def test_a_sampled_nested_record_valued_law_matches_sequential_under_jax(self):
         """The draw supplies nested record structure before either body is mapped."""
-        nested = ProductDistribution(
-            group={
-                "x": Normal(loc=0.0, scale=1.0, name="x"),
-                "y": Normal(loc=10.0, scale=1.0, name="y"),
-            },
-            name="nested",
+        nested = (
+            (Normal(loc=0.0, scale=1.0, name="x") * Normal(loc=10.0, scale=1.0, name="y"))
+            .with_path_names({"x": "group/x", "y": "group/y"})
+            .with_name("nested")
         )
         mapped = Function(
             name="function",
@@ -1221,12 +1222,9 @@ class TestTheProbeModelsItsExecutorsTransform:
             np.zeros(8),
         )
 
-    def test_a_law_that_cannot_answer_dtype_is_still_probed(self, caplog):
+    def test_the_views_of_a_dependent_joint_are_probed(self, caplog):
         """The root's resolved component metadata supplies the probe dtypes."""
-        joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0, name="z"),
-            x=lambda z: Normal(loc=z, scale=0.01, name="x"),
-        )
+        joint = _ShiftKernel() * Normal(loc=0.0, scale=1.0, name="z")
         difference = Function(name="function", fn=lambda a, b: a - b, n_broadcast_samples=8)
         sequential = Function(
             name="function", fn=lambda a, b: a - b, dispatch="sequential", n_broadcast_samples=8
@@ -1246,9 +1244,7 @@ class TestTheProbeModelsItsExecutorsTransform:
 
         Kept because the draw-based probe must not narrow what it accepts.
         """
-        law = ProductDistribution(
-            Normal(loc=0.0, scale=1.0, name="a"), Normal(loc=1.0, scale=1.0, name="b")
-        )
+        law = Normal(loc=0.0, scale=1.0, name="a") * Normal(loc=1.0, scale=1.0, name="b")
         totals = Function(name="function", fn=lambda r: r["a"] + r["b"], n_broadcast_samples=8)
         sequential = Function(
             name="function",
@@ -1320,7 +1316,7 @@ class TestTheProbeModelsItsExecutorsTransform:
         and the row-wise paths index the same record. A body that reads the field
         therefore runs under both, and the mapped executor still vectorizes it.
         """
-        law = ProductDistribution(Normal(loc=0.0, scale=1.0, name="x"))
+        law = FactoredDistribution("law", [Normal(loc=0.0, scale=1.0, name="x")])
         kinds = []
 
         def double(x):

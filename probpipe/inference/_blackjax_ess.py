@@ -34,6 +34,8 @@ import numpy as np
 from ..core._dispatch import Feasibility
 from ..custom_types import Array, ArrayLike
 from ..distributions._distribution import Distribution
+from ..distributions._factored import FactoredDistribution
+from ..families import MultivariateNormal, Normal
 from ..operations._condition import InferenceMethod
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._inference_utils import (
@@ -67,46 +69,35 @@ def _gaussian_prior_params(prior: Distribution) -> tuple[Array, Array] | None:
 
     Recognises:
 
-    * :class:`~probpipe.distributions.MultivariateNormal` — ``(loc, cov)``
-      directly.
-    * :class:`~probpipe.distributions.JointGaussian` — a named multi-field
-      Gaussian *with cross-covariance*. Its ``(mean_vector, covariance)``
-      are already laid out in the order of its components, so they
-      plug straight in; unlike a ``ProductDistribution`` of Gaussians, the
-      off-diagonal cross-field covariance is preserved.
-    * :class:`~probpipe.distributions.Normal` — ``(loc, diag(scale**2))``
-      with the scalar / batch promoted to a length-1 vector.
-    * :class:`~probpipe.distributions.ProductDistribution` whose
-      components are each themselves recognised — block-diagonal
-      assembly preserving the field order (the independent case).
+    * :class:`~probpipe.MultivariateNormal` — ``(loc, cov)`` directly.
+    * :class:`~probpipe.Normal` — ``(loc, diag(scale**2))`` with the scalar
+      promoted to a length-1 vector.
+    * a factored joint whose factors are each themselves recognised, as a
+      :class:`~probpipe.families.FactoredMultivariateGaussian` is —
+      block-diagonal assembly in the order of its components, the factors
+      being independent.
 
     Returns ``None`` for any other distribution: mixtures of Gaussians,
     conditional Gaussians whose covariance depends on other parameters,
     Gamma / Beta / Dirichlet / non-Gaussian priors, and improper
     priors (which have no ``_sample`` to draw the auxiliary from).
     """
-    from ..distributions import JointGaussian, ProductDistribution
-    from ..families import MultivariateNormal, Normal
-
     if isinstance(prior, MultivariateNormal):
         loc = jnp.atleast_1d(jnp.asarray(prior.loc))
         cov = jnp.atleast_2d(jnp.asarray(prior.cov))
         return loc, cov
-
-    if isinstance(prior, JointGaussian):
-        mean = jnp.atleast_1d(jnp.asarray(prior.mean_vector))
-        cov = jnp.atleast_2d(jnp.asarray(prior.covariance))
-        return mean, cov
 
     if isinstance(prior, Normal):
         loc = jnp.atleast_1d(jnp.asarray(prior.loc))
         scale = jnp.atleast_1d(jnp.asarray(prior.scale))
         return loc, jnp.diag(scale**2)
 
-    if isinstance(prior, ProductDistribution):
+    if isinstance(prior, FactoredDistribution):
         locs: list[Array] = []
         covs: list[Array] = []
-        for _name, component in prior.components.items():
+        for component in prior.factors:
+            if not isinstance(component, Distribution):
+                return None
             sub = _gaussian_prior_params(component)
             if sub is None:
                 return None
@@ -197,9 +188,8 @@ def elliptical_slice(
     ----------
     model : SimpleModel
         Must have a Gaussian prior recognised by
-        :func:`_gaussian_prior_params` (``MultivariateNormal``,
-        ``JointGaussian``, ``Normal``, or a ``ProductDistribution`` over
-        those).
+        :func:`_gaussian_prior_params` (``MultivariateNormal``, ``Normal``,
+        or a factored joint over those).
     data
         Observed data, passed to ``model.likelihood.log_likelihood``.
     num_results, num_warmup, num_chains

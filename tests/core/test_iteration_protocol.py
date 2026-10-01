@@ -34,7 +34,6 @@ from probpipe import (
     Normal,
     NumericRecord,
     NumericRecordBatch,
-    ProductDistribution,
     Record,
     RecordBatch,
 )
@@ -75,11 +74,8 @@ DISTRIBUTIONS = [
         id="MultivariateNormal",
     ),
     pytest.param(
-        lambda: ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0, name="x"),
-            y=Normal(loc=0.0, scale=1.0, name="y"),
-        ),
-        id="ProductDistribution",
+        lambda: Normal(loc=0.0, scale=1.0, name="x") * Normal(loc=0.0, scale=1.0, name="y"),
+        id="FactoredDistribution",
     ),
     pytest.param(
         lambda: _make_transformed(),

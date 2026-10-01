@@ -1,7 +1,7 @@
 """Round-trip tests for the terms that reconstruct through their own ``__reduce__``.
 
 These tests ensure that Record, RecordSpec, NumericRecord, RecordBatch,
-NumericRecordBatch, and ProductDistribution can survive pickle serialization,
+NumericRecordBatch, and FactoredDistribution can survive pickle serialization,
 which is required for Ray task distribution (Ray uses cloudpickle to ship
 arguments to workers), and that a copy or an unpickle preserves everything the
 term was carrying.
@@ -24,12 +24,12 @@ from probpipe import (
     Normal,
     NumericRecord,
     NumericRecordBatch,
-    ProductDistribution,
     RecordBatch,
 )
 from probpipe.core._opaque import OpaqueSpec
 from probpipe.core._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
 from probpipe.core.record import Record
+from probpipe.distributions import FactoredDistribution
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -390,8 +390,8 @@ class TestRoundTripPreservesAnnotations:
             pytest.param(lambda: Record("r", {"x": jnp.ones(3), "tag": "meters"}), id="record"),
             pytest.param(lambda: NumericRecord("nr", {"x": jnp.ones(3)}), id="numeric-record"),
             pytest.param(
-                lambda: ProductDistribution(value=Normal("value", 0.0, 1.0), name="joint"),
-                id="product-distribution",
+                lambda: FactoredDistribution("joint", [Normal("value", 0.0, 1.0)]),
+                id="factored-distribution",
             ),
         ]
     )
@@ -421,12 +421,12 @@ class TestRoundTripPreservesAnnotations:
 
     def test_unannotated_term_stays_unannotated(self):
         assert roundtrip(Record("r", {"x": jnp.ones(3)})).annotations is None
-        assert roundtrip(ProductDistribution(v=Normal("v", 0.0, 1.0))).annotations is None
+        assert roundtrip(Normal("v", 0.0, 1.0) * Normal("w", 0.0, 1.0)).annotations is None
 
     def test_the_reconstruction_has_the_same_type(self, term):
         # A term whose class is chosen from its constructor arguments — a record
-        # promoting to ``NumericRecord``, a product distribution picking up the
-        # mixins its components support — lands on a different class if the
+        # promoting to ``NumericRecord``, a factored joint picking up the
+        # capabilities its factors support — lands on a different class if the
         # reconstruction lets one of its own keywords be read as data. The state
         # can look complete while the interface is not.
         assert type(roundtrip(term)) is type(term)

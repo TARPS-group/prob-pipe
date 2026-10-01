@@ -5,8 +5,6 @@ The capability protocols of the distribution kinds are defined in
 
 - ``SupportsArrayBackend``, which a ``Distribution`` subclass implements to
   give ``DistributionArray`` a fused storage backend.
-- ``protocols_supported_by_all``, which returns the protocols every one of a
-  list of laws claims.
 - The likelihood protocols, ``Likelihood``, ``ConditionallyIndependentLikelihood``,
   and ``GenerativeLikelihood``, which the simple models consume.
 """
@@ -162,23 +160,6 @@ class SupportsArrayBackend(Protocol):
         ...
 
 
-def protocols_supported_by_all(
-    leaves: list,
-    candidates: tuple[type, ...],
-) -> tuple[type, ...]:
-    """Return the subset of *candidates* that every leaf satisfies.
-
-    Used by dynamic-protocol factories (``ProductDistribution``,
-    ``SequentialJointDistribution``, ``TransformedDistribution``,
-    ``_RecordDistributionView``, ``FlattenedDistributionView``) when building a
-    cached subclass whose protocol bases track the capabilities of the
-    underlying distribution(s). Pass in the leaves to check and the
-    tuple of ``SupportsFoo`` protocols to test against; get back the
-    protocols that are satisfied by every leaf, in the given order.
-    """
-    return tuple(p for p in candidates if all(isinstance(leaf, p) for leaf in leaves))
-
-
 # ---------------------------------------------------------------------------
 # Likelihoods and generative simulators
 # ---------------------------------------------------------------------------
@@ -313,5 +294,4 @@ __all__ = [
     "GenerativeLikelihood",
     "Likelihood",
     "SupportsArrayBackend",
-    "protocols_supported_by_all",
 ]

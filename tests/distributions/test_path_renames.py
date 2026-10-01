@@ -20,12 +20,11 @@ import jax.numpy as jnp
 import pytest
 
 from probpipe import (
-    JointGaussian,
+    MultivariateNormal,
     Normal,
     NumericArraySpec,
     NumericRecordBatch,
     OutputSpec,
-    ProductDistribution,
     Record,
     RecordBatch,
     RecordSpec,
@@ -276,7 +275,7 @@ class _ScoreKernel(ConditionalDistribution, SupportsConditionalLogProb):
 
 
 def _product() -> Distribution:
-    return ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 2.0, 3.0))
+    return Normal("a", 0.0, 1.0) * Normal("b", 2.0, 3.0)
 
 
 #: Three record atoms over ``a/x`` and ``b/y``.
@@ -316,7 +315,9 @@ class TestRenamedLawDeclaration:
         assert [info.name for info in renamed.provenance.parents] == [parent.name]
 
     def test_a_renamed_law_claims_the_capabilities_of_its_parent(self):
-        parent = JointGaussian(mean=_MEAN, cov=_COV, x=1, y=2)
+        parent = MultivariateNormal("x", _MEAN[:1], cov=_COV[:1, :1]) * MultivariateNormal(
+            "y", _MEAN[1:], cov=_COV[1:, 1:]
+        )
         renamed = parent.with_path_names(y="w")
         claims = (
             SupportsSampling,
@@ -351,7 +352,7 @@ class TestRenamedLawValues:
         assert jnp.array_equal(draws["obs"], parent._sample(key, (4,))["y"])
 
     def test_a_field_of_a_whole_record_term_is_renamed_in_its_draws(self, key):
-        parent = ProductDistribution(beta=Normal("beta", 0.0, 1.0), sigma=Normal("sigma", 1.0, 1.0))
+        parent = Normal("beta", 0.0, 1.0) * Normal("sigma", 1.0, 1.0)
         whole = _WholeRecordLaw(parent)
         renamed = whole.with_path_names({"parameters/beta": "parameters/b"}).with_path_names(
             parameters="theta"

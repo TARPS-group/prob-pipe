@@ -127,7 +127,7 @@ def _validate_learn_inputs(
     if not isinstance(prior, NumericDistribution):
         raise TypeError(
             f"{caller} requires a numeric prior with named parameter fields -- "
-            "typically a ProductDistribution of named distributions -- "
+            "typically a factored joint of named distributions -- "
             f"but got {type(prior).__name__}, which declares no numeric event."
         )
     return _components_record(prior.event_spec)

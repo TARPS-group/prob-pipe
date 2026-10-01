@@ -14,8 +14,8 @@ from probpipe.modeling import (
 
 #: The update that a KDE prior cannot take yet.
 _KDE_PRIOR = (
-    "SimpleModel requires a RecordDistribution prior, and the KDE an update converts the "
-    "posterior to is a Distribution"
+    "SimpleModel requires a factored or TFP prior, and the KDE an update converts the "
+    "posterior to is neither"
 )
 
 # ---------------------------------------------------------------------------
@@ -213,13 +213,12 @@ class TestIncrementalConditioner:
     @pytest.mark.pending(reason=_KDE_PRIOR, raises=TypeError)
     def test_a_nested_posterior_becomes_a_nested_prior(self):
         """The KDE that stands in for a posterior over a nested prior keeps the nesting."""
-        from probpipe import KDEDistribution, Normal, ProductDistribution
+        from probpipe import KDEDistribution, Normal
         from probpipe.inference._approximate_distribution import make_posterior
 
-        prior = ProductDistribution(
-            params=ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)),
-            s=Normal("s", 0.0, 1.0),
-        )
+        prior = (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)).with_path_names(
+            {"a": "params/a", "b": "params/b"}
+        ) * Normal("s", 0.0, 1.0)
         priors = []
 
         def condition_fn(model, data):
@@ -244,7 +243,7 @@ class TestIncrementalConditioner:
 
     @pytest.mark.pending(reason=_KDE_PRIOR, raises=TypeError)
     def test_multi_batch_preserves_named_record_fields(self):
-        """Multi-batch IncrementalConditioner over a named ProductDistribution
+        """Multi-batch IncrementalConditioner over a named factored joint
         prior preserves field names on every batch.
 
         Previously batches 2+ collapsed to a single unnamed ``posterior``
@@ -256,7 +255,6 @@ class TestIncrementalConditioner:
         from probpipe import (
             GLMLikelihood,
             Normal,
-            ProductDistribution,
             mean,
         )
 
@@ -264,10 +262,7 @@ class TestIncrementalConditioner:
         X = rng.randn(120).astype("float32")
         y = rng.poisson(np.exp(0.3 + 0.5 * X)).astype("float32")
 
-        prior = ProductDistribution(
-            Normal("intercept", 0.0, np.sqrt(5.0)),
-            Normal("slope", 0.0, np.sqrt(5.0)),
-        )
+        prior = Normal("intercept", 0.0, np.sqrt(5.0)) * Normal("slope", 0.0, np.sqrt(5.0))
         cond = IncrementalConditioner(prior, GLMLikelihood(tfp_glm.NegativeBinomial()))
         for s, e in [(0, 40), (40, 80), (80, 120)]:
             cond.update(X=X[s:e], y=y[s:e])

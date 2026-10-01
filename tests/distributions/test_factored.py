@@ -536,6 +536,15 @@ class TestEventDeclaration:
         assert joint.factors[-1] is potential
         assert list(joint.event_spec.components) == ["y", "beta"]
 
+    def test_the_numeric_views_read_each_component_of_the_joint(self):
+        from probpipe import Gamma, positive, real
+
+        joint = Normal("a", 0.0, 1.0) * Gamma("g", 2.0, 1.0)
+        assert isinstance(joint, NumericDistribution)
+        assert joint.supports == {"a": real, "g": positive}
+        assert joint.support is None
+        assert set(joint.dtypes) == {"a", "g"}
+
 
 # -- Factors ------------------------------------------------------------------------
 

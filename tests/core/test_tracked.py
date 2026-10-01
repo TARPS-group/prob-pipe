@@ -21,7 +21,6 @@ from probpipe import (
     NumericRecord,
     NumericRecordBatch,
     OpaqueBatch,
-    ProductDistribution,
     Provenance,
     ProvenanceMode,
     Record,
@@ -29,6 +28,7 @@ from probpipe import (
 )
 from probpipe.core._specs import RecordSpec
 from probpipe.core.tracked import Annotated, TrackedTerm, auto_name
+from probpipe.distributions import FactoredDistribution
 
 # ===========================================================================
 # 1. Mixin membership — every core object is a tracked term
@@ -139,17 +139,11 @@ class TestNameLifecycle:
         assert named.name == "mine"
 
     def test_composite_distribution_derives_default_name(self):
-        joint = ProductDistribution(
-            mu=Normal(loc=0.0, scale=1.0, name="mu"),
-            sigma=Normal(loc=0.0, scale=1.0, name="sigma"),
-        )
-        assert joint.name == "product(mu,sigma)"
+        joint = Normal(loc=0.0, scale=1.0, name="mu") * Normal(loc=0.0, scale=1.0, name="sigma")
+        assert joint.name == "mu·sigma"
 
     def test_composite_distribution_keeps_explicit_name(self):
-        joint = ProductDistribution(
-            mu=Normal(loc=0.0, scale=1.0, name="mu"),
-            name="my_joint",
-        )
+        joint = FactoredDistribution("my_joint", [Normal(loc=0.0, scale=1.0, name="mu")])
         assert joint.name == "my_joint"
 
     @pytest.mark.parametrize("name", [None, "mine"], ids=["derived", "supplied"])
@@ -334,20 +328,8 @@ class TestWithNameOnCustomNewHosts:
         key = jax.random.PRNGKey(0)
         assert jnp.allclose(jnp.asarray(t._sample(key, (5,))), jnp.asarray(t2._sample(key, (5,))))
 
-    def test_flattened_distribution_view(self):
-        from probpipe import FlattenedDistributionView, MultivariateNormal
-
-        mvn = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="theta")
-        flat = FlattenedDistributionView(mvn)
-        renamed = flat.with_name("theta_flat")
-        assert renamed.name == "theta_flat"
-        assert renamed.event_shape == flat.event_shape
-
-    def test_record_distribution_view(self):
-        joint = ProductDistribution(
-            mu=Normal(loc=0.0, scale=1.0, name="mu"),
-            sigma=Normal(loc=1.0, scale=0.5, name="sigma"),
-        )
+    def test_field_view(self):
+        joint = Normal(loc=0.0, scale=1.0, name="mu") * Normal(loc=1.0, scale=0.5, name="sigma")
         view = joint["mu"]
         renamed = view.with_name("mu_view")
         assert renamed.name == "mu_view"
@@ -380,19 +362,14 @@ class TestNamePreservation:
         named = MinibatchedDistribution("mine", prior, lik, Record("r", X=X, y=y), batch_size=2)
         assert named.name == "mine"
 
-    def test_product_conditioning_preserves_names(self):
-        auto_joint = ProductDistribution(
-            mu=Normal(loc=0.0, scale=1.0, name="mu"),
-            sigma=Normal(loc=1.0, scale=0.5, name="sigma"),
+    def test_joint_conditioning_preserves_names(self):
+        auto_joint = Normal(loc=0.0, scale=1.0, name="mu") * Normal(
+            loc=1.0, scale=0.5, name="sigma"
         )
-        cond = auto_joint._condition_on(mu=0.5)
+        cond = auto_joint._condition_on({"mu": 0.5})
         assert cond.name == auto_joint.name
-        named_joint = ProductDistribution(
-            mu=Normal(loc=0.0, scale=1.0, name="mu"),
-            sigma=Normal(loc=1.0, scale=0.5, name="sigma"),
-            name="my_joint",
-        )
-        cond_named = named_joint._condition_on(mu=0.5)
+        named_joint = auto_joint.with_name("my_joint")
+        cond_named = named_joint._condition_on({"mu": 0.5})
         assert cond_named.name == named_joint.name
 
     def test_distribution_array_slice_preserves_names(self):
@@ -470,17 +447,14 @@ class TestAnnotated:
 # ===========================================================================
 
 
-class TestProductPickleRoundTrip:
-    def test_product_keeps_derived_name_through_pickle(self):
-        joint = ProductDistribution(
-            mu=Normal(loc=0.0, scale=1.0, name="mu"),
-            sigma=Normal(loc=1.0, scale=0.5, name="sigma"),
-        )
+class TestJointPickleRoundTrip:
+    def test_joint_keeps_derived_name_through_pickle(self):
+        joint = Normal(loc=0.0, scale=1.0, name="mu") * Normal(loc=1.0, scale=0.5, name="sigma")
         back = pickle.loads(pickle.dumps(joint))
         assert back.name == joint.name
 
-    def test_user_named_product_keeps_identity_and_provenance(self):
-        joint = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"), name="my_joint")
+    def test_user_named_joint_keeps_identity_and_provenance(self):
+        joint = FactoredDistribution("my_joint", [Normal(loc=0.0, scale=1.0, name="mu")])
         joint.with_provenance(Provenance("op"))
         back = pickle.loads(pickle.dumps(joint))
         assert back.name == "my_joint"

@@ -24,11 +24,12 @@ import pytest
 from probpipe import (
     DistributionArray,
     Normal,
-    ProductDistribution,
-    SequentialJointDistribution,
     condition_on,
 )
 from probpipe.core._broadcast_distributions import BroadcastDistribution
+from probpipe.core._dispatch import ResolutionError
+from probpipe.core._specs import NumericArraySpec, OutputSpec
+from probpipe.distributions import ConditionalDistribution, SupportsConditionalSampling
 
 
 def assigned_state(term) -> dict:
@@ -62,6 +63,20 @@ def _census(value):
     return None
 
 
+class _ShiftKernel(ConditionalDistribution, SupportsConditionalSampling):
+    """``x | z ~ Normal(z, 0.5)``, the dependent factor of a joint."""
+
+    def __init__(self):
+        spec = NumericArraySpec(())
+        super().__init__("x", {"z": spec}, OutputSpec(x=spec))
+
+    def _condition_on(self, given, /, **options):
+        return Normal("x", given["z"], 0.5)
+
+    def _conditional_sample(self, given, key, sample_shape=()):
+        return Normal("x", given["z"], 0.5)._sample(key, sample_shape)
+
+
 class _ScalarBackend:
     """The smallest thing ``DistributionArray._from_backend`` accepts."""
 
@@ -84,22 +99,23 @@ class TestTheCheckItself:
     """
 
     def test_it_catches_an_edit_that_rebinds_nothing(self):
-        joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0, name="z"),
-            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
+        broadcast = BroadcastDistribution(
+            input_samples={"x": jnp.ones((5, 1))},
+            output_samples=jnp.zeros((5, 2)),
+            weights=None,
+            broadcast_args=["x"],
         )
-        name, container = next((n, v) for n, v in vars(joint).items() if isinstance(v, dict) and v)
-        before = assigned_state(joint)
+        name, container = next(
+            (n, v) for n, v in vars(broadcast).items() if isinstance(v, dict) and v
+        )
+        before = assigned_state(broadcast)
         container["injected"] = object()  # same dict object, new entry
-        assert assigned_state(joint) != before, f"an in-place edit to {name} went unseen"
+        assert assigned_state(broadcast) != before, f"an in-place edit to {name} went unseen"
 
     def test_it_catches_a_rebound_attribute(self):
-        joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0, name="z"),
-            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
-        )
+        joint = Normal("a", 0.0, 1.0) * Normal("b", 1.0, 2.0)
         before = assigned_state(joint)
-        object.__setattr__(joint, "_conditioned_names", ("z",))
+        object.__setattr__(joint, "_graph", None)
         assert assigned_state(joint) != before
 
     def test_it_ignores_the_memo(self):
@@ -144,22 +160,22 @@ class TestAQueryLeavesTheTermUnchanged:
         assert assigned_state(posterior) == before
         assert posterior._concat_chains() is first
 
-    def test_a_tfp_product_distribution_builds_its_tfp_view_at_construction(self):
-        # The combined TFP distribution is built once, by the constructor: no
-        # read fills it in later.
-        joint = ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 1.0, 2.0), name="j")
-        assert hasattr(joint, "_tfp_dist")
+    def test_a_factored_joint_is_unchanged_by_a_field_view(self):
+        # The view reads the joint's marginal report at the view's construction,
+        # which fills nothing on the joint.
+        joint = Normal("a", 0.0, 1.0) * Normal("b", 1.0, 2.0)
         before = assigned_state(joint)
-        _ = joint.dtypes
+        _ = joint["a"]
         assert assigned_state(joint) == before
 
 
 class TestAnOperationDoesNotMutateItsResultAfterBuildingIt:
-    def test_conditioning_a_sequential_joint(self):
-        joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0, name="z"),
-            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
-        )
+    @pytest.mark.pending(
+        reason="an exact slice assembles the conditional from normalized factors",
+        raises=ResolutionError,
+    )
+    def test_conditioning_a_dependent_joint(self):
+        joint = _ShiftKernel() * Normal(loc=0.0, scale=1.0, name="z")
         conditioned = condition_on(joint, z=jnp.asarray(2.0))
         # The result is complete when it is returned, and conditioning again
         # builds another result rather than editing this one.
@@ -168,7 +184,7 @@ class TestAnOperationDoesNotMutateItsResultAfterBuildingIt:
         assert assigned_state(conditioned) == before
         assert again is not conditioned
         # The operand is untouched, which is what §V.1 promises.
-        assert set(joint.components) == {"z", "x"}
+        assert set(joint.event_spec.components) == {"z", "x"}
 
 
 class TestEveryMemoHolderDropsItsMemoOnACopy:

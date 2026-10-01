@@ -13,23 +13,39 @@ import probpipe
 from probpipe import (
     Beta,
     EmpiricalDistribution,
-    JointGaussian,
+    MultivariateNormal,
     Normal,
     NumericRecord,
     NumericRecordBatch,
-    ProductDistribution,
     Provenance,
     ProvenanceMode,
-    SequentialJointDistribution,
     condition_on,
     from_distribution,
     provenance_ancestors,
     provenance_dag,
     workflow_run,
 )
+from probpipe.core._dispatch import ResolutionError
+from probpipe.core._specs import NumericArraySpec, OutputSpec
 from probpipe.core.provenance import ParentInfo
+from probpipe.distributions import ConditionalDistribution, SupportsConditionalSampling
 from probpipe.families import BijectorTransformedDistribution
 from probpipe.values._function_base import Function
+
+
+class _ShiftKernel(ConditionalDistribution, SupportsConditionalSampling):
+    """``x | z ~ Normal(z, 0.5)``, the dependent factor of a joint."""
+
+    def __init__(self):
+        spec = NumericArraySpec(())
+        super().__init__("x", {"z": spec}, OutputSpec(x=spec))
+
+    def _condition_on(self, given, /, **options):
+        return Normal("x", given["z"], 0.5)
+
+    def _conditional_sample(self, given, key, sample_shape=()):
+        return Normal("x", given["z"], 0.5)._sample(key, sample_shape)
+
 
 # ===========================================================================
 # 1. Provenance basics (dataclass, with_provenance, write-once)
@@ -262,10 +278,7 @@ class TestBijectorTransformedDistributionProvenance:
 
 class TestConditioningProvenance:
     def test_product_condition_on(self):
-        joint = ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0, name="x"),
-            y=Normal(loc=1.0, scale=2.0, name="y"),
-        )
+        joint = Normal(loc=0.0, scale=1.0, name="x") * Normal(loc=1.0, scale=2.0, name="y")
         raw = condition_on.apply(joint, x=jnp.array(0.0))
         cond = condition_on(joint, x=jnp.array(0.0))
         assert raw.provenance.operation == "condition_on"
@@ -280,10 +293,7 @@ class TestConditioningProvenance:
         ]
 
     def test_condition_on_records_plain_observation_by_parameter(self):
-        joint = ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0, name="x"),
-            y=Normal(loc=1.0, scale=2.0, name="y"),
-        )
+        joint = Normal(loc=0.0, scale=1.0, name="x") * Normal(loc=1.0, scale=2.0, name="y")
 
         at_zero = condition_on(joint, x=jnp.array(0.0))
         at_five = condition_on(joint, x=jnp.array(5.0))
@@ -297,22 +307,20 @@ class TestConditioningProvenance:
             at_five.provenance.inputs["**kwargs['x']"].fingerprint
         )
 
-    def test_sequential_condition_on(self):
-        seq = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0, name="z"),
-            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
-        )
-        cond = condition_on(seq, z=jnp.array(1.0))
+    @pytest.mark.pending(
+        reason="an exact slice assembles the conditional from normalized factors",
+        raises=ResolutionError,
+    )
+    def test_dependent_joint_condition_on(self):
+        joint = _ShiftKernel() * Normal(loc=0.0, scale=1.0, name="z")
+        cond = condition_on(joint, z=jnp.array(1.0))
         assert cond.provenance.operation == "workflow.condition_on"
         assert len(cond.provenance.parents) == 2
         assert isinstance(cond.provenance.parents[0], ParentInfo)
 
     def test_gaussian_condition_on(self):
-        jg = JointGaussian(
-            mean=jnp.zeros(2),
-            cov=jnp.eye(2),
-            x=1,
-            y=1,
+        jg = MultivariateNormal("x", jnp.zeros(1), cov=jnp.eye(1)) * MultivariateNormal(
+            "y", jnp.zeros(1), cov=jnp.eye(1)
         )
         cond = condition_on(jg, x=jnp.array([0.0]))
         assert cond.provenance.operation == "workflow.condition_on"
@@ -452,7 +460,7 @@ class TestProvenanceChains:
         """from_distribution → condition_on creates a 2-step chain."""
         src = Beta(alpha=2.0, beta=5.0, name="prior")
         converted = from_distribution(src, Normal, name="x")
-        joint = ProductDistribution(x=converted, y=Normal(loc=0.0, scale=1.0, name="y"))
+        joint = converted * Normal(loc=0.0, scale=1.0, name="y")
         cond = condition_on(joint, x=jnp.array(0.0))
 
         # cond's provenance points to joint

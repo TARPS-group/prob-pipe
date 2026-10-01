@@ -182,18 +182,6 @@ class TestASampleShapeGetsADrawLevel:
         assert isinstance(drawn[2], NumericArray)
         assert drawn[2].shape == ()
 
-    def test_a_record_law_still_draws_its_own_batch(self):
-        """A record law builds its own batch."""
-        from probpipe import NumericRecordBatch, ProductDistribution
-
-        law = ProductDistribution(
-            Normal(loc=0.0, scale=1.0, name="a"), Normal(loc=1.0, scale=1.0, name="b")
-        )
-
-        drawn = sample(law, sample_shape=(5,), key=jax.random.PRNGKey(0))
-
-        assert isinstance(drawn, NumericRecordBatch)
-
     def test_a_joint_draws_a_batch_of_records_under_its_declaration(self):
         """A law whose draws are a mapping of columns draws the batch its declaration names."""
         from probpipe import NumericRecordBatch

@@ -11,13 +11,12 @@ from probpipe import (
     MultivariateNormal,
     Normal,
     NumericArraySpec,
-    ProductDistribution,
     SimpleModel,
     condition_on,
     mean,
 )
 from probpipe.core._dispatch import ResolutionError
-from probpipe.distributions import Distribution
+from probpipe.distributions import Distribution, FactoredDistribution
 from probpipe.distributions._capabilities import SupportsSampling
 from probpipe.inference import inference_method_registry
 from probpipe.inference._inference_utils import observed_target
@@ -400,7 +399,7 @@ def gaussian_model():
     likelihood + data) pass ``check()`` on this target — so it is the
     canonical case for testing the 85-vs-75 tier ordering.
     """
-    prior = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"))
+    prior = FactoredDistribution("prior", [Normal(loc=0.0, scale=1.0, name="mu")])
     return SimpleModel(prior, _GaussianMeanLikelihood(), name="gauss")
 
 
@@ -522,7 +521,7 @@ class TestTargets:
     def test_a_target_without_a_density_is_refused_by_the_gradient_method(self):
         from probpipe.operations._condition import condition_on as condition_on_operation
 
-        simulator = ProductDistribution(theta=Normal("theta", 0.0, 1.0), y=Normal("y", 0.0, 1.0))
+        simulator = Normal("theta", 0.0, 1.0) * Normal("y", 0.0, 1.0)
         target = condition_on_operation.with_options(method="unnormalized")(
             _WithoutDensity(simulator), {"y": 0.3}
         )

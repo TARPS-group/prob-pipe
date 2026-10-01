@@ -19,8 +19,8 @@ from probpipe.modeling import GenerativeLikelihood, Likelihood
 
 #: The update that a KDE prior cannot take yet.
 _KDE_PRIOR = (
-    "SimpleModel requires a RecordDistribution prior, and the KDE an update converts the "
-    "posterior to is a Distribution"
+    "SimpleModel requires a factored or TFP prior, and the KDE an update converts the "
+    "posterior to is neither"
 )
 
 
@@ -190,11 +190,10 @@ class TestGLMLikelihoodDataTemplate:
 
     def test_data_template_integrates_with_simple_model(self, poisson_lik):
         """SimpleModel merges GLM data_template into fields."""
-        from probpipe import Normal, ProductDistribution
+        from probpipe import Normal
 
-        prior = ProductDistribution(
-            intercept=Normal(loc=0.0, scale=2.0, name="intercept"),
-            slope=Normal(loc=0.0, scale=2.0, name="slope"),
+        prior = Normal(loc=0.0, scale=2.0, name="intercept") * Normal(
+            loc=0.0, scale=2.0, name="slope"
         )
         model = SimpleModel(prior, poisson_lik)
         assert "X" in model.fields

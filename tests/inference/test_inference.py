@@ -19,7 +19,6 @@ from probpipe import (
     MultivariateNormal,
     Normal,
     NumericRecordBatch,
-    ProductDistribution,
     Record,
     RecordSpec,
     mean,
@@ -533,10 +532,9 @@ class TestApproximateDistributionValuesTemplate:
         """A field view and a KDE of the posterior read its target record."""
         from probpipe import KDEDistribution, from_distribution
 
-        prior = ProductDistribution(
-            params=ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)),
-            s=Normal("s", 0.0, 1.0),
-        )
+        prior = (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)).with_path_names(
+            {"a": "params/a", "b": "params/b"}
+        ) * Normal("s", 0.0, 1.0)
         chain = jax.random.normal(jax.random.PRNGKey(0), (40, 3))
         post = make_posterior(
             [chain], parents=(prior,), algorithm="test", event_spec=prior.event_spec
@@ -759,9 +757,9 @@ class TestRWMH:
 
     def test_requires_log_prob(self):
         """RWMH raises for distributions without SupportsLogProb and no conversion path."""
-        from probpipe import NumericRecordDistribution
+        from probpipe import NumericDistribution
 
-        class NoLogProbNoSample(NumericRecordDistribution):
+        class NoLogProbNoSample(NumericDistribution):
             def __init__(self, name):
                 super().__init__(name, NumericArraySpec((2,)))
 
@@ -840,10 +838,10 @@ class TestRWMH:
 
     def test_non_supports_mean_init(self):
         """RWMH falls back to zeros init when dist has no SupportsMean."""
-        from probpipe import NumericRecordDistribution
+        from probpipe import NumericDistribution
         from probpipe.distributions._capabilities import SupportsLogProb
 
-        class LogProbOnlyDist(NumericRecordDistribution, SupportsLogProb):
+        class LogProbOnlyDist(NumericDistribution, SupportsLogProb):
             def __init__(self, name):
                 super().__init__(name, NumericArraySpec((2,), "float32"))
 
@@ -871,10 +869,10 @@ class TestRWMH:
 
     def test_mean_exception_fallback(self):
         """RWMH falls back to zeros init when _mean() raises."""
-        from probpipe import NumericRecordDistribution
+        from probpipe import NumericDistribution
         from probpipe.distributions._capabilities import SupportsLogProb, SupportsMean
 
-        class BrokenMeanLogProbDist(NumericRecordDistribution, SupportsLogProb, SupportsMean):
+        class BrokenMeanLogProbDist(NumericDistribution, SupportsLogProb, SupportsMean):
             def __init__(self, name):
                 super().__init__(name, NumericArraySpec((2,), "float32"))
 
@@ -909,8 +907,8 @@ class TestRWMH:
 # ---------------------------------------------------------------------------
 
 
-class TestRecordDistributionView:
-    """Component views from Record-based posteriors."""
+class TestPosteriorFieldView:
+    """Field views of a posterior over a record."""
 
     @pytest.fixture
     def template(self):
@@ -1015,11 +1013,8 @@ class TestRecordDistributionView:
         assert posterior["r"].name == "r"
 
     def test_view_name_from_product(self):
-        """View.name works on ProductDistribution views."""
-        p = ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0, name="x"),
-            y=Normal(loc=0.0, scale=1.0, name="y"),
-        )
+        """View.name works on the views of a factored joint."""
+        p = Normal(loc=0.0, scale=1.0, name="x") * Normal(loc=0.0, scale=1.0, name="y")
         assert p["x"].name == "x"
         assert p["y"].name == "y"
 

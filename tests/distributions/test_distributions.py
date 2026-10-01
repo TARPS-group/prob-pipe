@@ -9,7 +9,6 @@ from probpipe import (
     EmpiricalDistribution,
     MultivariateNormal,
     NumericDistribution,
-    NumericRecordDistribution,
     Provenance,
     TFPDistribution,
     Weights,
@@ -429,17 +428,17 @@ class TestProvenance:
 
 
 # ---------------------------------------------------------------------------
-# NumericRecordDistribution ABC
+# NumericDistribution ABC
 # ---------------------------------------------------------------------------
 
 
 class TestDistributionABC:
     def test_cannot_instantiate(self):
         with pytest.raises(TypeError):
-            NumericRecordDistribution()
+            NumericDistribution()
 
     def test_no_condition_on_method(self, gaussian):
-        """condition_on() is only on JointDistribution, not NumericRecordDistribution ABC."""
+        """condition_on() is an operation, not a method of a NumericDistribution."""
         assert not hasattr(gaussian, "condition_on")
 
     def test_default_dtype(self, gaussian, loc):
@@ -455,7 +454,7 @@ class TestDistributionABC:
 
     def test_from_distribution_raises_for_invalid_input(self):
         with pytest.raises(TypeError):
-            from_distribution(None, NumericRecordDistribution)
+            from_distribution(None, NumericDistribution)
 
     def test_provenance_default_none(self, gaussian):
         g = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
@@ -527,7 +526,7 @@ class TestShapeSemantics:
 
 
 # ---------------------------------------------------------------------------
-# NumericRecordDistribution / TFPDistribution coverage gaps
+# NumericDistribution / TFPDistribution coverage gaps
 # ---------------------------------------------------------------------------
 
 
@@ -539,7 +538,7 @@ class TestDistributionCoverageGaps:
         ``dtype`` all read that declaration."""
         from probpipe import NumericArraySpec
 
-        class Scalar(NumericRecordDistribution):
+        class Scalar(NumericDistribution):
             def __init__(self, name):
                 super().__init__(name, NumericArraySpec((), "float32"))
 
@@ -549,7 +548,7 @@ class TestDistributionCoverageGaps:
         assert s.dtype == jnp.float32
 
     def test_dtype_uniform_with_template(self):
-        """NumericRecordDistribution.dtype is the common dtype when all fields match."""
+        """NumericDistribution.dtype is the common dtype when all fields match."""
         from probpipe import Normal
 
         n = Normal(loc=0.0, scale=1.0, name="x")

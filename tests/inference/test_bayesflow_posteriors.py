@@ -22,11 +22,11 @@ from probpipe import (
     ApproximateDistribution,
     Normal,
     NumericRecord,
-    ProductDistribution,
     condition_on,
     learn_amortized_posterior,
 )
 from probpipe.core._dispatch import ResolutionError
+from probpipe.core._specs import NumericArraySpec, OutputSpec
 from probpipe.distributions import ConditionalDistribution
 from probpipe.distributions._capabilities import (
     SupportsApproximateConditioning,
@@ -56,11 +56,22 @@ class _ToyLikelihood(Likelihood, GenerativeLikelihood):
         return mean[None, :] + 0.1 * jax.random.normal(key, (num_observations, 2))
 
 
+class _UniformBelowKernel(ConditionalDistribution, SupportsConditionalSampling):
+    """``x | z ~ Uniform(0, z)``, whose support depends on ``z`` and so is not declared."""
+
+    def __init__(self):
+        spec = NumericArraySpec((), "float32")
+        super().__init__("x", {"z": spec}, OutputSpec(x=spec))
+
+    def _condition_on(self, given, /, **options):
+        return pp.Uniform("x", 0.0, given["z"])
+
+    def _conditional_sample(self, given, key, sample_shape=()):
+        return pp.Uniform("x", 0.0, given["z"])._sample(key, sample_shape)
+
+
 def _prior():
-    return ProductDistribution(
-        Normal(loc=0.0, scale=1.0, name="a"),
-        Normal(loc=0.0, scale=1.0, name="b"),
-    )
+    return Normal(loc=0.0, scale=1.0, name="a") * Normal(loc=0.0, scale=1.0, name="b")
 
 
 def _observe(a, b, seed):
@@ -83,9 +94,8 @@ class _VecLikelihood(Likelihood, GenerativeLikelihood):
 
 
 def _vec_prior():
-    return ProductDistribution(
-        pp.MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="m"),
-        Normal(loc=0.0, scale=1.0, name="s"),
+    return pp.MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="m") * Normal(
+        loc=0.0, scale=1.0, name="s"
     )
 
 
@@ -149,10 +159,10 @@ class _MultiFieldLikelihood(Likelihood, GenerativeLikelihood):
 
 
 def _multi_field_prior():
-    return ProductDistribution(
-        Normal(loc=0.0, scale=1.0, name="a"),
-        pp.MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="b"),
-        Normal(loc=0.0, scale=1.0, name="c"),
+    return (
+        Normal(loc=0.0, scale=1.0, name="a")
+        * pp.MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="b")
+        * Normal(loc=0.0, scale=1.0, name="c")
     )
 
 
@@ -207,15 +217,14 @@ class _PositiveLikelihood(Likelihood, GenerativeLikelihood):
 
 
 def _nested_prior():
-    """Nested ``ProductDistribution``: a sub-record ``outer`` (a
+    """Nested joint: a sub-record ``outer`` (a
     positive leaf ``r`` and a real leaf ``m``) plus a top-level real ``c`` --
     leaves ``outer/r``, ``outer/m``, ``c``. The ``Gamma`` leaf exercises a
     per-leaf bijector *under* nesting; ``flatten`` order is ``[r, m, c]``."""
-    return ProductDistribution(
-        name="joint",
-        outer={"r": pp.Gamma("r", 3.0, 1.0), "m": Normal(loc=0.0, scale=1.0, name="m")},
-        c=Normal(loc=0.0, scale=1.0, name="c"),
+    outer = (pp.Gamma("r", 3.0, 1.0) * Normal(loc=0.0, scale=1.0, name="m")).with_path_names(
+        {"r": "outer/r", "m": "outer/m"}
     )
+    return (outer * Normal(loc=0.0, scale=1.0, name="c")).with_name("joint")
 
 
 class _NestedLikelihood(Likelihood, GenerativeLikelihood):
@@ -468,7 +477,7 @@ class TestBayesFlowMethods:
         assert np.asarray(post.draws()["a"]).reshape(-1).shape[0] == 200
 
     def test_single_field_prior(self):
-        """A single-field prior (not a ProductDistribution) is supported: its
+        """A single-field prior (not a factored joint) is supported: its
         draws are not field-indexable, but the canonical flat layout drives the
         per-field split, so it round-trips end-to-end to named draws."""
 
@@ -615,9 +624,7 @@ class TestBayesFlowMethods:
         the analytic mean and its std matches the analytic std (averaged over
         several observations). Trains a bit longer than the smoke tests so the
         estimator is near-converged."""
-        prior = ProductDistribution(
-            Normal(loc=0.0, scale=1.0, name="a"), Normal(loc=0.0, scale=1.0, name="b")
-        )
+        prior = Normal(loc=0.0, scale=1.0, name="a") * Normal(loc=0.0, scale=1.0, name="b")
         model = learn_amortized_posterior(
             prior,
             _ConjugateGaussianLikelihood(),
@@ -692,14 +699,10 @@ class TestBayesFlowMethods:
         in flatten order (``outer/a``, ``outer/b``, ``m``); a mis-ordered column or
         a mis-keyed per-leaf bijector would land a leaf's mass on the wrong
         coordinate and fail here."""
-        prior = ProductDistribution(
-            name="joint",
-            outer={
-                "a": Normal(loc=0.0, scale=1.0, name="a"),
-                "b": Normal(loc=0.0, scale=1.0, name="b"),
-            },
-            m=Normal(loc=0.0, scale=1.0, name="m"),
-        )
+        outer = (
+            Normal(loc=0.0, scale=1.0, name="a") * Normal(loc=0.0, scale=1.0, name="b")
+        ).with_path_names({"a": "outer/a", "b": "outer/b"})
+        prior = (outer * Normal(loc=0.0, scale=1.0, name="m")).with_name("joint")
         model = learn_amortized_posterior(
             prior,
             _ConjugateGaussianLikelihood(),
@@ -736,14 +739,10 @@ class TestBayesFlowMethods:
         CholeskyOuterProduct chain), and the forward map at sample time returns
         SPD draws under the nested leaf name ``outer/cov`` -- the nested analogue
         of test_wishart_matrix_prior_round_trip."""
-        prior = ProductDistribution(
-            name="joint",
-            outer={
-                "cov": pp.Wishart(df=4.0, scale=jnp.eye(2), name="cov"),
-                "m": Normal(loc=0.0, scale=1.0, name="m"),
-            },
-            c=Normal(loc=0.0, scale=1.0, name="c"),
-        )
+        outer = (
+            pp.Wishart(df=4.0, scale=jnp.eye(2), name="cov") * Normal(loc=0.0, scale=1.0, name="m")
+        ).with_path_names({"cov": "outer/cov", "m": "outer/m"})
+        prior = (outer * Normal(loc=0.0, scale=1.0, name="c")).with_name("joint")
         model = learn_amortized_posterior(
             prior,
             _ConjugateGaussianLikelihood(),
@@ -785,7 +784,7 @@ class TestBayesFlowMethods:
         """A constrained (positive) prior field is trained in unconstrained space and
         its draws are mapped back through the forward bijector, so they land in the
         support -- here all positive. The accompanying real-valued field is unaffected."""
-        prior = ProductDistribution(pp.Gamma("r", 3.0, 1.0), Normal(loc=0.0, scale=1.0, name="m"))
+        prior = pp.Gamma("r", 3.0, 1.0) * Normal(loc=0.0, scale=1.0, name="m")
         model = learn_amortized_posterior(
             prior,
             _PositiveLikelihood(),
@@ -808,9 +807,8 @@ class TestBayesFlowMethods:
         ``"inference_variables"``) train and condition, with draws returned
         under the user's names.
         """
-        prior = ProductDistribution(
-            Normal(loc=0.0, scale=1.0, name="observation"),
-            Normal(loc=0.0, scale=1.0, name="inference_variables"),
+        prior = Normal(loc=0.0, scale=1.0, name="observation") * Normal(
+            loc=0.0, scale=1.0, name="inference_variables"
         )
         model = learn_amortized_posterior(
             prior,
@@ -833,7 +831,7 @@ class TestBayesFlowMethods:
         """A bounded-interval prior field (Beta, unit-interval support) rounds
         through the Sigmoid bijector: trained unconstrained, every posterior
         draw lands strictly inside (0, 1)."""
-        prior = ProductDistribution(pp.Beta("q", 2.0, 2.0), Normal(loc=0.0, scale=1.0, name="m"))
+        prior = pp.Beta("q", 2.0, 2.0) * Normal(loc=0.0, scale=1.0, name="m")
         model = learn_amortized_posterior(
             prior,
             _ConjugateGaussianLikelihood(),
@@ -855,8 +853,8 @@ class TestBayesFlowMethods:
         shape at train time -- a flattened input would crash the
         CholeskyOuterProduct chain -- and the forward map at sample time returns
         draws that are symmetric positive definite."""
-        prior = ProductDistribution(
-            pp.Wishart(df=4.0, scale=jnp.eye(2), name="cov"), Normal(loc=0.0, scale=1.0, name="m")
+        prior = pp.Wishart(df=4.0, scale=jnp.eye(2), name="cov") * Normal(
+            loc=0.0, scale=1.0, name="m"
         )
         model = learn_amortized_posterior(
             prior,
@@ -1018,15 +1016,13 @@ class TestBayesFlowValidation:
     def test_rejects_discrete_prior(self):
         """A discrete prior field has no smooth bijector to R^d and is rejected up
         front with a clear error (here a Poisson count parameter)."""
-        bad_prior = ProductDistribution(pp.Poisson("k", 3.0), Normal(loc=0.0, scale=1.0, name="m"))
+        bad_prior = pp.Poisson("k", 3.0) * Normal(loc=0.0, scale=1.0, name="m")
         with pytest.raises(ValueError, match="discrete"):
             learn_amortized_posterior(bad_prior, _ToyLikelihood(), num_simulations=8, epochs=1)
 
     def test_rejects_a_prior_parameter_whose_support_is_not_declared(self):
         """A support that depends on another parameter is not declared, so no
         bijector to R^d can be chosen for it."""
-        prior = pp.SequentialJointDistribution(
-            z=pp.Exponential("z", 1.0), x=lambda z: pp.Uniform("x", 0.0, z)
-        )
+        prior = _UniformBelowKernel() * pp.Exponential("z", 1.0)
         with pytest.raises(ValueError, match="'x': its support is not declared"):
             learn_amortized_posterior(prior, _ToyLikelihood(), num_simulations=8, epochs=1)

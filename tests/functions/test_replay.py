@@ -19,7 +19,6 @@ import pytest
 from probpipe import (
     Function,
     Normal,
-    ProductDistribution,
     Provenance,
     ReplayCompatibilityError,
     ReplayUnsupportedCallableError,
@@ -976,20 +975,14 @@ class TestReplayPreflight:
             changed(value=candidate)
 
     def test_direct_record_projection_drift_fails_before_key_derivation(self):
-        original_root = ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0, name="x"),
-            y=Normal(loc=2.0, scale=1.0, name="y"),
-        )
+        original_root = Normal(loc=0.0, scale=1.0, name="x") * Normal(loc=2.0, scale=1.0, name="y")
         with workflow_run(seed=4):
             original = sample(original_root["x"])
         assert original.provenance.controls["replay"]["plan"]["expected_effects"][0][
             "record_path"
         ] == ["x"]
 
-        candidate_root = ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0, name="x"),
-            y=Normal(loc=2.0, scale=1.0, name="y"),
-        )
+        candidate_root = Normal(loc=0.0, scale=1.0, name="x") * Normal(loc=2.0, scale=1.0, name="y")
         with (
             patch.object(candidate_root, "_sample", side_effect=AssertionError("sampled")),
             patch(

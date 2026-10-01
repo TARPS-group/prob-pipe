@@ -10,6 +10,7 @@ from ..core.tracked import auto_name
 from ..custom_types import Array
 from ..distributions._capabilities import SupportsLogProb
 from ..distributions._distribution import Distribution
+from ..distributions._factored import FactoredDistribution
 from ..families._backend import TFPDistribution
 from ._base import ProbabilisticModel
 from ._likelihood import Likelihood
@@ -52,20 +53,18 @@ class SimpleModel[P, D](ProbabilisticModel, SupportsLogProb):
         # checkers catch a wrong-type prior at the call site. The
         # runtime checks remain as a backstop for callers who bypass
         # the type system: the prior must be both ``SupportsLogProb``
-        # (so the joint log-density is computable) and a record law or a
+        # (so the joint log-density is computable) and a factored joint or a
         # parametric family, whose declared components name the
         # parameters.
-        from ..core._record_distribution import RecordDistribution
-
         if not isinstance(prior, SupportsLogProb):
             raise TypeError(
                 f"SimpleModel requires a prior that supports SupportsLogProb, "
                 f"got {type(prior).__name__}"
             )
-        if not isinstance(prior, (RecordDistribution, TFPDistribution)):
+        if not isinstance(prior, (FactoredDistribution, TFPDistribution)):
             raise TypeError(
                 f"SimpleModel requires a prior that is a "
-                f"RecordDistribution or a parametric family, whose declared "
+                f"factored joint or a parametric family, whose declared "
                 f"components name the parameters; got {type(prior).__name__}."
             )
         self._prior = prior

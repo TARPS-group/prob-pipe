@@ -19,8 +19,8 @@ from typing import Any
 import jax.numpy as jnp
 
 from ..core._broadcast_distributions import SAMPLE_LEVEL
-from ..core._numeric_record_distribution import NumericRecordDistribution
 from ..core._spec_base import NumericArraySpec, NumericSpec
+from ..core.constraints import _supports_compatible
 from ..core.provenance import Provenance
 from ..distributions._capabilities import SupportsMean
 from ..distributions._distribution import Distribution, NumericDistribution
@@ -69,6 +69,97 @@ _MOMENT_MATCH_TARGETS = frozenset(
     }
 )
 _TOTAL_COUNT_TARGETS = frozenset({"Binomial", "NegativeBinomial", "Multinomial"})
+
+
+def _pairs_by_path(
+    source: dict[str, Any], target: dict[str, Any]
+) -> list[tuple[tuple[str, Any], tuple[str, Any]]] | None:
+    """Pair each target leaf with the source leaf whose path holds it, or ``None``.
+
+    A source leaf holds the target leaf of its own path and the target leaves
+    under it, as a posterior's flat chunk holds a nested component's leaves. The
+    pairing exists when the source leaves, in order, hold consecutive runs of
+    the target leaves that together cover them all.
+    """
+    targets = list(target.items())
+    pairs: list[tuple[tuple[str, Any], tuple[str, Any]]] = []
+    i = 0
+    for source_item in source.items():
+        path = source_item[0]
+        start = i
+        while i < len(targets) and (targets[i][0] == path or targets[i][0].startswith(path + "/")):
+            pairs.append((source_item, targets[i]))
+            i += 1
+        if i == start:
+            return None
+    return pairs if i == len(targets) else None
+
+
+def _check_support_compatible(target: Distribution, source: Distribution) -> None:
+    """Raise ``ValueError`` if *source*'s per-field supports are incompatible with *target*'s.
+
+    Called post-construction by the converter, so both sides expose
+    instance-level ``supports``, the views of a numeric law's declaration. For a single-field target (the common case),
+    every source field's support is compared against the lone
+    target support. For a multi-field target, supports pair up
+    field-by-field in insertion order, or else a source field pairs
+    with each target leaf under its path. Any other field-count
+    mismatch raises ``ValueError`` rather than silently truncating
+    via ``zip``.
+
+    Sources that don't expose per-field supports (non-NRD endpoints
+    like ``EmpiricalDistribution`` with object-dtype data) are
+    treated as "unknown" and the check returns without complaint.
+    """
+    try:
+        target_per_field = target.supports
+        source_per_field = source.supports
+    except AttributeError:
+        return
+
+    multi_leaf_source = len(source_per_field) > 1
+
+    if len(target_per_field) == 1:
+        target_support = next(iter(target_per_field.values()))
+        for field_name, source_support in source_per_field.items():
+            if _supports_compatible(source_support, target_support):
+                continue
+            field_part = f" field {field_name!r}" if multi_leaf_source else ""
+            raise ValueError(
+                f"Cannot convert {type(source).__name__}{field_part} "
+                f"(support={source_support}) to {type(target).__name__} "
+                f"(support={target_support}). "
+                f"Pass check_support=False to override."
+            )
+        return
+
+    # Multi-field target. Equal field counts pair positionally. Otherwise
+    # a source leaf that holds a flattened group, as a posterior holds a
+    # nested component, pairs with each target leaf under its path, and any
+    # other mismatch raises, since ``zip`` would silently truncate.
+    if len(source_per_field) == len(target_per_field):
+        pairs = list(zip(source_per_field.items(), target_per_field.items()))
+    else:
+        pairs = _pairs_by_path(source_per_field, target_per_field)
+    if pairs is None:
+        raise ValueError(
+            f"Cannot convert {type(source).__name__} "
+            f"({len(source_per_field)} fields: "
+            f"{tuple(source_per_field)}) to {type(target).__name__} "
+            f"({len(target_per_field)} fields: "
+            f"{tuple(target_per_field)}): field-count mismatch. "
+            f"Pass check_support=False to override."
+        )
+    for (s_name, s_sup), (t_name, t_sup) in pairs:
+        if _supports_compatible(s_sup, t_sup):
+            continue
+        raise ValueError(
+            f"Cannot convert {type(source).__name__} field "
+            f"{s_name!r} (support={s_sup}) to "
+            f"{type(target).__name__} field {t_name!r} "
+            f"(support={t_sup}). "
+            f"Pass check_support=False to override."
+        )
 
 
 @dataclass(frozen=True)
@@ -869,7 +960,7 @@ class ProbPipeConverter(Converter):
         # which counts as "unknown".
         if check_support and isinstance(result, NumericDistribution):
             with contextlib.suppress(AttributeError):
-                NumericRecordDistribution._check_support_compatible(result, source)
+                _check_support_compatible(result, source)
 
         return result
 

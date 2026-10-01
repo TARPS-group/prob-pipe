@@ -8,7 +8,8 @@ a linear-Gaussian observation is exact.
 
 Provides:
   - ``FactoredMultivariateGaussian`` – the factored joint of jointly Gaussian
-    factors, which ``*`` and ``joint`` derive.
+    factors, which ``*`` and ``joint`` derive through the refinement it
+    registers at import.
   - ``GaussianRandomFunction`` – the random function whose finite-dimensional
     laws are Gaussian, closed under shifts, scalings, output-side linear maps,
     and sums of independent members.
@@ -30,12 +31,24 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
+from ..core._dispatch import Feasibility
 from ..core._specs import OutputSpec
+from ..core.provenance import Provenance
+from ..core.record import Record
 from ..custom_types import Array, ArrayLike, PRNGKey
-from ..distributions._capabilities import SupportsMean, SupportsSampling, SupportsVariance
+from ..distributions._capabilities import (
+    SupportsExactConditioning,
+    SupportsMean,
+    SupportsSampling,
+    SupportsVariance,
+)
 from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution
-from ..distributions._factored import FactoredNumericDistribution
+from ..distributions._factored import (
+    FactoredDistribution,
+    FactoredNumericDistribution,
+    _register_refinement,
+)
 from ..linalg import DenseLinOp, LinOp
 from ..values._function_base import FunctionSpec
 from ._continuous import Normal
@@ -50,14 +63,33 @@ __all__ = [
 ]
 
 
-class FactoredMultivariateGaussian(FactoredNumericDistribution):
+def _is_gaussian(factor: Any) -> bool:
+    """Whether *factor* is a Gaussian law: a normal or a multivariate normal family."""
+    return isinstance(factor, (Normal, MultivariateNormal))
+
+
+def _jointly_gaussian(factors: Sequence[Distribution | ConditionalDistribution]) -> bool:
+    """Whether the flattened *factors* are jointly Gaussian: every one is a Gaussian law.
+
+    The linear-Gaussian conditional is the algebra's conditional member, and it
+    joins this test once it can be constructed.
+    """
+    return bool(factors) and all(_is_gaussian(factor) for factor in factors)
+
+
+class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactConditioning):
     """The factored joint whose factors are jointly Gaussian.
 
-    ``*`` and ``joint`` derive it as the most specific class whenever every
-    factor is a Gaussian or a linear-Gaussian conditional distribution, so it is
-    never constructed by hand. Its log-density, moments, and sampling are in
-    closed form, its conditioning and marginals are exact, and its pushforward
-    to the flat coordinates is a ``MultivariateNormal``.
+    The class registers with the factored joints at import, so ``*``, a joint
+    rebuilt by a transform, and a conditional joint bound at its givens
+    construct it as the most specific class whenever every factor is a
+    ``Normal`` or a ``MultivariateNormal``; it is derived rather than built by
+    hand. Such factors are independent, so the joint's sampling, log-density,
+    moments, quantiles, and marginals are the edge-free joint's, each in closed
+    form, and its covariance is block diagonal over the flattened draw.
+    Conditioning on some of its components is exact: the conditional law of
+    the others is the joint of their factors, which the values conditioned on
+    leave unchanged.
 
     Parameters
     ----------
@@ -68,8 +100,11 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution):
 
     Raises
     ------
-    NotImplementedError
-        Always, until the Gaussian algebra is implemented.
+    TypeError
+        If a factor is not a Gaussian law.
+    ValueError
+        If the factors break a composition rule, as for
+        :class:`~probpipe.distributions.FactoredDistribution`.
     """
 
     def __init__(
@@ -79,7 +114,71 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution):
         *,
         _scope: Mapping[str, int] | None = None,
     ) -> None:
-        raise NotImplementedError("FactoredMultivariateGaussian.__init__")
+        super().__init__(name, factors, _scope=_scope)
+        if not _jointly_gaussian(self.factors):
+            kinds = sorted(
+                {type(factor).__name__ for factor in self.factors if not _is_gaussian(factor)}
+            )
+            raise TypeError(
+                f"the factors of {name!r} are jointly Gaussian only when each is a Normal or a "
+                f"MultivariateNormal, got {kinds}"
+            )
+
+    def _condition_on(self, given: Record | Mapping[str, Any], /, **options: Any) -> Distribution:
+        """The joint of the factors whose components *given* leaves unconditioned.
+
+        Parameters
+        ----------
+        given : Record or Mapping[str, Any]
+            Values of some of the joint's components, keyed by component.
+        **options : Any
+            Unused, since the conditional is in closed form.
+
+        Returns
+        -------
+        FactoredMultivariateGaussian
+            The joint of the remaining factors, under the same name.
+
+        Raises
+        ------
+        KeyError
+            If a key of *given* is not a component of the joint.
+        ValueError
+            If *given* covers every component, so no law remains.
+        """
+        top = given.children if hasattr(given, "children") else given
+        conditioned = set(dict(top.items()))
+        unknown = sorted(conditioned - set(self.event_spec.components))
+        if unknown:
+            raise KeyError(f"{unknown} are not components of {self.name!r}")
+        kept = [
+            factor
+            for factor in self.factors
+            if not set(factor.event_spec.components) <= conditioned
+        ]
+        if not kept:
+            raise ValueError(
+                f"the given covers every component of {self.name!r}, so no law remains"
+            )
+        law = FactoredDistribution(self.name, kept)
+        return law.with_provenance(
+            Provenance.create(
+                "condition_on", parents=[self], metadata={"conditioned": sorted(conditioned)}
+            )
+        )
+
+    def _condition_on_guard(self, paths: tuple[str, ...]) -> Feasibility:
+        """Every path is a component of the joint, and some component stays unconditioned."""
+        components = set(self.event_spec.components)
+        outside = sorted(set(paths) - components)
+        if outside:
+            return Feasibility(False, f"{outside} are not components of {self.name!r}")
+        if components <= set(paths):
+            return Feasibility(False, f"the paths cover every component of {self.name!r}")
+        return Feasibility(True)
+
+
+_register_refinement(FactoredMultivariateGaussian, _jointly_gaussian)
 
 
 # ---------------------------------------------------------------------------

@@ -1348,6 +1348,46 @@ def _each_factor(
 
 
 # ---------------------------------------------------------------------------
+# Refinements
+# ---------------------------------------------------------------------------
+
+#: Each registered refinement of the factored law: a more specific class and the
+#: predicate over the flattened factors that admits it, in registration order.
+_REFINEMENTS: list[tuple[type, Callable[[tuple[Factor, ...]], bool]]] = []
+
+
+def _register_refinement(cls: type, predicate: Callable[[tuple[Factor, ...]], bool]) -> None:
+    """Register *cls* as the class of an unconditional joint whose factors satisfy *predicate*.
+
+    A family registers its factored class at import. ``*``, a joint rebuilt by a
+    transform, and a conditional joint bound at its givens construct the most
+    specific registered class whose predicate holds for the flattened factors.
+
+    Raises
+    ------
+    TypeError
+        If *cls* is not a subclass of :class:`FactoredDistribution`.
+    """
+    if not (isinstance(cls, type) and issubclass(cls, FactoredDistribution)):
+        raise TypeError(f"a refinement is a subclass of FactoredDistribution, got {cls!r}")
+    _REFINEMENTS.append((cls, predicate))
+
+
+def _refined_class(factors: tuple[Factor, ...]) -> type:
+    """The most specific registered class whose predicate holds for *factors*.
+
+    A candidate replaces the class chosen so far when it subclasses it, so of
+    two unrelated candidates the earlier registration stands; with none, the
+    class is :class:`FactoredDistribution`.
+    """
+    chosen: type = FactoredDistribution
+    for cls, holds in _REFINEMENTS:
+        if issubclass(cls, chosen) and holds(factors):
+            chosen = cls
+    return chosen
+
+
+# ---------------------------------------------------------------------------
 # The factored kinds
 # ---------------------------------------------------------------------------
 
@@ -1366,7 +1406,9 @@ class FactoredDistribution(Distribution, SupportsFactors):
     factors'. The moment capabilities are decided at construction: an edge-free
     joint has a moment exactly when every factor does, and a dependent joint has
     none. The marginal is resolved per path, and its guard reports whether the
-    marginal at a path is exact.
+    marginal at a path is exact. Constructing the class itself gives the most
+    specific registered refinement whose predicate the factors satisfy, as a
+    family registers its factored class.
 
     A draw is a mapping from each component to its raw value, in canonical
     factor order, and so is each event-typed moment. Sampling is ancestral: the
@@ -1397,9 +1439,13 @@ class FactoredDistribution(Distribution, SupportsFactors):
     def __new__(
         cls, name: str, factors: Sequence[Factor], *, _scope: Mapping[str, int] | None = None
     ) -> FactoredDistribution:
-        protocols = _joint_protocols(_factor_graph(factors, _scope), conditional=False)
+        graph = _factor_graph(factors, _scope)
         base = vars(cls).get("_capability_base", cls)
-        return object.__new__(_capability_subclass(base, protocols))
+        if base is FactoredDistribution:
+            base = _refined_class(graph.factors)
+        return object.__new__(
+            _capability_subclass(base, _joint_protocols(graph, conditional=False))
+        )
 
     def __init__(
         self, name: str, factors: Sequence[Factor], *, _scope: Mapping[str, int] | None = None

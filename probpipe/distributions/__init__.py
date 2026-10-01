@@ -33,11 +33,6 @@ from ._factored import (
     SupportsFactors,
 )
 from ._views import FieldView
-from .joint import (
-    JointGaussian,
-    ProductDistribution,
-    SequentialJointDistribution,
-)
 
 __all__ = [
     "ConditionalDistribution",
@@ -56,12 +51,8 @@ __all__ = [
     "FactoredNumericDistribution",
     "FieldView",
     "FullyNumericConditionalDistribution",
-    "JointGaussian",
     "NumericConditionalDistribution",
     "NumericDistribution",
-    # Joint
-    "ProductDistribution",
-    "SequentialJointDistribution",
     "SupportsConditionalCovariance",
     "SupportsConditionalExpectation",
     "SupportsConditionalLogProb",

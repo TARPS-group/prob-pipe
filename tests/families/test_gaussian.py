@@ -1039,10 +1039,113 @@ def test_the_factored_gaussian_is_a_numeric_factored_joint():
     assert issubclass(FactoredMultivariateGaussian, FactoredNumericDistribution)
 
 
-@pytest.mark.pending(reason="* derives the factored Gaussian from Gaussian factors")
-def test_composition_derives_the_factored_gaussian():
+@pytest.mark.pending(
+    reason="the linear-Gaussian conditional, the algebra's conditional member",
+    raises=NotImplementedError,
+)
+def test_composition_derives_the_factored_gaussian_of_a_linear_gaussian_observation():
     prior = MultivariateNormal("beta", jnp.zeros(2), cov=jnp.eye(2))
     observation = LinearGaussianConditional(
         "y", DenseLinOp(jnp.array([[1.0, 0.0], [1.0, 1.0]])), jnp.zeros(2), DenseLinOp(jnp.eye(2))
     )
     assert isinstance(observation * prior, FactoredMultivariateGaussian)
+
+
+@pytest.mark.pending(
+    reason="the linear-Gaussian conditional, the algebra's conditional member",
+    raises=NotImplementedError,
+)
+def test_conditioning_a_linear_gaussian_joint_on_its_observation_is_exact():
+    prior = MultivariateNormal("beta", jnp.zeros(2), cov=jnp.eye(2))
+    observation = LinearGaussianConditional(
+        "y", DenseLinOp(jnp.eye(2)), jnp.zeros(2), DenseLinOp(jnp.eye(2))
+    )
+    posterior = (observation * prior)._condition_on({"y": jnp.array([1.0, -1.0])})
+    np.testing.assert_allclose(np.asarray(posterior._mean()["beta"]), [0.5, -0.5], rtol=1e-6)
+
+
+def _gaussian_joint() -> FactoredMultivariateGaussian:
+    """``a ~ N(1, 2²)`` and ``b ~ N((0, 3), diag(1, 4))``, independent."""
+    return Normal("a", 1.0, 2.0) * MultivariateNormal(
+        "b", jnp.array([0.0, 3.0]), cov=jnp.diag(jnp.array([1.0, 4.0]))
+    )
+
+
+class TestTheFactoredGaussian:
+    def test_composition_of_gaussian_factors_derives_it(self):
+        joint = _gaussian_joint()
+        assert isinstance(joint, FactoredMultivariateGaussian)
+        assert joint.name == "a·b"
+        assert list(joint.event_spec.components) == ["a", "b"]
+
+    def test_constructing_the_factored_law_refines_to_it(self):
+        from probpipe.distributions import FactoredDistribution
+
+        joint = FactoredDistribution("j", [Normal("a", 0.0, 1.0), Normal("b", 0.0, 1.0)])
+        assert isinstance(joint, FactoredMultivariateGaussian)
+
+    def test_a_factor_that_is_not_gaussian_keeps_the_factored_law(self):
+        from probpipe import Gamma
+        from probpipe.distributions import FactoredDistribution
+
+        joint = Normal("a", 0.0, 1.0) * Gamma("g", 2.0, 1.0)
+        assert isinstance(joint, FactoredDistribution)
+        assert not isinstance(joint, FactoredMultivariateGaussian)
+
+    def test_direct_construction_refuses_a_factor_that_is_not_gaussian(self):
+        from probpipe import Gamma
+
+        with pytest.raises(TypeError, match="jointly Gaussian"):
+            FactoredMultivariateGaussian("j", [Normal("a", 0.0, 1.0), Gamma("g", 2.0, 1.0)])
+
+    def test_its_moments_are_the_factors_in_closed_form(self):
+        joint = _gaussian_joint()
+        means = joint._mean()
+        np.testing.assert_allclose(np.asarray(means["a"]), 1.0)
+        np.testing.assert_allclose(np.asarray(means["b"]), [0.0, 3.0])
+        np.testing.assert_allclose(_dense(joint._cov()), np.diag([4.0, 1.0, 4.0]))
+
+    def test_its_log_density_is_the_sum_of_the_factors(self):
+        joint = _gaussian_joint()
+        a, b = jnp.asarray(0.5), jnp.array([1.0, 2.0])
+        expected = joint.factors[0]._log_prob(a) + joint.factors[1]._log_prob(b)
+        np.testing.assert_allclose(joint._log_prob({"a": a, "b": b}), expected, rtol=1e-6)
+
+    def test_conditioning_on_a_component_is_exact_and_keeps_the_others(self):
+        from probpipe import SupportsExactConditioning
+
+        joint = _gaussian_joint()
+        assert isinstance(joint, SupportsExactConditioning)
+        conditioned = joint._condition_on({"a": 3.0})
+        assert isinstance(conditioned, FactoredMultivariateGaussian)
+        assert list(conditioned.event_spec.components) == ["b"]
+        assert conditioned.factors == (joint.factors[1],)
+        assert conditioned.name == joint.name
+
+    def test_the_conditioning_guard_needs_components_and_a_remainder(self):
+        from probpipe.distributions._capabilities import _capability_guard
+
+        joint = _gaussian_joint()
+        assert _capability_guard(joint, "_condition_on", ("b",)).feasible is True
+        assert _capability_guard(joint, "_condition_on", ("a", "b")).feasible is False
+        assert _capability_guard(joint, "_condition_on", ("c",)).feasible is False
+
+    def test_conditioning_on_every_component_raises(self):
+        with pytest.raises(ValueError, match="covers every component"):
+            _gaussian_joint()._condition_on({"a": 0.0, "b": jnp.zeros(2)})
+
+    def test_conditioning_on_a_name_that_is_not_a_component_raises(self):
+        with pytest.raises(KeyError, match="not components"):
+            _gaussian_joint()._condition_on({"c": 0.0})
+
+    def test_the_marginal_at_a_component_is_its_factor(self):
+        joint = _gaussian_joint()
+        assert joint._marginal("b").name == "b"
+        np.testing.assert_allclose(
+            np.asarray(joint._marginal("b")._mean()), np.asarray(joint.factors[1]._mean())
+        )
+
+    def test_a_rebuilt_joint_stays_the_factored_gaussian(self):
+        symbolic = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
+        assert isinstance(symbolic.with_dim_names(n="m"), FactoredMultivariateGaussian)
+        assert isinstance(symbolic.with_path_names(a="c"), FactoredMultivariateGaussian)

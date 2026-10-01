@@ -12,16 +12,16 @@ import pyabc
 from pyabc.sampler import SingleCoreSampler
 
 from ..core._dispatch import Feasibility
-from ..core.ops import log_prob, sample
 from ..custom_types import PRNGKey
 from ..operations._condition import InferenceMethod, _UnnormalizedConditional
 from ._approximate_distribution import ApproximateDistribution, make_posterior
-from ._inference_utils import joint_and_given
+from ._inference_utils import flat_unflatten, flat_vector, joint_and_given
 
 if TYPE_CHECKING:
     from xarray import DataTree
 
-    from .. import NumericRecordDistribution
+    from ..distributions._distribution import Distribution
+
 
 # Key under which the simulated/observed vector lives in pyabc's sumstat dict.
 _DATA_KEY = "y"
@@ -41,38 +41,38 @@ class PyABCDistribution(pyabc.Distribution):
     """A pyabc prior that samples and scores a ProbPipe prior jointly over its
     *flattened* parameter vector.
 
-    Sampling (:meth:`rvs`) and density (:meth:`pdf`) go through
-    ``prior.as_flat_distribution()``, so correlated and multivariate priors are
-    supported. The object is a dict-like, picklable ``pyabc.Distribution`` keyed
+    Sampling (:meth:`rvs`) and density (:meth:`pdf`) read the prior's draws
+    and density through its flat vector, the layout III.7 fixes for a numeric
+    law, so correlated and multivariate priors are supported. The object is a dict-like, picklable ``pyabc.Distribution`` keyed
     by flat ``pN`` names, which give pyabc the parameter names and the flat
     columns its perturbation kernel operates on.
     """
 
-    def __init__(self, prior: NumericRecordDistribution, key: PRNGKey):
+    def __init__(self, prior: Distribution, key: PRNGKey):
         """Wrap *prior* as a joint pyabc prior over its flat parameter vector.
 
         ``key`` is the JAX key threaded through :meth:`rvs` (split per draw). The
         per-position ``pN`` keys give pyabc the parameter names
         (``get_parameter_names``) and the flat columns its perturbation kernel
-        operates on; sampling and scoring go through the joint flat view.
+        operates on; sampling and scoring go through the prior's flat vector.
         """
         self._prior = prior
-        self._flat = prior.as_flat_distribution()
+        self._unflatten = flat_unflatten(prior)
         self._key = key
-        self._d = self._flat.vector_size
+        self._d = prior.event_spec.spec.vector_size
         super().__init__(**{_flat_key(i): pyabc.RV("uniform", 0, 1) for i in range(self._d)})
 
     def rvs(self, *args: Any, **kwargs: Any) -> pyabc.Parameter:
         """One joint draw from the prior, as a flat-keyed pyabc ``Parameter``."""
         self._key, sub = jax.random.split(self._key)
-        vec = np.asarray(sample(self._flat, key=sub)).ravel()
+        vec = np.asarray(flat_vector(self._prior._sample(sub)))
         return pyabc.Parameter(**{_flat_key(i): float(vec[i]) for i in range(self._d)})
 
     def pdf(self, x: Mapping[str, float]) -> float:
         """Joint prior density at *x*, the flat parameter vector reassembled
-        from its ``pN`` keys and scored through the flat view's ``log_prob``."""
+        from its ``pN`` keys and scored as the prior's draw it lays out."""
         vec = jnp.asarray([x[_flat_key(i)] for i in range(self._d)])
-        return float(np.exp(np.asarray(log_prob(self._flat, vec))))
+        return float(np.exp(np.asarray(self._prior._log_prob(self._unflatten(vec)))))
 
 
 def _euclidean_distance(x: _SumStat, x0: _SumStat) -> float:
@@ -298,7 +298,7 @@ class PyABCSMCMethod(InferenceMethod):
             algorithm="pyabc_smcabc",
             weights=jnp.asarray(weights / weights.sum()),
             event_spec=prior.event_spec,
-            field_order=list(prior.event_shapes),
+            field_order=list(prior.event_spec.components),
             annotations=_smc_diagnostics(history),
             n_particles=n_particles,
             max_populations=max_populations,

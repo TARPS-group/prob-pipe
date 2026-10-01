@@ -206,19 +206,17 @@ def test_x64_transformed_distribution_preserves_dtype():
     assert out == "OK"
 
 
-def test_x64_joint_gaussian_preserves_dtype():
+def test_x64_gaussian_joint_preserves_dtype():
     out = _run_x64(
         """
-        from probpipe.distributions.joint import JointGaussian
+        from probpipe.families import MultivariateNormal
         import probpipe.core.ops as ops
         import jax
 
-        jg = JointGaussian(
-            mean=jnp.zeros(3),
-            cov=jnp.eye(3),
-            x=1, y=2,
-        )
-        sample = ops.sample(jg, key=jax.random.key(0))
+        joint = MultivariateNormal(
+            loc=jnp.zeros(1), cov=jnp.eye(1), name='x',
+        ) * MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name='y')
+        sample = ops.sample(joint, key=jax.random.key(0))
         assert sample['x'].dtype == jnp.float64, sample['x'].dtype
         assert sample['y'].dtype == jnp.float64
         print('OK')
@@ -331,42 +329,38 @@ def test_x64_gaussian_random_function():
     assert out == "OK"
 
 
-def test_x64_product_distribution_promotes():
+def test_x64_joint_promotes():
     out = _run_x64(
         """
-        from probpipe.distributions import ProductDistribution
         from probpipe.families._continuous import Normal
         import probpipe.core.ops as ops
         import jax
 
-        prod = ProductDistribution(
-            a=Normal(loc=0.0, scale=1.0, name='a'),
-            b=Normal(loc=0.0, scale=1.0, name='b'),
-        )
-        sample = ops.sample(prod, key=jax.random.key(0))
+        joint = Normal(loc=0.0, scale=1.0, name='a') * Normal(loc=0.0, scale=1.0, name='b')
+        sample = ops.sample(joint, key=jax.random.key(0))
         assert sample['a'].dtype == jnp.float64
         assert sample['b'].dtype == jnp.float64
-        assert ops.log_prob(prod, sample).dtype == jnp.float64
+        assert ops.log_prob(joint, sample).dtype == jnp.float64
         print('OK')
         """
     )
     assert out == "OK"
 
 
-def test_x64_joint_gaussian_conditioning():
+def test_x64_gaussian_joint_conditioning():
     """Conditioning on observed data must respect the parent's dtype under x64."""
     out = _run_x64(
         """
-        from probpipe.distributions.joint import JointGaussian
+        from probpipe.families import MultivariateNormal
         from probpipe.core.ops import condition_on, sample
         import jax
 
-        jg = JointGaussian(
-            mean=jnp.zeros(3), cov=jnp.eye(3), x=1, y=2,
-        )
+        joint = MultivariateNormal(
+            loc=jnp.zeros(1), cov=jnp.eye(1), name='x',
+        ) * MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name='y')
         # Conditioning on a float32 observed value must not corrupt the
         # parent's float64 dtype.
-        cond = condition_on(jg, x=jnp.array([1.0], dtype=jnp.float32))
+        cond = condition_on(joint, x=jnp.array([1.0], dtype=jnp.float32))
         sample_y = sample(cond, key=jax.random.key(0))
         assert sample_y['y'].dtype == jnp.float64, sample_y['y'].dtype
         print('OK')

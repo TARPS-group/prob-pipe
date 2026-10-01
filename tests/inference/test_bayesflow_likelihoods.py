@@ -26,7 +26,6 @@ from probpipe import (
     BayesFlowRatio,
     Normal,
     NumericRecord,
-    ProductDistribution,
     SimpleModel,
     condition_on,
     learn_amortized_likelihood,
@@ -63,24 +62,17 @@ _SIM = _ConjugateSim()
 
 
 def _prior():
-    return ProductDistribution(
-        Normal(loc=0.0, scale=1.0, name="a"),
-        Normal(loc=0.0, scale=1.0, name="b"),
-    )
+    return Normal(loc=0.0, scale=1.0, name="a") * Normal(loc=0.0, scale=1.0, name="b")
 
 
 def _nested_prior():
     """Nested conjugate prior: a sub-record ``outer={a, b}`` plus a
     top-level ``m`` -- leaves ``outer/a``, ``outer/b``, ``m``, all ``N(0, 1)`` so
     ``_analytic_posterior`` applies per leaf (``flatten`` order ``[a, b, m]``)."""
-    return ProductDistribution(
-        name="joint",
-        outer={
-            "a": Normal(loc=0.0, scale=1.0, name="a"),
-            "b": Normal(loc=0.0, scale=1.0, name="b"),
-        },
-        m=Normal(loc=0.0, scale=1.0, name="m"),
-    )
+    outer = (
+        Normal(loc=0.0, scale=1.0, name="a") * Normal(loc=0.0, scale=1.0, name="b")
+    ).with_path_names({"a": "outer/a", "b": "outer/b"})
+    return (outer * Normal(loc=0.0, scale=1.0, name="m")).with_name("joint")
 
 
 def _analytic_posterior(y_rows: np.ndarray) -> tuple[np.ndarray, float]:
@@ -392,9 +384,7 @@ class TestConditioning:
                 return -0.5 * jnp.sum(resid**2) - rows.size * jnp.log(_SIGMA * np.sqrt(2 * np.pi))
 
         def _gamma_prior():
-            return ProductDistribution(
-                pp.Gamma("lam", 5.0, 1.0), Normal(loc=0.0, scale=1.0, name="m")
-            )
+            return pp.Gamma("lam", 5.0, 1.0) * Normal(loc=0.0, scale=1.0, name="m")
 
         y = np.asarray(_SIM.generate_data(jnp.array([5.0, 0.5]), 4, key=jax.random.PRNGKey(5)))
 

@@ -23,7 +23,6 @@ from probpipe import (
     NumericRecordBatch,
     Opaque,
     OpaqueBatch,
-    ProductDistribution,
     Record,
     RecordBatch,
     RecordSpec,
@@ -38,6 +37,7 @@ from probpipe.core.ops import (
     unnormalized_prob,
     variance,
 )
+from probpipe.distributions import FactoredDistribution
 from probpipe.functions._result import _wrap_as_term
 
 KEY = jax.random.PRNGKey(0)
@@ -220,7 +220,7 @@ class TestAnOperationNamesItsResult:
 
     def test_a_record_law_result_takes_the_output_name(self):
         """An already tracked draw is copied under the Function result label."""
-        joint = ProductDistribution(a=Normal("a", 0.0, 1.0), name="joint")
+        joint = FactoredDistribution("joint", [Normal("a", 0.0, 1.0)])
 
         drawn = sample(joint, key=KEY)
 
@@ -264,7 +264,7 @@ class TestLevelsAreNamedForWhatMintsThem:
         assert drawn.level_names == ("sample",)
 
     def test_a_record_drawing_law_mints_the_same_level(self):
-        joint = ProductDistribution(a=Normal("a", 0.0, 1.0), name="joint")
+        joint = FactoredDistribution("joint", [Normal("a", 0.0, 1.0)])
 
         drawn = sample(joint, sample_shape=(5,), key=KEY)
 

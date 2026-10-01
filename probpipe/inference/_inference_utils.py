@@ -10,11 +10,10 @@ Two target builders:
 - :func:`build_target_log_prob` returns a Record-shaped target
   (the TFP-flavoured interface).
 - :func:`build_target_log_prob_flat` returns a flat-vector target —
-  the BlackJAX entry point. It wraps the Record-shaped target through
-  the prior's
-  :meth:`~probpipe.core._numeric_record_distribution.NumericRecordDistribution.as_flat_distribution`
-  view so kernels that operate on flat parameter vectors plug in
-  without per-backend flatten / unflatten plumbing.
+  the BlackJAX entry point. It rebuilds the prior's event from each flat
+  vector, the layout III.7 fixes for a numeric law, so kernels that operate
+  on flat parameter vectors plug in without per-backend flatten / unflatten
+  plumbing.
 
 Scope: private to ``probpipe.inference``. Symbols are package-private
 utilities shared across the backend modules; not re-exported through
@@ -23,7 +22,7 @@ utilities shared across the backend modules; not re-exported through
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -36,8 +35,8 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..core._numeric_record import _reconstruct_from_vector
-from ..core._numeric_record_distribution import FlattenedDistributionView
 from ..core._record_spec import NumericRecordSpec
+from ..core._spec_base import NumericArraySpec
 from ..core._specs import OutputSpec
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike
@@ -59,6 +58,8 @@ __all__ = [
     "extract_event_spec",
     "flat_density",
     "flat_record",
+    "flat_unflatten",
+    "flat_vector",
     "get_init_state",
     "get_prior",
     "is_jax_traceable",
@@ -240,30 +241,31 @@ def joint_and_given(target: Any) -> tuple[Any, Any]:
 
 
 def _has_flat_view(prior: Any) -> bool:
-    """Whether *prior* has a flat view: one of its own, or a parametric family's."""
-    return getattr(prior, "as_flat_distribution", None) is not None or isinstance(
-        prior, TFPDistribution
-    )
+    """Whether *prior* is a parametric family, whose one array a flat vector lays out."""
+    return isinstance(prior, TFPDistribution)
 
 
-def _flat_view(prior: Any) -> Any | None:
-    """The flat view of *prior*, or ``None`` when it has none.
+def _flat_view(prior: Any) -> Callable[[Array], Array] | None:
+    """The map from a flat vector to a draw of *prior*, or ``None`` when it is no family.
 
-    A parametric family draws one array, which the flattened view lays out as
-    one vector.
+    A parametric family draws one array, which the flat vector lays out in
+    row-major order, so the map reshapes the vector to the event's shape.
     """
-    as_flat = getattr(prior, "as_flat_distribution", None)
-    if as_flat is not None:
-        return as_flat()
-    if isinstance(prior, TFPDistribution):
-        return FlattenedDistributionView(prior)
-    return None
+    if not _has_flat_view(prior):
+        return None
+    spec = prior.event_spec.spec
+    shape = spec.shape if isinstance(spec, NumericArraySpec) else ()
+
+    def unflatten(theta_flat: Array) -> Array:
+        return jnp.reshape(theta_flat, shape)
+
+    return unflatten
 
 
 def flat_record(prior: Any) -> NumericRecordSpec | None:
-    """The numeric record a flat chain over *prior* unflattens to, when it has no flat view.
+    """The numeric record a flat chain over *prior* unflattens to, when it is no family.
 
-    ``None`` for a prior with a flat view, and for one that draws no exposed
+    ``None`` for a parametric family, and for a law that draws no exposed
     numeric record, such as a law over one array.
     """
     if _has_flat_view(prior):
@@ -273,6 +275,44 @@ def flat_record(prior: Any) -> NumericRecordSpec | None:
         return None
     spec = declaration.spec
     return spec if isinstance(spec, NumericRecordSpec) else None
+
+
+def flat_unflatten(law: Any) -> Callable[[Array], Any]:
+    """The map from a flat vector to a draw of the numeric *law*, the inverse of :func:`flat_vector`.
+
+    A parametric family's draw is the vector reshaped to its event, and an
+    exposed numeric record's is the record whose leaves the vector lays out in
+    canonical order.
+
+    Raises
+    ------
+    TypeError
+        If *law* draws neither one array of a family nor an exposed numeric record.
+    """
+    flat_prior = _flat_view(law)
+    if flat_prior is not None:
+        return flat_prior
+    record = flat_record(law)
+    if record is None:
+        raise TypeError(f"{type(law).__name__} {law.name!r} draws no value a flat vector lays out")
+
+    def unflatten(theta_flat: Array) -> Any:
+        return _reconstruct_from_vector(law.name, record, theta_flat)
+
+    return unflatten
+
+
+def flat_vector(value: Any) -> Array:
+    """*value*, a draw of a numeric law, as one flat vector in canonical order.
+
+    A record, or the nested mapping of a record draw's raw leaves, gives its
+    leaves' coordinates in canonical order, and an array is raveled.
+    """
+    if isinstance(value, Mapping):
+        value = Record("draw", value)
+    if isinstance(value, Record):
+        return value.to_numeric().to_vector()
+    return jnp.ravel(jnp.asarray(value))
 
 
 def flat_density(dist: Any) -> Callable[[Array], Array]:
@@ -351,9 +391,8 @@ def get_init_state(
     1. Explicit ``init`` — trusted, returned verbatim (cast to the
        prior's dtype).
     2. **Prior sample** — if the prior implements ``SupportsSampling``,
-       draw a single sample with the supplied ``random_seed``. For a
-       ``RecordDistribution`` the sample is flattened to a numeric
-       vector via ``NumericRecord``.
+       draw a single sample with the supplied ``random_seed``. A record
+       draw is flattened to a numeric vector via ``NumericRecord``.
     3. **Joint draw** — if the prior is an unnormalized conditional
        over a numeric record, return the draw of its joint restricted
        to the unconditioned fields, flattened. A factored joint that
@@ -452,7 +491,7 @@ def extract_event_spec(dist: Distribution) -> OutputSpec | None:
     """Return the declaration of *dist*'s prior, or ``None`` for a prior with no flat vector.
 
     A ``SimpleModel``'s prior is read through :func:`get_prior`; any other
-    target is its own prior. A prior with neither ``as_flat_distribution`` nor
+    target is its own prior. A prior that is neither a parametric family nor
     an exposed numeric record, such as a bare ``SupportsLogProb`` target over a
     flat array, gives ``None``. :func:`build_target_log_prob_flat` uses the
     same condition, so every method names and shapes the posterior of such a
@@ -537,15 +576,14 @@ def build_target_log_prob_flat(
 
     Three cases:
 
-    1. **Record-shaped prior** (a :class:`~probpipe.core._numeric_record_distribution.NumericRecordDistribution`
-       — every ``SimpleModel`` prior is one). ``target_flat_fn``
-       composes :func:`build_target_log_prob` with the prior's
-       :meth:`~probpipe.core._numeric_record_distribution.FlatNumericRecordDistribution.unflatten_sample`,
-       and the prior's declaration is returned for downstream lift-back.
-    2. **Record-shaped target without a flat view**, such as the
-       unnormalized conditional of a factored joint: ``target_flat_fn``
-       unflattens the vector to the numeric record the target declares,
-       whose declaration is returned.
+    1. **A parametric family prior**: ``target_flat_fn`` composes
+       :func:`build_target_log_prob` with the reshape of the flat vector to
+       the family's event, and the prior's declaration is returned for
+       downstream lift-back.
+    2. **A record-shaped prior or target**, such as a factored joint or the
+       unnormalized conditional of one: ``target_flat_fn`` unflattens the
+       vector to the numeric record the target declares, whose declaration is
+       returned.
     3. **Bare ``SupportsLogProb`` target** with no Record-shaped prior
        (e.g., a hand-rolled ``Distribution`` subclass implementing
        ``_unnormalized_log_prob`` over a flat ``Array``). The target
@@ -562,7 +600,7 @@ def build_target_log_prob_flat(
     if flat_prior is not None:
 
         def target_flat(theta_flat: Array) -> Array:
-            return target_record(flat_prior.unflatten_sample(theta_flat))
+            return target_record(flat_prior(theta_flat))
 
         return target_flat, flat_init, prior.event_spec
 
@@ -595,18 +633,21 @@ def build_likelihood_flat(
 
     Two cases:
 
-    - **Record-shaped prior** (any ``SimpleModel`` prior): the flat
-      vector unflattens through the prior's
-      :meth:`~probpipe.core._numeric_record_distribution.FlatNumericRecordDistribution.unflatten_sample`
-      so the likelihood sees structured ``Record``-shaped params.
+    - **A parametric family or record-shaped prior**: the flat vector
+      unflattens to the prior's event, so the likelihood sees the
+      structured parameters a draw of the prior is.
     - **Bare-array prior**: the likelihood already accepts a flat
       vector, so it is called directly.
     """
     flat_prior = _flat_view(prior)
-    if flat_prior is not None:
+    record = flat_record(prior)
+    if flat_prior is not None or record is not None:
 
         def loglikelihood_fn(theta_flat: Array) -> Array:
-            params = flat_prior.unflatten_sample(theta_flat)
+            if flat_prior is not None:
+                params = flat_prior(theta_flat)
+            else:
+                params = _reconstruct_from_vector(prior.name, record, theta_flat)
             return likelihood.log_likelihood(params=params, data=data)
 
         return loglikelihood_fn

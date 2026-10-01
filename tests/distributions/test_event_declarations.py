@@ -34,13 +34,11 @@ from probpipe import (
     DistributionArray,
     EmpiricalDistribution,
     Exponential,
-    FlatNumericRecordDistribution,
     Gamma,
     GLMLikelihood,
     HalfCauchy,
     HalfNormal,
     InverseGamma,
-    JointGaussian,
     KDEDistribution,
     Laplace,
     LinearBasisFunction,
@@ -51,17 +49,12 @@ from probpipe import (
     NegativeBinomial,
     Normal,
     NumericDistribution,
-    NumericRecordDistribution,
-    NumericRecordSpec,
     NumericSpec,
     OpaqueBatch,
     OutputSpec,
     Pareto,
     Poisson,
-    ProductDistribution,
     Record,
-    RecordDistribution,
-    SequentialJointDistribution,
     SimpleGenerativeModel,
     SimpleModel,
     StudentT,
@@ -78,11 +71,6 @@ from probpipe.core._broadcast_distributions import (
     _make_mixture_marginal,
     _MixtureMarginal,
 )
-from probpipe.core._numeric_record_distribution import (
-    FlattenedDistributionView,
-    NumericRecordDistributionView,
-)
-from probpipe.core._record_distribution import _RecordDistributionView
 from probpipe.core._specs import RecordSpec
 from probpipe.distributions import (
     FactoredDistribution,
@@ -91,7 +79,6 @@ from probpipe.distributions import (
 )
 from probpipe.distributions._capabilities import SupportsSampling
 from probpipe.distributions._factored import _SoleField
-from probpipe.distributions._product import TFPProductDistribution
 from probpipe.distributions._views import _RenamedDistribution
 from probpipe.families import (
     BijectorTransformedDistribution,
@@ -208,10 +195,6 @@ def _standard_normal_density(x):
     return -0.5 * jnp.sum(jnp.asarray(x) ** 2)
 
 
-def _conditional(z):
-    return Normal("x", z, 1.0)
-
-
 def _zero_mean(X):
     return jnp.zeros(X.shape[0])
 
@@ -254,17 +237,6 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
         "b", Normal("x", 0.0, 1.0), replicate_size=3
     ),
     BootstrapDistribution: lambda: BootstrapDistribution("measure", Normal("x", 0.0, 1.0), 3),
-    ProductDistribution: lambda: ProductDistribution(
-        a=Normal("a", 0.0, 1.0),
-        e=EmpiricalDistribution("e", OpaqueBatch("labels", ["x", "y"], "e")),
-    ),
-    TFPProductDistribution: lambda: ProductDistribution(
-        a=Normal("a", 0.0, 1.0), b=Gamma("b", 2.0, 1.0)
-    ),
-    SequentialJointDistribution: lambda: SequentialJointDistribution(
-        z=Normal("z", 0.0, 1.0), x=_conditional
-    ),
-    JointGaussian: lambda: JointGaussian(mean=jnp.zeros(3), cov=jnp.eye(3), x=1, y=2),
     DistributionArray: lambda: DistributionArray.from_batched_params(
         Normal, loc=jnp.zeros(3), scale=1.0, name="x"
     ),
@@ -275,15 +247,6 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
         [Normal("y", 0.0, 1.0), Normal("y", 1.0, 1.0)]
     ),
     _ListMarginal: lambda: _ListMarginal(["a", "b"]),
-    FlattenedDistributionView: lambda: ProductDistribution(
-        a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)
-    ).as_flat_distribution(),
-    NumericRecordDistributionView: lambda: NumericRecordDistributionView(
-        MultivariateNormal("theta", jnp.zeros(3), cov=jnp.eye(3)), NumericRecordSpec(a=(), b=(2,))
-    ),
-    _RecordDistributionView: lambda: _RecordDistributionView(
-        ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)), "a"
-    ),
     RandomMeasure: lambda: RandomMeasure("m"),
     MinibatchedDistribution: _measure,
     _FixedMinibatchDistribution: lambda: _measure()._draw_one(jax.random.PRNGKey(0)),
@@ -313,10 +276,8 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     UnnormalizedDistribution: lambda: UnnormalizedDistribution(
         "u", _standard_normal_density, OutputSpec(x=probpipe.NumericArraySpec((2,)))
     ),
-    FieldView: lambda: FieldView(
-        ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)), "a"
-    ),
-    FactoredDistribution: lambda: Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0),
+    FieldView: lambda: FieldView(Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0), "a"),
+    FactoredDistribution: lambda: Normal("a", 0.0, 1.0) * Gamma("b", 2.0, 1.0),
     _UnnormalizedConditional: lambda: _unnormalized_conditional(
         Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0), Record("given", {"a": 0.0})
     ),
@@ -335,14 +296,12 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     BijectorTransformedDistribution: lambda: BijectorTransformedDistribution(
         "y", Normal("x", 0.0, 1.0), tfb.Exp()
     ),
-    FactoredMultivariateGaussian: lambda: FactoredMultivariateGaussian(
-        "g", [MultivariateNormal("x", jnp.zeros(2), cov=jnp.eye(2))]
-    ),
+    FactoredMultivariateGaussian: lambda: Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0),
     GaussianProcess: lambda: GaussianProcess("f", _zero_mean, _squared_exponential),
     _SoleField: lambda: _SoleField(FactoredDistribution("record", [Normal("beta", 0.0, 1.0)])),
-    _RenamedDistribution: lambda: ProductDistribution(
-        a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)
-    ).with_path_names(a="x"),
+    _RenamedDistribution: lambda: (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)).with_path_names(
+        {"a": "g/a"}
+    ),
 }
 
 # The catalog's families whose implementation has not merged construct by raising.
@@ -351,7 +310,6 @@ _STUB_CONSTRUCTIONS = {
     for cls in (
         MixtureDistribution,
         LinearPushforwardDistribution,
-        FactoredMultivariateGaussian,
     )
 }
 
@@ -361,9 +319,6 @@ _BASES = frozenset(
         NumericDistribution,
         FactoredNumericDistribution,
         TFPDistribution,
-        RecordDistribution,
-        NumericRecordDistribution,
-        FlatNumericRecordDistribution,
         _LearnedLaw,
     }
 )
@@ -439,7 +394,6 @@ _RUNTIME_CLASS = pytest.mark.xfail(
 )
 _PICKLE_FAILURES = {
     MultivariateNormal: _TFP_BACKEND,
-    JointGaussian: _TFP_BACKEND,
     MinibatchedDistribution: _TFP_BACKEND,
     _FixedMinibatchDistribution: _TFP_BACKEND,
     _RandomMinibatchLogProb: _TFP_BACKEND,
@@ -450,11 +404,7 @@ _PICKLE_FAILURES = {
     _ScaledGRF: _TFP_BACKEND,
     _IndependentSumGRF: _TFP_BACKEND,
     _LogRatePoisson: _TFP_BACKEND,
-    SequentialJointDistribution: _RUNTIME_CLASS,
     _MixtureMarginal: _RUNTIME_CLASS,
-    FlattenedDistributionView: _RUNTIME_CLASS,
-    NumericRecordDistributionView: _RUNTIME_CLASS,
-    _RecordDistributionView: _RUNTIME_CLASS,
 }
 
 

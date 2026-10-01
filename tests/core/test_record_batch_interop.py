@@ -32,7 +32,6 @@ from probpipe import (
     OpaqueBatch,
     OpaqueSpec,
     OutputSpec,
-    ProductDistribution,
     Record,
     RecordSpec,
     function,
@@ -153,11 +152,9 @@ class TestFieldExtraction:
     """A field view reads its column out of a batch."""
 
     def test_a_field_view_extracts_its_column_from_a_batch(self):
-        joint = ProductDistribution(
-            a=Normal(loc=0.0, scale=1.0, name="a"),
-            b=Normal(loc=0.0, scale=1.0, name="b"),
-            name="joint",
-        )
+        joint = (
+            Normal(loc=0.0, scale=1.0, name="a") * Normal(loc=0.0, scale=1.0, name="b")
+        ).with_name("joint")
         batch = NumericRecordBatch(
             "batch",
             {"a": jnp.arange(4.0), "b": jnp.ones(4)},
@@ -167,19 +164,6 @@ class TestFieldExtraction:
         )
 
         assert np.allclose(joint["a"]._project(batch), batch["a"])
-
-
-class TestFlatVectorBoundary:
-    """The distribution-level flatten accepts a batch."""
-
-    def test_flatten_value_ravels_a_batch(self):
-        from probpipe.core._numeric_record_distribution import NumericRecordDistribution
-
-        batch = _draws(3)
-
-        flat = NumericRecordDistribution.flatten_value(batch)
-
-        assert np.allclose(flat, batch.to_vector())
 
 
 class TestMinibatching:

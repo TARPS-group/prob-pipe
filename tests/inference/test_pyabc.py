@@ -21,11 +21,11 @@ import probpipe.families._continuous as C
 from probpipe import (
     MultivariateNormal,
     Normal,
-    ProductDistribution,
     condition_on,
     log_prob,
     mean,
 )
+from probpipe.distributions import FactoredDistribution
 from probpipe.inference import inference_method_registry
 from probpipe.inference._inference_utils import observed_target
 from probpipe.inference._pyabc import PyABCDistribution, PyABCSMCMethod
@@ -56,7 +56,7 @@ def _model(prior) -> SimpleGenerativeModel:
 
 
 def _product(*names: str):
-    return ProductDistribution(*[Normal(loc=0.0, scale=3.0, name=n) for n in names])
+    return FactoredDistribution("prior", [Normal(loc=0.0, scale=3.0, name=n) for n in names])
 
 
 def _means(post) -> dict[str, np.ndarray]:
@@ -413,7 +413,9 @@ class TestPyABCDistributionBacking:
     def test_supports_non_converter_family(self):
         """Any sampleable marginal with a density works (no fixed family list):
         StudentT, which has no scipy-converter mapping, is feasible."""
-        model = _model(ProductDistribution(C.StudentT(df=5.0, loc=0.0, scale=3.0, name="t")))
+        model = _model(
+            FactoredDistribution("prior", [C.StudentT(df=5.0, loc=0.0, scale=3.0, name="t")])
+        )
         assert PyABCSMCMethod().check(observed_target(model, jnp.array([2.0]))).feasible
 
 

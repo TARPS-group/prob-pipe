@@ -15,10 +15,10 @@ from probpipe import (
     NumericArraySpec,
     NumericRecord,
     OpaqueSpec,
-    ProductDistribution,
     SimpleModel,
     condition_on,
 )
+from probpipe.distributions import FactoredDistribution
 from probpipe.distributions._capabilities import SupportsSampling
 from probpipe.distributions._distribution import Distribution
 from probpipe.inference._inference_utils import (
@@ -64,11 +64,8 @@ class _GaussianMeanLikelihood(Likelihood):
 
 @pytest.fixture
 def small_model() -> SimpleModel:
-    """SimpleModel with a 2-field ProductDistribution prior."""
-    prior = ProductDistribution(
-        a=Normal(loc=0.0, scale=1.0, name="a"),
-        b=Normal(loc=2.0, scale=0.5, name="b"),
-    )
+    """SimpleModel with a 2-field factored prior."""
+    prior = Normal(loc=0.0, scale=1.0, name="a") * Normal(loc=2.0, scale=0.5, name="b")
     return SimpleModel(prior, _IdentityLikelihood(), name="m")
 
 
@@ -102,7 +99,7 @@ class TestBuildTargetLogProbFlat:
 
     def test_the_declared_component_order_is_preserved(self, small_model):
         _, _, event_spec = build_target_log_prob_flat(small_model, observed=None)
-        # Insertion order from the ProductDistribution constructor.
+        # The order of the joint's factors.
         assert tuple(event_spec.components) == ("a", "b")
 
     def test_bare_distribution_falls_through_unwrapped(self):
@@ -299,7 +296,7 @@ class TestBuildLikelihoodFlat:
 
     @pytest.fixture
     def gaussian_model(self):
-        prior = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"))
+        prior = FactoredDistribution("prior", [Normal(loc=0.0, scale=1.0, name="mu")])
         return SimpleModel(prior, _GaussianMeanLikelihood(scale=2.0), name="g")
 
     def test_returns_scalar_log_likelihood(self, gaussian_model):

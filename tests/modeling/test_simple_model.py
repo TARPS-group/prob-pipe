@@ -16,9 +16,8 @@ import pytest
 from probpipe import (
     ApproximateDistribution,
     MultivariateNormal,
+    Normal,
     NumericArraySpec,
-    NumericRecordDistributionView,
-    NumericRecordSpec,
     Record,
     RecordSpec,
     ResolutionError,
@@ -73,21 +72,19 @@ class TestSimpleModel:
         with pytest.raises(TypeError, match="SupportsLogProb"):
             SimpleModel(emp, lik)
 
-    def test_requires_record_distribution_prior(self):
-        """SimpleModel rejects priors that satisfy SupportsLogProb but
-        aren't a ``RecordDistribution`` — the model uses
-        ``prior.event_template`` to merge in likelihood data fields,
-        so an unnamed prior is structurally incompatible.
+    def test_requires_a_factored_or_parametric_prior(self):
+        """SimpleModel rejects priors that satisfy SupportsLogProb but are
+        neither a factored joint nor a parametric family — the model reads
+        the prior's declared components to merge in likelihood data fields.
 
-        The intersection of ``SupportsLogProb`` and
-        ``RecordDistribution`` can't be expressed statically, so the
-        runtime guard is the only backstop.
+        The intersection of ``SupportsLogProb`` and those classes can't be
+        expressed statically, so the runtime guard is the only backstop.
         """
         from probpipe import Distribution
         from probpipe.distributions._capabilities import SupportsLogProb
 
         class _LogProbOnly(Distribution, SupportsLogProb):
-            """A SupportsLogProb distribution that is not a RecordDistribution."""
+            """A SupportsLogProb distribution that is neither a joint nor a family."""
 
             def __init__(self) -> None:
                 super().__init__("log_prob_only", NumericArraySpec(()))
@@ -95,7 +92,7 @@ class TestSimpleModel:
             def _log_prob(self, value):
                 return jnp.zeros(())
 
-        with pytest.raises(TypeError, match="RecordDistribution"):
+        with pytest.raises(TypeError, match="factored joint"):
             SimpleModel(_LogProbOnly(), GaussianLikelihood())
 
     def test_always_supports_log_prob(self, model):
@@ -296,9 +293,8 @@ class TestSimpleModelWithValues:
 
     @pytest.fixture
     def prior_with_template(self):
-        # A record view of the vector, whose declaration names its two entries.
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params")
-        return NumericRecordDistributionView(prior, NumericRecordSpec(a=(), b=()))
+        # The independent N(0, 10 I) prior over two named entries.
+        return Normal("a", 0.0, jnp.sqrt(10.0)) * Normal("b", 0.0, jnp.sqrt(10.0))
 
     @pytest.fixture
     def likelihood(self):
@@ -359,8 +355,7 @@ class TestSimpleModelWithValues:
 
     def test_field_overlap_raises(self):
         """SimpleModel rejects overlapping prior and data field names."""
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params")
-        prior = NumericRecordDistributionView(prior, NumericRecordSpec(X=(), y=()))
+        prior = Normal("X", 0.0, jnp.sqrt(10.0)) * Normal("y", 0.0, jnp.sqrt(10.0))
 
         class _OverlapLikelihood:
             def log_likelihood(self, params, data):

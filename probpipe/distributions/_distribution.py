@@ -256,10 +256,8 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     :class:`~probpipe.core.tracked.Annotated` (free-form
     :attr:`~Annotated.annotations`).  A distribution's constructor takes
     its name as the required first argument, as ``Normal("x", 0.0, 1.0)``
-    does. A few classes, such as ``ProductDistribution`` and
-    ``DistributionArray``, take it as a keyword instead and derive one when it
-    is omitted. Every transform preserves the name; only ``with_name``
-    replaces it.
+    does; a joint that ``*`` composes is named by its operands' labels. Every
+    transform preserves the name; only ``with_name`` replaces it.
 
     Sampling and expectation capabilities are provided by the
     :class:`~probpipe.SupportsSampling` protocol.

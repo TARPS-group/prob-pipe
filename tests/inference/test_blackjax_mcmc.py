@@ -8,12 +8,12 @@ import pytest
 
 from probpipe import (
     Normal,
-    ProductDistribution,
     SimpleModel,
     condition_on,
     mean,
     variance,
 )
+from probpipe.distributions import FactoredDistribution
 from probpipe.inference import inference_method_registry
 from probpipe.inference._inference_utils import observed_target
 from probpipe.modeling._likelihood import Likelihood
@@ -51,10 +51,7 @@ class _GaussianMeanLikelihood(Likelihood):
 
 @pytest.fixture
 def small_model() -> SimpleModel:
-    prior = ProductDistribution(
-        a=Normal(loc=1.0, scale=0.5, name="a"),
-        b=Normal(loc=-2.0, scale=0.7, name="b"),
-    )
+    prior = Normal(loc=1.0, scale=0.5, name="a") * Normal(loc=-2.0, scale=0.7, name="b")
     return SimpleModel(prior, _IdentityLikelihood(), name="m")
 
 
@@ -118,7 +115,7 @@ class TestBlackJAXNuts:
         is the precision-weighted average ``sum(y) / 4 = 1.5``.
         Tolerances below check mean to ~3 σ_MC and variance to 10%.
         """
-        prior = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"))
+        prior = FactoredDistribution("prior", [Normal(loc=0.0, scale=1.0, name="mu")])
         model = SimpleModel(prior, _GaussianMeanLikelihood(), name="g")
         y = jnp.asarray([1.0, 2.0, 3.0])
 
@@ -207,7 +204,7 @@ class TestBlackJAXHmc:
         conservative MC-noise tolerances — far tighter than the ``O(0.5)``
         error a mis-specified posterior would produce.
         """
-        prior = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"))
+        prior = FactoredDistribution("prior", [Normal(loc=0.0, scale=1.0, name="mu")])
         model = SimpleModel(prior, _GaussianMeanLikelihood(), name="g")
         y = jnp.asarray([1.0, 2.0, 3.0])
 
@@ -237,7 +234,7 @@ class TestBlackJAXHmc:
         deterministic check that the Halton trajectory-length jitter is
         active.
         """
-        prior = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"))
+        prior = FactoredDistribution("prior", [Normal(loc=0.0, scale=1.0, name="mu")])
         model = SimpleModel(prior, _GaussianMeanLikelihood(), name="g")
         posterior = condition_on(
             model,
@@ -268,7 +265,7 @@ class TestBlackJAXHmc:
         here at the default ``num_integration_steps`` rather than the
         hand-dodged value used above.
         """
-        prior = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"))
+        prior = FactoredDistribution("prior", [Normal(loc=0.0, scale=1.0, name="mu")])
         model = SimpleModel(prior, _GaussianMeanLikelihood(), name="g")
         posterior = condition_on(
             model,
@@ -312,7 +309,7 @@ class TestBlackJAXHmc:
         the user-supplied ``step_size`` is used directly) against the
         randomized-``L`` production kernel.
         """
-        prior = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"))
+        prior = FactoredDistribution("prior", [Normal(loc=0.0, scale=1.0, name="mu")])
         model = SimpleModel(prior, _GaussianMeanLikelihood(), name="g")
         posterior = condition_on(
             model,

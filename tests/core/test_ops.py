@@ -16,18 +16,17 @@ from probpipe import (
     NumericArray,
     NumericArrayBatch,
     NumericArraySpec,
-    NumericRecordDistribution,
+    NumericDistribution,
     Opaque,
     OpaqueBatch,
-    ProductDistribution,
     ResolutionError,
-    SequentialJointDistribution,
     SupportsApproximateConditioning,
     SupportsExactConditioning,
     SupportsSampling,
     expectation,
 )
 from probpipe.core import ops
+from probpipe.distributions import FactoredDistribution
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -52,14 +51,14 @@ def empirical():
 
 @pytest.fixture
 def joint():
-    return ProductDistribution(x=Normal("x", 0, 1), y=Normal("y", 1, 2))
+    return Normal("x", 0, 1) * Normal("y", 1, 2)
 
 
 @pytest.fixture
 def no_moments():
     """A distribution that samples but implements no moment protocol."""
 
-    class NoMomentsDist(NumericRecordDistribution, SupportsSampling):
+    class NoMomentsDist(NumericDistribution, SupportsSampling):
         def __init__(self, name):
             super().__init__(name, NumericArraySpec(()))
 
@@ -73,7 +72,7 @@ def no_moments():
 def no_protocols():
     """A distribution that implements no operation protocol."""
 
-    class NoProtocolsDist(NumericRecordDistribution):
+    class NoProtocolsDist(NumericDistribution):
         def __init__(self, name):
             super().__init__(name, NumericArraySpec(()))
 
@@ -394,21 +393,13 @@ class TestExpectation:
 class TestConditionOn:
     def test_condition_product(self, joint):
         conditioned = ops.condition_on(joint, x=jnp.array(2.0))
-        assert conditioned.fields == ("y",)
+        assert tuple(conditioned.event_spec.components) == ("y",)
 
     def test_condition_case_mismatched_kwarg_raises(self, joint):
         """A case-mismatched data kwarg (`X` when the field is `x`) raises
         loudly via condition_on rather than being silently ignored."""
         with pytest.raises(TypeError, match="did you mean x"):
             ops.condition_on(joint, X=jnp.array(2.0))
-
-    def test_condition_sequential(self):
-        sjd = SequentialJointDistribution(
-            x=Normal("x", 0, 1),
-            y=lambda x: Normal(loc=x, scale=1.0, name="y"),
-        )
-        conditioned = ops.condition_on(sjd, x=jnp.array(3.0))
-        assert conditioned.fields == ("y",)
 
     def test_condition_on_an_object_with_no_protocols_raises_resolution_error(self):
         """No registered method dispatches on it, so resolution fails rather than typing."""
@@ -418,7 +409,7 @@ class TestConditionOn:
     def test_exact_only_keeps_the_exact_capability_route(self, joint):
         """The control is consumed by the operation, so it never reaches ``_condition_on``."""
         conditioned = ops.condition_on(joint, x=jnp.array(2.0), exact_only=True)
-        assert conditioned.fields == ("y",)
+        assert tuple(conditioned.event_spec.components) == ("y",)
 
     def test_controls_do_not_reach_the_capability_route(self):
         """``_condition_on`` sees the data and inference kwargs, and no controls."""
@@ -653,7 +644,7 @@ class TestSplitDataKwargs:
     def test_empty_kwargs(self):
         from probpipe.core.ops import _split_data_kwargs
 
-        dist = ProductDistribution(x=Normal("x", 0.0, 1.0))
+        dist = FactoredDistribution("p", [Normal("x", 0.0, 1.0)])
         data, inference = _split_data_kwargs(dist, {})
         assert data == {}
         assert inference == {}
@@ -661,7 +652,7 @@ class TestSplitDataKwargs:
     def test_all_data_kwargs(self):
         from probpipe.core.ops import _split_data_kwargs
 
-        dist = ProductDistribution(x=Normal("x", 0.0, 1.0), y=Normal("y", 0.0, 1.0))
+        dist = Normal("x", 0.0, 1.0) * Normal("y", 0.0, 1.0)
         data, inference = _split_data_kwargs(
             dist,
             {"x": jnp.array(1.0), "y": jnp.array(2.0)},
@@ -672,7 +663,7 @@ class TestSplitDataKwargs:
     def test_all_inference_kwargs(self):
         from probpipe.core.ops import _split_data_kwargs
 
-        dist = ProductDistribution(x=Normal("x", 0.0, 1.0))
+        dist = FactoredDistribution("p", [Normal("x", 0.0, 1.0)])
         data, inference = _split_data_kwargs(
             dist,
             {"num_results": 100, "random_seed": 42},
@@ -683,7 +674,7 @@ class TestSplitDataKwargs:
     def test_mixed_kwargs(self):
         from probpipe.core.ops import _split_data_kwargs
 
-        dist = ProductDistribution(x=Normal("x", 0.0, 1.0), y=Normal("y", 0.0, 1.0))
+        dist = Normal("x", 0.0, 1.0) * Normal("y", 0.0, 1.0)
         data, inference = _split_data_kwargs(
             dist,
             {"x": jnp.array(1.0), "num_results": 100},
@@ -709,7 +700,7 @@ class TestSplitDataKwargs:
         inference params."""
         from probpipe.core.ops import _split_data_kwargs
 
-        dist = ProductDistribution(X=Normal("X", 0.0, 1.0), y=Normal("y", 0.0, 1.0))
+        dist = Normal("X", 0.0, 1.0) * Normal("y", 0.0, 1.0)
         with pytest.raises(TypeError, match="did you mean X"):
             _split_data_kwargs(dist, {"x": jnp.array(1.0)})
 
@@ -718,7 +709,7 @@ class TestSplitDataKwargs:
         genuine inference parameter — no false positive."""
         from probpipe.core.ops import _split_data_kwargs
 
-        dist = ProductDistribution(X=Normal("X", 0.0, 1.0), y=Normal("y", 0.0, 1.0))
+        dist = Normal("X", 0.0, 1.0) * Normal("y", 0.0, 1.0)
         data, inference = _split_data_kwargs(
             dist,
             {"X": jnp.array(1.0), "num_results": 100},
