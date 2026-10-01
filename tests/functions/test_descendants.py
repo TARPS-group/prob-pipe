@@ -500,3 +500,114 @@ class TestLifts:
             workflow(rows, root, exponentiated)
 
         assert [shape for _key, shape in calls] == [(12,), (12,), (12,)]
+
+
+# -- Weights of exact empirical roots ------------------------------------------
+
+
+class TestEmpiricalRootWeights:
+    def test_a_lift_of_a_transform_minus_its_base_has_mean_zero(self):
+        """``b = exp(a)`` reads ``a``'s draw, so ``b - exp(a)`` is zero on every repetition."""
+        base = Normal("a", 0.0, 1.0)
+        transformed = BijectorTransformedDistribution("b", base, tfb.Exp())
+        workflow = Function(
+            "difference",
+            lambda a, b: b - jnp.exp(a),
+            dispatch="sequential",
+            n_broadcast_samples=64,
+        )
+
+        with workflow_run(seed=53):
+            result = workflow(base, transformed)
+
+        np.testing.assert_allclose(_raw_mean(result), 0.0, atol=1e-6)
+
+    def test_exact_empirical_root_and_descendant_keep_weights_once(self):
+        root = EmpiricalDistribution(
+            "base",
+            jnp.asarray([1.0, 4.0]),
+            weights=jnp.asarray([0.2, 0.8]),
+        )
+        exponentiated = BijectorTransformedDistribution("exponentiated", root, tfb.Exp())
+        workflow = Function(
+            name="function",
+            fn=lambda base, exp_base: exp_base - jnp.exp(base),
+            dispatch="sequential",
+            n_broadcast_samples=16,
+            include_inputs=True,
+        )
+
+        with patch.object(type(root), "_sample", side_effect=AssertionError("sampled exact root")):
+            result = workflow(root, exponentiated)
+
+        assert result.num_atoms == 2
+        np.testing.assert_allclose(result.samples, 0.0, atol=1e-6)
+        np.testing.assert_allclose(result.weights, jnp.asarray([0.2, 0.8]))
+        np.testing.assert_allclose(
+            result.input_samples["exp_base"],
+            jnp.exp(result.input_samples["base"]),
+            rtol=1e-6,
+        )
+
+    def test_exact_record_projection_then_transform_keeps_the_root_weights(self):
+        root = EmpiricalDistribution(
+            "joint",
+            NumericRecordBatch(
+                "draws",
+                {"x": jnp.asarray([1.0, 4.0]), "y": jnp.asarray([10.0, 40.0])},
+                "draw",
+                element_spec=NumericRecordSpec(x=(), y=()),
+            ),
+            weights=jnp.asarray([0.3, 0.7]),
+        )
+        x = root["x"]
+        exponentiated_x = BijectorTransformedDistribution("exponentiated_x", x, tfb.Exp())
+        workflow = Function(
+            name="function",
+            fn=lambda joint, x_value, exp_x: jnp.stack(
+                (joint["x"] - x_value, exp_x - jnp.exp(x_value))
+            ),
+            dispatch="sequential",
+            n_broadcast_samples=16,
+            include_inputs=True,
+        )
+
+        result = workflow(root, x, exponentiated_x)
+
+        assert result.num_atoms == 2
+        np.testing.assert_allclose(result.samples, 0.0, atol=1e-6)
+        np.testing.assert_allclose(result.weights, jnp.asarray([0.3, 0.7]))
+
+    def test_mixed_empirical_descendant_multiplies_root_weight_once(self):
+        exact_root = EmpiricalDistribution(
+            "exact",
+            jnp.asarray([1.0, 4.0]),
+            weights=jnp.asarray([0.2, 0.8]),
+        )
+        exponentiated = BijectorTransformedDistribution("exponentiated", exact_root, tfb.Exp())
+        sampled_calls = []
+        sampled = _RecordingNormal(sampled_calls, name="sampled")
+        workflow = Function(
+            name="function",
+            fn=lambda exact, exp_exact, noise: jnp.stack((exp_exact - jnp.exp(exact), noise)),
+            dispatch="sequential",
+            n_broadcast_samples=12,
+            include_inputs=True,
+        )
+
+        with workflow_run(seed=45):
+            result = workflow(exact_root, exponentiated, sampled)
+
+        assert result.num_atoms == 12
+        assert [shape for _key, shape in sampled_calls] == [(12,)]
+        np.testing.assert_allclose(result.samples[result.name][:, 0], 0.0, atol=1e-6)
+        np.testing.assert_allclose(
+            result.input_samples["exp_exact"],
+            jnp.exp(result.input_samples["exact"]),
+            rtol=1e-6,
+        )
+        np.testing.assert_allclose(
+            result.weights,
+            jnp.repeat(jnp.asarray([0.2, 0.8]) / 6.0, 6),
+            rtol=1e-6,
+        )
