@@ -444,11 +444,34 @@ def _empirical_of(call: BoundCall, draws: Any) -> EmpiricalDistribution:
     return EmpiricalDistribution(name, atoms)
 
 
+_mixture_factory: Callable[[str, list[Distribution], Any], Distribution] | None = None
+"""The finite mixture ``(name, components, weights)``, which the mixture family installs."""
+
+
+def _install_mixture(factory: Callable[[str, list[Distribution], Any], Distribution]) -> None:
+    """Install the finite mixture that the Monte Carlo mean of a law over laws returns."""
+    global _mixture_factory
+    _mixture_factory = factory
+
+
 def _mc_mean(call: BoundCall, result: OutputSpec | None) -> Any:
-    """The mean of the empirical law of the draws, their coordinatewise average."""
-    if isinstance(call.operands["d"].event_spec.spec, NumericSpec):
+    """The mean of the empirical law of the draws.
+
+    For a numeric event it is their coordinatewise average, and for an event
+    whose draws are laws it is their finite mixture with equal weights, the
+    Monte Carlo estimate of the mean measure.
+    """
+    event = call.operands["d"].event_spec.spec
+    if isinstance(event, NumericSpec):
         return _empirical_of(call, _monte_carlo_draws(call, "mean"))._mean()
-    raise NotImplementedError("mean.monte_carlo: the average of function- and measure-valued draws")
+    if isinstance(event, DistributionSpec):
+        if _mixture_factory is None:
+            raise RuntimeError("the mixture family is not installed; import probpipe")
+        draws = _monte_carlo_draws(call, "mean")
+        stored = draws.raw() if isinstance(draws, Batch) else draws
+        laws = list(np.asarray(stored, dtype=object).reshape(-1))
+        return _mixture_factory(call.operation.name, laws, jnp.full(len(laws), 1.0 / len(laws)))
+    raise NotImplementedError("mean.monte_carlo: the average of function-valued draws")
 
 
 def _mc_variance(call: BoundCall, result: OutputSpec | None) -> Any:

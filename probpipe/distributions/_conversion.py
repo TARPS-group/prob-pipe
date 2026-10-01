@@ -217,38 +217,49 @@ def _packaging(declaration: OutputSpec) -> str:
     return f"the whole term {component!r}"
 
 
-def _term_difference(expected: TermSpec | None, actual: TermSpec | None, path: str) -> str | None:
+#: The names of the two declarations a conversion compares, in its messages.
+_CONVERSION_SIDES = ("the source", "the result")
+
+
+def _term_difference(
+    expected: TermSpec | None,
+    actual: TermSpec | None,
+    path: str,
+    sides: tuple[str, str] = _CONVERSION_SIDES,
+) -> str | None:
     """How the term *actual* departs from *expected* in kind or shape at *path*, or ``None``.
 
     Dtypes and supports are representation and are not compared: a family's own
     dtype and support replace the source's. A type hole in *expected*, which a
     backend declaration may leave for the converter to fill, matches any term.
+    *sides* names the two declarations in the message.
     """
+    first, second = sides
     if expected is None:
         return None
     if isinstance(expected, NumericArraySpec) or isinstance(actual, NumericArraySpec):
         if not (isinstance(expected, NumericArraySpec) and isinstance(actual, NumericArraySpec)):
-            return f"{path} is {_kind(expected)} in the source and {_kind(actual)} in the result"
+            return f"{path} is {_kind(expected)} in {first} and {_kind(actual)} in {second}"
         try:
             _unify_array_shape(expected.shape, actual.shape, {}, path)
         except ValueError as error:
-            return f"{path} has shape {expected.shape} in the source: {error}"
+            return f"{path} has shape {expected.shape} in {first}: {error}"
         return None
     if isinstance(expected, RecordSpec) or isinstance(actual, RecordSpec):
         if not (isinstance(expected, RecordSpec) and isinstance(actual, RecordSpec)):
-            return f"{path} is {_kind(expected)} in the source and {_kind(actual)} in the result"
+            return f"{path} is {_kind(expected)} in {first} and {_kind(actual)} in {second}"
         if tuple(expected.children) != tuple(actual.children):
             return (
-                f"{path} has the fields {list(expected.children)} in the source and "
-                f"{list(actual.children)} in the result"
+                f"{path} has the fields {list(expected.children)} in {first} and "
+                f"{list(actual.children)} in {second}"
             )
         for name, child in expected.children.items():
-            difference = _term_difference(child, actual.children[name], f"{path}/{name}")
+            difference = _term_difference(child, actual.children[name], f"{path}/{name}", sides)
             if difference is not None:
                 return difference
         return None
     if expected != actual:
-        return f"{path} is {_kind(expected)} in the source and {_kind(actual)} in the result"
+        return f"{path} is {_kind(expected)} in {first} and {_kind(actual)} in {second}"
     return None
 
 
@@ -260,21 +271,25 @@ def _kind(spec: TermSpec | None) -> str:
     return f"a {type(spec).__name__}" if spec is not None else "undeclared"
 
 
-def _event_difference(expected: OutputSpec, actual: OutputSpec) -> str | None:
-    """How the declaration *actual* departs from the source's *expected*, or ``None``.
+def _event_difference(
+    expected: OutputSpec, actual: OutputSpec, sides: tuple[str, str] = _CONVERSION_SIDES
+) -> str | None:
+    """How the declaration *actual* departs from *expected*, or ``None``.
 
     A conversion preserves the packaging, the component names, and each
-    component's kind and shape.
+    component's kind and shape. *sides* names the two declarations in the
+    message, the source's and the result's by default.
     """
+    first, second = sides
     if expected.exposes_record != actual.exposes_record:
-        return f"the source declares {_packaging(expected)} and the result {_packaging(actual)}"
+        return f"{first} declares {_packaging(expected)} and {second} {_packaging(actual)}"
     if tuple(expected.components) != tuple(actual.components):
         return (
-            f"the source declares the components {list(expected.components)} and the result "
+            f"{first} declares the components {list(expected.components)} and {second} "
             f"{list(actual.components)}"
         )
     for name, spec in expected.components.items():
-        difference = _term_difference(spec, actual.components[name], name)
+        difference = _term_difference(spec, actual.components[name], name, sides)
         if difference is not None:
             return difference
     return None

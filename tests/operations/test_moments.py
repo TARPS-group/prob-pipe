@@ -202,7 +202,6 @@ class TestMean:
         with pytest.raises(ResolutionError, match="does not sample"):
             mean(Bare("b"))
 
-    @pytest.mark.pending(reason="the Monte Carlo mean of measure-valued draws is their mixture")
     def test_the_fallback_mean_of_a_measure_is_the_mixture_of_its_draws(self):
         assert mean(Measure("m")).event_spec == Measure("m").event_spec.spec.event_spec
 
