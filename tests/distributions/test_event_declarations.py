@@ -115,6 +115,7 @@ from probpipe.families import (
     GaussianProcess,
     LinearPushforwardDistribution,
     MixtureDistribution,
+    _resampling,
 )
 from probpipe.families._conditional import _IndependentObservations
 from probpipe.families._programs import (
@@ -365,6 +366,15 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     _empirical.EmpiricalDistribution: lambda: _empirical.EmpiricalDistribution(
         "e", jnp.zeros((5, 2))
     ),
+    _resampling.KDEDistribution: lambda: _resampling.KDEDistribution(
+        "kde", jnp.arange(6.0).reshape(3, 2)
+    ),
+    _resampling.BootstrapReplicateDistribution: lambda: _resampling.BootstrapReplicateDistribution(
+        "replicate", Normal("x", 0.0, 1.0), 3
+    ),
+    _resampling.BootstrapDistribution: lambda: _resampling.BootstrapDistribution(
+        "measure", Normal("x", 0.0, 1.0), 3
+    ),
     _SoleField: lambda: _SoleField(FactoredDistribution("record", [Normal("beta", 0.0, 1.0)])),
     _RenamedDistribution: lambda: ProductDistribution(
         a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)
@@ -443,10 +453,14 @@ def _library_classes() -> set[type]:
 
 
 # ``sample`` stacks a tuple draw as rows instead of wrapping it as one opaque
-# value.
+# value, and wraps a batch-valued draw as an array.
 _DRAW_FAILURES = {
     SimpleGenerativeModel: pytest.mark.xfail(
         raises=ValueError, strict=True, reason="sample stacks a tuple draw as rows"
+    ),
+    _resampling.BootstrapReplicateDistribution: pytest.mark.pending(
+        reason="the exported sample wraps a batch-valued draw as an array, not as its declared batch",
+        raises=AssertionError,
     ),
 }
 
