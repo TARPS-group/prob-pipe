@@ -470,10 +470,13 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         fields under it. The law is unchanged: a draw of the result is a draw of
         this law carrying the new names. Renaming a whole term's component alone
         changes only the declaration, so the result is a copy of the same class.
-        A rename that reaches a field of a record draw returns a law that holds
-        this one and renames values at its boundary: draws, moments, and
-        marginals on the way out, and scored values, givens, and paths on the way
-        in.
+        A factored law renames through its factors where they can carry the
+        rename, and the result is the factored joint of the renamed factors over
+        the same graph. Any other rename that reaches a field of a record draw,
+        including one that gathers components of several factors under one
+        node, returns a law that holds this one and renames values at its
+        boundary: draws, moments, and marginals on the way out, and scored
+        values, givens, and paths on the way in.
 
         Parameters
         ----------
@@ -493,9 +496,6 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
             If a key is not a path of the declaration.
         ValueError
             As :meth:`OutputSpec.with_path_names` raises it.
-        NotImplementedError
-            If this law is factored and a rename reaches a field of its record
-            draw, since a joint renames through its factors.
         """
         renamed = self.event_spec.with_path_names(mapping, **kwargs)
         renames = {**dict(mapping or {}), **kwargs}
