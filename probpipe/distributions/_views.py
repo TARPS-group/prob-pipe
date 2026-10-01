@@ -1467,6 +1467,23 @@ class _RenamedDistribution(Distribution):
         renames = {**dict(mapping or {}), **kwargs}
         return _renamed(self, _EventRenames.of(self.event_spec, renamed, renames), renames)
 
+    def _original_given(self, given: Any) -> Record | None:
+        """*given*, keyed by event paths of this law, as the record of the parent's nodes it binds.
+
+        ``None`` when a path holds no single node of the parent, as at a node a
+        rename gathered, or is not an event path of this law.
+        """
+        items = list(given.items())
+        if any(self._event.original(path) is None for path, _ in items):
+            return None
+        return Record(
+            "given",
+            {
+                self._event.original(path): self._event.undraw_at(path, value)
+                for path, value in items
+            },
+        )
+
     def _originals(self, paths: Sequence[str]) -> list[str]:
         """The parent's node for each of *paths*, event paths of this law.
 
