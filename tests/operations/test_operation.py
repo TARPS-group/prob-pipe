@@ -537,7 +537,7 @@ class TestSelection:
     def test_membership_suffices_where_the_class_defines_no_guard(self):
         assert center.check(Gaussian("g")).route == "closed_form"
 
-    def test_a_declining_guard_passes_to_the_fallback(self):
+    def test_a_rejecting_guard_passes_to_the_fallback(self):
         report = center.check(GuardedMean("g", False))
         assert (report.route, report.exact) == ("monte_carlo", False)
         declined = {info.method_name: info for info in report.routes}["closed_form"]

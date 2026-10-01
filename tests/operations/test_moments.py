@@ -197,7 +197,7 @@ class TestMean:
         law = Gaussian("g", -1.0)
         assert mean.with_options(method="monte_carlo").check(law).route == "monte_carlo"
 
-    def test_a_declining_guard_passes_to_the_fallback(self):
+    def test_a_rejecting_guard_passes_to_the_fallback(self):
         assert mean.check(GuardedMean("g", False)).route == "monte_carlo"
 
     def test_exact_only_refuses_a_law_without_a_closed_form(self):

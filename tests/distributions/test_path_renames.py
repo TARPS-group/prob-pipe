@@ -143,18 +143,18 @@ class _FiniteLaw(_Law, SupportsExpectation):
 
 
 class _GuardedMeanLaw(_Law, SupportsMean):
-    """A law over the nested event whose mean guard declines."""
+    """A law over the nested event whose mean guard rejects."""
 
-    DECLINED = Feasibility(False, "the mean does not exist")
+    REJECTED = Feasibility(False, "the mean does not exist")
 
     def __init__(self, name: str = "parent") -> None:
         super().__init__(name, _NESTED)
 
     def _mean(self) -> Any:
-        raise AssertionError("the guard declines the mean")
+        raise AssertionError("the guard rejects the mean")
 
     def _mean_guard(self) -> Feasibility:
-        return self.DECLINED
+        return self.REJECTED
 
 
 class _WholeRecordLaw(_Law, SupportsSampling):
@@ -440,9 +440,9 @@ class TestRenamedLawPaths:
 
     def test_a_projected_capability_carries_the_parent_guard(self):
         renamed = _GuardedMeanLaw().with_path_names(y="obs")
-        assert _capability_guard(renamed, "_mean") == _GuardedMeanLaw.DECLINED
+        assert _capability_guard(renamed, "_mean") == _GuardedMeanLaw.REJECTED
 
-    def test_the_marginal_guard_declines_paths_whose_final_segments_collide(self):
+    def test_the_marginal_guard_rejects_paths_whose_final_segments_collide(self):
         renamed = _grouped_law().with_path_names({"b/y": "b/x"})
         report = _capability_guard(renamed, "_marginal", ("a/x", "b/x"))
         assert report.feasible is False
@@ -525,7 +525,7 @@ class TestRenamedLawMoves:
         assert jnp.allclose(marginal._mean(), jnp.mean(_XS))
         assert renamed._marginal("b").event_spec == OutputSpec(b=RecordSpec(y=_SCALAR))
 
-    def test_the_marginal_at_a_group_that_gathers_several_nodes_is_declined(self):
+    def test_the_marginal_at_a_group_that_gathers_several_nodes_is_rejected(self):
         renamed = _grouped_law().with_path_names({"a/x": "g/x", "b/y": "g/y"})
         assert _capability_guard(renamed, "_marginal", "g").feasible is False
         with pytest.raises(ValueError, match="no single node"):

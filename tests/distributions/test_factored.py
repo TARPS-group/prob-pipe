@@ -253,7 +253,7 @@ class MomentLaw(
 
 
 class MarginalLaw(Law, SupportsMarginals):
-    """A law whose marginal is exact at the paths it lists, and declined at any other.
+    """A law whose marginal is exact at the paths it lists, and rejected at any other.
 
     It records each path it marginalizes, and the marginal is a law over the
     node under a component named by the path's final segment.
@@ -304,8 +304,8 @@ class PointLaw(Law, SupportsSampling):
         return self.draw
 
 
-class DecliningPointLaw(PointLaw):
-    """A point mass whose sampling guard declines."""
+class RejectingPointLaw(PointLaw):
+    """A point mass whose sampling guard rejects."""
 
     def _sample_guard(self) -> bool:
         """Draws only from a finite point."""
@@ -800,12 +800,12 @@ class TestMarginalGuard:
         joint = _likelihood() * _prior() * _law("other", "c")
         assert joint._marginal_guard(("y", "beta")).feasible is True
 
-    def test_a_component_whose_ancestor_is_another_factor_is_declined(self):
+    def test_a_component_whose_ancestor_is_another_factor_is_rejected(self):
         report = (_likelihood() * _prior())._marginal_guard("y")
         assert report.feasible is False
         assert report.description
 
-    def test_a_group_that_is_not_ancestrally_closed_is_declined(self):
+    def test_a_group_that_is_not_ancestrally_closed_is_rejected(self):
         joint = _likelihood() * _prior() * _law("other", "c")
         assert joint._marginal_guard(("y", "c")).feasible is False
 
@@ -842,13 +842,13 @@ class TestMarginalGuard:
             pytest.param(("a", "gamma"), id="in-a-selection"),
         ],
     )
-    def test_a_path_that_is_not_an_event_path_is_declined_with_a_reason(self, path):
+    def test_a_path_that_is_not_an_event_path_is_rejected_with_a_reason(self, path):
         joint = _pair(law=TotalMarginalLaw) * _law("other", "c")
         report = joint._marginal_guard(path)
         assert report.feasible is False
         assert "not an event path" in report.description
 
-    def test_a_path_inside_a_factor_without_marginals_is_declined(self):
+    def test_a_path_inside_a_factor_without_marginals_is_rejected(self):
         report = (_pair() * _law("other", "c"))._marginal_guard("a")
         assert report.feasible is False
         assert report.description
@@ -886,11 +886,11 @@ class TestFactorGuards:
             ),
         )
 
-    def test_a_declining_factor_declines_the_joint_whatever_the_others_report(self):
-        point = DecliningPointLaw("point", OutputSpec(beta=SCALAR), jnp.zeros(()))
+    def test_a_rejecting_factor_rejects_the_joint_whatever_the_others_report(self):
+        point = RejectingPointLaw("point", OutputSpec(beta=SCALAR), jnp.zeros(()))
         joint = _likelihood(UndecidedSamplingKernel) * point
         assert _capability_guard(joint, "_sample") == Feasibility(
-            False, "DecliningPointLaw._sample_guard() declined: Draws only from a finite point."
+            False, "RejectingPointLaw._sample_guard() rejected: Draws only from a finite point."
         )
 
     def test_a_conditional_joint_takes_its_factors_guards(self):
@@ -1008,7 +1008,7 @@ class TestMarginalValues:
         assert isinstance(value, dict) and list(value) == ["u", "v"]
         assert (float(value["u"]), float(value["v"])) == (1.0, 2.0)
 
-    def test_a_marginal_the_guard_declines_raises(self):
+    def test_a_marginal_the_guard_rejects_raises(self):
         with pytest.raises(ResolutionError, match=_mentions("'y'", "'prior'")):
             (_likelihood() * _prior())._marginal("y")
 

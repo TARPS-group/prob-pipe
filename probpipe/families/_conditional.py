@@ -167,7 +167,7 @@ def _require_invertible(link: Any, owner: str) -> None:
         If *link* is not a ``Function``.
     ResolutionError
         If *link* is not invertible: it does not claim ``SupportsInverse``, or
-        its guard declines.
+        its guard rejects.
     """
     if not isinstance(link, Function):
         raise TypeError(f"{owner} takes a link Function, got {type(link).__name__}")

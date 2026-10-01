@@ -115,8 +115,8 @@ class GuardedScored(_Scores, Distribution):
     """A representation whose density carries a guard that holds by its label."""
 
     def _log_prob_guard(self) -> bool:
-        """The label is not "declines"."""
-        return self.name != "declines"
+        """The label is not "rejects"."""
+        return self.name != "rejects"
 
 
 class Sampled(Distribution):
@@ -593,7 +593,7 @@ class TestTargetAdmission:
         assert info.pending == ("GuardedScored._log_prob_guard of the converted law",)
         assert type(registry.convert(Source("holds"), SupportsLogProb)) is GuardedScored
         with pytest.raises(ResolutionError, match="_log_prob"):
-            registry.convert(Source("declines"), SupportsLogProb)
+            registry.convert(Source("rejects"), SupportsLogProb)
 
     def test_a_sampling_target_admits_the_converter_declaring_it(self):
         registry = _registry(
@@ -886,7 +886,7 @@ class TestConvert:
         assert SupportsLogProb in info.capabilities
         assert ConverterRegistry().convert(source, SupportsLogProb) is source
 
-    def test_a_source_whose_guard_declines_is_converted(self):
+    def test_a_source_whose_guard_rejects_is_converted(self):
         source = GuardedSource(guard=False)
         registry = _registry(
             ToyConverter(

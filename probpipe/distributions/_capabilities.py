@@ -525,7 +525,7 @@ def _capability_guard(term: Any, method: str, *arguments: Any, **keywords: Any) 
     condition = _guard_condition(guard)
     suffix = f": {condition}" if condition else ""
     if report is False:
-        return Feasibility(False, f"{call} declined{suffix}")
+        return Feasibility(False, f"{call} rejected{suffix}")
     if report is None:
         return Feasibility(None, pending=(f"{call} needs values not yet known{suffix}",))
     raise TypeError(f"{call} returned {report!r}; a guard returns a bool, None, or a Feasibility")

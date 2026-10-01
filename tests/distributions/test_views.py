@@ -196,21 +196,21 @@ class _MarginalLaw(_UnguardedMarginalLaw):
 
 
 class _GuardedMeanLaw(_Law, SupportsMean):
-    """A law whose mean is declined by its guard."""
+    """A law whose mean is rejected by its guard."""
 
-    DECLINED = Feasibility(False, "the mean does not exist")
+    REJECTED = Feasibility(False, "the mean does not exist")
 
     def _mean(self) -> Any:
-        raise AssertionError("the guard declines the mean")
+        raise AssertionError("the guard rejects the mean")
 
     def _mean_guard(self) -> Feasibility:
-        return self.DECLINED
+        return self.REJECTED
 
 
 class _ConditioningLaw(_Law, SupportsExactConditioning):
     """A law over the default event that conditions exactly on ``model/theta/tau`` alone.
 
-    Each given it receives is recorded in ``given_calls``, and its guard declines
+    Each given it receives is recorded in ``given_calls``, and its guard rejects
     any other set of given paths.
     """
 
@@ -338,7 +338,7 @@ class _WholeLaw(_Law, SupportsSampling, SupportsCovariance):
 
 
 class _LevelGuardedQuantileLaw(_QuantileLaw):
-    """A quantile law whose guard declines levels outside the unit interval."""
+    """A quantile law whose guard rejects levels outside the unit interval."""
 
     def _quantile_guard(self, q: Any) -> bool:
         """Every level lies in the unit interval."""
@@ -797,9 +797,9 @@ class TestCapabilityDerivation:
 class TestGuards:
     @pytest.mark.parametrize("method", ["_log_prob", "_unnormalized_log_prob"])
     def test_the_density_guard_is_the_parent_marginal_guard_at_the_path(self, method):
-        declined = Feasibility(False, "no closed form at model/theta/mu")
-        parent = _MarginalLaw("parent", _EVENT, {"model/theta/mu": declined})
-        assert _capability_guard(FieldView(parent, "model/theta/mu"), method) == declined
+        rejected = Feasibility(False, "no closed form at model/theta/mu")
+        parent = _MarginalLaw("parent", _EVENT, {"model/theta/mu": rejected})
+        assert _capability_guard(FieldView(parent, "model/theta/mu"), method) == rejected
         assert _capability_guard(FieldView(parent, "y"), method) == Feasibility(True)
 
     @pytest.mark.parametrize("method", ["_log_prob", "_unnormalized_log_prob"])
@@ -839,57 +839,57 @@ class TestGuards:
             _capability_guard(FieldView(parent, "model/theta/mu"), "_log_prob")
 
     def test_the_marginal_guard_at_a_view_path_is_the_parent_guard_at_the_joined_path(self):
-        declined = Feasibility(False, "no closed form at model/theta/mu")
-        parent = _MarginalLaw("parent", _EVENT, {"model/theta/mu": declined})
+        rejected = Feasibility(False, "no closed form at model/theta/mu")
+        parent = _MarginalLaw("parent", _EVENT, {"model/theta/mu": rejected})
         view = FieldView(parent, "model/theta")
-        assert _capability_guard(view, "_marginal", "theta/mu") == declined
+        assert _capability_guard(view, "_marginal", "theta/mu") == rejected
         assert _capability_guard(view, "_marginal", "theta") == Feasibility(True)
 
     def test_the_marginal_guard_of_several_view_paths_is_the_parent_guard_at_theirs(self):
-        declined = Feasibility(False, "the pair has no closed form")
-        parent = _MarginalLaw("parent", _EVENT, {("model/theta/mu", "model/theta/tau"): declined})
+        rejected = Feasibility(False, "the pair has no closed form")
+        parent = _MarginalLaw("parent", _EVENT, {("model/theta/mu", "model/theta/tau"): rejected})
         view = FieldView(parent, "model/theta")
-        assert _capability_guard(view, "_marginal", ("theta/mu", "theta/tau")) == declined
+        assert _capability_guard(view, "_marginal", ("theta/mu", "theta/tau")) == rejected
 
     def test_a_projected_capability_carries_the_parent_guard(self):
         view = FieldView(_GuardedMeanLaw("parent", _EVENT), "y")
-        assert _capability_guard(view, "_mean") == _GuardedMeanLaw.DECLINED
+        assert _capability_guard(view, "_mean") == _GuardedMeanLaw.REJECTED
 
     def test_the_conditioning_guard_is_the_parent_guard_at_the_given_paths(self):
         parent = _ConditioningLaw("parent", _EVENT)
         view = FieldView(parent, "model/theta")
-        declined = parent._condition_on_guard(("model/theta/mu",))
-        assert _capability_guard(view, "_condition_on", ("theta/mu",)) == declined
+        rejected = parent._condition_on_guard(("model/theta/mu",))
+        assert _capability_guard(view, "_condition_on", ("theta/mu",)) == rejected
         assert _capability_guard(view, "_condition_on", ("theta/tau",)) == Feasibility(True)
 
     @pytest.mark.parametrize("path", ["theta/phi", "model/theta", ("theta/mu", "phi")])
-    def test_the_marginal_guard_declines_a_path_that_is_not_a_view_path(self, path):
+    def test_the_marginal_guard_rejects_a_path_that_is_not_a_view_path(self, path):
         view = FieldView(_MarginalLaw("parent", _EVENT), "model/theta")
         report = _capability_guard(view, "_marginal", path)
         assert report.feasible is False
         assert "not an event path of the view" in report.description
 
-    def test_the_marginal_guard_declines_paths_that_share_a_final_segment(self):
+    def test_the_marginal_guard_rejects_paths_that_share_a_final_segment(self):
         twins = RecordSpec(g=RecordSpec(a=RecordSpec(x=()), b=RecordSpec(x=())))
         view = FieldView(_MarginalLaw("parent", OutputSpec(twins)), "g")
         assert _capability_guard(view, "_marginal", ("g/a/x", "g/b/x")).feasible is False
         assert _capability_guard(view, "_marginal", ()).feasible is False
 
     def test_the_density_guard_of_a_selection_is_the_parent_marginal_guard_at_its_paths(self):
-        declined = Feasibility(False, "the pair has no closed form")
-        parent = _MarginalLaw("parent", _EVENT, {("model/theta/mu", "y"): declined})
+        rejected = Feasibility(False, "the pair has no closed form")
+        parent = _MarginalLaw("parent", _EVENT, {("model/theta/mu", "y"): rejected})
         assert (
-            _capability_guard(FieldView(parent, ("model/theta/mu", "y")), "_log_prob") == declined
+            _capability_guard(FieldView(parent, ("model/theta/mu", "y")), "_log_prob") == rejected
         )
 
     @pytest.mark.parametrize("paths", [("theta",), ("theta/mu", "theta/tau")])
-    def test_the_conditioning_guard_declines_a_given_that_covers_the_view(self, paths):
+    def test_the_conditioning_guard_rejects_a_given_that_covers_the_view(self, paths):
         view = FieldView(_ConditioningLaw("parent", _EVENT), "model/theta")
         report = _capability_guard(view, "_condition_on", paths)
         assert report.feasible is False
         assert "cover every field" in report.description
 
-    def test_the_conditioning_guard_declines_a_path_that_is_not_a_view_path(self):
+    def test_the_conditioning_guard_rejects_a_path_that_is_not_a_view_path(self):
         view = FieldView(_ConditioningLaw("parent", _EVENT), "model/theta")
         assert _capability_guard(view, "_condition_on", ("y",)).feasible is False
 

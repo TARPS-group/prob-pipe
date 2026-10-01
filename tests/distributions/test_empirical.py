@@ -625,7 +625,7 @@ class TestMarginals:
             law._marginal(("p/x", "q/x"))
         assert _capability_guard(law, "_marginal", ("p/x", "q/x")).feasible is False
 
-    def test_a_path_that_is_not_an_event_path_raises_and_is_declined(self):
+    def test_a_path_that_is_not_an_event_path_raises_and_is_rejected(self):
         law = _record_law()
         with pytest.raises(KeyError, match="not an event path"):
             law._marginal("c")

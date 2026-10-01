@@ -589,7 +589,7 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
             If no converter is feasible, the first converter that is not
             infeasible is unresolved, *method* names a converter that is not
             registered, is infeasible, or is approximate while *exact_only* is
-            set, or the converted law declines a guard of the target.
+            set, or a guard of the target rejects the converted law.
         TypeError
             As :meth:`check` raises it, or if the converted law is not a
             ``Distribution`` that satisfies the target.
@@ -647,7 +647,7 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
         ValueError
             If *result* does not carry the source's event declaration.
         ResolutionError
-            If *result* declines, or leaves unresolved, the guard *awaiting* names.
+            If the guard *awaiting* names rejects *result*, or leaves it unresolved.
         """
         source, target = args[0], args[1]
         name = registration.name

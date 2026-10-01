@@ -49,7 +49,7 @@ class TestMarginal:
         with pytest.raises(ApplicabilityError, match="not an event path"):
             marginal(Marginalizing("law"), "c")
 
-    def test_a_declining_guard_and_no_sampling_raise_resolution_error(self):
+    def test_a_rejecting_guard_and_no_sampling_raise_resolution_error(self):
         with pytest.raises(ResolutionError, match="The marginal is exact at the field a"):
             marginal(Marginalizing("law"), "b")
 
