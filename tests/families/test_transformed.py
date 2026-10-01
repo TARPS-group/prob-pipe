@@ -24,9 +24,11 @@ from probpipe import (
     mean,
     positive,
     real,
+    replay_run,
     sample,
     simplex,
     unit_interval,
+    workflow_run,
 )
 from probpipe.distributions._capabilities import (
     SupportsCovariance,
@@ -38,6 +40,7 @@ from probpipe.distributions._capabilities import (
 from probpipe.distributions._empirical import EmpiricalDistribution
 from probpipe.families import BijectorTransformedDistribution, LinearPushforwardDistribution
 from probpipe.linalg import DenseLinOp, LinOp
+from tests.functions._replay_fixtures import replayable_difference
 
 
 class _Exp(Function):
@@ -231,6 +234,55 @@ class TestSampling:
         xs = jnp.array([-1.0, 0.0, 1.0, 2.5])
         np.testing.assert_allclose(
             np.asarray(log_prob(transformed, xs)), np.asarray(log_prob(base, xs)), atol=1e-5
+        )
+
+
+def _exp_law(bijector_kind: str) -> BijectorTransformedDistribution:
+    bijector = tfb.Exp() if bijector_kind == "backend" else _Exp()
+    return BijectorTransformedDistribution("y", Normal("x", 0.0, 1.0), bijector)
+
+
+class TestReplay:
+    """A transformed law builds, samples, and lifts inside ``replay_run`` as when recorded."""
+
+    @pytest.mark.parametrize("bijector_kind", ["backend", "function"])
+    def test_a_draw_replays_identically(self, bijector_kind):
+        law = _exp_law(bijector_kind)
+        with workflow_run(seed=4):
+            original = sample(law, sample_shape=(3,))
+        with replay_run(original.provenance):
+            replayed = sample(law, sample_shape=(3,))
+        np.testing.assert_array_equal(np.asarray(replayed), np.asarray(original))
+
+    @pytest.mark.parametrize("bijector_kind", ["backend", "function"])
+    def test_a_law_built_inside_the_replay_draws_the_recorded_values(self, bijector_kind):
+        with workflow_run(seed=4):
+            original = sample(_exp_law(bijector_kind))
+        with replay_run(original.provenance):
+            replayed = sample(_exp_law(bijector_kind))
+        np.testing.assert_array_equal(np.asarray(replayed), np.asarray(original))
+
+    def test_a_lift_replays_identically(self):
+        difference = Function(
+            name="replayable_difference",
+            fn=replayable_difference,
+            n_broadcast_samples=8,
+            dispatch="sequential",
+        )
+
+        def operands():
+            root = Normal("root", 0.0, 1.0)
+            return {
+                "left": root,
+                "right": BijectorTransformedDistribution("right", root, tfb.Exp()),
+            }
+
+        with workflow_run(seed=53):
+            original = difference(**operands())
+        with replay_run(original.provenance):
+            replayed = difference(**operands())
+        np.testing.assert_array_equal(
+            np.asarray(replayed.atoms.to_vector()), np.asarray(original.atoms.to_vector())
         )
 
 
