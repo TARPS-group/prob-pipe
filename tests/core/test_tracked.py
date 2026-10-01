@@ -334,10 +334,10 @@ class TestWithNameOnCustomNewHosts:
         assert jnp.allclose(jnp.asarray(t._sample(key, (5,))), jnp.asarray(t2._sample(key, (5,))))
 
     def test_flattened_distribution_view(self):
-        from probpipe import MultivariateNormal
+        from probpipe import FlattenedDistributionView, MultivariateNormal
 
         mvn = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="theta")
-        flat = mvn.as_flat_distribution()
+        flat = FlattenedDistributionView(mvn)
         renamed = flat.with_name("theta_flat")
         assert renamed.name == "theta_flat"
         assert renamed.event_shape == flat.event_shape

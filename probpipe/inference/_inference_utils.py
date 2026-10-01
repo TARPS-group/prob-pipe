@@ -36,6 +36,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..core._numeric_record import _reconstruct_from_vector
+from ..core._numeric_record_distribution import FlattenedDistributionView
 from ..core._record_spec import NumericRecordSpec
 from ..core._specs import OutputSpec
 from ..core.record import Record
@@ -43,6 +44,7 @@ from ..custom_types import Array, ArrayLike
 from ..distributions._capabilities import SupportsSampling, _is_normalized
 from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution
+from ..families._backend import TFPDistribution
 from ..operations._condition import _UnnormalizedConditional
 
 logger = logging.getLogger(__name__)
@@ -237,13 +239,34 @@ def joint_and_given(target: Any) -> tuple[Any, Any]:
     return target, None
 
 
+def _has_flat_view(prior: Any) -> bool:
+    """Whether *prior* has a flat view: one of its own, or a parametric family's."""
+    return getattr(prior, "as_flat_distribution", None) is not None or isinstance(
+        prior, TFPDistribution
+    )
+
+
+def _flat_view(prior: Any) -> Any | None:
+    """The flat view of *prior*, or ``None`` when it has none.
+
+    A parametric family draws one array, which the flattened view lays out as
+    one vector.
+    """
+    as_flat = getattr(prior, "as_flat_distribution", None)
+    if as_flat is not None:
+        return as_flat()
+    if isinstance(prior, TFPDistribution):
+        return FlattenedDistributionView(prior)
+    return None
+
+
 def flat_record(prior: Any) -> NumericRecordSpec | None:
     """The numeric record a flat chain over *prior* unflattens to, when it has no flat view.
 
-    ``None`` for a prior with a flat view of its own, and for one that draws
-    no exposed numeric record, such as a law over one array.
+    ``None`` for a prior with a flat view, and for one that draws no exposed
+    numeric record, such as a law over one array.
     """
-    if getattr(prior, "as_flat_distribution", None) is not None:
+    if _has_flat_view(prior):
         return None
     declaration = getattr(prior, "event_spec", None)
     if not isinstance(declaration, OutputSpec) or not declaration.exposes_record:
@@ -436,7 +459,7 @@ def extract_event_spec(dist: Distribution) -> OutputSpec | None:
     target alike.
     """
     prior = get_prior(dist)
-    if getattr(prior, "as_flat_distribution", None) is None and flat_record(prior) is None:
+    if not _has_flat_view(prior) and flat_record(prior) is None:
         return None
     return prior.event_spec
 
@@ -535,9 +558,8 @@ def build_target_log_prob_flat(
     target_record = build_target_log_prob(dist, observed)
     flat_init = get_init_state(dist, init, random_seed=random_seed)
 
-    flat_view = getattr(prior, "as_flat_distribution", None)
-    if flat_view is not None:
-        flat_prior = flat_view()
+    flat_prior = _flat_view(prior)
+    if flat_prior is not None:
 
         def target_flat(theta_flat: Array) -> Array:
             return target_record(flat_prior.unflatten_sample(theta_flat))
@@ -580,9 +602,8 @@ def build_likelihood_flat(
     - **Bare-array prior**: the likelihood already accepts a flat
       vector, so it is called directly.
     """
-    flat_view = getattr(prior, "as_flat_distribution", None)
-    if flat_view is not None:
-        flat_prior = flat_view()
+    flat_prior = _flat_view(prior)
+    if flat_prior is not None:
 
         def loglikelihood_fn(theta_flat: Array) -> Array:
             params = flat_prior.unflatten_sample(theta_flat)

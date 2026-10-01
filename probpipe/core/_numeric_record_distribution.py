@@ -664,7 +664,7 @@ def _flattened_distribution_view_class_for_base(base: Distribution) -> type:
 
         def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
             pytree_samples = self._base._sample(key, sample_shape)
-            return self._base.flatten_value(
+            return NumericRecordDistribution.flatten_value(
                 pytree_samples,
                 event_shape=_raw_event_shape(self._base),
             )
@@ -676,7 +676,9 @@ def _flattened_distribution_view_class_for_base(base: Distribution) -> type:
 
         def _log_prob(self, x: ArrayLike) -> Array:
             x = jnp.asarray(x)
-            value = self._base.unflatten_value(x, template=self._base.event_spec.spec)
+            value = NumericRecordDistribution.unflatten_value(
+                x, template=self._base.event_spec.spec
+            )
             return self._base._log_prob(value)
 
         extra_methods["_log_prob"] = _log_prob
@@ -728,7 +730,9 @@ class FlattenedDistributionView(FlatNumericRecordDistribution):
         # name need not be a component name.
         self._init_tracked(base.name)
         self._init_declaration(
-            OutputSpec(to_vector=NumericArraySpec((base.event_size,), base.dtype, real))
+            OutputSpec(
+                to_vector=NumericArraySpec((base.event_spec.spec.vector_size,), base.dtype, real)
+            )
         )
 
     @property
@@ -738,7 +742,7 @@ class FlattenedDistributionView(FlatNumericRecordDistribution):
 
     def unflatten_sample(self, flat_sample: ArrayLike):
         """Convenience: unflatten a flat sample back to the pytree structure."""
-        return self._base.unflatten_value(
+        return NumericRecordDistribution.unflatten_value(
             jnp.asarray(flat_sample),
             template=self._base.event_spec.spec,
         )
@@ -761,7 +765,7 @@ def _nrdvfactory_sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()):
     from ._numeric_record import _reconstruct_from_vector
 
     base_sample = self._base._sample(key, sample_shape)
-    flat = self._base.flatten_value(
+    flat = NumericRecordDistribution.flatten_value(
         base_sample,
         event_shape=self._base.event_shape,
     )
@@ -776,7 +780,7 @@ def _nrdvfactory_log_prob(self, x) -> Array:
     from ._numeric_record_batch import NumericRecordBatch
 
     flat = x.to_vector() if isinstance(x, (NumericRecord, NumericRecordBatch)) else jnp.asarray(x)
-    value = self._base.unflatten_value(flat, template=self._base.event_spec.spec)
+    value = NumericRecordDistribution.unflatten_value(flat, template=self._base.event_spec.spec)
     return self._base._log_prob(value)
 
 
@@ -784,7 +788,7 @@ def _nrdvfactory_mean(self):
     from ._numeric_record import _reconstruct_from_vector
 
     value = self._base._mean()
-    flat = self._base.flatten_value(
+    flat = NumericRecordDistribution.flatten_value(
         value,
         event_shape=self._base.event_shape,
     )
@@ -795,7 +799,7 @@ def _nrdvfactory_variance(self):
     from ._numeric_record import _reconstruct_from_vector
 
     value = self._base._variance()
-    flat = self._base.flatten_value(
+    flat = NumericRecordDistribution.flatten_value(
         value,
         event_shape=self._base.event_shape,
     )

@@ -2,15 +2,28 @@
 
 ``TFPDistribution`` implements the capability set on raw arrays over a wrapped
 backend distribution, and every parametric family is a thin constructor over
-it. It is the only class that knows the backend exists.
+it. It is the only class that knows the backend exists, and its ``raw()`` is
+the wrapped backend distribution.
+
+Every family samples and has a normalized density. Beyond those, a family
+claims exactly the capabilities its backend computes: it lists them in its
+class-level table ``_backend_capabilities``, and the adapter gives the family
+the method that realizes each one unless the family defines its own. A moment
+is the backend's, the covariance is a linear operator over the flattened draw,
+and the quantiles are per coordinate with the level axes leading.
+
+A scalar family given parameters with axes draws one array of independent
+coordinates, one per entry of the broadcast parameters, so the backend's batch
+axes become the event's axes. A family whose draws are themselves arrays takes
+parameters for one law; a batch of separate laws is a ``DistributionBatch``.
 """
 
 from __future__ import annotations
 
 import contextlib
 import contextvars
-from collections.abc import Generator
-from typing import TYPE_CHECKING, Any
+from collections.abc import Callable, Generator
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import jax
 import jax.numpy as jnp
@@ -18,7 +31,6 @@ import numpy as np
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from .._array_utils import _slice_leading_axes
-from ..core._numeric_record_distribution import NumericRecordDistribution
 from ..core._specs import NumericArraySpec, OutputSpec
 from ..core.constraints import Constraint
 from ..custom_types import Array, ArrayLike, PRNGKey
@@ -26,11 +38,12 @@ from ..distributions._capabilities import (
     SupportsCovariance,
     SupportsLogProb,
     SupportsMean,
+    SupportsQuantile,
     SupportsSampling,
     SupportsVariance,
 )
-from ..distributions._distribution import Distribution
-from ..linalg.linear_operator import DenseLinOp, LinOp
+from ..distributions._distribution import Distribution, NumericDistribution
+from ..linalg import DenseLinOp, DiagonalLinOp, LinOp
 
 if TYPE_CHECKING:
     from ..core._spec_base import TermSpec
@@ -38,45 +51,33 @@ if TYPE_CHECKING:
 __all__ = ["TFPDistribution"]
 
 # ---------------------------------------------------------------------------
-# Internal bypass for the batched-parameters rejection
+# The separate-laws form for the batched storage
 # ---------------------------------------------------------------------------
-# ``TFPDistribution.__init__`` raises ``ValueError`` whenever a concrete
-# subclass (``Normal``, ``Beta``, ``Gamma``, …) is constructed with
-# parameters whose ``tfd.Distribution.batch_shape`` is non-empty,
-# enforcing the framework rule "one random variable per ``Distribution``"
-# (CONTRIBUTING.md); collections live in ``DistributionArray``.
 #
-# Library-internal infrastructure that legitimately holds a batched
-# form — the fused-storage ``_TFPArrayBackend``, converters that
-# fabricate batched-Normal forms during a WF sweep, sequential-joint
-# user lambdas given batched parents, ``GaussianRandomFunction.predict``
-# — opts in via :func:`_allow_batched_tfp_init`. User-facing callers
-# never use the bypass.
+# Inside ``_allow_batched_tfp_init`` a family given parameters with axes keeps
+# the backend's batch axes as the axes of separate laws: one draw is an array
+# of draws of separate laws, and the density is per law. The fused storage of a
+# ``DistributionArray`` reads that form, as do the moment-matching converters
+# and a sequential joint's components given batched parents. Outside it, a
+# scalar family's batch axes are the axes of one event.
 
 _BATCHED_INIT_BYPASS: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "_BATCHED_INIT_BYPASS",
     default=False,
 )
-"""Per-context flag consulted by ``TFPDistribution.__init__``'s
-batched-parameters rejection. ``ContextVar`` over a module-level bool
-because the bypass should be scoped to the dynamic extent of the
-``with`` block — including across threads and ``asyncio`` tasks — so
-two concurrent constructions can't bleed into each other's bypass
-state."""
+"""Whether a family built in the current context keeps its backend's batch axes as separate laws.
+
+A ``ContextVar`` scopes the form to the dynamic extent of the ``with`` block,
+across threads and ``asyncio`` tasks."""
 
 
 @contextlib.contextmanager
 def _allow_batched_tfp_init() -> Generator[None, None, None]:
-    """Context manager: allow TFP-backed constructors to accept
-    parameters whose implied ``batch_shape`` is non-empty.
+    """Build families in the separate-laws form within the block.
 
-    Used by library-internal infrastructure that legitimately needs
-    to construct a TFP-batched form (e.g. :class:`_TFPArrayBackend`,
-    converters that produce batched-Normal forms during a WF sweep,
-    sequential-joint sampling whose lambda receives a batched
-    sample). User code never uses this; intra-library tests that
-    emulate internal RandomFunction subclasses may import the
-    context manager directly.
+    A family given parameters with axes then keeps the backend's batch axes as
+    the axes of separate laws, with one draw per law and a density per law,
+    rather than as the axes of one event.
     """
     token = _BATCHED_INIT_BYPASS.set(True)
     try:
@@ -85,165 +86,195 @@ def _allow_batched_tfp_init() -> Generator[None, None, None]:
         _BATCHED_INIT_BYPASS.reset(token)
 
 
-class TFPDistribution(
-    NumericRecordDistribution,
-    SupportsSampling,
-    SupportsLogProb,
-    SupportsMean,
-    SupportsVariance,
-    SupportsCovariance,
-):
+# ---------------------------------------------------------------------------
+# The capabilities a backend computes
+# ---------------------------------------------------------------------------
+
+
+def _coordinates(backend: tfd.Distribution) -> tfd.Distribution:
+    """The backend of one coordinate, whose batch axes the event of independent coordinates reinterprets."""
+    return backend.distribution if isinstance(backend, tfd.Independent) else backend
+
+
+def _backend_mean(self: TFPDistribution) -> Array:
+    """The mean, shaped like one draw."""
+    return self._tfp_dist.mean()
+
+
+def _backend_variance(self: TFPDistribution) -> Array:
+    """The variance of each coordinate, shaped like one draw."""
+    return self._tfp_dist.variance()
+
+
+def _backend_cov(self: TFPDistribution) -> LinOp:
+    """The covariance of the flattened draw, a ``(d, d)`` operator.
+
+    Independent coordinates have the diagonal operator of their variances, and
+    a law over a vector has the backend's dense covariance.
     """
-    Base class for distributions backed by a ``tfd.Distribution`` instance.
+    backend = self._tfp_dist
+    if isinstance(backend, tfd.Independent) or tuple(backend.event_shape) == ():
+        return DiagonalLinOp(jnp.reshape(backend.variance(), (-1,)))
+    return DenseLinOp(backend.covariance())
 
-    Subclasses set ``self._tfp_dist`` in ``__init__`` and define
-    :meth:`_event_support`. One draw is the TFP event's array, with its shape
-    and dtype and the family's support, declared as a whole term, so every
-    instance is a :class:`~probpipe.NumericDistribution`. Its component
-    defaults to the law's name, and an ``event_spec`` declaration names
-    another. The private protocol methods ``_sample``, ``_expectation``,
-    ``_log_prob``, ``_mean``, and ``_variance`` all delegate to TFP (or use MC
-    fallback for expectations).
 
-    Inherits from :class:`SupportsSampling`, :class:`SupportsExpectation`,
-    :class:`SupportsLogProb` (provides ``_prob``,
-    ``_unnormalized_log_prob``, ``_unnormalized_prob`` defaults),
-    :class:`SupportsMean`, and :class:`SupportsVariance`.
+def _backend_quantile(self: TFPDistribution, q: ArrayLike) -> Array:
+    """The quantile of each coordinate at the levels *q*, of shape ``(*q.shape, *event_shape)``."""
+    coordinates = _coordinates(self._tfp_dist)
+    levels = jnp.asarray(q, dtype=coordinates.dtype)
+    event_rank = len(self.event_spec.spec.shape)
+    return coordinates.quantile(jnp.reshape(levels, levels.shape + (1,) * event_rank))
+
+
+#: The method that realizes each capability a family's backend may compute, by name.
+_BACKEND_METHODS: dict[type, dict[str, Callable[..., Any]]] = {
+    SupportsMean: {"_mean": _backend_mean},
+    SupportsVariance: {"_variance": _backend_variance},
+    SupportsCovariance: {"_cov": _backend_cov},
+    SupportsQuantile: {"_quantile": _backend_quantile},
+}
+
+
+# ---------------------------------------------------------------------------
+# The adapter
+# ---------------------------------------------------------------------------
+
+
+class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
+    """The law of one array, realized by a wrapped backend distribution.
+
+    The adapter samples through the backend and scores with its normalized
+    log-density. A family claims the further capabilities its backend
+    computes by listing them in ``_backend_capabilities``: the mean and the
+    variance, shaped like one draw; the covariance of the flattened draw as a
+    linear operator; and the quantiles of each coordinate. The adapter gives
+    the family the method realizing each, unless the family defines its own.
+
+    One draw is the backend event's array, with its shape and dtype and the
+    family's support, declared as a whole term, so every instance is a
+    :class:`~probpipe.NumericDistribution`. Its component defaults to the law's
+    name, and an ``event_spec`` declaration names another. A backend whose
+    draws are scalars and whose parameters have axes is reinterpreted as one
+    array of independent coordinates along those axes.
 
     Parameters
     ----------
     name : str
-        Distribution name.
-    event_spec : OutputSpec or TermSpec, optional
-        The declaration of one draw; see ``__init__``.
+        The law's label, and the component of its event unless *event_spec*
+        names another.
+    backend_dist : tfd.Distribution
+        The wrapped backend distribution, which a family's constructor builds
+        from its parameters.
+    event_spec : OutputSpec, optional
+        The declaration of one draw, which names its component. The adapter
+        fills a pending type, as in ``OutputSpec(theta=None)``, with the
+        backend event's array.
 
-    Rejects batched parameters
-    --------------------------
-    Per the framework hierarchy "one random variable per
-    ``Distribution``" rule (CONTRIBUTING.md), the constructor raises
-    :class:`ValueError` when the underlying ``tfd.Distribution`` has
-    a non-empty ``batch_shape``. Wrap multiple distributions in a
-    :class:`~probpipe.DistributionArray` instead — the migration
-    factory is :meth:`~probpipe.DistributionArray.from_batched_params`
-    (or the per-class alias :meth:`Distribution.from_batched_params`).
+    Raises
+    ------
+    TypeError
+        If *event_spec* is not an :class:`~probpipe.OutputSpec`, or exposes a
+        record.
+    ValueError
+        If the backend's draws are arrays and its parameters have axes, since
+        a batch of separate laws is a ``DistributionBatch``, or *event_spec*
+        declares a type that one draw does not conform to.
 
-    The check fires in ``__init__`` after the subclass's ``super().__init__``
-    call completes, so concrete subclasses that set ``self._tfp_dist``
-    *before* calling ``super().__init__`` (the standard pattern used
-    by ``Normal``, ``Beta``, ``Gamma``, …) are validated. Subclasses
-    that set ``_tfp_dist`` *after* ``super().__init__`` (e.g.
-    :class:`~probpipe.distributions.kde.KDEDistribution`) pass their own
-    ``event_spec`` and skip the check, since those classes keep their own
-    shape invariants and don't go through TFP's batched parameter
-    convention.
-
-    Internal infrastructure that legitimately needs the batched form
-    (the ``_TFPArrayBackend`` fused storage, converters, sequential
-    joints, GRF predictions) opts into the bypass via
-    :func:`_allow_batched_tfp_init`.
+    Notes
+    -----
+    A subclass that builds its backend after construction passes ``None`` for
+    *backend_dist* and its own complete *event_spec*, and sets ``_tfp_dist``
+    itself.
     """
+
+    #: The capabilities the family's backend computes beyond sampling and the density.
+    _backend_capabilities: ClassVar[frozenset[type]] = frozenset()
 
     _tfp_dist: tfd.Distribution
 
-    def __init__(self, name: str, event_spec: OutputSpec | TermSpec | None = None) -> None:
-        """Final-stage initializer for TFP-backed distributions.
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Give a family the method realizing each capability its table lists."""
+        super().__init_subclass__(**kwargs)
+        for protocol in vars(cls).get("_backend_capabilities", ()):
+            for method, implementation in _BACKEND_METHODS[protocol].items():
+                if method not in vars(cls):
+                    setattr(cls, method, implementation)
 
-        Concrete subclasses (``Normal``, ``Beta``, …) set
-        ``self._tfp_dist`` in their own ``__init__`` *before* calling
-        ``super().__init__(name=name, event_spec=event_spec)``, so by the
-        time we get here the TFP backend is fully constructed: it supplies
-        the type of one draw, and we can validate its ``batch_shape``.
+    def __init__(
+        self,
+        name: str,
+        backend_dist: tfd.Distribution | None,
+        *,
+        event_spec: OutputSpec | None = None,
+    ) -> None:
+        if backend_dist is None:
+            if event_spec is None:
+                raise TypeError(
+                    f"{type(self).__name__} builds its backend after construction, so it "
+                    f"must pass its own event_spec"
+                )
+            super().__init__(name, event_spec)
+            return
+        backend_dist = self._reinterpreted(backend_dist)
+        self._tfp_dist = backend_dist
+        produced = NumericArraySpec(
+            tuple(backend_dist.event_shape), backend_dist.dtype, self._event_support()
+        )
+        if event_spec is None:
+            declaration: OutputSpec | TermSpec = produced
+        elif isinstance(event_spec, OutputSpec):
+            declaration = event_spec.with_spec(produced)
+        else:
+            raise TypeError(f"event_spec must be an OutputSpec, got {type(event_spec).__name__}")
+        super().__init__(name, declaration)
 
-        Parameters
-        ----------
-        name : str
-            Distribution name.
-        event_spec : OutputSpec or TermSpec, optional
-            With the backend set, the family's declaration of one draw, which
-            :meth:`~probpipe.OutputSpec.with_spec` completes with the TFP
-            event's array; by default the array's component is ``name``. A
-            subclass that sets the backend afterwards passes its own
-            declaration.
+    def _reinterpreted(self, backend: tfd.Distribution) -> tfd.Distribution:
+        """*backend* with its batch axes as the event's, for draws of independent coordinates.
 
         Raises
         ------
-        TypeError
-            If the backend is set and *event_spec* is not an
-            :class:`~probpipe.OutputSpec`, or exposes a record, or the backend
-            is not yet set and *event_spec* is omitted.
         ValueError
-            If the TFP backend has a nonempty ``batch_shape`` outside
-            :func:`_allow_batched_tfp_init`, or *event_spec* declares a type
-            that does not unify with the TFP event's array.
+            If the backend's draws are arrays and its parameters have axes.
         """
-        # KDE-style subclasses set ``_tfp_dist`` *after* this call, so
-        # they supply their own declaration and shape invariants.
-        tfp_dist = getattr(self, "_tfp_dist", None)
-        if tfp_dist is not None:
-            produced = NumericArraySpec(
-                tuple(tfp_dist.event_shape), tfp_dist.dtype, self._event_support()
-            )
-            if event_spec is None:
-                event_spec = produced
-            elif isinstance(event_spec, OutputSpec):
-                event_spec = event_spec.with_spec(produced)
-            else:
-                raise TypeError(
-                    f"event_spec must be an OutputSpec, got {type(event_spec).__name__}"
-                )
-        elif event_spec is None:
-            raise TypeError(
-                f"{type(self).__name__} sets _tfp_dist after TFPDistribution.__init__, "
-                f"so it must pass its own event_spec"
-            )
-        super().__init__(name, event_spec)
-        if _BATCHED_INIT_BYPASS.get() or tfp_dist is None:
-            return
-        actual = tuple(tfp_dist.batch_shape)
-        if actual != ():
-            cls_name = type(self).__name__
+        batch = tuple(backend.batch_shape)
+        if not batch or _BATCHED_INIT_BYPASS.get():
+            return backend
+        if tuple(backend.event_shape) != ():
             raise ValueError(
-                f"{cls_name} parameters imply batch_shape={actual}; "
-                f"wrap multiple distributions in a DistributionArray "
-                f"instead. See "
-                f"DistributionArray.from_batched_params({cls_name}, ...) "
-                f"(or the alias {cls_name}.from_batched_params(...)) "
-                f"for the factory."
+                f"{type(self).__name__} parameters imply {batch} separate laws over arrays "
+                f"of shape {tuple(backend.event_shape)}; a batch of separate laws is a "
+                f"DistributionBatch"
             )
+        return tfd.Independent(backend, reinterpreted_batch_ndims=len(batch))
 
     # -- the event declaration ----------------------------------------------
 
-    def _event_support(self) -> Constraint:
-        """The support of one draw, which ``__init__`` declares; each family defines it."""
-        raise NotImplementedError(f"{type(self).__name__}._event_support")
+    def _event_support(self) -> Constraint | None:
+        """The support of one draw, which ``__init__`` declares.
 
-    # -- sampling & density -------------------------------------------------
+        Each family states its support, and a backend wrapped without a family
+        leaves it undeclared.
+        """
+        return None
 
-    def _sample(
-        self,
-        key: PRNGKey,
-        sample_shape: tuple[int, ...] = (),
-    ) -> Array:
-        """Draw samples using TFP's efficient batched sampling."""
+    def raw(self) -> tfd.Distribution:
+        """The wrapped backend distribution."""
+        return self._tfp_dist
+
+    # -- sampling and the density ---------------------------------------------
+
+    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
+        """Draws of the backend, with *sample_shape* leading."""
         return self._tfp_dist.sample(seed=key, sample_shape=sample_shape)
 
-    def _log_prob(self, x: ArrayLike) -> Array:
-        return self._tfp_dist.log_prob(jnp.asarray(x))
+    def _log_prob(self, value: ArrayLike) -> Array:
+        """The backend's normalized log-density, keeping the leading axes of *value*."""
+        return self._tfp_dist.log_prob(jnp.asarray(value))
 
-    def _mean(self) -> Array:
-        return self._tfp_dist.mean()
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}(name={self.name!r}, event_shape={self.event_shape})"
 
-    def _variance(self) -> Array:
-        return self._tfp_dist.variance()
-
-    def _cov(self) -> LinOp:
-        """The covariance of the flattened draw, a ``(d, d)`` dense operator."""
-        # The TFP event is flat even when the declared draw is a record.
-        if tuple(self._tfp_dist.event_shape) in ((), (1,)):
-            return DenseLinOp(jnp.reshape(self._tfp_dist.variance(), (1, 1)))
-        return DenseLinOp(self._tfp_dist.covariance())
-
-    # -- SupportsArrayBackend (fused storage for DistributionArray) ----------
+    # -- the fused storage of a DistributionArray ------------------------------
 
     @classmethod
     def _make_array_backend(
@@ -253,16 +284,11 @@ class TFPDistribution(
         batch_shape: tuple[int, ...],
         **batched_params: Any,
     ) -> _TFPArrayBackend:
-        """Construct a fused TFP-batched backend for ``DistributionArray``.
+        """Construct the fused storage of a DistributionArray of this family.
 
-        Inherited automatically by every concrete TFP-backed distribution
-        (``Normal``, ``Beta``, ``Gamma``, ``MultivariateNormal``, …); the
-        same code path covers the whole family because the wrapped TFP
-        constructor handles the per-class param-name mapping.
-
-        See :class:`probpipe.core.protocols.SupportsArrayBackend` for the
-        protocol contract. Additive — ``DistributionArray.from_batched_params``
-        is the only consumer; user code never calls this directly.
+        The storage holds one backend over the batched parameters in the
+        separate-laws form, and builds each cell with the family's constructor
+        at that cell's parameters.
         """
         return _TFPArrayBackend(
             dist_cls=cls,
@@ -289,12 +315,12 @@ def _construct_batched_dist(
     name: str,
     batched_params: dict[str, Any],
 ) -> TFPDistribution:
-    """Construct the fused batched distribution under the internal
-    bypass, with the centralised ``__array_backend``-suffixed name.
+    """Construct the fused batched distribution in the separate-laws form,
+    with the centralised ``__array_backend``-suffixed name.
 
     Used by both :meth:`_TFPArrayBackend.__init__` and
-    :meth:`_TFPArrayBackend.tree_unflatten` so the suffix and bypass
-    contract live in one place.
+    :meth:`_TFPArrayBackend.tree_unflatten` so the suffix and the form
+    are fixed in one place.
     """
     with _allow_batched_tfp_init():
         return dist_cls(

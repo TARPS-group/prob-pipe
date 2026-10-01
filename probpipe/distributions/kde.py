@@ -26,6 +26,7 @@ from ..core.constraints import Constraint, real
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike
 from ..families._backend import TFPDistribution
+from ._capabilities import SupportsCovariance, SupportsMean, SupportsVariance
 
 __all__ = ["KDEDistribution"]
 
@@ -71,6 +72,8 @@ class KDEDistribution(TFPDistribution):
         or any other declaration whose type does not unify with the flat array
         one draw is.
     """
+
+    _backend_capabilities = frozenset({SupportsMean, SupportsVariance, SupportsCovariance})
 
     def __init__(
         self,
@@ -120,7 +123,7 @@ class KDEDistribution(TFPDistribution):
             array = NumericArraySpec((d,) if d > 1 else (), samples.dtype, real)
             declaration = array if event_spec is None else event_spec.with_spec(array)
 
-        super().__init__(name, declaration)
+        super().__init__(name, None, event_spec=declaration)
 
         # Weights
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)

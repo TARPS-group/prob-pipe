@@ -8,6 +8,7 @@ import pytest
 from probpipe import (
     EmpiricalDistribution,
     MultivariateNormal,
+    NumericDistribution,
     NumericRecordDistribution,
     Provenance,
     RecordEmpiricalDistribution,
@@ -663,7 +664,7 @@ class TestDistributionABC:
 class TestTFPDistribution:
     def test_gaussian_is_tfp_distribution(self, gaussian):
         assert isinstance(gaussian, TFPDistribution)
-        assert isinstance(gaussian, NumericRecordDistribution)
+        assert isinstance(gaussian, NumericDistribution)
 
     def test_dtype(self, gaussian, loc):
         assert gaussian.dtype == loc.dtype

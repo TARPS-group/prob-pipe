@@ -41,9 +41,11 @@ from ..distributions._capabilities import (
     SupportsConditionalVariance,
 )
 from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
-from ..linalg import DiagonalLinOp, LinOp
+from ..linalg import LinOp
 from ..values import Function
 from ._backend import TFPDistribution
+from ._continuous import Normal
+from ._discrete import Bernoulli, Poisson
 
 if TYPE_CHECKING:
     from ..core.record import Record
@@ -170,32 +172,17 @@ def _require_invertible(link: Any, owner: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-class _IndependentObservations(TFPDistribution):
-    """The law of conditionally independent observations, one per parameter entry.
+class _LogRatePoisson(Poisson):
+    """The Poisson family at its natural parameter, the log-rate.
 
-    It adapts a backend law whose batch axis indexes the observations and
-    reinterprets that axis as the event, so one draw is the response vector.
-    The covariance is the diagonal operator of the per-observation variances.
+    The backend scores from the log-rate directly, which keeps the log-density
+    and its gradient finite where the rate underflows. The ``rate`` accessor is
+    the rate the log-rate gives.
     """
 
-    def __init__(
-        self,
-        name: str,
-        backend_dist: tfd.Distribution,
-        support: Constraint,
-        *,
-        event_spec: OutputSpec | None = None,
-    ) -> None:
-        self._tfp_dist = tfd.Independent(backend_dist, reinterpreted_batch_ndims=1)
-        self._support = support
-        super().__init__(name, event_spec=event_spec)
-
-    def _event_support(self) -> Constraint:
-        return self._support
-
-    def _cov(self) -> LinOp:
-        """The diagonal covariance of the independent observations."""
-        return DiagonalLinOp(self._tfp_dist.variance())
+    def __init__(self, name: str, log_rate: Array, *, event_spec: OutputSpec | None = None) -> None:
+        self._rate = jnp.exp(log_rate)
+        TFPDistribution.__init__(self, name, tfd.Poisson(log_rate=log_rate), event_spec=event_spec)
 
 
 def _observation_vector(values: ArrayLike, owner: str, quantity: str) -> Array:
@@ -346,9 +333,7 @@ class GaussianFamily(GLMFamily):
         """
         mean = _observation_vector(mean, f"{type(self).__name__}.build", "mean")
         scale = self._dispersion(dispersion, mean)
-        return _IndependentObservations(
-            name, tfd.Normal(loc=mean, scale=scale), real, event_spec=event_spec
-        )
+        return Normal(name, mean, scale, event_spec=event_spec)
 
 
 class BernoulliFamily(GLMFamily):
@@ -377,9 +362,7 @@ class BernoulliFamily(GLMFamily):
         """
         mean = _observation_vector(mean, f"{type(self).__name__}.build", "mean")
         self._dispersion(dispersion, mean)
-        return _IndependentObservations(
-            name, tfd.Bernoulli(probs=mean), boolean, event_spec=event_spec
-        )
+        return Bernoulli(name, probs=mean, event_spec=event_spec)
 
     def _build_canonical(
         self,
@@ -394,9 +377,7 @@ class BernoulliFamily(GLMFamily):
             predictor, f"{type(self).__name__}._build_canonical", "linear predictor"
         )
         self._dispersion(dispersion, logits)
-        return _IndependentObservations(
-            name, tfd.Bernoulli(logits=logits), boolean, event_spec=event_spec
-        )
+        return Bernoulli(name, logits=logits, event_spec=event_spec)
 
 
 class PoissonFamily(GLMFamily):
@@ -425,9 +406,7 @@ class PoissonFamily(GLMFamily):
         """
         mean = _observation_vector(mean, f"{type(self).__name__}.build", "mean")
         self._dispersion(dispersion, mean)
-        return _IndependentObservations(
-            name, tfd.Poisson(rate=mean), non_negative_integer, event_spec=event_spec
-        )
+        return Poisson(name, mean, event_spec=event_spec)
 
     def _build_canonical(
         self,
@@ -442,9 +421,7 @@ class PoissonFamily(GLMFamily):
             predictor, f"{type(self).__name__}._build_canonical", "linear predictor"
         )
         self._dispersion(dispersion, log_rate)
-        return _IndependentObservations(
-            name, tfd.Poisson(log_rate=log_rate), non_negative_integer, event_spec=event_spec
-        )
+        return _LogRatePoisson(name, log_rate, event_spec=event_spec)
 
 
 # ---------------------------------------------------------------------------

@@ -15,6 +15,7 @@ import numpy as np
 from ..core._empirical import RecordEmpiricalDistribution
 from ..core._numeric_record_distribution import NumericRecordDistribution
 from ..core.provenance import Provenance
+from ..families._backend import TFPDistribution
 from ._registry import (
     _SCIPY_PROVIDER_ABI,
     ConversionInfo,
@@ -25,6 +26,19 @@ from ._registry import (
     _resolve_conversion_key,
     _sampled_conversion_plan,
 )
+
+#: The numeric ProbPipe laws: the record laws and the parametric families.
+_NUMERIC_LAWS = (NumericRecordDistribution, TFPDistribution)
+
+
+def _natural_target(pp_cls: type, target_type: type) -> bool:
+    """Whether the family *pp_cls* of a backend object is a law of the class *target_type*.
+
+    A request for a numeric record law asks for the backend object's numeric
+    ProbPipe law, which a parametric family is.
+    """
+    return issubclass(pp_cls, target_type) or target_type is NumericRecordDistribution
+
 
 try:
     import scipy.stats as _stats
@@ -161,17 +175,17 @@ class ScipyConverter(Converter):
     def source_types(self) -> tuple[type, ...]:
         if not _HAS_SCIPY:
             return ()
-        return (_rv_frozen, NumericRecordDistribution, RecordEmpiricalDistribution)
+        return (_rv_frozen, NumericRecordDistribution, TFPDistribution, RecordEmpiricalDistribution)
 
     def target_types(self) -> tuple[type, ...]:
         if not _HAS_SCIPY:
             return ()
-        return (NumericRecordDistribution, RecordEmpiricalDistribution, _rv_frozen)
+        return (NumericRecordDistribution, TFPDistribution, RecordEmpiricalDistribution, _rv_frozen)
 
     @staticmethod
     def _is_probpipe_target(target_type: type) -> bool:
         return isinstance(target_type, type) and (
-            issubclass(target_type, NumericRecordDistribution)
+            issubclass(target_type, _NUMERIC_LAWS)
             or issubclass(target_type, RecordEmpiricalDistribution)
         )
 
@@ -186,7 +200,7 @@ class ScipyConverter(Converter):
                 dist_cls = type(source.dist)
                 if dist_cls in self._scipy_map:
                     pp_cls, _ = self._scipy_map[dist_cls]
-                    if target_type is pp_cls or issubclass(pp_cls, target_type):
+                    if _natural_target(pp_cls, target_type):
                         return ConversionInfo(
                             feasible=True,
                             method=ConversionMethod.EXACT,
@@ -213,7 +227,7 @@ class ScipyConverter(Converter):
                 )
 
         # Case 2: ProbPipe -> scipy
-        if isinstance(source, NumericRecordDistribution):
+        if isinstance(source, _NUMERIC_LAWS):
             if _HAS_SCIPY and isinstance(target_type, type) and issubclass(target_type, _rv_frozen):
                 src_name = type(source).__name__
                 if src_name in self._pp_map:
@@ -242,7 +256,7 @@ class ScipyConverter(Converter):
                     provider_abi=_SCIPY_PROVIDER_ABI,
                 )
             pp_cls, _ = self._scipy_map[dist_cls]
-            if target_type is pp_cls or issubclass(pp_cls, target_type):
+            if _natural_target(pp_cls, target_type):
                 return _scipy_nonrandom_plan("exact")
             return _scipy_nonrandom_plan("delegated")
         return _scipy_nonrandom_plan("exact")
@@ -281,7 +295,7 @@ class ScipyConverter(Converter):
                 params.setdefault("name", dist_cls.__name__)
                 pp_dist = pp_cls(**params)
                 pp_dist.with_provenance(Provenance.create("convert_from_scipy", parents=[]))
-                if isinstance(pp_dist, target_type):
+                if _natural_target(type(pp_dist), target_type):
                     return pp_dist
                 from ._registry import converter_registry
 
@@ -311,7 +325,7 @@ class ScipyConverter(Converter):
             return converter_registry.convert(emp, target_type, key=key, **kwargs)
 
         # Case 2: ProbPipe -> scipy
-        if isinstance(source, NumericRecordDistribution):
+        if isinstance(source, _NUMERIC_LAWS):
             src_name = type(source).__name__
             fn = self._pp_map.get(src_name)
             if fn is not None:

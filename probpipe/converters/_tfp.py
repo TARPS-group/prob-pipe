@@ -14,6 +14,7 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 from ..core._empirical import RecordEmpiricalDistribution
 from ..core._numeric_record_distribution import NumericRecordDistribution
 from ..core.provenance import Provenance
+from ..families._backend import TFPDistribution
 from ._registry import (
     _TFP_PROVIDER_ABI,
     ConversionInfo,
@@ -24,6 +25,18 @@ from ._registry import (
     _resolve_conversion_key,
     _sampled_conversion_plan,
 )
+
+#: The numeric ProbPipe laws: the record laws and the parametric families.
+_NUMERIC_LAWS = (NumericRecordDistribution, TFPDistribution)
+
+
+def _natural_target(pp_cls: type, target_type: type) -> bool:
+    """Whether the family *pp_cls* of a backend object is a law of the class *target_type*.
+
+    A request for a numeric record law asks for the backend object's numeric
+    ProbPipe law, which a parametric family is.
+    """
+    return issubclass(pp_cls, target_type) or target_type is NumericRecordDistribution
 
 
 def _tfp_nonrandom_plan(
@@ -148,28 +161,36 @@ class TFPConverter(Converter):
         return self._to_tfp
 
     def source_types(self) -> tuple[type, ...]:
-        return (tfd.Distribution, NumericRecordDistribution, RecordEmpiricalDistribution)
+        return (
+            tfd.Distribution,
+            NumericRecordDistribution,
+            TFPDistribution,
+            RecordEmpiricalDistribution,
+        )
 
     def target_types(self) -> tuple[type, ...]:
-        return (NumericRecordDistribution, RecordEmpiricalDistribution, tfd.Distribution)
+        return (
+            NumericRecordDistribution,
+            TFPDistribution,
+            RecordEmpiricalDistribution,
+            tfd.Distribution,
+        )
 
     @staticmethod
     def _is_probpipe_target(target_type: type) -> bool:
         return isinstance(target_type, type) and (
-            issubclass(target_type, NumericRecordDistribution)
+            issubclass(target_type, _NUMERIC_LAWS)
             or issubclass(target_type, RecordEmpiricalDistribution)
         )
 
     def check(self, source: Any, target_type: type) -> ConversionInfo:
         # Case 1: TFP -> ProbPipe
-        if isinstance(source, tfd.Distribution) and not isinstance(
-            source, NumericRecordDistribution
-        ):
+        if isinstance(source, tfd.Distribution) and not isinstance(source, _NUMERIC_LAWS):
             if self._is_probpipe_target(target_type):
                 src_cls = type(source)
                 if src_cls in self._tfp_map:
                     pp_cls, _ = self._tfp_map[src_cls]
-                    if target_type is pp_cls or issubclass(pp_cls, target_type):
+                    if _natural_target(pp_cls, target_type):
                         return ConversionInfo(
                             feasible=True,
                             method=ConversionMethod.EXACT,
@@ -188,9 +209,7 @@ class TFPConverter(Converter):
                         description=f"TFP {src_cls.__name__} -> ProbPipe -> {target_type.__name__}",
                     )
                 # Unknown TFP type -> sample fallback
-                if issubclass(
-                    target_type, (NumericRecordDistribution, RecordEmpiricalDistribution)
-                ):
+                if issubclass(target_type, (*_NUMERIC_LAWS, RecordEmpiricalDistribution)):
                     return ConversionInfo(
                         feasible=True,
                         method=ConversionMethod.SAMPLE,
@@ -202,7 +221,7 @@ class TFPConverter(Converter):
 
         # Case 2: ProbPipe -> TFP
         if (
-            isinstance(source, NumericRecordDistribution)
+            isinstance(source, _NUMERIC_LAWS)
             and isinstance(target_type, type)
             and issubclass(target_type, tfd.Distribution)
         ):
@@ -226,9 +245,7 @@ class TFPConverter(Converter):
         kwargs: dict[str, Any],
     ) -> _ConversionExecutionPlan:
         """Capture the TFP adapter path before any sampling occurs."""
-        if isinstance(source, tfd.Distribution) and not isinstance(
-            source, NumericRecordDistribution
-        ):
+        if isinstance(source, tfd.Distribution) and not isinstance(source, _NUMERIC_LAWS):
             src_cls = type(source)
             if src_cls not in self._tfp_map:
                 return _sampled_conversion_plan(
@@ -236,7 +253,7 @@ class TFPConverter(Converter):
                     provider_abi=_TFP_PROVIDER_ABI,
                 )
             pp_cls, _ = self._tfp_map[src_cls]
-            if target_type is pp_cls or issubclass(pp_cls, target_type):
+            if _natural_target(pp_cls, target_type):
                 return _tfp_nonrandom_plan("exact")
             return _tfp_nonrandom_plan("delegated")
         return _tfp_nonrandom_plan("exact")
@@ -264,9 +281,7 @@ class TFPConverter(Converter):
     ) -> Any:
         """Execute a conversion from its already validated private plan."""
         # Case 1: TFP -> ProbPipe
-        if isinstance(source, tfd.Distribution) and not isinstance(
-            source, NumericRecordDistribution
-        ):
+        if isinstance(source, tfd.Distribution) and not isinstance(source, _NUMERIC_LAWS):
             if self._is_probpipe_target(target_type):
                 src_cls = type(source)
                 if src_cls in self._tfp_map:
@@ -275,7 +290,7 @@ class TFPConverter(Converter):
                     params.setdefault("name", source.name or src_cls.__name__)
                     pp_dist = pp_cls(**params)
                     pp_dist.with_provenance(Provenance.create("convert_from_tfp", parents=[]))
-                    if isinstance(pp_dist, target_type):
+                    if _natural_target(type(pp_dist), target_type):
                         return pp_dist
                     # Chain: TFP -> natural ProbPipe -> target ProbPipe
                     from ._registry import converter_registry
@@ -301,7 +316,7 @@ class TFPConverter(Converter):
                 return converter_registry.convert(emp, target_type, key=key, **kwargs)
 
         # Case 2: ProbPipe -> TFP
-        if isinstance(source, NumericRecordDistribution):
+        if isinstance(source, _NUMERIC_LAWS):
             src_name = type(source).__name__
             fn = self._pp_map.get(src_name)
             if fn is not None:

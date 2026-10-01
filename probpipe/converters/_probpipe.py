@@ -19,8 +19,9 @@ from typing import Any
 import jax.numpy as jnp
 
 from ..core._empirical import EmpiricalDistribution, RecordEmpiricalDistribution
+from ..core._numeric_record_distribution import NumericRecordDistribution
 from ..core.provenance import Provenance
-from ..distributions._distribution import Distribution
+from ..distributions._distribution import Distribution, NumericDistribution
 from ..distributions.transformed import TransformedDistribution
 from ..families._backend import _allow_batched_tfp_init
 from ._registry import (
@@ -869,15 +870,12 @@ class ProbPipeConverter(Converter):
 
         # Post-construction support check. Per-field ``supports`` is
         # instance state, so the check has to run after the target is
-        # built. Targets that aren't ``NumericRecordDistribution``
-        # don't carry the method (skipped via the ``getattr`` fallback);
-        # sources that don't expose per-field ``supports`` raise
-        # ``AttributeError``, which counts as "unknown".
-        if check_support:
-            check = getattr(result, "_check_support_compatible", None)
-            if check is not None:
-                with contextlib.suppress(AttributeError):
-                    check(source)
+        # built. Only a numeric target declares supports; sources that
+        # don't expose per-field ``supports`` raise ``AttributeError``,
+        # which counts as "unknown".
+        if check_support and isinstance(result, NumericDistribution):
+            with contextlib.suppress(AttributeError):
+                NumericRecordDistribution._check_support_compatible(result, source)
 
         # Mark approximate if source is approximate or conversion used sampling.
         # Written through ``object.__setattr__``: the result is a tracked term,

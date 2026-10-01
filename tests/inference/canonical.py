@@ -95,9 +95,8 @@ class _Observations(TFPDistribution):
         *,
         event_spec: OutputSpec | None = None,
     ) -> None:
-        self._tfp_dist = backend
         self._support = support
-        super().__init__(name, event_spec=event_spec)
+        super().__init__(name, backend, event_spec=event_spec)
 
     def _event_support(self) -> Constraint:
         return self._support

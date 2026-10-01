@@ -3,15 +3,21 @@
 ``MultivariateNormal``, ``Dirichlet``, ``Multinomial``, ``Wishart``, and
 ``VonMisesFisher`` each derive their event term spec from their parameters and
 take an ``event_spec`` declaration that names the event's component.
+
+A family's parameters describe one law over an array; a batch of separate laws
+is a ``DistributionBatch``. Each family claims the moments its backend
+computes: all but the Wishart claim the covariance, all but the von
+Mises-Fisher claim the variance, and the multivariate normal also claims the
+quantile of each coordinate, from its normal marginals.
 """
 
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from .._dtype import _as_float_array, _promote_floats
-from ..core._numeric_record_distribution import FlatNumericRecordDistribution
 from ..core._specs import OutputSpec
 from ..core.constraints import (
     Constraint,
@@ -22,6 +28,13 @@ from ..core.constraints import (
     sphere,
 )
 from ..custom_types import Array, ArrayLike
+from ..distributions._capabilities import (
+    SupportsCovariance,
+    SupportsMean,
+    SupportsQuantile,
+    SupportsVariance,
+)
+from ..linalg import CholeskyLinOp, DenseLinOp, LinOp, TriangularLinOp
 from ._backend import TFPDistribution
 
 __all__ = [
@@ -38,9 +51,14 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
-class MultivariateNormal(TFPDistribution, FlatNumericRecordDistribution):
+class MultivariateNormal(TFPDistribution):
     """
     Multivariate normal (Gaussian) distribution.
+
+    Its covariance keeps the structure it was given: a ``LinOp`` as it is, a
+    dense matrix as a ``DenseLinOp``, and a Cholesky factor as a
+    ``CholeskyLinOp`` over it. The quantile of each coordinate is that of its
+    normal marginal, ``loc + sqrt(cov_ii) Φ⁻¹(q)``.
 
     Parameters
     ----------
@@ -51,8 +69,9 @@ class MultivariateNormal(TFPDistribution, FlatNumericRecordDistribution):
     scale_tril : array-like, shape ``(d, d)``, optional
         Lower-triangular Cholesky factor of the covariance.  Exactly one of
         *scale_tril* or *cov* must be provided.
-    cov : array-like, shape ``(d, d)``, optional
-        Covariance matrix (Cholesky-decomposed internally).
+    cov : LinOp or array-like, shape ``(d, d)``, optional
+        Covariance, as an operator or a matrix, Cholesky-decomposed for the
+        backend.
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
@@ -65,9 +84,13 @@ class MultivariateNormal(TFPDistribution, FlatNumericRecordDistribution):
         record.
     ValueError
         If not exactly one of *scale_tril* and *cov* is given, *cov* does not
-        match the length of *loc*, the parameters imply a nonempty batch shape,
-        or *event_spec* declares a type that one draw does not conform to.
+        match the length of *loc*, *loc* has more than one axis, or
+        *event_spec* declares a type that one draw does not conform to.
     """
+
+    _backend_capabilities = frozenset(
+        {SupportsMean, SupportsVariance, SupportsCovariance, SupportsQuantile}
+    )
 
     def __init__(
         self,
@@ -75,12 +98,15 @@ class MultivariateNormal(TFPDistribution, FlatNumericRecordDistribution):
         loc: ArrayLike,
         scale_tril: ArrayLike | None = None,
         *,
-        cov: ArrayLike | None = None,
+        cov: LinOp | ArrayLike | None = None,
         event_spec: OutputSpec | None = None,
     ):
         if scale_tril is not None and cov is not None:
             raise ValueError("Provide exactly one of scale_tril or cov, not both.")
 
+        operator = cov if isinstance(cov, LinOp) else None
+        if operator is not None:
+            cov = operator.to_dense()
         if scale_tril is not None:
             _, (loc, scale_tril) = _promote_floats(loc, scale_tril)
         elif cov is not None:
@@ -98,8 +124,9 @@ class MultivariateNormal(TFPDistribution, FlatNumericRecordDistribution):
 
         self._loc = loc
         self._scale_tril = scale_tril
-        self._tfp_dist = tfd.MultivariateNormalTriL(loc=loc, scale_tril=scale_tril)
-        super().__init__(name=name, event_spec=event_spec)
+        self._given_cov = operator if operator is not None else cov
+        backend = tfd.MultivariateNormalTriL(loc=loc, scale_tril=scale_tril)
+        super().__init__(name, backend, event_spec=event_spec)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -125,13 +152,30 @@ class MultivariateNormal(TFPDistribution, FlatNumericRecordDistribution):
     def _event_support(self) -> Constraint:
         return real
 
+    # -- the covariance and the quantiles ------------------------------------
+
+    def _cov(self) -> LinOp:
+        """The covariance operator, with the structure it was given."""
+        given = self._given_cov
+        if isinstance(given, LinOp):
+            return given
+        if given is not None:
+            return DenseLinOp(given)
+        return CholeskyLinOp(TriangularLinOp(self._scale_tril, lower=True))
+
+    def _quantile(self, q: ArrayLike) -> Array:
+        """The quantile of each coordinate's normal marginal, of shape ``(*q.shape, d)``."""
+        levels = jnp.asarray(q, dtype=self._loc.dtype)
+        scale = jnp.sqrt(jnp.diagonal(self.cov))
+        return self._loc + scale * jax.scipy.special.ndtri(levels)[..., None]
+
 
 # ---------------------------------------------------------------------------
 # Dirichlet
 # ---------------------------------------------------------------------------
 
 
-class Dirichlet(TFPDistribution, FlatNumericRecordDistribution):
+class Dirichlet(TFPDistribution):
     """
     Dirichlet distribution over the probability simplex.
 
@@ -152,10 +196,11 @@ class Dirichlet(TFPDistribution, FlatNumericRecordDistribution):
         If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
         record.
     ValueError
-        If *concentration* is a scalar, the parameters imply a nonempty batch
-        shape, or *event_spec* declares a type that one draw does not conform
-        to.
+        If *concentration* is a scalar or has more than one axis, or
+        *event_spec* declares a type that one draw does not conform to.
     """
+
+    _backend_capabilities = frozenset({SupportsMean, SupportsVariance, SupportsCovariance})
 
     def __init__(
         self, name: str, concentration: ArrayLike, *, event_spec: OutputSpec | None = None
@@ -165,8 +210,8 @@ class Dirichlet(TFPDistribution, FlatNumericRecordDistribution):
             raise ValueError("concentration must be at least 1-D.")
 
         self._concentration = concentration
-        self._tfp_dist = tfd.Dirichlet(concentration=concentration)
-        super().__init__(name=name, event_spec=event_spec)
+        backend = tfd.Dirichlet(concentration=concentration)
+        super().__init__(name, backend, event_spec=event_spec)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -189,7 +234,7 @@ class Dirichlet(TFPDistribution, FlatNumericRecordDistribution):
 # ---------------------------------------------------------------------------
 
 
-class Multinomial(TFPDistribution, FlatNumericRecordDistribution):
+class Multinomial(TFPDistribution):
     """
     Multinomial distribution over count vectors.
 
@@ -217,9 +262,11 @@ class Multinomial(TFPDistribution, FlatNumericRecordDistribution):
         record.
     ValueError
         If not exactly one of *probs* and *logits* is given, the parameters
-        imply a nonempty batch shape, or *event_spec* declares a type that one
+        describe more than one law, or *event_spec* declares a type that one
         draw does not conform to.
     """
+
+    _backend_capabilities = frozenset({SupportsMean, SupportsVariance, SupportsCovariance})
 
     def __init__(
         self,
@@ -237,15 +284,15 @@ class Multinomial(TFPDistribution, FlatNumericRecordDistribution):
             _, (total_count, probs) = _promote_floats(total_count, probs)
             self._probs = probs
             self._logits = None
-            self._tfp_dist = tfd.Multinomial(total_count=total_count, probs=probs)
+            backend = tfd.Multinomial(total_count=total_count, probs=probs)
         else:
             _, (total_count, logits) = _promote_floats(total_count, logits)
             self._logits = logits
             self._probs = None
-            self._tfp_dist = tfd.Multinomial(total_count=total_count, logits=logits)
+            backend = tfd.Multinomial(total_count=total_count, logits=logits)
 
         self._total_count = total_count
-        super().__init__(name=name, event_spec=event_spec)
+        super().__init__(name, backend, event_spec=event_spec)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -300,9 +347,11 @@ class Wishart(TFPDistribution):
         record.
     ValueError
         If not exactly one of *scale_tril* and *scale* is given, the parameters
-        imply a nonempty batch shape, or *event_spec* declares a type that one
+        describe more than one law, or *event_spec* declares a type that one
         draw does not conform to.
     """
+
+    _backend_capabilities = frozenset({SupportsMean, SupportsVariance})
 
     def __init__(
         self,
@@ -326,8 +375,8 @@ class Wishart(TFPDistribution):
 
         self._df = df
         self._scale_tril = scale_tril
-        self._tfp_dist = tfd.WishartTriL(df=df, scale_tril=scale_tril)
-        super().__init__(name=name, event_spec=event_spec)
+        backend = tfd.WishartTriL(df=df, scale_tril=scale_tril)
+        super().__init__(name, backend, event_spec=event_spec)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -359,7 +408,7 @@ class Wishart(TFPDistribution):
 # ---------------------------------------------------------------------------
 
 
-class VonMisesFisher(TFPDistribution, FlatNumericRecordDistribution):
+class VonMisesFisher(TFPDistribution):
     """
     Von Mises-Fisher distribution on the unit hypersphere.
 
@@ -382,9 +431,11 @@ class VonMisesFisher(TFPDistribution, FlatNumericRecordDistribution):
         If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
         record.
     ValueError
-        If the parameters imply a nonempty batch shape, or *event_spec*
-        declares a type that one draw does not conform to.
+        If the parameters describe more than one law, or *event_spec* declares
+        a type that one draw does not conform to.
     """
+
+    _backend_capabilities = frozenset({SupportsMean, SupportsCovariance})
 
     def __init__(
         self,
@@ -398,10 +449,8 @@ class VonMisesFisher(TFPDistribution, FlatNumericRecordDistribution):
 
         self._mean_direction = mean_direction
         self._concentration = concentration
-        self._tfp_dist = tfd.VonMisesFisher(
-            mean_direction=mean_direction, concentration=concentration
-        )
-        super().__init__(name=name, event_spec=event_spec)
+        backend = tfd.VonMisesFisher(mean_direction=mean_direction, concentration=concentration)
+        super().__init__(name, backend, event_spec=event_spec)
 
     # -- convenient accessors -----------------------------------------------
 

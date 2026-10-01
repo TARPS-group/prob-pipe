@@ -6,7 +6,15 @@ import numpy as np
 import pytest
 import scipy.stats
 
-from probpipe import NumericRecordDistribution, integer_interval, log_prob, mean, sample, variance
+from probpipe import (
+    NumericDistribution,
+    TFPDistribution,
+    integer_interval,
+    log_prob,
+    mean,
+    sample,
+    variance,
+)
 from probpipe.families import Bernoulli, Binomial, Categorical, NegativeBinomial, Poisson
 
 # ---------------------------------------------------------------------------
@@ -42,7 +50,8 @@ def discrete_dist(request):
 
 class TestGeneric:
     def test_is_distribution(self, discrete_dist):
-        assert isinstance(discrete_dist, NumericRecordDistribution)
+        assert isinstance(discrete_dist, TFPDistribution)
+        assert isinstance(discrete_dist, NumericDistribution)
 
     def test_event_shape(self, discrete_dist):
         assert isinstance(discrete_dist.event_shape, tuple)

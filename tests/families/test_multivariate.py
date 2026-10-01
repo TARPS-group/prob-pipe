@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import scipy.stats
 
-from probpipe import NumericRecordDistribution, cov, log_prob, mean, sample, variance
+from probpipe import NumericDistribution, TFPDistribution, cov, log_prob, mean, sample, variance
 from probpipe.families import Dirichlet, Multinomial, VonMisesFisher, Wishart
 
 # ---------------------------------------------------------------------------
@@ -62,7 +62,8 @@ EXPECTED_EVENT_SHAPES = {
 
 class TestGeneric:
     def test_is_distribution(self, multivariate_dist):
-        assert isinstance(multivariate_dist, NumericRecordDistribution)
+        assert isinstance(multivariate_dist, TFPDistribution)
+        assert isinstance(multivariate_dist, NumericDistribution)
 
     def test_event_shape(self, multivariate_dist):
         name = type(multivariate_dist).__name__

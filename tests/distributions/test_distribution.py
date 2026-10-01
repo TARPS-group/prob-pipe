@@ -72,6 +72,7 @@ from probpipe import (
     sphere,
     unit_interval,
 )
+from probpipe.core._numeric_record_distribution import NumericRecordDistributionView
 from probpipe.core._opaque import OpaqueSpec
 from probpipe.core._specs import NumericArraySpec
 from probpipe.core.provenance import Provenance, provenance_ancestors
@@ -616,9 +617,10 @@ class TestDerivedNames:
                 id="bootstrap-replicate",
             ),
             pytest.param(
-                lambda: MultivariateNormal(
-                    "law", jnp.zeros(2), cov=jnp.eye(2)
-                ).as_record_distribution(template=NumericRecordSpec(a=(), b=())),
+                lambda: NumericRecordDistributionView(
+                    MultivariateNormal("law", jnp.zeros(2), cov=jnp.eye(2)),
+                    NumericRecordSpec(a=(), b=()),
+                ),
                 lambda x: x["a"],
                 id="record-view",
             ),
@@ -1295,9 +1297,9 @@ class TestViewAndWrapperDeclarations:
         from probpipe import real
 
         template = NumericRecordSpec(a=(2,), b=())
-        dirichlet = Dirichlet("d", jnp.ones(3)).as_record_distribution(template=template)
-        normal = MultivariateNormal("m", jnp.zeros(3), cov=jnp.eye(3)).as_record_distribution(
-            template=template
+        dirichlet = NumericRecordDistributionView(Dirichlet("d", jnp.ones(3)), template)
+        normal = NumericRecordDistributionView(
+            MultivariateNormal("m", jnp.zeros(3), cov=jnp.eye(3)), template
         )
         # simplex holds for the whole vector, and for no piece of it.
         assert dirichlet.supports == {"a": None, "b": None}
@@ -1350,7 +1352,7 @@ class TestViewAndWrapperDeclarations:
 
     def test_a_record_view_of_a_vector_draws_its_template(self):
         mvn = MultivariateNormal("theta", loc=jnp.zeros(3), cov=jnp.eye(3))
-        view = mvn.as_record_distribution(template=NumericRecordSpec(a=(), b=(2,)))
+        view = NumericRecordDistributionView(mvn, NumericRecordSpec(a=(), b=(2,)))
         dtype = jnp.asarray(0.0).dtype
         assert view.event_spec == OutputSpec(
             RecordSpec(a=NumericArraySpec((), dtype, real), b=NumericArraySpec((2,), dtype, real))

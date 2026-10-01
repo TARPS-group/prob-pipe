@@ -5,6 +5,12 @@
 ``HalfNormal``, ``HalfCauchy``, ``Pareto``, and ``TruncatedNormal`` each derive
 their event term spec from their parameters and take an ``event_spec``
 declaration that names the event's component.
+
+The parameters broadcast against one another. Scalar parameters give a scalar
+draw, and parameters with axes give one draw of independent coordinates of the
+broadcast shape. Each family claims the mean, the variance, the covariance,
+and, except ``Pareto``, whose backend has no quantile function, the quantile of
+each coordinate.
 """
 
 from __future__ import annotations
@@ -23,6 +29,12 @@ from ..core.constraints import (
     unit_interval,
 )
 from ..custom_types import Array, ArrayLike
+from ..distributions._capabilities import (
+    SupportsCovariance,
+    SupportsMean,
+    SupportsQuantile,
+    SupportsVariance,
+)
 from ._backend import TFPDistribution
 
 __all__ = [
@@ -41,6 +53,9 @@ __all__ = [
     "TruncatedNormal",
     "Uniform",
 ]
+
+#: The capabilities the backend computes for the families with a quantile function.
+_CLOSED_FORM = frozenset({SupportsMean, SupportsVariance, SupportsCovariance, SupportsQuantile})
 
 
 # ---------------------------------------------------------------------------
@@ -70,16 +85,16 @@ class Normal(TFPDistribution):
         If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
         record.
     ValueError
-        If the parameters imply a nonempty batch shape, or *event_spec*
-        declares a type that one draw does not conform to.
+        If *event_spec* declares a type that one draw does not conform to.
     """
+
+    _backend_capabilities = _CLOSED_FORM
 
     def __init__(
         self, name: str, loc: ArrayLike, scale: ArrayLike, *, event_spec: OutputSpec | None = None
     ):
         _, (self._loc, self._scale) = _promote_floats(loc, scale)
-        self._tfp_dist = tfd.Normal(loc=self._loc, scale=self._scale)
-        super().__init__(name=name, event_spec=event_spec)
+        super().__init__(name, tfd.Normal(loc=self._loc, scale=self._scale), event_spec=event_spec)
 
     @property
     def loc(self) -> Array:
@@ -120,16 +135,20 @@ class Beta(TFPDistribution):
         If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
         record.
     ValueError
-        If the parameters imply a nonempty batch shape, or *event_spec*
-        declares a type that one draw does not conform to.
+        If *event_spec* declares a type that one draw does not conform to.
     """
+
+    _backend_capabilities = _CLOSED_FORM
 
     def __init__(
         self, name: str, alpha: ArrayLike, beta: ArrayLike, *, event_spec: OutputSpec | None = None
     ):
         _, (self._alpha, self._beta) = _promote_floats(alpha, beta)
-        self._tfp_dist = tfd.Beta(concentration1=self._alpha, concentration0=self._beta)
-        super().__init__(name=name, event_spec=event_spec)
+        super().__init__(
+            name,
+            tfd.Beta(concentration1=self._alpha, concentration0=self._beta),
+            event_spec=event_spec,
+        )
 
     @property
     def alpha(self) -> Array:
@@ -170,9 +189,10 @@ class Gamma(TFPDistribution):
         If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
         record.
     ValueError
-        If the parameters imply a nonempty batch shape, or *event_spec*
-        declares a type that one draw does not conform to.
+        If *event_spec* declares a type that one draw does not conform to.
     """
+
+    _backend_capabilities = _CLOSED_FORM
 
     def __init__(
         self,
@@ -183,8 +203,11 @@ class Gamma(TFPDistribution):
         event_spec: OutputSpec | None = None,
     ):
         _, (self._concentration, self._rate) = _promote_floats(concentration, rate)
-        self._tfp_dist = tfd.Gamma(concentration=self._concentration, rate=self._rate)
-        super().__init__(name=name, event_spec=event_spec)
+        super().__init__(
+            name,
+            tfd.Gamma(concentration=self._concentration, rate=self._rate),
+            event_spec=event_spec,
+        )
 
     @property
     def concentration(self) -> Array:
@@ -225,9 +248,10 @@ class InverseGamma(TFPDistribution):
         If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
         record.
     ValueError
-        If the parameters imply a nonempty batch shape, or *event_spec*
-        declares a type that one draw does not conform to.
+        If *event_spec* declares a type that one draw does not conform to.
     """
+
+    _backend_capabilities = _CLOSED_FORM
 
     def __init__(
         self,
@@ -238,8 +262,11 @@ class InverseGamma(TFPDistribution):
         event_spec: OutputSpec | None = None,
     ):
         _, (self._concentration, self._scale) = _promote_floats(concentration, scale)
-        self._tfp_dist = tfd.InverseGamma(concentration=self._concentration, scale=self._scale)
-        super().__init__(name=name, event_spec=event_spec)
+        super().__init__(
+            name,
+            tfd.InverseGamma(concentration=self._concentration, scale=self._scale),
+            event_spec=event_spec,
+        )
 
     @property
     def concentration(self) -> Array:
@@ -278,14 +305,14 @@ class Exponential(TFPDistribution):
         If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
         record.
     ValueError
-        If the parameters imply a nonempty batch shape, or *event_spec*
-        declares a type that one draw does not conform to.
+        If *event_spec* declares a type that one draw does not conform to.
     """
+
+    _backend_capabilities = _CLOSED_FORM
 
     def __init__(self, name: str, rate: ArrayLike, *, event_spec: OutputSpec | None = None):
         self._rate = _as_float_array(rate)
-        self._tfp_dist = tfd.Exponential(rate=self._rate)
-        super().__init__(name=name, event_spec=event_spec)
+        super().__init__(name, tfd.Exponential(rate=self._rate), event_spec=event_spec)
 
     @property
     def rate(self) -> Array:
@@ -322,16 +349,20 @@ class LogNormal(TFPDistribution):
         If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
         record.
     ValueError
-        If the parameters imply a nonempty batch shape, or *event_spec*
-        declares a type that one draw does not conform to.
+        If *event_spec* declares a type that one draw does not conform to.
     """
+
+    _backend_capabilities = _CLOSED_FORM
 
     def __init__(
         self, name: str, loc: ArrayLike, scale: ArrayLike, *, event_spec: OutputSpec | None = None
     ):
         _, (self._loc, self._scale) = _promote_floats(loc, scale)
-        self._tfp_dist = tfd.LogNormal(loc=self._loc, scale=self._scale)
-        super().__init__(name=name, event_spec=event_spec)
+        super().__init__(
+            name,
+            tfd.LogNormal(loc=self._loc, scale=self._scale),
+            event_spec=event_spec,
+        )
 
     @property
     def loc(self) -> Array:
@@ -374,9 +405,10 @@ class StudentT(TFPDistribution):
         If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
         record.
     ValueError
-        If the parameters imply a nonempty batch shape, or *event_spec*
-        declares a type that one draw does not conform to.
+        If *event_spec* declares a type that one draw does not conform to.
     """
+
+    _backend_capabilities = _CLOSED_FORM
 
     def __init__(
         self,
@@ -388,8 +420,11 @@ class StudentT(TFPDistribution):
         event_spec: OutputSpec | None = None,
     ):
         _, (self._df, self._loc, self._scale) = _promote_floats(df, loc, scale)
-        self._tfp_dist = tfd.StudentT(df=self._df, loc=self._loc, scale=self._scale)
-        super().__init__(name=name, event_spec=event_spec)
+        super().__init__(
+            name,
+            tfd.StudentT(df=self._df, loc=self._loc, scale=self._scale),
+            event_spec=event_spec,
+        )
 
     @property
     def df(self) -> Array:
@@ -434,16 +469,16 @@ class Uniform(TFPDistribution):
         If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
         record.
     ValueError
-        If the parameters imply a nonempty batch shape, or *event_spec*
-        declares a type that one draw does not conform to.
+        If *event_spec* declares a type that one draw does not conform to.
     """
+
+    _backend_capabilities = _CLOSED_FORM
 
     def __init__(
         self, name: str, low: ArrayLike, high: ArrayLike, *, event_spec: OutputSpec | None = None
     ):
         _, (self._low, self._high) = _promote_floats(low, high)
-        self._tfp_dist = tfd.Uniform(low=self._low, high=self._high)
-        super().__init__(name=name, event_spec=event_spec)
+        super().__init__(name, tfd.Uniform(low=self._low, high=self._high), event_spec=event_spec)
 
     @property
     def low(self) -> Array:
@@ -484,16 +519,16 @@ class Cauchy(TFPDistribution):
         If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
         record.
     ValueError
-        If the parameters imply a nonempty batch shape, or *event_spec*
-        declares a type that one draw does not conform to.
+        If *event_spec* declares a type that one draw does not conform to.
     """
+
+    _backend_capabilities = _CLOSED_FORM
 
     def __init__(
         self, name: str, loc: ArrayLike, scale: ArrayLike, *, event_spec: OutputSpec | None = None
     ):
         _, (self._loc, self._scale) = _promote_floats(loc, scale)
-        self._tfp_dist = tfd.Cauchy(loc=self._loc, scale=self._scale)
-        super().__init__(name=name, event_spec=event_spec)
+        super().__init__(name, tfd.Cauchy(loc=self._loc, scale=self._scale), event_spec=event_spec)
 
     @property
     def loc(self) -> Array:
@@ -534,16 +569,16 @@ class Laplace(TFPDistribution):
         If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
         record.
     ValueError
-        If the parameters imply a nonempty batch shape, or *event_spec*
-        declares a type that one draw does not conform to.
+        If *event_spec* declares a type that one draw does not conform to.
     """
+
+    _backend_capabilities = _CLOSED_FORM
 
     def __init__(
         self, name: str, loc: ArrayLike, scale: ArrayLike, *, event_spec: OutputSpec | None = None
     ):
         _, (self._loc, self._scale) = _promote_floats(loc, scale)
-        self._tfp_dist = tfd.Laplace(loc=self._loc, scale=self._scale)
-        super().__init__(name=name, event_spec=event_spec)
+        super().__init__(name, tfd.Laplace(loc=self._loc, scale=self._scale), event_spec=event_spec)
 
     @property
     def loc(self) -> Array:
@@ -582,14 +617,14 @@ class HalfNormal(TFPDistribution):
         If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
         record.
     ValueError
-        If the parameters imply a nonempty batch shape, or *event_spec*
-        declares a type that one draw does not conform to.
+        If *event_spec* declares a type that one draw does not conform to.
     """
+
+    _backend_capabilities = _CLOSED_FORM
 
     def __init__(self, name: str, scale: ArrayLike, *, event_spec: OutputSpec | None = None):
         self._scale = _as_float_array(scale)
-        self._tfp_dist = tfd.HalfNormal(scale=self._scale)
-        super().__init__(name=name, event_spec=event_spec)
+        super().__init__(name, tfd.HalfNormal(scale=self._scale), event_spec=event_spec)
 
     @property
     def scale(self) -> Array:
@@ -626,16 +661,20 @@ class HalfCauchy(TFPDistribution):
         If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
         record.
     ValueError
-        If the parameters imply a nonempty batch shape, or *event_spec*
-        declares a type that one draw does not conform to.
+        If *event_spec* declares a type that one draw does not conform to.
     """
+
+    _backend_capabilities = _CLOSED_FORM
 
     def __init__(
         self, name: str, loc: ArrayLike, scale: ArrayLike, *, event_spec: OutputSpec | None = None
     ):
         _, (self._loc, self._scale) = _promote_floats(loc, scale)
-        self._tfp_dist = tfd.HalfCauchy(loc=self._loc, scale=self._scale)
-        super().__init__(name=name, event_spec=event_spec)
+        super().__init__(
+            name,
+            tfd.HalfCauchy(loc=self._loc, scale=self._scale),
+            event_spec=event_spec,
+        )
 
     @property
     def loc(self) -> Array:
@@ -676,9 +715,10 @@ class Pareto(TFPDistribution):
         If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
         record.
     ValueError
-        If the parameters imply a nonempty batch shape, or *event_spec*
-        declares a type that one draw does not conform to.
+        If *event_spec* declares a type that one draw does not conform to.
     """
+
+    _backend_capabilities = frozenset({SupportsMean, SupportsVariance, SupportsCovariance})
 
     def __init__(
         self,
@@ -689,8 +729,11 @@ class Pareto(TFPDistribution):
         event_spec: OutputSpec | None = None,
     ):
         _, (self._concentration, self._scale) = _promote_floats(concentration, scale)
-        self._tfp_dist = tfd.Pareto(concentration=self._concentration, scale=self._scale)
-        super().__init__(name=name, event_spec=event_spec)
+        super().__init__(
+            name,
+            tfd.Pareto(concentration=self._concentration, scale=self._scale),
+            event_spec=event_spec,
+        )
 
     @property
     def concentration(self) -> Array:
@@ -735,9 +778,10 @@ class TruncatedNormal(TFPDistribution):
         If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
         record.
     ValueError
-        If the parameters imply a nonempty batch shape, or *event_spec*
-        declares a type that one draw does not conform to.
+        If *event_spec* declares a type that one draw does not conform to.
     """
+
+    _backend_capabilities = _CLOSED_FORM
 
     def __init__(
         self,
@@ -750,10 +794,11 @@ class TruncatedNormal(TFPDistribution):
         event_spec: OutputSpec | None = None,
     ):
         _, (self._loc, self._scale, self._low, self._high) = _promote_floats(loc, scale, low, high)
-        self._tfp_dist = tfd.TruncatedNormal(
-            loc=self._loc, scale=self._scale, low=self._low, high=self._high
+        super().__init__(
+            name,
+            tfd.TruncatedNormal(loc=self._loc, scale=self._scale, low=self._low, high=self._high),
+            event_spec=event_spec,
         )
-        super().__init__(name=name, event_spec=event_spec)
 
     @property
     def loc(self) -> Array:

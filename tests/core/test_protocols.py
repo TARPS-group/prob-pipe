@@ -261,8 +261,8 @@ class TestNamedComponents:
     def test_product_distribution(self, joint):
         assert hasattr(joint, "fields")
 
-    def test_normal_fields_has_name(self, normal):
-        assert normal.fields == ("x",)
+    def test_normal_components_have_its_name(self, normal):
+        assert tuple(normal.event_spec.components) == ("x",)
 
 
 # ---------------------------------------------------------------------------

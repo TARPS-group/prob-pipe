@@ -35,7 +35,7 @@ from ._capabilities import (
     SupportsSampling,
     SupportsVariance,
 )
-from ._distribution import Distribution
+from ._distribution import Distribution, NumericDistribution
 from ._joint_utils import (
     KeyPath,
     _parse_condition_args,
@@ -88,7 +88,7 @@ def _sequential_class_for_components(components: dict) -> type:
         leaves,
         (SupportsLogProb, SupportsMean, SupportsVariance),
     )
-    all_numeric = all(isinstance(leaf, NumericRecordDistribution) for leaf in leaves)
+    all_numeric = all(isinstance(leaf, NumericDistribution) for leaf in leaves)
 
     key = (frozenset(extra_bases), all_numeric)
     if key in _SEQUENTIAL_CLASS_CACHE:
@@ -333,7 +333,7 @@ class SequentialJointDistribution(
                 # Conditioned component: broadcast fixed value to sample_shape
                 val = self._conditioned_values[cname]
                 sampled[cname] = jnp.broadcast_to(val, sample_shape + val.shape)
-            elif isinstance(comp, NumericRecordDistribution):
+            elif isinstance(comp, Distribution):
                 # Root distribution: sample with sample_shape
                 sampled[cname] = comp._sample(subkey, sample_shape)
             else:
@@ -398,7 +398,7 @@ class SequentialJointDistribution(
             if components == "unconditioned" and cname in self._conditioned_names:
                 continue
             val = structured[cname]
-            if isinstance(comp, NumericRecordDistribution):
+            if isinstance(comp, Distribution):
                 lp = comp._log_prob(val)
             else:
                 cond_dist = _resolve_callable_component(comp, structured)
@@ -551,7 +551,7 @@ class SequentialJointDistribution(
     def __repr__(self) -> str:
         parts = []
         for k, v in self._raw_components.items():
-            if isinstance(v, NumericRecordDistribution):
+            if isinstance(v, Distribution):
                 parts.append(f"{k}={type(v).__name__}")
             else:
                 parts.append(f"{k}=<callable>")

@@ -111,12 +111,12 @@ from probpipe.distributions.gaussian_random_function import (
 from probpipe.families import (
     BijectorTransformedDistribution,
     FactoredMultivariateGaussian,
-    GaussianFamily,
     GaussianProcess,
     LinearPushforwardDistribution,
     MixtureDistribution,
+    PoissonFamily,
 )
-from probpipe.families._conditional import _IndependentObservations
+from probpipe.families._conditional import _LogRatePoisson
 from probpipe.families._programs import (
     PyMCModel,
     StanModel,
@@ -301,9 +301,9 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     FlattenedDistributionView: lambda: ProductDistribution(
         a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)
     ).as_flat_distribution(),
-    NumericRecordDistributionView: lambda: MultivariateNormal(
-        "theta", jnp.zeros(3), cov=jnp.eye(3)
-    ).as_record_distribution(template=NumericRecordSpec(a=(), b=(2,))),
+    NumericRecordDistributionView: lambda: NumericRecordDistributionView(
+        MultivariateNormal("theta", jnp.zeros(3), cov=jnp.eye(3)), NumericRecordSpec(a=(), b=(2,))
+    ),
     _RecordDistributionView: lambda: ProductDistribution(
         a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)
     )["a"],
@@ -343,7 +343,7 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     _UnnormalizedConditional: lambda: _unnormalized_conditional(
         Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0), Record("given", {"a": 0.0})
     ),
-    _IndependentObservations: lambda: GaussianFamily().build("y", jnp.zeros(3), 1.0),
+    _LogRatePoisson: lambda: PoissonFamily()._build_canonical("y", jnp.zeros(3)),
     MixtureDistribution: lambda: MixtureDistribution(
         "m",
         [
@@ -474,7 +474,7 @@ _PICKLE_FAILURES = {
     _ShiftedGRF: _TFP_BACKEND,
     _ScaledGRF: _TFP_BACKEND,
     _IndependentSumGRF: _TFP_BACKEND,
-    _IndependentObservations: _TFP_BACKEND,
+    _LogRatePoisson: _TFP_BACKEND,
     TransformedDistribution: _RUNTIME_CLASS,
     SequentialJointDistribution: _RUNTIME_CLASS,
     _MixtureMarginal: _RUNTIME_CLASS,

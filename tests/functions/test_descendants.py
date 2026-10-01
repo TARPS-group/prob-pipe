@@ -18,6 +18,7 @@ from probpipe import (
     Normal,
     NumericRecord,
     NumericRecordBatch,
+    NumericRecordDistributionView,
     NumericRecordSpec,
     ProductDistribution,
     Record,
@@ -588,11 +589,10 @@ def test_cyclic_record_view_graphs_fail_closed(cycle_kind):
 def test_known_unapproved_record_wrappers_fail_closed():
     root = ProductDistribution(x=Normal("x", 0.0, 1.0))
     flattened = root.as_flat_distribution()
-    lifted = MultivariateNormal(
-        loc=jnp.zeros(2),
-        cov=jnp.eye(2),
-        name="theta",
-    ).as_record_distribution(template=NumericRecordSpec(a=(), b=()))
+    lifted = NumericRecordDistributionView(
+        MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="theta"),
+        NumericRecordSpec(a=(), b=()),
+    )
 
     for value, label in (
         (flattened, "FlattenedDistributionView"),

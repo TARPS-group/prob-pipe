@@ -63,7 +63,6 @@ _OTHER_PACKAGES = frozenset({"EmpiricalDistribution"})
 
 #: Declarations the implementation does not match yet, with the change each awaits.
 _PENDING = {
-    "TFPDistribution": "the adapter takes the wrapped backend distribution as backend_dist",
     "BootstrapReplicateDistribution": (
         "replicate_size is positional-or-keyword, and event_spec names the replicate's component"
     ),
