@@ -330,7 +330,7 @@ class NamedTree[L]:
 
     # structure-preserving transforms — return the same family
     def with_path_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Self: ...
-    # rename or move nodes, old -> new; each key is the exact path of a node;
+    # rename or move nodes, old -> new, where old is the exact path of a node;
     # a new name may itself be a path, which moves the node there
     def map(self, f: Callable[[L], L], /, *args, **kwargs) -> Self: ...
     def map_with_keys(self, f: Callable[[str, L], L], /, *args, **kwargs) -> Self: ...
@@ -349,9 +349,22 @@ class NamedTree[L]:
 
 The parameter `L` declares the leaf type, which is what `values()`, `[]`, and `map` accept and return; interior nodes are always the family's own class. Implementations should check leaves against the declared leaf type at construction.
 
-`with_path_names` renames the fields *within* a tree, whereas `with_name` renames the object itself (II.4). `at_path` has a level analogue in `Batch.at_levels` (II.5), and the two are alike: a path addresses a position and returns a leaf or a subtree, and named level indexers address positions and return an element or a sub-batch.
+`with_path_names` renames the nodes *within* a tree, whereas `with_name` renames the object itself (II.4). `at_path` has a level analogue in `Batch.at_levels` (II.5), and the two are alike: a path addresses a position and returns a leaf or a subtree, and named level indexers address positions and return an element or a sub-batch.
 
-`with_path_names` renames or moves nodes by `old="new"` pairs. Each key is the exact path of the node it renames, so keyword pairs address top-level nodes and the positional mapping form addresses any node. A target may itself be a path: `with_path_names({"group/mu": "mu"})` promotes the field to the top level and `{"mu": "group/mu"}` demotes it under `group`, creating intermediate nodes as needed. All substitutions apply simultaneously, so sources resolve against the original tree and swaps and simultaneous ancestor–descendant moves are well-defined. An interior node that the result leaves empty dissolves, since a tree holds no empty subtrees, and a target may then take its path. A group that one move empties and another refills keeps its position. Every target is checked against the result: a collision raises, as a rename onto an existing sibling does, and so do a move into the moved node's own subtree and two targets where one is a prefix of the other. Ordering is deterministic: an in-place rename keeps its position, and a moved node appends at the end of its new parent's children, several nodes moved into one parent appending in the order the renames are given, the mapping's entries before the keywords. A rename is in place when the node's parent in the result is the same node, which requires an unchanged parent path and no ancestor that moves. Any other rename moves the node. In `{"g": "h", "g/mu": "g/m"}` the original `g` becomes `h`, so `mu` moves and is appended as `m` to a new group `g`.
+`with_path_names` renames nodes by `old="new"` pairs. A **rename** gives the node at path `old` the path `new`, and the node keeps its subtree. In each pair, `old` is the exact path of a node, so keyword pairs address top-level nodes and the positional mapping form addresses any node.
+
+A target may itself be a path, so a rename can **move** a node to another parent: `with_path_names({"group/mu": "mu"})` promotes the field to the top level, and `{"mu": "group/mu"}` demotes it under `group`, creating intermediate nodes as needed. A rename is *in place* when its target has the node's parent path and no ancestor of the node is itself renamed, so the node keeps its parent; every other rename moves the node. An interior node that the result leaves empty dissolves, since a tree holds no empty subtrees, and a target may then take its path.
+
+All renames apply simultaneously: each `old` resolves against the original tree, so swaps such as `{"a": "b", "b": "a"}` and simultaneous moves of a node and its ancestor are well-defined.
+
+Every target is checked against the result, and three cases raise:
+1. a collision, as when a node is renamed onto an existing sibling;
+2. a move into the moved node's own subtree;
+3. two targets of which one is a prefix of the other.
+
+Ordering is deterministic. An in-place rename keeps the node's position, and a moved node is appended to its new parent's children in the order the renames are given, with the mapping's entries before the keywords. A group that one move empties and another refills keeps its position.
+
+For example, in `{"g": "h", "g/mu": "g/m"}` the original `g` becomes `h`. The target `g/m` keeps the parent path of `mu`, but `g` itself is renamed, so `mu` moves and is appended as `m` to a new group `g`.
 
 ### Rationale
 
@@ -375,13 +388,21 @@ Each **dispatch method** declares:
 5. whether it is **exact**: a method either returns a representation of the requested result or a stand-in for it, declared where the method is registered and fixed for the method's life;
 6. a **priority**: an integer rank among the methods of the same exactness, and the one thing about a method a deployment may change at runtime.
 
-Dispatch is by argument type: a `UnaryDispatchRegistry` keys on the first argument's type, and a `BinaryDispatchRegistry` on the first two. The registry takes matching methods in **selection order** and runs the first whose `check` establishes feasibility. An unresolved higher-ranked candidate prevents a probe from claiming which method will run; execution resolves prerequisite plans first or reports unavailable requirements (V.9). Selection order is the same in every registry:
-1. exact methods before approximate ones, so exactness is never silently traded away;
+Dispatch is by argument type: a `UnaryDispatchRegistry` keys on the first argument's type, and a `BinaryDispatchRegistry` on the first two. The registry takes the matching methods in **selection order** and runs the first whose `check` establishes feasibility. While a higher-ranked candidate is unresolved, the registry's `check` reports the call unresolved (V.1), and execution resolves prerequisite plans first or reports unavailable requirements (V.9). Selection order is the same in every registry:
+1. exact methods before approximate ones, so auto-selection runs an exact method whenever one is feasible;
 2. priority among methods of the same exactness, higher first;
 3. specificity, favoring the method whose declared types are closest to the arguments' classes in method-resolution order: a type that admits a class without appearing in its method-resolution order, such as a registered virtual subclass of an abstract base class, counts as least specific, and a binary registry sums the distances of its two arguments;
 4. registration order.
 
-Specificity depends on the arguments, so `list_methods` orders by the other three criteria. A registry may also declare a floor tier below the methods it orders, whatever their exactness (V.7). A method whose priority is `None` is **opt-in-only**, skipped by auto-selection and reachable only by name. That is the default, so registering a method never silently changes what runs until a contributor ranks it. `set_priorities` re-ranks at runtime, by mapping or by keyword since a method name need not be an identifier, without changing whether a method is exact, and warns when a method moves into or out of opt-in-only. A caller can bypass auto-selection with `method="..."`, which bypasses the type pre-filter and nothing else: a call with fewer positional arguments than the registry's arity requires raises `TypeError`, whether or not a method is named. A call with no feasible method raises `ResolutionError`, naming the methods tried and what each was missing; a named method that is infeasible, or a name that is not registered, raises the same. The registry's `check` and `execute` are the dispatch interface, so an unknown name is a dispatch that cannot resolve; `get_method` and `set_priorities` look a name up and raise `KeyError`. A non-executing probe may instead report unresolved requirements (V.1); it must not report those as either feasibility or mathematical nonexistence. New methods are added by registration at import, by whichever layer owns the implementation, so a registry gains its providers without importing them. A registry reads a method's declarations once, at registration, and validates them before it changes; what it ranks and reports thereafter is that registration, so a method mutated afterwards changes nothing.
+A registry may also declare a floor tier, which ranks below every method it orders, whatever their exactness (V.7).
+
+**Priority.** A method whose priority is `None` is **opt-in-only**: auto-selection skips it, and a caller selects it by name. `None` is the default, so a method registered without a priority leaves auto-selection unchanged until a contributor ranks it. `set_priorities` re-ranks methods at runtime, by keyword or by a mapping, which accepts every method name. It keeps each method's declared exactness and warns when a method moves into or out of opt-in-only.
+
+**Listing.** `list_methods` returns the method names ranked by exactness, priority, and registration order. A call also ranks its candidates by specificity, before registration order, since specificity is measured against that call's arguments.
+
+**Naming a method.** `method="..."` selects the named method in place of auto-selection. Naming skips the type pre-filter alone: the named method's `check` still decides feasibility, and a call with fewer positional arguments than the registry's arity raises `TypeError`, as it does without a name. A call with no feasible method raises `ResolutionError`, naming the methods tried and what each was missing, and an infeasible named method or an unregistered name raises the same. The registry's `check` and `execute` are the dispatch interface, so an unregistered name is a dispatch that cannot resolve, whereas `get_method` and `set_priorities` look a name up and raise `KeyError` for an unregistered one.
+
+**Registration.** Methods are added by registration at import, by whichever layer owns the implementation, so a registry gains its providers without importing them. A registry reads a method's declarations once, at registration, and validates them before adding the method; thereafter it ranks and reports the declarations it read.
 
 ```python
 type UnarySupportedTypes = tuple[type, ...]
