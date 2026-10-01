@@ -114,7 +114,7 @@ Separate object and component names serve `C5 – Naming for unambiguous meaning
 
 ### Contract
 
-**The `Numeric` interface.** The numeric kinds share the `to_vector` interface, which lays a value out as one flat vector in canonical order. In addition, `vector_size` gives that vector's length, and `from_vector` rebuilds a value from a vector. The coordinate protocols expose the same layout to foreign libraries, so `np.*` and `jnp.*` functions apply to the numeric kinds (returning bare arrays). A bare array passed where a `Numeric` value is expected is promoted to the appropriate numeric type. Functions therefore act on a numeric value in two ways: a foreign function sees the coordinates and returns a bare array, while ProbPipe's own operators and elementwise `map` preserve structure and return tracked terms.
+**The `Numeric` interface.** The numeric kinds share the `to_vector` interface, which lays a value out as one flat vector in canonical order. In addition, `vector_size` gives that vector's length, and `from_vector` rebuilds a value from a vector. The coordinate protocols expose the same layout to foreign libraries, so `np.*` and `jnp.*` functions apply to the numeric kinds (returning bare arrays). A bare array passed where a `Numeric` value is expected is promoted to the appropriate numeric type. Functions therefore act on a numeric value in two ways: a foreign function sees the coordinates and returns a bare array, while ProbPipe's own operators and entrywise `map` preserve structure and return tracked terms.
 
 ```python
 class Numeric(ABC):                         # the flat-vector interface of the numeric kinds
@@ -150,7 +150,7 @@ A numeric kind may also specify the **support** of its values with a `Constraint
 ```python
 class Constraint(ABC):
     @abstractmethod
-    def check(self, value: ArrayLike) -> Array: ...   # elementwise membership
+    def check(self, value: ArrayLike) -> Array: ...   # entrywise membership
 ```
 
 ### Rationale
@@ -236,7 +236,7 @@ class BatchSpec(TermSpec):         # the batch kind's spec; is_valid accepts a m
 
 Construction checks every element against `element_spec` and reports the position that failed, since the batch asserts that spec of all of them. A constructor over raw elements completes a bare element spec as any constructor does (III.7): a record exposes its fields, and any other element is a whole term whose component defaults to the batch's label, captured once. A batch an operation produces carries the producer's declaration, the event declaration for draws (VI.3) and the completed output declaration for a sweep (V.6).
 
-**`[]` dispatch.** A key is either a **position** (for axes access) or a **name** (for component access). A position is thus an integer, a slice, or a tuple of those, and it addresses the batch axes, which `Batch` itself handles. A name is a string, or a tuple of strings for a path, and it addresses a component of every element, a record element's components being its fields. For an exposed record it returns the field's column as a view (II.4): a batch that keeps its container's levels, takes the field's spec as its `element_spec`, and is named from the field key. For a whole-term element it returns the batch itself under its one component, so a consumer addresses a batch by component whatever the elements' packaging. A path addresses a field within a record element. A tuple mixing the two is invalid.
+**`[]` dispatch.** The argument of `[]` is either a **position** (for axes access) or a **name** (for component access). A position is thus an integer, a slice, or a tuple of those, and it addresses the batch axes, which `Batch` itself handles. A name is a string, or a tuple of strings for a path, and it addresses a component of every element, a record element's components being its fields. For an exposed record it returns the field's column as a view (II.4): a batch that keeps its container's levels, takes the field's spec as its `element_spec`, and is named from the field key. For a whole-term element it returns the batch itself under its one component, so a consumer addresses a batch by component whatever the elements' packaging. A path addresses a field within a record element. A tuple mixing the two is invalid.
 
 ```python
 class Batch[E](TrackedTerm):
@@ -274,7 +274,7 @@ class Batch[E](TrackedTerm):
 
 **A polymorphic multiplicity.** An axis size may be a symbolic dimension name instead of an integer, as a `NumericArraySpec` shape entry may, so a *declaration* can fix the number of levels while deferring how many elements each holds: "returns a batch of `S` draws" before `S` is known. The names share one scope with the element's schema, so a batch of `("n",)` over arrays of shape `("n",)` is square by declaration. A live `Batch` is concrete, since it holds elements at positions; construction refuses a spec with free dimensions, and `batch_size` is defined once they are bound.
 
-**Level names.** Each level carries a name, listed in order by `level_names`. Names are unique within a batch and are identifiers, since `at_levels` addresses a level by keyword. An operation names the level it mints after itself, and a constructor such as `stack` takes the name to give it. A name already in use raises, as does a rename onto one, so the caller renames first or supplies another. `with_level_names` renames levels while preserving the object's name, shapes, and elements; subsequent views use the renamed levels. Renaming a *view* is refused when the new name collides with a level in its root selection that it no longer carries; `with_name` gives it a new name and view root. Level names are the key by which operations align batched operands (VI.11), and they are independent of the field names within an element.
+**Level names.** Each level carries a name, listed in order by `level_names`. Names are unique within a batch and are identifiers, since `at_levels` addresses a level by keyword. An operation names the level it mints after itself, and a constructor such as `stack` takes the name to give it. A name already in use raises, as does a rename onto one, so the caller renames first or supplies another. `with_level_names` renames levels while preserving the object's name, shapes, and elements; subsequent views use the renamed levels. Renaming a *view* is refused when the new name collides with a level in its root selection that it no longer carries; `with_name` gives it a new name and view root. Operations align batched operands by their level names (VI.11), which are independent of the field names within an element.
 
 **View identity.** A view of a batch, whether an element or a sub-batch, derives its name from the batch it was taken from and the positions it selects, naming the level each selection addresses. Take a batch named `posterior`, with a `chain` level of `(4,)` over a `draw` level of `(1000,)`:
 

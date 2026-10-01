@@ -35,7 +35,7 @@ It carries the full set of array operators, for example arithmetic and compariso
 ```python
 class NumericArray(TrackedTerm, Numeric):
     @property
-    def vector_size(self) -> int: ...     # the number of elements
+    def vector_size(self) -> int: ...     # the number of entries
     def to_vector(self) -> Array: ...     # the array raveled in row-major order
     @classmethod
     def from_vector(cls, name: str, spec: NumericArraySpec, vec: Array) -> NumericArray: ...
@@ -174,7 +174,7 @@ class LinOp(Function, ABC):        # the linear subtype of the III.3 base
 
     # square-only queries
     def solve(self, b: Array) -> Array: ...
-    def cholesky(self) -> LinOp: ...           # a triangular factor L with A = L Lᵀ
+    def cholesky(self) -> LinOp: ...           # a lower-triangular L with A = L Lᵀ
     def diag(self) -> Array: ...
     def logdet(self) -> Array: ...   # scalar Arrays rather than floats, keeping the queries differentiable
     def trace(self) -> Array: ...
@@ -295,7 +295,7 @@ class NumericRecord(Record, Numeric):
     def from_vector(cls, name: str, spec: NumericRecordSpec, vec: Array) -> NumericRecord: ...
 ```
 
-**Vector-space arithmetic.** `NumericRecord` implements the `Numeric` interface of II.3, so functions act on it in the two ways stated there. ProbPipe's own operators preserve structure and return tracked terms. They are the vector-space set, which is `+` and `-` between records sharing a schema and scalar `*` and `/`, and `map(f)` for elementwise maps, so `record.map(jnp.cos)` is the tracked form of `jnp.cos(record)`. Array-shaped operations such as broadcasting and positional indexing stay with arrays, and `__array_ufunc__` is left undefined, so NumPy and JAX functions behave alike on the same object.
+**Vector-space arithmetic.** `NumericRecord` implements the `Numeric` interface of II.3, so functions act on it in the two ways stated there. ProbPipe's own operators preserve structure and return tracked terms. They are the vector-space set, which is `+` and `-` between records sharing a schema and scalar `*` and `/`, and `map(f)` for entrywise maps, so `record.map(jnp.cos)` is the tracked form of `jnp.cos(record)`. Array-shaped behavior such as broadcasting and positional indexing stays with arrays, and `__array_ufunc__` is left undefined, so NumPy and JAX functions behave alike on the same object.
 
 ### Rationale
 
@@ -306,7 +306,7 @@ A `Record` is the *values* half of `C1 – Uniform interface to functions, distr
 - *Pytrees.* `Record` and `NumericRecord` are registered as JAX pytrees for advanced use, and the native `NamedTree` methods are the supported interface. JAX traversal follows the pytree registration, which can disagree with ProbPipe on what is a leaf, so users applying raw JAX functions are responsible for the documented behavior. Record equality is structural value equality, which is weaker than treedef equality. The registration's children are the field arrays, with a `NumericRecord`'s native leaves converting at this boundary, and its static aux data is the schema alone, since identity is boundary-attached (II.4); native container types therefore never enter a trace either. A round-trip returns bare-array leaves and keeps a `Record` a `Record`.
 
 - *Single-field presentation.* A `Record` is a container and presents as one, whatever its field count: a field is reached by indexing, and the array operators are the vector-space operations above.
-- *Construction validation.* Construction checks each leaf against its spec's `is_valid`, which validates structure only; for a `NumericArraySpec` that is shape and dtype, with dtype checked by `numpy.can_cast` same-kind, so a widening promotion or a within-kind narrowing passes and a cross-kind conversion raises. A `NumericArraySpec`'s `support` is descriptive metadata: checking it is data-dependent and element-wise, and it reduces to a Python `bool`, so it cannot run under `jax.jit` tracing, where construction also happens because pytree unflatten reconstructs a value inside the trace. Leaf validation is skipped during pytree unflattening, where a leaf's shape is transform-relative.
+- *Construction validation.* Construction checks each leaf against its spec's `is_valid`, which validates structure only; for a `NumericArraySpec` that is shape and dtype, with dtype checked by `numpy.can_cast` same-kind, so a widening promotion or a within-kind narrowing passes and a cross-kind conversion raises. A `NumericArraySpec`'s `support` is descriptive metadata: checking it is data-dependent and entrywise, and it reduces to a Python `bool`, so it cannot run under `jax.jit` tracing, where construction also happens because pytree unflatten reconstructs a value inside the trace. Leaf validation is skipped during pytree unflattening, where a leaf's shape is transform-relative.
 
 ## III.6 — `RecordBatch` and `NumericRecordBatch`
 
@@ -392,7 +392,7 @@ class Distribution(TrackedTerm):
     def with_dim_names(self, **names: str) -> Self: ...   # rename symbolic dimensions before composing (IV.2)
     def __getitem__(self, key: str | tuple[str, ...]) -> Distribution: ...
     # the law itself at a whole term's component, or the field view at another event path;
-    # any other key raises
+    # any other argument raises
 ```
 
 **Numeric distributions.** A `NumericDistribution` is a `Distribution` whose `event_spec.spec` is a `NumericSpec` (II.3), so its draws implement `Numeric` and the flat-vector interface applies; a scalar `Normal`'s `NumericArraySpec` event qualifies as a record event does. Membership is read from the declaration, so `isinstance(d, NumericDistribution)` holds if and only if the declaration of `d` is numeric, whatever its class. A class whose every instance is numeric may inherit the marker, and construction checks that each instance is numeric. Exactly the numeric laws have the marker's views, which, like `event_shape`, are final properties computed from the declaration:
@@ -484,7 +484,7 @@ class SupportsCovariance(Protocol):
 
 @runtime_checkable
 class SupportsQuantile(Protocol):
-    def _quantile(self, q: ArrayLike) -> Array: ...   # numeric draws: one value per level in q, per coordinate
+    def _quantile(self, q: ArrayLike) -> Array: ...   # numeric draws: one value per probability in q, per coordinate
 
 @runtime_checkable
 class SupportsExpectation(Protocol):
@@ -528,7 +528,7 @@ Each of these capabilities is defined only for a probability law: a sampler draw
 
 The projection rows are exact whenever the parent's answer is, and the density rows are exact per path. Only sampling requires the parent to sample, so a view on a non-sampling parent still carries its projected moments.
 
-Each derived capability carries the parent's guard for the call that its derivation makes, such as the parent's quantile guard at the same levels for the quantile row. The sample row passes its key and sample shape to the parent unchanged, so the view's draw at a key is the projection at `p` of the parent's draw at that key, and views of one parent drawn with one key are projections of the same parent draws. A given that covers every field of the view is malformed, since no law remains, so the conditioning row's guard rejects it and `_condition_on` raises `ValueError`. A selection drops each node that the given covers and keeps the rest.
+Each derived capability carries the parent's guard for the call that its derivation makes, such as the parent's quantile guard at the same probabilities for the quantile row. The sample row passes its key and sample shape to the parent unchanged, so the view's draw at a key is the projection at `p` of the parent's draw at that key, and views of one parent drawn with one key are projections of the same parent draws. A given that covers every field of the view is malformed, since no law remains, so the conditioning row's guard rejects it and `_condition_on` raises `ValueError`. A selection drops each node that the given covers and keeps the rest.
 
 **The marginal's capabilities.** A law claiming `SupportsMarginals` may define the companion `_marginal_capabilities(path)`, which returns the capabilities its exact marginal at `path` claims, read from its declarations without building the marginal. The marginals of a law that defines none claim the law's own capabilities. A factored joint reports the capabilities of the factors a marginal keeps, and an empirical law reports sampling and its moments but no density, so a view of `Normal("a", 0.0, 1.0) * EmpiricalDistribution("b", atoms)` at `a` claims a density and one at `b` does not. A view reads the report once, at construction, since its path is fixed, and offers the density rows when the report includes the density. The projection rows derive from the parent's own capabilities, since a view co-samples its parent.
 
