@@ -176,7 +176,7 @@ def test_workflow_run_reproduces_one_lifted_call():
     with workflow_run(seed=42):
         second = wf(normal)
 
-    assert jnp.allclose(first.samples, second.samples)
+    assert jnp.allclose(first.atoms, second.atoms)
 
 
 def test_workflow_seed_is_separate_from_user_seed_parameter():
@@ -207,10 +207,10 @@ def test_workflow_seed_is_separate_from_user_seed_parameter():
     with workflow_run(seed=42):
         second = wf(normal, seed=7.0)
 
-    assert jnp.allclose(first.samples["add_user_seed"], second.samples["add_user_seed"])
+    assert jnp.allclose(first.atoms["add_user_seed"], second.atoms["add_user_seed"])
     assert jnp.allclose(
-        first.samples["add_user_seed"],
-        base_result.samples["identity"] + 7.0,
+        first.atoms["add_user_seed"],
+        base_result.atoms["identity"] + 7.0,
     )
 
 

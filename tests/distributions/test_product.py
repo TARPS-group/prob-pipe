@@ -26,8 +26,17 @@ from probpipe import (
 from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._record_batch import RecordBatch
 from probpipe.core._record_distribution import _RecordDistributionView
+from probpipe.core._specs import RecordSpec
 from probpipe.core.record import Record
 from probpipe.values._function_base import Function
+
+
+def _labelled_law(name: str = "je") -> EmpiricalDistribution:
+    """An empirical law over records of an opaque label and a numeric id."""
+    columns = {"labels": np.array(["a", "b", "c"], dtype=object), "ids": jnp.array([0, 1, 2])}
+    atoms = RecordBatch("rows", columns, "row", element_spec=RecordSpec(labels=None, ids=()))
+    return EmpiricalDistribution(name, atoms)
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -343,16 +352,10 @@ class TestNestedSampleFlatten:
             np.testing.assert_allclose(rec[leaf], s[leaf], atol=1e-6)
 
     def test_batched_nested_non_numeric_field_is_a_plain_batch(self):
-        # A non-numeric joint (an object-dtype JointEmpirical leaf) makes the
+        # A non-numeric leaf (an empirical law over labelled records) makes the
         # batched draw a plain RecordBatch, not a NumericRecordBatch; such a
         # field is not flattenable.
-        from probpipe import JointEmpirical
-
-        je = JointEmpirical(
-            labels=np.array(["a", "b", "c"], dtype=object),
-            ids=np.array([0, 1, 2]),
-            name="je",
-        )
+        je = _labelled_law()
         joint = ProductDistribution(
             name="joint",
             outer={
@@ -524,11 +527,11 @@ class TestBroadcastingReconnection:
         wf = self._make_add_workflow("sequential")
         with workflow_run(seed=42):
             result = wf(a=joint["x"], b=joint["y"])
-        assert hasattr(result, "samples")
+        assert isinstance(result, EmpiricalDistribution)
         # x ~ N(0,1), y ~ N(10,1), independent => a+b ~ N(10, sqrt(2))
         # With n=128 (default broadcast), MC SE on mean ~ sqrt(2)/sqrt(128) ~ 0.125
-        mean_val = float(jnp.mean(result.samples))
-        var_val = float(jnp.var(result.samples))
+        mean_val = float(jnp.mean(np.asarray(result.atoms)))
+        var_val = float(jnp.var(np.asarray(result.atoms)))
         # Mean: 3 * MC SE tolerance
         np.testing.assert_allclose(mean_val, 10.0, atol=3 * np.sqrt(2) / np.sqrt(128))
         # Variance: 2.0 for independent components (loose since var of var is larger)
@@ -553,9 +556,9 @@ class TestBroadcastingReconnection:
         )
         with workflow_run(seed=99):
             result = wf(a=view_x, b=view_x)
-        assert hasattr(result, "samples")
+        assert isinstance(result, EmpiricalDistribution)
         # a and b are the same samples, so a - b = 0 for every sample
-        np.testing.assert_allclose(np.array(result.samples), 0.0, atol=1e-5)
+        np.testing.assert_allclose(np.asarray(result.atoms), 0.0, atol=1e-5)
 
     def test_mix_of_view_and_independent(self):
         """Mix of _RecordDistributionView and independent Normal both work."""
@@ -576,9 +579,9 @@ class TestBroadcastingReconnection:
         )
         with workflow_run(seed=77):
             result = wf(a=joint["x"], b=joint["y"], c=independent)
-        assert hasattr(result, "samples")
+        assert isinstance(result, EmpiricalDistribution)
         # x ~ N(0,1), y ~ N(5,1), c ~ N(100, 0.1) => sum ~ N(105, ...)
-        mean_val = float(jnp.mean(result.samples))
+        mean_val = float(jnp.mean(np.asarray(result.atoms)))
         assert abs(mean_val - 105.0) < 3.0
 
     def test_joint_views_sampled_together_jax(self):
@@ -599,8 +602,8 @@ class TestBroadcastingReconnection:
         )
         with workflow_run(seed=55):
             result = wf(a=joint["x"], b=joint["y"])
-        assert hasattr(result, "samples")
-        mean_val = float(jnp.mean(result.samples))
+        assert isinstance(result, EmpiricalDistribution)
+        mean_val = float(jnp.mean(np.asarray(result.atoms)))
         assert abs(mean_val - 10.0) < 2.0
 
     def test_same_view_twice_jax_backend(self):
@@ -622,8 +625,8 @@ class TestBroadcastingReconnection:
         )
         with workflow_run(seed=88):
             result = wf(a=view_x, b=view_x)
-        assert hasattr(result, "samples")
-        np.testing.assert_allclose(np.array(result.samples), 0.0, atol=1e-5)
+        assert isinstance(result, EmpiricalDistribution)
+        np.testing.assert_allclose(np.asarray(result.atoms), 0.0, atol=1e-5)
 
 
 # ===========================================================================
@@ -690,10 +693,10 @@ class TestProductProtocolDuckTyping:
 
     def test_mixed_no_log_prob(self):
         """Component lacking SupportsLogProb → product lacks it too."""
-        from probpipe import BootstrapDistribution, SupportsLogProb
+        from probpipe import SupportsLogProb
 
-        boot = BootstrapDistribution("y", jnp.array([1.0, 2.0, 3.0]))
-        joint = ProductDistribution(x=Normal("x", 0, 1), y=boot)
+        empirical = EmpiricalDistribution("y", jnp.array([1.0, 2.0, 3.0]))
+        joint = ProductDistribution(x=Normal("x", 0, 1), y=empirical)
         assert not isinstance(joint, SupportsLogProb)
 
     def test_always_supports_sampling(self):
@@ -734,23 +737,15 @@ class TestProductProtocolDuckTyping:
         assert hasattr(joint, "as_flat_distribution")
 
     def test_non_numeric_leaf_drops_nrd_mixin(self):
-        """A non-numeric ``RecordDistribution`` leaf disqualifies the
+        """A non-numeric leaf disqualifies the
         joint from the numeric mixin. The joint remains a
         :class:`RecordDistribution` (sampling, conditioning,
         named-component access all work) but the numeric API is
         absent — the product is still well-defined, just not
         flat-representable.
         """
-        import numpy as np
-
-        from probpipe import JointEmpirical, Normal
-
-        # Object-dtype JointEmpirical stays on the non-numeric base.
-        je = JointEmpirical(
-            labels=np.array(["a", "b", "c"], dtype=object),
-            ids=np.array([0, 1, 2]),
-            name="je",
-        )
+        # An empirical law over labelled records is not numeric.
+        je = _labelled_law()
         # Combine with a numeric Normal: mixed leaves.
         joint = ProductDistribution(x=Normal("x", 0, 1), je=je)
         assert isinstance(joint, ProductDistribution)
@@ -766,26 +761,17 @@ class TestProductProtocolDuckTyping:
 
     def test_repr_shows_non_numeric_leaf_class_name(self):
         """``__repr__`` prints the concrete class name for every
-        ``Distribution`` leaf — including non-numeric
-        ``RecordDistribution`` leaves like ``JointEmpirical``.
+        ``Distribution`` leaf — including a non-numeric
+        ``EmpiricalDistribution`` leaf.
         Previously the repr branched on
         :class:`NumericRecordDistribution` membership and hid
         non-numeric leaves behind ``{...}``.
         """
-        import numpy as np
-
-        from probpipe import JointEmpirical, Normal
-
-        je = JointEmpirical(
-            labels=np.array(["a", "b", "c"], dtype=object),
-            ids=np.array([0, 1, 2]),
-            name="je",
-        )
-        joint = ProductDistribution(x=Normal("x", 0, 1), je=je)
+        joint = ProductDistribution(x=Normal("x", 0, 1), je=_labelled_law())
         r = repr(joint)
         assert "x=Normal" in r
         # Non-numeric leaf prints its class name, not ``{...}``.
-        assert "je=JointEmpirical" in r
+        assert "je=EmpiricalDistribution" in r
         assert "{...}" not in r
 
 
@@ -1032,7 +1018,7 @@ class TestEnumerateWithDistributionViews:
         )
         with workflow_run(seed=123):
             result = wf(a=view_x, b=view_y, c=ed)
-        assert hasattr(result, "samples")
+        assert isinstance(result, EmpiricalDistribution)
         assert result.num_atoms == 50
 
 
@@ -1369,7 +1355,7 @@ class TestNestedProductDistribution:
         )
         with workflow_run(seed=42):
             result = wf(a=view_force, b=view_obs)
-        assert hasattr(result, "samples")
+        assert isinstance(result, EmpiricalDistribution)
         assert result.num_atoms == 30
 
 

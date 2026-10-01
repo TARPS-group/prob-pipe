@@ -5,8 +5,9 @@ and the catalog adds no base classes. Each module realizes one section of the
 catalog.
 
 Provides:
-  - the smoothing kernels of a kernel density estimate: ``SmoothingKernel``,
-    ``GaussianKernel``, and ``EpanechnikovKernel``;
+  - the resampling families: ``BootstrapReplicateDistribution``,
+    ``BootstrapDistribution``, and ``KDEDistribution``, with the smoothing
+    kernels ``SmoothingKernel``, ``GaussianKernel``, and ``EpanechnikovKernel``;
   - the mixture family, ``MixtureDistribution``;
   - the evaluation-result families, ``LinearPushforwardDistribution`` and
     ``BijectorTransformedDistribution``;
@@ -30,18 +31,28 @@ from ._conditional import (
 from ._gaussian import FactoredMultivariateGaussian, GaussianProcess
 from ._mixture import MixtureDistribution
 from ._programs import PyMCModel, StanModel, UnnormalizedDistribution
-from ._resampling import EpanechnikovKernel, GaussianKernel, SmoothingKernel
+from ._resampling import (
+    BootstrapDistribution,
+    BootstrapReplicateDistribution,
+    EpanechnikovKernel,
+    GaussianKernel,
+    KDEDistribution,
+    SmoothingKernel,
+)
 from ._transformed import BijectorTransformedDistribution, LinearPushforwardDistribution
 
 __all__ = [
     "BernoulliFamily",
     "BijectorTransformedDistribution",
+    "BootstrapDistribution",
+    "BootstrapReplicateDistribution",
     "EpanechnikovKernel",
     "FactoredMultivariateGaussian",
     "GLMFamily",
     "GaussianFamily",
     "GaussianKernel",
     "GaussianProcess",
+    "KDEDistribution",
     "LinearGaussianConditional",
     "LinearPushforwardDistribution",
     "MixtureDistribution",

@@ -178,7 +178,7 @@ def test_x64_empirical_distribution_preserves_dtype():
         from probpipe import EmpiricalDistribution
         samples = jnp.array([[1.0], [2.0], [3.0]])  # float64 under x64
         d = EmpiricalDistribution("x", samples)
-        assert d.flat_samples.dtype == jnp.float64, d.flat_samples.dtype
+        assert d.atoms.values.dtype == jnp.float64, d.atoms.values.dtype
         assert d.dtype == jnp.float64
         print('OK')
         """
@@ -293,7 +293,7 @@ def test_x64_discrete_distributions():
 def test_x64_kde_distribution():
     out = _run_x64(
         """
-        from probpipe.distributions.kde import KDEDistribution
+        from probpipe import KDEDistribution
         import probpipe.core.ops as ops
         import jax
 
@@ -379,18 +379,15 @@ def test_x64_joint_gaussian_conditioning():
     assert out == "OK"
 
 
-def test_x64_bootstrap_distribution():
+def test_x64_bootstrap_replicate():
     out = _run_x64(
         """
-        from probpipe.core._numeric_record_distribution import BootstrapDistribution
-        import probpipe.core.ops as ops
+        from probpipe import BootstrapReplicateDistribution, EmpiricalDistribution
         import jax
 
         evals = jnp.linspace(0.0, 1.0, 10)
-        b = BootstrapDistribution('b', evals)
-        assert b.dtype == jnp.float64
-        assert ops.mean(b).dtype == jnp.float64
-        assert ops.sample(b, key=jax.random.key(0)).dtype == jnp.float64
+        b = BootstrapReplicateDistribution('b', EmpiricalDistribution('e', evals))
+        assert jnp.asarray(b._sample(jax.random.key(0))).dtype == jnp.float64
         print('OK')
         """
     )

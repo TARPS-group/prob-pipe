@@ -172,20 +172,20 @@ class TestPredictiveCheck:
 
         numeric = NumericRecord("posterior", x=np.array([0.0, 1.0, 2.0]))
 
-        class _FakeRecordEmpiricalDistribution:
-            def __init__(self, name, values):
-                self.values = values
+        class _FakeEmpiricalDistribution:
+            def __init__(self, name, atoms):
+                self.atoms = atoms
                 self.name = name
 
             def _sample(self, key, shape):
-                assert self.values is numeric
+                np.testing.assert_array_equal(np.asarray(self.atoms["x"]), numeric["x"])
                 assert self.name == "posterior"
                 return jax.random.normal(key, shape)
 
         monkeypatch.setattr(
             predictive_check_module,
-            "RecordEmpiricalDistribution",
-            _FakeRecordEmpiricalDistribution,
+            "EmpiricalDistribution",
+            _FakeEmpiricalDistribution,
         )
 
         result = predictive_check(
@@ -467,7 +467,7 @@ class TestPredictiveCheckNonJax:
         # recovers each replicate's parameter.
         replay = NumpyGaussianLikelihood(rng_seed=11)
         noise = np.array([np.mean(replay.generate_data(0.0, 10)) for _ in range(20)])
-        params = np.asarray(replicated.samples["replicated_statistics"]) - noise
+        params = np.asarray(replicated.atoms.values) - noise
         # Every parameter is an atom of the source, and the replicates draw more than
         # one atom. Observed across five seeds: the float32 statistics recover the
         # atoms to within 1.2e-7.

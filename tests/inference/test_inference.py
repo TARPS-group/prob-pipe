@@ -29,7 +29,7 @@ from probpipe import (
 )
 from probpipe.core._record_batch import RecordBatch
 from probpipe.core._record_distribution import _RecordDistributionView
-from probpipe.core._specs import NumericArraySpec
+from probpipe.core._specs import NumericArraySpec, OutputSpec
 from probpipe.inference import rwmh
 from probpipe.inference._approximate_distribution import make_posterior
 from probpipe.inference._inference_utils import build_mcmc_datatree
@@ -228,7 +228,7 @@ class TestApproximateDistribution:
             weights=jnp.array([0.2, 0.8]),
         )
         assert post.weights is not None
-        np.testing.assert_allclose(np.asarray(mean(post)["posterior"]).ravel(), [8.0], atol=1e-6)
+        np.testing.assert_allclose(np.asarray(mean(post)).ravel(), [8.0], atol=1e-6)
 
     def test_make_posterior_weights_default_unweighted(self):
         """Without weights=, make_posterior yields an equal-weight posterior
@@ -236,7 +236,7 @@ class TestApproximateDistribution:
         chain = jnp.array([[0.0], [10.0]])
         prior = Normal(loc=0.0, scale=1.0, name="theta")
         post = make_posterior([chain], parents=(prior,), algorithm="test")
-        np.testing.assert_allclose(np.asarray(mean(post)["posterior"]).ravel(), [5.0], atol=1e-6)
+        np.testing.assert_allclose(np.asarray(mean(post)).ravel(), [5.0], atol=1e-6)
 
 
 class TestApproximateDistributionValuesTemplate:
@@ -297,7 +297,7 @@ class TestApproximateDistributionValuesTemplate:
         assert draws.shape == (50, 3)
 
     def test_the_target_names_the_fields(self, posterior_with_template, template):
-        assert posterior_with_template.fields == template.fields
+        assert tuple(posterior_with_template.event_spec.components) == template.fields
 
     @pytest.mark.parametrize("shape", [(), (2,)])
     def test_a_one_field_target_declares_the_fields_shape(self, shape):
@@ -531,7 +531,7 @@ class TestApproximateDistributionValuesTemplate:
 
     def test_a_nested_posterior_keeps_its_nesting_for_views_and_kde(self):
         """A field view and a KDE of the posterior read its target record."""
-        from probpipe import KDEDistribution
+        from probpipe import KDEDistribution, from_distribution
 
         prior = ProductDistribution(
             params=ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)),
@@ -542,18 +542,10 @@ class TestApproximateDistributionValuesTemplate:
             [chain], parents=(prior,), algorithm="test", event_spec=prior.event_spec
         )
         assert post["params/a"].event_spec.spec == prior.event_spec.spec.at_path(("params", "a"))
-        assert KDEDistribution.from_empirical(post).event_spec == prior.event_spec
+        assert from_distribution(post, KDEDistribution).event_spec == prior.event_spec
 
-    def test_nested_template_accessors_match_top_level_fields(self):
-        """Pin the accessor surface for a nested-template posterior.
-
-        With Option B's per-top-level-field split, every accessor on
-        ``ApproximateDistribution`` is keyed by the user-supplied
-        template's top-level fields. Nested ``RecordSpec`` fields
-        are stored as a flat ``(n, nested_vector_size)`` slice under the
-        top-level field name; ``draws()`` recovers the nested structure
-        from the target's declaration.
-        """
+    def test_a_nested_target_keeps_its_groups(self):
+        """A posterior over a nested record declares, stores, and reports its groups nested."""
         template = RecordSpec(
             params=RecordSpec(a=(), b=()),
             scale=(),
@@ -571,42 +563,29 @@ class TestApproximateDistributionValuesTemplate:
             algorithm="test",
             event_spec=template,
         )
-        # Template + ops all keyed by the top-level template fields,
-        # with no leftover ``"posterior"`` auto-wrap leaking through.
         expected_fields = ("params", "scale")
-        assert post.fields == expected_fields
-        # ``event_shapes['params']`` reports the nested record's
-        # flat size as a 1-D event; the nested structure is
-        # recoverable through ``draws()``.
-        assert post.event_shapes == {"params": (2,), "scale": ()}
-        # ``event_shape`` (singular) raises on multi-field — different
-        # code path, separate guard.
-        with pytest.raises(AttributeError, match="multiple fields"):
-            _ = post.event_shape
-        # ``draws()`` rebuilds the nesting from the target's declaration.
-        assert tuple(post.draws()["params"].event_template.keys()) == ("a", "b")
-        # Moments key by the user's top-level fields, not by an
-        # auto-wrap leaf.
+        assert tuple(post.event_spec.components) == expected_fields
+        assert post.event_spec == OutputSpec(template)
+        # The atoms keep the nesting, in the chain's flat layout.
+        np.testing.assert_allclose(post.atoms["params/b"][0], chain[:, 1])
+        np.testing.assert_allclose(post.atoms["scale"][0], chain[:, 2])
+        # Moments are records of the target's schema.
         from probpipe import mean as op_mean
         from probpipe import variance as op_variance
 
         m = op_mean(post)
         assert m.fields == expected_fields
-        assert m["params"].shape == (2,)  # flat per-component means
-        assert m["scale"].shape == ()
+        assert jnp.shape(m["params/a"]) == ()
+        assert jnp.shape(m["scale"]) == ()
         v = op_variance(post)
         assert v.fields == expected_fields
-        assert v["params"].shape == (2,)
-        assert v["scale"].shape == ()
-        # ``draws()`` walks the full template (incl. nesting).
+        assert jnp.shape(v["params/b"]) == ()
+        # ``draws()`` walks the full template, nesting included.
         draws = post.draws()
-        # Top-level names, which is what the accessors are keyed by.
         assert tuple(draws.event_template.children) == expected_fields
         assert draws["params/a"].shape == (40,)
         assert draws["params/b"].shape == (40,)
         assert draws["scale"].shape == (40,)
-        # ``flat_samples`` view is the (n, total_dim) matrix.
-        assert post.flat_samples.shape == (40, vector_size)
 
     def test_without_warmup(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
@@ -819,7 +798,7 @@ class TestRWMH:
         )
         assert isinstance(result, ApproximateDistribution)
 
-        first = np.asarray(result.flat_samples[0])
+        first = np.asarray(result.chains[0][0])
         # A chain seeded at the origin (init ignored) would land within a
         # few units of it; a step_size=0.5 RWMH move from [20, 20] stays
         # far out. Use a conservative band well clear of both regimes.
@@ -841,7 +820,7 @@ class TestRWMH:
             init=other_init,
             random_seed=42,
         )
-        first_other = np.asarray(result_other.flat_samples[0])
+        first_other = np.asarray(result_other.chains[0][0])
         assert np.linalg.norm(first - first_other) > 1.0, (
             "Different inits produced near-identical first draws — init may be ignored."
         )
@@ -970,14 +949,15 @@ class TestRecordDistributionView:
         with pytest.raises(KeyError):
             dist["nonexistent"]
 
-    def test_fields(self, posterior):
-        assert posterior.fields == ("K", "phi", "r")
+    def test_components(self, posterior):
+        assert tuple(posterior.event_spec.components) == ("K", "phi", "r")
 
-    def test_fields_with_single_field_autowrap(self):
-        """``fields`` reflects the auto-wrapped single field."""
+    def test_a_posterior_without_a_target_is_a_whole_term(self):
+        """Without a target, each draw is one array under the result's name."""
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
         dist = ApproximateDistribution([chain], name="x")
-        assert dist.fields == ("x",)
+        assert tuple(dist.event_spec.components) == ("x",)
+        assert dist.event_shape == (3,)
 
     def test_view_event_shape_scalar(self, posterior):
         view = posterior["r"]
@@ -1005,20 +985,6 @@ class TestRecordDistributionView:
         view = posterior["r"]
         s = view._sample(jax.random.PRNGKey(42), (10,))
         assert s.shape == (10,)
-
-    def test_select_positional(self, posterior):
-        sel = posterior.select("r", "K")
-        assert set(sel.keys()) == {"r", "K"}
-        assert all(isinstance(v, _RecordDistributionView) for v in sel.values())
-
-    def test_select_keyword_remap(self, posterior):
-        sel = posterior.select(growth_rate="r")
-        assert "growth_rate" in sel
-        assert isinstance(sel["growth_rate"], _RecordDistributionView)
-
-    def test_select_mixed(self, posterior):
-        sel = posterior.select("phi", growth_rate="r")
-        assert set(sel.keys()) == {"phi", "growth_rate"}
 
     def test_repr(self, posterior):
         view = posterior["r"]
@@ -1150,62 +1116,6 @@ class TestViewProtocolDuckTyping:
         assert isinstance(view, _RecordDistributionView)
 
 
-class TestRecordDistributionProperties:
-    """RecordDistribution base class properties on ApproximateDistribution."""
-
-    @pytest.fixture
-    def template(self):
-        return RecordSpec(K=(), phi=(), r=())
-
-    @pytest.fixture
-    def posterior(self, template):
-        chain = jax.random.normal(jax.random.PRNGKey(0), (50, 3))
-        prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
-        return make_posterior(
-            [chain],
-            parents=(prior,),
-            algorithm="test",
-            event_spec=template,
-        )
-
-    def test_record_distribution_flatten_unflatten(self, posterior):
-        """NumericRecordDistribution.flatten_value / unflatten_value round-trip."""
-        v = Record("r", K=jnp.array(1.0), phi=jnp.array(2.0), r=jnp.array(3.0))
-        flat = posterior.flatten_value(v)
-        np.testing.assert_allclose(flat, [1.0, 2.0, 3.0])  # insertion: K, phi, r
-        v2 = posterior.unflatten_value(flat, template=posterior.event_spec.spec)
-        assert isinstance(v2, Record)
-        np.testing.assert_allclose(float(v2["K"]), 1.0)
-        np.testing.assert_allclose(float(v2["r"]), 3.0)
-
-    def test_flatten_unflatten_roundtrip(self, posterior, template):
-        v = Record("r", K=jnp.array(1.0), phi=jnp.array(2.0), r=jnp.array(3.0))
-        flat = posterior.flatten_value(v)
-        assert flat.shape == (3,)
-        v2 = posterior.unflatten_value(flat, template=posterior.event_spec.spec)
-        assert isinstance(v2, Record)
-        np.testing.assert_allclose(float(v2["K"]), 1.0)
-        np.testing.assert_allclose(float(v2["r"]), 3.0)
-
-    def test_unflatten_without_template_uses_single_field_autowrap(self):
-        """Without a target, ApproximateDistribution auto-wraps the chain as
-        a one-field Record keyed by ``name=``, and ``unflatten_value``
-        rebuilds that record from a flat vector."""
-        chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
-        dist = ApproximateDistribution([chain], name="x")
-        result = dist.unflatten_value(jnp.zeros(3), template=dist.event_spec.spec)
-        assert result["x"].shape == (3,)
-        assert tuple(dist.event_spec.components) == ("x",)
-
-    def test_record_distribution_event_shapes(self, posterior):
-        """``event_shapes`` returns per-field dict."""
-        assert posterior.event_shapes == {"K": (), "phi": (), "r": ()}
-
-    def test_record_distribution_event_size(self, posterior, template):
-        """``event_size`` matches template.vector_size."""
-        assert posterior.event_size == template.vector_size
-
-
 class TestValuesSelect:
     """Record.select() for concrete data."""
 
@@ -1276,11 +1186,10 @@ class TestEndToEndValuesPipeline:
         )
 
     def test_template_propagation(self, posterior):
-        """The prior's declaration names the posterior's fields and their terms."""
-        tpl = posterior.event_spec.spec
-        assert tpl.fields == ("params",)
-        assert tpl["params"].shape == (2,)
-        assert tpl["params"].dtype == jnp.asarray(0.0).dtype
+        """The prior's declaration is the posterior's: a whole term under its component."""
+        assert tuple(posterior.event_spec.components) == ("params",)
+        assert posterior.event_spec.spec.shape == (2,)
+        assert posterior.event_spec.spec.dtype == jnp.asarray(0.0).dtype
 
     def test_draws_are_named_values(self, posterior):
         """draws() returns Record with correct field names and shapes."""
@@ -1305,9 +1214,9 @@ class TestEndToEndValuesPipeline:
         np.testing.assert_allclose(post_std, analytical_std, atol=0.15)
 
     def test_view_values_match_draws(self, posterior):
-        """View _mean() matches draws and analytical posterior mean."""
+        """The law at the component is the posterior, whose mean matches the draws."""
         view = posterior["params"]
-        assert isinstance(view, _RecordDistributionView)
+        assert view is posterior
         assert view.event_shape == (2,)
 
         # Delegation check: view._mean() == draws().params.mean()
@@ -1324,12 +1233,6 @@ class TestEndToEndValuesPipeline:
             atol=0.15,
         )
 
-    def test_select_returns_views(self, posterior):
-        """select() returns dict of views matching component names."""
-        sel = posterior.select("params")
-        assert set(sel.keys()) == {"params"}
-        assert isinstance(sel["params"], _RecordDistributionView)
-
     def test_workflow_broadcasting_values_correct(self, posterior):
         """Broadcast predict(params, x) computes correct function of posterior."""
         from probpipe.functions import function
@@ -1339,7 +1242,7 @@ class TestEndToEndValuesPipeline:
             return params[0] + params[1] * x
 
         with workflow_run(seed=0):
-            result = predict(**posterior.select("params"), x=0.5)
+            result = predict(params=posterior["params"], x=0.5)
         assert result.num_atoms == 100
         # predict([~0.91, ~1.82], 0.5) ≈ 0.91 + 1.82*0.5 ≈ 1.82
         analytical = 10 / 11 + 0.5 * 20 / 11
@@ -1358,9 +1261,8 @@ class TestEndToEndValuesPipeline:
         def identity_pair(a, b):
             return a - b
 
-        sel = posterior.select(a="params", b="params")
         with workflow_run(seed=0):
-            result = identity_pair(**sel)
+            result = identity_pair(a=posterior["params"], b=posterior["params"])
         # Mean check: necessary but insufficient
         np.testing.assert_allclose(np.asarray(mean(result)), 0.0, atol=1e-5)
         # Variance check: this is what actually validates correlation
@@ -1388,10 +1290,6 @@ class TestEndToEndValuesPipeline:
         assert isinstance(view_a, _RecordDistributionView)
         np.testing.assert_allclose(float(view_a._mean()), float(draws["a"].mean()), atol=1e-5)
 
-        # Select multiple fields
-        sel = post.select("a", "c")
-        assert set(sel.keys()) == {"a", "c"}
-
     def test_workflow_mixed_posterior_and_independent(self, posterior):
         """Workflow with both posterior views and an independent distribution."""
         from probpipe.functions import function
@@ -1407,7 +1305,7 @@ class TestEndToEndValuesPipeline:
 
         with workflow_run(seed=0):
             result = noisy_predict(
-                **posterior.select("params"),
+                params=posterior["params"],
                 noise=Normal("noise", 0, 0.01),
             )
         assert result.num_atoms == posterior.num_atoms

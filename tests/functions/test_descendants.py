@@ -20,7 +20,6 @@ from probpipe import (
     NumericRecordBatch,
     NumericRecordSpec,
     ProductDistribution,
-    Record,
     TransformedDistribution,
     workflow_run,
 )
@@ -646,7 +645,7 @@ def test_function_co_samples_root_and_multiple_descendants(dispatch):
         result = workflow(root, exponentiated, shifted)
 
     assert [shape for _key, shape in calls] == [(16,)]
-    np.testing.assert_allclose(result.samples, 0.0, atol=1e-6)
+    np.testing.assert_allclose(result.atoms, 0.0, atol=1e-6)
 
 
 def test_function_descendant_only_samples_its_captured_root_once():
@@ -729,7 +728,7 @@ def test_exact_empirical_root_and_descendant_keep_weights_once():
     np.testing.assert_allclose(result.weights, jnp.asarray([0.2, 0.8]))
     np.testing.assert_allclose(
         result.input_samples["exp_base"],
-        jnp.exp(result.input_samples["base"]["base"]),
+        jnp.exp(result.input_samples["base"]),
         rtol=1e-6,
     )
 
@@ -737,10 +736,11 @@ def test_exact_empirical_root_and_descendant_keep_weights_once():
 def test_exact_record_projection_then_transform_stays_diagonal():
     root = EmpiricalDistribution(
         "joint",
-        Record(
+        NumericRecordBatch(
             "draws",
-            x=jnp.asarray([1.0, 4.0]),
-            y=jnp.asarray([10.0, 40.0]),
+            {"x": jnp.asarray([1.0, 4.0]), "y": jnp.asarray([10.0, 40.0])},
+            "draw",
+            element_spec=NumericRecordSpec(x=(), y=()),
         ),
         weights=jnp.asarray([0.3, 0.7]),
     )
@@ -788,7 +788,7 @@ def test_mixed_empirical_descendant_multiplies_root_weight_once():
     np.testing.assert_allclose(result.samples[result.name][:, 0], 0.0, atol=1e-6)
     np.testing.assert_allclose(
         result.input_samples["exp_exact"],
-        jnp.exp(result.input_samples["exact"]["exact"]),
+        jnp.exp(result.input_samples["exact"]),
         rtol=1e-6,
     )
     np.testing.assert_allclose(
@@ -834,4 +834,4 @@ def test_nested_sweep_samples_shared_transform_root_once_per_cell(dispatch):
     assert result.batch_shape == (3,)
     assert [shape for _key, shape in calls] == [(12,), (12,), (12,)]
     for component in result.components:
-        np.testing.assert_allclose(component.samples, 0.0, atol=1e-6)
+        np.testing.assert_allclose(component.atoms, 0.0, atol=1e-6)

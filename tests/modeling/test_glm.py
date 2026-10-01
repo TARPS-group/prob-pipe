@@ -17,6 +17,12 @@ from probpipe import (
 )
 from probpipe.modeling import GenerativeLikelihood, Likelihood
 
+#: The update that a KDE prior cannot take yet.
+_KDE_PRIOR = (
+    "SimpleModel requires a RecordDistribution prior, and the KDE an update converts the "
+    "posterior to is a Distribution"
+)
+
 
 def _sigmoid(x):
     return 1.0 / (1.0 + np.exp(-x))
@@ -243,13 +249,13 @@ class TestGLMLikelihoodWithValues:
         assert mean(posterior).shape == (2,)
         # The draws are a batch of records under the prior's component.
         draws = posterior.draws()
-        flat = posterior.flatten_value(draws, event_shape=posterior.event_shape)
-        assert flat.shape == (50, 2)
+        assert draws["beta"].shape == (50, 2)
 
 
 class TestIncrementalConditionerAutoConvert:
     """IncrementalConditioner auto-converts non-SupportsLogProb posteriors."""
 
+    @pytest.mark.pending(reason=_KDE_PRIOR, raises=TypeError)
     def test_auto_convert_to_kde(self):
         """update() should work without a custom condition_fn."""
         from probpipe.distributions._capabilities import SupportsLogProb

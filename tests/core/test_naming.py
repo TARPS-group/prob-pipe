@@ -280,22 +280,26 @@ class TestLevelsAreNamedForWhatMintsThem:
     @pytest.mark.parametrize(
         ("atoms", "expected"),
         [
-            pytest.param(jnp.linspace(0.0, 1.0, 5), "NumericRecordBatch", id="numeric-atoms"),
+            pytest.param(jnp.linspace(0.0, 1.0, 5), "NumericArrayBatch", id="numeric-atoms"),
             pytest.param(
-                [Record("a", {"u": jnp.asarray(float(i))}) for i in range(4)],
+                NumericRecordBatch(
+                    "rows", {"u": jnp.arange(4.0)}, "row", element_spec=RecordSpec(u=())
+                ),
                 "NumericRecordBatch",
                 id="record-atoms",
             ),
-            pytest.param([object() for _ in range(3)], "OpaqueBatch", id="opaque-atoms"),
+            pytest.param(
+                OpaqueBatch("objects", [object() for _ in range(3)], "atom"),
+                "OpaqueBatch",
+                id="opaque-atoms",
+            ),
         ],
     )
     def test_a_law_that_assembles_its_own_draws_still_gets_the_level(self, atoms, expected):
         """The boundary mints the level for every kind of draw.
 
-        These laws lay the draws out themselves — as record columns, or as an array
-        of stored objects — and named nothing. The draws came back as one value:
-        a record whose fields had grown an axis, or a single opaque object holding
-        the whole array.
+        These laws lay the draws out themselves, in the batch form of their atoms,
+        and name no level.
         """
         from probpipe import EmpiricalDistribution
 
@@ -310,13 +314,15 @@ class TestLevelsAreNamedForWhatMintsThem:
 
         drawn = sample(EmpiricalDistribution("atoms", jnp.linspace(0.0, 1.0, 5)), key=KEY)
 
-        assert not isinstance(drawn, NumericRecordBatch)
+        assert not isinstance(drawn, NumericArrayBatch)
 
     def test_the_draws_take_the_sample_functions_output_name(self):
         from probpipe import EmpiricalDistribution
 
         drawn = sample(
-            EmpiricalDistribution("atoms", [object() for _ in range(3)]),
+            EmpiricalDistribution(
+                "atoms", OpaqueBatch("objects", [object() for _ in range(3)], "atom")
+            ),
             sample_shape=(3,),
             key=KEY,
         )

@@ -9,6 +9,7 @@ import pytest
 import scipy.stats
 
 from probpipe import (
+    EmpiricalDistribution,
     Normal,
     Record,
     RecordBatch,
@@ -461,9 +462,9 @@ class TestBroadcastingReconnection:
         )
         with workflow_run(seed=42):
             result = wf(a=joint["z"], b=joint["x"])
-        assert hasattr(result, "samples")
+        assert isinstance(result, EmpiricalDistribution)
         # z and x are jointly sampled, x ≈ z, so a - b ≈ 0
-        np.testing.assert_allclose(np.array(result.samples), 0.0, atol=0.15)
+        np.testing.assert_allclose(np.asarray(result.atoms), 0.0, atol=0.15)
 
     def test_views_from_sequential_joint_accept_jax(self):
         """Explicit ``dispatch="jax"`` runs for sequential-joint views.
@@ -495,8 +496,8 @@ class TestBroadcastingReconnection:
 
         mapped = run("jax")
 
-        np.testing.assert_allclose(np.array(mapped.samples), 0.0, atol=0.15)
-        np.testing.assert_allclose(np.array(mapped.samples), np.array(run("sequential").samples))
+        np.testing.assert_allclose(np.asarray(mapped.atoms), 0.0, atol=0.15)
+        np.testing.assert_allclose(np.asarray(mapped.atoms), np.asarray(run("sequential").atoms))
 
     def test_views_from_sequential_joint_reconnect_under_auto(self):
         """``dispatch="auto"`` reconnects the views whichever path it picks.
@@ -521,8 +522,8 @@ class TestBroadcastingReconnection:
         )
         with workflow_run(seed=55):
             result = wf(a=joint["z"], b=joint["x"])
-        assert hasattr(result, "samples")
-        np.testing.assert_allclose(np.array(result.samples), 0.0, atol=0.15)
+        assert isinstance(result, EmpiricalDistribution)
+        np.testing.assert_allclose(np.asarray(result.atoms), 0.0, atol=0.15)
 
 
 # ---------------------------------------------------------------------------

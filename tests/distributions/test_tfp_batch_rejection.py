@@ -37,7 +37,6 @@ from probpipe import (
 )
 from probpipe.core.constraints import real
 from probpipe.distributions._tfp_base import TFPDistribution, _allow_batched_tfp_init
-from probpipe.distributions.kde import KDEDistribution
 
 # ---------------------------------------------------------------------------
 # Rejection fires across the TFP family
@@ -239,26 +238,12 @@ class TestBypassForInternalInfra:
 
 
 # ---------------------------------------------------------------------------
-# KDE-style subclasses (set _tfp_dist after super().__init__) unaffected
+# Subclasses that set _tfp_dist after super().__init__
 # ---------------------------------------------------------------------------
 
 
-class TestKDEStyleSubclasses:
-    """``KDEDistribution`` calls ``super().__init__`` *before* setting
-    ``self._tfp_dist`` (the mixture is built from samples in the
-    rest of __init__). The rejection's ``hasattr`` guard skips the
-    check when ``_tfp_dist`` isn't yet present, so KDE construction
-    is unaffected.
-    """
-
-    def test_kde_construction_works(self):
-        kde = KDEDistribution("kde", jnp.zeros((20, 3)))
-        assert kde is not None
-        assert kde.name == "kde"
-
-    def test_kde_with_1d_samples(self):
-        kde = KDEDistribution("kde1d", jnp.linspace(0.0, 1.0, 10))
-        assert kde is not None
+class TestLateBackendSubclasses:
+    """A subclass that sets ``self._tfp_dist`` after ``super().__init__`` declares its own event."""
 
     def test_a_late_backend_needs_its_own_declaration(self):
         """No backend exists yet to read the event from, so the error names

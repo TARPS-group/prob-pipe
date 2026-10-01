@@ -1,9 +1,9 @@
-"""Approximate empirical distribution with chain structure and annotations DataTree."""
+"""Inference results: the empirical law of a run's draws, with its chains and annotations."""
 
 from __future__ import annotations
 
 from math import prod
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from xarray import DataTree
@@ -13,8 +13,10 @@ if TYPE_CHECKING:
 import jax.numpy as jnp
 
 from .._weights import Weights
-from ..core._empirical import RecordEmpiricalDistribution
 from ..core._immutable import transient_memo
+from ..core._numeric_array_batch import NumericArrayBatch
+from ..core._numeric_record import _reconstruct_from_vector
+from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._opaque import OpaqueSpec
 from ..core._specs import (
     NumericArraySpec,
@@ -26,9 +28,14 @@ from ..core._specs import (
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike
+from ..distributions._capabilities import _capability_subclass
 from ..distributions._distribution import Distribution, _complete_event_spec
+from ..distributions._empirical import _NUMERIC_MOMENTS, EmpiricalDistribution
 
 __all__ = ["ApproximateDistribution", "make_posterior"]
+
+#: The levels of an inference result's atoms, outermost first.
+_CHAIN_LEVELS = ("chain", "draw")
 
 
 def _spec_size(spec: NumericArraySpec | RecordSpec) -> int:
@@ -38,9 +45,8 @@ def _spec_size(spec: NumericArraySpec | RecordSpec) -> int:
     many scalars that field occupies in the dense 1-D vector layout (see
     :meth:`~probpipe.NumericRecord.to_vector`): ``prod(shape)`` for an
     :class:`NumericArraySpec`, or :attr:`~NumericRecordSpec.vector_size` for a
-    nested :class:`NumericRecordSpec`. Summing this over a template's fields
-    gives the template's own ``vector_size``; it is used here to size each
-    field's contiguous column block when splitting a flat chain.
+    nested :class:`NumericRecordSpec`. It sizes each field's contiguous column
+    block when the columns of a flat chain are permuted.
 
     Parameters
     ----------
@@ -84,9 +90,8 @@ def _column_permutation(
 
     *field_order* names the field each contiguous column-block of the flat
     chain occupies. The returned ``perm`` satisfies: ``flat[..., perm]``
-    lays the columns out in template-field order, so the positional split
-    in :class:`ApproximateDistribution` maps each column to the right
-    field by name.
+    lays the columns out in template-field order, so the columns of each field
+    are read by name rather than by position.
 
     Raises
     ------
@@ -122,34 +127,139 @@ def _column_permutation(
 
 
 # ---------------------------------------------------------------------------
+# The atoms
+# ---------------------------------------------------------------------------
+
+
+def _array_atoms(name: str, stacked: Array, term: NumericArraySpec) -> NumericArrayBatch:
+    """The draws *stacked* ``(chains, draws, *flat)`` as atoms of the array term *term*.
+
+    Each draw takes the shape the term declares, so a scalar term's draws are
+    scalars, and the dtype the term declares.
+
+    Raises
+    ------
+    ValueError
+        If a draw's flat width is not the term's size.
+    """
+    chains, draws = stacked.shape[:2]
+    if all(isinstance(size, int) for size in term.shape):
+        width = prod(stacked.shape[2:])
+        if width != prod(term.shape):
+            raise ValueError(
+                f"chain last dim ({width}) doesn't match the target's size {prod(term.shape)} "
+                f"for its shape {term.shape}."
+            )
+        values = jnp.reshape(stacked, (chains, draws, *term.shape))
+    else:
+        values = stacked
+        term = NumericArraySpec(tuple(stacked.shape[2:]), term.dtype, term.support)
+    if term.dtype is not None:
+        values = values.astype(term.dtype)
+    return NumericArrayBatch(name, values, _CHAIN_LEVELS, element_spec=term, axes_per_level=(1, 1))
+
+
+def _record_atoms(name: str, stacked: Array, record: RecordSpec) -> NumericRecordBatch:
+    """The draws *stacked* ``(chains, draws, d)`` as atoms of *record*, in its flat layout.
+
+    The columns follow the record's canonical leaf order, nested groups
+    included, and each leaf takes the shape and dtype the record declares.
+
+    Raises
+    ------
+    TypeError
+        If *record* has a leaf that is neither numeric nor opaque.
+    ValueError
+        If *record* has an opaque leaf, or a draw's flat width is not the
+        record's flat size.
+    """
+    for path, spec in record.items():
+        if isinstance(spec, OpaqueSpec):
+            raise ValueError(
+                f"ApproximateDistribution requires a numeric template; field {path!r} has an "
+                f"opaque spec. Opaque leaves don't have a flat size."
+            )
+    if not isinstance(record, NumericRecordSpec):
+        raise TypeError(
+            f"ApproximateDistribution requires a numeric target; {record!r} has a leaf "
+            f"without a flat size."
+        )
+    chains, draws = stacked.shape[:2]
+    flat = jnp.reshape(stacked, (chains, draws, -1))
+    if flat.shape[-1] != record.vector_size:
+        raise ValueError(
+            f"chain last dim ({flat.shape[-1]}) doesn't match the target's flat size "
+            f"({record.vector_size}); target fields={record.fields}."
+        )
+    columns, offset = {}, 0
+    for path, spec in record.items():
+        width = prod(spec.shape)
+        column = jnp.reshape(flat[..., offset : offset + width], (chains, draws, *spec.shape))
+        columns[path] = column if spec.dtype is None else column.astype(spec.dtype)
+        offset += width
+    return NumericRecordBatch(
+        name, columns, _CHAIN_LEVELS, element_spec=record, axes_per_level=(1, 1)
+    )
+
+
+def _chain_atoms(name: str, stacked: Array, declaration: OutputSpec | None) -> Any:
+    """The draws *stacked* ``(chains, draws, *flat)`` as atoms of the target's event term.
+
+    Without a target, each draw is one array.
+    """
+    if declaration is None:
+        element = NumericArraySpec(tuple(stacked.shape[2:]), stacked.dtype)
+        return NumericArrayBatch(
+            name, stacked, _CHAIN_LEVELS, element_spec=element, axes_per_level=(1, 1)
+        )
+    term = declaration.spec
+    if isinstance(term, RecordSpec):
+        return _record_atoms(name, stacked, term)
+    if not isinstance(term, NumericArraySpec):
+        raise TypeError(
+            f"ApproximateDistribution requires a numeric target; {name!r} declares {term!r}"
+        )
+    return _array_atoms(name, stacked, term)
+
+
+# ---------------------------------------------------------------------------
 # ApproximateDistribution
 # ---------------------------------------------------------------------------
 
 
-class ApproximateDistribution(RecordEmpiricalDistribution):
-    """Empirical distribution with chain structure.
+class ApproximateDistribution(EmpiricalDistribution):
+    """The empirical law of an inference run's draws, with the chains that produced them.
 
-    Stores per-chain sample arrays for chain-structured access via
-    :meth:`draws`.  Algorithm metadata, sample statistics, warmup
-    samples, and the ArviZ ``DataTree`` live in ``dist.annotations``
-    (on the Distribution base class), not as attributes of this class.
+    An MCMC or ABC result is an :class:`~probpipe.EmpiricalDistribution` whose
+    atoms are its draws on the levels ``chain`` and ``draw``, so its sampling,
+    expectation, moments, quantiles, and marginals are the empirical law's. Its
+    event declaration is its target's: a whole-term target stays whole, and a
+    record target keeps its fields' supports, scalar shapes, and nested groups.
+    The method's chains are kept as it produced them, in the target's flat
+    layout, for :attr:`chains` and :meth:`draws`.
+
+    What the result shares with every inference result is its record:
+    :func:`make_posterior` gives it ``provenance`` naming the method and the
+    target, and stores the method's diagnostics, sample statistics, and warmup
+    draws in :attr:`~probpipe.Distribution.annotations`, an ArviZ-compatible
+    ``DataTree`` under ``arviz/``. Whether the result is exact or approximate,
+    and relative to what, is read from that record.
 
     Parameters
     ----------
     chains : list of Array
-        Per-chain sample arrays, each of shape ``(num_draws, *event_shape)``.
+        Per-chain draws, each of shape ``(num_draws, *flat)`` in the target's
+        flat layout; the chains have equal lengths.
     weights : array-like, :class:`~probpipe.Weights`, or None
-        Optional per-sample importance weights (across all chains).
+        Optional per-draw importance weights, across all chains in chain order.
     name : str or None
-        Distribution name for provenance. Keyword-only; defaults to ``"posterior"``.
+        The result's label. Keyword-only; defaults to ``"posterior"``.
     event_spec : OutputSpec, TermSpec, or None
-        The target's declaration, usually the prior's ``event_spec``. Its
-        components name the posterior's fields: the concatenated chain is
-        split into one array per component, so :meth:`draws`,
-        :meth:`_mean` / :meth:`_variance`, etc. return Records keyed by
-        them. A bare ``RecordSpec`` exposes its fields, as
-        :class:`~probpipe.Distribution` completes one. ``None`` leaves the
-        posterior a single unnamed numeric block.
+        The target's declaration, usually the prior's ``event_spec``, which the
+        result declares as its event. A bare ``RecordSpec`` exposes its fields,
+        as :class:`~probpipe.Distribution` completes one, and any other term is
+        a whole term under *name*. ``None`` makes each draw one array, a whole
+        term under *name*.
     field_order : list of str or None
         Names the field each contiguous column-block of *chains* belongs
         to, in the order they appear. Default (``None``) assumes the
@@ -159,25 +269,32 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         rather than position. Requires *event_spec*, and must be a
         permutation of its components.
 
-    Notes
-    -----
-    When the target has several components, ``__init__`` slices the
-    concatenated chain into one array per component so
-    :attr:`fields`, :attr:`event_shapes`, :attr:`dtypes`,
-    :meth:`_mean` / :meth:`_variance`, and the public ops
-    (``mean(post)`` / ``variance(post)``) all return Records whose
-    keys match :attr:`fields`. A nested record component is stored as a
-    flat ``(n, nested_vector_size)`` array under its name; :meth:`draws`
-    recovers the nesting from the target's declaration.
-
-    A whole-term target gives a posterior that draws a one-field record
-    under the target's component, an interim implementation detail.
+    Raises
+    ------
+    ValueError
+        If *chains* is empty or the chains differ in length, *field_order* is
+        given without *event_spec* or is not a permutation of its components, or
+        a draw's flat width is not the target's flat size.
+    TypeError
+        If the target has a leaf without a flat size.
     """
 
     #: The memo is not state: a copy recomputes rather than inheriting one. It
     #: matters for more than size here, since a memoised value can carry the
     #: provenance of the term that computed it.
-    _transient_state = ("_memo",)
+    _transient_state = (*EmpiricalDistribution._transient_state, "_memo")
+
+    def __new__(
+        cls,
+        chains: list[Array],
+        *,
+        weights: ArrayLike | Weights | None = None,
+        name: str | None = None,
+        event_spec: OutputSpec | TermSpec | None = None,
+        field_order: list[str] | None = None,
+    ) -> ApproximateDistribution:
+        base = vars(cls).get("_capability_base", cls)
+        return object.__new__(_capability_subclass(base, _NUMERIC_MOMENTS))
 
     def __init__(
         self,
@@ -190,115 +307,44 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
     ):
         if not chains:
             raise ValueError("Must provide at least one chain")
-        # The record the target's components form, which names the fields.
-        record = (
-            None
-            if event_spec is None
-            else _components_record(_complete_event_spec(event_spec, name or "posterior"))
-        )
+        label = name or "posterior"
+        declaration = None if event_spec is None else _complete_event_spec(event_spec, label)
+        # The record the target's components form, which names the fields of draws().
+        record = None if declaration is None else _components_record(declaration)
+        flat_chains = [jnp.asarray(chain) for chain in chains]
 
-        self._chains = [jnp.asarray(c) for c in chains]
-        # A memo, filled on first read. Reading fills it in place, which leaves
-        # the term's own attributes as construction set them — what the
-        # immutability guard sees, and what a copy drops rather than inherits.
-        self._memo: dict[str, Array] = {}
-
-        # When the caller's chain columns are laid out in a different
-        # field order than the record — e.g. a backend whose trace
-        # sorts variable names — permute them into the record's order.
-        # The positional split below (and ``draws()`` unflatten) then map
-        # each column to the right field by name rather than by position,
-        # so callers don't have to pre-sort.
+        # When the chain columns are laid out in a different field order than the
+        # record, as for a backend whose trace sorts variable names, permute them
+        # into the record's order, so each column is read by name.
         if field_order is not None:
             if record is None:
                 raise ValueError(
                     "field_order requires an event_spec; it names the "
                     "target's components and is meaningless without one."
                 )
-            # Validates field_order is a permutation of the template
-            # fields (raises otherwise) for any field count, so a
-            # single-field typo or wrong name is also caught.
             perm = _column_permutation(record, field_order)
-            # Validate width for any field count, *before* the gather:
-            # ``c[..., perm]`` would otherwise silently drop extra columns
-            # (too-wide chain) or clamp out-of-bounds indices (too-narrow),
-            # then pass the post-gather total-size check.
-            for c in self._chains:
-                if c.shape[-1] != len(perm):
+            # The width is checked before the gather, which would otherwise drop
+            # extra columns or clamp out-of-bounds indices.
+            for chain in flat_chains:
+                if chain.shape[-1] != len(perm):
                     raise ValueError(
-                        f"chain last dim ({c.shape[-1]}) doesn't match "
+                        f"chain last dim ({chain.shape[-1]}) doesn't match "
                         f"the template total flat size ({len(perm)})."
                     )
             if len(record.fields) > 1:
-                self._chains = [c[..., perm] for c in self._chains]
-                transient_memo(self).pop("concatenated", None)
+                flat_chains = [chain[..., perm] for chain in flat_chains]
 
-        flat = self._concat_chains()
-        # ``draws()`` rebuilds Records from the target's record when there is
-        # one, and returns the raw concatenated array otherwise.
-        self._target_record = record
-        # Several components → split the flat chain by top-level field. A
-        # nested record component is stored as a 2-D
-        # ``(n, nested_vector_size)`` slice under its name; ``draws()``
-        # recovers the nesting. Slice sizes use ``_spec_size``, which handles
-        # both flat and nested specs.
-        if record is not None and len(record.fields) > 1:
-            # Compute per-field sizes upfront so we can sanity-check the
-            # chain's last dim against the template's total flat size
-            # (catching template/data mismatch before silent slicing past
-            # the end produces zero-sized chunks). ``_spec_size`` raises
-            # on opaque (``spec=None``) leaves; pre-validate here so the
-            # error names the offending field rather than the generic
-            # ``_spec_size`` message.
-            sizes: list[int] = []
-            for field_name in record.fields:
-                spec = record.children[field_name]
-                if isinstance(spec, OpaqueSpec):
-                    raise ValueError(
-                        f"ApproximateDistribution requires a numeric "
-                        f"template; field {field_name!r} has an opaque "
-                        f"spec. Opaque leaves don't have a flat size."
-                    )
-                sizes.append(_spec_size(spec))
-            total = sum(sizes)
-            if flat.shape[-1] != total:
-                raise ValueError(
-                    f"chain last dim ({flat.shape[-1]}) doesn't match "
-                    f"template total flat size ({total}); template "
-                    f"fields={record.fields}, sizes={sizes}."
-                )
-            offset = 0
-            fields: dict[str, Array] = {}
-            for field_name, size in zip(record.fields, sizes):
-                spec = record.children[field_name]
-                chunk = flat[..., offset : offset + size]
-                if isinstance(spec, RecordSpec):
-                    # Nested: keep flat-per-top-level-field. Shape is
-                    # ``(*sample_shape, nested_vector_size)``.
-                    fields[field_name] = chunk
-                else:
-                    # NumericArraySpec leaf (opaque rejected above, nested handled).
-                    shape = cast(NumericArraySpec, spec).shape
-                    fields[field_name] = chunk.reshape(*flat.shape[:-1], *shape)
-                offset += size
-            label = name or "posterior"
-            super().__init__(label, Record(label, fields), weights=weights)
-        else:
-            # One component or none: the component (default ``name``, then
-            # ``"posterior"``) becomes the auto-wrapped field name, and a
-            # numeric component's draws take the shape it declares, so a scalar
-            # component's draws are scalars.
-            field_name = name or "posterior"
-            if record is not None and len(record.fields) == 1:
-                field_name = record.fields[0]
-                spec = record.children[field_name]
-                if (
-                    isinstance(spec, NumericArraySpec)
-                    and all(isinstance(size, int) for size in spec.shape)
-                    and flat.shape[-1] == prod(spec.shape)
-                ):
-                    flat = flat.reshape(*flat.shape[:-1], *spec.shape)
-            super().__init__(field_name, flat, weights=weights)
+        lengths = sorted({int(chain.shape[0]) for chain in flat_chains})
+        if len(lengths) > 1:
+            raise ValueError(f"the chains of an inference result have equal lengths, got {lengths}")
+        atoms = _chain_atoms(label, jnp.stack(flat_chains), declaration)
+        super().__init__(label, atoms, weights, event_spec=declaration)
+        object.__setattr__(self, "_chains", flat_chains)
+        object.__setattr__(self, "_target_record", record)
+        # A memo, filled on first read. Reading fills it in place, which leaves
+        # the term's own attributes as construction set them — what the
+        # immutability guard sees, and what a copy drops rather than inherits.
+        object.__setattr__(self, "_memo", {})
 
     def _concat_chains(self) -> Array:
         """Lazily concatenated view of all chains."""
@@ -312,7 +358,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
 
     @property
     def chains(self) -> list[Array]:
-        """Per-chain sample arrays."""
+        """Per-chain draws, in the target's flat layout."""
         return self._chains
 
     @property
@@ -322,11 +368,9 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
 
     @property
     def num_draws(self) -> int:
-        """Number of draws *per chain* (assumes equal-length chains).
+        """Number of draws *per chain*.
 
-        Distinct from ``num_atoms`` (inherited from
-        :class:`~probpipe.core._empirical.RecordEmpiricalDistribution`),
-        which counts the total atoms across all chains —
+        Distinct from ``num_atoms``, which counts the draws across all chains,
         ``num_atoms == num_chains * num_draws``.
         """
         return self._chains[0].shape[0]
@@ -408,8 +452,8 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         Returns
         -------
         Array or Record
-            With a target declaration, a :class:`~probpipe.Record` whose fields
-            are its components. Otherwise a raw array.
+            With a target declaration, a batch of records whose fields are its
+            components. Otherwise a raw array in the flat layout.
         """
         if chain is not None:
             samples = self._chains[chain]
@@ -425,29 +469,20 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
                     parts = [jnp.concatenate([w, c], axis=0) for w, c in zip(warmup, parts)]
             samples = jnp.concatenate(parts, axis=0)
 
-        record = getattr(self, "_target_record", None)
+        record = self._target_record
         if record is not None:
             # Reconstruct: batch_shape is inferred from the leading axes of
             # the concatenated draws (a matrix ``(n, vector_size)``).
-            from ..core._numeric_record import _reconstruct_from_vector
-
             return _reconstruct_from_vector(self.name, record, samples)
         return samples
 
     def __repr__(self) -> str:
-        # Use ``event_shapes`` (plural) for multi-field posteriors so
-        # the repr stays valid; ``event_shape`` (singular) raises on
-        # multi-field by design.
-        if len(self._record_data.fields) == 1:
-            shape_part = f"event_shape={self.event_shape}"
-        else:
-            shape_part = f"event_shapes={self.event_shapes}"
         return (
             f"ApproximateDistribution("
             f"algorithm={self.algorithm!r}, "
             f"num_chains={self.num_chains}, "
             f"num_draws={self.num_draws}, "
-            f"{shape_part})"
+            f"components={list(self.event_spec.components)})"
         )
 
 
@@ -472,7 +507,8 @@ def make_posterior(
     Parameters
     ----------
     chains : list of Array
-        Per-chain sample arrays, each shaped ``(num_draws, *event_shape)``.
+        Per-chain draws, each shaped ``(num_draws, *flat)`` in the target's
+        flat layout.
     parents : tuple of Distribution
         Parent distributions for provenance tracking.
     algorithm : str
@@ -481,8 +517,8 @@ def make_posterior(
         Pre-built annotations DataTree (diagnostics, sample stats, warmup).
         Inference methods are responsible for building this.
     event_spec : OutputSpec, TermSpec, or None
-        The target's declaration, usually the prior's ``event_spec``. If
-        provided, ``draws()`` returns a named ``Record``.
+        The target's declaration, usually the prior's ``event_spec``, which the
+        result declares as its event.
     field_order : list of str or None
         Names the field each contiguous column-block of ``chains`` belongs
         to. Default (``None``) assumes the columns are laid out in the

@@ -538,8 +538,8 @@ class TestWorkflowCallableAnchor:
             replayed = workflow(value=Normal(loc=0.0, scale=1.0, name="value"))
 
         assert jnp.array_equal(
-            replayed.samples[replayed.name],
-            original.samples[original.name],
+            replayed.atoms[replayed.name],
+            original.atoms[original.name],
         )
         assert replayed.provenance is None
         capture.assert_called_once_with(workflow)

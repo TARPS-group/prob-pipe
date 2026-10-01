@@ -35,11 +35,9 @@ import numpy as np
 
 from .._weights import Weights, weighted_choice, weighted_covariance, weighted_mean
 from ..core._batch import BatchSpec
-from ..core._kinds import batch_class_for_spec
 from ..core._numeric_record import NumericRecord
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._random_measures import RandomMeasure
-from ..core._record_batch import _batch_class_for
 from ..core._record_spec import NumericRecordSpec, RecordSpec
 from ..core._spec_base import NumericArraySpec, TermSpec
 from ..core._specs import OutputSpec
@@ -53,16 +51,22 @@ from ..distributions._capabilities import (
     SupportsVariance,
 )
 from ..distributions._distribution import Distribution, DistributionSpec
-from ..distributions._empirical import EmpiricalDistribution
+from ..distributions._empirical import EmpiricalDistribution, _batch_form
 from ..distributions._factored import _raw_record
 from ..linalg import DenseLinOp
 
 if TYPE_CHECKING:
-    from ..core._batch import Batch
     from ..custom_types import Array, ArrayLike, PRNGKey
     from ..linalg import LinOp
 
-__all__ = ["EpanechnikovKernel", "GaussianKernel", "SmoothingKernel"]
+__all__ = [
+    "BootstrapDistribution",
+    "BootstrapReplicateDistribution",
+    "EpanechnikovKernel",
+    "GaussianKernel",
+    "KDEDistribution",
+    "SmoothingKernel",
+]
 
 _PATH_SEP = "/"
 
@@ -165,16 +169,6 @@ def _replicates(
 def _replicate_at(raw: Any, position: tuple[int, ...]) -> Any:
     """The replicate at *position* of the sample axes of *raw*, raw draws of several replicates."""
     return jax.tree.map(lambda leaf: leaf[position], raw)
-
-
-def _batch_form(name: str, raw: Any, level: str, spec: TermSpec) -> Batch:
-    """*raw*, one replicate's raw draws along their leading axis, as the batch of *spec* on *level*."""
-    if isinstance(spec, RecordSpec):
-        return _batch_class_for(spec)(name, _raw_record(raw), level, element_spec=spec)
-    batch_class = batch_class_for_spec(spec)
-    if batch_class is None:
-        raise TypeError(f"a draw declared as {type(spec).__name__} has no batch form")
-    return batch_class(name, raw, level, element_spec=spec)
 
 
 class BootstrapReplicateDistribution(Distribution, SupportsSampling):

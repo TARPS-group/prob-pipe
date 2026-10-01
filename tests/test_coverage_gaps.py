@@ -6,7 +6,6 @@ fall-throughs).  Tests include real value/shape assertions — they are not
 coverage-only touches.
 
 Covers:
-- BootstrapDistribution: weighted sampling, variance, repr, support, evaluations
 - EmpiricalDistribution: weighted subsampled expectation
 - TFPDistribution._cov: scalar and multivariate
 - TransformedDistribution non-TFP paths
@@ -20,110 +19,14 @@ import pytest
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
 from probpipe import (
-    BootstrapDistribution,
     EmpiricalDistribution,
     Normal,
-    RecordEmpiricalDistribution,
     TransformedDistribution,
     cov,
-    mean,
     sample,
     variance,
 )
 from probpipe.distributions.multivariate import MultivariateNormal
-
-# ---------------------------------------------------------------------------
-# BootstrapDistribution
-# ---------------------------------------------------------------------------
-
-
-class TestBootstrapDistributionCoverage:
-    """Cover weighted paths, repr, support, evaluations, sample shapes."""
-
-    def test_scalar_0d_raises(self):
-        with pytest.raises(ValueError, match="at least 1 dimension"):
-            BootstrapDistribution("bootstrap", jnp.float32(1.0))
-
-    def test_evaluations_property(self):
-        evals = jnp.array([1.0, 2.0, 3.0])
-        bd = BootstrapDistribution("bd", evals)
-        assert bd.evaluations.shape == (3,)
-        np.testing.assert_allclose(bd.evaluations, evals)
-
-    def test_repr(self):
-        bd = BootstrapDistribution("bd", jnp.array([1.0, 2.0, 3.0]))
-        r = repr(bd)
-        assert "BootstrapDistribution" in r
-        assert "num_atoms=3" in r
-        assert "event_shape=()" in r
-
-    def test_support_is_real(self):
-        from probpipe.core.constraints import real
-
-        bd = BootstrapDistribution("bd", jnp.array([1.0, 2.0]))
-        assert bd.support is real
-
-    def test_weighted_mean(self):
-        evals = jnp.array([0.0, 10.0])
-        weights = jnp.array([0.3, 0.7])
-        bd = BootstrapDistribution("bd", evals, weights=weights)
-        np.testing.assert_allclose(float(mean(bd)), 7.0, atol=1e-5)
-
-    def test_weighted_variance(self):
-        evals = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        weights = jnp.array([0.1, 0.2, 0.3, 0.2, 0.2])
-        bd = BootstrapDistribution("bd", evals, weights=weights)
-        v = variance(bd)
-        assert jnp.isfinite(v)
-        assert float(v) > 0
-        # Weighted variance should be smaller than unweighted sample variance
-        sample_var = float(jnp.var(evals))
-        assert float(v) < sample_var
-
-    def test_weighted_sample_unbatched(self):
-        evals = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        weights = jnp.array([0.1, 0.2, 0.3, 0.2, 0.2])
-        bd = BootstrapDistribution("bd", evals, weights=weights)
-        key = jax.random.PRNGKey(42)
-        s = sample(bd, key=key)
-        assert s.shape == ()
-        assert jnp.isfinite(s)
-
-    def test_unweighted_sample_unbatched(self):
-        evals = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        bd = BootstrapDistribution("bd", evals)
-        key = jax.random.PRNGKey(42)
-        s = sample(bd, key=key)
-        assert s.shape == ()
-        assert jnp.isfinite(s)
-
-    def test_weighted_sample_batched(self):
-        evals = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        weights = jnp.array([0.1, 0.2, 0.3, 0.2, 0.2])
-        bd = BootstrapDistribution("bd", evals, weights=weights)
-        key = jax.random.PRNGKey(42)
-        s = sample(bd, key=key, sample_shape=(10,))
-        assert s.shape == (10,)
-        assert jnp.all(jnp.isfinite(s))
-
-    def test_unweighted_sample_batched(self):
-        evals = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        bd = BootstrapDistribution("bd", evals)
-        key = jax.random.PRNGKey(42)
-        s = sample(bd, key=key, sample_shape=(10,))
-        assert s.shape == (10,)
-        assert jnp.all(jnp.isfinite(s))
-
-    def test_multidimensional_evaluations(self):
-        evals = jnp.ones((10, 3))
-        bd = BootstrapDistribution("bd", evals)
-        assert bd.event_shape == (3,)
-        assert bd.num_atoms == 10
-        r = repr(bd)
-        assert "BootstrapDistribution" in r
-        assert "num_atoms=10" in r
-        assert "event_shape=(3,)" in r
-
 
 # ---------------------------------------------------------------------------
 # EmpiricalDistribution — weighted subsampling
@@ -134,12 +37,12 @@ class TestEmpiricalSubsampling:
     """Cover the weighted subsample paths in _expectation."""
 
     def test_weighted_cov(self):
-        """Weighted RecordEmpiricalDistribution covariance."""
+        """Weighted EmpiricalDistribution covariance."""
         key = jax.random.PRNGKey(0)
         samples = jax.random.normal(key, (50, 2))
         weights = jax.random.uniform(jax.random.PRNGKey(1), (50,))
         weights = weights / jnp.sum(weights)
-        ed = RecordEmpiricalDistribution("x", samples, weights=weights)
+        ed = EmpiricalDistribution("x", samples, weights=weights)
         C = cov(ed)
         assert C.shape == (2, 2)
         assert jnp.all(jnp.isfinite(C))
@@ -182,7 +85,7 @@ class TestTransformedNonTFP:
     def td(self):
         key = jax.random.PRNGKey(0)
         samples = jax.random.normal(key, (100, 2))
-        emp = RecordEmpiricalDistribution("x", samples)
+        emp = EmpiricalDistribution("x", samples)
         return TransformedDistribution("transformed", emp, tfb.Exp())
 
     def test_base_property(self, td):

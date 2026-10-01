@@ -14,7 +14,6 @@ from probpipe import (
     NumericArraySpec,
     NumericRecordDistribution,
     OpaqueSpec,
-    RecordEmpiricalDistribution,
     from_distribution,
     log_prob,
     sample,
@@ -604,20 +603,3 @@ class TestIntegerDtypeReporting:
         from probpipe import Poisson
 
         assert Poisson(rate=2.0, name="x").dtype == jnp.float32
-
-
-# ---------------------------------------------------------------------------
-# FlattenedDistributionView on EmpiricalDistribution
-# ---------------------------------------------------------------------------
-
-
-class TestFlattenedDistributionViewEmpirical:
-    def test_empirical_flatten_roundtrip(self, key):
-        samples = jax.random.normal(key, shape=(100, 5))
-        emp = RecordEmpiricalDistribution("x", samples)
-
-        flat_dist = emp.as_flat_distribution()
-        assert flat_dist.event_shape == (5,)
-
-        flat_sample = sample(flat_dist, key=key)
-        assert flat_sample.shape == (5,)

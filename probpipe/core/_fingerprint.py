@@ -17,7 +17,8 @@ Supported types
 - ``set`` / ``frozenset`` — order-independent (element sub-digests, sorted)
 - ``Record`` — leaf paths + leaf values (leaf-keyed collection)
 - ``Distribution`` — class + name + parameters; ``EmpiricalDistribution``
-  hashes samples + weights; ``Weights`` are hashed by content
+  hashes atoms + weights, ``KDEDistribution`` hashes atoms + weights + kernel
+  class + scales; ``Weights`` are hashed by content
 - ``Function`` — frozen signature and input/output declarations, plus either
   plain-callable bytecode, referenced names, and captured/default values or a
   private implementation type
@@ -656,9 +657,18 @@ def _is_distribution(obj: Any) -> bool:
 
 def _is_empirical(obj: Any) -> bool:
     try:
-        from ._empirical import EmpiricalDistribution
+        from ..distributions._empirical import EmpiricalDistribution
 
         return isinstance(obj, EmpiricalDistribution)
+    except ImportError:
+        return False
+
+
+def _is_kde(obj: Any) -> bool:
+    try:
+        from ..families._resampling import KDEDistribution
+
+        return isinstance(obj, KDEDistribution)
     except ImportError:
         return False
 
@@ -729,19 +739,24 @@ def _update_distribution(
             _update(h, v, depth + 1, max_array_bytes, state)
             h.update(b";")
     elif _is_empirical(dist):
-        # EmpiricalDistribution / RecordEmpiricalDistribution: hash the sample
-        # data and weights via the PUBLIC accessors. The Record-backed subclass
-        # stores no ``_samples`` attribute, so keying on it silently dropped
-        # into the generic fallback below and hashed weights by repr (losing the
-        # values); using ``.samples`` / ``.is_uniform`` / ``.log_weights``
-        # distinguishes reweighted posteriors (IS/SMC) from the original.
-        h.update(b"samples=")
-        _update(h, dist.samples, depth + 1, max_array_bytes, state)
-        h.update(b"uniform=")
-        h.update(b"1" if dist.is_uniform else b"0")
-        if not dist.is_uniform:
-            h.update(b"log_weights=")
-            _update(h, dist.log_weights, depth + 1, max_array_bytes, state)
+        # An empirical law: hash its atoms and its normalized weights through the
+        # public accessors, so a reweighted posterior (IS/SMC) is distinguished
+        # from the original by its weights' values.
+        h.update(b"atoms=")
+        _update(h, dist.atoms, depth + 1, max_array_bytes, state)
+        h.update(b"weights=")
+        _update(h, dist.weights, depth + 1, max_array_bytes, state)
+    elif _is_kde(dist):
+        # A kernel density estimate: hash the parameters of its mixture, which are
+        # the atoms, the weights, the kernel class, and the copies' scales.
+        h.update(b"atoms=")
+        _update(h, dist._atoms, depth + 1, max_array_bytes, state)
+        h.update(b"weights=")
+        _update(h, dist._w, depth + 1, max_array_bytes, state)
+        h.update(b"kernel=")
+        h.update(f"{dist._kernel.__module__}.{dist._kernel.__qualname__}".encode())
+        h.update(b"scales=")
+        _update(h, dist._bank._scales, depth + 1, max_array_bytes, state)
     else:
         # Generic fallback for other non-TFP distributions.
         _SKIP = frozenset({"_name", "_provenance", "_annotations"})

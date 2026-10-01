@@ -269,7 +269,7 @@ class TestLiftedNames:
         with workflow_run(seed=1):
             result = wrapped(Normal("x", 0, 1))
         assert result.name == "doubled"
-        assert result.fields == ("value",)
+        assert tuple(result.event_spec.components) == ("value",)
         assert result.num_atoms == 8
 
     @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax", "auto"])
@@ -399,10 +399,10 @@ class TestCompletedOutputDeclarations:
             joint = wrapped.with_options(include_inputs=True)(Normal("x", 0, 1))
         result = joint.marginalize()
         assert result.name == "result"
-        assert result.fields == ("component",)
+        assert tuple(result.event_spec.components) == ("component",)
         assert result.event_spec.spec["component"].shape == (2,)
         np.testing.assert_allclose(
-            result.samples["component"][:, 1], result.samples["component"][:, 0] + 1, rtol=0, atol=0
+            result.atoms["component"][:, 1], result.atoms["component"][:, 0] + 1, rtol=0, atol=0
         )
         assert wrapped.output_spec is declaration
         if kind in ("hole", "record_hole"):
@@ -468,7 +468,7 @@ class TestCompletedOutputDeclarations:
         assert result.batch_shape == (3,)
         for marginal in result:
             assert marginal.event_spec.spec == result.event_spec.spec
-            values = marginal.samples["component"]
+            values = marginal.atoms["component"]
             np.testing.assert_array_equal(values[:, 0], values[:, 1])
         assert declaration.free_dims == {"width"}
 

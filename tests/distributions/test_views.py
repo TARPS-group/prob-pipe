@@ -872,7 +872,13 @@ class TestDerivedBehavior:
 
     def test_the_view_quantiles_of_a_parent_with_record_quantiles(self):
         values = jnp.array([[1.0, 2.0], [3.0, 5.0], [2.0, 4.0]])
-        parent = probpipe.EmpiricalDistribution("e", Record("r", u=values[:, 0], v=values[:, 1]))
+        atoms = NumericRecordBatch(
+            "rows",
+            {"u": values[:, 0], "v": values[:, 1]},
+            "row",
+            element_spec=RecordSpec(u=(), v=()),
+        )
+        parent = EmpiricalDistribution("e", atoms)
         levels = jnp.array([0.25, 0.5])
         quantiles = FieldView(parent, "v")._quantile(levels)
         assert quantiles.shape == (2,)

@@ -361,34 +361,32 @@ class TestDistributionHashing:
         assert fingerprint(n) != fingerprint(b)
 
     def test_empirical_distribution_stable(self):
-        from probpipe import RecordEmpiricalDistribution
+        from probpipe import EmpiricalDistribution
 
         samples = jnp.array([1.0, 2.0, 3.0])
-        e1 = RecordEmpiricalDistribution("posterior", samples)
-        e2 = RecordEmpiricalDistribution("posterior", samples)
+        e1 = EmpiricalDistribution("posterior", samples)
+        e2 = EmpiricalDistribution("posterior", samples)
         assert fingerprint(e1) == fingerprint(e2)
 
     def test_empirical_different_samples_differ(self):
-        from probpipe import RecordEmpiricalDistribution
+        from probpipe import EmpiricalDistribution
 
-        e1 = RecordEmpiricalDistribution("post", jnp.array([1.0, 2.0, 3.0]))
-        e2 = RecordEmpiricalDistribution("post", jnp.array([1.0, 2.0, 9.0]))
+        e1 = EmpiricalDistribution("post", jnp.array([1.0, 2.0, 3.0]))
+        e2 = EmpiricalDistribution("post", jnp.array([1.0, 2.0, 9.0]))
         assert fingerprint(e1) != fingerprint(e2)
 
     def test_empirical_non_uniform_weights_differ(self):
         """IS/SMC reweighting must produce a different fingerprint."""
-        from probpipe import RecordEmpiricalDistribution
+        from probpipe import EmpiricalDistribution
 
         samples = jnp.array([1.0, 2.0, 3.0])
-        uniform = RecordEmpiricalDistribution("post", samples)
-        reweighted = RecordEmpiricalDistribution(
-            "post", samples, weights=jnp.array([0.7, 0.2, 0.1])
-        )
+        uniform = EmpiricalDistribution("post", samples)
+        reweighted = EmpiricalDistribution("post", samples, weights=jnp.array([0.7, 0.2, 0.1]))
         assert fingerprint(uniform) != fingerprint(reweighted)
 
     def test_kde_distribution_stable(self):
-        """KDE (composite TFP distribution) must be stable."""
-        from probpipe.distributions.kde import KDEDistribution
+        """A KDE's fingerprint is stable."""
+        from probpipe import KDEDistribution
 
         pts = jnp.array([0.0, 1.0, 2.0])
         k1 = KDEDistribution("kde", pts)
@@ -397,7 +395,7 @@ class TestDistributionHashing:
 
     def test_kde_different_points_differ(self):
         """Two KDE distributions with different data must have different fingerprints."""
-        from probpipe.distributions.kde import KDEDistribution
+        from probpipe import KDEDistribution
 
         k1 = KDEDistribution("kde", jnp.array([0.0, 1.0, 2.0]))
         k2 = KDEDistribution("kde", jnp.array([0.0, 1.0, 99.0]))
@@ -761,14 +759,13 @@ class TestNestedRecordHashing:
 
 
 class TestEmpiricalReweighting:
-    """The Record-backed empirical class stores no ``_samples`` — reweighted
-    posteriors must still be distinguished (was a silent collision)."""
+    """Empirical laws over the same atoms are distinguished by their weights."""
 
     def _emp(self, weights):
-        from probpipe.core._empirical import EmpiricalDistribution
+        from probpipe import EmpiricalDistribution, Weights
 
         s = jnp.array([1.0, 2.0, 3.0])
-        return EmpiricalDistribution("p", s, log_weights=jnp.log(jnp.array(weights)))
+        return EmpiricalDistribution("p", s, Weights(log_weights=jnp.log(jnp.array(weights))))
 
     def test_reweighted_differs(self):
         assert fingerprint(self._emp([0.7, 0.2, 0.1])) != fingerprint(self._emp([0.1, 0.2, 0.7]))

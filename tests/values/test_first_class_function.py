@@ -1044,10 +1044,10 @@ class TestSymbolicCalls:
 
         assert result.event_spec.spec.leaf_shapes == {"pair": (2,)}
         assert result.num_atoms == 8
-        assert result.samples["pair"].shape == (8, 2)
+        assert result.atoms["pair"].shape == (8, 2)
         np.testing.assert_allclose(
-            result.samples["pair"][:, 1],
-            result.samples["pair"][:, 0] + 1,
+            result.atoms["pair"][:, 1],
+            result.atoms["pair"][:, 0] + 1,
         )
 
     def test_every_sweep_cell_is_validated_against_output_template(self):
@@ -1101,7 +1101,7 @@ class TestSymbolicCalls:
 
         assert result.provenance.metadata["dispatch"] == "sequential"
         assert result.event_spec.spec["y"].support == positive
-        assert bool(jnp.all(result.samples["y"] > 0))
+        assert bool(jnp.all(result.atoms["y"] > 0))
 
     def test_support_pinned_broadcast_explicit_jax_reports_traceability_error(self):
         wrapped = Function(
@@ -1201,10 +1201,10 @@ class TestSymbolicCalls:
             result = wrapped(Normal("x", 0, 1))
 
         assert result.event_spec.spec.leaf_shapes == {"stats/value": (), "stats/doubled": ()}
-        assert result.samples["stats/value"].shape == (8,)
+        assert result.atoms["stats/value"].shape == (8,)
         np.testing.assert_allclose(
-            result.samples["stats/doubled"],
-            result.samples["stats/value"] * 2,
+            result.atoms["stats/doubled"],
+            result.atoms["stats/value"] * 2,
         )
         averaged = mean(result)
         assert averaged.event_template == RecordSpec(
@@ -1490,7 +1490,7 @@ class TestReentrancyAndProvenance:
 
         def evaluate(_):
             with workflow_run(seed=19):
-                return wrapped(source).samples["function"]
+                return wrapped(source).atoms["function"]
 
         sequential = [evaluate(index) for index in range(2)]
         with ThreadPoolExecutor(max_workers=2) as pool:

@@ -51,9 +51,6 @@ _SECTION_MODULES = {
 _CURRENT_MODULES = {
     "TFPDistribution": "probpipe.distributions._tfp_base",
     "Normal": "probpipe.distributions.continuous",
-    "BootstrapReplicateDistribution": "probpipe.core._empirical",
-    "BootstrapDistribution": "probpipe.core._numeric_record_distribution",
-    "KDEDistribution": "probpipe.distributions.kde",
     "RandomFunction": "probpipe.core._random_functions",
     "RandomMeasure": "probpipe.core._random_measures",
     "GaussianRandomFunction": "probpipe.distributions.gaussian_random_function",
@@ -66,15 +63,7 @@ _OTHER_PACKAGES = frozenset({"EmpiricalDistribution"})
 #: Declarations the implementation does not match yet, with the change each awaits.
 _PENDING = {
     "TFPDistribution": "the adapter takes the wrapped backend distribution as backend_dist",
-    "BootstrapReplicateDistribution": (
-        "replicate_size is positional-or-keyword, and event_spec names the replicate's component"
-    ),
-    "BootstrapDistribution": (
-        "BootstrapDistribution is the bootstrap random measure over a source and a replicate size"
-    ),
-    "KDEDistribution": (
-        "the KDE takes atoms, bandwidth, weights, and a SmoothingKernel class, in that order"
-    ),
+    "KDEDistribution": "the declaration check compares a class-valued default by the class's name",
     "GaussianRandomFunction": (
         "predict_covariance and __call__ take the stacked inputs only, without the joint flags"
     ),

@@ -27,6 +27,7 @@ from ._conditional import (
     NumericConditionalDistribution,
 )
 from ._distribution import Distribution, DistributionSpec, NumericDistribution
+from ._empirical import EmpiricalDistribution
 from ._factored import (
     FactoredConditionalDistribution,
     FactoredConditionalNumericDistribution,
@@ -66,13 +67,10 @@ from .gaussian_random_function import (
     LinearBasisFunction,
 )
 from .joint import (
-    JointEmpirical,
     JointGaussian,
-    NumericJointEmpirical,
     ProductDistribution,
     SequentialJointDistribution,
 )
-from .kde import KDEDistribution
 from .multivariate import (
     Dirichlet,
     Multinomial,
@@ -98,6 +96,7 @@ __all__ = [
     "Distribution",
     "DistributionBatch",
     "DistributionSpec",
+    "EmpiricalDistribution",
     "Exponential",
     "FactoredConditionalDistribution",
     "FactoredConditionalNumericDistribution",
@@ -112,10 +111,7 @@ __all__ = [
     "HalfCauchy",
     "HalfNormal",
     "InverseGamma",
-    "JointEmpirical",
     "JointGaussian",
-    # KDE
-    "KDEDistribution",
     "Laplace",
     "LinearBasisFunction",
     "LogNormal",
@@ -127,7 +123,6 @@ __all__ = [
     "Normal",
     "NumericConditionalDistribution",
     "NumericDistribution",
-    "NumericJointEmpirical",
     "Pareto",
     "Poisson",
     # Joint

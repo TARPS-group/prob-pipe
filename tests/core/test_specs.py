@@ -523,9 +523,9 @@ class TestSpecKinds:
         assert schema["raw_callable"] == FunctionSpec()
 
     def test_an_empirical_over_opaque_atoms_is_a_distribution_field(self):
-        from probpipe import EmpiricalDistribution
+        from probpipe import EmpiricalDistribution, OpaqueBatch
 
-        law = EmpiricalDistribution("law", ["a", "b"])
+        law = EmpiricalDistribution("law", OpaqueBatch("labels", ["a", "b"], "law"))
         schema = RecordSpec.infer_from({"law": law})
         assert schema["law"] == law.spec
         assert law.event_spec == OutputSpec(law=OpaqueSpec())
@@ -709,7 +709,7 @@ class TestNestedValueBinding:
     def test_fixed_and_concretized_specs_follow_the_same_binding_rules(
         self, wrap_binding, kind, size
     ):
-        from probpipe import EmpiricalDistribution, Function
+        from probpipe import EmpiricalDistribution, Function, NumericRecordBatch
 
         if kind == "function":
 
@@ -726,8 +726,15 @@ class TestNestedValueBinding:
             )
         else:
             spec_type = DistributionSpec
-            reference = EmpiricalDistribution("x", np.zeros((2, 3)))
-            actual = EmpiricalDistribution("x", np.zeros((2, size)))
+
+            def law(width):
+                atoms = NumericRecordBatch(
+                    "rows", {"x": np.zeros((2, width))}, "row", element_spec=RecordSpec(x=(width,))
+                )
+                return EmpiricalDistribution("x", atoms)
+
+            reference = law(3)
+            actual = law(size)
 
         # Both kinds bind by unification; function binding reads the available
         # declarations without checking callable compatibility.

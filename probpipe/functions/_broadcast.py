@@ -22,13 +22,15 @@ except ImportError:
     task = flow = None
 
 from ..core._broadcast_distributions import BroadcastDistribution
-from ..core._empirical import EmpiricalDistribution
 from ..core._specs import OutputSpec, RecordSpec
 from ..core.config import WorkflowKind, prefect_config
 from ..core.provenance import Provenance
+from ..core.record import Record
 from ..core.tracked import TrackedTerm
 from ..custom_types import Array, PRNGKey
 from ..distributions._distribution import Distribution
+from ..distributions._empirical import EmpiricalDistribution
+from ..distributions._factored import _raw_record
 from ..values._binding import WorkflowInputRef, input_ref_value, replace_input_refs
 from . import _execution, _plan, _recipe
 from ._broker import _record_active_execution_contract
@@ -286,10 +288,22 @@ def _sample_planned_source_groups(
         )
         key = get_key(event)
         binding = stochastic_plan.runtime_bindings[group.index]
-        root_sample = binding.sample_root(key, sample_shape)
+        root_sample = _record_columns(binding.sample_root(key, sample_shape), binding.root.name)
         for consumer, evaluate in zip(group.consumers, binding.consumer_evaluators):
             sampled[consumer.arg_ref] = evaluate(root_sample)
     return sampled
+
+
+def _record_columns(draws: Any, name: str) -> Any:
+    """*draws*, raw draws along a leading axis, with record draws held in a ``Record`` of columns.
+
+    A record-valued law's raw draws are the nested mapping of its columns, and
+    the lift reads each row of a record argument as a ``Record``. Any other
+    draws are returned as they are.
+    """
+    if isinstance(draws, Mapping) and not isinstance(draws, TrackedTerm):
+        return Record(name, _raw_record(draws))
+    return draws
 
 
 def _broadcast_jax(
@@ -383,11 +397,13 @@ def _broadcast_enumerate(
                 "exact empirical size changed after planning: "
                 f"planned {group.exact_size}, found {dist.num_atoms}"
             )
+        # Every atom along one leading axis, in its raw form.
+        atoms = _record_columns(dist._atoms_at(jnp.arange(dist.num_atoms)), dist.name)
         exact_entries.append(
             (
                 group,
                 dist,
-                tuple(evaluate(dist.samples) for evaluate in binding.consumer_evaluators),
+                tuple(evaluate(atoms) for evaluate in binding.consumer_evaluators),
             )
         )
 

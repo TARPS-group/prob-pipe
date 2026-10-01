@@ -66,7 +66,7 @@ def _sample_value(result):
 
 
 def _marginal_values(result):
-    return np.asarray(result.samples[result.name])
+    return np.asarray(result.atoms[result.name])
 
 
 def _mutate_provenance(provenance, mutate):

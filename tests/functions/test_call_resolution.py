@@ -379,4 +379,4 @@ class TestCallOptions:
         with workflow_run(seed=42):
             second = wf(normal_dist)
 
-        assert jnp.allclose(first.samples, second.samples)
+        assert jnp.allclose(first.atoms, second.atoms)

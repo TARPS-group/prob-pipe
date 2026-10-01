@@ -70,7 +70,6 @@ from ..core._dispatch import (
     UnaryDispatchMethod,
     UnaryDispatchRegistry,
 )
-from ..core._empirical import RecordEmpiricalDistribution
 from ..core._record_spec import RecordSpec
 from ..core._spec_base import TermSpec
 from ..core._specs import InputSpec, OutputSpec, _components_record
@@ -1369,7 +1368,7 @@ def _draws_of(call: BoundCall, law: Any) -> Any:
 def _an_empirical_target(call: BoundCall) -> Feasibility:
     """The target is an empirical class, or a capability protocol an empirical law claims."""
     target = call.operands["target"]
-    if issubclass(EmpiricalDistribution, target) or issubclass(RecordEmpiricalDistribution, target):
+    if issubclass(EmpiricalDistribution, target):
         return Feasibility(True)
     return Feasibility(
         False, f"route 'normalize' declined: an empirical law does not satisfy {target.__name__}"

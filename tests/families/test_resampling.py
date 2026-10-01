@@ -40,11 +40,13 @@ from probpipe.distributions._capabilities import (
     SupportsSampling,
     SupportsVariance,
 )
-from probpipe.families import EpanechnikovKernel, GaussianKernel, SmoothingKernel
-from probpipe.families._resampling import (
+from probpipe.families import (
     BootstrapDistribution,
     BootstrapReplicateDistribution,
+    EpanechnikovKernel,
+    GaussianKernel,
     KDEDistribution,
+    SmoothingKernel,
 )
 from tests._ops import EmpiricalDistribution, sample
 

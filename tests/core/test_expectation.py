@@ -1,4 +1,4 @@
-"""Tests for expectation(Distribution) and BootstrapDistribution."""
+"""Tests for expectation(Distribution)."""
 
 import jax
 import jax.numpy as jnp
@@ -11,7 +11,6 @@ from probpipe import (
     Bernoulli,
     Beta,
     Binomial,
-    BootstrapDistribution,
     BootstrapReplicateDistribution,
     Categorical,
     EmpiricalDistribution,
@@ -19,11 +18,8 @@ from probpipe import (
     Gamma,
     Normal,
     NumericArray,
-    NumericRecord,
-    RecordEmpiricalDistribution,
     expectation,
     mean,
-    sample,
     set_default_num_evaluations,
     variance,
 )
@@ -31,61 +27,12 @@ from probpipe.core._dispatch import Feasibility, ResolutionError
 from probpipe.operations import ExpectationMethod, expectation_method_registry
 
 # ---------------------------------------------------------------------------
-# BootstrapDistribution tests
+# Expectation — the estimate is an array
 # ---------------------------------------------------------------------------
 
 
-class TestBootstrapDistribution:
-    """Test BootstrapDistribution construction and properties."""
-
-    def test_construction(self):
-        evals = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        bd = BootstrapDistribution("bd", evals)
-        assert bd.num_atoms == 5
-        assert bd.event_shape == ()
-
-    def test_mean(self):
-        evals = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        bd = BootstrapDistribution("bd", evals)
-        np.testing.assert_allclose(float(mean(bd)), 3.0, atol=1e-6)
-
-    def test_variance(self):
-        """Variance of bootstrap mean = Var(evals) / n."""
-        evals = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        bd = BootstrapDistribution("bd", evals)
-        sample_var = float(jnp.var(evals))
-        expected_se_var = sample_var / 5
-        np.testing.assert_allclose(float(variance(bd)), expected_se_var, atol=1e-5)
-
-    def test_weighted(self):
-        evals = jnp.array([0.0, 10.0])
-        weights = jnp.array([0.3, 0.7])
-        bd = BootstrapDistribution("bd", evals, weights=weights)
-        np.testing.assert_allclose(float(mean(bd)), 7.0, atol=1e-5)
-
-    def test_sample(self):
-        evals = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        bd = BootstrapDistribution("bd", evals)
-        key = jax.random.PRNGKey(0)
-        samples = sample(bd, key=key, sample_shape=(100,))
-        assert samples.shape == (100,)
-        # Bootstrap means should cluster around 3.0
-        np.testing.assert_allclose(float(jnp.mean(samples)), 3.0, atol=0.5)
-
-    def test_multidim_evals(self):
-        evals = jnp.ones((10, 3))
-        bd = BootstrapDistribution("bd", evals)
-        assert bd.event_shape == (3,)
-        assert mean(bd).shape == (3,)
-
-
-# ---------------------------------------------------------------------------
-# Expectation — returns BootstrapDistribution by default
-# ---------------------------------------------------------------------------
-
-
-class TestExpectationReturnsDist:
-    """With RETURN_APPROX_DIST=True (default), sample-based expectations return BootstrapDistribution."""
+class TestExpectationReturnsArray:
+    """An expectation returns its estimate, exact or sample-based, as an array."""
 
     def test_return_dist_false_returns_array(self):
         d = Normal(loc=3.0, scale=1.0, name="x")
@@ -258,7 +205,7 @@ class TestExpectationEmpirical:
 
     def test_matches_mean_method(self):
         samples = jnp.array([1.0, 3.0, 5.0, 7.0])
-        d = RecordEmpiricalDistribution("x", samples)
+        d = EmpiricalDistribution("x", samples)
         ex = expectation(d, lambda x: x)
         np.testing.assert_allclose(float(ex), float(mean(d)), atol=1e-6)
 
@@ -272,7 +219,7 @@ class TestMCFallbackMethods:
     """Test that base mean(Distribution)/variance()/cov() use MC when no exact override."""
 
     def test_tfp_mean_still_exact(self):
-        """mean(TFPDistribution) returns exact Array, not BootstrapDistribution."""
+        """mean(TFPDistribution) returns the exact array."""
         d = Normal(loc=3.0, scale=1.0, name="x")
         result = mean(d)
         assert isinstance(result, NumericArray)
@@ -285,9 +232,9 @@ class TestMCFallbackMethods:
         np.testing.assert_allclose(float(result), 4.0, atol=1e-6)
 
     def test_empirical_mean_still_exact(self):
-        d = RecordEmpiricalDistribution("x", jnp.array([1.0, 2.0, 3.0]))
+        d = EmpiricalDistribution("x", jnp.array([1.0, 2.0, 3.0]))
         result = mean(d)
-        assert isinstance(result, NumericRecord)
+        assert isinstance(result, NumericArray)
         np.testing.assert_allclose(float(result), 2.0, atol=1e-6)
 
 

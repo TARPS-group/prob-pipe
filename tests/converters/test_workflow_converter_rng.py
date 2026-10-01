@@ -18,11 +18,11 @@ from probpipe import (
     ConversionMethod,
     Converter,
     Distribution,
+    EmpiricalDistribution,
     Gamma,
     MultivariateNormal,
     Normal,
     NumericArraySpec,
-    RecordEmpiricalDistribution,
     TransformedDistribution,
     converter_registry,
     from_distribution,
@@ -31,6 +31,7 @@ from probpipe import (
 from probpipe.converters import ConverterRegistry, _probpipe, _scipy, _tfp
 from probpipe.converters._probpipe import ProbPipeConverter
 from probpipe.converters._tfp import TFPConverter
+from probpipe.distributions._empirical import _coordinates
 from probpipe.functions import _context
 from probpipe.linalg.linear_operator import DenseLinOp
 
@@ -45,16 +46,21 @@ class _RecordingNormal(Normal):
         return super()._sample(key, sample_shape)
 
 
-class _RecordingEmpirical(RecordEmpiricalDistribution):
+class _RecordingEmpirical(EmpiricalDistribution):
+    def __new__(cls, calls, values=None):
+        return super().__new__(cls, "x", jnp.asarray(_atoms_or_default(values)))
+
     def __init__(self, calls, values=None):
         self.calls = calls
-        if values is None:
-            values = [-1.0, 0.0, 1.0, 2.0]
-        super().__init__("x", jnp.asarray(values))
+        super().__init__("x", jnp.asarray(_atoms_or_default(values)))
 
     def _sample(self, key, sample_shape=()):
         self.calls.append((key, tuple(sample_shape)))
         return super()._sample(key, sample_shape)
+
+
+def _atoms_or_default(values):
+    return [-1.0, 0.0, 1.0, 2.0] if values is None else values
 
 
 class _VectorSource(Distribution):
@@ -77,7 +83,7 @@ class _VectorSource(Distribution):
 
 
 def _flat_samples(dist):
-    return np.asarray(dist.flat_samples)
+    return np.asarray(_coordinates(dist))
 
 
 class TestBuiltInConversionPlanning:
@@ -103,7 +109,7 @@ class TestBuiltInConversionPlanning:
             stats = pytest.importorskip("scipy.stats")
             converter = _scipy.ScipyConverter()
             source = stats.chi2(df=3)
-        target = RecordEmpiricalDistribution
+        target = EmpiricalDistribution
         plan = converter._workflow_plan_conversion(source, target, {"num_samples": 4})
         invalid_plan = replace(plan, sample_shape=None)
         key = jax.random.key(11) if explicit_key else None
@@ -146,7 +152,7 @@ class TestBuiltInConversionPlanning:
             ):
                 result = converter_registry.convert(
                     source,
-                    RecordEmpiricalDistribution,
+                    EmpiricalDistribution,
                     num_samples=num_samples,
                 )
             return _flat_samples(result), commit.call_args_list
@@ -172,7 +178,7 @@ class TestBuiltInConversionPlanning:
         ):
             converter_registry.convert(
                 Normal(loc=0.0, scale=1.0, name="x"),
-                RecordEmpiricalDistribution,
+                EmpiricalDistribution,
                 num_samples=num_samples,
             )
 
@@ -189,7 +195,7 @@ class TestBuiltInConversionPlanning:
         with workflow_run(seed=7):
             expected = converter_registry.convert(
                 source,
-                RecordEmpiricalDistribution,
+                EmpiricalDistribution,
                 num_samples=8,
             )
 
@@ -197,13 +203,13 @@ class TestBuiltInConversionPlanning:
         with workflow_run(seed=7):
             converter_registry.convert(
                 source,
-                RecordEmpiricalDistribution,
+                EmpiricalDistribution,
                 key=explicit,
                 num_samples=8,
             )
             actual = converter_registry.convert(
                 source,
-                RecordEmpiricalDistribution,
+                EmpiricalDistribution,
                 num_samples=8,
             )
 
@@ -242,7 +248,7 @@ class TestBuiltInConversionPlanning:
         ):
             result = from_distribution(
                 Normal(loc=0.0, scale=1.0, name="x"),
-                RecordEmpiricalDistribution,
+                EmpiricalDistribution,
                 num_samples=8,
             )
 
@@ -264,7 +270,7 @@ class TestBuiltInConversionPlanning:
         ):
             converted = converter_registry.convert(
                 descendant,
-                RecordEmpiricalDistribution,
+                EmpiricalDistribution,
                 num_samples=12,
             )
 
@@ -272,7 +278,7 @@ class TestBuiltInConversionPlanning:
         root_key = calls[0][0]
         expected = jnp.exp(Normal._sample(root, root_key, (12,)))
         np.testing.assert_allclose(
-            converted.flat_samples[:, 0],
+            _flat_samples(converted)[:, 0],
             expected,
             rtol=1e-6,
             atol=1e-6,
@@ -288,7 +294,7 @@ class TestBuiltInConversionPlanning:
         with workflow_run(seed=31):
             converted = from_distribution(
                 descendant,
-                RecordEmpiricalDistribution,
+                EmpiricalDistribution,
                 num_samples=12,
             )
 
@@ -309,7 +315,7 @@ class TestBuiltInConversionPlanning:
         ):
             converter_registry.convert(
                 descendant,
-                RecordEmpiricalDistribution,
+                EmpiricalDistribution,
                 num_samples=8,
             )
 
@@ -324,13 +330,13 @@ class TestBuiltInConversionPlanning:
 
         converted = converter_registry.convert(
             descendant,
-            RecordEmpiricalDistribution,
+            EmpiricalDistribution,
             key=explicit,
             num_samples=8,
         )
 
         expected = descendant._sample(explicit, (8,))
-        np.testing.assert_allclose(converted.flat_samples[:, 0], expected)
+        np.testing.assert_allclose(_flat_samples(converted)[:, 0], expected)
 
     def test_mc_moment_conversion_plans_and_reuses_one_sample_batch(self):
         calls = []
@@ -377,7 +383,7 @@ class TestBuiltInConversionPlanning:
         assert [shape for _key, shape in calls] == [(16,)]
 
         root_key = calls[0][0]
-        root_samples = RecordEmpiricalDistribution._sample(root, root_key, (16,))
+        root_samples = EmpiricalDistribution._sample(root, root_key, (16,))
         expected = descendant.bijector.forward(root_samples)
         np.testing.assert_allclose(converted._mean(), jnp.mean(expected, axis=0))
         np.testing.assert_allclose(converted._variance(), jnp.var(expected, axis=0))
@@ -422,7 +428,7 @@ class TestBuiltInConversionPlanning:
 
         assert [shape for _key, shape in calls] == [(16,)]
         root_key = calls[0][0]
-        root_samples = RecordEmpiricalDistribution._sample(root, root_key, (16,))
+        root_samples = EmpiricalDistribution._sample(root, root_key, (16,))
         expected = descendant.bijector.forward(root_samples)
         expected_mean = jnp.mean(expected, axis=0)
         diff = expected - expected_mean
@@ -567,7 +573,7 @@ class TestExternalProviderAdapters:
         ):
             result = converter_registry.convert(
                 source,
-                RecordEmpiricalDistribution,
+                EmpiricalDistribution,
                 num_samples=16,
             )
 
@@ -587,7 +593,7 @@ class TestExternalProviderAdapters:
         ):
             result = TFPConverter().convert(
                 source,
-                RecordEmpiricalDistribution,
+                EmpiricalDistribution,
                 num_samples=16,
             )
 
@@ -601,7 +607,7 @@ class TestExternalProviderAdapters:
             with workflow_run(seed=7):
                 return converter_registry.convert(
                     source,
-                    RecordEmpiricalDistribution,
+                    EmpiricalDistribution,
                     num_samples=16,
                 )
 
@@ -615,7 +621,7 @@ class TestExternalProviderAdapters:
             with workflow_run(seed=7):
                 return converter_registry.convert(
                     source,
-                    RecordEmpiricalDistribution,
+                    EmpiricalDistribution,
                     num_samples=16,
                 )
 
@@ -635,7 +641,7 @@ class TestExternalProviderAdapters:
         ):
             result = converter_registry.convert(
                 source,
-                RecordEmpiricalDistribution,
+                EmpiricalDistribution,
                 num_samples=16,
             )
 

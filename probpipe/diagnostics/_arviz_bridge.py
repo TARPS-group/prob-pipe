@@ -19,6 +19,7 @@ import numpy as np
 # Absolute (not relative) so this file stays loadable standalone — the
 # missing-xarray fallback test execs it outside the package.
 from probpipe.diagnostics._utils import _is_structured, _leaf_keys
+from probpipe.distributions._empirical import EmpiricalDistribution
 
 try:
     import xarray as xr
@@ -52,8 +53,8 @@ def extract_draws(posterior: Any) -> dict[str, np.ndarray]:
     1. **ApproximateDistribution** (from ``condition_on``) with
        ``.draws()`` returning a ``Record`` / ``NumericRecord`` or
        plain dict.
-    2. **EmpiricalDistribution** with ``.samples`` as a
-       ``Record`` / ``NumericRecord``.
+    2. **EmpiricalDistribution**, whose atoms along one axis give one
+       variable per leaf path, or one under the component of an array event.
 
     Parameters
     ----------
@@ -69,7 +70,7 @@ def extract_draws(posterior: Any) -> dict[str, np.ndarray]:
     Raises
     ------
     TypeError
-        If the posterior has neither ``.draws()`` nor ``.samples``.
+        If the posterior is neither of these.
     """
     # Case 1: ApproximateDistribution with .draws()
     if hasattr(posterior, "draws"):
@@ -81,16 +82,17 @@ def extract_draws(posterior: Any) -> dict[str, np.ndarray]:
         if isinstance(raw, dict):
             return {k: np.asarray(v) for k, v in raw.items()}
 
-    # Case 2: EmpiricalDistribution with .samples
-    if hasattr(posterior, "samples"):
-        samples = posterior.samples
-        if _is_structured(samples):
-            return {k: np.asarray(samples[k]) for k in _leaf_keys(samples)}
-        return {"x": np.asarray(samples)}
+    # Case 2: EmpiricalDistribution, its atoms along one axis
+    if isinstance(posterior, EmpiricalDistribution):
+        rows = posterior._rows
+        if isinstance(rows, dict):
+            return {path: np.asarray(column) for path, column in rows.items()}
+        (component,) = posterior.event_spec.components
+        return {component: np.asarray(rows)}
 
     raise TypeError(
         f"Cannot extract draws from {type(posterior).__name__}. "
-        f"Expected a posterior with .draws() or .samples attribute."
+        f"Expected a posterior with .draws() or an EmpiricalDistribution."
     )
 
 
@@ -127,7 +129,7 @@ def to_arviz_dataset(
         raise ImportError("xarray is required. Install with: pip install xarray")
 
     # ── ApproximateDistribution: delegate to the canonical builder ────────────
-    if hasattr(posterior, "chains") and _is_structured(posterior):
+    if hasattr(posterior, "chains") and _is_structured(posterior.draws(chain=0)):
         from ._datatree_store import to_named_posterior_dataset
 
         ds = to_named_posterior_dataset(posterior)

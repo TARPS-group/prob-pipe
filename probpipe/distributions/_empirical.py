@@ -25,10 +25,11 @@ from .._weights import (
 from ..core._array_backend import _to_jax_array
 from ..core._batch import Batch
 from ..core._dispatch import Feasibility
+from ..core._kinds import batch_class_for_spec
 from ..core._numeric_array_batch import NumericArrayBatch
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._object_batch import _is_object_array, _ObjectBatch
-from ..core._record_batch import RecordBatch
+from ..core._record_batch import RecordBatch, _batch_class_for
 from ..core._record_spec import NumericRecordSpec, RecordSpec
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec
 from ..core._specs import OutputSpec
@@ -45,7 +46,7 @@ from ._capabilities import (
     _capability_subclass,
 )
 from ._distribution import Distribution, _whole_term_component
-from ._factored import _stacked
+from ._factored import _raw_record, _stacked
 from ._views import _node_at
 
 if TYPE_CHECKING:
@@ -175,6 +176,26 @@ def _taken(column: Any, index: Any) -> Any:
 def _ranks(atoms: Batch) -> tuple[int, ...]:
     """How many axes each level of *atoms* holds, outermost first."""
     return tuple(len(group) for group in atoms.axis_groups)
+
+
+def _batch_form(name: str, raw: Any, level: str, spec: TermSpec) -> Batch:
+    """*raw*, values of *spec* in raw form along one leading axis, as their batch on *level*.
+
+    The raw form is an array of array values, the nested mapping of columns, or
+    a ``Record`` of them, for record values, and an object array of any other
+    values.
+
+    Raises
+    ------
+    TypeError
+        If *spec* has no batch form.
+    """
+    if isinstance(spec, RecordSpec):
+        return _batch_class_for(spec)(name, _raw_record(raw), level, element_spec=spec)
+    batch_class = batch_class_for_spec(spec)
+    if batch_class is None:
+        raise TypeError(f"a value declared as {type(spec).__name__} has no batch form")
+    return batch_class(name, raw, level, element_spec=spec)
 
 
 # ---------------------------------------------------------------------------
