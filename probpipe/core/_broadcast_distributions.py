@@ -145,7 +145,6 @@ class _MixtureMarginal(Distribution):
 
         # A draw is one component's draw.
         super().__init__(name, _cell_declaration(tuple(components), name))
-        self._approximate = True
 
     @property
     def num_atoms(self) -> int:
@@ -1418,7 +1417,6 @@ class BroadcastDistribution(Distribution, SupportsSampling):
         else:
             event_spec = OpaqueSpec()
         super().__init__(name, event_spec)
-        self._approximate = True
         # A memo, filled on first read. Reading fills it in place, which leaves
         # the term's own attributes as construction set them — what the
         # immutability guard sees, and what a copy drops rather than inherits.

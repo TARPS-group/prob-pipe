@@ -605,18 +605,6 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         rec = _pack_fields(fields, field_kwargs, owner=type(self).__name__)
         return field_kwargs[fields[0]] if len(fields) == 1 else rec
 
-    # -- approximation tracking ---------------------------------------------
-
-    @property
-    def is_approximate(self) -> bool:
-        """Whether this distribution is an approximation.
-
-        Approximate distributions are typically produced by sampling,
-        variational inference, MCMC, bootstrap procedures, or other numerical
-        approximations.
-        """
-        return getattr(self, "_approximate", False)
-
     # -- annotations ---------------------------------------------------------
     #
     # ``annotations`` (the general post-construction metadata store) is

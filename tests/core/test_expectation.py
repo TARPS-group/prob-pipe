@@ -1,11 +1,10 @@
-"""Tests for expectation(Distribution), BootstrapDistribution, and is_approximate."""
+"""Tests for expectation(Distribution) and BootstrapDistribution."""
 
 import jax
 import jax.numpy as jnp
 import jax.scipy.special as jsp
 import numpy as np
 import pytest
-import tensorflow_probability.substrates.jax.bijectors as tfb
 
 import probpipe.distributions._distribution as dist_mod
 from probpipe import (
@@ -22,9 +21,7 @@ from probpipe import (
     NumericArray,
     NumericRecord,
     RecordEmpiricalDistribution,
-    TransformedDistribution,
     expectation,
-    from_distribution,
     mean,
     sample,
     set_default_num_evaluations,
@@ -46,7 +43,6 @@ class TestBootstrapDistribution:
         bd = BootstrapDistribution("bd", evals)
         assert bd.num_atoms == 5
         assert bd.event_shape == ()
-        assert bd.is_approximate
 
     def test_mean(self):
         evals = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
@@ -293,51 +289,6 @@ class TestMCFallbackMethods:
         result = mean(d)
         assert isinstance(result, NumericRecord)
         np.testing.assert_allclose(float(result), 2.0, atol=1e-6)
-
-
-# ---------------------------------------------------------------------------
-# is_approximate tests
-# ---------------------------------------------------------------------------
-
-
-class TestIsApproximate:
-    def test_tfp_distribution_exact(self):
-        assert not Normal(loc=0.0, scale=1.0, name="x").is_approximate
-        assert not Gamma(concentration=1.0, rate=1.0, name="x").is_approximate
-        assert not Beta(alpha=1.0, beta=1.0, name="x").is_approximate
-        assert not Bernoulli(probs=0.5, name="x").is_approximate
-
-    def test_empirical_approximate_by_default(self):
-        d = EmpiricalDistribution("x", jnp.array([1.0, 2.0]))
-        assert d.is_approximate
-
-    def test_bootstrap_always_approximate(self):
-        bd = BootstrapDistribution("bd", jnp.array([1.0, 2.0, 3.0]))
-        assert bd.is_approximate
-
-    def test_transformed_propagates(self):
-        exact_base = Normal(loc=0.0, scale=1.0, name="x")
-        t_exact = TransformedDistribution("t_exact", exact_base, tfb.Exp())
-        assert not t_exact.is_approximate
-
-        approx_base = EmpiricalDistribution("x", jnp.array([1.0, 2.0]))
-        t_approx = TransformedDistribution("t_approx", approx_base, tfb.Exp())
-        assert t_approx.is_approximate
-
-    def test_from_distribution_same_class_exact(self):
-        d = Normal(loc=0.0, scale=1.0, name="x")
-        d2 = from_distribution(d, Normal)
-        assert not d2.is_approximate
-
-    def test_from_distribution_different_class_approximate(self):
-        d = Normal(loc=5.0, scale=0.1, name="x")
-        d2 = from_distribution(d, Gamma, check_support=False)
-        assert d2.is_approximate
-
-    def test_from_distribution_to_empirical(self):
-        d = Normal(loc=0.0, scale=1.0, name="x")
-        d2 = from_distribution(d, RecordEmpiricalDistribution)
-        assert d2.is_approximate
 
 
 # ---------------------------------------------------------------------------

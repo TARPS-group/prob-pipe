@@ -153,8 +153,6 @@ class TransformedDistribution(NumericRecordDistribution):
             dtype = base.dtype
         super().__init__(name, NumericArraySpec(shape, dtype, self._event_support()))
 
-        self._approximate = base.is_approximate
-
         self.with_provenance(
             Provenance.create(
                 "transform",

@@ -354,7 +354,6 @@ class EmpiricalDistribution(
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         # Atoms of no known kind form a whole-term event under the name.
         super().__init__(name, OpaqueSpec())
-        self._approximate = True
 
     # -- properties ---------------------------------------------------------
 
@@ -556,7 +555,6 @@ class RecordEmpiricalDistribution(
         # call Distribution.__init__ directly. A draw is a row, so the atoms
         # declare an exposed record, the auto-wrapped array's included.
         Distribution.__init__(self, name, _atom_declaration(atom_template, self._record_data))
-        self._approximate = True
 
     # -- properties ---------------------------------------------------------
 
@@ -881,7 +879,6 @@ class BootstrapReplicateDistribution(
             # ``default_replicate_size`` when the caller didn't pass it
             # (matches the old behaviour where source size == default).
             self._source_size = source_size if source_size is not None else default_replicate_size
-        self._approximate = True
 
     def _replicate_event_spec(self) -> TermSpec:
         """One replicate: ``replicate_size`` draws of the source.

@@ -280,10 +280,6 @@ class TestProperties:
         assert dist.weights is not None
         assert dist.weights.shape == (3,)
 
-    def test_approximate_flag(self):
-        dist = BootstrapReplicateDistribution("x", jnp.ones((5, 2)))
-        assert dist._approximate is True
-
     def test_numeric_has_event_shape(self):
         """Numeric arrays dispatch to Array variant with event_shape."""
         dist = BootstrapReplicateDistribution("x", jnp.ones((5, 2)))

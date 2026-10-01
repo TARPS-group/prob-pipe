@@ -485,7 +485,6 @@ class BootstrapDistribution(
             name,
             NumericArraySpec(self._evaluations.shape[1:], self._evaluations.dtype, real),
         )
-        self._approximate = True
 
     @property
     def num_atoms(self) -> int:

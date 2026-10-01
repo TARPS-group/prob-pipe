@@ -119,16 +119,6 @@ class TestProbPipeConverter:
         assert len(result.provenance.parents) == 1
         assert result.provenance.parents[0].name == "prior"
 
-    def test_approximate_flag(self):
-        g = Gamma(concentration=3.0, rate=1.0, name="g")
-        result = converter_registry.convert(g, Normal)
-        assert result.is_approximate
-
-    def test_same_class_not_approximate(self):
-        n = Normal(loc=0.0, scale=1.0, name="x")
-        result = converter_registry.convert(n, Normal)
-        assert not result.is_approximate
-
     def test_same_class_returns_source(self):
         """Same-class conversion returns the source object itself."""
         n = Normal(loc=1.0, scale=2.0, name="x")

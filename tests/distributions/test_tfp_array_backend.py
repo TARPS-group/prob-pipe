@@ -502,54 +502,6 @@ class TestScalarParamBroadcasting:
 
 
 # ---------------------------------------------------------------------------
-# Backend-derived approximation status
-# ---------------------------------------------------------------------------
-
-
-class TestBackendApproximate:
-    """``_from_backend`` propagates ``is_approximate`` from the
-    backend rather than hardcoding ``False``. This is forward-
-    compatible with a future ``_RecordBatchBackend`` over an
-    empirical source whose samples are an approximation.
-    """
-
-    def test_tfp_backend_is_exact(self):
-        """The shipping ``_TFPArrayBackend`` has no
-        ``is_approximate`` attribute, so the ``DistributionArray``
-        defaults to exact (``False``)."""
-        from probpipe import DistributionArray
-
-        backend = Normal._make_array_backend(
-            name="x",
-            batch_shape=(3,),
-            loc=jnp.zeros(3),
-            scale=1.0,
-        )
-        da = DistributionArray._from_backend(backend, name="x")
-        assert da.is_approximate is False
-
-    def test_approximate_backend_propagates(self):
-        """A backend reporting ``is_approximate=True`` flows through
-        to the assembled DistributionArray."""
-        from probpipe import DistributionArray
-
-        class _ApproxBackend:
-            batch_shape = (3,)
-            event_shape = ()
-            is_approximate = True
-
-            @property
-            def cell_spec(self):
-                return self.cell(0).event_spec.spec
-
-            def cell(self, i):
-                return Normal(loc=0.0, scale=1.0, name=f"x_{i}")
-
-        da = DistributionArray._from_backend(_ApproxBackend(), name="x")
-        assert da.is_approximate is True
-
-
-# ---------------------------------------------------------------------------
 # Negative-index alignment
 # ---------------------------------------------------------------------------
 

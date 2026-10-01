@@ -99,7 +99,6 @@ class _DiracRandomMeasure(
         self._inner_event_shape = first_es
         self._inner_support = first_supp
         super().__init__(name=name or "dirac_random_measure")
-        self._approximate = True
 
     @property
     def inner_support(self):
