@@ -26,8 +26,10 @@ import numpy as np
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._specs import _components_record
 from ..core.ops import sample as _sample_op
-from ..core.protocols import GenerativeLikelihood
+from ..core.record import Record
 from ..custom_types import Array, PRNGKey
+from ..distributions._capabilities import SupportsConditionalSampling
+from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution, NumericDistribution
 
 if TYPE_CHECKING:
@@ -104,7 +106,7 @@ def _adapter_field_keys(keys: tuple[str, ...]) -> tuple[str, ...]:
 
 def _validate_learn_inputs(
     prior: Distribution,
-    simulator: GenerativeLikelihood,
+    simulator: ConditionalDistribution,
     *,
     caller: str,
     sim_backend: SimBackend,
@@ -119,10 +121,13 @@ def _validate_learn_inputs(
             raise TypeError(f"{_name} must be an integer, got {type(_val).__name__}.")
         if _val < 1:
             raise ValueError(f"{_name} must be a positive integer, got {_val}.")
-    if not hasattr(simulator, "generate_data"):
+    if not (
+        isinstance(simulator, ConditionalDistribution)
+        and isinstance(simulator, SupportsConditionalSampling)
+    ):
         raise TypeError(
-            "simulator must be a GenerativeLikelihood with a generate_data method, "
-            f"got {type(simulator).__name__}"
+            "simulator must be a ConditionalDistribution that samples, the kernel of one "
+            f"observation given the prior's fields, got {type(simulator).__name__}"
         )
     if not isinstance(prior, NumericDistribution):
         raise TypeError(
@@ -151,9 +156,22 @@ def _isolated_keras_seeding(random_seed: int):
         np.random.set_state(np_state)
 
 
+def _simulator_given(simulator: ConditionalDistribution, params: Any) -> Any:
+    """The simulator's given values at *params*, the record of one prior draw.
+
+    A simulator whose given slots are the prior's components receives the record
+    itself, so it may read a nested field by its leaf path; any other receives
+    the record of its slots.
+    """
+    slots = tuple(simulator.given_spec)
+    if set(slots) == set(params.fields):
+        return params
+    return Record("given", {slot: params[slot] for slot in slots})
+
+
 def _simulate_offline(
     prior: Distribution,
-    simulator: GenerativeLikelihood,
+    simulator: ConditionalDistribution,
     num_simulations: int,
     key: PRNGKey,
     *,
@@ -201,13 +219,14 @@ def _simulate_offline(
     sim_keys = jax.random.split(k_sim, num_simulations)
 
     def _one(flat_row: Array, k: PRNGKey) -> Array:
-        # Per-draw structured params (named-field access), per the
-        # GenerativeLikelihood contract. ``flat_row`` is 1-D, so from_vector
-        # rebuilds a single NumericRecord.
+        # One observation of the simulator kernel at the per-draw structured
+        # params. ``flat_row`` is 1-D, so from_vector rebuilds a single
+        # NumericRecord.
         from ..core._numeric_record import _reconstruct_from_vector
+        from ._inference_utils import flat_vector
 
         params = _reconstruct_from_vector("params", template, flat_row)
-        return jnp.ravel(simulator.generate_data(params, 1, key=k)[0])
+        return flat_vector(simulator._conditional_sample(_simulator_given(simulator, params), k))
 
     if sim_backend == "jax":
         # JAX-traceable simulators: vmap the whole batch (fast path).

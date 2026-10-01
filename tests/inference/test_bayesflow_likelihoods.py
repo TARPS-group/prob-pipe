@@ -19,14 +19,15 @@ pytest.importorskip("bayesflow")
 import jax
 import jax.numpy as jnp
 import numpy as np
+import tensorflow_probability.substrates.jax.distributions as tfd
 
 import probpipe as pp
 from probpipe import (
     BayesFlowLikelihood,
     BayesFlowRatio,
     Normal,
+    NumericArraySpec,
     NumericRecord,
-    SimpleModel,
     condition_on,
     learn_amortized_likelihood,
     learn_amortized_ratio,
@@ -36,33 +37,34 @@ from probpipe.distributions._capabilities import (
     SupportsConditionalUnnormalizedLogProb,
 )
 from probpipe.inference._bayesflow_common import _adapter_field_keys
-from probpipe.modeling import GenerativeLikelihood, Likelihood
 from probpipe.operations._condition import condition_on as condition_on_operation
 
-from ._bayesflow_helpers import theta_vec
+from ._bayesflow_helpers import SimulatorKernel, theta_vec
+from .canonical import ObservationKernel
 
 # Conjugate model: theta ~ N(0, I_2), y_i = theta + sigma * eps. With n rows the
 # posterior is N(sum(y) / (n + sigma^2), sigma^2 / (n + sigma^2) I).
 _SIGMA = 0.5
 
 
-class _ConjugateSim(Likelihood, GenerativeLikelihood):
-    # ``log_likelihood`` is unused by the amortized path (only ``generate_data``
-    # is called); stubbed here just to satisfy the ``Likelihood`` protocol.
-    def log_likelihood(self, params, data):
-        return jnp.array(0.0)
-
-    def generate_data(self, params, num_observations, *, key=None):
-        key = key if key is not None else jax.random.PRNGKey(0)
-        t = theta_vec(params)
-        return t[None, :] + _SIGMA * jax.random.normal(key, (num_observations, t.shape[-1]))
+def _rows(params, num_observations, key):
+    """*num_observations* i.i.d. rows ``y_i = theta + sigma * eps`` at the parameters *params*."""
+    t = theta_vec(params)
+    return t[None, :] + _SIGMA * jax.random.normal(key, (num_observations, t.shape[-1]))
 
 
-_SIM = _ConjugateSim()
+def _sim(prior):
+    """The conjugate simulator over *prior*'s fields: one row per draw."""
+    return SimulatorKernel(
+        prior, (prior.event_spec.spec.vector_size,), lambda params, key: _rows(params, 1, key)[0]
+    )
 
 
 def _prior():
     return Normal(loc=0.0, scale=1.0, name="a") * Normal(loc=0.0, scale=1.0, name="b")
+
+
+_SIM = _sim(_prior())
 
 
 def _nested_prior():
@@ -248,18 +250,12 @@ class TestSurrogateContract:
         (the atleast_2d reading would reject every multi-row scalar dataset).
         Tiny untuned training -- this checks shape semantics, not calibration."""
 
-        class _ScalarSim(Likelihood, GenerativeLikelihood):
-            def log_likelihood(self, params, data):
-                return jnp.array(0.0)
-
-            def generate_data(self, params, num_observations, *, key=None):
-                key = key if key is not None else jax.random.PRNGKey(0)
-                a = theta_vec(params)[0]
-                return a + 0.1 * jax.random.normal(key, (num_observations, 1))
+        def _scalar(params, key):
+            return theta_vec(params)[:1] + 0.1 * jax.random.normal(key, (1,))
 
         lik = learn_amortized_ratio(
             _prior(),
-            _ScalarSim(),
+            SimulatorKernel(_prior(), (1,), _scalar),
             num_simulations=256,
             epochs=2,
             batch_size=64,
@@ -309,7 +305,7 @@ class TestConditioning:
         The analytic n=8 std (~0.17) is ~2.6x tighter than n=1 (~0.45), so the
         ratio band transitively enforces the sharpening."""
         theta_true = jnp.array([0.6, -0.6])
-        y = np.asarray(_SIM.generate_data(theta_true, 8, key=jax.random.PRNGKey(3)))
+        y = np.asarray(_rows(theta_true, 8, jax.random.PRNGKey(3)))
         # Observed across seeds: mean err 0.03-0.34 post-std, ratios 0.99-1.10
         # (the per-row score errors accumulate over n rows, hence the wider
         # mean bound than n=1).
@@ -335,14 +331,14 @@ class TestConditioning:
         assert (ratio_band[0] < ratio).all() and (ratio < ratio_band[1]).all(), ratio
 
     def test_nle_nested_prior_end_to_end(self):
-        """NLE lifts a nested prior: SimpleModel(nested prior, learned
-        likelihood) + condition_on -> NUTS recovers the analytic conjugate
+        """NLE lifts a nested prior: the learned likelihood times the nested
+        prior, conditioned with condition_on -> NUTS recovers the analytic conjugate
         posterior, per nested leaf. NLE feeds raw theta to the network, so the
         nesting is purely the leaf-keyed adapter routing (no bijectors)."""
         prior = _nested_prior()
         nle = learn_amortized_likelihood(
             prior,
-            _SIM,
+            _sim(prior),
             num_simulations=4000,
             epochs=25,
             batch_size=256,
@@ -358,7 +354,7 @@ class TestConditioning:
         prior = _nested_prior()
         nre = learn_amortized_ratio(
             prior,
-            _SIM,
+            _sim(prior),
             num_simulations=8000,
             epochs=40,
             batch_size=256,
@@ -375,22 +371,24 @@ class TestConditioning:
         the natural space; the learned likelihood conditions on raw positive
         theta."""
 
-        class _TrueGaussianLik(Likelihood):
-            def log_likelihood(self, params, data):
-                t = theta_vec(params)
-                t = jnp.ravel(jnp.asarray(t))
-                rows = jnp.atleast_2d(jnp.asarray(data))
-                resid = (rows - t[None, :]) / _SIGMA
-                return -0.5 * jnp.sum(resid**2) - rows.size * jnp.log(_SIGMA * np.sqrt(2 * np.pi))
-
         def _gamma_prior():
             return pp.Gamma("lam", 5.0, 1.0) * Normal(loc=0.0, scale=1.0, name="m")
 
-        y = np.asarray(_SIM.generate_data(jnp.array([5.0, 0.5]), 4, key=jax.random.PRNGKey(5)))
+        y = np.asarray(_rows(jnp.array([5.0, 0.5]), 4, jax.random.PRNGKey(5)))
 
+        # The analytic Gaussian likelihood of the four rows, as a kernel of (lam, m).
+        prior = _gamma_prior()
+        true_likelihood = ObservationKernel(
+            "observation",
+            dict(prior.event_spec.components),
+            NumericArraySpec(y.shape),
+            lambda lam, m: tfd.Independent(
+                tfd.Normal(jnp.broadcast_to(jnp.stack([lam, m]), y.shape), _SIGMA), 2
+            ),
+        )
         ref_post = condition_on(
-            SimpleModel(prior=_gamma_prior(), likelihood=_TrueGaussianLik()),
-            jnp.asarray(y),
+            true_likelihood * prior,
+            {"observation": jnp.asarray(y)},
             num_results=1500,
             num_warmup=500,
             random_seed=0,
@@ -398,7 +396,7 @@ class TestConditioning:
         ref = np.asarray(ref_post.draws()["lam"]).reshape(-1)
         lik = learn_amortized_likelihood(
             _gamma_prior(),
-            _SIM,
+            _sim(_gamma_prior()),
             num_simulations=3000,
             epochs=20,
             batch_size=256,
@@ -420,21 +418,15 @@ class TestConditioning:
         1.13-1.27 across seeds); the cell-midpoint scoring must also match a
         non-dequantized wrapper of the same approximator at y + 1/2 exactly."""
 
-        class _PoissonPairSim(Likelihood, GenerativeLikelihood):
-            def log_likelihood(self, params, data):
-                return jnp.array(0.0)
-
-            def generate_data(self, params, num_observations, *, key=None):
-                key = key if key is not None else jax.random.PRNGKey(0)
-                lam = theta_vec(params)[0]
-                counts = jax.random.poisson(key, lam, (num_observations, 2))
-                return counts.astype(jnp.float32)
+        def _poisson_pair(params, key):
+            lam = theta_vec(params)[0]
+            return jax.random.poisson(key, lam, (2,)).astype(jnp.float32)
 
         y_obs = jnp.array([[2.0, 1.0]])
         an_mean, an_std = 5.0 / 4.0, np.sqrt(5.0) / 4.0
         lik = learn_amortized_likelihood(
             pp.Gamma("lam", 2.0, 2.0),
-            _PoissonPairSim(),
+            SimulatorKernel(pp.Gamma("lam", 2.0, 2.0), (2,), _poisson_pair),
             num_simulations=4000,
             epochs=25,
             batch_size=256,
@@ -482,7 +474,7 @@ class TestValidation:
         class _NoGenerate:
             pass
 
-        with pytest.raises(TypeError, match="generate_data"):
+        with pytest.raises(TypeError, match="ConditionalDistribution that samples"):
             learn_amortized_likelihood(_prior(), _NoGenerate(), num_simulations=8, epochs=1)
 
     def test_rejects_a_prior_that_is_not_numeric(self):
@@ -494,33 +486,22 @@ class TestValidation:
         observations (float32 spacing reaches 1.0 there, so the unit-cell
         arithmetic would silently round away)."""
 
-        class _HugeCounts(Likelihood, GenerativeLikelihood):
-            def log_likelihood(self, params, data):
-                return jnp.array(0.0)
-
-            def generate_data(self, params, num_observations, *, key=None):
-                return jnp.full((num_observations, 2), 2.0**23)
-
+        huge_counts = SimulatorKernel(_prior(), (2,), lambda params, key: jnp.full((2,), 2.0**23))
         with pytest.raises(ValueError, match=r"2\*\*23"):
             learn_amortized_likelihood(
-                _prior(), _HugeCounts(), num_simulations=8, epochs=1, dequantize=True
+                _prior(), huge_counts, num_simulations=8, epochs=1, dequantize=True
             )
 
     def test_nle_rejects_one_dimensional_observations(self):
         """The default coupling flow cannot model 1-D densities; the error points
         at learn_amortized_ratio (whose classifier has no minimum dimension)."""
 
-        class _Scalar(Likelihood, GenerativeLikelihood):
-            def log_likelihood(self, params, data):
-                return jnp.array(0.0)
+        def _scalar(params, key):
+            return theta_vec(params)[:1] + 0.1 * jax.random.normal(key, (1,))
 
-            def generate_data(self, params, num_observations, *, key=None):
-                key = key if key is not None else jax.random.PRNGKey(0)
-                a = theta_vec(params)[0]
-                return a + 0.1 * jax.random.normal(key, (num_observations, 1))
-
+        scalar = SimulatorKernel(_prior(), (1,), _scalar)
         with pytest.raises(ValueError, match="learn_amortized_ratio"):
-            learn_amortized_likelihood(_prior(), _Scalar(), num_simulations=8, epochs=1)
+            learn_amortized_likelihood(_prior(), scalar, num_simulations=8, epochs=1)
 
 
 class TestDeterminism:

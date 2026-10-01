@@ -31,7 +31,6 @@ import numpy as np
 
 from ..core._spec_base import NumericArraySpec
 from ..core._specs import OutputSpec
-from ..core.protocols import GenerativeLikelihood
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike
 from ..distributions._capabilities import (
@@ -118,7 +117,7 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
     prior : Distribution
         The prior the estimator was trained against; its ``event_size`` fixes
         the expected ``theta`` width, and its components are the given slots.
-    simulator : GenerativeLikelihood
+    simulator : ConditionalDistribution
         The training simulator.
     data_dim : int
         Flattened per-row observation width the network was trained on (fixed
@@ -131,7 +130,7 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
         self,
         approximator: ContinuousApproximator | RatioApproximator,
         prior: Distribution,
-        simulator: GenerativeLikelihood,
+        simulator: ConditionalDistribution,
         *,
         data_dim: int,
         name: str,
@@ -158,7 +157,7 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
         return self._prior
 
     @property
-    def simulator(self) -> GenerativeLikelihood:
+    def simulator(self) -> ConditionalDistribution:
         """The training simulator."""
         return self._simulator
 
@@ -287,7 +286,7 @@ class BayesFlowLikelihood(_BayesFlowLikelihoodBase, SupportsConditionalLogProb):
         self,
         approximator: ContinuousApproximator,
         prior: Distribution,
-        simulator: GenerativeLikelihood,
+        simulator: ConditionalDistribution,
         *,
         data_dim: int,
         dequantized: bool = False,
@@ -350,7 +349,7 @@ class BayesFlowRatio(_BayesFlowLikelihoodBase, SupportsConditionalUnnormalizedLo
         self,
         approximator: RatioApproximator,
         prior: Distribution,
-        simulator: GenerativeLikelihood,
+        simulator: ConditionalDistribution,
         *,
         data_dim: int,
     ):
@@ -393,7 +392,7 @@ class BayesFlowRatio(_BayesFlowLikelihoodBase, SupportsConditionalUnnormalizedLo
 
 def _train_offline(
     prior: Distribution,
-    simulator: GenerativeLikelihood,
+    simulator: ConditionalDistribution,
     *,
     caller: str,
     num_simulations: int,
@@ -483,7 +482,7 @@ def _train_offline(
 
 def learn_amortized_likelihood(
     prior: Distribution,
-    simulator: GenerativeLikelihood,
+    simulator: ConditionalDistribution,
     *,
     num_simulations: int = 10_000,
     epochs: int = 50,
@@ -514,10 +513,10 @@ def learn_amortized_likelihood(
         constrained and discrete-valued parameter fields are both fine here,
         since theta is a network *input* (whether the downstream sampler can
         handle the prior is the sampler's concern).
-    simulator : GenerativeLikelihood
-        ``generate_data(params, num_observations, *, key)``; receives the
-        prior's structured per-draw record (named-field access). Must be
-        JAX-vmappable unless ``sim_backend="sequential"``.
+    simulator : ConditionalDistribution
+        The kernel of one observation given the prior's fields, which samples;
+        its given values are the prior's structured per-draw record (named-field
+        access). Must be JAX-vmappable unless ``sim_backend="sequential"``.
     num_simulations, epochs, batch_size : int
         Offline simulation count and keras training schedule.
     sim_backend : {"jax", "sequential"}
@@ -574,8 +573,8 @@ def learn_amortized_likelihood(
         a custom ``inference_network``); with ``dequantize=True``, also if the
         simulated observations reach ``2**23``.
     TypeError
-        If a count parameter is not an integer, ``simulator`` lacks
-        ``generate_data``, or ``prior`` is not a numeric distribution.
+        If a count parameter is not an integer, ``simulator`` is not a kernel
+        that samples, or ``prior`` is not a numeric distribution.
     ImportError
         If the ``[bayesflow]`` extra is not installed.
     """
@@ -613,7 +612,7 @@ def learn_amortized_likelihood(
 
 def learn_amortized_ratio(
     prior: Distribution,
-    simulator: GenerativeLikelihood,
+    simulator: ConditionalDistribution,
     *,
     num_simulations: int = 10_000,
     epochs: int = 50,
@@ -643,9 +642,9 @@ def learn_amortized_ratio(
         Prior over the model parameters; a numeric distribution, possibly
         nested (as in :func:`learn_amortized_likelihood` -- constrained and
         discrete-valued parameter fields are fine, theta is a network input).
-    simulator : GenerativeLikelihood
-        ``generate_data(params, num_observations, *, key)``; receives the
-        prior's structured per-draw record.
+    simulator : ConditionalDistribution
+        The kernel of one observation given the prior's fields, which samples;
+        its given values are the prior's structured per-draw record.
     num_simulations : int
         Number of ``(theta, y)`` pairs simulated offline for training.
     epochs, batch_size : int
@@ -674,8 +673,8 @@ def learn_amortized_ratio(
         If ``sim_backend`` is unknown or a count parameter is less than one
         (no minimum observation dimension, unlike NLE).
     TypeError
-        If a count parameter is not an integer, ``simulator`` lacks
-        ``generate_data``, or ``prior`` is not a numeric distribution.
+        If a count parameter is not an integer, ``simulator`` is not a kernel
+        that samples, or ``prior`` is not a numeric distribution.
     ImportError
         If the ``[bayesflow]`` extra is not installed.
     """

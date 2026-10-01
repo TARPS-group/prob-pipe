@@ -31,7 +31,6 @@ from ..core._dispatch import Feasibility, MathematicalDomainError, ResolutionErr
 from ..core._numeric_record import _reconstruct_from_vector
 from ..core._spec_base import NumericArraySpec
 from ..core._specs import _components_record
-from ..core.protocols import GenerativeLikelihood
 from ..core.record import Record
 from ..custom_types import Array
 from ..distributions._capabilities import (
@@ -180,7 +179,7 @@ class _AmortizedPosterior(
         The trained BayesFlow approximator.
     prior : Distribution
         The prior the network was trained against.
-    simulator : GenerativeLikelihood
+    simulator : ConditionalDistribution
         The simulator the network was trained against.
     method : {"npe", "fmpe", "cmpe"}
         The amortized estimator.
@@ -198,7 +197,7 @@ class _AmortizedPosterior(
         self,
         approximator: ContinuousApproximator,
         prior: Distribution,
-        simulator: GenerativeLikelihood,
+        simulator: ConditionalDistribution,
         *,
         method: AmortizedMethod,
         data_dim: int,
@@ -234,7 +233,7 @@ class _AmortizedPosterior(
         return self._prior
 
     @property
-    def simulator(self) -> GenerativeLikelihood:
+    def simulator(self) -> ConditionalDistribution:
         """The simulator the network was trained against."""
         return self._simulator
 
@@ -354,7 +353,7 @@ class _AmortizedPosterior(
 @function
 def learn_amortized_posterior(
     prior: Distribution,
-    simulator: GenerativeLikelihood,
+    simulator: ConditionalDistribution,
     *,
     method: AmortizedMethod = "npe",
     num_simulations: int = 10_000,
@@ -389,15 +388,15 @@ def learn_amortized_posterior(
         via the per-leaf bijector from :func:`~probpipe.bijector_for` -- applied at
         the leaf's native event shape -- and mapped back to the support at sample
         time; real-valued leaves use the identity.  Discrete priors are not supported.
-    simulator : GenerativeLikelihood
-        Must implement ``generate_data(params, num_observations, *, key)``.  As with
-        ``SimpleGenerativeModel`` / ``PriorPredictiveCheck``, ``params`` is the prior's
-        native per-draw sample -- a record whose fields are accessible by name
-        (``params["a"]``), not a flattened vector.  It must be JAX-vmappable unless
-        ``sim_backend="sequential"`` (see below). Training uses one simulated dataset
-        per ``theta``, fixing the conditioning shape: ``condition_on`` must be given
-        observed data of that same flattened size (datasets of any size are the
-        NLE/NRE learners' case).
+    simulator : ConditionalDistribution
+        The kernel of one observation given the prior's fields, which claims
+        ``SupportsConditionalSampling``. Its given values are the prior's native
+        per-draw sample -- a record whose fields are accessible by name
+        (``given["a"]``), not a flattened vector.  It must be JAX-vmappable unless
+        ``sim_backend="sequential"`` (see below). Training uses one simulated
+        observation per ``theta``, fixing the conditioning shape: ``condition_on``
+        must be given observed data of that same flattened size (datasets of any
+        size are the NLE/NRE learners' case).
     method : {"npe", "fmpe", "cmpe"}
         Amortized estimator: NPE (coupling flow), FMPE (flow matching), or CMPE
         (consistency model). NPE's coupling flow needs at least two *unconstrained*
@@ -444,8 +443,8 @@ def learn_amortized_posterior(
         less than one, or a prior field's support is not declared or admits no
         smooth bijector to ``R^d`` (e.g. a discrete prior).
     TypeError
-        If a count parameter is not an integer, ``simulator`` lacks
-        ``generate_data``, or ``prior`` is not a numeric distribution.
+        If a count parameter is not an integer, ``simulator`` is not a kernel
+        that samples, or ``prior`` is not a numeric distribution.
     ImportError
         If the ``[bayesflow]`` extra is not installed.
     """
