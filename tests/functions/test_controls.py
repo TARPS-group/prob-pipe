@@ -126,6 +126,32 @@ class TestResolution:
 
         assert result.num_atoms == 9
 
+    def test_an_unset_control_reads_the_default_when_it_is_read(self, monkeypatch):
+        wrapped = Function("identity", _identity)
+        view = wrapped.with_options(raw=True)
+        monkeypatch.setattr(Function, "DEFAULT_N_BROADCAST_SAMPLES", 17)
+
+        assert wrapped.options["n_broadcast_samples"] == 17
+        assert view.options["n_broadcast_samples"] == 17
+
+    def test_a_set_control_keeps_its_value_when_the_default_changes(self, monkeypatch):
+        wrapped = Function("identity", _identity, n_broadcast_samples=7)
+        monkeypatch.setattr(Function, "DEFAULT_N_BROADCAST_SAMPLES", 17)
+
+        assert wrapped.options["n_broadcast_samples"] == 7
+        assert wrapped.with_options(raw=True).options["n_broadcast_samples"] == 7
+
+    def test_the_default_read_at_call_time_governs_the_lift(self, monkeypatch):
+        @function(dispatch="sequential")
+        def identity(x):
+            return x
+
+        monkeypatch.setattr(Function, "DEFAULT_N_BROADCAST_SAMPLES", 6)
+        with workflow_run(seed=0):
+            result = identity(standard_normal())
+
+        assert result.num_atoms == 6
+
     def test_a_declaration_is_kept_by_a_view(self):
         wrapped = Function("value", _identity, output_spec=OutputSpec(v=NumericArraySpec(())))
 

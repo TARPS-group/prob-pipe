@@ -380,6 +380,10 @@ _CONTROL_DEFAULTS: Mapping[str, Any] = MappingProxyType(
     }
 )
 
+#: The controls a construction keyword of None leaves at their default; None is
+#: inadmissible for every other control.
+_DEFAULTED_BY_NONE = frozenset({"n_broadcast_samples", "max_workers", "method", "conversions"})
+
 #: Removed construction keywords, which warn: ``func`` aliases ``fn``, and the rest are ignored.
 _REMOVED_KEYWORDS = frozenset({"seed", "input_template", "output_template", "func"})
 
@@ -441,7 +445,7 @@ class Function(Node, TrackedTerm, Annotated):
         - ``workflow_kind`` (WorkflowKind): orchestration selection; DEFAULT,
           the default, inherits the workflow configuration.
         - ``n_broadcast_samples`` (int or None): positive sampling-lift count,
-          defaulting to 128.
+          defaulting to the class's ``DEFAULT_N_BROADCAST_SAMPLES``, 128.
         - ``dispatch`` ({"auto", "jax", "sequential", "thread"}): evaluation
           dispatch interpreted by the engine, "auto" by default.
         - ``max_workers`` (int or None): positive thread-worker count, or the
@@ -483,6 +487,8 @@ class Function(Node, TrackedTerm, Annotated):
     ``spec`` contains only input/output declarations. ``with_name`` changes the
     function label and callable metadata; output_name and component names are
     preserved. ``with_options`` returns a shallow copy with revised controls.
+    A Function stores only the controls set on it, so ``options`` reads every
+    other control's default when it is read.
     """
 
     _signature_info: WorkflowSignatureInfo
@@ -576,12 +582,12 @@ class Function(Node, TrackedTerm, Annotated):
             input_spec=input_spec,
             construction_bindings=construction_bindings,
         )
-        options = dict(_CONTROL_DEFAULTS) | controls
-        if options["n_broadcast_samples"] is None:
-            options["n_broadcast_samples"] = self.DEFAULT_N_BROADCAST_SAMPLES
-        if options["conversions"] is None:
-            options["conversions"] = MappingProxyType({})
-        options = _validate_options(options, signature_info.signature)
+        given = {
+            name: value
+            for name, value in controls.items()
+            if value is not None or name not in _DEFAULTED_BY_NONE
+        }
+        options = _set_controls(self._control_defaults(), {}, given, signature_info.signature)
         set_attribute = partial(object.__setattr__, self)
         self._init_tracked(name)
         set_attribute("_annotations", {})
@@ -647,8 +653,16 @@ class Function(Node, TrackedTerm, Annotated):
 
     @property
     def options(self) -> Mapping[str, Any]:
-        """Read-only engine controls, separate from domain arguments."""
-        return self._options
+        """The effective engine controls, separate from domain arguments.
+
+        A control set at construction or by :meth:`with_options` keeps its value,
+        and every other control reports the framework's default as it reads now.
+        """
+        return MappingProxyType(self._control_defaults() | dict(self._options))
+
+    def _control_defaults(self) -> dict[str, Any]:
+        """Every control's framework default, the class's sample count included."""
+        return dict(_CONTROL_DEFAULTS) | {"n_broadcast_samples": self.DEFAULT_N_BROADCAST_SAMPLES}
 
     def with_options(self, **controls: Any) -> Self:
         """Return a copy with revised controls, preserving identity and declarations.
@@ -657,11 +671,11 @@ class Function(Node, TrackedTerm, Annotated):
         and seed. None leaves an existing control unchanged. Invalid control
         values raise the same errors as construction.
         """
-        unknown = controls.keys() - self.options.keys()
+        unknown = controls.keys() - _CONTROL_DEFAULTS.keys()
         if unknown:
             raise TypeError(f"Unknown Function controls: {sorted(unknown)}")
-        options = dict(self.options) | {k: v for k, v in controls.items() if v is not None}
-        options = _validate_options(options, self.signature)
+        revisions = {name: value for name, value in controls.items() if value is not None}
+        options = _set_controls(self._control_defaults(), self._options, revisions, self.signature)
         clone = self._shallow_copy()
         object.__setattr__(clone, "_options", MappingProxyType(options))
         return clone
@@ -748,6 +762,26 @@ class Function(Node, TrackedTerm, Annotated):
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         return _call_engine(self, *args, **kwargs)
+
+
+def _set_controls(
+    defaults: Mapping[str, Any],
+    current: Mapping[str, Any],
+    revisions: Mapping[str, Any],
+    signature: inspect.Signature,
+) -> dict[str, Any]:
+    """The controls set once *revisions* revise *current*, validated against the defaults.
+
+    Only set controls are stored, so a default is read when a control is read.
+
+    Raises
+    ------
+    TypeError, ValueError
+        As :func:`_validate_options` raises for the effective controls.
+    """
+    set_controls = dict(current) | dict(revisions)
+    validated = _validate_options(dict(defaults) | set_controls, signature)
+    return {name: validated[name] for name in set_controls}
 
 
 def _validate_options(options: Mapping[str, Any], signature: inspect.Signature) -> dict[str, Any]:
