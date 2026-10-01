@@ -58,7 +58,6 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "as_prng_key",
-    "build_likelihood_flat",
     "build_mcmc_datatree",
     "build_target_log_prob",
     "build_target_log_prob_flat",
@@ -69,9 +68,7 @@ __all__ = [
     "flat_unflatten",
     "flat_vector",
     "get_init_state",
-    "get_prior",
     "is_jax_traceable",
-    "is_simple_model",
     "joint_and_given",
     "likelihood_flat",
     "model_factors",
@@ -214,8 +211,8 @@ def observed_target(model: Any, observed: Any) -> Any:
     """
     if observed is None or not isinstance(model, (Distribution, ConditionalDistribution)):
         return model
-    if is_simple_model(model) or not isinstance(observed, (Record, Mapping)):
-        return _UnnormalizedConditional(model, observed, get_prior(model).event_spec, keyed=False)
+    if not isinstance(observed, (Record, Mapping)):
+        return _UnnormalizedConditional(model, observed, model.event_spec, keyed=False)
     values = dict(observed.children if isinstance(observed, Record) else observed)
     law = model
     if isinstance(model, ConditionalDistribution):
@@ -226,9 +223,9 @@ def observed_target(model: Any, observed: Any) -> Any:
     if not values:
         if isinstance(law, Distribution) and not _is_normalized(law):
             return law
-        return _UnnormalizedConditional(model, observed, get_prior(model).event_spec, keyed=False)
+        return _UnnormalizedConditional(model, observed, model.event_spec, keyed=False)
     if not set(values) <= set(law.event_spec.components):
-        return _UnnormalizedConditional(law, values, get_prior(law).event_spec, keyed=False)
+        return _UnnormalizedConditional(law, values, law.event_spec, keyed=False)
     return _unnormalized_conditional(law, Record("given", values))
 
 
@@ -236,16 +233,11 @@ def observed_parts(target: Any) -> tuple[Any, Any]:
     """The model and the observed data *target* binds, as the model-and-data helpers take them.
 
     An unnormalized conditional at data its joint does not declare as fields
-    is that joint and those data, and so is one of a ``SimpleModel`` at exactly
-    its likelihood's data fields. Any other target is its own model, with its
+    is that joint and those data. Any other target is its own model, with its
     data already bound.
     """
-    if isinstance(target, _UnnormalizedConditional):
-        joint, given = target.joint, target.given
-        if not target.keyed:
-            return joint, given
-        if is_simple_model(joint) and set(given.fields) == set(joint._data_fields):
-            return joint, given
+    if isinstance(target, _UnnormalizedConditional) and not target.keyed:
+        return target.joint, target.given
     return target, None
 
 
@@ -517,10 +509,8 @@ def get_init_state(
 ) -> jnp.ndarray:
     """Determine an initial chain state.
 
-    Pass the full target (a ``SimpleModel`` or a bare ``Distribution``);
-    this helper calls :func:`get_prior` internally and works against
-    the prior — that is the parameter-space distribution from which
-    init candidates should be drawn.
+    Pass the target, the law over the parameters from which init
+    candidates are drawn.
 
     Resolution order:
 
@@ -547,7 +537,7 @@ def get_init_state(
     pure location models. Callers that genuinely need a data-derived
     init should pass ``init=`` explicitly.
     """
-    prior = get_prior(dist)
+    prior = dist
 
     target_dtype = getattr(prior, "dtype", None)
     if not isinstance(target_dtype, jnp.dtype):
@@ -607,36 +597,22 @@ def get_init_state(
 
 
 # ---------------------------------------------------------------------------
-# SimpleModel detection and prior extraction
+# The declaration of the posterior
 # ---------------------------------------------------------------------------
-
-
-def is_simple_model(dist: Distribution) -> bool:
-    """Check whether *dist* is a SimpleModel (lazy import for circularity)."""
-    from ..modeling._simple import SimpleModel
-
-    return isinstance(dist, SimpleModel)
-
-
-def get_prior(dist: Distribution) -> Distribution:
-    """Return the prior of a model, or *dist* itself for non-model targets."""
-    return dist._prior if is_simple_model(dist) else dist
 
 
 def extract_event_spec(dist: Distribution) -> OutputSpec | None:
     """Return the declaration of *dist*'s prior, or ``None`` for a prior with no flat vector.
 
-    A ``SimpleModel``'s prior is read through :func:`get_prior`; any other
-    target is its own prior. A prior that is neither a parametric family nor
+    The target is its own prior. A prior that is neither a parametric family nor
     an exposed numeric record, such as a bare ``SupportsLogProb`` target over a
     flat array, gives ``None``. :func:`build_target_log_prob_flat` uses the
     same condition, so every method names and shapes the posterior of such a
     target alike.
     """
-    prior = get_prior(dist)
-    if not _has_flat_view(prior) and flat_record(prior) is None:
+    if not _has_flat_view(dist) and flat_record(dist) is None:
         return None
-    return prior.event_spec
+    return dist.event_spec
 
 
 # ---------------------------------------------------------------------------
@@ -650,17 +626,15 @@ def build_target_log_prob(
 ) -> Callable[[Any], Array]:
     """Build a ``target_log_prob_fn(params)`` from *dist* and *observed*.
 
-    Three cases, in the order the body dispatches them:
+    Two cases, in the order the body dispatches them:
 
-    1. **SimpleModel** (has prior + likelihood):
-       ``prior._log_prob(params) + likelihood.log_likelihood(params, data)``.
-    2. **Bare target with data**: joint over ``(params, data)``,
+    1. **Bare target with data**: joint over ``(params, data)``,
        evaluated as ``dist._unnormalized_log_prob((params, data))``.
-    3. **Bare target without data**: ``dist._unnormalized_log_prob``
-       returned directly (the caller is presumed to have already
-       folded the data into the distribution, e.g. via closure).
+    2. **Target without data**: ``dist._unnormalized_log_prob``
+       returned directly, the data already bound, as an unnormalized
+       conditional binds them.
 
-    The unnormalized accessor is used for cases 2 and 3 because MCMC
+    The unnormalized accessor is used because MCMC
     samplers do not require a normalized density. Distributions that
     only implement ``_log_prob`` are unaffected: the
     ``SupportsUnnormalizedLogProb`` protocol provides a default
@@ -670,19 +644,6 @@ def build_target_log_prob(
     raw array, a ``Record`` object, or a dict — the likelihood handles
     its own input types).
     """
-    if is_simple_model(dist):
-
-        def target_log_prob_fn(params):
-            lp = dist._prior._log_prob(params)
-            if observed is not None:
-                lp = lp + dist._likelihood.log_likelihood(
-                    params=params,
-                    data=observed,
-                )
-            return lp
-
-        return target_log_prob_fn
-
     if observed is not None:
         return lambda params: dist._unnormalized_log_prob((params, observed))
 
@@ -728,7 +689,7 @@ def build_target_log_prob_flat(
 
     Intended for use by BlackJAX-flavoured MCMC / VI backends.
     """
-    prior = get_prior(dist)
+    prior = dist
     target_record = build_target_log_prob(dist, observed)
     flat_init = get_init_state(dist, init, random_seed=random_seed)
 
@@ -751,47 +712,6 @@ def build_target_log_prob_flat(
     # Bare array-shaped target: ``target_record`` already accepts a
     # flat array and no template is available to lift the chain.
     return target_record, flat_init, None
-
-
-def build_likelihood_flat(
-    prior: Distribution,
-    likelihood: Any,
-    data: ArrayLike | Record | None,
-) -> Callable[[Array], Array]:
-    """Build a flat-vector ``loglikelihood_fn(theta_flat)`` from a prior +
-    likelihood + data.
-
-    Unlike :func:`build_target_log_prob_flat` (which builds the *joint*
-    prior + likelihood density), this returns the *likelihood alone* as
-    a function of a flat parameter vector. Elliptical slice sampling
-    folds the Gaussian prior into the proposal mechanism, so it needs
-    the likelihood by itself.
-
-    Two cases:
-
-    - **A parametric family or record-shaped prior**: the flat vector
-      unflattens to the prior's event, so the likelihood sees the
-      structured parameters a draw of the prior is.
-    - **Bare-array prior**: the likelihood already accepts a flat
-      vector, so it is called directly.
-    """
-    flat_prior = _flat_view(prior)
-    record = flat_record(prior)
-    if flat_prior is not None or record is not None:
-
-        def loglikelihood_fn(theta_flat: Array) -> Array:
-            if flat_prior is not None:
-                params = flat_prior(theta_flat)
-            else:
-                params = _reconstruct_from_vector(prior.name, record, theta_flat)
-            return likelihood.log_likelihood(params=params, data=data)
-
-        return loglikelihood_fn
-
-    def loglikelihood_fn(theta_flat: Array) -> Array:
-        return likelihood.log_likelihood(params=theta_flat, data=data)
-
-    return loglikelihood_fn
 
 
 # ---------------------------------------------------------------------------

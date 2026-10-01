@@ -11,11 +11,9 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 import tensorflow_probability.substrates.jax as tfp
-import tensorflow_probability.substrates.jax.glm as tfp_glm
 
 from probpipe import (
     EmpiricalDistribution,
-    GLMLikelihood,
     MultivariateNormal,
     Normal,
     NumericArraySpec,
@@ -23,9 +21,14 @@ from probpipe import (
     NumericRecordSpec,
     OutputSpec,
     RecordSpec,
-    SimpleModel,
 )
 from probpipe.core.record import Record
+from probpipe.distributions import ConditionalDistribution
+from probpipe.distributions._capabilities import (
+    SupportsConditionalLogProb,
+    SupportsConditionalSampling,
+)
+from probpipe.families import GaussianFamily, glm_likelihood
 from probpipe.validation import SBCResult, interval_coverage, simulation_based_calibration
 from probpipe.validation._calibration import (
     _component_names,
@@ -38,32 +41,44 @@ from probpipe.validation._calibration import (
 tfd = tfp.distributions
 
 
-class _BiasedMeanLikelihood:
-    """A deliberately miscalibrated Gaussian-mean likelihood.
+class _BiasedMeanKernel(
+    ConditionalDistribution, SupportsConditionalSampling, SupportsConditionalLogProb
+):
+    """A deliberately miscalibrated Gaussian-mean likelihood of ``n`` observations.
 
-    ``log_likelihood`` is ``N(y; μ, 1)``, but ``generate_data`` draws from
-    ``N(μ + bias, 1)`` — the unmodeled shift makes the posterior systematically
-    miss ``θ★``, so SBC ranks are non-uniform. Used to test that SBC *detects*
-    miscalibration.
+    Its density is ``N(y; μ, 1)``, but it samples from ``N(μ + bias, 1)``. Data
+    drawn from the joint therefore carry an unmodeled shift, which makes the
+    posterior systematically miss ``θ★``, so SBC ranks are non-uniform. Used to
+    test that SBC *detects* miscalibration.
     """
 
-    def __init__(self, bias: float):
-        self.bias = float(bias)
+    def __init__(self, bias: float, n: int = 10):
+        super().__init__("y", {"mu": NumericArraySpec(())}, OutputSpec(y=NumericArraySpec((n,))))
+        object.__setattr__(self, "_bias", float(bias))
+        object.__setattr__(self, "_n", n)
 
-    def log_likelihood(self, params, data):
-        mu = jnp.reshape(jnp.asarray(params), ())
-        return jnp.sum(tfd.Normal(mu, 1.0).log_prob(jnp.asarray(data)))
+    @staticmethod
+    def _mu(given):
+        return jnp.asarray(dict(given.children if isinstance(given, Record) else given)["mu"])
 
-    def generate_data(self, params, num_observations, *, key):
-        mu = jnp.reshape(jnp.asarray(params), ())
-        return mu + self.bias + jax.random.normal(key, (num_observations,))
+    def _condition_on(self, given, /, **options):
+        # The law the kernel draws from carries the shift; its density does not.
+        return Normal("y", jnp.full(self._n, self._mu(given) + self._bias), 1.0)
+
+    def _conditional_log_prob(self, given, value):
+        return jnp.sum(tfd.Normal(self._mu(given), 1.0).log_prob(jnp.asarray(value)))
+
+    def _conditional_sample(self, given, key, sample_shape=()):
+        shift = self._mu(given) + self._bias
+        return shift + jax.random.normal(key, (*sample_shape, self._n))
 
 
 def _gaussian_glm(p: int = 2, n: int = 12, seed: int = 7):
-    """A well-specified Gaussian linear model: sampleable prior + generative GLM."""
+    """A well-specified Gaussian linear model with an intercept: the joint of y and beta."""
     X = jax.random.normal(jax.random.PRNGKey(seed), (n, p - 1))
+    design = jnp.concatenate([jnp.ones((n, 1)), X], axis=1)
     prior = MultivariateNormal(loc=jnp.zeros(p), cov=jnp.eye(p), name="beta")
-    return SimpleModel(prior, GLMLikelihood(tfp_glm.Normal(), x=X)), n
+    return glm_likelihood("y", GaussianFamily(), X=design, dispersion=1.0) * prior
 
 
 class TestIntervalCoverage:
@@ -216,12 +231,12 @@ class TestFlattening:
 
 class TestSBC:
     def test_well_specified_ranks_uniform(self):
-        model, n = _gaussian_glm()
+        model = _gaussian_glm()
         res = simulation_based_calibration(
             model,
+            observed="y",
             num_simulations=32,
             num_posterior_draws=100,
-            num_observations=n,
             num_warmup=100,
             key=jax.random.PRNGKey(0),
         )
@@ -243,17 +258,18 @@ class TestSBC:
         assert np.all(hist.sum(axis=1) == 32)
 
     def test_detects_subtle_miscalibration(self):
-        # A *sub-posterior-SD* mean shift is still caught. generate_data carries an
-        # unmodeled +0.2 shift while the posterior SD is ≈ 0.31 (precision
-        # 1/4 + 10 = 10.25), so the per-fit bias is only ≈ 0.6 posterior SD — yet
+        # A *sub-posterior-SD* mean shift is still caught. The kernel's draws carry an
+        # unmodeled +0.25 shift while the posterior SD is ≈ 0.31 (precision
+        # 1/4 + 10 = 10.25), so the per-fit bias is only ≈ 0.8 posterior SD — yet
         # SBC rejects because the shift is *systematic* across simulations and
-        # accumulates. Measured ks_pvalue.max ≤ 0.002 over seeds 0–2 at S=24.
-        model = SimpleModel(Normal(loc=0.0, scale=2.0, name="mu"), _BiasedMeanLikelihood(0.2))
+        # accumulates. Measured ks_pvalue.max ≤ 0.001 and mean rank ≤ 0.34 over
+        # seeds 0–2 at S=48.
+        model = _BiasedMeanKernel(0.25) * Normal(loc=0.0, scale=2.0, name="mu")
         res = simulation_based_calibration(
             model,
-            num_simulations=24,
+            observed="y",
+            num_simulations=48,
             num_posterior_draws=100,
-            num_observations=10,
             num_warmup=100,
             key=jax.random.PRNGKey(0),
         )
@@ -263,15 +279,21 @@ class TestSBC:
         assert ((res.ranks + 0.5) / (res.num_posterior_draws + 1)).mean() < 0.45
 
     def test_rejects_bad_num_simulations(self):
-        model, n = _gaussian_glm()
+        model = _gaussian_glm()
         with pytest.raises(ValueError, match="num_simulations"):
             simulation_based_calibration(
-                model, num_simulations=0, num_posterior_draws=50, num_observations=n
+                model, observed="y", num_simulations=0, num_posterior_draws=50
             )
 
     def test_rejects_random_seed_in_infer_kwargs(self):
-        model, n = _gaussian_glm()
+        model = _gaussian_glm()
         with pytest.raises(ValueError, match="random_seed"):
             simulation_based_calibration(
-                model, num_simulations=2, num_posterior_draws=50, num_observations=n, random_seed=0
+                model, observed="y", num_simulations=2, num_posterior_draws=50, random_seed=0
+            )
+
+    def test_rejects_an_observed_name_that_is_no_field(self):
+        with pytest.raises(ValueError, match="are not fields"):
+            simulation_based_calibration(
+                _gaussian_glm(), observed="z", num_simulations=2, num_posterior_draws=50
             )

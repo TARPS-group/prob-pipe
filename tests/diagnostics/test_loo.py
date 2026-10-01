@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 import xarray as xr
 
+from probpipe import MultivariateNormal
 from probpipe.diagnostics._datatree_store import _add_group
 from probpipe.diagnostics._loo import (
     _add_log_likelihood,
@@ -22,6 +24,7 @@ from probpipe.diagnostics._loo import (
     add_loo,
 )
 from probpipe.diagnostics._views import LOOView
+from probpipe.families import GaussianFamily, glm_likelihood
 
 # ---------------------------------------------------------------------------
 # Fake posterior
@@ -641,54 +644,29 @@ class TestAddLooKwargs:
 # ---------------------------------------------------------------------------
 
 
-class _FakeModel:
-    """Minimal model stub with a pure-NumPy per_datum_log_likelihood."""
-
-    def __init__(self, n_obs: int = 20, n_features: int = 1):
-        rng = np.random.default_rng(0)
-        self._x = rng.standard_normal((n_obs, n_features))  # (n_obs, n_features)
-        self._fit_intercept = True
-
-        class _Likelihood:
-            def __init__(self, x):
-                self._x = x
-                self._fit_intercept = True
-
-            def per_datum_log_likelihood(self, params, datum):
-                # Simple Gaussian log likelihood — fully NumPy, not JAX-traceable
-                # so the fallback loop is exercised.
-                import numpy as _np
-
-                if hasattr(params, "__getitem__"):
-                    try:
-                        beta = _np.concatenate(
-                            [
-                                _np.atleast_1d(_np.asarray(params["intercept"])),
-                                _np.atleast_1d(_np.asarray(params["slope"])),
-                            ]
-                        )
-                    except Exception:
-                        beta = _np.asarray(params).ravel()
-                else:
-                    beta = _np.asarray(params).ravel()
-                x_i = _np.atleast_1d(_np.asarray(datum["X"]))
-                y_i = float(_np.asarray(datum["y"]))
-                eta = beta[0] + x_i @ beta[1:]
-                return float(-0.5 * (y_i - eta) ** 2)
-
-        self._likelihood = _Likelihood(self._x)
+def _gaussian_regression(n_obs: int = 20, n_features: int = 1):
+    """A Gaussian linear model with an intercept: the joint of y and beta, and its design."""
+    rng = np.random.default_rng(0)
+    x = rng.standard_normal((n_obs, n_features))
+    design = jnp.asarray(np.concatenate([np.ones((n_obs, 1)), x], axis=1), dtype=jnp.float32)
+    prior = MultivariateNormal(
+        loc=jnp.zeros(n_features + 1), cov=jnp.eye(n_features + 1), name="beta"
+    )
+    return glm_likelihood("y", GaussianFamily(), X=design, dispersion=1.0) * prior, design
 
 
 class _FakePostForLL:
-    """Fake posterior compatible with internal log-likelihood computation."""
+    """Fake posterior whose chains lie in the flat layout of the coefficients."""
 
     def __init__(self, n_chains: int = 2, n_draws: int = 50, n_features: int = 1):
         self._annotations = None
         self._n_chains = n_chains
         self._n_draws = n_draws
         rng = np.random.default_rng(1)
-        self._intercept = rng.standard_normal((n_chains, n_draws))
-        self._slope = rng.standard_normal((n_chains, n_draws, n_features))
+        self._chains = [
+            rng.standard_normal((n_draws, n_features + 1)).astype(np.float32)
+            for _ in range(n_chains)
+        ]
 
     @property
     def num_chains(self):
@@ -699,29 +677,16 @@ class _FakePostForLL:
         return self._n_draws
 
     @property
-    def fields(self):
-        return ["intercept", "slope"]
-
-    def draws(self, *, chain: int):
-        class _Rec(dict):
-            @property
-            def fields(self):
-                return list(self.keys())
-
-        return _Rec(
-            {
-                "intercept": self._intercept[chain],
-                "slope": self._slope[chain],
-            }
-        )
+    def chains(self):
+        return self._chains
 
 
 class TestAddLogLikelihood:
     def _setup(self, n_obs=20):
         rng = np.random.default_rng(2)
-        model = _FakeModel(n_obs=n_obs)
+        model, _ = _gaussian_regression(n_obs=n_obs)
         post = _FakePostForLL()
-        data = {"X": model._x, "y": rng.standard_normal(n_obs)}
+        data = {"y": jnp.asarray(rng.standard_normal(n_obs), dtype=jnp.float32)}
         return post, model, data
 
     def test_writes_log_likelihood_group(self):
@@ -739,12 +704,16 @@ class TestAddLogLikelihood:
         assert da.dims == ("chain", "draw", "obs")
         assert da.shape == (post.num_chains, post.num_draws, n_obs)
 
-    def test_values_are_finite(self):
-        post, model, data = self._setup()
+    def test_values_are_the_pointwise_gaussian_log_densities(self):
+        n_obs = 6
+        post, model, data = self._setup(n_obs=n_obs)
+        _, design = _gaussian_regression(n_obs=n_obs)
         _add_log_likelihood(post, model, data)
-        ll_ds = post._annotations["arviz"]["log_likelihood"].to_dataset()
-        arr = np.asarray(ll_ds["y"].values)
-        assert np.all(np.isfinite(arr))
+        ll = np.asarray(post._annotations["arviz"]["log_likelihood"].to_dataset()["y"].values)
+        beta = post.chains[0][0]
+        residual = np.asarray(data["y"]) - np.asarray(design) @ beta
+        expected = -0.5 * residual**2 - 0.5 * np.log(2 * np.pi)
+        np.testing.assert_allclose(ll[0, 0], expected, rtol=1e-5, atol=1e-5)
 
     def test_custom_var_name(self):
         post, model, data = self._setup()
@@ -755,6 +724,12 @@ class TestAddLogLikelihood:
     def test_returns_none(self):
         post, model, data = self._setup()
         assert _add_log_likelihood(post, model, data) is None
+
+    def test_a_joint_whose_likelihood_scores_no_observation_raises(self):
+        post, _, data = self._setup()
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="beta")
+        with pytest.raises(TypeError, match="scores each observation"):
+            _add_log_likelihood(post, prior, data)
 
     def test_fallback_loop_produces_same_shape(self):
         """Force the fallback by patching jax.vmap to raise."""
@@ -782,55 +757,10 @@ class TestAddLogLikelihood:
         view = LOOView(post._annotations["diagnostics"]["runs"]["loo"])
         assert isinstance(view.elpd_loo, float)
 
-    def test_fast_path_writes_log_likelihood(self):
-        class _JaxModel:
-            def __init__(self):
-                self._x = np.arange(6, dtype=float).reshape(3, 2)
-
-                class _Likelihood:
-                    def __init__(self, x):
-                        self._x = x
-
-                    def per_datum_log_likelihood(self, params, datum):
-                        eta = params[0] + datum["X"] @ params[1:]
-                        return -0.5 * (datum["y"] - eta) ** 2
-
-                self._likelihood = _Likelihood(self._x)
-
-        post = _FakePostForLL(n_chains=1, n_draws=4, n_features=2)
-        model = _JaxModel()
-        data = {"X": model._x, "y": np.array([0.0, 1.0, 2.0])}
-
-        _add_log_likelihood(post, model, data)
-
-        ll_ds = post._annotations["arviz"]["log_likelihood"].to_dataset()
-        assert ll_ds["y"].shape == (1, 4, 3)
-
     def test_fast_path_and_fallback_log_likelihoods_match(self):
-        class _HybridJaxModel:
-            def __init__(self):
-                self._x = np.arange(6, dtype=float).reshape(3, 2)
-
-                class _Likelihood:
-                    def __init__(self, x):
-                        self._x = x
-
-                    def per_datum_log_likelihood(self, params, datum):
-                        try:
-                            intercept = params["intercept"]
-                            slope = params["slope"]
-                        except Exception:
-                            intercept = params[0]
-                            slope = params[1:]
-                        eta = intercept + datum["X"] @ slope
-                        return -0.5 * (datum["y"] - eta) ** 2
-
-                self._likelihood = _Likelihood(self._x)
-
-        model = _HybridJaxModel()
-        data = {"X": model._x, "y": np.array([0.0, 1.0, 2.0])}
-        fast_post = _FakePostForLL(n_chains=1, n_draws=4, n_features=2)
-        fallback_post = _FakePostForLL(n_chains=1, n_draws=4, n_features=2)
+        _, model, data = self._setup(n_obs=3)
+        fast_post = _FakePostForLL(n_chains=1, n_draws=4)
+        fallback_post = _FakePostForLL(n_chains=1, n_draws=4)
 
         _add_log_likelihood(fast_post, model, data)
         with patch("jax.vmap", side_effect=Exception("no vmap")):
@@ -838,4 +768,4 @@ class TestAddLogLikelihood:
 
         fast = fast_post._annotations["arviz"]["log_likelihood"].to_dataset()["y"]
         fallback = fallback_post._annotations["arviz"]["log_likelihood"].to_dataset()["y"]
-        np.testing.assert_allclose(fast, fallback, rtol=1e-6)
+        np.testing.assert_allclose(fast, fallback, rtol=1e-5, atol=1e-6)

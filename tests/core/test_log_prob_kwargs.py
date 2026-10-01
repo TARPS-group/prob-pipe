@@ -16,12 +16,10 @@ import warnings
 import jax.numpy as jnp
 import numpy as np
 import pytest
-import tensorflow_probability.substrates.jax.glm as tfp_glm
 
 from probpipe import (
     Beta,
     Distribution,
-    GLMLikelihood,
     MinibatchedDistribution,
     MultivariateNormal,
     Normal,
@@ -30,7 +28,6 @@ from probpipe import (
     NumericRecordBatch,
     OpaqueSpec,
     Record,
-    SimpleModel,
     log_prob,
     prob,
     random_log_prob,
@@ -38,7 +35,7 @@ from probpipe import (
     unnormalized_log_prob,
     unnormalized_prob,
 )
-from probpipe.core._specs import NumericArraySpec, OutputSpec, RecordSpec
+from probpipe.core._specs import NumericArraySpec, OutputSpec
 from probpipe.distributions import ConditionalDistribution, SupportsConditionalLogProb
 
 
@@ -97,59 +94,25 @@ class TestKwargFormRecord:
         assert jnp.allclose(log_prob(jg, u=u, v=v), log_prob(jg, Record("r", u=u, v=v)))
 
 
-class TestKwargFormSimpleModel:
-    """The headline case: ``log_prob(model, intercept=..., slope=..., X=..., y=...)``."""
+class TestKwargFormJoint:
+    """The headline case: ``log_prob(joint, beta=..., y=...)`` for a GLM joint."""
 
     @staticmethod
     def _glm_model():
-        X = np.array([0.1, 0.5, -0.3], dtype=np.float32)
-        y = np.array([1.0, 3.0, 0.0], dtype=np.float32)
-        lik = GLMLikelihood(tfp_glm.Poisson(), X)
-        prior = Normal("intercept", 0.0, 1.0) * Normal("slope", 0.0, 1.0)
-        return SimpleModel(prior, lik, name="m"), X, y
+        from probpipe.families import PoissonFamily, glm_likelihood
 
-    def test_kwarg_matches_record_and_tuple(self):
-        model, X, y = self._glm_model()
-        kw = log_prob(model, intercept=0.3, slope=0.5, X=X, y=y)
-        rec = log_prob(model, Record("r", intercept=0.3, slope=0.5, X=X, y=y))
-        tup = model._log_prob((Record("r", intercept=0.3, slope=0.5), Record("r", X=X, y=y)))
+        x = np.array([0.1, 0.5, -0.3], dtype=np.float32)
+        X = jnp.asarray(np.stack([np.ones_like(x), x], axis=1))
+        y = jnp.array([1.0, 3.0, 0.0])
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="beta")
+        return glm_likelihood("y", PoissonFamily(), X=X) * prior, y
+
+    def test_kwarg_matches_record(self):
+        model, y = self._glm_model()
+        beta = jnp.array([0.3, 0.5])
+        kw = log_prob(model, beta=beta, y=y)
+        rec = log_prob(model, Record("r", beta=beta, y=y))
         assert jnp.allclose(kw, rec)
-        assert jnp.allclose(kw, tup)
-
-    def test_keyword_form_rejected_without_data_template(self):
-        """A likelihood with no named data fields cannot use the keyword/Record
-        form (data can't be supplied) — it must raise, not pass data=None."""
-
-        class _NoTemplateLikelihood:
-            def log_likelihood(self, params, data):
-                return jnp.asarray(0.0)
-
-        prior = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
-        model = SimpleModel(prior, _NoTemplateLikelihood(), name="m")
-        with pytest.raises(TypeError, match="no named data fields"):
-            log_prob(model, a=0.5, b=0.5)
-        # The (params, data) tuple form remains available for such models.
-        lp = model._log_prob((Record("r", a=0.5, b=0.5), jnp.zeros(3)))
-        assert jnp.isfinite(lp)
-
-    def test_single_field_prior_packs_to_bare_array(self):
-        """A single-field prior's params repack to a bare array (not a 1-field
-        Record) in _split_log_prob_value — exercises the len(fields) == 1 branch."""
-
-        class _ScalarLikelihood:
-            data_template = RecordSpec(y=())
-
-            def log_likelihood(self, params, data):
-                # params is the bare scalar from the single-field prior
-                return -0.5 * jnp.sum((data["y"] - params) ** 2)
-
-        model = SimpleModel(Normal("theta", 0.0, 1.0), _ScalarLikelihood(), name="m")
-        y = jnp.array([0.2, -0.1, 0.4])
-        kw = log_prob(model, theta=0.5, y=y)
-        rec = log_prob(model, Record("r", theta=0.5, y=y))
-        tup = model._log_prob((0.5, Record("r", y=y)))  # single-field prior → bare scalar
-        assert jnp.allclose(kw, rec)
-        assert jnp.allclose(kw, tup)
 
 
 class TestStanViewsPackValue:

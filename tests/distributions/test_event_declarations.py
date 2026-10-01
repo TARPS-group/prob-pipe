@@ -53,8 +53,6 @@ from probpipe import (
     Pareto,
     Poisson,
     Record,
-    SimpleGenerativeModel,
-    SimpleModel,
     StudentT,
     TFPDistribution,
     TruncatedNormal,
@@ -69,7 +67,6 @@ from probpipe.core._broadcast_distributions import (
     _make_mixture_marginal,
     _MixtureMarginal,
 )
-from probpipe.core._specs import RecordSpec
 from probpipe.distributions import (
     FactoredDistribution,
     FactoredNumericDistribution,
@@ -120,7 +117,6 @@ from probpipe.inference._minibatch import (
     _RandomMinibatchLogProb,
 )
 from probpipe.linalg import DenseLinOp
-from probpipe.modeling._likelihood import GenerativeLikelihood
 from probpipe.operations._condition import _unnormalized_conditional, _UnnormalizedConditional
 
 # -- Constructions ------------------------------------------------------------
@@ -148,19 +144,8 @@ def _measure() -> MinibatchedDistribution:
     return MinibatchedDistribution("measure", prior, likelihood, y, batch_size=5)
 
 
-class _Likelihood:
-    data_template = RecordSpec(y=(3,))
-
-    def log_likelihood(self, params, data):
-        return jnp.asarray(0.0)
-
-
-class _Simulator(GenerativeLikelihood):
-    def log_likelihood(self, params, data):
-        return jnp.asarray(0.0)
-
-    def generate_data(self, params, n_samples, *, key=None):
-        return jnp.zeros((n_samples, 1))
+class _Simulator:
+    """A stand-in for the simulator a learned kernel stores and never calls here."""
 
 
 def _pymc_model_fn(y=None):
@@ -260,8 +245,6 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
         parents=(MultivariateNormal("z", jnp.zeros(2), cov=jnp.eye(2)),),
         algorithm="test",
     ),
-    SimpleModel: lambda: SimpleModel(Normal("theta", 0.0, 1.0), _Likelihood()),
-    SimpleGenerativeModel: lambda: SimpleGenerativeModel(Normal("theta", 0.0, 1.0), _Simulator()),
     _LearnedDensity: lambda: BayesFlowLikelihood(
         None, Normal("theta", 0.0, 1.0), _Simulator(), data_dim=2
     )._condition_on({"theta": 0.0}),
@@ -370,9 +353,6 @@ def _library_classes() -> set[type]:
 # ``sample`` stacks a tuple draw as rows instead of wrapping it as one opaque
 # value, and wraps a batch-valued draw as an array.
 _DRAW_FAILURES = {
-    SimpleGenerativeModel: pytest.mark.xfail(
-        raises=ValueError, strict=True, reason="sample stacks a tuple draw as rows"
-    ),
     BootstrapReplicateDistribution: pytest.mark.pending(
         reason="the exported sample wraps a batch-valued draw as an array, not as its declared batch",
         raises=AssertionError,

@@ -593,8 +593,8 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
           built from the named fields.
 
         Distributions whose ``_log_prob`` consumes a Record but splits it
-        internally (e.g. ``SimpleModel`` → ``(params, data)``) keep this
-        default and do the split in ``_log_prob``. Override only when the
+        internally (e.g. a factored joint, which scores each factor's fields)
+        keep this default and do the split in ``_log_prob``. Override only when the
         value type is neither a bare array nor a flat Record (e.g.
         ``StanModel``'s single ``parameters=`` flat array).
 

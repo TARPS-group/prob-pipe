@@ -35,10 +35,9 @@ import arviz as az
 import numpy as np
 import xarray as xr
 
-from ..core.record import Record
 from ..distributions._distribution import Distribution
 from ._datatree import _add_group
-from ._utils import _json_dumps_safe, _leaf_keys, _record_get, _safe_float
+from ._utils import _json_dumps_safe, _record_get, _safe_float
 
 __all__ = ["add_loo"]
 
@@ -394,8 +393,8 @@ def add_loo(
                 "likelihoods with shape (chain, draw, obs). Either use an "
                 "inference backend/model path that records pointwise log "
                 "likelihoods, pass log_likelihood=... as an advanced override, "
-                "or pass model=... and data=... when the model exposes a "
-                "supported pointwise log-likelihood method."
+                "or pass model=... and data=... with a joint whose likelihood "
+                "factor scores each observation."
             )
 
     if not _has_group(arviz_tree, "log_likelihood"):
@@ -410,8 +409,8 @@ def add_loo(
                 "likelihoods with shape (chain, draw, obs). Either use an "
                 "inference backend/model path that records pointwise log "
                 "likelihoods, pass log_likelihood=... as an advanced override, "
-                "or pass model=... and data=... when the model exposes a "
-                "supported pointwise log-likelihood method."
+                "or pass model=... and data=... with a joint whose likelihood "
+                "factor scores each observation."
             )
 
     # ------------------------------------------------------------------
@@ -550,15 +549,14 @@ def _add_log_likelihood(
     Parameters
     ----------
     posterior : ApproximateDistribution
-        Fitted posterior.
-    model : SimpleModel
-        The model the posterior was conditioned from. Must expose
-        ``_likelihood`` with a ``per_datum_log_likelihood(params, datum)``
-        method — satisfied by ``GLMLikelihood`` and any other likelihood
-        implementing ``ConditionallyIndependentLikelihood``.
-    data : Record-like
-        Observed data with fields matching the likelihood's
-        ``data_template``. For ``GLMLikelihood``, needs ``X`` and ``y``.
+        Fitted posterior, whose chains lie in the flat layout of the prior.
+    model : Distribution
+        The factored joint the posterior was conditioned from, such as
+        ``likelihood * prior``. Its likelihood factor scores each of its
+        conditionally independent observations, as the kernel
+        :func:`~probpipe.families.glm_likelihood` returns does.
+    data : Record or Mapping
+        The observed values the posterior was conditioned on, keyed by field.
     var_name : str
         Variable name written into the log-likelihood xarray Dataset.
 
@@ -566,6 +564,12 @@ def _add_log_likelihood(
     -------
     None
         Mutates ``posterior._annotations`` in place.
+
+    Raises
+    ------
+    TypeError
+        If *model* at *data* has no likelihood factor that scores each
+        observation.
 
     Notes
     -----
@@ -577,102 +581,59 @@ def _add_log_likelihood(
     --------
     ::
 
-        add_loo(posterior, model=model, data=data)
+        add_loo(posterior, model=likelihood * prior, data={"y": y})
         print(posterior.diagnostics.loo.elpd_loo)
     """
     import jax
     import jax.numpy as jnp
 
-    ll = model._likelihood
+    from ..inference._inference_utils import (
+        flat_unflatten,
+        model_factors,
+        observed_target,
+        parameter_given,
+    )
+    from ..inference._minibatch import _data_size, _reads_observations
+
+    factors = model_factors(observed_target(model, data))
+    if factors is None or not _reads_observations(factors.likelihood):
+        raise TypeError(
+            "add_loo computes pointwise log likelihoods for a factored joint at observed "
+            "fields whose likelihood scores each observation, such as glm_likelihood's kernel"
+        )
+    likelihood, observed = factors.likelihood, factors.observed
+    unflatten = flat_unflatten(factors.prior)
     n_chains = posterior.num_chains
     n_draws = posterior.num_draws
+    n_obs = _data_size(observed)
 
-    y = jnp.asarray(data["y"])
-    X = jnp.asarray(ll._x)  # (n_obs, n_features)
-    n_obs = y.shape[0]
-
-    # ------------------------------------------------------------------
-    # Build field metadata from one reference draw for flat↔Record conversion
-    # ------------------------------------------------------------------
-    ref_draws = posterior.draws(chain=0)
-    # Leaf fields keyed by full /-path (see ``_leaf_keys`` for the
-    # nested-vs-duck-typed rule). _field_meta is the canonical leaf order for
-    # the flat<->Record conversion.
-    _field_meta = [(f, jnp.asarray(ref_draws[f][0]).shape) for f in _leaf_keys(ref_draws)]
-
-    def _flat_to_record(flat: Any, field_meta: list) -> Record:
-        """Reconstruct a named Record from a flat parameter array."""
-        out = {}
-        idx = 0
-        for fname, shape in field_meta:
-            size = int(np.prod(shape)) if shape else 1
-            val = flat[idx : idx + size]
-            out[fname] = val.reshape(shape) if shape else val[0]
-            idx += size
-        # Positional (path-keyed) construction so /-paths rebuild the nesting;
-        # keyword construction would reject a key containing "/".
-        return Record("params", out)
-
-    def _draws_to_flat(draws_c: Any) -> Any:
-        """Stack all fields into a (n_draws, n_params) array."""
-        parts = []
-        for f, _shape in _field_meta:
-            arr = jnp.asarray(draws_c[f])  # (n_draws, *shape)
-            parts.append(arr.reshape(n_draws, -1) if arr.ndim > 1 else arr[:, None])
-        return jnp.concatenate(parts, axis=1)  # (n_draws, n_params)
-
-    # ------------------------------------------------------------------
-    # Build a JAX-traceable per-(params, datum) log likelihood function.
-    # params here is a flat 1D array of length n_params; datum is a
-    # (x_i, y_i) pair. We avoid Record construction inside jax.vmap
-    # because Records are Python objects, not JAX pytrees.
-    # ------------------------------------------------------------------
-
-    def _log_lik_single(params_flat: Any, x_i: Any, y_i: Any) -> Any:
-        """Scalar log likelihood for one draw and one observation.
-
-        Constructs the datum Record at the Python level via a closure so
-        JAX only traces the numeric computation inside
-        ``per_datum_log_likelihood``, not the Record construction.
-        """
-        datum = Record("datum", {"X": x_i, "y": y_i})
-        return ll.per_datum_log_likelihood(params_flat, datum)
-
-    # Note: the per-datum record is constructed inside the vmapped
-    # function. If the likelihood's per_datum_log_likelihood is not
-    # JAX-traceable (e.g. uses Python control flow on datum fields),
-    # the except branch below falls back to a Python loop.
+    def _log_lik_single(params_flat: Any, row: Any) -> Any:
+        """Scalar log likelihood for one draw and one observation."""
+        given = parameter_given(factors, unflatten(params_flat))
+        return likelihood._observation_log_prob(given, observed, jnp.reshape(row, (1,)))
 
     try:
-        # vmap over observations (x_i, y_i) for a fixed draw
-        _log_lik_obs = jax.vmap(_log_lik_single, in_axes=(None, 0, 0))
-
-        # vmap over draws for a fixed chain
-        _log_lik_draws = jax.vmap(_log_lik_obs, in_axes=(0, None, None))
+        # vmap over observations for a fixed draw, then over draws for a fixed chain
+        _log_lik_draws = jax.vmap(jax.vmap(_log_lik_single, in_axes=(None, 0)), in_axes=(0, None))
     except Exception:
         _log_lik_draws = None
+    rows = jnp.arange(n_obs)
 
     log_lik = np.zeros((n_chains, n_draws, n_obs), dtype=np.float32)
 
     for c in range(n_chains):
-        draws_c = posterior.draws(chain=c)
-        params_flat = _draws_to_flat(draws_c)  # (n_draws, n_params)
+        params_flat = jnp.asarray(posterior.chains[c])  # (n_draws, n_params)
 
         try:
             if _log_lik_draws is None:
                 raise RuntimeError("JAX vmap is unavailable")
-
             # Fast path: vmap over (draws, obs) in one call
-            chain_ll = _log_lik_draws(params_flat, X, y)  # (n_draws, n_obs)
-            log_lik[c] = np.asarray(chain_ll, dtype=np.float32)
-
+            log_lik[c] = np.asarray(_log_lik_draws(params_flat, rows), dtype=np.float32)
         except Exception:
             # Fallback: Python loop over draws (likelihood not JAX-traceable)
             for d in range(n_draws):
-                param_record = _flat_to_record(params_flat[d], _field_meta)
                 for i in range(n_obs):
-                    datum = Record("datum", {"X": X[i], "y": y[i]})
-                    log_lik[c, d, i] = float(ll.per_datum_log_likelihood(param_record, datum))
+                    log_lik[c, d, i] = float(_log_lik_single(params_flat[d], jnp.asarray(i)))
 
     log_lik_ds = _log_likelihood_to_dataset(log_lik, var_name=var_name)
     _add_group(posterior, "arviz/log_likelihood", log_lik_ds)

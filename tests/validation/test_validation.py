@@ -6,11 +6,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-import tensorflow_probability.substrates.jax.glm as tfp_glm
 
 from probpipe import (
     EmpiricalDistribution,
-    GLMLikelihood,
     MultivariateNormal,
     Normal,
     predictive_check,
@@ -19,6 +17,7 @@ from probpipe.validation import predictive_check as pc_direct
 from probpipe.validation._predictive_check import (
     _supports_key_arg,
 )
+from tests._regression_provider import CertifiedRegression
 
 # ---------------------------------------------------------------------------
 # Helper: JAX-based generative likelihood
@@ -490,7 +489,7 @@ class TestPredictiveCheckBatched:
         x = jnp.linspace(-1, 1, 20)
         X = jnp.asarray(x)[:, None]
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="beta")
-        lik = GLMLikelihood(tfp_glm.Poisson(), X)
+        lik = CertifiedRegression("poisson", X)
         return prior, lik
 
     def test_supports_key_arg_glm(self, glm_setup):
@@ -502,7 +501,7 @@ class TestPredictiveCheckBatched:
         assert not _supports_key_arg(likelihood)
 
     def test_batched_path_used_for_glm(self, glm_setup):
-        """GLMLikelihood triggers the batched path and produces correct results."""
+        """A keyed simulator triggers the batched path and produces correct results."""
         prior, lik = glm_setup
         result = predictive_check(
             prior,

@@ -512,8 +512,6 @@ _RETIRING = {
     "ApproximateDistribution",
     "BroadcastDistribution",
     "DistributionArray",
-    "SimpleGenerativeModel",
-    "SimpleModel",
 }
 _PUBLIC_CLASSES = _public_distribution_classes()
 
@@ -1339,50 +1337,7 @@ class TestViewAndWrapperDeclarations:
 
 
 class TestModelDeclarations:
-    """Models and posteriors declare what their templates or stored draws are."""
-
-    def test_a_simple_model_keeps_its_prior_dtypes_and_supports(self):
-        from probpipe import SimpleModel, positive, real
-
-        class _Likelihood:
-            def log_likelihood(self, params, data):
-                return 0.0
-
-        whole = SimpleModel(Gamma("sigma", 2.0, 1.0), _Likelihood(), name="m")
-        joint = SimpleModel(
-            (Normal("a", 0.0, 1.0) * Gamma("s", 2.0, 1.0)).with_name("p"),
-            _Likelihood(),
-            name="m",
-        )
-        assert whole.supports == {"sigma": positive}
-        assert joint.supports == {"a": real, "s": positive}
-
-    def test_a_simple_model_declares_its_parameters_and_data(self):
-        from probpipe import SimpleModel
-
-        class _Likelihood:
-            data_template = RecordSpec(y=(3,))
-
-            def log_likelihood(self, params, data):
-                return jnp.asarray(0.0)
-
-        model = SimpleModel(Normal("theta", 0.0, 1.0), _Likelihood())
-        theta = NumericArraySpec((), jnp.asarray(0.0).dtype, real)
-        assert model.event_spec == OutputSpec(RecordSpec(theta=theta, y=(3,)))
-
-    def test_a_simple_generative_model_draws_an_opaque_pair(self):
-        from probpipe import SimpleGenerativeModel
-        from probpipe.modeling._likelihood import GenerativeLikelihood
-
-        class _Simulator(GenerativeLikelihood):
-            def log_likelihood(self, params, data):
-                return jnp.asarray(0.0)
-
-            def generate_data(self, params, n_samples, *, key=None):
-                return jnp.zeros((n_samples, 2))
-
-        model = SimpleGenerativeModel(Normal("theta", 0.0, 1.0), _Simulator(), name="gen")
-        assert model.event_spec == OutputSpec(gen=OpaqueSpec())
+    """Posteriors declare what their targets or stored draws are."""
 
     def test_a_posterior_declares_its_targets_event(self):
         from probpipe.inference._approximate_distribution import make_posterior

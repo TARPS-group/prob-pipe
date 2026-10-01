@@ -5,10 +5,11 @@ from __future__ import annotations
 import jax.numpy as jnp
 import numpy as np
 import pytest
+import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
     Normal,
-    SimpleModel,
+    NumericArraySpec,
     condition_on,
     mean,
     variance,
@@ -16,8 +17,8 @@ from probpipe import (
 from probpipe.distributions import FactoredDistribution
 from probpipe.inference import inference_method_registry
 from probpipe.inference._inference_utils import observed_target
-from probpipe.modeling._likelihood import Likelihood
 from tests.inference._harness import validate_method
+from tests.inference.canonical import ObservationKernel
 
 # TFP/JAX emit a deprecation warning during random-key construction
 # (``shape requires ndarray or scalar arguments, got <class 'NoneType'>``)
@@ -28,31 +29,43 @@ pytestmark = pytest.mark.filterwarnings(
 )
 
 
-class _IdentityLikelihood(Likelihood):
-    """``log p(y | theta) = 0`` — posterior collapses to the prior."""
+def _identity(prior, n=4):
+    """``n`` observations whose density does not depend on the parameters, times *prior*.
 
-    def log_likelihood(self, params, data) -> float:
-        return jnp.asarray(0.0)
+    The posterior collapses to the prior.
+    """
+    return (
+        ObservationKernel(
+            "y",
+            dict(prior.event_spec.components),
+            NumericArraySpec((n,)),
+            lambda **values: tfd.Independent(tfd.Normal(jnp.zeros(n), 1.0), 1),
+        )
+        * prior
+    )
 
 
-class _GaussianMeanLikelihood(Likelihood):
-    """``log p(y | mu) = sum_i log N(y_i; mu, 1)`` — closed-form posterior.
+def _gaussian_mean(prior, n=3):
+    """``y_i ~ N(mu, 1)`` for ``n`` observations, times *prior* over ``mu``.
 
     Prior ``N(0, 1)`` on ``mu`` paired with ``n`` observations gives
     posterior ``N(n * y_bar / (n + 1), 1 / (n + 1))``.
     """
-
-    def log_likelihood(self, params, data) -> float:
-        mu = params if not hasattr(params, "fields") else params["mu"]
-        y = data
-        # Sum of N(y_i; mu, 1) log-densities, dropping the constant.
-        return -0.5 * jnp.sum((y - mu) ** 2)
+    return (
+        ObservationKernel(
+            "y",
+            dict(prior.event_spec.components),
+            NumericArraySpec((n,)),
+            lambda mu: tfd.Independent(tfd.Normal(jnp.broadcast_to(mu, (n,)), 1.0), 1),
+        )
+        * prior
+    )
 
 
 @pytest.fixture
-def small_model() -> SimpleModel:
+def small_model():
     prior = Normal(loc=1.0, scale=0.5, name="a") * Normal(loc=-2.0, scale=0.7, name="b")
-    return SimpleModel(prior, _IdentityLikelihood(), name="m")
+    return _identity(prior)
 
 
 class TestBlackJAXRegistration:
@@ -79,7 +92,7 @@ class TestBlackJAXNuts:
     def test_runs_end_to_end(self, small_model):
         posterior = condition_on(
             small_model,
-            jnp.zeros((4,)),
+            {"y": jnp.zeros((4,))},
             method="blackjax_nuts",
             num_results=200,
             num_warmup=200,
@@ -94,7 +107,7 @@ class TestBlackJAXNuts:
         # With an identity likelihood, the posterior is the prior.
         posterior = condition_on(
             small_model,
-            jnp.zeros((4,)),
+            {"y": jnp.zeros((4,))},
             method="blackjax_nuts",
             num_results=400,
             num_warmup=400,
@@ -116,12 +129,12 @@ class TestBlackJAXNuts:
         Tolerances below check mean to ~3 σ_MC and variance to 10%.
         """
         prior = FactoredDistribution("prior", [Normal(loc=0.0, scale=1.0, name="mu")])
-        model = SimpleModel(prior, _GaussianMeanLikelihood(), name="g")
+        model = _gaussian_mean(prior)
         y = jnp.asarray([1.0, 2.0, 3.0])
 
         posterior = condition_on(
             model,
-            y,
+            {"y": y},
             method="blackjax_nuts",
             num_results=2000,
             num_warmup=1000,
@@ -153,7 +166,7 @@ class TestBlackJAXNuts:
         """
         posterior = condition_on(
             small_model,
-            jnp.zeros((4,)),
+            {"y": jnp.zeros((4,))},
             method="blackjax_nuts",
             num_results=50,
             num_warmup=0,
@@ -175,7 +188,7 @@ class TestBlackJAXHmc:
     def test_runs_end_to_end(self, small_model):
         posterior = condition_on(
             small_model,
-            jnp.zeros((4,)),
+            {"y": jnp.zeros((4,))},
             method="blackjax_hmc",
             num_results=200,
             num_warmup=200,
@@ -205,12 +218,12 @@ class TestBlackJAXHmc:
         error a mis-specified posterior would produce.
         """
         prior = FactoredDistribution("prior", [Normal(loc=0.0, scale=1.0, name="mu")])
-        model = SimpleModel(prior, _GaussianMeanLikelihood(), name="g")
+        model = _gaussian_mean(prior)
         y = jnp.asarray([1.0, 2.0, 3.0])
 
         posterior = condition_on(
             model,
-            y,
+            {"y": y},
             method="blackjax_hmc",
             num_results=4000,
             num_warmup=2000,
@@ -235,10 +248,10 @@ class TestBlackJAXHmc:
         active.
         """
         prior = FactoredDistribution("prior", [Normal(loc=0.0, scale=1.0, name="mu")])
-        model = SimpleModel(prior, _GaussianMeanLikelihood(), name="g")
+        model = _gaussian_mean(prior)
         posterior = condition_on(
             model,
-            jnp.asarray([1.0, 2.0, 3.0]),
+            {"y": jnp.asarray([1.0, 2.0, 3.0])},
             method="blackjax_hmc",
             num_results=1000,
             num_warmup=500,
@@ -266,10 +279,10 @@ class TestBlackJAXHmc:
         hand-dodged value used above.
         """
         prior = FactoredDistribution("prior", [Normal(loc=0.0, scale=1.0, name="mu")])
-        model = SimpleModel(prior, _GaussianMeanLikelihood(), name="g")
+        model = _gaussian_mean(prior)
         posterior = condition_on(
             model,
-            jnp.asarray([1.0, 2.0, 3.0]),
+            {"y": jnp.asarray([1.0, 2.0, 3.0])},
             method="blackjax_hmc",
             num_results=4000,
             num_warmup=2000,
@@ -310,10 +323,10 @@ class TestBlackJAXHmc:
         randomized-``L`` production kernel.
         """
         prior = FactoredDistribution("prior", [Normal(loc=0.0, scale=1.0, name="mu")])
-        model = SimpleModel(prior, _GaussianMeanLikelihood(), name="g")
+        model = _gaussian_mean(prior)
         posterior = condition_on(
             model,
-            jnp.asarray([1.0, 2.0, 3.0]),
+            {"y": jnp.asarray([1.0, 2.0, 3.0])},
             method="blackjax_hmc",
             num_results=100,
             num_warmup=0,
@@ -345,7 +358,7 @@ class TestSampleStats:
         num_chains, num_results = 2, 200
         posterior = condition_on(
             small_model,
-            jnp.zeros((4,)),
+            {"y": jnp.zeros((4,))},
             method="blackjax_nuts",
             num_results=num_results,
             num_warmup=200,
@@ -390,7 +403,7 @@ class TestSampleStats:
         num_chains = 2
         posterior = condition_on(
             small_model,
-            jnp.zeros((4,)),
+            {"y": jnp.zeros((4,))},
             method="blackjax_nuts",
             num_results=100,
             num_warmup=100,
@@ -411,9 +424,9 @@ class TestCheckFeasibility:
         assert info.feasible is False
         assert "SupportsUnnormalizedLogProb" in info.description
 
-    def test_check_passes_on_simple_model(self, small_model):
+    def test_check_passes_on_a_joint_at_its_data(self, small_model):
         method = inference_method_registry.get_method("blackjax_nuts")
-        info = method.check(observed_target(small_model, jnp.zeros((4,))))
+        info = method.check(observed_target(small_model, {"y": jnp.zeros((4,))}))
         assert info.feasible is True
 
 

@@ -24,7 +24,6 @@ from ._inference_utils import (
     extract_event_spec,
     flat_record,
     get_init_state,
-    get_prior,
     is_jax_traceable,
     observed_parts,
 )
@@ -125,7 +124,7 @@ def _chain_target(
     declares a numeric record it has no flat view of is scored at that state
     unflattened, and any other at the state as it is.
     """
-    if flat_record(get_prior(model)) is not None:
+    if flat_record(model) is not None:
         return build_target_log_prob_flat(model, observed, init=init, random_seed=random_seed)
     return (
         build_target_log_prob(model, observed),

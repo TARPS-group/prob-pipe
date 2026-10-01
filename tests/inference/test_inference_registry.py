@@ -8,11 +8,9 @@ import pytest
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
-    GLMLikelihood,
     MultivariateNormal,
     Normal,
     NumericArraySpec,
-    SimpleModel,
     condition_on,
     mean,
 )
@@ -30,17 +28,18 @@ from tests.inference.canonical import ObservationKernel
 
 @pytest.fixture
 def simple_model():
-    """A simple Poisson regression model."""
-    import tensorflow_probability.substrates.jax.glm as tfp_glm
+    """A Poisson regression with an intercept: the joint of y and beta."""
+    from probpipe.families import PoissonFamily, glm_likelihood
 
-    X = np.asarray(np.linspace(-1, 1, 20))[:, None].astype(np.float32)
+    x = np.asarray(np.linspace(-1, 1, 20)).astype(np.float32)
+    X = jnp.asarray(np.stack([np.ones_like(x), x], axis=1))
     prior = MultivariateNormal(loc=jnp.zeros(2), cov=5.0 * jnp.eye(2), name="beta")
-    return SimpleModel(prior, GLMLikelihood(tfp_glm.Poisson(), X))
+    return glm_likelihood("y", PoissonFamily(), X=X) * prior
 
 
 @pytest.fixture
 def data():
-    return jnp.ones(20, dtype=float)
+    return {"y": jnp.ones(20, dtype=float)}
 
 
 class TestInferenceMethodRegistry:
@@ -91,7 +90,7 @@ class TestInferenceMethodRegistry:
             num_warmup=20,
             random_seed=0,
         )
-        assert mean(posterior).shape == (2,)
+        assert mean(posterior)["beta"].shape == (2,)
 
     def test_exact_only_refuses_every_inference_method(self, simple_model, data):
         """Every registered method is approximate, so an exact-only call resolves to nothing."""
@@ -476,12 +475,14 @@ class TestTargets:
         target = inference_method_registry.check(observed_target(simple_model, data))
         assert two_argument.method_name == target.method_name == "blackjax_nuts"
 
-    def test_the_target_of_a_model_and_its_data_reads_back_as_them(self, simple_model, data):
+    def test_the_target_of_a_joint_and_its_data_reads_back_as_them(self, simple_model, data):
         from probpipe.inference._inference_utils import joint_and_given, observed_parts
 
         target = observed_target(simple_model, data)
-        assert observed_parts(target) == (simple_model, data)
-        assert joint_and_given(target) == (simple_model, data)
+        assert observed_parts(target) == (target, None)
+        joint, given = joint_and_given(target)
+        assert joint is simple_model
+        assert set(given.fields) == {"y"}
         assert observed_target(simple_model, None) is simple_model
 
     def test_a_keyed_target_is_its_own_model(self):

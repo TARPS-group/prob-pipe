@@ -1155,18 +1155,21 @@ class TestEndToEndValuesPipeline:
     @pytest.fixture
     def posterior(self):
         """Run inference once for all end-to-end tests."""
+        import tensorflow_probability.substrates.jax.distributions as tfd
+
+        from probpipe import condition_on
+        from tests.inference.canonical import ObservationKernel
+
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params")
-
-        class _Lik:
-            def log_likelihood(self, params, data):
-                return -0.5 * jnp.sum((data - params) ** 2)
-
-        from probpipe import SimpleModel, condition_on
-
-        model = SimpleModel(prior, _Lik())
+        likelihood = ObservationKernel(
+            "y",
+            {"params": prior.event_spec.spec},
+            NumericArraySpec((2,)),
+            lambda params: tfd.Independent(tfd.Normal(params, 1.0), 1),
+        )
         return condition_on(
-            model,
-            jnp.array([1.0, 2.0]),
+            likelihood * prior,
+            {"y": jnp.array([1.0, 2.0])},
             num_results=500,
             num_warmup=200,
             step_size=0.3,
@@ -1174,10 +1177,10 @@ class TestEndToEndValuesPipeline:
         )
 
     def test_template_propagation(self, posterior):
-        """The prior's declaration is the posterior's: a whole term under its component."""
+        """The posterior is a law over the joint's unconditioned field, a record of params."""
         assert tuple(posterior.event_spec.components) == ("params",)
-        assert posterior.event_spec.spec.shape == (2,)
-        assert posterior.event_spec.spec.dtype == jnp.asarray(0.0).dtype
+        assert posterior.event_spec.components["params"].shape == (2,)
+        assert posterior.event_spec.components["params"].dtype == jnp.asarray(0.0).dtype
 
     def test_draws_are_named_values(self, posterior):
         """draws() returns Record with correct field names and shapes."""
@@ -1202,9 +1205,9 @@ class TestEndToEndValuesPipeline:
         np.testing.assert_allclose(post_std, analytical_std, atol=0.15)
 
     def test_view_values_match_draws(self, posterior):
-        """The law at the component is the posterior, whose mean matches the draws."""
+        """The view of the field is a law whose mean matches the draws."""
         view = posterior["params"]
-        assert view is posterior
+        assert isinstance(view, FieldView)
         assert view.event_shape == (2,)
 
         # Delegation check: view._mean() == draws().params.mean()

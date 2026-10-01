@@ -8,11 +8,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-import tensorflow_probability.substrates.jax.glm as tfp_glm
 
-from probpipe import GLMLikelihood, workflow_run
+from probpipe import workflow_run
 from probpipe.diagnostics._ppc_spc import _ppc_op, add_ppc
 from probpipe.functions import _context
+from tests._regression_provider import CertifiedRegression
 
 
 def _mean(values):
@@ -30,11 +30,7 @@ class _OpaqueLikelihood:
 
 
 def _certified_likelihood():
-    return GLMLikelihood(
-        tfp_glm.Normal(),
-        x=jnp.ones((4, 1)),
-        fit_intercept=False,
-    )
+    return CertifiedRegression("normal", jnp.ones((4, 1)), fit_intercept=False)
 
 
 class TestPpcDiagnosticBroker:

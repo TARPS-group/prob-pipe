@@ -2,29 +2,28 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-import tensorflow_probability.substrates.jax.glm as tfp_glm
 
 from probpipe import (
     EmpiricalDistribution,
-    GLMLikelihood,
     MultivariateNormal,
     Normal,
     predictive_check,
     workflow_run,
 )
+from probpipe.families import GaussianFamily, glm_likelihood
 from probpipe.functions import _context
 from probpipe.validation import (
     Reference,
     score_posterior,
     simulation_based_calibration,
 )
+from tests._regression_provider import CertifiedRegression
 
 
 class _OpaqueLikelihood:
@@ -46,7 +45,7 @@ class _RecordingNormal(Normal):
 def _glm_validation_setup():
     x = jnp.linspace(-1.0, 1.0, 6)[:, None]
     prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="beta")
-    likelihood = GLMLikelihood(tfp_glm.Normal(), x=x)
+    likelihood = CertifiedRegression("normal", x)
     return prior, likelihood
 
 
@@ -171,15 +170,12 @@ class TestPredictiveCheckBroker:
 
         commit.assert_not_called()
 
-    def test_glm_subclass_is_not_certified(self):
-        class DerivedGLMLikelihood(GLMLikelihood):
+    def test_a_subclass_of_a_certified_provider_is_not_certified(self):
+        class DerivedRegression(CertifiedRegression):
             pass
 
         prior, _ = _glm_validation_setup()
-        likelihood = DerivedGLMLikelihood(
-            tfp_glm.Normal(),
-            x=jnp.linspace(-1.0, 1.0, 6)[:, None],
-        )
+        likelihood = DerivedRegression("normal", jnp.linspace(-1.0, 1.0, 6)[:, None])
 
         with (
             patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
@@ -198,7 +194,7 @@ class TestPredictiveCheckBroker:
 
     def test_class_method_override_is_not_certified(self, monkeypatch):
         prior, likelihood = _glm_validation_setup()
-        monkeypatch.setattr(GLMLikelihood, "generate_data", _OpaqueLikelihood.generate_data)
+        monkeypatch.setattr(CertifiedRegression, "generate_data", _OpaqueLikelihood.generate_data)
 
         with (
             patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
@@ -215,9 +211,9 @@ class TestPredictiveCheckBroker:
 
         commit.assert_not_called()
 
-    def test_glm_without_design_matrix_fails_before_event_commit(self):
+    def test_a_provider_without_its_design_fails_before_event_commit(self):
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="beta")
-        likelihood = GLMLikelihood(tfp_glm.Normal())
+        likelihood = CertifiedRegression("normal")
 
         with (
             patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
@@ -239,10 +235,8 @@ class TestSimulationBasedCalibrationBroker:
     @staticmethod
     def _model():
         x = jnp.ones((3, 1))
-        return SimpleNamespace(
-            prior=MultivariateNormal(loc=jnp.zeros(1), cov=jnp.eye(1), name="beta"),
-            likelihood=GLMLikelihood(tfp_glm.Normal(), x=x, fit_intercept=False),
-        )
+        prior = MultivariateNormal(loc=jnp.zeros(1), cov=jnp.eye(1), name="beta")
+        return glm_likelihood("y", GaussianFamily(), X=x, dispersion=1.0) * prior
 
     def test_seeded_sbc_claims_one_event_and_derives_inference_seeds(self, monkeypatch):
         inference_seeds = []
@@ -279,9 +273,9 @@ class TestSimulationBasedCalibrationBroker:
             ):
                 result = simulation_based_calibration(
                     self._model(),
+                    observed="y",
                     num_simulations=num_simulations,
                     num_posterior_draws=4,
-                    num_observations=3,
                 )
             return result.ranks.copy(), tuple(inference_seeds), commit
 
@@ -299,9 +293,9 @@ class TestSimulationBasedCalibrationBroker:
         with patch("probpipe.functions._context._commit_stochastic_invocation") as explicit_commit:
             simulation_based_calibration(
                 self._model(),
+                observed="y",
                 num_simulations=2,
                 num_posterior_draws=4,
-                num_observations=3,
                 key=jax.random.key(11),
             )
         explicit_commit.assert_not_called()
@@ -334,9 +328,9 @@ class TestSimulationBasedCalibrationBroker:
         ):
             result = simulation_based_calibration(
                 self._model(),
+                observed="y",
                 num_simulations=np.int64(2),
                 num_posterior_draws=np.int64(4),
-                num_observations=np.int64(3),
             )
 
         assert result.ranks.shape == (2, 1)
@@ -349,15 +343,13 @@ class TestSimulationBasedCalibrationBroker:
             ("num_simulations", 0),
             ("num_posterior_draws", True),
             ("num_posterior_draws", 0),
-            ("num_observations", True),
-            ("num_observations", 0),
         ],
     )
     def test_invalid_counts_fail_before_event_commit(self, argument, value):
         kwargs = {
+            "observed": "y",
             "num_simulations": 2,
             "num_posterior_draws": 4,
-            "num_observations": 3,
             argument: value,
         }
         with (
@@ -369,21 +361,17 @@ class TestSimulationBasedCalibrationBroker:
 
         commit.assert_not_called()
 
-    def test_opaque_provider_requires_explicit_key(self):
-        model = SimpleNamespace(
-            prior=Normal(loc=0.0, scale=1.0, name="x"),
-            likelihood=_OpaqueLikelihood(),
-        )
+    def test_a_model_that_does_not_sample_fails_before_event_commit(self):
         with (
             patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=7),
-            pytest.raises(TypeError, match="explicit key"),
+            pytest.raises(TypeError, match="does not support SBC joint sampling"),
         ):
             simulation_based_calibration(
-                model,
+                _OpaqueLikelihood(),
+                observed="y",
                 num_simulations=2,
                 num_posterior_draws=4,
-                num_observations=3,
             )
 
         commit.assert_not_called()

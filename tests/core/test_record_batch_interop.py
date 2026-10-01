@@ -166,32 +166,6 @@ class TestFieldExtraction:
         assert np.allclose(joint["a"]._project(batch), batch["a"])
 
 
-class TestDesignCoercion:
-    """A GLM design coerces a batch the way it coerces a record."""
-
-    def test_a_single_field_batch_coerces_to_its_column(self):
-        from probpipe.modeling._glm import _coerce_array
-
-        batch = _one_field(4)
-
-        assert np.allclose(_coerce_array(batch), batch["x"])
-
-    def test_a_multi_field_batch_stacks_its_columns(self):
-        from probpipe.modeling._glm import _coerce_array
-
-        batch = _one_field(4).merge(
-            NumericRecordBatch(
-                "batch",
-                {"y": jnp.ones(4)},
-                "draw",
-                element_spec=NumericRecordSpec(y=()),
-                axes_per_level=(1,),
-            )
-        )
-
-        assert _coerce_array(batch).shape == (4, 2)
-
-
 class TestBroadcastComponents:
     """The broadcast helpers gather and unwrap a batch's rows."""
 

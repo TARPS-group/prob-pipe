@@ -513,28 +513,6 @@ class TestJointDynamicProtocols:
         assert SupportsLogProb not in type(joint).__mro__
 
 
-class TestSimpleGenerativeModelSampling:
-    """SimpleGenerativeModel now advertises SupportsSampling."""
-
-    def test_supports_sampling(self):
-        from probpipe import Normal, SimpleGenerativeModel
-
-        class _L:
-            def generate_data(self, params, num_observations, *, key):
-                import jax
-
-                k = key if key is not None else jax.random.PRNGKey(0)
-                return jax.random.normal(k, (num_observations, 3))
-
-        model = SimpleGenerativeModel(
-            prior=Normal(loc=0.0, scale=1.0, name="theta"),
-            likelihood=_L(),
-        )
-        assert isinstance(model, SupportsSampling)
-        _params, data = model._sample(jax.random.PRNGKey(0))
-        assert data.shape == (3,)
-
-
 # ---------------------------------------------------------------------------
 # SupportsArrayBackend protocol surface
 # ---------------------------------------------------------------------------
@@ -591,3 +569,15 @@ class TestSupportsArrayBackendProtocolSurface:
             assert required in members, (
                 f"_DistributionArrayBackend missing required attr {required!r}"
             )
+
+
+@pytest.mark.pending(
+    reason="predictive_check and add_ppc take a GenerativeLikelihood until they take a sampling "
+    "kernel",
+    raises=AssertionError,
+)
+def test_the_generative_likelihood_protocol_retires():
+    """A model is a factored joint or a program family, so no likelihood protocol remains."""
+    from probpipe.core import protocols
+
+    assert not hasattr(protocols, "GenerativeLikelihood")
