@@ -1224,13 +1224,13 @@ class TestViewAndWrapperDeclarations:
         law = _DeclaredLaw("p", RecordSpec(a=a, b=RecordSpec(c=c)))
         assert law["a"].event_spec == OutputSpec(a=a)
         nested = law["b"]["b/c"]
-        assert nested.name == "b/c"
+        assert nested.name == "p"
         assert nested.event_spec == OutputSpec(c=c)
 
     def test_a_slash_path_selects_the_field_it_names(self):
         law = _DeclaredLaw("p", RecordSpec(a=(), b=RecordSpec(c=())))
         view = law["b/c"]
-        assert view.name == "b/c"
+        assert view.name == "p"
         assert view.event_spec == law["b"]["b/c"].event_spec
 
 

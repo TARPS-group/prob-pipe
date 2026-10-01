@@ -943,9 +943,9 @@ class TestMarginalValues:
         assert pair.marginalized == ["a"]
         assert marginal.event_spec == OutputSpec(a=SCALAR)
 
-    def test_the_marginal_of_a_group_is_labeled_by_its_paths(self):
+    def test_the_marginal_of_a_group_keeps_the_joint_label(self):
         joint = _law("u", "a") * _law("v", "b") * _law("w", "c")
-        assert joint._marginal(("a", "c")).name == "a, c"
+        assert joint._marginal(("a", "c")).name == joint.name
 
     @pytest.mark.parametrize(
         "path",
@@ -957,11 +957,11 @@ class TestMarginalValues:
             pytest.param("params/u", id="reduced-factor"),
         ],
     )
-    def test_a_marginal_is_labeled_by_its_path_as_the_view_there_is(self, path):
+    def test_a_marginal_keeps_the_joint_label_as_the_view_there_does(self, path):
         record = OneFieldNormal("one", OutputSpec(RecordSpec(record=SCALAR)))
         params = MarginalLaw("p", OutputSpec(params=RecordSpec(u=SCALAR)), exact=("params/u",))
         joint = _likelihood() * _prior() * record * params
-        assert joint._marginal(path).name == FieldView(joint, path).name
+        assert joint._marginal(path).name == FieldView(joint, path).name == joint.name
 
     def test_a_selection_of_one_whole_term_is_an_exposed_record(self):
         prior = _prior()
@@ -971,9 +971,10 @@ class TestMarginalValues:
 
     def test_a_selection_of_a_record_factor_components_is_that_factor_under_the_paths(self):
         pair = _pair()
-        marginal = (pair * _law("other", "c"))._marginal(("a", "b"))
+        joint = pair * _law("other", "c")
+        marginal = joint._marginal(("a", "b"))
         assert type(marginal) is type(pair) and marginal.spec == pair.spec
-        assert (marginal.name, pair.name) == ("a, b", "pair")
+        assert (marginal.name, pair.name) == (joint.name, "pair")
 
     @pytest.mark.parametrize(
         "path",

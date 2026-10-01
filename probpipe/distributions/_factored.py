@@ -686,9 +686,13 @@ def _sole_field_expectation(self: _SoleField, f: Callable[[Any], Array]) -> Arra
 def _sole_field_marginal(self: _SoleField, path: str | tuple[str, ...]) -> Distribution:
     """This law at its component, and the record law's marginal at any other path.
 
-    The field and the record have the same event paths.
+    The field and the record have the same event paths, and the marginal keeps
+    this law's label.
     """
-    return self if path == self._component else self._law._marginal(path)
+    if path == self._component:
+        return self
+    marginal = self._law._marginal(path)
+    return marginal if marginal.name == self.name else marginal.with_name(self.name)
 
 
 def _sole_field_marginal_guard(self: _SoleField, path: str | tuple[str, ...]) -> Feasibility:
@@ -1089,8 +1093,8 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
     exposed record: the one factor itself when it exposes a record, and
     otherwise the joint of the kept factors in factor order, repackaged when
     the paths name the fields in another order, so its fields follow the
-    order of the paths (III.8). The marginal is labeled as the view at *path*
-    is: by the path, or by the paths of a selection joined with ``", "``.
+    order of the paths (III.8). The marginal keeps the joint's label, as the
+    view at *path* does.
 
     Parameters
     ----------
@@ -1122,7 +1126,7 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
         raise ResolutionError(f"{self.name!r} has no exact marginal at {path!r}: {reason}")
     graph: _FactorGraph = self._graph
     projection = isinstance(path, str)
-    label = path if projection else ", ".join(paths)
+    label = self.name
     kept: list[Distribution] = []
     for index, requested in _requests(graph, paths).items():
         factor = graph.factors[index]

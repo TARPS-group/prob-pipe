@@ -1006,17 +1006,17 @@ class TestPosteriorFieldView:
         # Variance of column 0: var([1,3,5]) = 8/3
         np.testing.assert_allclose(float(view._variance()), jnp.var(chain[:, 0]), atol=1e-5)
 
-    def test_view_name_matches_field(self, posterior):
-        """View.name should return the field name."""
-        assert posterior["K"].name == "K"
-        assert posterior["phi"].name == "phi"
-        assert posterior["r"].name == "r"
+    def test_a_view_keeps_the_posterior_label_and_exposes_its_field(self, posterior):
+        """A view keeps its parent's label, and its event exposes the selected field."""
+        for field in ("K", "phi", "r"):
+            assert posterior[field].name == posterior.name
+            assert list(posterior[field].event_spec.components) == [field]
 
-    def test_view_name_from_product(self):
-        """View.name works on the views of a factored joint."""
+    def test_a_view_of_a_factored_joint_keeps_the_joint_label(self):
+        """The views of a factored joint keep its label, and their events expose the fields."""
         p = Normal(loc=0.0, scale=1.0, name="x") * Normal(loc=0.0, scale=1.0, name="y")
-        assert p["x"].name == "x"
-        assert p["y"].name == "y"
+        assert p["x"].name == p["y"].name == p.name
+        assert list(p["x"].event_spec.components) == ["x"]
 
 
 class TestViewProtocolDuckTyping:

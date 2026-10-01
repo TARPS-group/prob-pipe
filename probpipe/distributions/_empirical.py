@@ -545,11 +545,11 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         """The empirical law of the atoms projected onto *path*, under the same weights.
 
         A single event path yields the leaf or subtree at that path whole, under
-        a component named by the path's final segment, and the path labels the
-        result. A tuple of event paths yields an exposed record of the selected
-        nodes keyed by their final segments, and the paths joined with ``", "``
-        label the result. The projected atoms keep the stored atoms' levels, and
-        the result holds no reference to this law.
+        a component named by the path's final segment. A tuple of event paths
+        yields an exposed record of the selected nodes keyed by their final
+        segments. Either way the result keeps this law's label, the projected
+        atoms keep the stored atoms' levels, and the result holds no reference
+        to this law.
 
         Raises
         ------
@@ -563,14 +563,13 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         """
         selected = self._selection(path)
         if isinstance(path, str):
-            ((label, segments, node),) = selected
+            ((requested, segments, node),) = selected
             atoms = self._projection(segments, node)
-            declaration = OutputSpec(**{label.rsplit(_PATH_SEP, 1)[-1]: node})
+            declaration = OutputSpec(**{requested.rsplit(_PATH_SEP, 1)[-1]: node})
         else:
-            label = ", ".join(selected_path for selected_path, _, _ in selected)
-            atoms = self._selection_batch(selected, label)
+            atoms = self._selection_batch(selected)
             declaration = OutputSpec(atoms.element_spec)
-        return EmpiricalDistribution(label, atoms, self._w, event_spec=declaration)
+        return EmpiricalDistribution(self.name, atoms, self._w, event_spec=declaration)
 
     def _marginal_guard(self, path: str | tuple[str, ...]) -> Feasibility | bool:
         """Whether *path* is an event path, or a selection of them with distinct final segments.
@@ -640,8 +639,11 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
             )
         return column
 
-    def _selection_batch(self, selected: tuple[_Selected, ...], label: str) -> RecordBatch:
-        """The atoms projected onto the selected nodes, one field per node under its final segment."""
+    def _selection_batch(self, selected: tuple[_Selected, ...]) -> RecordBatch:
+        """The atoms projected onto the selected nodes, one field per node under its final segment.
+
+        The batch is named by the stored atoms' name indexed by the selected paths.
+        """
         atoms = self._atoms
         is_record = isinstance(self.event_spec.spec, RecordSpec)
         stored = atoms._raw_columns() if is_record else {}
@@ -664,7 +666,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         element = RecordSpec(fields)
         batch_class = NumericRecordBatch if isinstance(element, NumericRecordSpec) else RecordBatch
         return batch_class(
-            f"{atoms.name}[{label!r}]",
+            f"{atoms.name}[{tuple(requested for requested, _, _ in selected)!r}]",
             columns,
             atoms.level_names,
             element_spec=element,

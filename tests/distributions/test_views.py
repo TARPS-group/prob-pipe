@@ -487,10 +487,10 @@ class TestDeclaration:
         assert view.spec == DistributionSpec(declaration)
 
     @pytest.mark.parametrize(("event_spec", "path"), _PATHS)
-    def test_a_view_is_labeled_by_its_path_and_reads_its_parent_there(self, event_spec, path):
+    def test_a_view_keeps_its_parent_label_and_reads_its_parent_there(self, event_spec, path):
         parent = _Law("parent", event_spec)
         view = FieldView(parent, path)
-        assert view.name == path
+        assert view.name == "parent"
         assert view.parent is parent
         assert view.path == path
 
@@ -635,12 +635,12 @@ class TestIndexing:
         with pytest.raises(ValueError):
             view[("g/a/x", "g/b/x")]
 
-    def test_a_selection_is_labeled_by_its_paths_and_reads_its_parent_at_them(self):
+    def test_a_selection_keeps_its_parent_label_and_reads_its_parent_at_them(self):
         parent = _Law("parent", _EVENT)
         selection = FieldView(parent, "model/theta")[("theta/tau", "theta/mu")]
         assert selection.parent is parent
         assert selection.path == ("model/theta/tau", "model/theta/mu")
-        assert selection.name == "model/theta/tau, model/theta/mu"
+        assert selection.name == "parent"
 
     def test_a_selection_of_one_path_exposes_a_record_of_one_field(self):
         selection = FieldView(_Law("parent", _EVENT), ("model/theta",))
@@ -982,6 +982,12 @@ class TestDerivedBehavior:
         assert parent.marginal_calls == ["model/theta/mu"]
         assert not isinstance(marginal, FieldView)
         assert list(marginal.event_spec.components) == ["mu"]
+
+    def test_the_view_marginal_keeps_the_view_label(self):
+        parent = _UnguardedMarginalLaw("parent", _EVENT)
+        assert FieldView(parent, "model/theta")._marginal("theta/mu").name == "parent"
+        relabeled = FieldView(parent, "model/theta").with_name("theta")
+        assert relabeled._marginal(("theta/mu", "theta/tau")).name == "theta"
 
     def test_conditioning_a_view_conditions_its_parent_at_the_given_paths(self):
         parent = _ConditioningLaw("parent", _EVENT)

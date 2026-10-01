@@ -580,7 +580,7 @@ class TestMarginals:
         marginal = law._marginal("b")
         assert isinstance(marginal, EmpiricalDistribution)
         assert not isinstance(marginal, FieldView)
-        assert marginal.name == "b"
+        assert marginal.name == law.name
         assert marginal.event_spec == OutputSpec(b=_RECORD_SPEC["b"])
         assert jnp.array_equal(marginal.atoms.values, _B)
         assert np.allclose(marginal.weights, _RECORD_WEIGHTS)
@@ -598,7 +598,7 @@ class TestMarginals:
 
     def test_the_marginal_of_a_nested_leaf_takes_its_final_segment(self):
         marginal = EmpiricalDistribution("m", _mixed_atoms())._marginal("g/v")
-        assert marginal.name == "g/v"
+        assert marginal.name == "m"
         assert marginal.event_spec == OutputSpec(v=NumericArraySpec((2,)))
         assert jnp.allclose(marginal._mean(), jnp.mean(_V, axis=0))
 
@@ -610,7 +610,7 @@ class TestMarginals:
     def test_a_selection_of_paths_is_an_exposed_record_that_keeps_the_rows(self):
         law = EmpiricalDistribution("m", _mixed_atoms())
         marginal = law._marginal(("label", "g/v"))
-        assert marginal.name == "label, g/v"
+        assert marginal.name == "m"
         assert marginal.event_spec == OutputSpec(RecordSpec(label=None, v=(2,)))
         rows = {(label, *np.asarray(v)) for label, v in zip(_LABELS, _V)}
         for key in jax.random.split(jax.random.PRNGKey(0), 10):
