@@ -852,15 +852,26 @@ def from_distribution(
         Source distribution to convert.
     target_type : type
         The target distribution class.
-    key : PRNGKey, optional
-        JAX PRNG key for sampling-based conversion.
+    key : None
+        Refused when given: a conversion's draws are workflow-owned random
+        events, which ``workflow_run(seed=...)`` makes reproducible.
     check_support : bool
         If ``True`` (default), verify the supports are compatible.
     **kwargs
         Additional keyword arguments passed to the converter.
-    """
-    from ..converters import converter_registry
 
-    return converter_registry.convert(
-        source, target_type, key=key, check_support=check_support, **kwargs
-    )
+    Raises
+    ------
+    TypeError
+        If *key* is given.
+    """
+    from ..distributions._conversion import converter_registry
+
+    if key is not None:
+        raise TypeError(
+            "from_distribution takes no key: a conversion's draws are workflow-owned random "
+            "events, which workflow_run(seed=...) makes reproducible"
+        )
+    if not check_support:
+        kwargs["check_support"] = False
+    return converter_registry.convert(source, target_type, **kwargs)

@@ -1,4 +1,11 @@
-"""Tests for the converter registry and built-in converters."""
+"""Tests for the shipped converters and the global converter registry.
+
+The registry returns a law that already satisfies the target as it is. The
+shipped converters bring TFP and SciPy distributions into ProbPipe exactly, and
+fit a family by its moments, sample an empirical law, or smooth a kernel
+density estimate approximately; every conversion carries the source's event
+declaration and records the converter in the result's provenance.
+"""
 
 import jax
 import jax.numpy as jnp
@@ -11,7 +18,6 @@ from probpipe import (
     Beta,
     Categorical,
     ConversionInfo,
-    ConversionMethod,
     Converter,
     EmpiricalDistribution,
     Exponential,
@@ -23,10 +29,22 @@ from probpipe import (
     NumericRecordBatch,
     NumericRecordSpec,
     OpaqueBatch,
+    OutputSpec,
     Poisson,
+    ResolutionError,
     converter_registry,
     from_distribution,
     function,
+    workflow_run,
+)
+from probpipe.distributions import ConverterRegistry
+from probpipe.distributions._capabilities import (
+    SupportsCovariance,
+    SupportsExactConditioning,
+    SupportsLogProb,
+    SupportsMean,
+    SupportsSampling,
+    SupportsVariance,
 )
 from probpipe.families._continuous import (
     Cauchy,
@@ -49,6 +67,14 @@ from probpipe.families._multivariate import Dirichlet, Multinomial, VonMisesFish
 
 
 class TestConverterRegistry:
+    def test_the_shipped_converters_are_registered(self):
+        assert set(converter_registry.list_methods()) >= {
+            "tfp",
+            "moment_match",
+            "empirical",
+            "kde",
+        }
+
     def test_check_returns_conversioninfo(self):
         info = converter_registry.check(Normal("x", 0, 1), Normal)
         assert isinstance(info, ConversionInfo)
@@ -59,7 +85,7 @@ class TestConverterRegistry:
         assert not info.feasible
 
     def test_convert_raises_for_unknown(self):
-        with pytest.raises(TypeError):
+        with pytest.raises(ResolutionError, match=r"\(int, Normal\)"):
             converter_registry.convert(42, Normal)
 
     def test_is_distribution_type_probpipe(self):
@@ -73,18 +99,21 @@ class TestConverterRegistry:
         assert not converter_registry.is_distribution_type(42)
         assert not converter_registry.is_distribution_type("hello")
 
+    def test_an_option_no_converter_reads_raises_type_error(self):
+        with pytest.raises(TypeError, match=r"'moment_match' reads the options"):
+            converter_registry.convert(Gamma("g", 9.0, 1.0), Normal, bandwidth=0.5)
+
 
 # ---------------------------------------------------------------------------
-# ProbPipe ↔ ProbPipe
+# Moment matching between ProbPipe laws
 # ---------------------------------------------------------------------------
 
 
-class TestProbPipeConverter:
-    def test_same_class_exact(self):
+class TestMomentMatching:
+    def test_same_class_needs_no_converter(self):
         n = Normal(loc=2.0, scale=0.5, name="x")
         info = converter_registry.check(n, Normal)
-        assert info.method == ConversionMethod.EXACT
-        assert info.estimated_time == 0.0
+        assert (info.method_name, info.exact, info.samples) == (None, True, False)
 
         result = converter_registry.convert(n, Normal)
         assert isinstance(result, Normal)
@@ -94,11 +123,17 @@ class TestProbPipeConverter:
     def test_cross_family_moment_match(self):
         g = Gamma(concentration=9.0, rate=1.0, name="g")
         info = converter_registry.check(g, Normal)
-        assert info.method == ConversionMethod.MOMENT_MATCH
+        assert (info.method_name, info.exact, info.samples) == ("moment_match", False, False)
 
         result = converter_registry.convert(g, Normal, num_samples=5000)
         assert isinstance(result, Normal)
         np.testing.assert_allclose(float(result._loc), 9.0, atol=0.5)
+
+    def test_the_fit_keeps_the_source_label_and_component(self):
+        g = Gamma(concentration=9.0, rate=1.0, name="g", event_spec=OutputSpec(theta=None))
+        result = converter_registry.convert(g, Normal)
+        assert result.name == "g"
+        assert list(result.event_spec.components) == ["theta"]
 
     def test_support_mismatch_raises_by_default(self):
         n = Normal(loc=0.5, scale=0.1, name="x")
@@ -112,6 +147,8 @@ class TestProbPipeConverter:
 
     def test_to_empirical(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
+        info = converter_registry.check(n, EmpiricalDistribution)
+        assert (info.method_name, info.exact, info.samples) == ("empirical", False, True)
         emp = converter_registry.convert(n, EmpiricalDistribution, num_samples=100)
         assert isinstance(emp, EmpiricalDistribution)
         assert emp.num_atoms == 100
@@ -122,7 +159,8 @@ class TestProbPipeConverter:
         g = Gamma(concentration=3.0, rate=1.0, name="prior")
         result = converter_registry.convert(g, Normal)
         assert result.provenance is not None
-        assert result.provenance.operation == "from_distribution"
+        assert result.provenance.operation == "convert"
+        assert result.provenance.metadata == {"converter": "moment_match", "exact": False}
         assert len(result.provenance.parents) == 1
         assert result.provenance.parents[0].name == "prior"
 
@@ -131,6 +169,13 @@ class TestProbPipeConverter:
         n = Normal(loc=1.0, scale=2.0, name="x")
         result = converter_registry.convert(n, Normal)
         assert result is n
+
+    def test_a_target_that_names_no_family_is_not_moment_matched(self):
+        """Moment matching fits the family the target names, and a protocol names none."""
+        emp = EmpiricalDistribution("x", jnp.array([0.5, 1.0, 2.0]))
+        info = converter_registry.check(emp, SupportsLogProb, method="moment_match")
+        assert info.feasible is False
+        assert "SupportsLogProb names none" in info.description
 
 
 class TestAnEmpiricalSourceAgainstTheTargetSupport:
@@ -152,8 +197,8 @@ class TestAnEmpiricalSourceAgainstTheTargetSupport:
         assert isinstance(from_distribution(source, Exponential, check_support=False), Exponential)
 
 
-class TestARecordSourceWithOneLeaf:
-    """A record law's moments and draws arrive as nested mappings of raw leaves (D7)."""
+class TestARecordSource:
+    """A family draws one array, so a law over a record converts through a field's law."""
 
     @staticmethod
     def _posterior() -> EmpiricalDistribution:
@@ -162,36 +207,44 @@ class TestARecordSourceWithOneLeaf:
         atoms = NumericRecordBatch("atoms", {"lam": lam}, "draw", element_spec=spec)
         return EmpiricalDistribution("posterior", atoms)
 
-    def test_its_moments_match_a_scalar_family(self):
-        result = from_distribution(self._posterior(), Normal)
+    def test_a_record_law_does_not_convert_to_a_family(self):
+        """The conversion would change the packaging, which a conversion preserves."""
+        with pytest.raises(ResolutionError, match=r"exposed record; convert a field's law"):
+            converter_registry.convert(self._posterior(), Normal)
+
+    def test_its_field_law_matches_a_scalar_family(self):
+        result = converter_registry.convert(self._posterior()["lam"], Normal)
         lam = jnp.array([2.2, 2.5, 2.7, 2.4])
         assert isinstance(result, Normal)
         np.testing.assert_allclose(float(result._loc), float(jnp.mean(lam)), rtol=1e-6)
         np.testing.assert_allclose(float(result._scale), float(jnp.std(lam)), rtol=1e-5)
 
-    def test_its_draws_fit_a_scalar_family(self):
-        result = from_distribution(self._posterior(), HalfCauchy, num_samples=200)
+    def test_its_field_law_draws_fit_a_scalar_family(self):
+        with workflow_run(seed=0):
+            result = converter_registry.convert(
+                self._posterior()["lam"], HalfCauchy, num_samples=200
+            )
         assert isinstance(result, HalfCauchy)
         assert 2.2 <= float(result._scale) <= 2.7
 
-    def test_a_parameter_naming_the_family_converts_it(self):
+    def test_a_parameter_naming_the_family_converts_the_field_law(self):
         @function
         def location(d: Normal):
             return d._loc
 
         lam = jnp.array([2.2, 2.5, 2.7, 2.4])
-        np.testing.assert_allclose(float(location(self._posterior())), float(jnp.mean(lam)))
+        np.testing.assert_allclose(
+            float(location(self._posterior()["lam"])), float(jnp.mean(lam)), rtol=1e-6
+        )
 
 
 # ---------------------------------------------------------------------------
-# Cross-family moment-matching (exercises all _convert_to_* functions)
+# Cross-family moment-matching (exercises every family's fit)
 # ---------------------------------------------------------------------------
 
 
 class TestAllCrossFamilyConversions:
-    """Exercise every _convert_to_* path with a cross-family source."""
-
-    key = jax.random.PRNGKey(42)
+    """Exercise every family's fit with a cross-family source."""
 
     @pytest.mark.parametrize(
         "target_cls",
@@ -270,8 +323,7 @@ class TestAllCrossFamilyConversions:
         with pytest.raises(ValueError, match="total_count"):
             converter_registry.convert(mvn, Multinomial, check_support=False)
 
-    def test_wishart_from_mvn(self):
-        # Wishart samples are matrices; use Wishart as source for itself
+    def test_wishart_from_wishart(self):
         w = Wishart(df=5.0, scale_tril=jnp.eye(2), name="w")
         result = converter_registry.convert(w, Wishart)
         assert result is w  # same-class
@@ -292,6 +344,8 @@ class TestAllCrossFamilyConversions:
     def test_mvn_from_empirical(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (100, 3))
         emp = EmpiricalDistribution("x", samples)
+        info = converter_registry.check(emp, MultivariateNormal)
+        assert info.samples is False  # the empirical law's moments are in closed form
         result = converter_registry.convert(emp, MultivariateNormal)
         assert isinstance(result, MultivariateNormal)
         assert result.loc.shape == (3,)
@@ -301,9 +355,14 @@ class TestAllCrossFamilyConversions:
         result = converter_registry.convert(mvn, MultivariateNormal)
         assert result is mvn
 
+    def test_a_vector_family_refuses_a_matrix_event(self):
+        w = Wishart(df=5.0, scale_tril=jnp.eye(2), name="w")
+        with pytest.raises(ResolutionError, match="rank 1"):
+            converter_registry.convert(w, MultivariateNormal)
+
 
 # ---------------------------------------------------------------------------
-# TFP ↔ ProbPipe
+# TFP backend distributions entering ProbPipe
 # ---------------------------------------------------------------------------
 
 
@@ -312,7 +371,7 @@ class TestTFPConverter:
         tfp_n = tfd.Normal(loc=2.0, scale=0.5)
         info = converter_registry.check(tfp_n, Normal)
         assert info.feasible
-        assert info.method == ConversionMethod.EXACT
+        assert (info.method_name, info.exact, info.samples) == ("tfp", True, False)
 
         result = converter_registry.convert(tfp_n, Normal)
         assert isinstance(result, Normal)
@@ -334,76 +393,74 @@ class TestTFPConverter:
         assert isinstance(result, MultivariateNormal)
         np.testing.assert_allclose(result.loc, loc, atol=1e-5)
 
-    def test_probpipe_to_tfp(self):
-        n = Normal(loc=3.0, scale=1.0, name="x")
-        result = converter_registry.convert(n, tfd.Normal)
-        assert isinstance(result, tfd.Normal)
-        np.testing.assert_allclose(float(result.loc), 3.0)
-        np.testing.assert_allclose(float(result.scale), 1.0)
-
-    def test_probpipe_to_tfp_beta(self):
-        b = Beta(alpha=2.0, beta=5.0, name="b")
-        result = converter_registry.convert(b, tfd.Beta)
-        assert isinstance(result, tfd.Beta)
-        np.testing.assert_allclose(float(result.concentration1), 2.0)
-        np.testing.assert_allclose(float(result.concentration0), 5.0)
+    def test_an_event_spec_option_names_the_component(self):
+        result = converter_registry.convert(
+            tfd.Normal(0.0, 1.0), Normal, event_spec=OutputSpec(mu=None)
+        )
+        assert list(result.event_spec.components) == ["mu"]
 
     def test_tfp_to_probpipe_provenance(self):
         result = converter_registry.convert(tfd.Normal(0, 1), Normal)
         assert result.provenance is not None
-        assert result.provenance.operation == "convert_from_tfp"
+        assert result.provenance.operation == "convert"
+        assert result.provenance.metadata == {"converter": "tfp", "exact": True}
+
+    def test_an_unknown_tfp_distribution_enters_through_the_backend_adapter(self):
+        """A backend distribution without a family is wrapped exactly, not sampled."""
+        from probpipe import TFPDistribution
+
+        tfp_dist = tfd.VonMises(loc=0.0, concentration=1.0)
+        result = converter_registry.convert(tfp_dist, SupportsLogProb)
+        assert type(result) is TFPDistribution
+        assert result.raw() is tfp_dist
 
     def test_unknown_tfp_to_empirical(self):
-        """Unknown TFP types fall back to sampling → EmpiricalDistribution."""
-        # Use a TFP distribution we haven't mapped
+        """An unknown TFP distribution samples through the backend adapter."""
         tfp_dist = tfd.VonMises(loc=0.0, concentration=1.0)
         result = converter_registry.convert(tfp_dist, EmpiricalDistribution, num_samples=50)
         assert isinstance(result, EmpiricalDistribution)
         assert result.num_atoms == 50
 
-    def test_probpipe_mvn_to_tfp(self):
-        loc = jnp.array([1.0, 2.0])
-        cov = jnp.array([[1.0, 0.3], [0.3, 2.0]])
-        mvn = MultivariateNormal(loc=loc, cov=cov, name="z")
-        result = converter_registry.convert(mvn, tfd.MultivariateNormalTriL)
-        assert isinstance(result, tfd.MultivariateNormalTriL)
-        np.testing.assert_allclose(result.loc, loc, atol=1e-5)
+    def test_a_family_exports_its_backend_distribution_through_raw(self):
+        """Converting to a backend class is no conversion, since the result carries no declaration."""
+        n = Normal(loc=3.0, scale=1.0, name="x")
+        assert isinstance(n.raw(), tfd.Normal)
+        np.testing.assert_allclose(float(n.raw().loc), 3.0)
+        with pytest.raises(ResolutionError):
+            converter_registry.convert(n, tfd.Normal)
+
+    @pytest.mark.parametrize(
+        ("law", "backend"),
+        [
+            (Beta(alpha=2.0, beta=5.0, name="b"), tfd.Beta),
+            (Gamma(concentration=3.0, rate=1.0, name="g"), tfd.Gamma),
+            (Exponential(rate=2.0, name="e"), tfd.Exponential),
+            (Bernoulli(probs=0.3, name="b"), tfd.Bernoulli),
+            (Dirichlet(concentration=jnp.array([2.0, 3.0, 1.0]), name="d"), tfd.Dirichlet),
+            (
+                MultivariateNormal(loc=jnp.array([1.0, 2.0]), cov=jnp.eye(2), name="z"),
+                tfd.MultivariateNormalTriL,
+            ),
+        ],
+        ids=["beta", "gamma", "exponential", "bernoulli", "dirichlet", "mvn"],
+    )
+    def test_each_family_exports_its_backend_distribution(self, law, backend):
+        assert isinstance(law.raw(), backend)
 
     def test_probpipe_to_tfp_round_trip(self):
         n = Normal(loc=5.0, scale=2.0, name="x")
-        tfp_n = converter_registry.convert(n, tfd.Normal)
-        n2 = converter_registry.convert(tfp_n, Normal)
+        n2 = converter_registry.convert(n.raw(), Normal)
         np.testing.assert_allclose(float(n2._loc), 5.0)
         np.testing.assert_allclose(float(n2._scale), 2.0)
 
     def test_tfp_cross_family_chain(self):
-        """TFP Gamma → ProbPipe Normal via chained conversion."""
+        """A TFP Gamma moment-matches to a ProbPipe Normal as the Gamma it enters as."""
         tfp_g = tfd.Gamma(concentration=9.0, rate=1.0)
+        info = converter_registry.check(tfp_g, Normal)
+        assert (info.method_name, info.exact) == ("moment_match", False)
         result = converter_registry.convert(tfp_g, Normal, num_samples=5000)
         assert isinstance(result, Normal)
         np.testing.assert_allclose(float(result._loc), 9.0, atol=0.5)
-
-    def test_probpipe_gamma_to_tfp(self):
-        g = Gamma(concentration=3.0, rate=1.0, name="g")
-        result = converter_registry.convert(g, tfd.Gamma)
-        assert isinstance(result, tfd.Gamma)
-        np.testing.assert_allclose(float(result.concentration), 3.0)
-
-    def test_probpipe_exponential_to_tfp(self):
-        e = Exponential(rate=2.0, name="e")
-        result = converter_registry.convert(e, tfd.Exponential)
-        assert isinstance(result, tfd.Exponential)
-        np.testing.assert_allclose(float(result.rate), 2.0)
-
-    def test_probpipe_bernoulli_to_tfp(self):
-        b = Bernoulli(probs=0.3, name="b")
-        result = converter_registry.convert(b, tfd.Bernoulli)
-        assert isinstance(result, tfd.Bernoulli)
-
-    def test_probpipe_dirichlet_to_tfp(self):
-        d = Dirichlet(concentration=jnp.array([2.0, 3.0, 1.0]), name="d")
-        result = converter_registry.convert(d, tfd.Dirichlet)
-        assert isinstance(result, tfd.Dirichlet)
 
     def test_tfp_poisson_to_probpipe(self):
         result = converter_registry.convert(tfd.Poisson(rate=3.0), Poisson)
@@ -433,7 +490,7 @@ class TestTFPConverter:
 
 
 # ---------------------------------------------------------------------------
-# Scipy ↔ ProbPipe (optional)
+# SciPy frozen distributions entering ProbPipe (optional)
 # ---------------------------------------------------------------------------
 
 
@@ -445,6 +502,8 @@ class TestScipyConverter:
     def test_scipy_norm_to_probpipe(self):
         import scipy.stats as ss
 
+        info = converter_registry.check(ss.norm(loc=1.0, scale=2.0), Normal)
+        assert (info.method_name, info.exact) == ("scipy", True)
         result = converter_registry.convert(ss.norm(loc=1.0, scale=2.0), Normal)
         assert isinstance(result, Normal)
         np.testing.assert_allclose(float(result._loc), 1.0)
@@ -466,21 +525,20 @@ class TestScipyConverter:
         np.testing.assert_allclose(float(result._concentration), 3.0)
         np.testing.assert_allclose(float(result._rate), 0.5)  # rate = 1/scale
 
-    def test_probpipe_to_scipy(self):
+    def test_a_conversion_to_a_scipy_class_is_refused(self):
+        """A SciPy distribution carries no event declaration, so it is no conversion target."""
         from scipy.stats._distn_infrastructure import rv_frozen
 
-        n = Normal(loc=3.0, scale=1.0, name="x")
-        result = converter_registry.convert(n, rv_frozen)
-        assert isinstance(result, rv_frozen)
-        np.testing.assert_allclose(result.mean(), 3.0)
-        np.testing.assert_allclose(result.std(), 1.0)
+        with pytest.raises(ResolutionError):
+            converter_registry.convert(Normal(loc=3.0, scale=1.0, name="x"), rv_frozen)
 
     def test_scipy_provenance(self):
         import scipy.stats as ss
 
         result = converter_registry.convert(ss.norm(0, 1), Normal)
         assert result.provenance is not None
-        assert result.provenance.operation == "convert_from_scipy"
+        assert result.provenance.operation == "convert"
+        assert result.provenance.metadata == {"converter": "scipy", "exact": True}
 
     def test_scipy_norm_positional_args(self):
         """Scipy norm created with positional args should still extract correctly."""
@@ -523,45 +581,24 @@ class TestScipyConverter:
         np.testing.assert_allclose(float(result._loc), 2.0)
         np.testing.assert_allclose(float(result._scale), 0.5)
 
-    def test_probpipe_gamma_to_scipy(self):
-        from scipy.stats._distn_infrastructure import rv_frozen
-
-        g = Gamma(concentration=3.0, rate=0.5, name="g")
-        result = converter_registry.convert(g, rv_frozen)
-        assert isinstance(result, rv_frozen)
-        np.testing.assert_allclose(result.mean(), 6.0, atol=0.01)
-
-    def test_probpipe_exponential_to_scipy(self):
-        from scipy.stats._distn_infrastructure import rv_frozen
-
-        e = Exponential(rate=2.0, name="e")
-        result = converter_registry.convert(e, rv_frozen)
-        assert isinstance(result, rv_frozen)
-        np.testing.assert_allclose(result.mean(), 0.5, atol=0.01)
-
-    def test_probpipe_beta_to_scipy(self):
-        from scipy.stats._distn_infrastructure import rv_frozen
-
-        b = Beta(alpha=2.0, beta=5.0, name="b")
-        result = converter_registry.convert(b, rv_frozen)
-        assert isinstance(result, rv_frozen)
-        np.testing.assert_allclose(result.mean(), 2.0 / 7.0, atol=0.01)
-
     def test_unknown_scipy_fallback_to_sampling(self):
-        """Unknown scipy distribution type falls back to sampling."""
+        """A SciPy distribution without a family samples through SciPy."""
         import scipy.stats as ss
 
-        # Use a scipy distribution we haven't mapped (e.g., chi2)
         result = converter_registry.convert(ss.chi2(df=3), EmpiricalDistribution, num_samples=100)
         assert isinstance(result, EmpiricalDistribution)
         assert result.num_atoms == 100
 
     def test_scipy_check_unknown_type(self):
+        """A SciPy distribution without a family moment-matches from its draws."""
         import scipy.stats as ss
 
         info = converter_registry.check(ss.chi2(df=3), Normal)
         assert info.feasible
-        assert info.method == ConversionMethod.SAMPLE
+        assert (info.method_name, info.exact, info.samples) == ("moment_match", False, True)
+        with workflow_run(seed=0):
+            result = converter_registry.convert(ss.chi2(df=3), Normal, num_samples=4000)
+        np.testing.assert_allclose(float(result._loc), 3.0, atol=0.2)
 
     def test_is_distribution_type_scipy(self):
         import scipy.stats as ss
@@ -581,41 +618,45 @@ class TestCustomConverter:
                 self.val = val
 
         class DummyConverter(Converter):
-            def source_types(self):
-                return (DummyDist,)
+            @property
+            def name(self):
+                return "dummy"
 
-            def target_types(self):
-                return (Normal,)
-
-            def check(self, source, target_type):
-                if isinstance(source, DummyDist) and target_type is Normal:
-                    return ConversionInfo(feasible=True, method=ConversionMethod.EXACT)
-                return ConversionInfo(feasible=False)
-
-            def convert(self, source, target_type, *, key=None, **kwargs):
-                return Normal(loc=source.val, scale=1.0, name="x")
+            @property
+            def exact(self):
+                return True
 
             @property
             def priority(self):
                 return 10
 
-        converter_registry.register(DummyConverter())
-        try:
-            d = DummyDist(42.0)
-            assert converter_registry.is_distribution_type(d)
-            result = converter_registry.convert(d, Normal)
-            assert isinstance(result, Normal)
-            np.testing.assert_allclose(float(result._loc), 42.0)
-        finally:
-            # Clean up: remove the dummy converter
-            converter_registry._converters = [
-                c for c in converter_registry._converters if not isinstance(c, DummyConverter)
-            ]
-            converter_registry._type_cache.clear()
+            def supported_types(self):
+                return ((DummyDist,), (Normal,))
+
+            def check(self, source, target_type, **options):
+                return ConversionInfo(
+                    feasible=True,
+                    method_name=self.name,
+                    exact=True,
+                    target_spec=Normal(loc=0.0, scale=1.0, name="x").spec,
+                    target_class=Normal,
+                )
+
+            def execute(self, source, target_type, **options):
+                return Normal(loc=source.val, scale=1.0, name="x")
+
+        registry = ConverterRegistry()
+        registry.register(DummyConverter())
+        d = DummyDist(42.0)
+        assert registry.is_distribution_type(d)
+        result = registry.convert(d, Normal)
+        assert isinstance(result, Normal)
+        np.testing.assert_allclose(float(result._loc), 42.0)
+        assert result.provenance.metadata == {"converter": "dummy", "exact": True}
 
 
 # ---------------------------------------------------------------------------
-# from_distribution() backward compatibility
+# from_distribution delegates to the registry
 # ---------------------------------------------------------------------------
 
 
@@ -661,12 +702,12 @@ class TestFromDistributionDelegation:
 
 
 # ---------------------------------------------------------------------------
-# Edge cases
+# Provenance and edge cases
 # ---------------------------------------------------------------------------
 
 
 class TestConversionProvenance:
-    """A conversion records its source in provenance."""
+    """A conversion records its source and its converter in provenance."""
 
     def test_empirical_moments_record_the_source(self):
         """Moment matching an empirical law records the law as its parent."""
@@ -674,7 +715,8 @@ class TestConversionProvenance:
         emp = EmpiricalDistribution("x", samples)
         result = converter_registry.convert(emp, Normal)
         assert result.provenance is not None
-        assert result.provenance.operation == "from_distribution"
+        assert result.provenance.operation == "convert"
+        assert [parent.name for parent in result.provenance.parents] == ["x"]
 
     def test_same_class_records_nothing(self):
         """Same-class conversion returns source directly, no provenance."""
@@ -687,36 +729,28 @@ class TestConversionProvenance:
         g = Gamma(concentration=9.0, rate=1.0, name="g")
         result = converter_registry.convert(g, Normal)
         assert result.provenance is not None
-        assert result.provenance.operation == "from_distribution"
+        assert result.provenance.operation == "convert"
         assert len(result.provenance.parents) == 1
         assert result.provenance.parents[0].name == "g"
 
 
 class TestEdgeCases:
     def test_convert_none_raises(self):
-        with pytest.raises(TypeError):
+        with pytest.raises(ResolutionError, match="NoneType"):
             converter_registry.convert(None, Normal)
 
     def test_convert_non_type_target_raises(self):
-        with pytest.raises(TypeError, match="No converter"):
+        with pytest.raises(ResolutionError, match="No method registered"):
             converter_registry.convert(Normal("x", 0, 1), str)
 
-    def test_check_infeasible_non_type_target(self):
-        info = converter_registry.check(Normal("x", 0, 1), "not a type")
-        assert not info.feasible
+    def test_check_non_type_target_raises(self):
+        with pytest.raises(TypeError, match="class or a protocol"):
+            converter_registry.check(Normal("x", 0, 1), "not a type")
 
 
 # ---------------------------------------------------------------------------
-# Protocol-based conversion
+# Capability targets
 # ---------------------------------------------------------------------------
-
-from probpipe.distributions._capabilities import (
-    SupportsCovariance,
-    SupportsLogProb,
-    SupportsMean,
-    SupportsSampling,
-    SupportsVariance,
-)
 
 
 class TestProtocolConversion:
@@ -743,7 +777,7 @@ class TestProtocolConversion:
         )
 
     def test_multivariate_empirical_to_supports_log_prob(self):
-        """Multivariate (single-field with d-dim event) RecordEmpirical → KDE."""
+        """An empirical law over vectors converts to a KDE over them."""
         samples = jax.random.normal(jax.random.PRNGKey(1), (300, 4))
         emp = EmpiricalDistribution("x", samples)
         result = converter_registry.convert(emp, SupportsLogProb)
@@ -799,26 +833,40 @@ class TestProtocolConversion:
     def test_object_array_empirical_to_kde_rejected(self):
         """An empirical law over opaque atoms does not convert to a KDE, which smooths numbers."""
         emp = EmpiricalDistribution("emp", OpaqueBatch("labels", ["a", "b", "c"], "site"))
-        with pytest.raises(TypeError, match="numeric"):
+        with pytest.raises(ResolutionError, match="numeric"):
             converter_registry.convert(emp, KDEDistribution)
 
     def test_check_protocol_already_satisfied(self):
-        """check() returns EXACT when protocol is already satisfied."""
+        """check() reports an exact report selecting no converter when the protocol holds."""
         n = Normal(loc=0.0, scale=1.0, name="x")
         info = converter_registry.check(n, SupportsLogProb)
         assert info.feasible
-        assert info.method == ConversionMethod.EXACT
+        assert (info.method_name, info.exact) == (None, True)
 
     def test_check_protocol_needs_conversion(self):
-        """check() returns feasible when conversion is possible."""
+        """check() reports the kernel density estimate for an empirical law."""
         samples = jax.random.normal(jax.random.PRNGKey(2), (100,))
         emp = EmpiricalDistribution("x", samples)
         info = converter_registry.check(emp, SupportsLogProb)
         assert info.feasible
-        assert info.method == ConversionMethod.MOMENT_MATCH
+        assert (info.method_name, info.exact, info.samples) == ("kde", False, False)
+
+    def test_a_law_that_samples_converts_to_a_moment_by_its_empirical_law(self):
+        """A converter whose result claims the capability serves a request for it."""
+        import tensorflow_probability.substrates.jax.bijectors as tfb
+
+        from probpipe import BijectorTransformedDistribution
+
+        law = BijectorTransformedDistribution("y", Normal("x", 0.0, 1.0), tfb.Exp())
+        assert not isinstance(law, SupportsMean)
+        info = converter_registry.check(law, SupportsMean)
+        assert (info.method_name, info.samples) == ("empirical", True)
+        assert isinstance(
+            converter_registry.convert(law, SupportsMean, num_samples=20), SupportsMean
+        )
 
     def test_unregistered_protocol_raises(self):
-        """Unregistered protocol raises TypeError when source doesn't satisfy it."""
+        """A protocol no converter's result claims raises ResolutionError."""
         from typing import Protocol, runtime_checkable
 
         @runtime_checkable
@@ -827,10 +875,12 @@ class TestProtocolConversion:
 
         samples = jax.random.normal(jax.random.PRNGKey(3), (50,))
         emp = EmpiricalDistribution("x", samples)
-        # The protocol is not a registered conversion target, and the
-        # empirical distribution does not satisfy it either.
-        with pytest.raises(TypeError):
+        with pytest.raises(ResolutionError):
             converter_registry.convert(emp, SupportsSomethingUnregistered)
+
+    def test_exact_conditioning_is_no_converter_target(self):
+        with pytest.raises(ResolutionError):
+            converter_registry.convert(Normal("x", 0.0, 1.0), SupportsExactConditioning)
 
     def test_from_distribution_with_protocol(self):
         """from_distribution() works with protocol targets."""

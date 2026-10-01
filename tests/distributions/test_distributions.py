@@ -10,6 +10,7 @@ from probpipe import (
     MultivariateNormal,
     NumericDistribution,
     Provenance,
+    ResolutionError,
     TFPDistribution,
     Weights,
     cov,
@@ -175,17 +176,17 @@ class TestMultivariateNormal:
     def test_dtype(self, gaussian, loc):
         assert gaussian.dtype == loc.dtype
 
-    def test_from_distribution_empirical(self, gaussian, key):
-        ed = from_distribution(gaussian, EmpiricalDistribution, key=key, num_samples=2000)
-        g2 = from_distribution(ed, MultivariateNormal, name="fitted")
+    def test_from_distribution_empirical(self, gaussian):
+        ed = from_distribution(gaussian, EmpiricalDistribution, num_samples=2000)
+        g2 = from_distribution(ed, MultivariateNormal)
         np.testing.assert_allclose(g2.loc, gaussian.loc, atol=0.2)
         assert g2.name == from_distribution.output_name
         assert g2.provenance is not None
         assert g2.provenance.operation == "workflow.from_distribution"
 
-    def test_from_distribution_gaussian(self, gaussian, key):
-        """Moment-match from another MultivariateNormal via sampling."""
-        g2 = from_distribution(gaussian, MultivariateNormal, key=key, num_samples=5000)
+    def test_from_distribution_gaussian(self, gaussian):
+        """A law already of the target class converts to itself."""
+        g2 = from_distribution(gaussian, MultivariateNormal, num_samples=5000)
         np.testing.assert_allclose(g2.loc, gaussian.loc, atol=0.15)
 
 
@@ -285,19 +286,19 @@ class TestEmpiricalDistribution:
         ed = EmpiricalDistribution("emp", simple_samples)
         assert ed.name == "emp"
 
-    def test_from_distribution(self, gaussian, key):
-        ed = from_distribution(gaussian, EmpiricalDistribution, key=key, num_samples=50)
+    def test_from_distribution(self, gaussian):
+        ed = from_distribution(gaussian, EmpiricalDistribution, num_samples=50)
         assert ed.num_atoms == 50
         assert ed.event_shape == gaussian.event_shape
         assert ed.provenance is not None
         assert ed.provenance.operation == "workflow.from_distribution"
         assert ed.name == from_distribution.output_name
 
-    def test_from_distribution_custom_name(self, gaussian, key):
-        ed = from_distribution.apply(
-            gaussian, EmpiricalDistribution, key=key, num_samples=10, name="custom"
-        )
-        assert ed.name == "custom"
+    def test_from_distribution_keeps_the_source_label(self, gaussian):
+        """A conversion changes the representation, so the raw result keeps the label."""
+        ed = from_distribution.apply(gaussian, EmpiricalDistribution, num_samples=10)
+        assert ed.name == gaussian.name
+        assert ed.event_spec == gaussian.event_spec
 
     def test_from_distribution_default_key(self, gaussian):
         """from_distribution should work without explicit key."""
@@ -453,8 +454,12 @@ class TestDistributionABC:
         )
 
     def test_from_distribution_raises_for_invalid_input(self):
-        with pytest.raises(TypeError):
+        with pytest.raises(ResolutionError, match="NoneType"):
             from_distribution(None, NumericDistribution)
+
+    def test_from_distribution_takes_no_key(self, gaussian, key):
+        with pytest.raises(TypeError, match="workflow_run"):
+            from_distribution(gaussian, EmpiricalDistribution, key=key, num_samples=10)
 
     def test_provenance_default_none(self, gaussian):
         g = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")

@@ -8,15 +8,19 @@ import numpy as np
 import pytest
 
 from probpipe import (
+    Distribution,
     EmpiricalDistribution,
     NumericArray,
     NumericArrayBatch,
+    NumericArraySpec,
     NumericRecord,
     NumericRecordBatch,
     Poisson,
     RecordSpec,
+    ResolutionError,
     SupportsQuantile,
     quantile,
+    workflow_run,
 )
 
 
@@ -101,8 +105,19 @@ class TestQuantileOp:
         )
 
     def test_raises_on_unsupported_distribution(self):
-        with pytest.raises(TypeError, match="quantile"):
-            quantile(Poisson("x", 2.0), 0.5)
+        """A law without quantiles that does not sample has no converter to quantiles."""
+
+        class Bare(Distribution):
+            pass
+
+        with pytest.raises(ResolutionError, match="converts to SupportsQuantile"):
+            quantile(Bare("x", NumericArraySpec(())), 0.5)
+
+    def test_a_law_without_quantiles_that_samples_converts_to_its_empirical_law(self):
+        """The Poisson family has no closed-form quantile, so its draws' quantile is returned."""
+        with workflow_run(seed=0):
+            median = quantile(Poisson("x", 2.0), 0.5)
+        assert float(jnp.asarray(median)) in (1.0, 2.0, 3.0)
 
     def test_raises_on_out_of_range_q(self):
         emp = EmpiricalDistribution("x", jnp.arange(10.0))

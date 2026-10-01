@@ -20,6 +20,7 @@ from probpipe import (
     OutputSpec,
     RandomFunction,
     RandomMeasure,
+    ResolutionError,
     SupportsMean,
     SupportsRandomLogProb,
     SupportsRandomUnnormalizedLogProb,
@@ -84,15 +85,15 @@ class TestRandomFunction:
             _MinimalRandomFunction("rf", event_spec)
 
     def test_sample_raises(self, key):
-        with pytest.raises(TypeError, match="does not support sampling"):
+        with pytest.raises(ResolutionError, match="converts to SupportsSampling"):
             sample(_MinimalRandomFunction("rf"), key=key)
 
     def test_sample_with_shape_raises(self, key):
-        with pytest.raises(TypeError, match="does not support sampling"):
+        with pytest.raises(ResolutionError, match="converts to SupportsSampling"):
             sample(_MinimalRandomFunction("rf"), key=key, sample_shape=(5,))
 
     def test_log_prob_raises(self):
-        with pytest.raises(TypeError):
+        with pytest.raises(ResolutionError, match="converts to SupportsLogProb"):
             log_prob(_MinimalRandomFunction("rf"), lambda x: x)
 
 
@@ -321,13 +322,14 @@ class TestProtocolOptIn:
         assert not isinstance(rm, SupportsRandomLogProb)
         assert not isinstance(rm, SupportsRandomUnnormalizedLogProb)
 
-    def test_unsupported_op_raises_typerror(self):
+    def test_unsupported_op_raises_resolution_error(self):
+        """No converter gives a random measure that only samples these capabilities."""
         rm = _SamplingOnlyRandomMeasure(Normal(loc=0.0, scale=1.0, name="n0"))
-        with pytest.raises(TypeError, match="mean"):
+        with pytest.raises(ResolutionError, match="SupportsMean"):
             mean(rm)
-        with pytest.raises(TypeError, match="random_log_prob"):
+        with pytest.raises(ResolutionError, match="SupportsRandomLogProb"):
             random_log_prob(rm)
-        with pytest.raises(TypeError, match="random_unnormalized_log_prob"):
+        with pytest.raises(ResolutionError, match="SupportsRandomUnnormalizedLogProb"):
             random_unnormalized_log_prob(rm)
 
 

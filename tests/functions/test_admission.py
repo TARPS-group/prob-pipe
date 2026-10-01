@@ -34,7 +34,8 @@ from probpipe import (
     function,
     workflow_run,
 )
-from probpipe.distributions import ConditionalDistribution, SupportsMarginals
+from probpipe.distributions import ConditionalDistribution
+from probpipe.distributions._capabilities import SupportsExactConditioning
 
 from ._design_helpers import error_of, standard_normal
 
@@ -183,9 +184,6 @@ class TestConversionPlanning:
 
         assert seen == [law]
 
-    @pytest.mark.pending(
-        reason="a conversion with no converter raises ResolutionError", raises=AssertionError
-    )
     def test_a_parameter_class_with_no_converter_raises_resolution_error(self):
         @function
         def consume(d: _Unconvertible):
@@ -193,19 +191,15 @@ class TestConversionPlanning:
 
         assert isinstance(error_of(lambda: consume(standard_normal())), ResolutionError)
 
-    @pytest.mark.pending(
-        reason="an unsatisfiable capability target raises rather than passing the law through",
-        raises=AssertionError,
-    )
     def test_a_capability_no_converter_establishes_raises_resolution_error(self):
         @function
-        def consume(d: SupportsMarginals):
+        def consume(d: SupportsExactConditioning):
             return 0.0
 
         assert isinstance(error_of(lambda: consume(standard_normal())), ResolutionError)
 
     def test_a_probe_plans_the_conversion_without_constructing_it(self, monkeypatch):
-        from probpipe.converters import converter_registry
+        from probpipe.distributions._conversion import converter_registry
 
         def refuse(*args, **kwargs):
             raise AssertionError("a probe constructed a conversion")

@@ -25,6 +25,7 @@ from typing import Any
 
 from .._weights import Weights, weighted_choice
 from ..distributions._batches import DistributionBatch
+from ..distributions._conversion import converter_registry
 from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution, _batch_form
 from ..functions import function
@@ -146,10 +147,10 @@ def with_conversion(
     """Wrap a step function to convert its output after each step.
 
     After calling *step_fn*, converts the resulting distribution to
-    *target_type* using ProbPipe's standard ``from_distribution``
-    operation (which dispatches through the converter registry).
-    The pre-conversion distribution is accessible via the converted
-    distribution's provenance parents (set by the converter).
+    *target_type* through the converter registry, which returns a law that
+    already satisfies the target as it is. The pre-conversion distribution
+    is the converted distribution's provenance parent, which the registry
+    records with the converter it selected.
 
     This is useful when the step function produces samples (e.g.,
     MCMC output) but the next iteration needs a parametric
@@ -166,7 +167,8 @@ def with_conversion(
         Distribution type to convert to (e.g., ``MultivariateNormal``).
         Can also be a protocol (e.g., ``SupportsLogProb``).
     **convert_kwargs
-        Extra keyword arguments passed to ``from_distribution``.
+        The registry's controls ``method`` and ``exact_only`` and the
+        converter's options, passed to ``converter_registry.convert``.
 
     Returns
     -------
@@ -176,10 +178,8 @@ def with_conversion(
     inner_name = _step_fn_name(step_fn)
 
     def _with_conversion_impl(dist: Distribution, inp: Any) -> Distribution:
-        from .ops import from_distribution
-
         result = step_fn(dist, inp)
-        return from_distribution(result, target_type, **convert_kwargs)
+        return converter_registry.convert(result, target_type, **convert_kwargs)
 
     return Function(
         fn=_with_conversion_impl,

@@ -60,8 +60,8 @@ __all__ = ["TFPDistribution"]
 # Inside ``_allow_batched_tfp_init`` a family given parameters with axes keeps
 # the backend's batch axes as the axes of separate laws: one draw is an array
 # of draws of separate laws, and the density is per law. The fused storage of
-# laws at batched parameters below reads that form, as do the moment-matching
-# converters. Outside it, a scalar family's batch axes are the axes of one event.
+# laws at batched parameters below reads that form. Outside it, a scalar
+# family's batch axes are the axes of one event.
 
 _BATCHED_INIT_BYPASS: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "_BATCHED_INIT_BYPASS",

@@ -29,8 +29,12 @@ Provides:
     ``PoissonFamily``, and ``glm_likelihood``;
   - the program-defined families ``StanModel``, ``PyMCModel``, and
     ``UnnormalizedDistribution``.
+
+Importing the package registers the shipped converters with the converter
+registry (:mod:`._converters`).
 """
 
+from . import _converters
 from ._backend import TFPDistribution
 from ._conditional import (
     BernoulliFamily,
