@@ -230,7 +230,7 @@ class TestFromDistributionProvenance:
 
     def test_empirical_from_distribution(self):
         src = Normal(loc=0.0, scale=1.0, name="norm_src")
-        ed = from_distribution(src, EmpiricalDistribution, n_samples=100)
+        ed = from_distribution(src, EmpiricalDistribution, num_samples=100)
         assert ed.provenance is not None
         assert ed.provenance.operation == "workflow.from_distribution"
         assert len(ed.provenance.parents) == 2
@@ -459,11 +459,14 @@ class TestBroadcastingProvenance:
 
 class TestProvenanceChains:
     def test_two_step_chain(self):
-        """from_distribution → condition_on creates a 2-step chain."""
+        """from_distribution → condition_on creates a 2-step chain.
+
+        The converted law keeps the source's component, which the joint conditions on.
+        """
         src = Beta(alpha=2.0, beta=5.0, name="prior")
-        converted = from_distribution(src, Normal, name="x")
+        converted = from_distribution(src, Normal)
         joint = converted * Normal(loc=0.0, scale=1.0, name="y")
-        cond = condition_on(joint, x=jnp.array(0.0))
+        cond = condition_on(joint, prior=jnp.array(0.0))
 
         # cond's provenance points to joint
         assert cond.provenance.operation == "workflow.condition_on"

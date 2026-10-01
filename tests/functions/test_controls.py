@@ -291,7 +291,6 @@ class TestControlsThatSelectTheRoute:
         with pytest.raises(ResolutionError):
             identity.with_options(exact_only=True)(standard_normal())
 
-    @pytest.mark.pending(reason="conversion planning under the conversions control")
     def test_conversions_configure_the_conversion_of_their_parameter(self):
         @function(n_broadcast_samples=8, dispatch="sequential")
         def identity(x):

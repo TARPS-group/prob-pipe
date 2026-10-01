@@ -30,13 +30,13 @@ import numpy as np
 
 from ..core._record_spec import RecordSpec
 from ..core._specs import OutputSpec
-from ..core.ops import condition_on
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..distributions._distribution import _array_leaves
 from ..distributions._empirical import EmpiricalDistribution, _coordinates
 from ..distributions._factored import _raw_record
 from ..functions import _context
 from ..functions._broker import _PROBPIPE_DISTRIBUTION_PROVIDER_ABI
+from ..operations._condition import condition_on
 from ._workflow_rng import (
     _resolve_validation_key,
     _validate_positive_int,
@@ -203,7 +203,8 @@ def simulation_based_calibration(
     num_simulations
         Number of ``(θ★, y, posterior)`` replications.
     num_posterior_draws
-        Posterior draws per fit (``num_results`` passed to :func:`condition_on`).
+        Posterior draws per fit, the ``num_results`` entry of the fit's
+        ``method_options``.
     method
         Inference method name for :func:`condition_on` (``None`` = auto-select).
     key
@@ -211,8 +212,8 @@ def simulation_based_calibration(
         per-fit MCMC seed, so a fixed key makes the whole run reproducible. Do not
         also pass ``random_seed`` in ``infer_kwargs``.
     **infer_kwargs
-        Extra keyword arguments forwarded to :func:`condition_on` (e.g.
-        ``num_warmup``, ``num_chains``).
+        Further budgets of the inference method, such as ``num_warmup`` or
+        ``num_chains``, which each fit passes in its ``method_options``.
 
     Returns
     -------
@@ -265,14 +266,8 @@ def simulation_based_calibration(
         theta_star = {name: draw[name] for name in parameters}
         y = {name: draw[name] for name in observed}
         seed = int(jax.random.randint(k_mcmc, (), 0, 2_000_000_000))
-        posterior = condition_on(
-            model,
-            y,
-            method=method,
-            num_results=num_posterior_draws,
-            random_seed=seed,
-            **infer_kwargs,
-        )
+        budgets = {"num_results": num_posterior_draws, "random_seed": seed, **infer_kwargs}
+        posterior = condition_on.with_options(method=method, method_options=budgets)(model, y)
         draws = _coordinates(posterior)  # (L, p)
         if component_names is None:
             component_names = _component_names(posterior)

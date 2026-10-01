@@ -251,12 +251,12 @@ class TestProb:
         np.testing.assert_allclose(float(p), expected, rtol=1e-5)
 
     def test_raises_without_supports_log_prob(self, no_protocols):
-        """prob op raises TypeError for distributions without SupportsLogProb.
+        """prob op raises ResolutionError for a distribution no converter gives a density.
 
         The distribution must not sample either: the call converts a distribution
         that samples into a KDEDistribution, which supports log_prob.
         """
-        with pytest.raises(TypeError, match="does not support prob"):
+        with pytest.raises(ResolutionError, match="converts to SupportsLogProb"):
             ops.prob(no_protocols, jnp.float32(0.0))
 
 
@@ -303,10 +303,15 @@ class TestMean:
         marginalized = ops.mean(BootstrapDistribution("bd", source))
         np.testing.assert_allclose(float(ops.mean(marginalized)), 3.0)
 
-    def test_raises_without_supports_mean(self, no_moments):
-        """mean op raises TypeError for distributions without SupportsMean."""
-        with pytest.raises(TypeError, match="does not support mean"):
-            ops.mean(no_moments)
+    def test_raises_without_supports_mean(self, no_protocols, no_moments):
+        """mean op raises for a law without a mean that does not sample.
+
+        A law that samples converts to the empirical law of its draws, whose
+        mean the op returns.
+        """
+        with pytest.raises(ResolutionError, match="converts to SupportsMean"):
+            ops.mean(no_protocols)
+        assert jnp.isfinite(jnp.asarray(ops.mean(no_moments)))
 
 
 # ---------------------------------------------------------------------------
@@ -323,10 +328,14 @@ class TestVariance:
         v = ops.variance(empirical)
         assert v.shape == (2,)
 
-    def test_raises_without_supports_variance(self, no_moments):
-        """variance op raises TypeError for distributions without SupportsVariance."""
-        with pytest.raises(TypeError, match="does not support variance"):
-            ops.variance(no_moments)
+    def test_raises_without_supports_variance(self, no_protocols, no_moments):
+        """variance op raises for a law without a variance that does not sample.
+
+        A law that samples converts to the empirical law of its draws.
+        """
+        with pytest.raises(ResolutionError, match="converts to SupportsVariance"):
+            ops.variance(no_protocols)
+        assert jnp.asarray(ops.variance(no_moments)) >= 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -340,10 +349,14 @@ class TestCov:
         assert c.shape == (2, 2)
         np.testing.assert_allclose(c, c.T, atol=1e-5)
 
-    def test_raises_without_supports_covariance(self, no_moments):
-        """cov op raises TypeError for distributions without SupportsCovariance."""
-        with pytest.raises(TypeError, match="does not support covariance"):
-            ops.cov(no_moments)
+    def test_raises_without_supports_covariance(self, no_protocols, no_moments):
+        """cov op raises for a law without a covariance that does not sample.
+
+        A law that samples converts to the empirical law of its draws.
+        """
+        with pytest.raises(ResolutionError, match="converts to SupportsCovariance"):
+            ops.cov(no_protocols)
+        assert jnp.asarray(ops.cov(no_moments)).shape == (1, 1)
 
 
 # ---------------------------------------------------------------------------

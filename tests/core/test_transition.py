@@ -17,11 +17,6 @@ from probpipe import (
 )
 from probpipe.values._function_base import Function
 
-#: The fold's result, which the return wraps as an Opaque while iterate returns a list.
-_ITERATE_BATCH = pytest.mark.pending(
-    reason="iterate's result is a batch of the laws it visits", raises=(AssertionError, TypeError)
-)
-
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
 # ---------------------------------------------------------------------------
@@ -62,7 +57,6 @@ def _produced(element):
 
 
 class TestIterate:
-    @_ITERATE_BATCH
     def test_basic(self, initial):
         """iterate returns a DistributionBatch including the initial.
 
@@ -77,14 +71,12 @@ class TestIterate:
         assert dists[0].atoms is initial.atoms
         assert all(isinstance(d, Distribution) for d in dists)
 
-    @_ITERATE_BATCH
     def test_values(self, initial):
         """Step results have correct sample values."""
         dists = iterate(step_fn=shift_step, initial=initial, inputs=[1.0, 2.0])
         assert jnp.allclose(dists[1].atoms.values, jnp.ones((50, 2)))
         assert jnp.allclose(dists[2].atoms.values, jnp.full((50, 2), 3.0))
 
-    @_ITERATE_BATCH
     def test_provenance_auto_attach(self, initial):
         """Provenance is auto-attached when step function doesn't set it."""
         dists = iterate(step_fn=shift_step, initial=initial, inputs=[1.0])
@@ -95,7 +87,6 @@ class TestIterate:
         assert len(produced.parents) == 1
         assert produced.parents[0].name == initial.name
 
-    @_ITERATE_BATCH
     def test_provenance_preserved(self, initial):
         """Provenance set by step function is not overwritten."""
         dists = iterate(step_fn=provenance_step, initial=initial, inputs=[1.0])
@@ -103,7 +94,6 @@ class TestIterate:
         assert produced.operation == "custom_step"
         assert produced.metadata["value"] == 1.0
 
-    @_ITERATE_BATCH
     def test_provenance_chain(self, initial):
         """Each step's provenance points to the previous distribution."""
         dists = iterate(step_fn=shift_step, initial=initial, inputs=[1.0, 2.0, 3.0])
@@ -125,7 +115,6 @@ class TestIterate:
         assert recorded[1] == (1, 3.0)
         assert recorded[2] == (2, 6.0)
 
-    @_ITERATE_BATCH
     def test_callback_early_stop(self, initial):
         """Callback returning False truncates iteration."""
 
@@ -142,7 +131,6 @@ class TestIterate:
         # initial + steps 0 and 1 (stops after callback for step 1)
         assert len(dists) == 3
 
-    @_ITERATE_BATCH
     def test_empty_inputs(self, initial):
         """Empty inputs returns list with only the initial distribution."""
         dists = iterate(step_fn=shift_step, initial=initial, inputs=[])
@@ -158,11 +146,24 @@ class TestIterate:
         with pytest.raises(TypeError, match="returned str"):
             iterate(step_fn=bad_step, initial=initial, inputs=[1])
 
-    @_ITERATE_BATCH
     def test_final_is_last(self, initial):
         """dists[-1] is the final distribution."""
         dists = iterate(step_fn=shift_step, initial=initial, inputs=[1.0, 2.0])
         assert jnp.allclose(dists[-1].atoms.values, jnp.full((50, 2), 3.0))
+
+    def test_the_laws_are_on_one_level_named_iterate(self, initial):
+        dists = iterate(step_fn=shift_step, initial=initial, inputs=[1.0, 2.0])
+        assert dists.level_names == ("iterate",)
+        assert dists.event_spec == initial.event_spec
+
+    def test_a_step_that_changes_the_event_declaration_raises(self, initial):
+        """The visited laws share one event declaration, as a batch's elements do."""
+
+        def widen(dist, inp):
+            return EmpiricalDistribution(_component(dist), jnp.zeros((50, 3)))
+
+        with pytest.raises(TypeError):
+            iterate(step_fn=widen, initial=initial, inputs=[1.0])
 
 
 # ---------------------------------------------------------------------------
@@ -179,14 +180,12 @@ class TestWithConversion:
         assert "shift_step" in step._name
         assert "MultivariateNormal" in step._name
 
-    @_ITERATE_BATCH
     def test_converts_output(self, initial):
         """Output is converted to target type."""
         step = with_conversion(shift_step, MultivariateNormal)
         dists = iterate(step_fn=step, initial=initial, inputs=[1.0])
         assert isinstance(dists[-1], MultivariateNormal)
 
-    @_ITERATE_BATCH
     def test_pre_conversion_in_provenance_parents(self, initial):
         """Pre-conversion distribution is accessible via provenance parents."""
         step = with_conversion(shift_step, MultivariateNormal)
@@ -196,7 +195,6 @@ class TestWithConversion:
         assert converted.provenance is not None
         assert len(converted.provenance.parents) > 0
 
-    @_ITERATE_BATCH
     def test_multi_step_stays_parametric(self):
         """Each step produces a parametric distribution usable as next prior."""
         from probpipe import sample as pp_sample
@@ -226,7 +224,6 @@ class TestWithResampling:
         assert "with_resampling" in step._name
         assert "shift_step" in step._name
 
-    @_ITERATE_BATCH
     def test_no_resample_uniform(self):
         """Uniform weights -> no resampling (ESS = N)."""
         initial = EmpiricalDistribution("x", jnp.zeros((100, 2)))
@@ -234,7 +231,6 @@ class TestWithResampling:
         dists = iterate(step_fn=step, initial=initial, inputs=[1.0])
         assert _produced(dists[-1]).operation == "workflow.with_resampling(shift_step)"
 
-    @_ITERATE_BATCH
     def test_resample_degenerate(self):
         """Highly non-uniform weights -> resampling triggered."""
         n = 100
@@ -251,7 +247,6 @@ class TestWithResampling:
         np.testing.assert_allclose(resampled.weights, 1.0 / n)
         assert _produced(resampled).operation == "workflow.with_resampling(weighted_step)"
 
-    @_ITERATE_BATCH
     def test_resample_stores_ess_in_metadata(self):
         """Pre-resampling ESS is stored in provenance metadata."""
         n = 50
@@ -270,7 +265,6 @@ class TestWithResampling:
         assert "ess_ratio" in raw.provenance.metadata
         assert raw.provenance.metadata["ess_ratio"] < 0.5
 
-    @_ITERATE_BATCH
     def test_non_empirical_passthrough(self):
         """Non-EmpiricalDistribution passes through unchanged."""
         initial = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
@@ -282,7 +276,6 @@ class TestWithResampling:
         dists = iterate(step_fn=step, initial=initial, inputs=[1.0])
         assert isinstance(dists[-1], MultivariateNormal)
 
-    @_ITERATE_BATCH
     def test_deterministic_seed(self):
         """Resampling is deterministic across repeated calls with same seed."""
         n = 100
@@ -313,7 +306,6 @@ class TestWithResampling:
 
 
 class TestNestability:
-    @_ITERATE_BATCH
     def test_nested_iterate(self, initial):
         """A step function can call iterate internally."""
 

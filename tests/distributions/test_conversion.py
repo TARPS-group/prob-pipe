@@ -10,8 +10,10 @@ capability protocol. The converter registry
 3. selects among the admitted converters by exactness, then priority, then
    specificity, then registration order.
 
-Its ``check`` reports the selected converter's promise under the registered
-name and exactness, and a conversion carries the source's event declaration.
+It tests the source first, returning a law that already satisfies the target
+as it is. Its ``check`` reports the selected converter's promise under the
+registered name and exactness, and a conversion carries the source's event
+declaration and satisfies the target.
 """
 
 from __future__ import annotations
@@ -41,9 +43,6 @@ from probpipe.distributions._conversion import (
     ConverterRegistry,
     converter_registry,
 )
-
-#: What a ``pytest.raises`` block raises when the call it guards raises nothing.
-_DID_NOT_RAISE = pytest.fail.Exception
 
 _SCALAR = NumericArraySpec(())
 
@@ -98,6 +97,26 @@ class Scored(_Scores, Distribution):
 
 class ScoredSource(_Scores, Source):
     """A source with a density."""
+
+
+class GuardedSource(_Scores, Source):
+    """A source whose density carries a guard that returns what the test sets."""
+
+    def __init__(self, guard: bool | None, name: str = "x"):
+        super().__init__(name)
+        object.__setattr__(self, "_guard", guard)
+
+    def _log_prob_guard(self) -> bool | None:
+        """The test's setting."""
+        return self._guard
+
+
+class GuardedScored(_Scores, Distribution):
+    """A representation whose density carries a guard that holds by its label."""
+
+    def _log_prob_guard(self) -> bool:
+        """The label is not "declines"."""
+        return self.name != "declines"
 
 
 class Sampled(Distribution):
@@ -220,10 +239,21 @@ class TestConversionInfo:
         assert issubclass(ConversionInfo, MethodInfo)
         assert issubclass(ConversionInfo, Feasibility)
 
-    def test_adds_the_target_spec_the_target_class_and_the_capabilities(self):
+    def test_adds_the_promise_and_whether_the_conversion_samples(self):
         inherited = {field.name for field in fields(MethodInfo)}
         added = [field.name for field in fields(ConversionInfo) if field.name not in inherited]
-        assert added == ["target_spec", "target_class", "capabilities"]
+        assert added == ["target_spec", "target_class", "capabilities", "samples"]
+
+    def test_samples_must_be_a_bool(self):
+        with pytest.raises(TypeError, match="samples"):
+            ConversionInfo(feasible=False, samples=1)
+
+    def test_a_report_selecting_no_converter_is_an_exact_one(self):
+        """A source that already satisfies the target needs no converter, and is exact."""
+        info = ConversionInfo(feasible=True, exact=True, target_spec=Source().spec)
+        assert info.method_name is None and info.exact is True
+        with pytest.raises(ValueError, match="names its method"):
+            ConversionInfo(feasible=True, exact=False, target_spec=Source().spec)
 
     def test_promises_nothing_by_default(self):
         info = ConversionInfo(feasible=False)
@@ -279,9 +309,6 @@ class TestConversionInfo:
         with pytest.raises(ValueError, match="names its method"):
             ConversionInfo(feasible=None, pending=("the event declaration",))
 
-    @pytest.mark.pending(
-        reason="a feasible ConversionInfo requires its target spec", raises=_DID_NOT_RAISE
-    )
     def test_a_feasible_report_promises_its_target_spec(self):
         """Planning reads the promised declaration, so a feasible conversion states it."""
         with pytest.raises(ValueError):
@@ -369,10 +396,6 @@ class TestRegistration:
             registry.register(ToyConverter("m", targets=(Elsewhere,)))
         assert registry.list_methods() == ["m"]
 
-    @pytest.mark.pending(
-        reason="registration refuses a declared source type that issubclass cannot check",
-        raises=_DID_NOT_RAISE,
-    )
     def test_a_source_protocol_with_a_data_member_is_refused(self):
         """``issubclass`` raises for such a protocol, so admitting it makes every lookup raise."""
         registry = _registry(ToyConverter("ok"))
@@ -452,6 +475,20 @@ class TestKeying:
 
 
 # ---------------------------------------------------------------------------
+# The objects the function engine brings into ProbPipe
+# ---------------------------------------------------------------------------
+
+
+class TestDistributionTypes:
+    def test_a_law_is_a_distribution_type(self):
+        assert ConverterRegistry().is_distribution_type(Source())
+
+    def test_an_object_a_converter_reads_is_one(self):
+        assert not ConverterRegistry().is_distribution_type(3)
+        assert _registry(ToyConverter("m", sources=(int,))).is_distribution_type(3)
+
+
+# ---------------------------------------------------------------------------
 # Admission: a declared target is the requested one or refines it
 # ---------------------------------------------------------------------------
 
@@ -528,10 +565,6 @@ class TestTargetAdmission:
         )
         assert registry.check(Source(), SupportsLogProb).method_name == "to_scored"
 
-    @pytest.mark.pending(
-        reason="the registry reads a protocol target's claim from the promised capabilities",
-        raises=AssertionError,
-    )
     def test_a_protocol_target_needs_the_capability_among_the_promised_ones(self):
         """Declaring the protocol admits the converter, and the promise must guarantee it.
 
@@ -544,6 +577,23 @@ class TestTargetAdmission:
         assert registry.check(Source(), SupportsLogProb).feasible is False
         with pytest.raises(ResolutionError):
             registry.convert(Source(), SupportsLogProb)
+
+    def test_a_guarded_promise_is_unresolved_until_the_converted_law_exists(self):
+        """Only the converted law can decide its guard, which execution then checks."""
+        registry = _registry(
+            ToyConverter(
+                "to_guarded",
+                targets=(SupportsLogProb,),
+                target_class=GuardedScored,
+                capabilities=(SupportsLogProb,),
+            )
+        )
+        info = registry.check(Source(), SupportsLogProb)
+        assert info.unresolved and info.method_name == "to_guarded"
+        assert info.pending == ("GuardedScored._log_prob_guard of the converted law",)
+        assert type(registry.convert(Source("holds"), SupportsLogProb)) is GuardedScored
+        with pytest.raises(ResolutionError, match="_log_prob"):
+            registry.convert(Source("declines"), SupportsLogProb)
 
     def test_a_sampling_target_admits_the_converter_declaring_it(self):
         registry = _registry(
@@ -816,18 +866,72 @@ class TestConvert:
             _registry(failing, fallback).convert(Source(), Target)
         assert fallback.check_calls == [] and fallback.execute_calls == []
 
-    def test_a_source_already_of_the_target_class_is_dispatched_like_any_other(self):
-        """The registry runs a converter for every request it receives.
-
-        The convert operation and normalization return such a source without
-        consulting the registry.
-        """
+    def test_a_source_already_of_the_target_class_is_returned_as_it_is(self):
+        """The registry tests the source first, so no converter runs for it."""
         source = Target("x", _SCALAR)
-        with pytest.raises(ResolutionError, match=r"\(Target, Target\)"):
-            ConverterRegistry().convert(source, Target)
+        assert ConverterRegistry().convert(source, Target) is source
         copier = ToyConverter("copy", sources=(Target,))
-        assert _registry(copier).convert(source, Target) is not source
-        assert copier.execute_calls == [((source, Target), {})]
+        registry = _registry(copier)
+        assert registry.convert(source, Target, method="copy") is source
+        info = registry.check(source, Target)
+        assert info.feasible is True
+        assert (info.method_name, info.exact, info.samples) == (None, True, False)
+        assert info.target_spec == source.spec and info.target_class is Target
+        assert copier.check_calls == [] and copier.execute_calls == []
+
+    def test_a_source_claiming_the_target_protocol_is_returned_as_it_is(self):
+        source = ScoredSource()
+        info = ConverterRegistry().check(source, SupportsLogProb)
+        assert info.feasible is True and info.method_name is None
+        assert SupportsLogProb in info.capabilities
+        assert ConverterRegistry().convert(source, SupportsLogProb) is source
+
+    def test_a_source_whose_guard_declines_is_converted(self):
+        source = GuardedSource(guard=False)
+        registry = _registry(
+            ToyConverter(
+                "to_density",
+                targets=(SupportsLogProb,),
+                target_class=Scored,
+                capabilities=(SupportsLogProb,),
+            )
+        )
+        assert registry.check(source, SupportsLogProb).method_name == "to_density"
+        assert type(registry.convert(source, SupportsLogProb)) is Scored
+
+    def test_a_source_whose_guard_awaits_values_is_unresolved(self):
+        """Whether the source needs a conversion is not yet known, so no converter is selected."""
+        source = GuardedSource(guard=None)
+        registry = _registry(
+            ToyConverter(
+                "to_density",
+                targets=(SupportsLogProb,),
+                target_class=Scored,
+                capabilities=(SupportsLogProb,),
+            )
+        )
+        info = registry.check(source, SupportsLogProb)
+        assert info.unresolved and info.method_name is None
+        assert "_log_prob_guard" in info.pending[0]
+        with pytest.raises(ResolutionError, match="unresolved"):
+            registry.convert(source, SupportsLogProb)
+
+    def test_the_converted_law_records_the_source_and_the_converter(self):
+        source = Source("theta")
+        result = _registry(ToyConverter("m", exact=False)).convert(source, Target)
+        assert result.provenance.operation == "convert"
+        assert [parent.name for parent in result.provenance.parents] == ["theta"]
+        assert result.provenance.metadata == {"converter": "m", "exact": False}
+
+    def test_a_result_that_is_not_a_law_raises_type_error(self):
+        registry = _registry(ToyConverter("m", result=object()))
+        with pytest.raises(TypeError, match="returns a Distribution"):
+            registry.convert(Source(), Target)
+
+    def test_a_result_that_is_not_of_the_target_class_raises_type_error(self):
+        registry = _registry(ToyConverter("m", result=Elsewhere("x", _SCALAR)))
+        with pytest.raises(TypeError, match="not a Target"):
+            registry.convert(Source(), Target)
 
     def test_check_and_execute_pass_call_keywords_to_the_converter(self):
         converter = ToyConverter("m")
@@ -837,19 +941,12 @@ class TestConvert:
         assert [kwargs for _, kwargs in converter.check_calls] == [{"num_draws": 64}] * 2
         assert [kwargs for _, kwargs in converter.execute_calls] == [{"num_draws": 64}]
 
-    @pytest.mark.pending(
-        reason="convert passes converter options to the converter's check and execute",
-        raises=TypeError,
-    )
     def test_convert_passes_converter_options_to_the_converter(self):
         converter = ToyConverter("m")
         _registry(converter).convert(Source(), Target, num_draws=64)
         assert [kwargs for _, kwargs in converter.check_calls] == [{"num_draws": 64}]
         assert [kwargs for _, kwargs in converter.execute_calls] == [{"num_draws": 64}]
 
-    @pytest.mark.pending(
-        reason="convert takes method and exact_only by keyword only", raises=_DID_NOT_RAISE
-    )
     def test_convert_takes_its_controls_by_keyword_only(self):
         registry = _registry(ToyConverter("m"))
         with pytest.raises(TypeError):
@@ -926,9 +1023,6 @@ class TestCheckReport:
         with pytest.raises(ResolutionError, match="exact_only"):
             registry.convert(source, Target, exact_only=True)
 
-    @pytest.mark.pending(
-        reason="every report of the converter registry is a ConversionInfo", raises=AssertionError
-    )
     def test_every_report_is_a_conversion_info(self):
         registry = _registry(
             ToyConverter("moment_match", exact=False), ToyConverter("infeasible", feasible=False)
@@ -943,10 +1037,6 @@ class TestCheckReport:
         kinds = {case: type(report).__name__ for case, report in reports.items()}
         assert set(kinds.values()) == {"ConversionInfo"}, kinds
 
-    @pytest.mark.pending(
-        reason="the registry refuses a converter report that is not a ConversionInfo",
-        raises=_DID_NOT_RAISE,
-    )
     def test_a_converter_report_that_is_not_a_conversion_info_raises_type_error(self):
         registry = _registry(ToyConverter("m", report=Feasibility(feasible=True)))
         with pytest.raises(TypeError):
@@ -967,10 +1057,6 @@ class TestEventDeclarationPreserved:
         assert result.event_spec == source.event_spec
         assert result.spec == source.spec
 
-    @pytest.mark.pending(
-        reason="the registry refuses a converted law that does not carry the source's declaration",
-        raises=_DID_NOT_RAISE,
-    )
     @pytest.mark.parametrize(
         "declaration",
         [
@@ -985,10 +1071,6 @@ class TestEventDeclarationPreserved:
         with pytest.raises(ValueError):
             registry.convert(Source("x"), Target)
 
-    @pytest.mark.pending(
-        reason="the registry refuses a promise of a declaration other than the source's",
-        raises=_DID_NOT_RAISE,
-    )
     def test_a_promise_of_another_declaration_is_refused(self):
         promise = ConversionInfo(
             feasible=True,

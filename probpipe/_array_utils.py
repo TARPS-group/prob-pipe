@@ -422,9 +422,8 @@ def _slice_leading_axes(value: Any, multi_index: tuple[int, ...]) -> Any:
     """Index the leading ``len(multi_index)`` axes of ``value`` at the given
     multi-d index. Scalars and lower-rank values pass through unchanged.
 
-    Used by ``DistributionArray.from_batched_params`` (literal-array
-    fallback) and by ``_TFPArrayBackend.cell`` to slice batched
-    parameter arrays per cell. The trailing event axes (if any) are
+    Used by ``_TFPArrayBackend.cell`` to slice batched parameter arrays
+    per cell. The trailing event axes (if any) are
     preserved in the slice — for ``MultivariateNormal`` with ``loc``
     of shape ``(batch, d)`` and ``multi_index=(i,)``, returns
     ``loc[i]`` of shape ``(d,)``.

@@ -336,11 +336,10 @@ def _run_call(
         options=options,
     )
 
-    if function.options["conversions"]:
-        raise NotImplementedError("Function.__call__: the conversions control")
     values = _normalization.normalize_distribution_values(
         values=call.values,
         signature_info=function._signature_info,
+        conversions=function.options["conversions"],
     )
     _call.admit_arguments(
         function._signature_info,
@@ -1079,10 +1078,10 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
         default_include_inputs=function.options["include_inputs"],
         options=_call.WorkflowCallOptions(),
     )
-    if function.options["conversions"]:
-        raise NotImplementedError("Function.check: the conversions control")
     values, conversions, waiting = _normalization.plan_distribution_values(
-        values=call.values, signature_info=function._signature_info
+        values=call.values,
+        signature_info=function._signature_info,
+        conversions=function.options["conversions"],
     )
     _call.admit_arguments(
         function._signature_info,

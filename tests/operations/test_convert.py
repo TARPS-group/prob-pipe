@@ -65,10 +65,12 @@ class _SuiteConverter(Converter):
     def supported_types(self) -> tuple[tuple[type, ...], tuple[type, ...]]:
         return ((_Source,), self._targets)
 
-    def check(self, source: Any, target_type: type, *, exact_only: bool = False) -> ConversionInfo:
-        return ConversionInfo(True, method_name=self._name, exact=self._exact)
+    def check(self, source: Any, target_type: type, **options: Any) -> ConversionInfo:
+        return ConversionInfo(
+            True, method_name=self._name, exact=self._exact, target_spec=source.spec
+        )
 
-    def execute(self, source: Any, target_type: type) -> Distribution:
+    def execute(self, source: Any, target_type: type, **options: Any) -> Distribution:
         component = next(iter(source.event_spec.components)) if self._keep else "other"
         law = target_type(self._name, component)
         return law

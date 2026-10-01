@@ -34,12 +34,6 @@ from probpipe import distributions
 # isort: split
 
 from probpipe._weights import Weights
-from probpipe.converters import (
-    ConversionInfo,
-    ConversionMethod,
-    Converter,
-    converter_registry,
-)
 from probpipe.core._array_backend import (
     ArrayBackend,
     array_backend_for,
@@ -108,6 +102,7 @@ from probpipe.distributions._capabilities import (
     SupportsUnnormalizedLogProb,
     SupportsVariance,
 )
+from probpipe.distributions._conversion import ConversionInfo, Converter, converter_registry
 from probpipe.distributions._distribution import (
     DEFAULT_NUM_EVALUATIONS,
     Distribution,
@@ -219,7 +214,6 @@ __all__ = [
     "Cauchy",
     "Constraint",
     "ConversionInfo",
-    "ConversionMethod",
     "Converter",
     "Design",
     "Dirichlet",

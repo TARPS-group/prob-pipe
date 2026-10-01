@@ -3,8 +3,8 @@
 The capability protocols of the distribution kinds are defined in
 :mod:`probpipe.distributions._capabilities`. This module holds the rest:
 
-- ``SupportsArrayBackend``, which a ``Distribution`` subclass implements to
-  give ``DistributionArray`` a fused storage backend.
+- ``SupportsArrayBackend``, which a distribution class implements to store
+  its laws at batched parameters in one fused backend.
 - ``GenerativeLikelihood``, the simulator protocol that
   :func:`~probpipe.validation.predictive_check` takes.
 """
@@ -28,40 +28,26 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
-# Array backend (fused storage for DistributionArray)
+# Array backend: the fused storage of laws of one class at batched parameters
 # ---------------------------------------------------------------------------
 
 
 @runtime_checkable
 class _DistributionArrayBackend(Protocol):
-    """Internal storage backend that ``DistributionArray`` consumes.
+    """The fused storage of laws of one distribution class at batched parameters.
 
-    A backend owns the *batched* parameters of a homogeneous
-    ``DistributionArray`` and delivers vectorised ops directly — TFP's
-    native batch axis, a single empirical law whose atoms carry a leading
-    batch dim, etc. It carries no ``name`` / ``provenance``
-    and lives only as the contract between a distribution class's
-    :meth:`SupportsArrayBackend._make_array_backend` and the array
-    consumer.
+    A backend owns the batched parameters of the laws and computes their
+    capabilities vectorized, through the backend's native batch axis, without
+    one ``Distribution`` per position. It carries no ``name`` or
+    ``provenance``, and it is the contract between a class's
+    :meth:`SupportsArrayBackend._make_array_backend` and the code that stores
+    the laws. Backends are private to the library.
 
-    Backends are private to the library. User code never imports or
-    constructs them; they exist solely so a
-    :class:`~probpipe.DistributionArray` can fuse storage instead of
-    materialising one ``Distribution`` per cell.
-
-    Required surface
-    ----------------
-    Every backend exposes ``batch_shape``, ``event_shape``, ``cell_spec``, ``cell``,
-    and the ``_sample``/``_log_prob``/``_mean``/``_variance``/``_cov``
-    methods that mirror whichever moment / density protocols the
-    underlying distribution class supports. ``DistributionArray``
-    introspects via ``isinstance`` and forwards to whichever ones are
-    present.
-
-    ``cell(index)`` materialises a fresh **scalar** ``Distribution``
-    (i.e. ``batch_shape == ()``) for the cell at ``index``. Used by
-    ``DistributionArray.__getitem__`` and by the WF sweep when
-    cell-level dispatch is needed.
+    Every backend exposes ``batch_shape``, ``event_shape``, ``cell_spec``,
+    ``cell``, and whichever of ``_sample``, ``_log_prob``, ``_mean``,
+    ``_variance``, and ``_cov`` the class's laws support. ``cell(index)`` builds
+    the law at ``index``, a ``Distribution`` of the class at that position's
+    parameters.
     """
 
     @property
@@ -82,31 +68,19 @@ class _DistributionArrayBackend(Protocol):
 
 @runtime_checkable
 class SupportsArrayBackend(Protocol):
-    """Distribution class that supports efficient batched construction.
+    """A distribution class that stores its laws at batched parameters in one backend.
 
-    Used by :meth:`DistributionArray.from_batched_params` to fuse
-    storage when the caller's components are homogeneous instances of
-    the same class. Implementations construct an internal
-    :class:`_DistributionArrayBackend` that owns the batched parameters
-    and the vectorised ops; ``DistributionArray`` becomes a thin
-    consumer.
+    Implementations construct an internal :class:`_DistributionArrayBackend`
+    that owns the batched parameters and computes the laws' capabilities
+    vectorized. A class that does not implement the protocol stores one
+    ``Distribution`` per position instead.
 
-    Distribution classes that don't implement this protocol still work
-    in a ``DistributionArray`` via the literal-array fallback (one
-    ``Distribution`` instance per cell) — slower but correct.
-
-    The protocol attaches to the **class**, not to instances. The
-    runtime check is ``isinstance(MyDistribution, SupportsArrayBackend)``
-    (i.e. the class itself implements ``_make_array_backend``).
-    ``isinstance(an_instance, SupportsArrayBackend)`` returns
-    ``True`` too — instances inherit class attributes, and
-    ``runtime_checkable`` just looks for the named attribute — but
-    the result is misleading because the contract is at class
-    scope.
-
-    The protocol is internal to the library; user code never calls
-    ``_make_array_backend`` directly. ``DistributionArray`` is the
-    sole consumer.
+    The protocol attaches to the **class**, not to its instances: the runtime
+    check is ``isinstance(MyDistribution, SupportsArrayBackend)``, which holds
+    when the class implements ``_make_array_backend``. An instance passes the
+    check too, since it inherits the class's attributes, but the contract is
+    the class's. The protocol is internal to the library, and user code never
+    calls ``_make_array_backend``.
 
     Examples
     --------

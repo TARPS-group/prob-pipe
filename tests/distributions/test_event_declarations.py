@@ -271,10 +271,7 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
 # The catalog's families whose implementation has not merged construct by raising.
 _STUB_CONSTRUCTIONS = {
     cls: pytest.mark.pending(reason=f"{cls.__name__} constructs")
-    for cls in (
-        MixtureDistribution,
-        LinearPushforwardDistribution,
-    )
+    for cls in (LinearPushforwardDistribution,)
 }
 
 # Bases a concrete class specializes, constructed only through one.

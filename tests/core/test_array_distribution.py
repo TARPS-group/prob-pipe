@@ -10,14 +10,14 @@ from probpipe import (
     NumericArraySpec,
     NumericDistribution,
     OpaqueSpec,
+    ResolutionError,
     from_distribution,
     log_prob,
-    positive,
     real,
     unnormalized_log_prob,
 )
-from probpipe.converters._probpipe import _check_support_compatible
 from probpipe.core._specs import NumericRecordSpec
+from probpipe.families._converters import _check_support
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -48,13 +48,13 @@ class TestDistributionBase:
     """Tests for methods defined on Distribution itself."""
 
     def test_log_prob_raises_by_default(self):
-        """Distribution without SupportsLogProb raises TypeError."""
+        """A law without a density, which no converter gives one, raises ResolutionError."""
 
         class StubDist(Distribution):
             pass
 
         d = StubDist("stub", OpaqueSpec())
-        with pytest.raises(TypeError, match="does not support log_prob"):
+        with pytest.raises(ResolutionError, match="'dist' converts to SupportsLogProb"):
             log_prob(d, jnp.array(0.0))
 
     def test_unnormalized_log_prob_delegates_to_log_prob(self, scalar_normal):
@@ -157,92 +157,21 @@ class TestCanonicalConvenience:
         ``dtype`` is the dtype every leaf shares."""
         assert multi_leaf_dist.support == real
 
-    def test_check_support_compatible_includes_field_name_on_multi_leaf(
-        self,
-        multi_leaf_dist,
-    ):
-        """The support check reads the per-leaf ``supports`` of the source. For a
-        multi-leaf source, the field name appears in the error message, and a
-        single-leaf source gets the message without a field prefix.
-
-        Target: ``Gamma`` (``positive`` support); source fields are
-        ``real`` → incompatible, so the first field that fails the
-        check raises with its name.
-        """
+    def test_the_support_check_refuses_a_fit_narrower_than_the_source(self, scalar_normal):
+        """A moment-matched fit's support must contain the source's."""
         from probpipe import Gamma
 
         target = Gamma(concentration=1.0, rate=1.0, name="gamma_target")
-        with pytest.raises(
-            ValueError,
-            match=r"_Declared field 'a' \(support=real\)",
-        ):
-            _check_support_compatible(target, multi_leaf_dist)
+        with pytest.raises(ValueError, match=r"Normal 'x' \(support=real\)"):
+            _check_support(target, scalar_normal)
 
-    def test_check_support_compatible_multi_field_target_field_count_mismatch(
-        self,
-        multi_leaf_dist,
-    ):
-        """Multi-field target with a different field count from the
-        source raises ``ValueError`` rather than silently truncating
-        via ``zip``. The error message names both arities so the
-        caller can see which side is wrong.
-        """
-        leaf = _leaf(support=positive)
-        target = _Declared("three_field", NumericRecordSpec(a=leaf, b=leaf, c=leaf))
-        with pytest.raises(
-            ValueError,
-            match=r"field-count mismatch",
-        ):
-            _check_support_compatible(target, multi_leaf_dist)
-
-    def test_check_support_compatible_multi_field_target_paired_mismatch(self):
-        """Multi-field target with matching field count compares
-        positionally; the first incompatible pair raises with both
-        field names in the message.
-        """
-        source = _Declared("source", NumericRecordSpec(s1=_leaf(), s2=_leaf()))
-        positive_leaf = _leaf(support=positive)
-        target = _Declared("target", NumericRecordSpec(t1=positive_leaf, t2=positive_leaf))
-        with pytest.raises(
-            ValueError,
-            match=r"field 's1' \(support=real\).*field 't1' \(support=positive\)",
-        ):
-            _check_support_compatible(target, source)
-
-    def test_check_support_compatible_pairs_a_flattened_group_with_its_leaves(self):
-        """A source field that holds a flattened group, as a posterior holds a
-        nested component, is checked against each target leaf under its path.
-        """
-
-        def nested(support):
-            group = NumericRecordSpec(a=_leaf(support=support), b=_leaf(support=support))
-            return _Declared("nested", NumericRecordSpec(params=group, s=_leaf()))
-
-        def flat(name):
-            return _Declared("flat", NumericRecordSpec(**{name: _leaf((2,))}, s=_leaf()))
-
-        _check_support_compatible(nested(real), flat("params"))
-        with pytest.raises(
-            ValueError,
-            match=r"field 'params' \(support=real\).*field 'params/a' \(support=positive\)",
-        ):
-            _check_support_compatible(nested(positive), flat("params"))
-        with pytest.raises(ValueError, match="field-count mismatch"):
-            _check_support_compatible(nested(real), flat("x"))
-
-    def test_check_support_compatible_skips_non_nrd_source(self, scalar_normal):
-        """Sources without per-field ``supports``, as an opaque
-        ``EmpiricalDistribution`` with object-dtype leaves has none, are treated
-        as unknown: the check returns silently rather than raising
-        ``AttributeError``.
-        """
+    def test_the_support_check_skips_a_source_without_a_support(self, scalar_normal):
+        """A source whose support is undeclared, such as an opaque law, has nothing to compare."""
 
         class _NoSupportsSource:
-            """Pretends to be a source but has no ``supports`` attribute."""
+            """Pretends to be a source but has no ``support`` attribute."""
 
-            # Plain object — accessing ``.supports`` raises ``AttributeError``.
-
-        _check_support_compatible(scalar_normal, _NoSupportsSource())  # no raise
+        _check_support(scalar_normal, _NoSupportsSource())  # no raise
 
 
 # ---------------------------------------------------------------------------

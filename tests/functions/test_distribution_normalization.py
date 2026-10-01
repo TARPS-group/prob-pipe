@@ -21,6 +21,7 @@ from probpipe import (
     NumericArrayBatch,
     NumericDistribution,
     OpaqueSpec,
+    ResolutionError,
     converter_registry,
     log_prob,
     mean,
@@ -81,8 +82,9 @@ class TestNormalizeDistributionValues:
         source = Normal(loc=0.0, scale=1.0, name="source")
 
         with pytest.raises(
-            TypeError,
-            match=r"No converter registered for Normal -> UnsupportedDistribution",
+            ResolutionError,
+            match=r"'dist' converts to UnsupportedDistribution: No method registered for "
+            r"\(Normal, UnsupportedDistribution\)",
         ):
             normalize_distribution_values(
                 values={"dist": source},
@@ -102,14 +104,41 @@ class TestNormalizeDistributionValues:
         assert isinstance(normalized["dist"], KDEDistribution)
         assert isinstance(normalized["dist"], SupportsLogProb)
 
-    def test_protocol_hint_preserves_value_when_conversion_raises_type_error(self, empirical_dist):
-        with patch.object(converter_registry, "convert", side_effect=TypeError("unsupported")):
-            normalized = normalize_distribution_values(
+    def test_protocol_hint_raises_when_no_conversion_applies(self, empirical_dist):
+        """A failed conversion raises, naming the parameter, rather than passing the law through."""
+        failure = ResolutionError("no converter applies")
+        with (
+            patch.object(converter_registry, "convert", side_effect=failure),
+            pytest.raises(ResolutionError, match="'dist' converts to SupportsLogProb"),
+        ):
+            normalize_distribution_values(
                 values={"dist": empirical_dist},
                 signature_info=_signature_info(("dist",), {"dist": SupportsLogProb}),
             )
 
-        assert normalized["dist"] is empirical_dist
+    def test_a_conversions_entry_selects_the_converter_and_passes_its_options(self):
+        normalized = normalize_distribution_values(
+            values={"dist": Normal("x", 0.0, 1.0)},
+            signature_info=_signature_info(("dist",), {"dist": SupportsLogProb}),
+        )
+        assert isinstance(normalized["dist"], Normal)
+        with workflow_run(seed=0):
+            normalized = normalize_distribution_values(
+                values={"dist": Normal("x", 0.0, 1.0)},
+                signature_info=_signature_info(("dist",), {"dist": EmpiricalDistribution}),
+                conversions={"dist": {"method": "empirical", "num_samples": 7}},
+            )
+        assert normalized["dist"].num_atoms == 7
+
+    def test_a_conversions_entry_restricted_to_exact_converters_refuses_an_approximation(
+        self, empirical_dist
+    ):
+        with pytest.raises(ResolutionError, match="exact_only"):
+            normalize_distribution_values(
+                values={"dist": empirical_dist},
+                signature_info=_signature_info(("dist",), {"dist": SupportsLogProb}),
+                conversions={"dist": {"exact_only": True}},
+            )
 
     def test_protocol_hint_propagates_invalid_conversion_plan(self, empirical_dist):
         error = RuntimeError("a sampled conversion requires a sample shape")

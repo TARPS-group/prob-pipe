@@ -303,7 +303,6 @@ class TestTheCapabilities:
         for protocol in (SupportsMean, SupportsVariance, SupportsCovariance):
             assert not isinstance(transformed, protocol)
 
-    @pytest.mark.pending(reason="the moment operations' routes", raises=TypeError)
     def test_the_mean_of_a_nonlinear_map_is_estimated(self, key):
         atoms = jax.random.normal(key, (50, 2))
         transformed = BijectorTransformedDistribution(

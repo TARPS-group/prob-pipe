@@ -33,7 +33,8 @@ from probpipe import (
     function,
     workflow_run,
 )
-from probpipe.distributions import DistributionBatch, SupportsMarginals
+from probpipe.distributions import DistributionBatch
+from probpipe.distributions._capabilities import SupportsLogProb
 
 from ._design_helpers import atom_leaves, error_of, one_field_law, record_law, standard_normal
 
@@ -86,7 +87,7 @@ class TestTheTrigger:
 
     @pytest.mark.parametrize(
         "annotation",
-        [Distribution, Normal, SupportsMarginals, Distribution | None],
+        [Distribution, Normal, SupportsLogProb, Distribution | None],
         ids=["Distribution", "subclass", "capability", "optional"],
     )
     def test_a_parameter_that_names_a_distribution_consumes_it(self, annotation):
