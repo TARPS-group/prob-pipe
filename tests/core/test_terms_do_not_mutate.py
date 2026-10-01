@@ -65,8 +65,6 @@ def _census(value):
 class _ScalarBackend:
     """The smallest thing ``DistributionArray._from_backend`` accepts."""
 
-    is_approximate = False
-
     def __init__(self, n: int):
         self.batch_shape = (n,)
 

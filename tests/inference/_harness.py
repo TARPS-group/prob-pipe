@@ -151,11 +151,13 @@ _CONSTRAINED_SCALE = (
     "the zero-density wall at tau = 0 and the chains mix too slowly"
 )
 KNOWN_FAILURES[("blackjax_hmc", "probpipe", "eight_schools")] = (_CONSTRAINED_SCALE, AssertionError)
+# A result declares its target's supports, so the mean of draws outside the
+# support fails the mean's check of its declared support.
 for _method in _FLAT_CHAIN_METHODS:
-    KNOWN_FAILURES[(_method, "probpipe", "beta_bernoulli")] = (_OUTSIDE_THE_SUPPORT, AssertionError)
+    KNOWN_FAILURES[(_method, "probpipe", "beta_bernoulli")] = (_OUTSIDE_THE_SUPPORT, ValueError)
     KNOWN_FAILURES[(_method, "probpipe", "dirichlet_multinomial")] = (
         _UNCONSTRAINED_SIMPLEX,
-        AssertionError,
+        ValueError,
     )
 
 

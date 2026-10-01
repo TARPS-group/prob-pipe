@@ -576,13 +576,6 @@ class TestLearnedKernels:
         )
         assert_matches(law, split, consistent=False)
 
-    @pytest.mark.pending(
-        reason=(
-            "bug: an amortized posterior of a whole-term prior returns a law exposing a "
-            "one-field record, which condition_on's declared result refuses"
-        ),
-        raises=ValueError,
-    )
     def test_an_amortized_posterior_of_a_whole_term_prior_conditions(self):
         """Conditioning the amortized posterior of a whole-term prior returns a law over that term."""
         _bayesflow()

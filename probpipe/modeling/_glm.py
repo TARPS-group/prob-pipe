@@ -51,10 +51,13 @@ class GLMLikelihood:
       supplied at construction time — the construction-time ``X`` is
       used.
 
-    Joint bootstrapping of covariates and response uses the Record
-    form::
+    Joint bootstrapping of covariates and response resamples the rows of
+    a batch of records::
 
-        Xy = Record("Xy", X=X_covariates, y=y_observed)
+        Xy = NumericRecordBatch(
+            "Xy", {"X": X_covariates, "y": y_observed}, "row",
+            element_spec=NumericRecordSpec(X=(p,), y=()),
+        )
         bootstrap = BootstrapReplicateDistribution("bootstrap", EmpiricalDistribution("Xy", Xy))
         bagged = condition_on.with_options(n_broadcast_samples=16)(
             model, bootstrap,

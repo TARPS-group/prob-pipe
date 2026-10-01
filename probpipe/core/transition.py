@@ -23,7 +23,9 @@ import contextlib
 from collections.abc import Callable, Iterable
 from typing import Any
 
+from .._weights import Weights, weighted_choice
 from ..distributions._distribution import Distribution
+from ..distributions._empirical import EmpiricalDistribution, _batch_form
 from ..functions import function
 from ..values import Function
 from .provenance import Provenance
@@ -226,31 +228,27 @@ def with_resampling(
 
     def _with_resampling_impl(dist: Distribution, inp: Any) -> Distribution:
         nonlocal call_count
-        from ._empirical import EmpiricalDistribution
 
         out_dist = step_fn(dist, inp)
 
         if isinstance(out_dist, EmpiricalDistribution):
             n = out_dist.num_atoms
-            ess = float(out_dist.effective_sample_size)
+            ess = float(Weights(n=n, weights=out_dist.weights).effective_sample_size)
             ess_ratio = ess / n
 
             if ess_ratio < ess_threshold:
                 key = jax.random.PRNGKey(seed + call_count)
                 call_count += 1
-                indices = out_dist._w.choice(key, shape=(n,))
-                # Resample per-leaf (samples is a NumericRecord; index each
-                # leaf's stacked array along the sample axis). Path-keyed
-                # construction rebuilds any nested structure.
-                from .record import Record
-
-                new_record = Record(
+                indices = weighted_choice(key, n, weights=out_dist.weights, shape=(n,))
+                # The drawn atoms, equally weighted, on the one level resampling mints.
+                atoms = _batch_form(
                     out_dist.name,
-                    {k: v[indices] for k, v in out_dist.samples.items()},
+                    out_dist._atoms_at(indices),
+                    "resample",
+                    out_dist.event_spec.spec,
                 )
                 resampled = EmpiricalDistribution(
-                    out_dist.name,
-                    new_record,
+                    out_dist.name, atoms, event_spec=out_dist.event_spec
                 )
                 resampled.with_provenance(
                     Provenance.create(

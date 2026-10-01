@@ -26,7 +26,6 @@ from probpipe.distributions._capabilities import (
     SupportsQuantile,
     SupportsVariance,
 )
-from probpipe.distributions.kde import KDEDistribution
 from probpipe.families import TFPDistribution
 from probpipe.families._backend import _allow_batched_tfp_init
 from probpipe.linalg import DiagonalLinOp, LinOp
@@ -326,11 +325,6 @@ class TestTheSeparateLawsForm:
 
 class TestALateBackend:
     """A subclass that builds its backend after construction passes its own declaration."""
-
-    def test_a_kde_builds_its_backend_after_construction(self):
-        kde = KDEDistribution("kde", jnp.zeros((20, 3)))
-        assert kde.name == "kde"
-        assert KDEDistribution("kde1d", jnp.linspace(0.0, 1.0, 10)).event_shape == ()
 
     def test_a_late_backend_needs_its_own_declaration(self):
         class _LateBackend(TFPDistribution):

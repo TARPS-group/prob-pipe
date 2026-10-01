@@ -166,7 +166,7 @@ class TestExtractEventSpec:
             num_chains=1,
             random_seed=0,
         )
-        assert posterior.fields == ("posterior",)
+        assert list(posterior.event_spec.components) == ["posterior"]
         assert isinstance(posterior.draws(), jax.Array)
 
 

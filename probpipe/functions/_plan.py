@@ -16,8 +16,8 @@ from typing import Any, Literal, Union, get_args, get_origin
 
 from ..core._batch import Batch
 from ..core._distribution_array import DistributionArray
-from ..core._empirical import EmpiricalDistribution
 from ..distributions._distribution import Distribution
+from ..distributions._empirical import EmpiricalDistribution
 from ..values import _binding
 from . import _descendants, _normalization
 

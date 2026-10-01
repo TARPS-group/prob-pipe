@@ -44,6 +44,5 @@ def test_the_result_keeps_the_target_component(posterior):
     assert list(posterior.event_spec.components) == ["z"]
 
 
-@pytest.mark.pending(reason="a result keeps the target event's packaging", raises=AssertionError)
 def test_the_result_keeps_the_target_packaging(posterior, target):
     assert posterior.event_spec == target.event_spec

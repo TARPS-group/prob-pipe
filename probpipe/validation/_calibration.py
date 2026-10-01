@@ -29,8 +29,13 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from ..core._record_spec import RecordSpec
+from ..core._specs import OutputSpec
 from ..core.ops import condition_on
 from ..custom_types import Array, ArrayLike, PRNGKey
+from ..distributions._distribution import _array_leaves
+from ..distributions._empirical import EmpiricalDistribution, _coordinates
+from ..distributions._factored import _raw_record
 from ..functions import _context
 from ._predictive_check import _supports_key_arg
 from ._workflow_rng import (
@@ -45,16 +50,25 @@ __all__ = ["SBCResult", "interval_coverage", "simulation_based_calibration"]
 # -- helpers ----------------------------------------------------------------
 
 
-def _flatten_point(point: Any, fields: tuple[str, ...] | None) -> Array:
-    """Flatten one parameter draw to the 1-D layout of ``flat_samples``.
+def _flatten_point(point: Any, event_spec: OutputSpec) -> Array:
+    """Flatten one parameter draw to the flat layout of the posterior's atoms.
 
-    The single-draw analogue of :attr:`flat_samples`: ``prior._sample`` returns a
-    bare array for a single-field prior (raveled directly) or a ``Record`` for a
-    multi-field prior (fields raveled and concatenated in posterior field order).
+    The posterior's event declaration *event_spec* gives the layout. An array
+    draw is raveled, and a record draw, a ``Record`` or the nested mapping of
+    its leaves, has its leaves raveled and concatenated in the declaration's
+    leaf order.
     """
-    if hasattr(point, "fields"):
-        return jnp.concatenate([jnp.ravel(jnp.asarray(point[f])) for f in fields])
-    return jnp.ravel(jnp.asarray(point))
+    spec = event_spec.spec
+    if not isinstance(spec, RecordSpec):
+        return jnp.ravel(jnp.asarray(point))
+    raw = _raw_record(point)
+    leaves = []
+    for path in spec:
+        leaf = raw
+        for segment in path.split("/"):
+            leaf = leaf[segment]
+        leaves.append(jnp.ravel(jnp.asarray(leaf)))
+    return jnp.concatenate(leaves)
 
 
 def _ranks(draws: Array, point: Array) -> Array:
@@ -66,22 +80,17 @@ def _ranks(draws: Array, point: Array) -> Array:
     return jnp.sum(draws < point[None, :], axis=0)
 
 
-def _component_names(posterior: Any) -> tuple[str, ...] | None:
-    """Per-flattened-component parameter names matching the ``flat_samples`` columns.
+def _component_names(posterior: Any) -> tuple[str, ...]:
+    """Per-flattened-component parameter names matching the posterior's flat coordinates.
 
-    A scalar field keeps its name; a field with ``k > 1`` flattened components
-    becomes ``field[0] … field[k-1]`` (row-major), in posterior field order.
-    Returns ``None`` if the posterior exposes neither ``fields`` nor
-    ``event_shapes``.
+    A scalar leaf keeps its path, and a leaf with ``k > 1`` flattened
+    components becomes ``path[0] … path[k-1]`` (row-major), in the posterior's
+    leaf order. A whole-term posterior's one leaf is its component.
     """
-    fields = getattr(posterior, "fields", None)
-    shapes = getattr(posterior, "event_shapes", None)
-    if not fields or shapes is None:
-        return None
     names: list[str] = []
-    for f in fields:
-        size = int(np.prod(shapes[f], dtype=int))
-        names.extend([f] if size == 1 else [f"{f}[{i}]" for i in range(size)])
+    for path, spec in _array_leaves(posterior.event_spec).items():
+        size = int(np.prod(spec.shape, dtype=int))
+        names.extend([path] if size == 1 else [f"{path}[{i}]" for i in range(size)])
     return tuple(names)
 
 
@@ -245,7 +254,6 @@ def simulation_based_calibration(
         )
 
     rank_rows: list[np.ndarray] = []
-    fields: tuple[str, ...] | None = None
     component_names: tuple[str, ...] | None = None
     draws = None
     for _ in range(num_simulations):
@@ -264,11 +272,10 @@ def simulation_based_calibration(
             random_seed=seed,
             **infer_kwargs,
         )
-        draws = jnp.asarray(posterior.flat_samples)  # (L, p)
-        if fields is None:
-            fields = getattr(posterior, "fields", None)
+        draws = _coordinates(posterior)  # (L, p)
+        if component_names is None:
             component_names = _component_names(posterior)
-        theta_flat = _flatten_point(theta_star, fields)  # (p,)
+        theta_flat = _flatten_point(theta_star, posterior.event_spec)  # (p,)
         rank_rows.append(np.asarray(_ranks(draws, theta_flat)))
 
     ranks = np.stack(rank_rows).astype(int)  # (num_simulations, p)
@@ -301,11 +308,15 @@ def interval_coverage(
     ``(posterior, truth)`` pairs gives the frequentist coverage, which matches the
     nominal level for a calibrated method.
 
-    *draws_or_dist* is an ``(n, d)`` (or 1-D ``(n,)``) array of draws or a
-    distribution exposing ``flat_samples`` (treated as equally weighted, as
-    MCMC draws are); *truth* is the matching ``(d,)``.
+    *draws_or_dist* is an ``(n, d)`` (or 1-D ``(n,)``) array of draws or an
+    empirical law, read as the flat coordinates of its atoms (treated as
+    equally weighted, as MCMC draws are); *truth* is the matching ``(d,)``.
     """
-    draws = jnp.asarray(getattr(draws_or_dist, "flat_samples", draws_or_dist))
+    draws = jnp.asarray(
+        _coordinates(draws_or_dist)
+        if isinstance(draws_or_dist, EmpiricalDistribution)
+        else draws_or_dist
+    )
     if draws.ndim == 1:
         draws = draws[:, None]
     truth = jnp.atleast_1d(jnp.asarray(truth))

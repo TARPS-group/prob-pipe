@@ -9,7 +9,13 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from probpipe import EmpiricalDistribution, Normal, Record
+from probpipe import (
+    EmpiricalDistribution,
+    Normal,
+    NumericArraySpec,
+    NumericRecordBatch,
+    NumericRecordSpec,
+)
 
 
 def error_of(call: Callable[[], Any]) -> BaseException | None:
@@ -33,14 +39,19 @@ def standard_normal(name: str = "z") -> Normal:
 def record_law(name: str = "joint", *, n: int = 12) -> EmpiricalDistribution:
     """An empirical law over records ``{a, b}`` whose every atom has ``b == 2 * a``."""
     a = jnp.arange(float(n))
-    return EmpiricalDistribution(name, Record("atoms", {"a": a, "b": 2.0 * a}))
+    spec = NumericRecordSpec(a=NumericArraySpec((), a.dtype), b=NumericArraySpec((), a.dtype))
+    atoms = NumericRecordBatch("atoms", {"a": a, "b": 2.0 * a}, "atom", element_spec=spec)
+    return EmpiricalDistribution(name, atoms)
 
 
 def one_field_law(name: str = "posterior", *, n: int = 12) -> EmpiricalDistribution:
     """An empirical law whose event is a record with the single field ``beta``."""
-    return EmpiricalDistribution(name, Record("atoms", {"beta": jnp.arange(2.0 * n).reshape(n, 2)}))
+    beta = jnp.arange(2.0 * n).reshape(n, 2)
+    spec = NumericRecordSpec(beta=NumericArraySpec((2,), beta.dtype))
+    atoms = NumericRecordBatch("atoms", {"beta": beta}, "atom", element_spec=spec)
+    return EmpiricalDistribution(name, atoms)
 
 
 def atom_leaves(law: Any) -> list[np.ndarray]:
     """The stored atoms of an empirical law, one array per leaf, whatever its event kind."""
-    return [np.asarray(leaf) for leaf in jax.tree_util.tree_leaves(law.samples)]
+    return [np.asarray(leaf) for leaf in jax.tree_util.tree_leaves(law.atoms)]

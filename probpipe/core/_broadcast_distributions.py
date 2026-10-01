@@ -1,7 +1,8 @@
 """Broadcast distribution and marginal types.
 
 Provides:
-  - ``_RecordMarginal``                    – Record-shaped output marginal.
+  - ``_record_marginal()``                 – Record-shaped output marginal, an
+                                             ``EmpiricalDistribution``.
   - ``_MixtureMarginal``                   – Distribution output marginal (mixture).
   - ``_ListMarginal``                      – Non-stackable output marginal.
   - ``MarginalizedBroadcastDistribution``  – Union type alias.
@@ -28,13 +29,9 @@ from ..distributions._capabilities import (
     SupportsVariance,
 )
 from ..distributions._distribution import Distribution
+from ..distributions._empirical import EmpiricalDistribution
 from ._array_backend import _event_shape_of, _is_numeric_leaf, _to_jax_array
-from ._batch import _ranks_of
-from ._empirical import (
-    EmpiricalDistribution,
-    RecordEmpiricalDistribution,
-    _atom_declaration,
-)
+from ._batch import Batch, _ranks_of
 from ._function_batch import FunctionBatch
 from ._immutable import constructing, transient_memo
 from ._numeric_array import NumericArray
@@ -53,6 +50,7 @@ from ._specs import (
     RecordSpec,
     TermSpec,
 )
+from .constraints import real
 from .named_tree import _PATH_SEP
 from .record import Record
 from .tracked import auto_name
@@ -66,56 +64,96 @@ from .tracked import auto_name
 # ---------------------------------------------------------------------------
 
 
-class _RecordMarginal(RecordEmpiricalDistribution):
-    """Record-shaped output marginal of a :class:`BroadcastDistribution`.
+def _record_declaration(
+    template: RecordSpec, columns: dict[str, Any], prefix: str = ""
+) -> RecordSpec:
+    """The declaration of one output laid out as *template*, over its stacked *columns*.
 
-    Wraps the broadcast outputs as a Record-valued empirical
-    distribution with per-field weighted resampling and moments. Bare
-    array outputs auto-wrap as a single-field Record keyed by ``name``.
-    The name defaults to ``empirical(a,b)`` over the fields of record
-    outputs and to ``"marginal"`` for bare array outputs.
+    Each array leaf keeps what *template* declares, taking its column's dtype
+    when it declares none and the real line when it declares no support, as
+    the output marginal's moments treat every leaf as real-valued.
     """
 
-    def __init__(
-        self,
-        samples: Record | RecordBatch | Array,
-        weights: Array | Weights | None = None,
-        *,
-        log_weights: Array | Weights | None = None,
-        name: str | None = None,
-        output_template: RecordSpec | None = None,
-    ):
-        # A batch of records holds its rows axis in the batch, and the merged
-        # constructor wants one row per batch index, so peel it: the leaves keep
-        # the rows axis and the record above them loses it. Leaf-keyed, so a
-        # nested batch peels correctly; path-keyed construction rebuilds nesting.
-        if isinstance(samples, RecordBatch):
-            template = samples.event_template
-            # Raw columns: a non-array field presents as its own object batch,
-            # which is not what belongs in a record of batched leaves.
-            samples = Record(samples.name, samples._raw_columns())
-        else:
-            template = None
-        # The WF marginal context carries no more meaningful name.
-        name = auto_name(
-            name or None,
-            f"empirical({','.join(samples.fields)})" if isinstance(samples, Record) else "marginal",
-        )
-        if output_template is not None and not isinstance(samples, Record):
-            (path,) = output_template.keys()
-            samples = Record(name, {path: samples})
-        super().__init__(name, samples, weights=weights, log_weights=log_weights)
-        # The declared output template, else the exact one the batch carried,
-        # is what a draw is declared as.
-        record = output_template if output_template is not None else template
-        if record is not None:
-            self._init_declaration(_atom_declaration(record, self._record_data))
+    def leaf(path: str, spec: TermSpec) -> TermSpec:
+        if isinstance(spec, RecordSpec):
+            return _record_declaration(spec, columns, f"{path}/")
+        if not isinstance(spec, NumericArraySpec):
+            return spec
+        dtype = spec.dtype if spec.dtype is not None else jnp.asarray(columns[path]).dtype
+        return NumericArraySpec(spec.shape, dtype, real if spec.support is None else spec.support)
 
-    def __repr__(self):
-        return (
-            f"MarginalizedBroadcastDistribution(num_atoms={self.num_atoms}, "
-            f"fields=({', '.join(self._record_data.fields)}))"
-        )
+    return RecordSpec(
+        {field: leaf(f"{prefix}{field}", spec) for field, spec in template.children.items()}
+    )
+
+
+def _record_marginal(
+    samples: Record | RecordBatch | Array,
+    weights: Array | Weights | None = None,
+    *,
+    name: str | None = None,
+    output_template: RecordSpec | None = None,
+) -> EmpiricalDistribution:
+    """The output marginal of a :class:`BroadcastDistribution` whose outputs stack.
+
+    The outputs are the atoms of an empirical law over an exposed record: a
+    batch of records keeps its levels, and a record of columns or an array of
+    outputs lies on the level ``draw``. A bare array of outputs is one field,
+    keyed by *output_template*'s one leaf or else by the law's name. The name
+    defaults to ``empirical(a,b)`` over the fields of record outputs and to
+    ``"marginal"`` for array outputs.
+
+    The record is the lift's interim declaration of its result. Taking the
+    function's completed output declaration instead, so that an array return
+    gives an array-valued law (V.10), applies here.
+    """
+    if isinstance(samples, RecordBatch):
+        template = samples.event_template
+        columns = samples._raw_columns()
+        levels, ranks = tuple(samples.level_names), _ranks_of(samples.axis_groups)
+        fields = tuple(template.children)
+    elif isinstance(samples, Record):
+        template = _reshaped_template(samples.event_template, lambda shape: shape[1:])
+        columns = {path: samples[path] for path in samples.event_template}
+        levels, ranks = (DRAW_LEVEL,), (1,)
+        fields = tuple(samples.fields)
+    else:
+        template, columns, levels, ranks, fields = None, None, (DRAW_LEVEL,), (1,), None
+    # The WF marginal context carries no more meaningful name.
+    name = auto_name(
+        name or None, f"empirical({','.join(fields)})" if fields is not None else "marginal"
+    )
+    if columns is None:
+        values = jnp.asarray(samples)
+        (path,) = output_template.keys() if output_template is not None else (name,)
+        columns = {path: values}
+        template = RecordSpec({path: NumericArraySpec(tuple(values.shape[1:]), values.dtype)})
+    # The declared output template, else the one the outputs carry, is what a draw is.
+    record = _record_declaration(
+        output_template if output_template is not None else template, columns
+    )
+    atoms = _batch_class_for(record)(
+        name, columns, levels, element_spec=record, axes_per_level=ranks
+    )
+    return EmpiricalDistribution(name, atoms, weights)
+
+
+def _input_marginal(name: str, rows: Any, weights: Weights) -> EmpiricalDistribution:
+    """The empirical law of one broadcast argument's rows under the broadcast's weights.
+
+    The rows lie along one leading axis: a batch keeps its levels, and an
+    array, a record of columns, or a list of objects lies on the level ``draw``.
+    """
+    if isinstance(rows, Batch):
+        return EmpiricalDistribution(name, rows, weights)
+    if isinstance(rows, Record):
+        element = _reshaped_template(rows.event_template, lambda shape: shape[1:])
+        columns = {path: rows[path] for path in rows.event_template}
+        atoms = _batch_class_for(element)(name, columns, DRAW_LEVEL, element_spec=element)
+        return EmpiricalDistribution(name, atoms, weights)
+    if isinstance(rows, list) or _is_object_array(rows):
+        return EmpiricalDistribution(name, OpaqueBatch(name, list(rows), DRAW_LEVEL), weights)
+    return EmpiricalDistribution(name, jnp.asarray(rows), weights, level=DRAW_LEVEL)
 
 
 class _MixtureMarginal(Distribution):
@@ -145,7 +183,6 @@ class _MixtureMarginal(Distribution):
 
         # A draw is one component's draw.
         super().__init__(name, _cell_declaration(tuple(components), name))
-        self._approximate = True
 
     @property
     def num_atoms(self) -> int:
@@ -345,13 +382,13 @@ class _ListMarginal(Distribution):
 
 
 # Public alias for type checking / isinstance
-MarginalizedBroadcastDistribution = _RecordMarginal | _MixtureMarginal | _ListMarginal
+MarginalizedBroadcastDistribution = EmpiricalDistribution | _MixtureMarginal | _ListMarginal
 """Union type for the output marginal of a :class:`BroadcastDistribution`.
 
 Concrete subtype depends on output kind:
 
-- :class:`_RecordMarginal` — stackable array or Record outputs
-  (numeric arrays auto-wrap as single-field Records)
+- :class:`~probpipe.EmpiricalDistribution` — stackable array or Record outputs,
+  over an exposed record (an array output is one field)
 - :class:`_MixtureMarginal` — distribution outputs (mixture)
 - :class:`_ListMarginal` — non-stackable outputs
 """
@@ -528,7 +565,7 @@ def _make_marginal(
         return _ListMarginal(rows, weights, name=name)
 
     if isinstance(output_samples, RecordBatch):
-        return _RecordMarginal(
+        return _record_marginal(
             output_samples,
             weights,
             name=name,
@@ -544,7 +581,7 @@ def _make_marginal(
         if all(hasattr(v, "ndim") and v.ndim > 0 for v in resolved):
             n = resolved[0].shape[0]
             if all(v.shape[0] == n for v in resolved):
-                return _RecordMarginal(
+                return _record_marginal(
                     output_samples,
                     weights,
                     name=name,
@@ -552,7 +589,7 @@ def _make_marginal(
                 )
 
     if isinstance(output_samples, jnp.ndarray):
-        return _RecordMarginal(
+        return _record_marginal(
             output_samples,
             weights,
             name=name or "marginal",
@@ -573,7 +610,7 @@ def _make_marginal(
                     )
                 else:
                     aggregate = RecordBatch.stack(output_samples, level_name=DRAW_LEVEL)
-                return _RecordMarginal(
+                return _record_marginal(
                     aggregate,
                     weights,
                     name=name,
@@ -583,7 +620,7 @@ def _make_marginal(
                 pass
         try:
             stacked = jnp.stack([jnp.asarray(r) for r in output_samples], axis=0)
-            return _RecordMarginal(
+            return _record_marginal(
                 stacked,
                 weights,
                 name=name or "marginal",
@@ -601,7 +638,7 @@ def _make_marginal(
 
     # Single array result (e.g., from vmap); ensure at least 1D for the sample axis
     arr = jnp.atleast_1d(jnp.asarray(output_samples))
-    return _RecordMarginal(
+    return _record_marginal(
         arr,
         weights,
         name=name or "marginal",
@@ -1250,8 +1287,8 @@ def _row_count(component: Any) -> int:
     has neither that means the right thing — its ``len`` is the *field* count and
     its ``shape`` raises unless it holds a single leaf — so it reports
     ``batch_shape``. A plain record batched on its leaves has no ``batch_shape``
-    either, which is the form ``RecordEmpiricalDistribution._sample`` returns, so
-    its rows are read off a leaf.
+    either, which is the form a record law's draws take in the lift, so its rows
+    are read off a leaf.
     """
     batch_shape = getattr(component, "batch_shape", None)
     if batch_shape:
@@ -1418,7 +1455,6 @@ class BroadcastDistribution(Distribution, SupportsSampling):
         else:
             event_spec = OpaqueSpec()
         super().__init__(name, event_spec)
-        self._approximate = True
         # A memo, filled on first read. Reading fills it in place, which leaves
         # the term's own attributes as construction set them — what the
         # immutability guard sees, and what a copy drops rather than inherits.
@@ -1443,9 +1479,9 @@ class BroadcastDistribution(Distribution, SupportsSampling):
 
     @property
     def samples(self) -> Any:
-        """Output samples (forwarded to output marginal for backward compat)."""
+        """The output marginal's atoms, or its items when the outputs do not stack."""
         m = self.marginalize()
-        return m.samples if hasattr(m, "samples") else m.items
+        return m.atoms if isinstance(m, EmpiricalDistribution) else m.items
 
     # -- Named components ----------------------------------------------------
 
@@ -1457,8 +1493,7 @@ class BroadcastDistribution(Distribution, SupportsSampling):
         if key == "_output":
             return self.marginalize()
         if key in self._input_samples:
-            arr = self._input_samples[key]
-            return EmpiricalDistribution(key, arr, weights=self._w)
+            return _input_marginal(key, self._input_samples[key], self._w)
         raise KeyError(f"Unknown component {key!r}; available: {self.fields}")
 
     # -- joint sampling -----------------------------------------------------

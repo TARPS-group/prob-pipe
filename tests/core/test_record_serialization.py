@@ -19,13 +19,14 @@ import jax.numpy as jnp
 import pytest
 
 from probpipe import (
+    BootstrapReplicateDistribution,
+    EmpiricalDistribution,
     Normal,
     NumericRecord,
     NumericRecordBatch,
     ProductDistribution,
     RecordBatch,
 )
-from probpipe.core._empirical import BootstrapReplicateDistribution, EmpiricalDistribution
 from probpipe.core._opaque import OpaqueSpec
 from probpipe.core._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
 from probpipe.core.record import Record
@@ -226,7 +227,7 @@ def test_bootstrap_replicate_pickle():
     brd = BootstrapReplicateDistribution("x", base)
     brd2 = roundtrip(brd)
     # Verify it round-tripped as the right type and is callable
-    assert type(brd2).__name__ == "RecordBootstrapReplicateDistribution"
+    assert type(brd2) is BootstrapReplicateDistribution
     assert "replicate_size=3" in repr(brd2)
 
 

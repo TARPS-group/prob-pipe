@@ -20,6 +20,7 @@ from probpipe import (
     Normal,
     NumericRecord,
     NumericRecordBatch,
+    OpaqueBatch,
     ProductDistribution,
     Provenance,
     ProvenanceMode,
@@ -351,8 +352,8 @@ class TestWithNameOnCustomNewHosts:
         renamed = view.with_name("mu_view")
         assert renamed.name == "mu_view"
 
-    def test_empirical_router(self):
-        emp = EmpiricalDistribution("emp", ["a", "b", "c"])
+    def test_empirical_capability_subclass(self):
+        emp = EmpiricalDistribution("emp", OpaqueBatch("labels", ["a", "b", "c"], "emp"))
         renamed = emp.with_name("labels")
         assert renamed.name == "labels"
 

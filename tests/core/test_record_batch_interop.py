@@ -280,11 +280,11 @@ class TestBroadcastComponents:
         assert _row_count(_draws(6)) == 6
 
     def test_a_batch_marginal_peels_the_rows_axis(self):
-        from probpipe.core._broadcast_distributions import _RecordMarginal
+        from probpipe.core._broadcast_distributions import _record_marginal
 
         batch = _draws(4)
 
-        marginal = _RecordMarginal(batch, None)
+        marginal = _record_marginal(batch)
 
         assert marginal.event_spec.spec.leaf_shapes == batch.event_template.leaf_shapes
         assert marginal.num_atoms == 4
@@ -952,12 +952,10 @@ class TestFunctionValuedColumnsStack:
 
 
 class TestAnEmpiricalTakesABatch:
-    def test_a_batch_routes_to_the_record_empirical(self):
-        """An empirical over a batch of records is an empirical over its rows:
-        the batch peels to the leaf-rows form the class stores, raw columns and
-        all, and resampling keeps rows paired."""
+    def test_an_empirical_over_a_batch_resamples_whole_rows(self):
+        """An empirical over a batch of records has one atom per row, and
+        resampling keeps rows paired."""
         from probpipe import EmpiricalDistribution, sample
-        from probpipe.core._empirical import RecordEmpiricalDistribution
 
         data = NumericRecordBatch(
             "batch",
@@ -968,7 +966,7 @@ class TestAnEmpiricalTakesABatch:
 
         empirical = EmpiricalDistribution("empirical", data)
 
-        assert isinstance(empirical, RecordEmpiricalDistribution)
+        assert isinstance(empirical, EmpiricalDistribution)
         assert empirical.num_atoms == 4
         drawn = sample(empirical, key=jax.random.PRNGKey(0), sample_shape=(16,))
         stored = {(float(i), float(i * 10)) for i in range(4)}

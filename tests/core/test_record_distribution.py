@@ -11,11 +11,9 @@
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
 
 from probpipe import (
-    EmpiricalDistribution,
     Normal,
 )
 from probpipe.core._record_distribution import (
@@ -120,15 +118,3 @@ class TestEventShapesUniformDict:
         es = multi_field_dist.event_shapes
         assert isinstance(es, dict)
         assert es == {"x": (), "y": ()}
-
-    def test_array_empirical_auto_wraps_single_field(self):
-        """An ``EmpiricalDistribution`` built from a raw array auto-wraps
-        as a single-field Record keyed by ``name=``; the declaration,
-        fields, and event shapes reflect that single field."""
-        samples = np.random.randn(100, 3)
-        dist = EmpiricalDistribution("x", samples)
-        assert dist.event_spec.spec.fields == ("x",)
-        assert dist.fields == ("x",)
-        assert dist.event_shapes == {"x": (3,)}
-        # Single-field shortcut.
-        assert dist.event_shape == (3,)

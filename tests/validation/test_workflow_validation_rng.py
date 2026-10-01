@@ -12,10 +12,10 @@ import pytest
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
 from probpipe import (
+    EmpiricalDistribution,
     GLMLikelihood,
     MultivariateNormal,
     Normal,
-    RecordEmpiricalDistribution,
     predictive_check,
     workflow_run,
 )
@@ -69,7 +69,7 @@ class TestPredictiveCheckBroker:
                     num_observations=6,
                     num_replications=num_replications,
                 )
-            return np.asarray(result["replicated_statistics"].flat_samples), derive
+            return np.asarray(result["replicated_statistics"].atoms.values), derive
 
         first, first_derive = run(8)
         second, second_derive = run(8)
@@ -79,7 +79,7 @@ class TestPredictiveCheckBroker:
         assert first_derive.call_count == 1
         assert second_derive.call_count == 1
         assert larger_derive.call_count == 1
-        assert larger.shape == (16, 1)
+        assert larger.shape == (16,)
 
     def test_opaque_provider_requires_explicit_key_before_sampling(self):
         calls = []
@@ -258,7 +258,7 @@ class TestSimulationBasedCalibrationBroker:
         ):
             del model, data, method, kwargs
             inference_seeds.append(random_seed)
-            return RecordEmpiricalDistribution(
+            return EmpiricalDistribution(
                 "beta",
                 jnp.zeros((num_results, 1)),
             )
@@ -315,7 +315,7 @@ class TestSimulationBasedCalibrationBroker:
             **kwargs,
         ):
             del model, data, kwargs
-            return RecordEmpiricalDistribution(
+            return EmpiricalDistribution(
                 "beta",
                 jnp.zeros((num_results, 1)),
             )

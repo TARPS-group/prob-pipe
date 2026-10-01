@@ -17,13 +17,16 @@ from probpipe import (
     Function,
     MultivariateNormal,
     Normal,
+    NumericArrayBatch,
+    NumericArraySpec,
     ProductDistribution,
     Record,
     RecordBatch,
-    RecordEmpiricalDistribution,
     sample,
     workflow_run,
 )
+from probpipe.core._record_batch import _batch_class_for
+from probpipe.core._record_spec import _reshaped_template
 from probpipe.core.config import WorkflowKind
 from probpipe.distributions import SequentialJointDistribution
 from probpipe.functions import (
@@ -33,6 +36,14 @@ from probpipe.functions import (
 )
 from probpipe.functions._plan import build_broadcast_plan, build_stochastic_plan
 from probpipe.values import _binding
+
+
+def _empirical_of_rows(name: str, rows: Record, weights=None) -> EmpiricalDistribution:
+    """The empirical law of *rows*, a record whose leaves stack the atoms along their leading axis."""
+    element = _reshaped_template(rows.event_template, lambda shape: shape[1:])
+    columns = {path: rows[path] for path in rows.event_template}
+    atoms = _batch_class_for(element)(name, columns, "atom", element_spec=element)
+    return EmpiricalDistribution(name, atoms, weights)
 
 
 def _execution_config(
@@ -213,7 +224,7 @@ class TestExecuteDistributionBroadcast:
 
         plan = _stochastic_plan(values, 8)
         result = _broadcast.execute_distribution_broadcast(
-            func=lambda first, second: first["shared"] - second["shared"],
+            func=lambda first, second: first - second,
             values=values,
             stochastic_plan=plan,
             logical_unit=plan.logical_units[0],
@@ -228,17 +239,13 @@ class TestExecuteDistributionBroadcast:
         )
 
         assert result.num_atoms == 2
-        np.testing.assert_array_equal(
-            result.input_samples["first"]["shared"], jnp.asarray([1.0, 4.0])
-        )
-        np.testing.assert_array_equal(
-            result.input_samples["first"]["shared"], result.input_samples["second"]["shared"]
-        )
+        np.testing.assert_array_equal(result.input_samples["first"], jnp.asarray([1.0, 4.0]))
+        np.testing.assert_array_equal(result.input_samples["first"], result.input_samples["second"])
         np.testing.assert_allclose(result.samples, 0.0)
         np.testing.assert_allclose(result.weights, jnp.asarray([0.2, 0.8]))
 
     def test_weighted_record_root_and_view_enumerate_once(self):
-        shared = EmpiricalDistribution(
+        shared = _empirical_of_rows(
             "shared",
             Record(
                 "draws",
@@ -336,7 +343,7 @@ class TestExecuteDistributionBroadcast:
         }
 
         def add(x, y):
-            return x["x"] + y["y"]
+            return x + y
 
         plan = _stochastic_plan(values, 10)
         result = _broadcast.execute_distribution_broadcast(
@@ -356,11 +363,11 @@ class TestExecuteDistributionBroadcast:
 
         assert result.num_atoms == 4
         np.testing.assert_allclose(
-            result.input_samples["x"]["x"],
+            result.input_samples["x"],
             jnp.asarray([[1.0], [1.0], [2.0], [2.0]]),
         )
         np.testing.assert_allclose(
-            result.input_samples["y"]["y"],
+            result.input_samples["y"],
             jnp.asarray([[10.0], [20.0], [10.0], [20.0]]),
         )
         np.testing.assert_allclose(
@@ -374,10 +381,13 @@ class TestExecuteDistributionBroadcast:
         )
 
     def test_exact_empirical_size_must_match_the_frozen_plan(self):
-        empirical = EmpiricalDistribution("x", [1.0, 2.0, 3.0])
+        empirical = EmpiricalDistribution("x", jnp.asarray([1.0, 2.0, 3.0]))
         values = {"x": empirical}
         plan = _stochastic_plan(values, 8)
-        empirical._samples = np.asarray([1.0, 2.0], dtype=object)
+        atoms = NumericArrayBatch(
+            "x", jnp.asarray([1.0, 2.0]), "x", element_spec=NumericArraySpec(())
+        )
+        object.__setattr__(empirical, "_atoms", atoms)
 
         with pytest.raises(RuntimeError, match="exact empirical size changed after planning"):
             _broadcast.execute_distribution_broadcast(
@@ -732,17 +742,6 @@ class TestCoSamplingThroughACall:
         )
 
     @staticmethod
-    def _field_difference(field, **controls):
-        """The difference of two draws of a one-field record law, which arrive as records."""
-        return Function(
-            name="function",
-            fn=lambda a, b: a[field] - b[field],
-            dispatch="sequential",
-            n_broadcast_samples=controls.pop("n_broadcast_samples", 8),
-            **controls,
-        )
-
-    @staticmethod
     def _run(workflow, *args, **kwargs):
         with workflow_run(seed=0):
             return workflow(*args, **kwargs)
@@ -758,7 +757,7 @@ class TestCoSamplingThroughACall:
         dist = Normal(loc=0.0, scale=1.0, name="x")
         result = self._run(self._difference(dispatch=dispatch), dist, dist)
 
-        np.testing.assert_array_equal(np.asarray(result.samples), np.zeros(8))
+        np.testing.assert_array_equal(np.asarray(result.atoms), np.zeros(8))
 
     @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
     def test_include_inputs_reports_one_realization_under_both_names(self, dispatch):
@@ -784,11 +783,11 @@ class TestCoSamplingThroughACall:
         second = Normal(loc=0.0, scale=1.0, name="x")
 
         assert not np.allclose(
-            np.asarray(self._run(self._difference(), first, second).samples),
+            np.asarray(self._run(self._difference(), first, second).atoms),
             0.0,
         )
         np.testing.assert_array_equal(
-            np.asarray(self._run(self._difference(), first, first).samples),
+            np.asarray(self._run(self._difference(), first, first).atoms),
             np.zeros(8),
         )
 
@@ -800,7 +799,7 @@ class TestCoSamplingThroughACall:
             Normal(loc=0.0, scale=1.0, name="y"),
         )
 
-        assert not np.allclose(np.asarray(result.samples), 0.0)
+        assert not np.allclose(np.asarray(result.atoms), 0.0)
 
     @pytest.mark.parametrize("n_broadcast_samples", [16, 8, 3])
     def test_an_empirical_passed_twice_enumerates_one_axis(self, n_broadcast_samples):
@@ -812,12 +811,12 @@ class TestCoSamplingThroughACall:
         """
         empirical = EmpiricalDistribution("e", jnp.array([1.0, 2.0, 3.0]))
         result = self._run(
-            self._field_difference("e", n_broadcast_samples=n_broadcast_samples),
+            self._difference(n_broadcast_samples=n_broadcast_samples),
             empirical,
             empirical,
         )
 
-        samples = np.asarray(result.samples).ravel()
+        samples = np.asarray(result.atoms).ravel()
         assert samples.size == 3
         np.testing.assert_array_equal(samples, np.zeros(3))
 
@@ -835,7 +834,7 @@ class TestCoSamplingThroughACall:
             name="function", fn=lambda a: a["x"], dispatch="sequential", n_broadcast_samples=8
         )
 
-        assert np.asarray(self._run(lifted, joint).samples).shape[0] == 8
+        assert np.asarray(self._run(lifted, joint).atoms).shape[0] == 8
 
     def test_a_parent_and_its_own_view_lift_together(self):
         """The remaining IV.2 case, end to end: ``f(d, d["x"])`` is one draw."""
@@ -851,17 +850,17 @@ class TestCoSamplingThroughACall:
         )
 
         np.testing.assert_array_equal(
-            np.asarray(self._run(lifted, joint, joint["x"]).samples),
+            np.asarray(self._run(lifted, joint, joint["x"]).atoms),
             np.zeros(8),
         )
 
     def test_a_record_valued_empirical_enumerates(self):
         """Enumerated rows stack per argument, and a record row is not an array.
 
-        Atoms of a record-valued empirical are ``Record``s, which ``jnp.stack``
-        cannot take; they stack through ``RecordBatch.stack`` instead.
+        A record-valued empirical's atoms reach the body as ``Record``s, which
+        ``jnp.stack`` cannot take; they stack through ``RecordBatch.stack`` instead.
         """
-        empirical = RecordEmpiricalDistribution(
+        empirical = _empirical_of_rows(
             "e",
             Record("r", x=jnp.array([1.0, 2.0, 3.0]), y=jnp.array([10.0, 20.0, 30.0])),
         )
@@ -870,18 +869,18 @@ class TestCoSamplingThroughACall:
         )
 
         np.testing.assert_array_equal(
-            np.asarray(self._run(lifted, empirical).samples).ravel(),
+            np.asarray(self._run(lifted, empirical).atoms).ravel(),
             np.array([10.0, 20.0, 30.0]),
         )
 
     def test_a_record_valued_lift_can_be_resampled(self):
         """The joint over a record-valued input is a distribution, so it samples.
 
-        Reading ``.samples`` goes through the output marginal and says nothing
+        Reading ``.atoms`` goes through the output marginal and says nothing
         about the joint: resampling gathers rows from every component, and a
         record-valued input carries its rows in fields rather than along a shape.
         """
-        empirical = RecordEmpiricalDistribution(
+        empirical = _empirical_of_rows(
             "e",
             Record("r", x=jnp.array([1.0, 2.0, 3.0]), y=jnp.array([10.0, 20.0, 30.0])),
         )
@@ -915,7 +914,7 @@ class TestCoSamplingThroughACall:
         That path hands back a plain record batched on its leaves rather than a
         record batch, which reports no ``batch_shape`` — the rows are on a leaf.
         """
-        empirical = RecordEmpiricalDistribution(
+        empirical = _empirical_of_rows(
             "e", Record("r", x=jnp.arange(10.0), y=jnp.arange(10.0) * 10)
         )
         lifted = Function(
@@ -924,7 +923,7 @@ class TestCoSamplingThroughACall:
 
         result = self._run(lifted, empirical)
         assert result.num_atoms == 5
-        assert np.asarray(result.samples).shape == (5,)
+        assert np.asarray(result.atoms).shape == (5,)
 
     def test_a_mixed_record_stacks_with_an_object_column(self):
         """Columns are leaf-keyed and typed per field, so a record mixing a
@@ -940,7 +939,7 @@ class TestCoSamplingThroughACall:
     def test_a_nested_record_valued_empirical_lifts(self):
         """A column is keyed by leaf path, so a nested record batches like a
         flat one."""
-        empirical = RecordEmpiricalDistribution(
+        empirical = _empirical_of_rows(
             "e",
             Record(
                 "r", group={"x": jnp.array([1.0, 2.0, 3.0]), "y": jnp.array([10.0, 20.0, 30.0])}
@@ -978,7 +977,7 @@ class TestCoSamplingThroughACall:
             n_broadcast_samples=8,
         )
 
-        assert np.asarray(self._run(lifted, nested).samples).shape == (8,)
+        assert np.asarray(self._run(lifted, nested).atoms).shape == (8,)
 
     def test_a_sampled_nested_record_valued_law_matches_sequential_under_jax(self):
         """The draw supplies nested record structure before either body is mapped."""
@@ -1003,12 +1002,12 @@ class TestCoSamplingThroughACall:
         )
 
         np.testing.assert_array_equal(
-            np.asarray(self._run(mapped, nested).samples),
-            np.asarray(self._run(sequential, nested).samples),
+            np.asarray(self._run(mapped, nested).atoms),
+            np.asarray(self._run(sequential, nested).atoms),
         )
 
     def test_a_record_valued_empirical_passed_twice_shares_its_atom(self):
-        empirical = RecordEmpiricalDistribution(
+        empirical = _empirical_of_rows(
             "e",
             Record("r", x=jnp.array([1.0, 2.0, 3.0]), y=jnp.array([10.0, 20.0, 30.0])),
         )
@@ -1020,14 +1019,14 @@ class TestCoSamplingThroughACall:
         )
 
         np.testing.assert_array_equal(
-            np.asarray(self._run(lifted, empirical, empirical).samples),
+            np.asarray(self._run(lifted, empirical, empirical).atoms),
             np.zeros(3),
         )
 
     def test_an_aliased_empirical_counts_its_weight_once(self):
         """Weights are per group, so an alias does not square them."""
         empirical = EmpiricalDistribution("e", jnp.array([1.0, 2.0, 3.0]))
-        result = self._run(self._field_difference("e", include_inputs=True), empirical, empirical)
+        result = self._run(self._difference(include_inputs=True), empirical, empirical)
 
         np.testing.assert_allclose(np.asarray(result.weights), np.full(3, 1 / 3))
 
@@ -1142,7 +1141,7 @@ class TestTheProbeModelsItsExecutorsTransform:
         fell_back = self._run(self._returns_a_batch(dispatch="auto"), dist)
         sequential = self._run(self._returns_a_batch(dispatch="sequential"), dist)
 
-        np.testing.assert_array_equal(np.asarray(fell_back.samples), np.asarray(sequential.samples))
+        np.testing.assert_array_equal(np.asarray(fell_back.atoms), np.asarray(sequential.atoms))
 
     def test_requesting_jax_reports_the_dispatch_rather_than_the_pytree(self):
         """The refusal names the choice the caller made and can change."""
@@ -1181,8 +1180,8 @@ class TestTheProbeModelsItsExecutorsTransform:
         second = Normal(loc=3.0, scale=1.0, name="y")
 
         np.testing.assert_array_equal(
-            np.asarray(self._run(broadcast, first, second).samples),
-            np.asarray(self._run(sequential, first, second).samples),
+            np.asarray(self._run(broadcast, first, second).atoms),
+            np.asarray(self._run(sequential, first, second).atoms),
         )
 
     def test_the_mapped_slice_carries_the_declared_event_shape(self, caplog):
@@ -1203,8 +1202,8 @@ class TestTheProbeModelsItsExecutorsTransform:
 
         assert not any("not JAX-traceable" in record.message for record in caplog.records)
         np.testing.assert_allclose(
-            np.asarray(mapped.samples),
-            np.asarray(self._run(sequential, vector).samples),
+            np.asarray(mapped.atoms),
+            np.asarray(self._run(sequential, vector).atoms),
             rtol=1e-6,
         )
 
@@ -1218,7 +1217,7 @@ class TestTheProbeModelsItsExecutorsTransform:
         difference = Function(name="function", fn=lambda a, b: a - b, n_broadcast_samples=8)
 
         np.testing.assert_array_equal(
-            np.asarray(self._run(difference, dist, dist).samples),
+            np.asarray(self._run(difference, dist, dist).atoms),
             np.zeros(8),
         )
 
@@ -1238,8 +1237,8 @@ class TestTheProbeModelsItsExecutorsTransform:
 
         assert not any("not JAX-traceable" in record.message for record in caplog.records)
         np.testing.assert_allclose(
-            np.asarray(mapped.samples),
-            np.asarray(self._run(sequential, a=joint["z"], b=joint["x"]).samples),
+            np.asarray(mapped.atoms),
+            np.asarray(self._run(sequential, a=joint["z"], b=joint["x"]).atoms),
         )
 
     def test_a_multi_field_law_vectorizes(self, caplog):
@@ -1263,7 +1262,7 @@ class TestTheProbeModelsItsExecutorsTransform:
 
         assert not any("not JAX-traceable" in record.message for record in caplog.records)
         np.testing.assert_array_equal(
-            np.asarray(mapped.samples), np.asarray(self._run(sequential, law).samples)
+            np.asarray(mapped.atoms), np.asarray(self._run(sequential, law).atoms)
         )
 
     def test_an_empirical_law_is_enumerated_rather_than_mapped(self):
@@ -1273,7 +1272,7 @@ class TestTheProbeModelsItsExecutorsTransform:
         probe would say, so its agreeing with sequential dispatch is a property
         of that path rather than of the mapped one.
         """
-        law = RecordEmpiricalDistribution(
+        law = _empirical_of_rows(
             "law", Record("r", {"a": jnp.arange(6.0), "b": jnp.arange(6.0) + 10.0})
         )
         totals = Function(name="function", fn=lambda r: r["a"] + r["b"], n_broadcast_samples=6)
@@ -1285,8 +1284,8 @@ class TestTheProbeModelsItsExecutorsTransform:
         )
 
         np.testing.assert_allclose(
-            np.asarray(self._run(totals, law).samples),
-            np.asarray(self._run(sequential, law).samples),
+            np.asarray(self._run(totals, law).atoms),
+            np.asarray(self._run(sequential, law).atoms),
         )
 
     def test_a_batch_returning_body_survives_the_nested_regime(self, caplog):
@@ -1339,6 +1338,6 @@ class TestTheProbeModelsItsExecutorsTransform:
         # Consistent *and* still vectorized, rather than consistent by retreat.
         assert not any("not JAX-traceable" in record.message for record in caplog.records)
         np.testing.assert_array_equal(
-            np.asarray(mapped.samples), np.asarray(self._run(sequential, law).samples)
+            np.asarray(mapped.atoms), np.asarray(self._run(sequential, law).atoms)
         )
         assert kinds and all(issubclass(kind, Record) for kind in kinds)

@@ -32,6 +32,12 @@ from probpipe.inference._inference_utils import observed_target
 from probpipe.inference._minibatch import MinibatchedDistribution
 from tests.inference._harness import validate_method
 
+
+def _draws(posterior: ApproximateDistribution) -> jax.Array:
+    """The posterior's draws across its chains, in the target's flat layout."""
+    return jnp.concatenate(posterior.chains)
+
+
 # -- Fixtures ------------------------------------------------------------------
 
 
@@ -162,7 +168,7 @@ class TestReproducibility:
             observed_target(logistic_problem["model"], logistic_problem["data"]),
             **kwargs,
         )
-        np.testing.assert_array_equal(post1.flat_samples, post2.flat_samples)
+        np.testing.assert_array_equal(_draws(post1), _draws(post2))
 
     def test_different_seeds_produce_different_chains(self, logistic_problem):
         kwargs = dict(
@@ -182,7 +188,7 @@ class TestReproducibility:
             **kwargs,
         )
         # Chains should differ somewhere — not just identical
-        assert not jnp.allclose(post1.flat_samples, post2.flat_samples)
+        assert not jnp.allclose(_draws(post1), _draws(post2))
 
 
 # -- Feasibility (check) ------------------------------------------------------
@@ -247,12 +253,12 @@ class TestConvergence:
             step_size=1e-3,
             random_seed=42,
         )
-        assert post.flat_samples.shape == (5000, 2)
-        assert jnp.all(jnp.isfinite(post.flat_samples))
+        assert _draws(post).shape == (5000, 2)
+        assert jnp.all(jnp.isfinite(_draws(post)))
         # Non-mixing guard: a stuck chain near init would have ~zero std.
-        per_coord_std = np.asarray(jnp.std(post.flat_samples, axis=0))
+        per_coord_std = np.asarray(jnp.std(_draws(post), axis=0))
         assert per_coord_std.min() > 0.05, f"Chain looks stuck — per-coord std: {per_coord_std}"
-        sample_mean = np.asarray(jnp.mean(post.flat_samples, axis=0))
+        sample_mean = np.asarray(jnp.mean(_draws(post), axis=0))
         true = np.asarray(logistic_problem["true_theta"])
         np.testing.assert_allclose(sample_mean, true, atol=0.3)
 
@@ -268,11 +274,11 @@ class TestConvergence:
             beta=0.0,
             random_seed=42,
         )
-        assert post.flat_samples.shape == (5000, 2)
-        assert jnp.all(jnp.isfinite(post.flat_samples))
-        per_coord_std = np.asarray(jnp.std(post.flat_samples, axis=0))
+        assert _draws(post).shape == (5000, 2)
+        assert jnp.all(jnp.isfinite(_draws(post)))
+        per_coord_std = np.asarray(jnp.std(_draws(post), axis=0))
         assert per_coord_std.min() > 0.05, f"Chain looks stuck — per-coord std: {per_coord_std}"
-        sample_mean = np.asarray(jnp.mean(post.flat_samples, axis=0))
+        sample_mean = np.asarray(jnp.mean(_draws(post), axis=0))
         true = np.asarray(logistic_problem["true_theta"])
         np.testing.assert_allclose(sample_mean, true, atol=0.3)
 
@@ -293,10 +299,10 @@ class TestConditionOnDispatch:
             random_seed=7,
         )
         assert isinstance(post, ApproximateDistribution)
-        assert post.flat_samples.shape == (1000, 2)
+        assert _draws(post).shape == (1000, 2)
 
     def test_chain_shape_is_num_results_by_event_shape(self, logistic_problem):
-        """`post.flat_samples` is `(num_results, *event_shape)` for a single chain."""
+        """The draws are `(num_results, *event_shape)` for a single chain."""
         post = BlackJAXSGLDMethod().execute(
             observed_target(logistic_problem["model"], logistic_problem["data"]),
             batch_size=20,
@@ -305,7 +311,7 @@ class TestConditionOnDispatch:
             step_size=1e-3,
             random_seed=1,
         )
-        assert post.flat_samples.shape == (100, logistic_problem["P"])
+        assert _draws(post).shape == (100, logistic_problem["P"])
 
     def test_warmup_discards_initial_samples(self, logistic_problem):
         """``num_warmup=N`` drops the first N samples; ``num_results`` retained."""
@@ -317,7 +323,7 @@ class TestConditionOnDispatch:
             step_size=1e-3,
             random_seed=3,
         )
-        assert post.flat_samples.shape == (300, 2)
+        assert _draws(post).shape == (300, 2)
 
     def test_user_supplied_init_position(self, logistic_problem):
         """``init=`` overrides the prior-sampled default."""
@@ -333,7 +339,7 @@ class TestConditionOnDispatch:
         )
         # With a tiny step size, the very first retained sample should
         # sit close to `init` (it's at most one Langevin step away).
-        first = np.asarray(post.flat_samples[0])
+        first = np.asarray(_draws(post)[0])
         np.testing.assert_allclose(first, np.asarray(init), atol=0.05)
 
     def test_with_replacement_kwarg_is_accepted_and_dispatches(self, logistic_problem):
@@ -364,8 +370,8 @@ class TestConditionOnDispatch:
         )
         # No exception + finite, correctly-shaped chain == kwarg accepted
         # by execute() and threaded into MinibatchedDistribution.
-        assert post.flat_samples.shape == (100, logistic_problem["P"])
-        assert jnp.all(jnp.isfinite(post.flat_samples))
+        assert _draws(post).shape == (100, logistic_problem["P"])
+        assert jnp.all(jnp.isfinite(_draws(post)))
 
 
 # ---------------------------------------------------------------------------

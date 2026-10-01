@@ -5,7 +5,9 @@ import jax.numpy as jnp
 import pytest
 
 from probpipe import (
-    RecordEmpiricalDistribution,
+    EmpiricalDistribution,
+    NumericArrayBatch,
+    NumericArraySpec,
     from_distribution,
 )
 from probpipe.core.constraints import (
@@ -228,9 +230,12 @@ class TestDistributionSupport:
     def test_mvn_support(self):
         assert MultivariateNormal("z", jnp.zeros(2), cov=jnp.eye(2)).support == real
 
-    def test_empirical_support(self):
-        ed = RecordEmpiricalDistribution("x", jnp.ones((5, 2)))
-        assert ed.support == real
+    def test_empirical_support_is_what_its_atoms_declare(self):
+        atoms = NumericArrayBatch(
+            "x", jnp.ones((5, 2)), "atom", element_spec=NumericArraySpec((2,), support=real)
+        )
+        assert EmpiricalDistribution("x", atoms).support == real
+        assert EmpiricalDistribution("x", jnp.ones((5, 2))).support is None
 
 
 # ── Section 4: from_distribution tests ────────────────────────────────────────
@@ -308,7 +313,7 @@ class TestFromDistribution:
     # -- multivariate --
     def test_mvn_from_empirical(self, key):
         samples = jax.random.normal(key, (100, 3))
-        ed = RecordEmpiricalDistribution("x", samples)
+        ed = EmpiricalDistribution("x", samples)
         mvn = from_distribution(ed, MultivariateNormal)
         assert mvn.dim == 3
 
@@ -337,5 +342,5 @@ class TestFromDistribution:
     # -- empirical from anything --
     def test_empirical_from_normal(self, key):
         n = Normal(loc=0.0, scale=1.0, name="n")
-        ed = from_distribution(n, RecordEmpiricalDistribution, key=key, num_samples=100)
+        ed = from_distribution(n, EmpiricalDistribution, key=key, num_samples=100)
         assert ed.num_atoms == 100

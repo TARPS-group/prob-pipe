@@ -7,9 +7,10 @@ posterior?", as opposed to per-fit convergence diagnostics (ESS, R-hat), which
 functions used by the inference test suite and the ``probpipe-benchmark``
 harness.
 
-The approximation under test is consumed as draws (anything exposing
-``flat_samples``, or a raw ``(n, d)`` array); the moment metrics use its sample
-mean and covariance rather than any analytic moments it may expose.
+The approximation under test is consumed as draws (an empirical law, read as
+the flat coordinates of its atoms, or a raw ``(n, d)`` array); the moment
+metrics use its sample mean and covariance rather than any analytic moments it
+may expose.
 
 Three metric families, by what the reference must carry (see :class:`Reference`):
 
@@ -36,12 +37,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Literal, Protocol, runtime_checkable
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
 
 from ..custom_types import Array, ArrayLike, PRNGKey
+from ..distributions._empirical import EmpiricalDistribution, _coordinates
 from ..functions import _context
 from ._workflow_rng import (
     _SLICED_WASSERSTEIN_PROVIDER_ABI,
@@ -60,17 +62,9 @@ __all__ = [
 ]
 
 
-@runtime_checkable
-class _SupportsFlatSamples(Protocol):
-    """An object exposing ``flat_samples`` (an empirical / approximate posterior)."""
-
-    @property
-    def flat_samples(self) -> Array: ...
-
-
 # What the metrics accept for an approximation or reference draws: a raw ``(n, d)``
-# (or 1-D) array, or a distribution that exposes ``flat_samples``.
-type DrawsLike = ArrayLike | _SupportsFlatSamples
+# (or 1-D) array, or an empirical law, whose atoms' flat coordinates are the draws.
+type DrawsLike = ArrayLike | EmpiricalDistribution
 
 
 # -- coercion + moment helpers ---------------------------------------------
@@ -79,11 +73,11 @@ type DrawsLike = ArrayLike | _SupportsFlatSamples
 def _as_draws(x: DrawsLike) -> Array:
     """Coerce an approximation / reference to an ``(n, d)`` draws matrix.
 
-    Accepts an ``ApproximateDistribution`` / empirical (anything exposing
-    ``flat_samples``) or a raw array; a 1-D array of ``n`` scalars becomes
-    ``(n, 1)``.
+    Accepts an empirical law, an inference result included, whose atoms' flat
+    coordinates are the draws, or a raw array; a 1-D array of ``n`` scalars
+    becomes ``(n, 1)``.
     """
-    raw = x.flat_samples if isinstance(x, _SupportsFlatSamples) else x
+    raw = _coordinates(x) if isinstance(x, EmpiricalDistribution) else x
     arr = jnp.asarray(raw)
     if arr.ndim == 1:
         arr = arr[:, None]

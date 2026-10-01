@@ -11,7 +11,7 @@ Record-aware flatten/unflatten over the event declaration. ``event_shape`` and
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from typing import Any
 
 import jax
@@ -280,13 +280,22 @@ class _RecordDistributionView(Distribution):
     # -- Internals ----------------------------------------------------------
 
     def _extract(self, structured: Any) -> Any:
-        """Extract this field from a parent record, record batch, or flat array."""
+        """Extract this field from a parent record, record batch, raw record, or flat array.
+
+        A raw record is the nested mapping of a record's leaves, the form a law
+        on the distribution base returns its draws in.
+        """
         from ._record_batch import RecordBatch
 
         if isinstance(structured, Record):
             return structured.at_path(self._key_path)
         if isinstance(structured, RecordBatch):
             return structured[self._key_path]
+        if isinstance(structured, Mapping):
+            node = structured
+            for segment in self._key_path:
+                node = node[segment]
+            return node
         # Flat array — unflatten via the parent's static unflatten_value.
         # Only numeric parents define unflatten_value; non-numeric Record
         # parents never reach this branch (their samples are Records).

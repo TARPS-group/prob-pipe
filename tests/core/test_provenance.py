@@ -12,6 +12,7 @@ import tensorflow_probability.substrates.jax.bijectors as tfb
 import probpipe
 from probpipe import (
     Beta,
+    EmpiricalDistribution,
     JointGaussian,
     Normal,
     NumericRecord,
@@ -19,7 +20,6 @@ from probpipe import (
     ProductDistribution,
     Provenance,
     ProvenanceMode,
-    RecordEmpiricalDistribution,
     SequentialJointDistribution,
     condition_on,
     from_distribution,
@@ -28,7 +28,6 @@ from probpipe import (
     workflow_run,
 )
 from probpipe.core.provenance import ParentInfo
-from probpipe.distributions import _empirical
 from probpipe.families import BijectorTransformedDistribution
 from probpipe.values._function_base import Function
 
@@ -215,7 +214,7 @@ class TestFromDistributionProvenance:
 
     def test_empirical_from_distribution(self):
         src = Normal(loc=0.0, scale=1.0, name="norm_src")
-        ed = from_distribution(src, RecordEmpiricalDistribution, n_samples=100)
+        ed = from_distribution(src, EmpiricalDistribution, n_samples=100)
         assert ed.provenance is not None
         assert ed.provenance.operation == "workflow.from_distribution"
         assert len(ed.provenance.parents) == 2
@@ -247,7 +246,7 @@ class TestBijectorTransformedDistributionProvenance:
         assert td.provenance.metadata["bijector"] == "chain_of_exp_of_shift"
 
     def test_transform_with_empirical_base(self):
-        ed = _empirical.EmpiricalDistribution("x", jnp.array([1.0, 2.0, 3.0]))
+        ed = EmpiricalDistribution("x", jnp.array([1.0, 2.0, 3.0]))
         td = BijectorTransformedDistribution("td", ed, tfb.Exp())
         assert td.provenance is not None
         assert td.provenance.operation == "transform"
@@ -338,7 +337,7 @@ class TestBroadcastingProvenance:
         wf = Function(name="identity", fn=identity, dispatch="sequential", n_broadcast_samples=20)
         with workflow_run(seed=42):
             result = wf(x=n)
-        assert hasattr(result, "samples")
+        assert hasattr(result, "atoms")
         assert result.provenance is not None
         assert result.provenance.operation == "broadcast"
         assert len(result.provenance.parents) == 2
@@ -359,7 +358,7 @@ class TestBroadcastingProvenance:
         wf = Function(name="double", fn=double, dispatch="jax", n_broadcast_samples=20)
         with workflow_run(seed=42):
             result = wf(x=n)
-        assert hasattr(result, "samples")
+        assert hasattr(result, "atoms")
         assert result.provenance is not None
         assert result.provenance.operation == "broadcast"
         assert result.provenance.metadata["dispatch"] == "jax"
@@ -396,7 +395,7 @@ class TestBroadcastingProvenance:
 
     def test_broadcast_enumerate_provenance(self):
         """Enumeration path should also get provenance."""
-        ed = RecordEmpiricalDistribution("x", jnp.array([1.0, 2.0, 3.0]))
+        ed = EmpiricalDistribution("x", jnp.array([1.0, 2.0, 3.0]))
         n = Normal(loc=0.0, scale=1.0, name="n")
 
         def add(a: float, b: float) -> float:
@@ -405,7 +404,7 @@ class TestBroadcastingProvenance:
         wf = Function(name="add", fn=add, dispatch="sequential", n_broadcast_samples=20)
         with workflow_run(seed=42):
             result = wf(a=ed, b=n)
-        assert hasattr(result, "samples")
+        assert hasattr(result, "atoms")
         assert result.provenance is not None
         assert result.provenance.operation == "broadcast"
 

@@ -66,7 +66,7 @@ class TestSequentialLiftingWorkflowRun:
 
         assert sample_calls == [((3974922193, 721833970), (5,))]
         np.testing.assert_array_equal(
-            np.asarray(result.samples),
+            np.asarray(result.atoms),
             np.asarray([6783, 11879, 26960, 21029, 10625], dtype=np.float32),
         )
 
@@ -185,9 +185,9 @@ class TestSequentialLiftingWorkflowRun:
         first_run = run()
         second_run = run()
 
-        assert jnp.array_equal(first_run[0].samples, second_run[0].samples)
-        assert jnp.array_equal(first_run[1].samples, second_run[1].samples)
-        assert not jnp.array_equal(first_run[0].samples, first_run[1].samples)
+        assert jnp.array_equal(first_run[0].atoms, second_run[0].atoms)
+        assert jnp.array_equal(first_run[1].atoms, second_run[1].atoms)
+        assert not jnp.array_equal(first_run[0].atoms, first_run[1].atoms)
 
     def test_bare_lifted_calls_receive_independent_ephemeral_roots(self):
         @function(n_broadcast_samples=16, dispatch="sequential")
@@ -202,7 +202,7 @@ class TestSequentialLiftingWorkflowRun:
             first = identity(dist)
             second = identity(dist)
 
-        assert not jnp.array_equal(first.samples, second.samples)
+        assert not jnp.array_equal(first.atoms, second.atoms)
         assert urandom.call_count == 2
 
     def test_non_stochastic_siblings_do_not_shift_later_lifting(self):
@@ -234,8 +234,8 @@ class TestSequentialLiftingWorkflowRun:
         expected = baseline()
         actual = with_siblings()
 
-        assert jnp.array_equal(actual[0].samples, expected[0].samples)
-        assert jnp.array_equal(actual[1].samples, expected[1].samples)
+        assert jnp.array_equal(actual[0].atoms, expected[0].atoms)
+        assert jnp.array_equal(actual[1].atoms, expected[1].atoms)
 
 
 def test_auto_probe_detects_nested_randomness_caught_by_user_code():
@@ -272,6 +272,6 @@ def test_auto_probe_detects_nested_randomness_caught_by_user_code():
     def following_samples(workflow):
         with workflow_run(seed=7):
             workflow(outer_dist)
-            return following_identity(outer_dist).samples["following_identity"]
+            return following_identity(outer_dist).atoms["following_identity"]
 
     assert jnp.array_equal(following_samples(auto), following_samples(sequential))

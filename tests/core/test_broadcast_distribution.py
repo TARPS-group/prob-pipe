@@ -30,7 +30,6 @@ from probpipe.core._broadcast_distributions import (
     _make_marginal,
     _make_mixture_marginal,
     _MixtureMarginal,
-    _RecordMarginal,
 )
 
 
@@ -254,7 +253,7 @@ class TestBroadcastDistributionComponents:
         )
         x_dist = bd["x"]
         assert isinstance(x_dist, EmpiricalDistribution)
-        np.testing.assert_allclose(x_dist.samples, x_data, atol=1e-6)
+        np.testing.assert_allclose(x_dist.atoms.values, x_data, atol=1e-6)
 
     def test_getitem_output_returns_marginal(self):
         n = 5
@@ -265,7 +264,7 @@ class TestBroadcastDistributionComponents:
             broadcast_args=["x"],
         )
         out = bd["_output"]
-        assert isinstance(out, _RecordMarginal)
+        assert isinstance(out, EmpiricalDistribution)
 
     def test_getitem_invalid_key(self):
         bd = BroadcastDistribution(
@@ -298,13 +297,16 @@ class TestBroadcastDistributionProvenance:
 
 
 # ---------------------------------------------------------------------------
-# _RecordMarginal (output marginal for array outputs)
+# The record marginal of array outputs: an empirical law over a one-field record
 # ---------------------------------------------------------------------------
 
 
 class TestArrayMarginal:
+    """Array outputs are the atoms of an empirical law over a record of one field, ``marginal``."""
+
     def test_protocols(self):
-        m = _RecordMarginal(jnp.ones((10, 3)), None)
+        m = _make_marginal(jnp.ones((10, 3)), None)
+        assert isinstance(m, EmpiricalDistribution)
         assert isinstance(m, SupportsSampling)
         assert isinstance(m, SupportsMean)
         assert isinstance(m, SupportsVariance)
@@ -312,38 +314,38 @@ class TestArrayMarginal:
 
     def test_mean_uniform(self):
         samples = jnp.array([[1.0], [2.0], [3.0]])
-        m = _RecordMarginal(samples, None)
-        np.testing.assert_allclose(m._mean(), jnp.array([2.0]), atol=1e-5)
+        m = _make_marginal(samples, None)
+        np.testing.assert_allclose(m._mean()["marginal"], jnp.array([2.0]), atol=1e-5)
 
     def test_mean_weighted(self):
         samples = jnp.array([[0.0], [10.0]])
         weights = jnp.array([0.75, 0.25])
-        m = _RecordMarginal(samples, weights)
-        np.testing.assert_allclose(m._mean(), jnp.array([2.5]), atol=1e-5)
+        m = _make_marginal(samples, weights)
+        np.testing.assert_allclose(m._mean()["marginal"], jnp.array([2.5]), atol=1e-5)
 
     def test_variance(self):
         samples = jnp.array([[1.0], [3.0]])
-        m = _RecordMarginal(samples, None)
-        np.testing.assert_allclose(m._variance(), jnp.array([1.0]), atol=1e-5)
+        m = _make_marginal(samples, None)
+        np.testing.assert_allclose(m._variance()["marginal"], jnp.array([1.0]), atol=1e-5)
 
     def test_cov(self):
         samples = jnp.array([[1.0, 2.0], [3.0, 4.0]])
-        m = _RecordMarginal(samples, None)
+        m = _make_marginal(samples, None)
         cov = m._cov()
         assert cov.shape == (2, 2)
 
     def test_sample(self, key):
         samples = jnp.arange(100, dtype=jnp.float32).reshape(-1, 1)
-        m = _RecordMarginal(samples, None)
+        m = _make_marginal(samples, None)
         drawn = m._sample(key, (50,))
-        assert drawn.shape == (50, 1)
+        assert drawn["marginal"].shape == (50, 1)
 
     def test_properties(self):
         samples = jnp.ones((10, 3))
-        m = _RecordMarginal(samples, None)
+        m = _make_marginal(samples, None)
         assert m.num_atoms == 10
-        assert m.event_shape == (3,)
-        assert m.dim == 3
+        assert list(m.event_spec.components) == ["marginal"]
+        assert m.event_spec.spec.vector_size == 3
 
 
 # ---------------------------------------------------------------------------
@@ -443,7 +445,7 @@ class TestListMarginal:
 class TestMakeMarginal:
     def test_array_output(self):
         m = _make_marginal(jnp.ones((5, 2)), None)
-        assert isinstance(m, _RecordMarginal)
+        assert isinstance(m, EmpiricalDistribution)
 
     def test_declared_bare_array_requires_single_leaf_template(self):
         from probpipe import RecordSpec
@@ -464,11 +466,11 @@ class TestMakeMarginal:
         marginal = _make_marginal(samples, None, output_template=template)
 
         assert marginal.event_spec.spec.leaf_shapes == template.leaf_shapes
-        np.testing.assert_allclose(marginal.samples["stats/value"], samples)
+        np.testing.assert_allclose(marginal.atoms["stats/value"], samples)
 
     def test_list_of_arrays(self):
         m = _make_marginal([jnp.array(1.0), jnp.array(2.0)], None)
-        assert isinstance(m, _RecordMarginal)
+        assert isinstance(m, EmpiricalDistribution)
 
     def test_list_of_strings(self):
         m = _make_marginal(["a", "b", "c"], None)
@@ -584,48 +586,46 @@ class TestBroadcastDistributionListOutputSampling:
 
 
 # ---------------------------------------------------------------------------
-# _RecordMarginal additional coverage
+# The record marginal of array outputs, further cases
 # ---------------------------------------------------------------------------
 
 
 class TestArrayMarginalAdditional:
     def test_repr(self):
-        m = _RecordMarginal(jnp.ones((10, 3)), None)
+        m = _make_marginal(jnp.ones((10, 3)), None)
         r = repr(m)
-        assert "MarginalizedBroadcastDistribution" in r
+        assert "EmpiricalDistribution" in r
         assert "num_atoms=10" in r
-        # Auto-wrapped as a single-field Record keyed by the default
-        # marginal name.
-        assert "fields=(marginal)" in r
+        assert "marginal" in r
 
     def test_sample_scalar(self, key):
-        """Single draw (sample_shape=()) returns unbatched array."""
+        """Single draw (sample_shape=()) returns one record of an unbatched array."""
         samples = jnp.arange(100, dtype=jnp.float32).reshape(-1, 1)
-        m = _RecordMarginal(samples, None)
+        m = _make_marginal(samples, None)
         drawn = m._sample(key, ())
-        assert drawn.shape == (1,)
+        assert drawn["marginal"].shape == (1,)
 
     def test_sample_weighted_scalar(self, key):
         """Weighted single draw."""
         samples = jnp.array([[0.0], [100.0]])
         w = jnp.array([0.0, 1.0])
-        m = _RecordMarginal(samples, w)
+        m = _make_marginal(samples, w)
         drawn = m._sample(key, ())
-        np.testing.assert_allclose(drawn, jnp.array([100.0]), atol=1e-5)
+        np.testing.assert_allclose(drawn["marginal"], jnp.array([100.0]), atol=1e-5)
 
     def test_sample_weighted_batch(self, key):
         """Weighted batch draw."""
         samples = jnp.array([[0.0], [100.0]])
         w = jnp.array([0.0, 1.0])
-        m = _RecordMarginal(samples, w)
+        m = _make_marginal(samples, w)
         drawn = m._sample(key, (20,))
-        np.testing.assert_allclose(drawn, jnp.full((20, 1), 100.0), atol=1e-5)
+        np.testing.assert_allclose(drawn["marginal"], jnp.full((20, 1), 100.0), atol=1e-5)
 
     def test_expectation_full(self):
         """Full expectation over all samples."""
         samples = jnp.array([[1.0], [2.0], [3.0]])
-        m = _RecordMarginal(samples, None)
-        result = m._expectation(lambda x: x**2)
+        m = _make_marginal(samples, None)
+        result = m._expectation(lambda x: x["marginal"] ** 2)
         # E[X^2] = (1+4+9)/3 = 14/3
         np.testing.assert_allclose(result, jnp.array([14.0 / 3]), atol=1e-4)
 
@@ -633,15 +633,15 @@ class TestArrayMarginalAdditional:
         """Weighted expectation."""
         samples = jnp.array([[0.0], [10.0]])
         w = jnp.array([0.75, 0.25])
-        m = _RecordMarginal(samples, w)
-        result = m._expectation(lambda x: x)
+        m = _make_marginal(samples, w)
+        result = m._expectation(lambda x: x["marginal"])
         np.testing.assert_allclose(result, jnp.array([2.5]), atol=1e-4)
 
     def test_cov_weighted(self):
         """Weighted covariance."""
         samples = jnp.array([[1.0, 2.0], [3.0, 4.0]])
         w = jnp.array([0.5, 0.5])
-        m = _RecordMarginal(samples, w)
+        m = _make_marginal(samples, w)
         cov = m._cov()
         assert cov.shape == (2, 2)
 
@@ -649,10 +649,10 @@ class TestArrayMarginalAdditional:
         """Weighted variance."""
         samples = jnp.array([[0.0], [10.0]])
         w = jnp.array([0.5, 0.5])
-        m = _RecordMarginal(samples, w)
+        m = _make_marginal(samples, w)
         v = m._variance()
         # Var = 0.5*(0-5)^2 + 0.5*(10-5)^2 = 25
-        np.testing.assert_allclose(v, jnp.array([25.0]), atol=1e-4)
+        np.testing.assert_allclose(v["marginal"], jnp.array([25.0]), atol=1e-4)
 
 
 # ---------------------------------------------------------------------------
@@ -714,7 +714,7 @@ class TestMakeMarginalEdgeCases:
     def test_scalar_output(self):
         """Single scalar value (e.g., from vmap)."""
         m = _make_marginal(3.14, None)
-        assert isinstance(m, _RecordMarginal)
+        assert isinstance(m, EmpiricalDistribution)
 
     def test_with_name(self):
         """Name propagates."""
@@ -723,13 +723,13 @@ class TestMakeMarginalEdgeCases:
 
 
 # ---------------------------------------------------------------------------
-# _RecordMarginal (Record-returning Functions)
+# The record marginal of Record-returning Functions
 # ---------------------------------------------------------------------------
 
 
 class TestRecordBatchMarginal:
-    """Record-returning Function outputs should be RecordBatchMarginal,
-    not _ListMarginal, and must support mean/variance/sample."""
+    """Record-returning Function outputs are an empirical law over the record,
+    not a _ListMarginal, and support mean/variance/sample."""
 
     @pytest.fixture
     def record_workflow(self):
@@ -752,7 +752,7 @@ class TestRecordBatchMarginal:
         prior,
     ):
         result = record_workflow(**prior.select("x", "y"))
-        assert isinstance(result, _RecordMarginal)
+        assert isinstance(result, EmpiricalDistribution)
 
     def test_mean_per_field(self, record_workflow, prior):
         with workflow_run(seed=0):
@@ -787,10 +787,9 @@ class TestRecordBatchMarginal:
         assert s["sum"].shape == (5,)
         assert s["diff"].shape == (5,)
 
-    def test_repr_mentions_fields(self, record_workflow, prior):
+    def test_the_record_names_the_fields(self, record_workflow, prior):
         result = record_workflow(**prior.select("x", "y"))
-        r = repr(result)
-        assert "sum" in r and "diff" in r
+        assert list(result.event_spec.components) == ["sum", "diff"]
 
 
 # ===========================================================================

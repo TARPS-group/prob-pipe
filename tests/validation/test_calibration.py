@@ -13,7 +13,18 @@ import pytest
 import tensorflow_probability.substrates.jax as tfp
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
-from probpipe import EmpiricalDistribution, GLMLikelihood, MultivariateNormal, Normal, SimpleModel
+from probpipe import (
+    EmpiricalDistribution,
+    GLMLikelihood,
+    MultivariateNormal,
+    Normal,
+    NumericArraySpec,
+    NumericRecordBatch,
+    NumericRecordSpec,
+    OutputSpec,
+    RecordSpec,
+    SimpleModel,
+)
 from probpipe.core.record import Record
 from probpipe.validation import SBCResult, interval_coverage, simulation_based_calibration
 from probpipe.validation._calibration import (
@@ -86,7 +97,7 @@ class TestIntervalCoverage:
         assert cov[0.8].shape == (3,)
 
     def test_accepts_distribution_input(self):
-        # A distribution exposing flat_samples scores identically to its raw draws.
+        # An empirical law scores identically to its atoms' flat coordinates.
         draws = jax.random.normal(jax.random.PRNGKey(4), (2000, 2))
         emp = EmpiricalDistribution("z", draws)
         from_dist = interval_coverage(emp, jnp.array([0.3, -0.4]), levels=(0.9,))
@@ -172,18 +183,35 @@ class TestFlattening:
     def test_flatten_point_honors_field_order(self):
         point = Record("r", a=jnp.array([1.0, 2.0]), b=jnp.array([3.0]))
         np.testing.assert_array_equal(
-            np.asarray(_flatten_point(point, ("a", "b"))), [1.0, 2.0, 3.0]
+            np.asarray(_flatten_point(point, OutputSpec(RecordSpec(a=(2,), b=(1,))))),
+            [1.0, 2.0, 3.0],
         )
         # The posterior's field order is authoritative (b before a).
         np.testing.assert_array_equal(
-            np.asarray(_flatten_point(point, ("b", "a"))), [3.0, 1.0, 2.0]
+            np.asarray(_flatten_point(point, OutputSpec(RecordSpec(b=(1,), a=(2,))))),
+            [3.0, 1.0, 2.0],
         )
+
+    def test_flatten_point_ravels_an_array_draw(self):
+        point = jnp.array([[1.0, 2.0], [3.0, 4.0]])
+        flat = _flatten_point(point, OutputSpec(theta=NumericArraySpec((2, 2))))
+        np.testing.assert_array_equal(np.asarray(flat), [1.0, 2.0, 3.0, 4.0])
 
     def test_component_names_expand_per_field(self):
         # A length-k field becomes field[0..k-1]; a scalar field keeps its name —
-        # in posterior field order, matching flat_samples columns.
-        emp = EmpiricalDistribution("m", Record("r", a=jnp.zeros((10, 2)), b=jnp.zeros((10,))))
+        # in posterior field order, matching the flat coordinates of its atoms.
+        atoms = NumericRecordBatch(
+            "r",
+            {"a": jnp.zeros((10, 2)), "b": jnp.zeros((10,))},
+            "atom",
+            element_spec=NumericRecordSpec(a=(2,), b=()),
+        )
+        emp = EmpiricalDistribution("m", atoms)
         assert _component_names(emp) == ("a[0]", "a[1]", "b")
+
+    def test_a_whole_term_posterior_names_its_component(self):
+        emp = EmpiricalDistribution("m", jnp.zeros((10, 2)))
+        assert _component_names(emp) == ("m[0]", "m[1]")
 
 
 class TestSBC:

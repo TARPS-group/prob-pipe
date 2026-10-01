@@ -49,12 +49,6 @@ from probpipe.core._batch import Batch, BatchSpec
 from probpipe.core._broadcast_distributions import BroadcastDistribution
 from probpipe.core._dispatch import MathematicalDomainError, ResolutionError
 from probpipe.core._distribution_array import DistributionArray
-from probpipe.core._empirical import (
-    BootstrapReplicateDistribution,
-    EmpiricalDistribution,
-    RecordBootstrapReplicateDistribution,
-    RecordEmpiricalDistribution,
-)
 from probpipe.core._function_batch import FunctionBatch
 from probpipe.core._numeric import Numeric
 from probpipe.core._numeric_array import NumericArray
@@ -62,7 +56,6 @@ from probpipe.core._numeric_array_batch import NumericArrayBatch
 from probpipe.core._numeric_record import NumericRecord
 from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._numeric_record_distribution import (
-    BootstrapDistribution,
     FlatNumericRecordDistribution,
     FlattenedDistributionView,
     NumericRecordDistribution,
@@ -110,11 +103,7 @@ from probpipe.core.transition import (
     with_resampling,
 )
 from probpipe.distributions import (
-    JointEmpirical,
     JointGaussian,
-    # KDE
-    KDEDistribution,
-    NumericJointEmpirical,
     # Joint
     ProductDistribution,
     SequentialJointDistribution,
@@ -140,6 +129,7 @@ from probpipe.distributions._distribution import (
     NumericDistribution,
     set_default_num_evaluations,
 )
+from probpipe.distributions._empirical import EmpiricalDistribution
 from probpipe.families import (
     Bernoulli,
     Beta,
@@ -172,6 +162,11 @@ from probpipe.families import (
     UnnormalizedDistribution,
     VonMisesFisher,
     Wishart,
+)
+from probpipe.families._resampling import (
+    BootstrapDistribution,
+    BootstrapReplicateDistribution,
+    KDEDistribution,
 )
 from probpipe.functions import (
     AbstractModule,
@@ -272,7 +267,6 @@ __all__ = [
     "IncrementalConditioner",
     "InputSpec",
     "InverseGamma",
-    "JointEmpirical",
     "JointGaussian",
     "KDEDistribution",
     "Laplace",
@@ -292,7 +286,6 @@ __all__ = [
     "NumericArrayBatch",
     "NumericArraySpec",
     "NumericDistribution",
-    "NumericJointEmpirical",
     "NumericRecord",
     "NumericRecordBatch",
     "NumericRecordDistribution",
@@ -314,9 +307,7 @@ __all__ = [
     "RandomMeasure",
     "Record",
     "RecordBatch",
-    "RecordBootstrapReplicateDistribution",
     "RecordDistribution",
-    "RecordEmpiricalDistribution",
     "RecordSpec",
     "ReplayCompatibilityError",
     "ReplayUnsupportedCallableError",

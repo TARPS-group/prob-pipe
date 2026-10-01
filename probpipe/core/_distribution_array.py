@@ -290,11 +290,6 @@ class DistributionArray(Distribution):
         self._backend = None
         name = auto_name(name, "distribution_array")
         super().__init__(name, _cell_declaration(components, name))
-        # A DistributionArray holding MC-marginal components inherits
-        # their approximation status; if any component is approximate
-        # (a _MixtureMarginal or RecordEmpiricalDistribution), so is
-        # the stack.
-        self._approximate = any(getattr(c, "is_approximate", False) for c in components)
 
     # -- public batched-construction factory --------------------------------
 
@@ -471,12 +466,6 @@ class DistributionArray(Distribution):
         # Cells are named after the array, so one cell's term is declared
         # under the array's own name.
         Distribution.__init__(instance, name, OutputSpec(**{name: backend.cell_spec}))
-        # Approximation status flows from the backend. TFP-backed
-        # arrays are exact; a future Record-backend (over a
-        # ``RecordEmpiricalDistribution``) will report
-        # ``is_approximate=True`` on its own samples and the array
-        # picks that up here.
-        set_attribute("_approximate", bool(getattr(backend, "is_approximate", False)))
         return instance
 
     # -- structure -----------------------------------------------------------

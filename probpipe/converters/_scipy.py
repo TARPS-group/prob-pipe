@@ -12,9 +12,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..core._empirical import RecordEmpiricalDistribution
 from ..core._numeric_record_distribution import NumericRecordDistribution
 from ..core.provenance import Provenance
+from ..distributions._empirical import EmpiricalDistribution
 from ..families._backend import TFPDistribution
 from ._registry import (
     _SCIPY_PROVIDER_ABI,
@@ -175,18 +175,17 @@ class ScipyConverter(Converter):
     def source_types(self) -> tuple[type, ...]:
         if not _HAS_SCIPY:
             return ()
-        return (_rv_frozen, NumericRecordDistribution, TFPDistribution, RecordEmpiricalDistribution)
+        return (_rv_frozen, NumericRecordDistribution, TFPDistribution, EmpiricalDistribution)
 
     def target_types(self) -> tuple[type, ...]:
         if not _HAS_SCIPY:
             return ()
-        return (NumericRecordDistribution, TFPDistribution, RecordEmpiricalDistribution, _rv_frozen)
+        return (NumericRecordDistribution, TFPDistribution, EmpiricalDistribution, _rv_frozen)
 
     @staticmethod
     def _is_probpipe_target(target_type: type) -> bool:
         return isinstance(target_type, type) and (
-            issubclass(target_type, _NUMERIC_LAWS)
-            or issubclass(target_type, RecordEmpiricalDistribution)
+            issubclass(target_type, _NUMERIC_LAWS) or issubclass(target_type, EmpiricalDistribution)
         )
 
     def check(self, source: Any, target_type: type) -> ConversionInfo:
@@ -301,7 +300,7 @@ class ScipyConverter(Converter):
 
                 return converter_registry.convert(pp_dist, target_type, key=key, **kwargs)
 
-            # Unknown scipy: sample -> RecordEmpiricalDistribution
+            # Unknown scipy: sample -> EmpiricalDistribution
             kwargs.pop("num_samples", None)
             sample_shape = plan.sample_shape
             if sample_shape is None:
@@ -316,9 +315,9 @@ class ScipyConverter(Converter):
                 )
             )
             emp_name = kwargs.get("name") or getattr(source, "name", None) or "samples"
-            emp = RecordEmpiricalDistribution(emp_name, samples)
+            emp = EmpiricalDistribution(emp_name, samples)
             emp.with_provenance(Provenance.create("convert_from_scipy", parents=[]))
-            if issubclass(target_type, RecordEmpiricalDistribution):
+            if issubclass(target_type, EmpiricalDistribution):
                 return emp
             from ._registry import converter_registry
 

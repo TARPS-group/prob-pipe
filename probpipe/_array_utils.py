@@ -36,8 +36,7 @@ def _as_array(x: Any) -> Array:
 def _is_numeric_array(x: object) -> bool:
     """Return ``True`` if *x* is a JAX or numpy array with a numeric dtype.
 
-    Numpy object arrays (used for generic non-array samples in
-    ``EmpiricalDistribution``) return ``False``.
+    Numpy object arrays, which hold values that are not arrays, return ``False``.
     """
     if isinstance(x, jax.Array):
         return True

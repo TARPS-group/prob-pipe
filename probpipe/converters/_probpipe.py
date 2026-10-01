@@ -18,11 +18,13 @@ from typing import Any
 
 import jax.numpy as jnp
 
-from ..core._empirical import EmpiricalDistribution, RecordEmpiricalDistribution
+from ..core._broadcast_distributions import SAMPLE_LEVEL
 from ..core._numeric_record_distribution import NumericRecordDistribution
+from ..core._spec_base import NumericArraySpec, NumericSpec
 from ..core.provenance import Provenance
 from ..distributions._capabilities import SupportsMean
 from ..distributions._distribution import Distribution, NumericDistribution
+from ..distributions._empirical import EmpiricalDistribution, _batch_form, _coordinates
 from ..families._backend import _allow_batched_tfp_init
 from ..families._transformed import BijectorTransformedDistribution
 from ._registry import (
@@ -185,33 +187,18 @@ def _probpipe_nonrandom_plan(
 # ---------------------------------------------------------------------------
 
 
-def _mm_provenance(source, mean_result=None, var_result=None):
-    """Build provenance for a moment-matching conversion.
-
-    If *mean_result* or *var_result* are ``BootstrapDistribution``
-    instances (from MC fallback), they are stored in the metadata so
-    users can inspect conversion error.
-    """
-    from ..core._numeric_record_distribution import BootstrapDistribution
-
-    metadata = {}
-    if isinstance(mean_result, BootstrapDistribution):
-        metadata["mean_bootstrap"] = mean_result
-    if isinstance(var_result, BootstrapDistribution):
-        metadata["var_bootstrap"] = var_result
-    return Provenance.create("from_distribution", parents=[source], metadata=metadata)
+def _mm_provenance(source):
+    """Build provenance for a moment-matching conversion of *source*."""
+    return Provenance.create("from_distribution", parents=[source], metadata={})
 
 
 def _point_estimate(x):
-    """Extract a plain array from a value that may be a BootstrapDistribution
-    or a single-field NumericRecord (the auto-wrap form returned by
-    ``RecordEmpiricalDistribution._mean`` — numeric arrays auto-wrap
-    as a single-field Record)."""
-    from ..core._numeric_record import NumericRecord
-    from ..core._numeric_record_distribution import BootstrapDistribution
+    """Extract a plain array from a moment that may be a single-field NumericRecord.
 
-    if isinstance(x, BootstrapDistribution):
-        x = x._mean()
+    A law that draws a one-field record returns its moments in that form.
+    """
+    from ..core._numeric_record import NumericRecord
+
     if isinstance(x, NumericRecord) and len(x.fields) == 1:
         return x[x.fields[0]]
     return x
@@ -234,7 +221,7 @@ def _convert_to_normal(source, key, **kw):
     m_raw, v_raw = _source_mean(source, kw), _source_variance(source, kw)
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     r = Normal(loc=m, scale=jnp.sqrt(v), name=kw.get("name") or source.name)
-    r.with_provenance(_mm_provenance(source, m_raw, v_raw))
+    r.with_provenance(_mm_provenance(source))
     return r
 
 
@@ -250,7 +237,7 @@ def _convert_to_beta(source, key, **kw):
     alpha = jnp.maximum(m * common, 0.01)
     beta = jnp.maximum((1.0 - m) * common, 0.01)
     r = Beta(alpha=alpha, beta=beta, name=kw.get("name") or source.name)
-    r.with_provenance(_mm_provenance(source, m_raw, v_raw))
+    r.with_provenance(_mm_provenance(source))
     return r
 
 
@@ -263,7 +250,7 @@ def _convert_to_gamma(source, key, **kw):
     m_raw, v_raw = _source_mean(source, kw), _source_variance(source, kw)
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     r = Gamma(concentration=m**2 / v, rate=m / v, name=kw.get("name") or source.name)
-    r.with_provenance(_mm_provenance(source, m_raw, v_raw))
+    r.with_provenance(_mm_provenance(source))
     return r
 
 
@@ -278,7 +265,7 @@ def _convert_to_inverse_gamma(source, key, **kw):
     conc = m**2 / v + 2
     scale = m * (m**2 / v + 1)
     r = InverseGamma(concentration=conc, scale=scale, name=kw.get("name") or source.name)
-    r.with_provenance(_mm_provenance(source, m_raw, v_raw))
+    r.with_provenance(_mm_provenance(source))
     return r
 
 
@@ -291,7 +278,7 @@ def _convert_to_exponential(source, key, **kw):
     m_raw = _source_mean(source, kw)
     m = _point_estimate(m_raw)
     r = Exponential(rate=1.0 / m, name=kw.get("name") or source.name)
-    r.with_provenance(_mm_provenance(source, m_raw))
+    r.with_provenance(_mm_provenance(source))
     return r
 
 
@@ -306,7 +293,7 @@ def _convert_to_lognormal(source, key, **kw):
     scale = jnp.sqrt(jnp.log(1.0 + v / (m**2)))
     loc = jnp.log(m) - scale**2 / 2.0
     r = LogNormal(loc=loc, scale=scale, name=kw.get("name") or source.name)
-    r.with_provenance(_mm_provenance(source, m_raw, v_raw))
+    r.with_provenance(_mm_provenance(source))
     return r
 
 
@@ -323,7 +310,7 @@ def _convert_to_studentt(source, key, **kw):
     r = StudentT(
         df=df, loc=m, scale=jnp.sqrt(v * (df - 2.0) / df), name=kw.get("name") or source.name
     )
-    r.with_provenance(_mm_provenance(source, m_raw, v_raw))
+    r.with_provenance(_mm_provenance(source))
     return r
 
 
@@ -337,7 +324,7 @@ def _convert_to_uniform(source, key, **kw):
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     half = jnp.sqrt(3.0 * v)
     r = Uniform(low=m - half, high=m + half, name=kw.get("name") or source.name)
-    r.with_provenance(_mm_provenance(source, m_raw, v_raw))
+    r.with_provenance(_mm_provenance(source))
     return r
 
 
@@ -350,7 +337,7 @@ def _convert_to_cauchy(source, key, **kw):
     m_raw, v_raw = _source_mean(source, kw), _source_variance(source, kw)
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     r = Cauchy(loc=m, scale=jnp.sqrt(v) / 2.0, name=kw.get("name") or source.name)
-    r.with_provenance(_mm_provenance(source, m_raw, v_raw))
+    r.with_provenance(_mm_provenance(source))
     return r
 
 
@@ -363,7 +350,7 @@ def _convert_to_laplace(source, key, **kw):
     m_raw, v_raw = _source_mean(source, kw), _source_variance(source, kw)
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     r = Laplace(loc=m, scale=jnp.sqrt(v / 2.0), name=kw.get("name") or source.name)
-    r.with_provenance(_mm_provenance(source, m_raw, v_raw))
+    r.with_provenance(_mm_provenance(source))
     return r
 
 
@@ -377,7 +364,7 @@ def _convert_to_halfnormal(source, key, **kw):
     v = _point_estimate(v_raw)
     # var = scale^2 * (1 - 2/pi), so scale = sqrt(var / (1 - 2/pi))
     r = HalfNormal(scale=jnp.sqrt(v / (1.0 - 2.0 / jnp.pi)), name=kw.get("name") or source.name)
-    r.with_provenance(_mm_provenance(source, var_result=v_raw))
+    r.with_provenance(_mm_provenance(source))
     return r
 
 
@@ -427,7 +414,7 @@ def _convert_to_truncatednormal(source, key, **kw):
         high=jnp.max(samples),
         name=kw.get("name") or source.name,
     )
-    r.with_provenance(_mm_provenance(source, m_raw, v_raw))
+    r.with_provenance(_mm_provenance(source))
     return r
 
 
@@ -515,10 +502,10 @@ def _convert_to_multivariatenormal(source, key, **kw):
     name = kw.get("name") or source.name
     if isinstance(source, MultivariateNormal):
         return source
-    if isinstance(source, RecordEmpiricalDistribution):
-        loc = _source_mean(source, kw)
-        cov_mat = _source_covariance(source, kw)
-        r = MultivariateNormal(loc=loc, cov=cov_mat, name=name)
+    if isinstance(source, EmpiricalDistribution):
+        # The flat coordinates of the atoms give the moments of every numeric event.
+        loc = source.weights @ _coordinates(source)
+        r = MultivariateNormal(loc=loc, cov=source._cov().to_dense(), name=name)
         r.with_provenance(_mm_provenance(source))
         return r
     # General case: use _mean() and _cov() directly
@@ -534,7 +521,7 @@ def _convert_to_multivariatenormal(source, key, **kw):
     cov_mat = 0.5 * (cov_mat + cov_mat.T)
     cov_mat = cov_mat + 1e-6 * jnp.eye(cov_mat.shape[0])
     r = MultivariateNormal(loc=loc, cov=cov_mat, name=name)
-    r.with_provenance(_mm_provenance(source, m_raw))
+    r.with_provenance(_mm_provenance(source))
     return r
 
 
@@ -550,7 +537,7 @@ def _convert_to_dirichlet(source, key, **kw):
     conc0 = jnp.maximum(conc0, 0.01)
     conc = jnp.maximum(m * conc0, 0.01)
     r = Dirichlet(concentration=conc, name=kw.get("name") or source.name)
-    r.with_provenance(_mm_provenance(source, m_raw, v_raw))
+    r.with_provenance(_mm_provenance(source))
     return r
 
 
@@ -570,7 +557,7 @@ def _convert_to_multinomial(source, key, **kw):
     probs = m / total_count
     probs = probs / probs.sum()
     r = Multinomial(total_count=total_count, probs=probs, name=kw.get("name") or source.name)
-    r.with_provenance(_mm_provenance(source, m_raw))
+    r.with_provenance(_mm_provenance(source))
     return r
 
 
@@ -609,67 +596,75 @@ def _convert_to_vonmisesfisher(source, key, **kw):
     r = VonMisesFisher(
         mean_direction=mean_dir, concentration=conc, name=kw.get("name") or source.name
     )
-    r.with_provenance(_mm_provenance(source, m_raw))
+    r.with_provenance(_mm_provenance(source))
     return r
 
 
 def _convert_to_empirical(source, key, **kw):
-    """Convert any distribution to RecordEmpiricalDistribution by sampling."""
-    if isinstance(source, RecordEmpiricalDistribution):
+    """Convert any distribution to an EmpiricalDistribution of its draws.
+
+    The draws are the atoms, on the level ``sample`` that drawing them mints,
+    and keep the source's event declaration, so the empirical law's components
+    and packaging are the source's.
+    """
+    if isinstance(source, EmpiricalDistribution):
         return source
+    name = kw.get("name") or source.name
     samples = _sample_with_execution_plan(source, key, kw)
-    r = RecordEmpiricalDistribution(kw.get("name") or source.name, samples)
+    atoms = _batch_form(name, samples, SAMPLE_LEVEL, source.event_spec.spec)
+    r = EmpiricalDistribution(name, atoms, event_spec=source.event_spec)
     r.with_provenance(_mm_provenance(source))
     return r
+
+
+def _smoothed_atoms(name, values, spec):
+    """*values*, raw values of *spec* along one axis, as a KDE takes its atoms.
+
+    An array event's values are an array; a record event's are a batch of
+    records on one level.
+    """
+    if isinstance(spec, NumericArraySpec):
+        return jnp.asarray(values)
+    return _batch_form(name, values, SAMPLE_LEVEL, spec)
 
 
 def _convert_to_kde(source, key, **kw):
     """Convert any distribution to a KDEDistribution.
 
-    For a ``RecordEmpiricalDistribution`` source (including its
-    subclasses such as :class:`~probpipe.inference.ApproximateDistribution`),
-    the stored samples, weights, and declared record are reused
-    directly via :meth:`KDEDistribution.from_empirical` — which
-    preserves named-field structure end-to-end. Other sources fall
-    back to drawing fresh samples, and the KDE draws one array.
+    An empirical source's atoms and weights are the KDE's, so an inference
+    result's posterior keeps its target's event declaration. Other sources are
+    sampled, and the KDE smooths the draws under the source's declaration.
 
     Raises
     ------
     TypeError
-        If *source* is a generic ``EmpiricalDistribution``
-        (non-numeric / object-array storage). KDE requires numeric
-        samples; route the source through
-        ``RecordEmpiricalDistribution`` or supply a numeric source.
+        If *source*'s event is not numeric, since a KDE smooths numeric atoms.
     """
-    from ..distributions.kde import KDEDistribution
+    from ..families._resampling import KDEDistribution
 
     if isinstance(source, KDEDistribution):
         return source
 
     bandwidth = kw.pop("bandwidth", None)
     name = kw.get("name") or source.name
+    spec = source.event_spec.spec
+    if not isinstance(spec, NumericSpec):
+        raise TypeError(f"a KDE smooths numeric atoms, and {source.name!r} declares {spec!r}")
 
-    if isinstance(source, RecordEmpiricalDistribution):
-        # Single-field and multi-field paths both route through
-        # ``from_empirical``, which threads the source's declared record so
-        # KDE preserves named fields.
-        r = KDEDistribution.from_empirical(source, bandwidth=bandwidth, name=name)
+    if isinstance(source, EmpiricalDistribution):
+        r = KDEDistribution(
+            name,
+            _smoothed_atoms(name, source._rows, source.event_spec.spec),
+            bandwidth,
+            source.weights,
+            event_spec=source.event_spec,
+        )
         r.with_provenance(_mm_provenance(source))
         return r
 
-    if isinstance(source, EmpiricalDistribution):
-        # Generic (object-array) EmpiricalDistribution: KDE is
-        # nonsensical because the samples aren't numeric.
-        raise TypeError(
-            f"Cannot KDE-convert generic (object-array) "
-            f"EmpiricalDistribution (got samples of dtype "
-            f"{getattr(source.samples, 'dtype', type(source.samples).__name__)}). "
-            f"KDE requires numeric samples; route through "
-            f"RecordEmpiricalDistribution or supply a numeric source."
-        )
-
     samples = _sample_with_execution_plan(source, key, kw)
-    r = KDEDistribution(name, samples, bandwidth=bandwidth)
+    atoms = _smoothed_atoms(name, samples, source.event_spec.spec)
+    r = KDEDistribution(name, atoms, bandwidth, event_spec=source.event_spec)
     r.with_provenance(_mm_provenance(source))
     return r
 
@@ -707,7 +702,6 @@ def _build_dispatch_table() -> dict[str, callable]:
         "Wishart": _convert_to_wishart,
         "VonMisesFisher": _convert_to_vonmisesfisher,
         "EmpiricalDistribution": _convert_to_empirical,
-        "RecordEmpiricalDistribution": _convert_to_empirical,
         "KDEDistribution": _convert_to_kde,
     }
 
@@ -803,7 +797,6 @@ class ProbPipeConverter(Converter):
             "Categorical",
             "Wishart",
             "EmpiricalDistribution",
-            "RecordEmpiricalDistribution",
         }
         if target_name in sampled_targets:
             return _probpipe_sampled_plan(kwargs.get("num_samples", DEFAULT_NUM_SAMPLES))
@@ -814,7 +807,7 @@ class ProbPipeConverter(Converter):
             return _probpipe_sampled_plan(kwargs.get("num_samples", DEFAULT_NUM_SAMPLES))
 
         if target_name == "MultivariateNormal":
-            if isinstance(source, RecordEmpiricalDistribution):
+            if isinstance(source, EmpiricalDistribution):
                 return _probpipe_nonrandom_plan()
             return _conditional_conversion_plan(kwargs.get("num_samples", DEFAULT_NUM_SAMPLES))
 
@@ -877,12 +870,6 @@ class ProbPipeConverter(Converter):
         if check_support and isinstance(result, NumericDistribution):
             with contextlib.suppress(AttributeError):
                 NumericRecordDistribution._check_support_compatible(result, source)
-
-        # Mark approximate if source is approximate or conversion used sampling.
-        # Written through ``object.__setattr__``: the result is a tracked term,
-        # and this is the conversion finishing it rather than a later edit.
-        if source.is_approximate or not isinstance(source, target_type):
-            object.__setattr__(result, "_approximate", True)
 
         return result
 

@@ -15,8 +15,6 @@ Provides:
     (single field, ``event_shape=(N,)``), used as the input type for
     algorithms that consume a flat parameter vector and as the source
     of :meth:`~FlatNumericRecordDistribution.as_record_distribution`.
-  - :class:`BootstrapDistribution` — MC error tracking via bootstrap
-    resampling.
   - :class:`FlattenedDistributionView` — flat view of any distribution
     (always a ``FlatNumericRecordDistribution`` by construction).
   - :class:`NumericRecordDistributionView` — inverse, lifting a flat
@@ -48,8 +46,6 @@ if TYPE_CHECKING:
 import jax
 import jax.numpy as jnp
 
-from .._dtype import _as_float_array
-from .._weights import Weights
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..distributions._capabilities import (
     SupportsCovariance,
@@ -431,101 +427,6 @@ class NumericRecordDistribution(RecordDistribution, NumericDistribution):
         except (AttributeError, ValueError):
             parts.append(f"event_shapes={self.event_shapes}")
         return f"{parts[0]}({', '.join(parts[1:])})"
-
-
-# ---------------------------------------------------------------------------
-# BootstrapDistribution
-# ---------------------------------------------------------------------------
-
-
-class BootstrapDistribution(
-    NumericRecordDistribution, SupportsSampling, SupportsMean, SupportsVariance
-):
-    """Distribution over bootstrap-resampled means of a statistic.
-
-    Given *n* evaluations ``f(x_1), ..., f(x_n)`` where ``x_i ~ P``,
-    this represents the sampling distribution of the sample mean
-    ``(1/n) sum f(x_i)``, capturing Monte Carlo error.
-
-    Parameters
-    ----------
-    name : str
-        Distribution name.
-    evaluations : array-like, shape ``(n, *stat_shape)``
-        The individual ``f(x_i)`` values.
-    weights : array-like, :class:`~probpipe.Weights`, or None
-        Non-negative weights (normalized internally).  A pre-built
-        :class:`~probpipe.Weights` object is also accepted.  Mutually
-        exclusive with *log_weights*.  When neither is given, uniform
-        weights are used.
-    log_weights : array-like, :class:`~probpipe.Weights`, or None
-        Log-unnormalized weights.  A pre-built :class:`~probpipe.Weights`
-        object is also accepted.  Mutually exclusive with *weights*.
-    """
-
-    def __init__(
-        self,
-        name: str,
-        evaluations: ArrayLike,
-        *,
-        weights: ArrayLike | Weights | None = None,
-        log_weights: ArrayLike | Weights | None = None,
-    ):
-        self._evaluations = _as_float_array(evaluations)
-        if self._evaluations.ndim == 0:
-            raise ValueError("evaluations must have at least 1 dimension.")
-        self._num_atoms = self._evaluations.shape[0]
-        self._w = Weights(
-            n=self._num_atoms,
-            weights=weights,
-            log_weights=log_weights,
-        )
-        # A draw is one resampled mean, an array of the statistic's shape.
-        super().__init__(
-            name,
-            NumericArraySpec(self._evaluations.shape[1:], self._evaluations.dtype, real),
-        )
-        self._approximate = True
-
-    @property
-    def num_atoms(self) -> int:
-        """Number of stored atoms (function evaluations) backing this distribution."""
-        return self._num_atoms
-
-    @property
-    def evaluations(self) -> Array:
-        return self._evaluations
-
-    def _mean(self) -> Array:
-        """Point estimate: (weighted) mean of evaluations."""
-        return self._w.mean(self._evaluations)
-
-    def _variance(self) -> Array:
-        """Variance of the sampling distribution (approx Var[f(X)] / n_eff)."""
-        sample_var = self._w.variance(self._evaluations)
-        return sample_var / self._w.effective_sample_size
-
-    def _sample(
-        self,
-        key: PRNGKey,
-        sample_shape: tuple[int, ...] = (),
-    ) -> Array:
-        """Draw bootstrap resamples of the mean."""
-
-        def _one_resample(k):
-            idx = self._w.choice(k, shape=(self._num_atoms,))
-            return jnp.mean(self._evaluations[idx], axis=0)
-
-        if sample_shape == ():
-            return _one_resample(key)
-        total = prod(sample_shape)
-        keys = jax.random.split(key, total)
-
-        results = jax.vmap(_one_resample)(keys)
-        return results.reshape(sample_shape + self.event_shape)
-
-    def __repr__(self) -> str:
-        return f"BootstrapDistribution(num_atoms={self._num_atoms}, event_shape={self.event_shape})"
 
 
 # ---------------------------------------------------------------------------

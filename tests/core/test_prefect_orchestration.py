@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 
 import probpipe.functions._broker as broker_mod
-from probpipe import Normal, WorkflowKind, sample, workflow_run
+from probpipe import EmpiricalDistribution, Normal, WorkflowKind, sample, workflow_run
 from probpipe.values._function_base import Function
 
 prefect_testing = pytest.importorskip("prefect.testing.utilities")
@@ -211,7 +211,7 @@ class TestPrefectRngConformance:
             )
             with warning_context, workflow_run(seed=17):
                 result = workflow(x=normal_dist)
-            samples.append(np.asarray(result.samples))
+            samples.append(np.asarray(result.atoms))
 
         for sample_values in samples[1:]:
             np.testing.assert_array_equal(sample_values, samples[0])
@@ -326,7 +326,7 @@ class TestPrefectTaskRowWise:
         )
         with workflow_run(seed=0):
             result = wf(x=normal_dist)
-        assert hasattr(result, "samples")
+        assert isinstance(result, EmpiricalDistribution)
         assert result.num_atoms == 30
 
     def test_output_values_correct(self, normal_dist):
@@ -341,7 +341,7 @@ class TestPrefectTaskRowWise:
             result = wf(x=normal_dist)
         # Mean should be ~2.0 (1.0 + 1.0)
         np.testing.assert_allclose(
-            float(jnp.mean(result.samples)),
+            float(jnp.mean(np.asarray(result.atoms))),
             2.0,
             atol=0.15,
         )
@@ -357,7 +357,7 @@ class TestPrefectTaskRowWise:
         d2 = Normal(loc=2.0, scale=0.3, name="y")
         with workflow_run(seed=2):
             result = wf(x=normal_dist, y=d2)
-        assert hasattr(result, "samples")
+        assert isinstance(result, EmpiricalDistribution)
         assert result.num_atoms == 30
 
 
@@ -379,7 +379,7 @@ class TestPrefectFlowRowWise:
         )
         with workflow_run(seed=10):
             result = wf(x=normal_dist)
-        assert hasattr(result, "samples")
+        assert isinstance(result, EmpiricalDistribution)
         assert result.num_atoms == 25
 
     def test_output_values_correct(self, normal_dist):
@@ -394,7 +394,7 @@ class TestPrefectFlowRowWise:
             result = wf(x=normal_dist)
         # Mean should be ~2.0 (1.0 * 2)
         np.testing.assert_allclose(
-            float(jnp.mean(result.samples)),
+            float(jnp.mean(np.asarray(result.atoms))),
             2.0,
             atol=0.15,
         )
@@ -503,7 +503,7 @@ class TestPrefectImportGuard:
         )
         with workflow_run(seed=60), pytest.warns(UserWarning, match="Prefect is not installed"):
             result = wf(x=normal_dist)
-        assert hasattr(result, "samples")
+        assert isinstance(result, EmpiricalDistribution)
 
     def test_flow_warns_without_prefect(self, normal_dist, monkeypatch):
         import probpipe.functions._function as node_mod
@@ -520,7 +520,7 @@ class TestPrefectImportGuard:
         )
         with workflow_run(seed=61), pytest.warns(UserWarning, match="Prefect is not installed"):
             result = wf(x=normal_dist)
-        assert hasattr(result, "samples")
+        assert isinstance(result, EmpiricalDistribution)
 
     def test_jax_warns_without_prefect(self, normal_dist, monkeypatch):
         import probpipe.functions._function as node_mod
@@ -537,4 +537,4 @@ class TestPrefectImportGuard:
         )
         with workflow_run(seed=62), pytest.warns(UserWarning, match="Prefect is not installed"):
             result = wf(x=normal_dist)
-        assert hasattr(result, "samples")
+        assert isinstance(result, EmpiricalDistribution)

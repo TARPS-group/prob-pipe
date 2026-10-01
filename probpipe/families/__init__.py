@@ -13,8 +13,9 @@ Provides:
     ``Poisson``, ``Categorical``, and ``NegativeBinomial``; and the
     multivariate ``MultivariateNormal``, ``Dirichlet``, ``Multinomial``,
     ``Wishart``, and ``VonMisesFisher``;
-  - the smoothing kernels of a kernel density estimate: ``SmoothingKernel``,
-    ``GaussianKernel``, and ``EpanechnikovKernel``;
+  - the resampling families: ``BootstrapReplicateDistribution``,
+    ``BootstrapDistribution``, and ``KDEDistribution``, with the smoothing
+    kernels ``SmoothingKernel``, ``GaussianKernel``, and ``EpanechnikovKernel``;
   - the mixture family, ``MixtureDistribution``;
   - the evaluation-result families, ``LinearPushforwardDistribution`` and
     ``BijectorTransformedDistribution``;
@@ -66,7 +67,14 @@ from ._mixture import MixtureDistribution
 from ._multivariate import Dirichlet, Multinomial, MultivariateNormal, VonMisesFisher, Wishart
 from ._programs import PyMCModel, StanModel, UnnormalizedDistribution
 from ._random_functions import RandomFunction, RandomMeasure
-from ._resampling import EpanechnikovKernel, GaussianKernel, SmoothingKernel
+from ._resampling import (
+    BootstrapDistribution,
+    BootstrapReplicateDistribution,
+    EpanechnikovKernel,
+    GaussianKernel,
+    KDEDistribution,
+    SmoothingKernel,
+)
 from ._transformed import BijectorTransformedDistribution, LinearPushforwardDistribution
 
 __all__ = [
@@ -75,6 +83,8 @@ __all__ = [
     "Beta",
     "BijectorTransformedDistribution",
     "Binomial",
+    "BootstrapDistribution",
+    "BootstrapReplicateDistribution",
     "Categorical",
     "Cauchy",
     "Dirichlet",
@@ -90,6 +100,7 @@ __all__ = [
     "HalfCauchy",
     "HalfNormal",
     "InverseGamma",
+    "KDEDistribution",
     "Laplace",
     "LinearBasisFunction",
     "LinearGaussianConditional",

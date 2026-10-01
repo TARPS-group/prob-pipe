@@ -25,10 +25,11 @@ from .._weights import (
 from ..core._array_backend import _to_jax_array
 from ..core._batch import Batch
 from ..core._dispatch import Feasibility
+from ..core._kinds import batch_class_for_spec
 from ..core._numeric_array_batch import NumericArrayBatch
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._object_batch import _is_object_array, _ObjectBatch
-from ..core._record_batch import RecordBatch
+from ..core._record_batch import RecordBatch, _batch_class_for
 from ..core._record_spec import NumericRecordSpec, RecordSpec
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec
 from ..core._specs import OutputSpec
@@ -45,7 +46,7 @@ from ._capabilities import (
     _capability_subclass,
 )
 from ._distribution import Distribution, _whole_term_component
-from ._factored import _stacked
+from ._factored import _raw_record, _stacked
 from ._views import _node_at
 
 if TYPE_CHECKING:
@@ -55,9 +56,6 @@ if TYPE_CHECKING:
 __all__ = ["EmpiricalDistribution"]
 
 _PATH_SEP = "/"
-
-#: The level a bare array's leading axis becomes when the array is stored as a batch.
-_ATOM_LEVEL = "atom"
 
 #: The moments an instance claims when its event is numeric.
 _NUMERIC_MOMENTS = (SupportsMean, SupportsVariance, SupportsCovariance, SupportsQuantile)
@@ -178,6 +176,26 @@ def _taken(column: Any, index: Any) -> Any:
 def _ranks(atoms: Batch) -> tuple[int, ...]:
     """How many axes each level of *atoms* holds, outermost first."""
     return tuple(len(group) for group in atoms.axis_groups)
+
+
+def _batch_form(name: str, raw: Any, level: str, spec: TermSpec) -> Batch:
+    """*raw*, values of *spec* in raw form along one leading axis, as their batch on *level*.
+
+    The raw form is an array of array values, the nested mapping of columns, or
+    a ``Record`` of them, for record values, and an object array of any other
+    values.
+
+    Raises
+    ------
+    TypeError
+        If *spec* has no batch form.
+    """
+    if isinstance(spec, RecordSpec):
+        return _batch_class_for(spec)(name, _raw_record(raw), level, element_spec=spec)
+    batch_class = batch_class_for_spec(spec)
+    if batch_class is None:
+        raise TypeError(f"a value declared as {type(spec).__name__} has no batch form")
+    return batch_class(name, raw, level, element_spec=spec)
 
 
 # ---------------------------------------------------------------------------
@@ -304,9 +322,10 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
     The atoms are given in the event's batch form, such as a ``RecordBatch`` or
     an ``OpaqueBatch``, or as an array whose leading axis indexes array atoms.
     Every batch axis indexes atoms, in the row-major order positional indexing
-    reads. The atoms are stored as given, and an array is stored as a
-    ``NumericArrayBatch`` whose one level is named ``atom``. The weights are
-    normalized and default to uniform.
+    reads. A batch is stored as given and keeps its own levels, which
+    ``with_level_names`` renames. An array is stored as a ``NumericArrayBatch``
+    on one level named by *level*, which defaults to the law's component. The
+    weights are normalized and default to uniform.
 
     **The event declaration.** Without *event_spec*, record atoms expose their
     fields, and any other atoms form a whole-term event whose component defaults
@@ -348,6 +367,9 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         flat, one per atom in the row-major order of the batch axes, or shaped
         like the batch axes. A ``Weights`` object, which can be built from log
         weights, is adopted as it is.
+    level : str, optional
+        The name of the one level a plain array's atoms lie on. It defaults to
+        the law's component.
     event_spec : OutputSpec, optional
         The declaration of one draw, completed with the atoms' spec.
 
@@ -355,13 +377,14 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
     ------
     TypeError
         If *name* is not a non-empty string, *atoms* is neither a batch of a
-        stored kind nor a numeric array, *event_spec* is not an ``OutputSpec``,
-        or *event_spec* exposes a record for atoms that are not records.
+        stored kind nor a numeric array, *level* is not a string or is given
+        with a batch of atoms, *event_spec* is not an ``OutputSpec``, or
+        *event_spec* exposes a record for atoms that are not records.
     ValueError
         If *atoms* holds no atom or is a 0-d array, the weights do not number
-        one per atom or are negative or sum to zero, *event_spec* declares a type
-        that does not unify with the atoms' spec, or the default component *name*
-        is not a valid component name.
+        one per atom or are negative or sum to zero, *level* is not a valid level
+        name, *event_spec* declares a type that does not unify with the atoms'
+        spec, or the default component *name* is not a valid component name.
 
     Examples
     --------
@@ -369,6 +392,8 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
     >>> law = EmpiricalDistribution("theta", jnp.array([0.0, 1.0, 3.0]), jnp.array([1.0, 1.0, 2.0]))
     >>> list(law.event_spec.components)
     ['theta']
+    >>> law.atoms.level_names
+    ('theta',)
     >>> float(law._mean())
     1.75
     """
@@ -384,6 +409,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         atoms: Batch | Array,
         weights: Array | Weights | None = None,
         *,
+        level: str | None = None,
         event_spec: OutputSpec | None = None,
     ) -> EmpiricalDistribution:
         base = vars(cls).get("_capability_base", cls)
@@ -396,9 +422,17 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         atoms: Batch | Array,
         weights: Array | Weights | None = None,
         *,
+        level: str | None = None,
         event_spec: OutputSpec | None = None,
     ) -> None:
         atom_spec = _atom_spec(atoms)
+        if level is not None and not isinstance(level, str):
+            raise TypeError(f"level is the name of a level, got {type(level).__name__}")
+        if level is not None and isinstance(atoms, Batch):
+            raise TypeError(
+                f"level names the level of a plain array's atoms; the batch {atoms.name!r} keeps "
+                f"its own levels {list(atoms.level_names)}, which with_level_names renames"
+            )
         if event_spec is None:
             declared: OutputSpec | TermSpec = atom_spec
         elif isinstance(event_spec, OutputSpec):
@@ -406,11 +440,12 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         else:
             raise TypeError(f"event_spec must be an OutputSpec, got {type(event_spec).__name__}")
         super().__init__(name, declared)
-        stored = (
-            atoms
-            if isinstance(atoms, Batch)
-            else NumericArrayBatch(name, atoms, _ATOM_LEVEL, element_spec=atom_spec)
-        )
+        if isinstance(atoms, Batch):
+            stored = atoms
+        else:
+            # An array's atoms form a whole-term event, whose component names their level.
+            on_level = _whole_term_component(self.event_spec) if level is None else level
+            stored = NumericArrayBatch(name, atoms, on_level, element_spec=atom_spec)
         atom_weights = _atom_weights(weights, stored)
         object.__setattr__(self, "_atoms", stored)
         object.__setattr__(self, "_w", atom_weights)

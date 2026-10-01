@@ -48,26 +48,14 @@ _SECTION_MODULES = {
 }
 
 #: Where each declared class that ``families/`` does not define is today.
-_CURRENT_MODULES = {
-    "BootstrapReplicateDistribution": "probpipe.core._empirical",
-    "BootstrapDistribution": "probpipe.core._numeric_record_distribution",
-    "KDEDistribution": "probpipe.distributions.kde",
-}
+_CURRENT_MODULES: dict[str, str] = {}
 
 #: Declarations of these sections that the distribution layer owns and checks.
 _OTHER_PACKAGES = frozenset({"EmpiricalDistribution"})
 
 #: Declarations the implementation does not match yet, with the change each awaits.
 _PENDING = {
-    "BootstrapReplicateDistribution": (
-        "replicate_size is positional-or-keyword, and event_spec names the replicate's component"
-    ),
-    "BootstrapDistribution": (
-        "BootstrapDistribution is the bootstrap random measure over a source and a replicate size"
-    ),
-    "KDEDistribution": (
-        "the KDE takes atoms, bandwidth, weights, and a SmoothingKernel class, in that order"
-    ),
+    "KDEDistribution": "the declaration check compares a class-valued default by the class's name",
 }
 
 #: New declarations the catalog does not define yet; each has a pending case above.

@@ -183,7 +183,6 @@ class BijectorTransformedDistribution(Distribution):
     One draw is an array whose shape and dtype are those of the bijector's
     output at a draw of the base, declared as a whole term under the law's
     name; its support is the one the bijector maps onto when that is known.
-    The law is approximate when its base is.
 
     Parameters
     ----------
@@ -247,7 +246,6 @@ class BijectorTransformedDistribution(Distribution):
         image = jax.eval_shape(bijector.apply, point)
         object.__setattr__(self, "_base", base)
         object.__setattr__(self, "_bijector", bijector)
-        object.__setattr__(self, "_approximate", base.is_approximate)
         super().__init__(name, NumericArraySpec(tuple(image.shape), image.dtype, _image(bijector)))
         self.with_provenance(
             Provenance.create("transform", parents=[base], metadata={"bijector": bijector.name})

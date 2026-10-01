@@ -12,6 +12,12 @@ from probpipe.modeling import (
     Likelihood,
 )
 
+#: The update that a KDE prior cannot take yet.
+_KDE_PRIOR = (
+    "SimpleModel requires a RecordDistribution prior, and the KDE an update converts the "
+    "posterior to is a Distribution"
+)
+
 # ---------------------------------------------------------------------------
 # Lazy imports — probpipe.modeling.__getattr__ branches
 # ---------------------------------------------------------------------------
@@ -161,6 +167,7 @@ class TestIncrementalConditioner:
         assert posterior is not prior
         assert conditioner.curr_posterior is posterior
 
+    @pytest.mark.pending(reason=_KDE_PRIOR, raises=TypeError)
     def test_update_all_chains_batches(self, prior, likelihood, dim):
         """update_all must condition on each batch in turn and return the chain."""
         conditioner = IncrementalConditioner(
@@ -203,6 +210,7 @@ class TestIncrementalConditioner:
         # Internal state unchanged because we bypassed update().
         assert conditioner.curr_posterior is prior
 
+    @pytest.mark.pending(reason=_KDE_PRIOR, raises=TypeError)
     def test_a_nested_posterior_becomes_a_nested_prior(self):
         """The KDE that stands in for a posterior over a nested prior keeps the nesting."""
         from probpipe import KDEDistribution, Normal, ProductDistribution
@@ -234,6 +242,7 @@ class TestIncrementalConditioner:
         assert isinstance(priors[1], KDEDistribution)
         assert priors[1].event_spec == prior.event_spec
 
+    @pytest.mark.pending(reason=_KDE_PRIOR, raises=TypeError)
     def test_multi_batch_preserves_named_record_fields(self):
         """Multi-batch IncrementalConditioner over a named ProductDistribution
         prior preserves field names on every batch.

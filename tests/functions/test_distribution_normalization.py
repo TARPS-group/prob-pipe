@@ -284,7 +284,7 @@ class TestUnhintedExternalDistribution:
         # ``atol=0.0`` is deliberate: multiplication by 2.0 is bit-exact
         # under IEEE 754, so the broadcast output should match the
         # recorded per-call inputs exactly.
-        np.testing.assert_allclose(result.samples, 2.0 * jnp.stack(seen_values), atol=0.0)
+        np.testing.assert_allclose(result.atoms, 2.0 * jnp.stack(seen_values), atol=0.0)
 
 
 @runtime_checkable

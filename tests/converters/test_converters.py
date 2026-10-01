@@ -16,10 +16,13 @@ from probpipe import (
     EmpiricalDistribution,
     Exponential,
     Gamma,
+    KDEDistribution,
     MultivariateNormal,
     Normal,
+    NumericRecordBatch,
+    NumericRecordSpec,
+    OpaqueBatch,
     Poisson,
-    RecordEmpiricalDistribution,
     converter_registry,
     from_distribution,
 )
@@ -107,9 +110,11 @@ class TestProbPipeConverter:
 
     def test_to_empirical(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
-        emp = converter_registry.convert(n, RecordEmpiricalDistribution, num_samples=100)
-        assert isinstance(emp, RecordEmpiricalDistribution)
+        emp = converter_registry.convert(n, EmpiricalDistribution, num_samples=100)
+        assert isinstance(emp, EmpiricalDistribution)
         assert emp.num_atoms == 100
+        assert emp.event_spec == n.event_spec
+        assert emp.atoms.level_names == ("sample",)
 
     def test_provenance_attached(self):
         g = Gamma(concentration=3.0, rate=1.0, name="prior")
@@ -118,16 +123,6 @@ class TestProbPipeConverter:
         assert result.provenance.operation == "from_distribution"
         assert len(result.provenance.parents) == 1
         assert result.provenance.parents[0].name == "prior"
-
-    def test_approximate_flag(self):
-        g = Gamma(concentration=3.0, rate=1.0, name="g")
-        result = converter_registry.convert(g, Normal)
-        assert result.is_approximate
-
-    def test_same_class_not_approximate(self):
-        n = Normal(loc=0.0, scale=1.0, name="x")
-        result = converter_registry.convert(n, Normal)
-        assert not result.is_approximate
 
     def test_same_class_returns_source(self):
         """Same-class conversion returns the source object itself."""
@@ -231,8 +226,8 @@ class TestAllCrossFamilyConversions:
 
     def test_wishart_to_empirical(self):
         w = Wishart(df=5.0, scale_tril=jnp.eye(2), name="w")
-        result = converter_registry.convert(w, RecordEmpiricalDistribution, num_samples=50)
-        assert isinstance(result, RecordEmpiricalDistribution)
+        result = converter_registry.convert(w, EmpiricalDistribution, num_samples=50)
+        assert isinstance(result, EmpiricalDistribution)
         assert result.num_atoms == 50
 
     def test_vonmisesfisher_same_class(self):
@@ -244,7 +239,7 @@ class TestAllCrossFamilyConversions:
 
     def test_mvn_from_empirical(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (100, 3))
-        emp = RecordEmpiricalDistribution("x", samples)
+        emp = EmpiricalDistribution("x", samples)
         result = converter_registry.convert(emp, MultivariateNormal)
         assert isinstance(result, MultivariateNormal)
         assert result.loc.shape == (3,)
@@ -307,11 +302,11 @@ class TestTFPConverter:
         assert result.provenance.operation == "convert_from_tfp"
 
     def test_unknown_tfp_to_empirical(self):
-        """Unknown TFP types fall back to sampling → RecordEmpiricalDistribution."""
+        """Unknown TFP types fall back to sampling → EmpiricalDistribution."""
         # Use a TFP distribution we haven't mapped
         tfp_dist = tfd.VonMises(loc=0.0, concentration=1.0)
-        result = converter_registry.convert(tfp_dist, RecordEmpiricalDistribution, num_samples=50)
-        assert isinstance(result, RecordEmpiricalDistribution)
+        result = converter_registry.convert(tfp_dist, EmpiricalDistribution, num_samples=50)
+        assert isinstance(result, EmpiricalDistribution)
         assert result.num_atoms == 50
 
     def test_probpipe_mvn_to_tfp(self):
@@ -505,10 +500,8 @@ class TestScipyConverter:
         import scipy.stats as ss
 
         # Use a scipy distribution we haven't mapped (e.g., chi2)
-        result = converter_registry.convert(
-            ss.chi2(df=3), RecordEmpiricalDistribution, num_samples=100
-        )
-        assert isinstance(result, RecordEmpiricalDistribution)
+        result = converter_registry.convert(ss.chi2(df=3), EmpiricalDistribution, num_samples=100)
+        assert isinstance(result, EmpiricalDistribution)
         assert result.num_atoms == 100
 
     def test_scipy_check_unknown_type(self):
@@ -601,15 +594,15 @@ class TestFromDistributionDelegation:
 
     def test_from_distribution_to_empirical(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
-        emp = from_distribution(n, RecordEmpiricalDistribution, num_samples=50)
-        assert isinstance(emp, RecordEmpiricalDistribution)
+        emp = from_distribution(n, EmpiricalDistribution, num_samples=50)
+        assert isinstance(emp, EmpiricalDistribution)
         assert emp.num_atoms == 50
 
     def test_empirical_to_empirical_preserves_source_only_for_raw_apply(self):
         samples = jnp.array([[1.0], [2.0], [3.0]])
-        emp = RecordEmpiricalDistribution("orig", samples)
-        raw = from_distribution.apply(emp, RecordEmpiricalDistribution)
-        emp2 = from_distribution(emp, RecordEmpiricalDistribution)
+        emp = EmpiricalDistribution("orig", samples)
+        raw = from_distribution.apply(emp, EmpiricalDistribution)
+        emp2 = from_distribution(emp, EmpiricalDistribution)
         assert raw is emp
         assert emp2 is not emp
         assert emp2.provenance.operation == "workflow.from_distribution"
@@ -620,31 +613,18 @@ class TestFromDistributionDelegation:
 # ---------------------------------------------------------------------------
 
 
-class TestBootstrapMetadata:
-    """Verify bootstrap distributions are stored in provenance metadata
-    when the source distribution uses MC fallback for mean/variance."""
+class TestConversionProvenance:
+    """A conversion records its source in provenance."""
 
-    def test_analytical_moments_no_bootstrap(self):
-        """TFP distributions have exact mean/var, so no bootstrap in metadata."""
-        g = Gamma(concentration=9.0, rate=1.0, name="g")
-        result = converter_registry.convert(g, Normal, num_samples=500)
-        assert result.provenance is not None
-        meta = result.provenance.metadata
-        # Gamma has analytical mean/variance → no BootstrapDistribution stored
-        assert "mean_bootstrap" not in meta
-        assert "var_bootstrap" not in meta
-
-    def test_empirical_moments_have_bootstrap(self):
-        """RecordEmpiricalDistribution uses MC for mean/var, producing bootstrap metadata."""
+    def test_empirical_moments_record_the_source(self):
+        """Moment matching an empirical law records the law as its parent."""
         samples = jax.random.normal(jax.random.PRNGKey(0), (200,))
-        emp = RecordEmpiricalDistribution("x", samples[:, None])
+        emp = EmpiricalDistribution("x", samples)
         result = converter_registry.convert(emp, Normal)
         assert result.provenance is not None
-        # EmpiricalDistribution._mean()/_variance() return plain arrays;
-        # at minimum, provenance should be attached
         assert result.provenance.operation == "from_distribution"
 
-    def test_same_class_no_bootstrap_metadata(self):
+    def test_same_class_records_nothing(self):
         """Same-class conversion returns source directly, no provenance."""
         n = Normal(loc=2.0, scale=0.5, name="x")
         result = converter_registry.convert(n, Normal)
@@ -685,7 +665,6 @@ from probpipe.distributions._capabilities import (
     SupportsSampling,
     SupportsVariance,
 )
-from probpipe.distributions.kde import KDEDistribution
 
 
 class TestProtocolConversion:
@@ -698,11 +677,9 @@ class TestProtocolConversion:
         assert result is n
 
     def test_scalar_empirical_to_supports_log_prob(self):
-        """Scalar RecordEmpiricalDistribution converts to KDE via SupportsLogProb."""
-        from probpipe.distributions.kde import KDEDistribution
-
+        """Scalar EmpiricalDistribution converts to KDE via SupportsLogProb."""
         samples = jax.random.normal(jax.random.PRNGKey(0), (300,))
-        emp = RecordEmpiricalDistribution("x", samples)
+        emp = EmpiricalDistribution("x", samples)
         result = converter_registry.convert(emp, SupportsLogProb)
         assert isinstance(result, SupportsLogProb)
         assert isinstance(result, KDEDistribution)
@@ -715,10 +692,8 @@ class TestProtocolConversion:
 
     def test_multivariate_empirical_to_supports_log_prob(self):
         """Multivariate (single-field with d-dim event) RecordEmpirical → KDE."""
-        from probpipe.distributions.kde import KDEDistribution
-
         samples = jax.random.normal(jax.random.PRNGKey(1), (300, 4))
-        emp = RecordEmpiricalDistribution("x", samples)
+        emp = EmpiricalDistribution("x", samples)
         result = converter_registry.convert(emp, SupportsLogProb)
         assert isinstance(result, SupportsLogProb)
         assert isinstance(result, KDEDistribution)
@@ -729,83 +704,51 @@ class TestProtocolConversion:
         )
 
     def test_multi_field_record_empirical_to_kde(self):
-        """Multi-field RecordEmpirical → KDE via flat_samples (n, total_dim).
-
-        Pre-fix this raised because ``_convert_to_kde`` fell through to
-        ``source._sample(key, (n,))`` which returned a NumericRecord;
-        ``KDEDistribution(NumericRecord)`` then tripped the multi-field
-        shape shim. The fix routes multi-field empiricals through
-        ``source.flat_samples`` (KDE accepts a flat (n, dim) matrix).
-        """
-        from probpipe import Record
-        from probpipe.distributions.kde import KDEDistribution
-
+        """An empirical law over a record converts to a KDE over its atoms."""
         n = 200
-        rec = Record(
+        rows = NumericRecordBatch(
             "r",
-            mu=jax.random.normal(jax.random.PRNGKey(2), (n,)),
-            log_sigma=jax.random.normal(jax.random.PRNGKey(3), (n,)),
+            {
+                "mu": jax.random.normal(jax.random.PRNGKey(2), (n,)),
+                "log_sigma": jax.random.normal(jax.random.PRNGKey(3), (n,)),
+            },
+            "row",
+            element_spec=NumericRecordSpec(mu=(), log_sigma=()),
         )
-        emp = RecordEmpiricalDistribution("emp", rec)
+        emp = EmpiricalDistribution("emp", rows)
         result = converter_registry.convert(emp, SupportsLogProb)
         assert isinstance(result, KDEDistribution)
-        # KDE got the flat (n, 2) matrix.
         assert result.num_atoms == n
-        # log_prob over a single 2-vector returns a scalar.
-        lp = result._log_prob(jnp.array([0.0, 0.0]))
+        # log_prob of one record returns a scalar.
+        lp = result._log_prob({"mu": 0.0, "log_sigma": 0.0})
         assert lp.shape == ()
 
     def test_single_field_record_empirical_to_kde_unchanged(self):
-        """Single-field path stays on the fast path (passes the field
-        array straight to KDE rather than going via ``flat_samples``).
-
-        Pinned so a future ``flat_samples``-everywhere refactor doesn't
-        silently change the single-field behaviour. The (n,) auto-wrap
-        case keeps its 0-D KDE event shape.
-        """
-        from probpipe.distributions.kde import KDEDistribution
-
+        """An empirical law over scalars converts to a KDE whose event is a scalar."""
         samples = jax.random.normal(jax.random.PRNGKey(4), (150,))
-        emp = RecordEmpiricalDistribution("theta", samples)
+        emp = EmpiricalDistribution("theta", samples)
         result = converter_registry.convert(emp, SupportsLogProb)
         assert isinstance(result, KDEDistribution)
-        # Scalar event — direct field passthrough, not flattened.
         assert result.event_shape == ()
 
     def test_weighted_single_field_empirical_to_kde_preserves_weights(self):
-        """Single-field empirical with non-uniform weights → KDE with
-        the same weights."""
-        from probpipe.distributions.kde import KDEDistribution
-
+        """An empirical law with non-uniform weights converts to a KDE with the same weights."""
         n = 80
         samples = jax.random.normal(jax.random.PRNGKey(5), (n,))
         weights = jnp.linspace(0.1, 1.0, n)
-        emp = RecordEmpiricalDistribution("x", samples, weights=weights)
+        emp = EmpiricalDistribution("x", samples, weights=weights)
         result = converter_registry.convert(emp, SupportsLogProb)
         assert isinstance(result, KDEDistribution)
-        # KDE preserves the source's normalised weights (the converter
-        # passes ``weights=source._w``; KDE may rebuild a Weights
-        # internally, but the normalised values must match).
         np.testing.assert_allclose(
-            np.asarray(result._w.normalized),
-            np.asarray(emp._w.normalized),
-            atol=1e-6,
+            np.asarray(result._w.normalized), np.asarray(emp.weights), atol=1e-6
         )
         assert not result._w.is_uniform
 
     def test_object_array_empirical_to_kde_rejected(self):
-        """Generic (object-array) EmpiricalDistribution → KDE raises
-        a clear TypeError.
-
-        Without the explicit raise, KDE construction would fail
-        somewhere deep with a confusing dtype error.
-        """
-        emp = EmpiricalDistribution("emp", ["a", "b", "c"])
-        with pytest.raises(
-            TypeError,
-            match=r"generic .object-array. EmpiricalDistribution",
-        ):
-            converter_registry.convert(emp, SupportsLogProb)
+        """An empirical law over opaque atoms does not convert to a KDE, which smooths numbers."""
+        emp = EmpiricalDistribution("emp", OpaqueBatch("labels", ["a", "b", "c"], "site"))
+        with pytest.raises(TypeError, match="numeric"):
+            converter_registry.convert(emp, KDEDistribution)
 
     def test_check_protocol_already_satisfied(self):
         """check() returns EXACT when protocol is already satisfied."""
@@ -817,7 +760,7 @@ class TestProtocolConversion:
     def test_check_protocol_needs_conversion(self):
         """check() returns feasible when conversion is possible."""
         samples = jax.random.normal(jax.random.PRNGKey(2), (100,))
-        emp = RecordEmpiricalDistribution("x", samples)
+        emp = EmpiricalDistribution("x", samples)
         info = converter_registry.check(emp, SupportsLogProb)
         assert info.feasible
         assert info.method == ConversionMethod.MOMENT_MATCH
@@ -831,7 +774,7 @@ class TestProtocolConversion:
             def _something_unregistered(self) -> None: ...
 
         samples = jax.random.normal(jax.random.PRNGKey(3), (50,))
-        emp = RecordEmpiricalDistribution("x", samples)
+        emp = EmpiricalDistribution("x", samples)
         # The protocol is not a registered conversion target, and the
         # empirical distribution does not satisfy it either.
         with pytest.raises(TypeError):
@@ -840,47 +783,42 @@ class TestProtocolConversion:
     def test_from_distribution_with_protocol(self):
         """from_distribution() works with protocol targets."""
         samples = jax.random.normal(jax.random.PRNGKey(4), (200,))
-        emp = RecordEmpiricalDistribution("x", samples)
+        emp = EmpiricalDistribution("x", samples)
         result = from_distribution(emp, SupportsLogProb)
         assert isinstance(result, SupportsLogProb)
 
     def test_protocol_conversion_preserves_provenance(self):
         """Protocol-based conversion attaches provenance."""
         samples = jax.random.normal(jax.random.PRNGKey(5), (200,))
-        emp = RecordEmpiricalDistribution("posterior", samples)
+        emp = EmpiricalDistribution("posterior", samples)
         result = converter_registry.convert(emp, SupportsLogProb)
         assert result.provenance is not None
         assert len(result.provenance.parents) == 1
         assert result.provenance.parents[0].name == "posterior"
 
     def test_multi_field_empirical_preserves_template_through_kde(self):
-        """Multi-field RecordEmpirical → KDE preserves the named template.
-        Regression: previously the converter passed ``flat_samples`` to KDE
-        without the template, so the resulting KDE collapsed to a single-field
-        auto-template keyed by ``name``.
-        """
-        from probpipe import Record
-        from probpipe.distributions.kde import KDEDistribution
-
+        """An empirical law over a record converts to a KDE over that record's fields."""
         n = 200
-        rec = Record(
+        rows = NumericRecordBatch(
             "r",
-            intercept=jax.random.normal(jax.random.PRNGKey(0), (n,)),
-            slope=jax.random.normal(jax.random.PRNGKey(1), (n,)),
+            {
+                "intercept": jax.random.normal(jax.random.PRNGKey(0), (n,)),
+                "slope": jax.random.normal(jax.random.PRNGKey(1), (n,)),
+            },
+            "row",
+            element_spec=NumericRecordSpec(intercept=(), slope=()),
         )
-        emp = RecordEmpiricalDistribution("emp", rec)
+        emp = EmpiricalDistribution("emp", rows)
         result = converter_registry.convert(emp, SupportsLogProb)
         assert isinstance(result, KDEDistribution)
         assert result.event_spec.spec.fields == ("intercept", "slope")
 
     def test_approximate_distribution_preserves_template_through_kde(self):
-        """``ApproximateDistribution`` (inherits from RecordEmpirical) →
-        KDE must preserve the parameter-field structure so that
-        :class:`IncrementalConditioner` updates beyond batch 1 don't
-        collapse to a flat ``posterior`` field.
+        """An inference result converts to a KDE over its target's record.
+
+        An :class:`IncrementalConditioner` update beyond its first batch reads the
+        record's fields.
         """
-        from probpipe.core._specs import NumericRecordSpec
-        from probpipe.distributions.kde import KDEDistribution
         from probpipe.inference._approximate_distribution import (
             ApproximateDistribution,
         )
@@ -898,6 +836,7 @@ class TestProtocolConversion:
         result = converter_registry.convert(approx, SupportsLogProb)
         assert isinstance(result, KDEDistribution)
         assert result.event_spec.spec.fields == ("intercept", "slope")
+        assert list(result.event_spec.components) == list(approx.event_spec.components)
 
 
 # ---------------------------------------------------------------------------
@@ -989,7 +928,7 @@ class TestKDEDistribution:
     def test_convert_empirical_to_kde(self):
         """from_distribution(empirical, KDEDistribution) works."""
         samples = jax.random.normal(jax.random.PRNGKey(0), (200,))
-        emp = RecordEmpiricalDistribution("x", samples)
+        emp = EmpiricalDistribution("x", samples)
         kde = converter_registry.convert(emp, KDEDistribution)
         assert isinstance(kde, KDEDistribution)
         assert kde.num_atoms == 200

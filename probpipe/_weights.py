@@ -300,17 +300,12 @@ class Weights:
         w.covariance(values)            # weighted covariance matrix
         w.choice(key, shape=(10,))      # draw 10 weighted random indices
 
-    **Passing to distribution constructors** — all ProbPipe distribution
-    constructors that accept ``weights`` or ``log_weights`` also accept
-    a pre-built ``Weights`` object for either parameter.  When a
-    ``Weights`` object is passed, it is used as-is (no re-validation).
-    The behavior is the same regardless of which parameter it is passed
-    to, since the ``Weights`` object already encapsulates its
-    representation::
+    **Passing to distribution constructors** — a distribution constructor
+    that accepts ``weights`` also accepts a pre-built ``Weights`` object,
+    which is used as-is (no re-validation), so log-weights reach it as one::
 
         w = Weights(log_weights=log_w)
-        EmpiricalDistribution("x", samples, weights=w)       # OK
-        EmpiricalDistribution("x", samples, log_weights=w)   # also OK, same result
+        EmpiricalDistribution("x", samples, weights=w)
 
     **JAX compatibility** — ``Weights`` is registered as a JAX pytree
     whose single leaf is the **normalized** weight array, so it works

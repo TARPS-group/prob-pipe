@@ -8,12 +8,13 @@ from typing import Any
 import jax
 import numpy as np
 
-from ..core._empirical import RecordEmpiricalDistribution
 from ..core._numeric_record import NumericRecord
+from ..core._record_spec import _reshaped_template
 from ..core.protocols import GenerativeLikelihood
 from ..custom_types import PRNGKey
 from ..distributions._capabilities import SupportsSampling
 from ..distributions._distribution import Distribution
+from ..distributions._empirical import EmpiricalDistribution, _batch_form
 from ..functions import function
 from ._workflow_rng import (
     _require_certified_generative_provider,
@@ -79,7 +80,7 @@ def predictive_check[P, D](
     dict
         Always contains:
 
-        - ``"replicated_statistics"`` — ``RecordEmpiricalDistribution``
+        - ``"replicated_statistics"`` — an ``EmpiricalDistribution``
           over the test statistic values from replicated data.
 
         When *observed_data* is provided, also contains:
@@ -97,12 +98,11 @@ def predictive_check[P, D](
     if not callable(test_fn):
         raise TypeError(f"test_fn must be callable; got {type(test_fn).__name__}")
 
-    # -- Unwrap NumericRecord if the node system resolved the distribution --
+    # -- A NumericRecord of stacked draws is the empirical law of its rows --
     if isinstance(distribution, NumericRecord):
-        distribution = RecordEmpiricalDistribution(
-            getattr(distribution, "name", "posterior"),
-            distribution,  # NumericRecord is a Record subclass — accepted directly
-        )
+        name = getattr(distribution, "name", "posterior")
+        row = _reshaped_template(distribution.event_template, lambda shape: shape[1:])
+        distribution = EmpiricalDistribution(name, _batch_form(name, distribution, "draw", row))
     if not callable(getattr(distribution, "_sample", None)):
         raise TypeError(f"{type(distribution).__name__} does not support predictive sampling")
 
@@ -139,10 +139,7 @@ def predictive_check[P, D](
             key,
         )
 
-    replicated_dist = RecordEmpiricalDistribution(
-        "replicated_statistics",
-        stats_array,
-    )
+    replicated_dist = EmpiricalDistribution("replicated_statistics", stats_array)
 
     test_fn_name = getattr(test_fn, "__name__", repr(test_fn))
     result = {

@@ -43,7 +43,7 @@ def _resolve_target_for_log_prob(dist: Any) -> type:
     Normal/MultivariateNormal because it can capture multimodality,
     skewness, and other non-Gaussian structure.
     """
-    from ..distributions.kde import KDEDistribution
+    from ..families._resampling import KDEDistribution
 
     return KDEDistribution
 

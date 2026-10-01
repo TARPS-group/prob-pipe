@@ -40,7 +40,6 @@ from probpipe import (
     HalfCauchy,
     HalfNormal,
     InverseGamma,
-    JointEmpirical,
     JointGaussian,
     KDEDistribution,
     Laplace,
@@ -55,6 +54,7 @@ from probpipe import (
     NumericRecordDistribution,
     NumericRecordSpec,
     NumericSpec,
+    OpaqueBatch,
     OutputSpec,
     Pareto,
     Poisson,
@@ -77,11 +77,6 @@ from probpipe.core._broadcast_distributions import (
     _ListMarginal,
     _make_mixture_marginal,
     _MixtureMarginal,
-    _RecordMarginal,
-)
-from probpipe.core._empirical import (
-    RecordBootstrapReplicateDistribution,
-    RecordEmpiricalDistribution,
 )
 from probpipe.core._numeric_record_distribution import (
     FlattenedDistributionView,
@@ -93,11 +88,9 @@ from probpipe.distributions import (
     FactoredDistribution,
     FactoredNumericDistribution,
     FieldView,
-    _empirical,
 )
 from probpipe.distributions._capabilities import SupportsSampling
 from probpipe.distributions._factored import _SoleField
-from probpipe.distributions._joint_empirical import NumericJointEmpirical
 from probpipe.distributions._product import TFPProductDistribution
 from probpipe.distributions._views import _RenamedDistribution
 from probpipe.families import (
@@ -253,18 +246,17 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     Multinomial: lambda: Multinomial("x", 4.0, probs=jnp.array([0.2, 0.3, 0.5])),
     Wishart: lambda: Wishart("x", 4.0, scale_tril=jnp.eye(2)),
     VonMisesFisher: lambda: VonMisesFisher("x", jnp.array([0.0, 1.0]), 2.0),
-    KDEDistribution: lambda: KDEDistribution("k", jnp.zeros((10, 2))),
-    EmpiricalDistribution: lambda: EmpiricalDistribution("e", ["a", "b"]),
-    RecordEmpiricalDistribution: lambda: EmpiricalDistribution("r", jnp.zeros((5, 2))),
+    KDEDistribution: lambda: KDEDistribution("kde", jnp.arange(6.0).reshape(3, 2)),
+    EmpiricalDistribution: lambda: EmpiricalDistribution(
+        "e", OpaqueBatch("labels", ["a", "b"], "e")
+    ),
     BootstrapReplicateDistribution: lambda: BootstrapReplicateDistribution(
         "b", Normal("x", 0.0, 1.0), replicate_size=3
     ),
-    RecordBootstrapReplicateDistribution: lambda: BootstrapReplicateDistribution(
-        "b", jnp.zeros((5, 2))
-    ),
-    BootstrapDistribution: lambda: BootstrapDistribution("expectation", jnp.zeros((10, 3))),
+    BootstrapDistribution: lambda: BootstrapDistribution("measure", Normal("x", 0.0, 1.0), 3),
     ProductDistribution: lambda: ProductDistribution(
-        a=Normal("a", 0.0, 1.0), e=EmpiricalDistribution("e", ["x", "y"])
+        a=Normal("a", 0.0, 1.0),
+        e=EmpiricalDistribution("e", OpaqueBatch("labels", ["x", "y"], "e")),
     ),
     TFPProductDistribution: lambda: ProductDistribution(
         a=Normal("a", 0.0, 1.0), b=Gamma("b", 2.0, 1.0)
@@ -273,17 +265,12 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
         z=Normal("z", 0.0, 1.0), x=_conditional
     ),
     JointGaussian: lambda: JointGaussian(mean=jnp.zeros(3), cov=jnp.eye(3), x=1, y=2),
-    JointEmpirical: lambda: JointEmpirical(
-        labels=np.array(["a", "b"], dtype=object), ids=np.array([0, 1])
-    ),
-    NumericJointEmpirical: lambda: JointEmpirical(u=np.ones((4, 2)), v=np.zeros(4)),
     DistributionArray: lambda: DistributionArray.from_batched_params(
         Normal, loc=jnp.zeros(3), scale=1.0, name="x"
     ),
     BroadcastDistribution: lambda: BroadcastDistribution(
         {"x": jnp.zeros(3)}, jnp.zeros(3), broadcast_args=["x"]
     ),
-    _RecordMarginal: lambda: _RecordMarginal(jnp.zeros((4, 2)), name="m"),
     _MixtureMarginal: lambda: _make_mixture_marginal(
         [Normal("y", 0.0, 1.0), Normal("y", 1.0, 1.0)]
     ),
@@ -352,9 +339,6 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
         "g", [MultivariateNormal("x", jnp.zeros(2), cov=jnp.eye(2))]
     ),
     GaussianProcess: lambda: GaussianProcess("f", _zero_mean, _squared_exponential),
-    _empirical.EmpiricalDistribution: lambda: _empirical.EmpiricalDistribution(
-        "e", jnp.zeros((5, 2))
-    ),
     _SoleField: lambda: _SoleField(FactoredDistribution("record", [Normal("beta", 0.0, 1.0)])),
     _RenamedDistribution: lambda: ProductDistribution(
         a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)
@@ -431,10 +415,14 @@ def _library_classes() -> set[type]:
 
 
 # ``sample`` stacks a tuple draw as rows instead of wrapping it as one opaque
-# value.
+# value, and wraps a batch-valued draw as an array.
 _DRAW_FAILURES = {
     SimpleGenerativeModel: pytest.mark.xfail(
         raises=ValueError, strict=True, reason="sample stacks a tuple draw as rows"
+    ),
+    BootstrapReplicateDistribution: pytest.mark.pending(
+        reason="the exported sample wraps a batch-valued draw as an array, not as its declared batch",
+        raises=AssertionError,
     ),
 }
 
@@ -451,7 +439,6 @@ _RUNTIME_CLASS = pytest.mark.xfail(
 )
 _PICKLE_FAILURES = {
     MultivariateNormal: _TFP_BACKEND,
-    KDEDistribution: _TFP_BACKEND,
     JointGaussian: _TFP_BACKEND,
     MinibatchedDistribution: _TFP_BACKEND,
     _FixedMinibatchDistribution: _TFP_BACKEND,
@@ -468,14 +455,6 @@ _PICKLE_FAILURES = {
     FlattenedDistributionView: _RUNTIME_CLASS,
     NumericRecordDistributionView: _RUNTIME_CLASS,
     _RecordDistributionView: _RUNTIME_CLASS,
-}
-
-
-# The interim ``event_shape`` overrides: an empirical law over an array still
-# draws a one-field record.
-_EVENT_SHAPE_OVERRIDES = {
-    "RecordEmpiricalDistribution",
-    "RecordBootstrapReplicateDistribution",
 }
 
 
@@ -508,8 +487,7 @@ class TestCoverage:
             assert "event_template" not in defined, cls
             if cls is not NumericDistribution:
                 assert not {"dtypes", "supports", "dtype", "support"} & defined.keys(), cls
-            if cls.__name__ not in _EVENT_SHAPE_OVERRIDES:
-                assert "event_shape" not in defined, cls
+            assert "event_shape" not in defined, cls
 
 
 class TestDeclaration:

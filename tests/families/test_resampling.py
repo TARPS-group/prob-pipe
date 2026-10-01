@@ -1,8 +1,11 @@
 """Contracts of the resampling families (VII.2): the smoothing kernels, the KDE, and the bootstrap.
 
-The smoothing kernels are new in ``families/``; the bootstrap replicate, the
-bootstrap distribution, and the KDE are checked where they are defined today,
-and the contracts they do not meet yet are pending.
+A bootstrap replicate is ``replicate_size`` iid draws of a source that samples,
+in the event's batch form on one level, and the bootstrap distribution is the
+random measure whose draw is the empirical measure of one replicate. A KDE
+smooths weighted atoms with a smoothing kernel whose bank of placed copies one
+uniform constructor builds; its density, draws, and moments are exact for the
+smoothed law.
 """
 
 from __future__ import annotations
@@ -14,19 +17,38 @@ import pytest
 from scipy import stats
 
 from probpipe import (
-    BootstrapDistribution,
-    BootstrapReplicateDistribution,
-    EmpiricalDistribution,
-    KDEDistribution,
+    Function,
     Normal,
+    NumericArrayBatch,
+    NumericArraySpec,
     NumericRecordBatch,
     NumericRecordSpec,
     OutputSpec,
     RandomMeasure,
     Record,
+    RecordSpec,
+    workflow_run,
 )
+from probpipe.core._batch import BatchSpec
 from probpipe.core._numeric_record import NumericRecord
-from probpipe.families import EpanechnikovKernel, GaussianKernel, SmoothingKernel
+from probpipe.core.constraints import positive, real
+from probpipe.distributions import DistributionSpec
+from probpipe.distributions._capabilities import (
+    SupportsCovariance,
+    SupportsLogProb,
+    SupportsMean,
+    SupportsSampling,
+    SupportsVariance,
+)
+from probpipe.families import (
+    BootstrapDistribution,
+    BootstrapReplicateDistribution,
+    EpanechnikovKernel,
+    GaussianKernel,
+    KDEDistribution,
+    SmoothingKernel,
+)
+from tests._ops import EmpiricalDistribution, sample
 
 _KERNELS = [GaussianKernel, EpanechnikovKernel]
 
@@ -246,6 +268,20 @@ class TestTheKDELaw:
         mixture = jax.scipy.special.logsumexp(jnp.log(weights) + bank._log_density(x))
         np.testing.assert_allclose(kde._log_prob(x), mixture, rtol=1e-5)
 
+    def test_the_density_is_the_scipy_mixture(self, centers):
+        weights = np.array([0.2, 0.3, 0.5])
+        kde = KDEDistribution("k", centers, jnp.array([0.4, 0.6]), jnp.asarray(weights))
+        x = np.array([1.5, 0.0])
+        density = sum(
+            w * stats.multivariate_normal(c, np.diag([0.16, 0.36])).pdf(x)
+            for w, c in zip(weights, np.asarray(centers))
+        )
+        np.testing.assert_allclose(kde._log_prob(jnp.asarray(x)), np.log(density), rtol=1e-5)
+
+    def test_the_density_scores_a_batch_of_points(self, centers):
+        kde = KDEDistribution("k", centers, 0.5)
+        assert kde._log_prob(jnp.zeros((4, 5, 2))).shape == (4, 5)
+
     def test_the_mean_is_the_weighted_atom_mean(self, centers):
         weights = jnp.array([0.2, 0.3, 0.5])
         kde = KDEDistribution("k", centers, weights=weights, bandwidth=0.5)
@@ -260,9 +296,22 @@ class TestTheKDELaw:
             kde._variance(), atom_variance + 0.5**2 * GaussianKernel.variance, rtol=1e-5
         )
 
-    @pytest.mark.pending(
-        reason="the KDE takes a SmoothingKernel class and builds its bank", raises=TypeError
-    )
+    def test_the_covariance_adds_the_kernel_variance_on_the_diagonal(self, centers):
+        weights = jnp.array([0.2, 0.3, 0.5])
+        kde = KDEDistribution("k", centers, jnp.array([0.5, 1.0]), weights)
+        diff = np.asarray(centers - weights @ centers)
+        expected = (np.asarray(weights)[:, None] * diff).T @ diff + np.diag([0.25, 1.0])
+        np.testing.assert_allclose(kde._cov().to_dense(), expected, rtol=1e-5)
+
+    def test_per_atom_scales_enter_the_variance_by_weight(self, centers):
+        weights = jnp.array([0.2, 0.3, 0.5])
+        scales = jnp.array([[0.5], [1.0], [2.0]])
+        kde = KDEDistribution("k", centers, scales, weights)
+        atom_variance = weights @ (centers - weights @ centers) ** 2
+        np.testing.assert_allclose(
+            kde._variance(), atom_variance + weights @ (scales**2)[:, 0], rtol=1e-5
+        )
+
     def test_the_kde_takes_a_kernel_class(self, centers):
         kde = KDEDistribution("k", centers, 0.5, kernel=EpanechnikovKernel)
         atom_variance = jnp.var(centers, axis=0)
@@ -270,13 +319,181 @@ class TestTheKDELaw:
             kde._variance(), atom_variance + 0.25 * EpanechnikovKernel.variance, rtol=1e-5
         )
 
-    @pytest.mark.pending(
-        reason="bandwidth accepts the name of a selection rule", raises=(TypeError, ValueError)
-    )
+    def test_the_kernel_is_a_smoothing_kernel_class(self, centers):
+        with pytest.raises(TypeError, match="SmoothingKernel"):
+            KDEDistribution("k", centers, 0.5, kernel=GaussianKernel.build_kernels(centers, 1.0))
+
+    def test_draws_follow_the_smoothed_law(self, centers):
+        weights = jnp.array([0.2, 0.3, 0.5])
+        kde = KDEDistribution("k", centers, jnp.array([0.4, 0.6]), weights)
+        draws = kde._sample(jax.random.PRNGKey(4), (40000,))
+        assert draws.shape == (40000, 2)
+        np.testing.assert_allclose(draws.mean(axis=0), kde._mean(), atol=0.03)
+        np.testing.assert_allclose(draws.var(axis=0), kde._variance(), rtol=0.03)
+
+    def test_one_draw_has_the_event_shape(self, centers):
+        assert KDEDistribution("k", centers, 0.5)._sample(jax.random.PRNGKey(5)).shape == (2,)
+
+    def test_it_claims_the_exact_capabilities(self, centers):
+        kde = KDEDistribution("k", centers, 0.5)
+        for protocol in (
+            SupportsSampling,
+            SupportsLogProb,
+            SupportsMean,
+            SupportsVariance,
+            SupportsCovariance,
+        ):
+            assert isinstance(kde, protocol), protocol.__name__
+
+
+class TestTheBandwidthRules:
+    @staticmethod
+    def _spread(centers, weights):
+        mean = weights @ centers
+        return np.sqrt(np.asarray(weights @ (centers - mean) ** 2))
+
+    def test_scott_is_the_default(self, centers):
+        default = KDEDistribution("k", centers)
+        scott = KDEDistribution("k", centers, "scott")
+        np.testing.assert_allclose(default._variance(), scott._variance(), rtol=1e-6)
+
     @pytest.mark.parametrize("rule", ["scott", "silverman"])
     def test_bandwidth_accepts_a_selection_rule(self, rule, centers):
         kde = KDEDistribution("k", centers, rule)
         assert kde.event_spec.components == {"k": kde.event_spec.spec}
+
+    def test_scott_scales_the_spread_by_the_effective_sample_size(self, centers):
+        weights = jnp.array([0.2, 0.3, 0.5])
+        n_eff = 1.0 / float(jnp.sum(weights**2))
+        h = n_eff ** (-1.0 / 6.0) * self._spread(centers, weights)
+        kde = KDEDistribution("k", centers, "scott", weights)
+        atom_variance = np.asarray(weights @ (centers - weights @ centers) ** 2)
+        np.testing.assert_allclose(kde._variance(), atom_variance + h**2, rtol=1e-5)
+
+    def test_silverman_adds_its_constant(self, centers):
+        weights = jnp.array([0.2, 0.3, 0.5])
+        n_eff = 1.0 / float(jnp.sum(weights**2))
+        h = (4.0 / 4.0) ** (1.0 / 6.0) * n_eff ** (-1.0 / 6.0) * self._spread(centers, weights)
+        kde = KDEDistribution("k", centers, "silverman", weights)
+        atom_variance = np.asarray(weights @ (centers - weights @ centers) ** 2)
+        np.testing.assert_allclose(kde._variance(), atom_variance + h**2, rtol=1e-5)
+
+    def test_uniform_weights_count_every_atom(self):
+        atoms = jnp.arange(8.0)
+        h = 8.0 ** (-1.0 / 5.0) * float(jnp.std(atoms))
+        kde = KDEDistribution("k", atoms)
+        np.testing.assert_allclose(kde._variance(), jnp.var(atoms) + h**2, rtol=1e-5)
+
+    def test_an_unknown_rule_raises(self, centers):
+        with pytest.raises(ValueError, match="rule"):
+            KDEDistribution("k", centers, "rule-of-thumb")
+
+    def test_a_rule_refuses_atoms_without_spread(self):
+        with pytest.raises(ValueError, match="no spread"):
+            KDEDistribution("k", jnp.ones((4, 2)))
+
+
+class TestTheKDEDeclaration:
+    def test_array_atoms_form_a_whole_term_under_the_law_name(self, centers):
+        kde = KDEDistribution("post", centers, 0.5)
+        assert kde.event_spec == OutputSpec(post=NumericArraySpec((2,), jnp.float32, real))
+        assert kde.event_shape == (2,)
+
+    def test_scalar_atoms_draw_scalars(self):
+        kde = KDEDistribution("k", jnp.arange(5.0), 0.5)
+        assert kde.event_shape == ()
+        assert kde._sample(jax.random.PRNGKey(0), (3,)).shape == (3,)
+
+    def test_integer_atoms_are_smoothed_as_floats(self):
+        kde = KDEDistribution("k", jnp.arange(5), 0.5)
+        assert jnp.issubdtype(kde.event_spec.spec.dtype, jnp.floating)
+
+    def test_a_type_hole_takes_the_atoms_term(self, centers):
+        kde = KDEDistribution("post", centers, 0.5, event_spec=OutputSpec(theta=None))
+        assert kde.event_spec == OutputSpec(theta=NumericArraySpec((2,), jnp.float32, real))
+
+    def test_a_declaration_the_atoms_do_not_match_is_refused(self, centers):
+        with pytest.raises(ValueError, match="theta"):
+            KDEDistribution(
+                "post", centers, 0.5, event_spec=OutputSpec(theta=NumericArraySpec((3,)))
+            )
+
+    def test_an_exposed_record_needs_record_atoms(self, centers):
+        with pytest.raises(TypeError, match="RecordSpec"):
+            KDEDistribution("post", centers, 0.5, event_spec=OutputSpec(RecordSpec(a=(2,))))
+
+    def test_record_atoms_expose_their_fields_on_the_real_line(self, record_centers):
+        kde = KDEDistribution("post", record_centers, 0.5)
+        assert kde.event_spec == OutputSpec(
+            RecordSpec(
+                a=NumericArraySpec((), jnp.float32, real), b=NumericArraySpec((), jnp.float32, real)
+            )
+        )
+
+    def test_a_declared_support_of_the_atoms_is_widened_to_the_real_line(self):
+        atoms = NumericRecordBatch(
+            "atoms",
+            {"s": jnp.array([1.0, 2.0, 3.0])},
+            "atom",
+            element_spec=NumericRecordSpec(s=NumericArraySpec((), jnp.float32, positive)),
+        )
+        kde = KDEDistribution("post", atoms, 0.5)
+        assert kde.event_spec.spec["s"].support is real
+
+    @pytest.mark.parametrize(
+        "atoms",
+        [
+            pytest.param(Record("r", a=jnp.zeros(3)), id="one-record"),
+            pytest.param(["a", "b"], id="list"),
+            pytest.param(np.array(["a", "b"], dtype=object), id="object-array"),
+        ],
+    )
+    def test_atoms_are_numeric(self, atoms):
+        with pytest.raises(TypeError):
+            KDEDistribution("k", atoms, 1.0)
+
+
+class TestARecordKDE:
+    def test_draws_are_the_raw_form_of_the_record(self, record_centers):
+        kde = KDEDistribution("post", record_centers, 0.5)
+        one = kde._sample(jax.random.PRNGKey(0))
+        many = kde._sample(jax.random.PRNGKey(1), (8,))
+        assert set(one) == {"a", "b"} and np.shape(one["a"]) == ()
+        assert np.shape(many["a"]) == (8,) and np.shape(many["b"]) == (8,)
+
+    def test_the_sample_operation_returns_records(self, record_centers):
+        kde = KDEDistribution("post", record_centers, 0.5)
+        with workflow_run(seed=2):
+            draws = sample(kde, sample_shape=(5,))
+        assert isinstance(draws, NumericRecordBatch)
+        assert draws.batch_shape == (5,)
+
+    def test_the_density_reads_a_record_and_a_batch_of_records(self, centers, record_centers):
+        kde = KDEDistribution("post", record_centers, NumericRecord("h", {"a": 0.5, "b": 1.5}))
+        flat = KDEDistribution("flat", centers, jnp.array([0.5, 1.5]))
+        point = NumericRecord("v", {"a": 0.5, "b": -0.3})
+        np.testing.assert_allclose(kde._log_prob(point), flat._log_prob(jnp.array([0.5, -0.3])))
+        np.testing.assert_allclose(kde._log_prob({"a": 0.5, "b": -0.3}), kde._log_prob(point))
+        batch = NumericRecordBatch(
+            "values",
+            {"a": jnp.array([0.5, 0.6, 0.7]), "b": jnp.array([-0.3, -0.4, -0.5])},
+            "value",
+            element_spec=NumericRecordSpec(a=(), b=()),
+        )
+        expected = flat._log_prob(jnp.array([[0.5, -0.3], [0.6, -0.4], [0.7, -0.5]]))
+        np.testing.assert_allclose(kde._log_prob(batch), expected, rtol=1e-6)
+
+    def test_the_density_refuses_a_bare_array_for_a_record(self, record_centers):
+        kde = KDEDistribution("post", record_centers, 0.5)
+        with pytest.raises(TypeError, match="record"):
+            kde._log_prob(jnp.zeros(2))
+
+    def test_the_moments_are_the_raw_form_of_the_record(self, centers, record_centers):
+        kde = KDEDistribution("post", record_centers, 0.5)
+        flat = KDEDistribution("flat", centers, 0.5)
+        mean, variance = kde._mean(), kde._variance()
+        np.testing.assert_allclose([mean["a"], mean["b"]], flat._mean(), rtol=1e-6)
+        np.testing.assert_allclose([variance["a"], variance["b"]], flat._variance(), rtol=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -284,11 +501,21 @@ class TestTheKDELaw:
 # ---------------------------------------------------------------------------
 
 
+def _rows() -> NumericRecordBatch:
+    return NumericRecordBatch(
+        "xy",
+        {"x": jnp.arange(4.0), "y": 10.0 * jnp.arange(4.0)},
+        "row",
+        element_spec=NumericRecordSpec(x=(), y=()),
+    )
+
+
 class TestTheBootstrapReplicate:
     def test_a_draw_is_replicate_size_draws_of_a_sampling_source(self):
         replicate = BootstrapReplicateDistribution("b", Normal("x", 0.0, 1.0), replicate_size=5)
         assert replicate._sample(jax.random.PRNGKey(0)).shape == (5,)
         assert replicate._sample(jax.random.PRNGKey(0), (3,)).shape == (3, 5)
+        assert replicate._sample(jax.random.PRNGKey(0), (2, 3)).shape == (2, 3, 5)
 
     def test_replicate_size_is_required_for_a_source_without_atoms(self):
         with pytest.raises(ValueError, match="replicate_size"):
@@ -298,39 +525,129 @@ class TestTheBootstrapReplicate:
         source = EmpiricalDistribution("data", jnp.arange(6.0))
         assert BootstrapReplicateDistribution("b", source).replicate_size == 6
 
+    @pytest.mark.parametrize(
+        ("size", "error"),
+        [
+            pytest.param(0, ValueError, id="zero"),
+            pytest.param(-2, ValueError, id="negative"),
+            pytest.param(2.5, TypeError, id="float"),
+            pytest.param(True, TypeError, id="bool"),
+        ],
+    )
+    def test_an_invalid_replicate_size_raises(self, size, error):
+        with pytest.raises(error, match="replicate_size"):
+            BootstrapReplicateDistribution("b", Normal("x", 0.0, 1.0), size)
+
+    @pytest.mark.parametrize("source", [jnp.arange(3.0), Record("r", a=jnp.zeros(3))])
+    def test_the_source_is_a_law_that_samples(self, source):
+        with pytest.raises(TypeError, match="samples"):
+            BootstrapReplicateDistribution("b", source, 3)
+
     def test_the_outer_component_defaults_to_the_label_for_an_array_source(self):
         replicate = BootstrapReplicateDistribution("b", Normal("x", 0.0, 1.0), replicate_size=5)
         assert list(replicate.event_spec.components) == ["b"]
-        assert replicate.event_spec.spec.shape == (5,)
+        assert replicate.event_spec.spec.batch_shape == (5,)
+        assert replicate.event_spec.spec.element_spec == Normal("x", 0.0, 1.0).event_spec.spec
 
-    @pytest.mark.pending(
-        reason="a replicate's outer declaration is its own, under the law's name",
-        raises=AssertionError,
-    )
     def test_the_outer_component_defaults_to_the_label_for_an_empirical_source(self):
         replicate = BootstrapReplicateDistribution("b", EmpiricalDistribution("data", jnp.ones(6)))
         assert not replicate.event_spec.exposes_record
         assert list(replicate.event_spec.components) == ["b"]
 
-    @pytest.mark.pending(
-        reason="a replicate of record draws is a batch of records", raises=AssertionError
-    )
     def test_a_replicate_of_records_is_a_record_batch(self):
-        source = EmpiricalDistribution("xy", Record("xy", x=jnp.arange(4.0), y=jnp.ones(4)))
-        replicate = BootstrapReplicateDistribution("b", source, replicate_size=3)
-        assert isinstance(replicate._sample(jax.random.PRNGKey(0)), NumericRecordBatch)
+        replicate = BootstrapReplicateDistribution("b", EmpiricalDistribution("xy", _rows()), 3)
+        raw = replicate._sample(jax.random.PRNGKey(0))
+        assert set(raw) == {"x", "y"} and np.shape(raw["x"]) == (3,)
+        with workflow_run(seed=3):
+            draw = sample(replicate)
+        assert isinstance(draw, NumericRecordBatch)
+        assert (draw.batch_shape, draw.level_names) == ((3,), ("row",))
 
-    @pytest.mark.pending(reason="replicate_size is positional-or-keyword", raises=TypeError)
+    def test_record_rows_are_resampled_jointly(self):
+        replicate = BootstrapReplicateDistribution("b", EmpiricalDistribution("xy", _rows()), 50)
+        raw = replicate._sample(jax.random.PRNGKey(6))
+        np.testing.assert_allclose(raw["y"], 10.0 * raw["x"])
+
     def test_replicate_size_is_positional(self):
         replicate = BootstrapReplicateDistribution("b", Normal("x", 0.0, 1.0), 4)
         assert replicate.replicate_size == 4
 
-    @pytest.mark.pending(reason="event_spec names the replicate's component", raises=TypeError)
     def test_event_spec_names_the_outer_component(self):
         replicate = BootstrapReplicateDistribution(
             "b", Normal("x", 0.0, 1.0), 4, event_spec=OutputSpec(dataset=None)
         )
         assert list(replicate.event_spec.components) == ["dataset"]
+
+    def test_an_exposed_record_declaration_is_refused(self):
+        with pytest.raises(TypeError, match="RecordSpec"):
+            BootstrapReplicateDistribution(
+                "b", Normal("x", 0.0, 1.0), 4, event_spec=OutputSpec(RecordSpec(a=()))
+            )
+
+    def test_the_draws_are_atoms_of_an_empirical_source(self):
+        data = jnp.array([1.0, 5.0, 9.0])
+        replicate = BootstrapReplicateDistribution("b", EmpiricalDistribution("y", data), 20)
+        assert set(np.asarray(replicate._sample(jax.random.PRNGKey(7))).tolist()) <= {1.0, 5.0, 9.0}
+
+    def test_an_atom_of_zero_weight_is_never_drawn(self):
+        source = EmpiricalDistribution("y", jnp.array([1.0, 5.0, 9.0]), jnp.array([1.0, 0.0, 1.0]))
+        draws = BootstrapReplicateDistribution("b", source, 400)._sample(jax.random.PRNGKey(8))
+        assert 5.0 not in set(np.asarray(draws).tolist())
+
+    def test_it_samples_and_claims_no_moment(self):
+        replicate = BootstrapReplicateDistribution("b", Normal("x", 0.0, 1.0), 3)
+        assert isinstance(replicate, SupportsSampling)
+        assert not isinstance(replicate, SupportsMean)
+
+    def test_the_bootstrap_distribution_of_a_statistic_is_its_lift(self):
+        """The replicate means of a dataset concentrate at its mean, with the standard error's spread."""
+        data = jax.random.normal(jax.random.PRNGKey(9), (200,))
+        replicate = BootstrapReplicateDistribution("b", EmpiricalDistribution("y", data))
+        with workflow_run(seed=4):
+            means = Function("stat", lambda b: jnp.mean(b)).with_options(n_broadcast_samples=400)(
+                b=replicate
+            )
+        np.testing.assert_allclose(means._mean()["stat"], jnp.mean(data), atol=0.03)
+        np.testing.assert_allclose(
+            jnp.sqrt(means._variance()["stat"]), jnp.std(data) / jnp.sqrt(200.0), rtol=0.2
+        )
+
+
+class TestTheReplicateLevel:
+    def test_it_defaults_to_an_empirical_sources_one_level(self):
+        replicate = BootstrapReplicateDistribution("b", EmpiricalDistribution("xy", _rows()))
+        assert replicate.event_spec.spec.level_names == ("row",)
+
+    def test_it_defaults_to_the_component_of_a_whole_term_source(self):
+        replicate = BootstrapReplicateDistribution("b", Normal("x", 0.0, 1.0), 3)
+        assert replicate.event_spec.spec.level_names == ("x",)
+
+    def test_a_source_with_several_levels_takes_its_component(self):
+        atoms = NumericArrayBatch(
+            "draws", jnp.zeros((2, 3)), ("chain", "draw"), element_spec=NumericArraySpec(())
+        )
+        replicate = BootstrapReplicateDistribution("b", EmpiricalDistribution("theta", atoms))
+        assert replicate.event_spec.spec.level_names == ("theta",)
+
+    def test_it_is_required_for_a_source_exposing_several_components(self):
+        atoms = NumericRecordBatch(
+            "draws",
+            {"x": jnp.zeros((2, 3)), "y": jnp.zeros((2, 3))},
+            ("chain", "draw"),
+            element_spec=NumericRecordSpec(x=(), y=()),
+            axes_per_level=(1, 1),
+        )
+        source = EmpiricalDistribution("post", atoms)
+        with pytest.raises(ValueError, match="level"):
+            BootstrapReplicateDistribution("b", source)
+        named = BootstrapReplicateDistribution("b", source, level="row")
+        assert named.event_spec.spec.level_names == ("row",)
+
+    def test_level_names_the_replicates_level(self):
+        replicate = BootstrapReplicateDistribution("b", Normal("x", 0.0, 1.0), 3, level="obs")
+        assert replicate.event_spec.spec == BatchSpec(
+            Normal("x", 0.0, 1.0).event_spec.spec, ((3,),), ("obs",)
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -339,18 +656,43 @@ class TestTheBootstrapReplicate:
 
 
 class TestTheBootstrapMeasure:
-    @pytest.mark.pending(
-        reason="BootstrapDistribution is the bootstrap random measure", raises=AssertionError
-    )
     def test_the_bootstrap_distribution_is_a_random_measure(self):
         assert issubclass(BootstrapDistribution, RandomMeasure)
 
-    @pytest.mark.pending(
-        reason="a bootstrap draw is the empirical measure of one replicate",
-        raises=(TypeError, ValueError),
-    )
     def test_a_draw_is_the_empirical_measure_of_one_replicate(self):
         measure = BootstrapDistribution("B", Normal("x", 0.0, 1.0), 7)
         draw = measure._sample(jax.random.PRNGKey(0))
         assert isinstance(draw, EmpiricalDistribution)
         assert draw.num_atoms == 7
+
+    def test_a_drawn_measure_carries_the_sources_declaration(self):
+        source = EmpiricalDistribution("xy", _rows())
+        draw = BootstrapDistribution("B", source)._sample(jax.random.PRNGKey(1))
+        assert draw.event_spec == source.event_spec
+        assert draw.atoms.level_names == ("row",)
+        np.testing.assert_allclose(draw.weights, 0.25)
+
+    def test_the_outer_declaration_is_a_law_of_the_sources_event(self):
+        source = Normal("x", 0.0, 1.0)
+        measure = BootstrapDistribution("B", source, 4)
+        assert measure.event_spec == OutputSpec(B=DistributionSpec(source.event_spec))
+        named = BootstrapDistribution("B", source, 4, event_spec=OutputSpec(measure=None))
+        assert list(named.event_spec.components) == ["measure"]
+
+    def test_draws_under_a_sample_shape_are_an_array_of_measures(self):
+        measure = BootstrapDistribution("B", Normal("x", 0.0, 1.0), 5)
+        draws = measure._sample(jax.random.PRNGKey(2), (2, 3))
+        assert draws.shape == (2, 3)
+        assert all(isinstance(draw, EmpiricalDistribution) for draw in draws.flat)
+        assert draws[0, 0].num_atoms == 5
+
+    def test_the_mean_is_the_source(self):
+        source = EmpiricalDistribution("y", jnp.array([1.0, 2.0, 4.0]))
+        measure = BootstrapDistribution("B", source)
+        assert isinstance(measure, SupportsMean)
+        assert measure._mean() is source
+
+    def test_the_drawn_atoms_are_the_sources(self):
+        source = EmpiricalDistribution("y", jnp.array([1.0, 5.0, 9.0]))
+        draw = BootstrapDistribution("B", source, 30)._sample(jax.random.PRNGKey(3))
+        assert set(np.asarray(draw.atoms.values).tolist()) <= {1.0, 5.0, 9.0}

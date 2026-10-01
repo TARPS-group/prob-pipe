@@ -7,11 +7,13 @@ import importlib
 import importlib.util
 import sys
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 import xarray as xr
 
 import probpipe.diagnostics._arviz_bridge as arviz_bridge
+from probpipe import EmpiricalDistribution, NumericRecordBatch, RecordSpec
 from probpipe.diagnostics._arviz_bridge import (
     check_arviz_installed,
     extract_draws,
@@ -33,12 +35,7 @@ class _DrawsPosterior:
         return self._draws
 
 
-class _SamplesPosterior:
-    def __init__(self, samples):
-        self.samples = samples
-
-
-def test_extract_draws_supports_draws_records_dicts_and_samples():
+def test_extract_draws_supports_draws_records_dicts_and_empirical_laws():
     post = _DrawsPosterior({"alpha": np.arange(3), "beta": np.ones(3)})
     assert set(extract_draws(post)) == {"alpha", "beta"}
 
@@ -47,14 +44,21 @@ def test_extract_draws_supports_draws_records_dicts_and_samples():
             return {"theta": [1.0, 2.0]}
 
     np.testing.assert_array_equal(extract_draws(_DictDraws())["theta"], [1.0, 2.0])
-    np.testing.assert_array_equal(extract_draws(_SamplesPosterior([4, 5]))["x"], [4, 5])
+    empirical = EmpiricalDistribution("x", jnp.array([4.0, 5.0]))
+    np.testing.assert_array_equal(extract_draws(empirical)["x"], [4.0, 5.0])
 
     with pytest.raises(TypeError, match="Cannot extract draws"):
         extract_draws(object())
 
 
-def test_extract_draws_supports_sample_records():
-    post = _SamplesPosterior(_Record({"alpha": [1.0, 2.0], "beta": [3.0, 4.0]}))
+def test_extract_draws_supports_record_atoms():
+    atoms = NumericRecordBatch(
+        "rows",
+        {"alpha": jnp.array([1.0, 2.0]), "beta": jnp.array([3.0, 4.0])},
+        "row",
+        element_spec=RecordSpec(alpha=(), beta=()),
+    )
+    post = EmpiricalDistribution("post", atoms)
 
     draws = extract_draws(post)
 
@@ -90,7 +94,9 @@ def test_to_arviz_dataset_delegates_for_approximate_distribution(monkeypatch):
     class _ApproxPosterior:
         def __init__(self):
             self.chains = [object()]
-            self.fields = ["alpha", "beta"]
+
+        def draws(self, chain=None):
+            return _Record({"alpha": np.ones(2), "beta": np.zeros(2)})
 
     source = xr.Dataset(
         {

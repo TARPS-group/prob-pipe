@@ -11,8 +11,8 @@ from probpipe import (
     NumericDistribution,
     NumericRecordDistribution,
     Provenance,
-    RecordEmpiricalDistribution,
     TFPDistribution,
+    Weights,
     cov,
     from_distribution,
     log_prob,
@@ -177,7 +177,7 @@ class TestMultivariateNormal:
         assert gaussian.dtype == loc.dtype
 
     def test_from_distribution_empirical(self, gaussian, key):
-        ed = from_distribution(gaussian, RecordEmpiricalDistribution, key=key, num_samples=2000)
+        ed = from_distribution(gaussian, EmpiricalDistribution, key=key, num_samples=2000)
         g2 = from_distribution(ed, MultivariateNormal, name="fitted")
         np.testing.assert_allclose(g2.loc, gaussian.loc, atol=0.2)
         assert g2.name == from_distribution.output_name
@@ -197,13 +197,13 @@ class TestMultivariateNormal:
 
 class TestEmpiricalDistribution:
     def test_uniform_weights(self, simple_samples):
-        ed = RecordEmpiricalDistribution("x", simple_samples)
+        ed = EmpiricalDistribution("x", simple_samples)
         assert ed.num_atoms == 3
-        assert ed.dim == 1
+        assert ed.event_shape == (1,)
         np.testing.assert_allclose(ed.weights, jnp.ones(3) / 3)
 
     def test_custom_weights(self, simple_samples, simple_weights):
-        ed = RecordEmpiricalDistribution("x", simple_samples, simple_weights)
+        ed = EmpiricalDistribution("x", simple_samples, simple_weights)
         np.testing.assert_allclose(ed.weights.sum(), 1.0)
         expected_mean = jnp.sum(simple_samples.ravel() * ed.weights)
         np.testing.assert_allclose(jnp.asarray(mean(ed)).ravel(), expected_mean, atol=1e-6)
@@ -227,20 +227,17 @@ class TestEmpiricalDistribution:
             EmpiricalDistribution("x", simple_samples, jnp.array([0.5, 0.5]))
 
     def test_1d_input_scalar_event(self):
-        ed = RecordEmpiricalDistribution("x", jnp.array([1.0, 2.0, 3.0]))
+        ed = EmpiricalDistribution("x", jnp.array([1.0, 2.0, 3.0]))
         assert ed.event_shape == ()
-        # ``samples`` returns the wrapped Record — pull the field for
-        # raw-array shape inspection.
-        assert ed.samples["x"].shape == (3,)
+        assert ed.atoms.values.shape == (3,)
 
     def test_multidim_event_shape(self):
         samples = jnp.ones((5, 3))
-        ed = RecordEmpiricalDistribution("x", samples)
+        ed = EmpiricalDistribution("x", samples)
         assert ed.event_shape == (3,)
-        assert ed.dim == 3
 
     def test_event_shape(self, simple_samples):
-        ed = RecordEmpiricalDistribution("x", simple_samples)
+        ed = EmpiricalDistribution("x", simple_samples)
         assert ed.event_shape == (1,)
 
     def test_sample_shape(self, simple_samples, key):
@@ -260,19 +257,19 @@ class TestEmpiricalDistribution:
             assert jnp.any(jnp.all(jnp.isclose(simple_samples, val), axis=-1))
 
     def test_mean(self, simple_samples, simple_weights):
-        ed = RecordEmpiricalDistribution("x", simple_samples, simple_weights)
+        ed = EmpiricalDistribution("x", simple_samples, simple_weights)
         expected = jnp.sum(simple_samples.ravel() * ed.weights)
         np.testing.assert_allclose(jnp.asarray(mean(ed)).ravel(), expected, atol=1e-6)
 
     def test_variance(self, simple_samples, simple_weights):
-        ed = RecordEmpiricalDistribution("x", simple_samples, simple_weights)
+        ed = EmpiricalDistribution("x", simple_samples, simple_weights)
         mu = jnp.asarray(mean(ed))
         expected = jnp.sum(ed.weights * (simple_samples.ravel() - mu.ravel()) ** 2)
         np.testing.assert_allclose(jnp.asarray(variance(ed)).ravel(), expected, atol=1e-6)
 
     def test_cov_matrix(self):
         samples = jnp.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
-        ed = RecordEmpiricalDistribution("x", samples)
+        ed = EmpiricalDistribution("x", samples)
         C = jnp.asarray(cov(ed))
         assert C.shape == (2, 2)
         np.testing.assert_allclose(C, C.T, atol=1e-6)
@@ -280,7 +277,7 @@ class TestEmpiricalDistribution:
     def test_cov_psd(self):
         """Covariance matrix should be positive semi-definite."""
         samples = jnp.array([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0], [0.0, 0.0]])
-        ed = RecordEmpiricalDistribution("x", samples)
+        ed = EmpiricalDistribution("x", samples)
         C = jnp.asarray(cov(ed))
         eigvals = jnp.linalg.eigvalsh(C)
         assert jnp.all(eigvals >= -1e-8)
@@ -290,7 +287,7 @@ class TestEmpiricalDistribution:
         assert ed.name == "emp"
 
     def test_from_distribution(self, gaussian, key):
-        ed = from_distribution(gaussian, RecordEmpiricalDistribution, key=key, num_samples=50)
+        ed = from_distribution(gaussian, EmpiricalDistribution, key=key, num_samples=50)
         assert ed.num_atoms == 50
         assert ed.event_shape == gaussian.event_shape
         assert ed.provenance is not None
@@ -299,177 +296,23 @@ class TestEmpiricalDistribution:
 
     def test_from_distribution_custom_name(self, gaussian, key):
         ed = from_distribution.apply(
-            gaussian, RecordEmpiricalDistribution, key=key, num_samples=10, name="custom"
+            gaussian, EmpiricalDistribution, key=key, num_samples=10, name="custom"
         )
         assert ed.name == "custom"
 
     def test_from_distribution_default_key(self, gaussian):
         """from_distribution should work without explicit key."""
-        ed = from_distribution(gaussian, RecordEmpiricalDistribution, num_samples=10)
+        ed = from_distribution(gaussian, EmpiricalDistribution, num_samples=10)
         assert ed.num_atoms == 10
 
 
 class TestEmpiricalValidationMessages:
-    """Pin actionable error messages for ``RecordEmpiricalDistribution``
-    construction failures. The reviewer flagged that the 0-D-field
-    branch reported ``"sample-axis length None"``, which doesn't help
-    users debug. Each message must include the offending field name
-    and its actual ``arr.shape``.
-    """
+    """Pin actionable error messages for empirical-law construction failures."""
 
-    def test_zero_dim_first_field_reports_shape(self):
-        """First field is 0-D → message names the field and shape."""
-        from probpipe import Record
-
-        rec = Record("r", x=jnp.array(1.0))
-        with pytest.raises(ValueError) as exc:
-            RecordEmpiricalDistribution("empirical", rec)
-        msg = str(exc.value)
-        assert "'x'" in msg
-        assert "shape ()" in msg
-
-    def test_zero_dim_later_field_reports_shape(self):
-        """A later field is 0-D → message names that field, its shape,
-        and the reference field."""
-        from probpipe import Record
-
-        rec = Record("r", x=jnp.zeros(5), y=jnp.array(2.0))
-        with pytest.raises(ValueError) as exc:
-            RecordEmpiricalDistribution("empirical", rec)
-        msg = str(exc.value)
-        assert "'y'" in msg
-        assert "shape ()" in msg
-        assert "'x'" in msg
-        assert "5" in msg
-
-    def test_mismatched_sample_axis_reports_both_fields(self):
-        """A later field has a different sample-axis length → message
-        names the field, its full shape, and the reference field."""
-        from probpipe import Record
-
-        rec = Record("r", x=jnp.zeros(5), y=jnp.zeros(7))
-        with pytest.raises(ValueError) as exc:
-            RecordEmpiricalDistribution("empirical", rec)
-        msg = str(exc.value)
-        assert "'y'" in msg
-        assert "(7,)" in msg
-        assert "'x'" in msg
-        # Reference n should appear.
-        assert "5" in msg
-
-    def test_zero_dim_numeric_array_reports_shape(self):
-        """``EmpiricalDistribution('x', jnp.array(1.0))`` is a 0-D
-        bare array — the auto-wrap path should reject with a clear
-        message that includes the actual shape."""
-        with pytest.raises(ValueError, match=r"shape \(\)"):
+    def test_zero_dim_numeric_array_reports_its_missing_axis(self):
+        """``EmpiricalDistribution('x', jnp.array(1.0))`` has no axis of atoms."""
+        with pytest.raises(ValueError, match="0-d array"):
             EmpiricalDistribution("x", jnp.array(1.0))
-
-
-class TestFlatSamples:
-    """Tests for the ``flat_samples`` ``(n, dim)`` matrix accessor."""
-
-    def test_single_field_scalar_event(self):
-        # Auto-wrap of a (n,) array → flat_samples is (n, 1) since
-        # the field's event-shape product is 1.
-        ed = EmpiricalDistribution("x", jnp.arange(10.0))
-        assert ed.flat_samples.shape == (10, 1)
-        np.testing.assert_array_equal(
-            ed.flat_samples,
-            jnp.arange(10.0).reshape(10, 1),
-        )
-
-    def test_single_field_1d_event(self):
-        # (n, d) input with name= → flat_samples is (n, d).
-        samples = jnp.arange(15.0).reshape(5, 3)
-        ed = EmpiricalDistribution("theta", samples)
-        assert ed.flat_samples.shape == (5, 3)
-        np.testing.assert_array_equal(ed.flat_samples, samples)
-
-    def test_single_field_multi_dim_event(self):
-        # (n, 3, 2) → flatten the (3, 2) event row-major to (6,).
-        samples = jnp.arange(24.0).reshape(4, 3, 2)
-        ed = EmpiricalDistribution("W", samples)
-        assert ed.flat_samples.shape == (4, 6)
-        np.testing.assert_array_equal(
-            ed.flat_samples,
-            samples.reshape(4, 6),
-        )
-
-    def test_multi_field_1d_events(self):
-        # Multi-field record → column-stack in insertion order.
-        from probpipe import Record
-
-        rec = Record(
-            "r",
-            mu=jnp.arange(8.0),
-            log_sigma=jnp.arange(8.0) + 100.0,
-        )
-        ed = RecordEmpiricalDistribution("ed", rec)
-        assert ed.flat_samples.shape == (8, 2)
-        # First column is mu, second is log_sigma — insertion order.
-        np.testing.assert_array_equal(ed.flat_samples[:, 0], jnp.arange(8.0))
-        np.testing.assert_array_equal(
-            ed.flat_samples[:, 1],
-            jnp.arange(8.0) + 100.0,
-        )
-
-    def test_multi_field_mixed_event_shapes(self):
-        # mu: (10,), beta: (10, 3) → flat_samples (10, 1+3) = (10, 4).
-        from probpipe import Record
-
-        rec = Record(
-            "r",
-            mu=jnp.arange(10.0),
-            beta=jnp.arange(30.0).reshape(10, 3),
-        )
-        ed = RecordEmpiricalDistribution("ed", rec)
-        assert ed.flat_samples.shape == (10, 4)
-        np.testing.assert_array_equal(ed.flat_samples[:, 0], jnp.arange(10.0))
-        np.testing.assert_array_equal(
-            ed.flat_samples[:, 1:],
-            jnp.arange(30.0).reshape(10, 3),
-        )
-
-    def test_field_order_matches_insertion(self):
-        # Insertion-order rule: flat_samples columns follow `dist.fields`.
-        from probpipe import Record
-
-        rec1 = Record("r", z=jnp.zeros(5), a=jnp.ones(5))
-        rec2 = Record("r", a=jnp.ones(5), z=jnp.zeros(5))
-        ed1 = RecordEmpiricalDistribution("ed1", rec1)
-        ed2 = RecordEmpiricalDistribution("ed2", rec2)
-        # Different insertion order → different flat_samples column order.
-        assert ed1.fields == ("z", "a")
-        assert ed2.fields == ("a", "z")
-        np.testing.assert_array_equal(ed1.flat_samples[:, 0], jnp.zeros(5))
-        np.testing.assert_array_equal(ed1.flat_samples[:, 1], jnp.ones(5))
-        np.testing.assert_array_equal(ed2.flat_samples[:, 0], jnp.ones(5))
-        np.testing.assert_array_equal(ed2.flat_samples[:, 1], jnp.zeros(5))
-
-    def test_caches_repeated_access(self):
-        # Repeated ``.flat_samples`` should return the same cached array,
-        # not re-materialise the concatenation each time.
-        ed = EmpiricalDistribution("x", jnp.arange(20.0).reshape(10, 2))
-        assert ed.flat_samples is ed.flat_samples
-
-    def test_zero_sized_event(self):
-        # A field with a zero-sized event dim (e.g. an empty
-        # design-matrix slot) should reshape to (n, 0) and concatenate
-        # cleanly alongside non-empty fields. Pins that the
-        # reshape-then-concat pipeline doesn't choke on prod([0]) == 0.
-        from probpipe import Record
-
-        rec = Record(
-            "r",
-            empty=jnp.zeros((10, 0)),
-            real=jnp.arange(30.0).reshape(10, 3),
-        )
-        ed = RecordEmpiricalDistribution("ed", rec)
-        assert ed.flat_samples.shape == (10, 3)
-        np.testing.assert_array_equal(
-            ed.flat_samples,
-            jnp.arange(30.0).reshape(10, 3),
-        )
 
 
 class TestEmpiricalLogWeights:
@@ -478,8 +321,7 @@ class TestEmpiricalLogWeights:
     def test_log_weights_construction(self):
         samples = jnp.array([[1.0], [2.0], [3.0]])
         lw = jnp.log(jnp.array([0.2, 0.3, 0.5]))
-        ed = EmpiricalDistribution("x", samples, log_weights=lw)
-        assert not ed.is_uniform
+        ed = EmpiricalDistribution("x", samples, Weights(log_weights=lw))
         np.testing.assert_allclose(ed.weights, jnp.array([0.2, 0.3, 0.5]), atol=1e-5)
 
     def test_log_weights_unnormalized(self):
@@ -487,46 +329,26 @@ class TestEmpiricalLogWeights:
         samples = jnp.array([[1.0], [2.0]])
         # log(2) and log(8) → weights 0.2 and 0.8
         lw = jnp.array([jnp.log(2.0), jnp.log(8.0)])
-        ed = EmpiricalDistribution("x", samples, log_weights=lw)
+        ed = EmpiricalDistribution("x", samples, Weights(log_weights=lw))
         np.testing.assert_allclose(ed.weights, jnp.array([0.2, 0.8]), atol=1e-5)
-
-    def test_log_weights_property_normalized(self):
-        samples = jnp.array([[1.0], [2.0], [3.0]])
-        lw = jnp.array([1.0, 2.0, 3.0])  # unnormalized
-        ed = EmpiricalDistribution("x", samples, log_weights=lw)
-        # Normalised log-weights should sum to 0 in exp-space
-        np.testing.assert_allclose(jnp.exp(ed.log_weights).sum(), 1.0, atol=1e-5)
-
-    def test_both_weights_and_log_weights_raises(self):
-        samples = jnp.array([[1.0], [2.0]])
-        with pytest.raises(ValueError, match="not both"):
-            EmpiricalDistribution(
-                "x", samples, weights=jnp.array([0.5, 0.5]), log_weights=jnp.array([0.0, 0.0])
-            )
 
     def test_log_weights_wrong_length_raises(self):
         samples = jnp.array([[1.0], [2.0], [3.0]])
         with pytest.raises(ValueError, match="does not match"):
-            EmpiricalDistribution("x", samples, log_weights=jnp.array([0.0, 0.0]))
+            EmpiricalDistribution("x", samples, Weights(log_weights=jnp.array([0.0, 0.0])))
 
-    def test_uniform_flag(self, simple_samples):
+    def test_uniform_weights_by_default(self, simple_samples):
         ed = EmpiricalDistribution("x", simple_samples)
-        assert ed.is_uniform
         np.testing.assert_allclose(ed.weights, jnp.ones(3) / 3)
-        np.testing.assert_allclose(ed.log_weights, jnp.full(3, -jnp.log(3.0)), atol=1e-6)
-
-    def test_weighted_not_uniform(self, simple_samples, simple_weights):
-        ed = EmpiricalDistribution("x", simple_samples, simple_weights)
-        assert not ed.is_uniform
 
     def test_uniform_mean_matches_numpy(self):
         samples = jnp.array([[1.0], [3.0], [5.0]])
-        ed = RecordEmpiricalDistribution("x", samples)
+        ed = EmpiricalDistribution("x", samples)
         np.testing.assert_allclose(mean(ed), jnp.array([3.0]), atol=1e-6)
 
     def test_uniform_variance_matches_numpy(self):
         samples = jnp.array([[1.0], [3.0], [5.0]])
-        ed = RecordEmpiricalDistribution("x", samples)
+        ed = EmpiricalDistribution("x", samples)
         expected_var = jnp.mean((samples - jnp.array([[3.0]])) ** 2, axis=0)
         np.testing.assert_allclose(variance(ed), expected_var, atol=1e-6)
 
@@ -542,7 +364,7 @@ class TestEmpiricalLogWeights:
         """Very large log-weights should not overflow."""
         samples = jnp.array([[1.0], [2.0], [3.0]])
         lw = jnp.array([1000.0, 1001.0, 1000.5])
-        ed = EmpiricalDistribution("x", samples, log_weights=lw)
+        ed = EmpiricalDistribution("x", samples, Weights(log_weights=lw))
         # Should produce valid weights that sum to 1
         assert jnp.all(jnp.isfinite(ed.weights))
         np.testing.assert_allclose(ed.weights.sum(), 1.0, atol=1e-5)
@@ -557,14 +379,14 @@ class TestEmpiricalLogWeights:
         """Mean with log_weights should match weights-based mean."""
         samples = jnp.array([[1.0], [2.0], [3.0]])
         weights = jnp.array([0.2, 0.3, 0.5])
-        ed_w = RecordEmpiricalDistribution("x", samples, weights)
-        ed_lw = RecordEmpiricalDistribution("x", samples, log_weights=jnp.log(weights))
+        ed_w = EmpiricalDistribution("x", samples, weights)
+        ed_lw = EmpiricalDistribution("x", samples, Weights(log_weights=jnp.log(weights)))
         np.testing.assert_allclose(mean(ed_w), mean(ed_lw), atol=1e-5)
 
     def test_uniform_cov(self):
         """Uniform cov should match standard formula."""
         samples = jnp.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
-        ed = RecordEmpiricalDistribution("x", samples)
+        ed = EmpiricalDistribution("x", samples)
         mu = jnp.mean(samples, axis=0)
         diff = samples - mu
         expected = diff.T @ diff / 3
@@ -734,6 +556,6 @@ class TestDistributionCoverageGaps:
         assert n.dtype == n._tfp_dist.dtype
 
     def test_array_empirical_dtype(self):
-        """RecordEmpiricalDistribution.dtype returns sample dtype."""
+        """An empirical law's dtype is its atoms' dtype."""
         samples = jnp.array([[1.0, 2.0]], dtype=jnp.float32)
-        assert RecordEmpiricalDistribution("x", samples).dtype == jnp.float32
+        assert EmpiricalDistribution("x", samples).dtype == jnp.float32

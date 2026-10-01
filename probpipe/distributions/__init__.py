@@ -22,6 +22,7 @@ from ._conditional import (
     NumericConditionalDistribution,
 )
 from ._distribution import Distribution, DistributionSpec, NumericDistribution
+from ._empirical import EmpiricalDistribution
 from ._factored import (
     FactoredConditionalDistribution,
     FactoredConditionalNumericDistribution,
@@ -33,13 +34,10 @@ from ._factored import (
 )
 from ._views import FieldView
 from .joint import (
-    JointEmpirical,
     JointGaussian,
-    NumericJointEmpirical,
     ProductDistribution,
     SequentialJointDistribution,
 )
-from .kde import KDEDistribution
 
 __all__ = [
     "ConditionalDistribution",
@@ -49,6 +47,7 @@ __all__ = [
     "Distribution",
     "DistributionBatch",
     "DistributionSpec",
+    "EmpiricalDistribution",
     "FactoredConditionalDistribution",
     "FactoredConditionalNumericDistribution",
     "FactoredDistribution",
@@ -57,13 +56,9 @@ __all__ = [
     "FactoredNumericDistribution",
     "FieldView",
     "FullyNumericConditionalDistribution",
-    "JointEmpirical",
     "JointGaussian",
-    # KDE
-    "KDEDistribution",
     "NumericConditionalDistribution",
     "NumericDistribution",
-    "NumericJointEmpirical",
     # Joint
     "ProductDistribution",
     "SequentialJointDistribution",

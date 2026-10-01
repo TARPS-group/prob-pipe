@@ -131,7 +131,6 @@ class _DiracRandomMeasure(
         self._components = components
         self._w = Weights(n=len(components), weights=weights)
         super().__init__(name or "dirac_random_measure", DistributionSpec(first.event_spec))
-        self._approximate = True
 
     @property
     def components(self):

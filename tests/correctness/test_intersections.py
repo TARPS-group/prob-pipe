@@ -64,18 +64,6 @@ from tests.inference.canonical import LeafReference, PosteriorReference, ScaleMi
 #: The controls of a gradient-based fit.
 FIT = PROFILES["blackjax_nuts"].controls
 
-#: The bug that an MCMC result loses parts of its target's declaration.
-_DECLARATION_BUG = (
-    "bug: an MCMC result rebuilds its declaration from the flat chain, dropping the "
-    "target's supports, scalar shapes, and nested groups"
-)
-
-#: The bug that an MCMC result flattens a nested component of its target.
-_NESTING_BUG = (
-    "bug: an MCMC result stores each nested component of its target as one flat array, "
-    "so its moments, draws, and views lose the nested paths"
-)
-
 
 def _from_draws(posterior, target) -> EmpiricalDistribution:
     """The posterior's draws as an EmpiricalDistribution on the levels ``chain`` and ``draw``.
@@ -144,17 +132,14 @@ class TestNestedHierarchicalModel:
         _, target, posterior = schools
         assert_matches(_from_draws(posterior, target), nested_schools_reference())
 
-    @pytest.mark.pending(reason=_NESTING_BUG, raises=AssertionError)
     def test_the_posterior_matches_the_reference_at_the_nested_paths(self, schools):
         _, _, posterior = schools
         assert_matches(posterior, nested_schools_reference())
 
-    @pytest.mark.pending(reason=_DECLARATION_BUG, raises=AssertionError)
     def test_the_posterior_declares_the_targets_nested_record(self, schools):
         _, target, posterior = schools
         assert posterior.event_spec == target.event_spec
 
-    @pytest.mark.pending(reason=_NESTING_BUG, raises=KeyError)
     def test_a_view_at_a_nested_path_reads_the_posterior(self, schools):
         _, _, posterior = schools
         view = FieldView(posterior, "population/tau")
@@ -163,14 +148,12 @@ class TestNestedHierarchicalModel:
             float(np.mean(draws["population"]["tau"])), rel=1e-5
         )
 
-    @pytest.mark.pending(reason=_NESTING_BUG, raises=AssertionError)
     def test_the_tracked_mean_is_a_record_of_the_targets_schema(self, schools):
         _, target, posterior = schools
         result = mean(posterior)
         assert isinstance(result, NumericRecord)
         assert result.spec == target.event_spec.spec
 
-    @pytest.mark.pending(reason=_NESTING_BUG, raises=AssertionError)
     def test_draws_of_the_posterior_keep_the_nested_paths(self, schools):
         _, _, posterior = schools
         with workflow_run(seed=21):
@@ -178,9 +161,6 @@ class TestNestedHierarchicalModel:
         assert isinstance(raw["population"], dict) and set(raw["population"]) == {"mu", "tau"}
         assert np.shape(raw["groups"]["theta_tilde"]) == (3, canonical.SCHOOL_EFFECTS.shape[0])
 
-    @pytest.mark.pending(
-        reason="an MCMC result is an EmpiricalDistribution, whose marginals are exact"
-    )
     def test_the_marginal_of_a_nested_group_is_the_groups_empirical_law(self, schools):
         _, _, posterior = schools
         group = marginal(posterior, "population")
@@ -210,12 +190,11 @@ def _glm_init():
 
 
 def _declaration_cases():
-    pending = pytest.mark.pending(reason=_DECLARATION_BUG, raises=AssertionError)
     return [
         pytest.param("gaussian_linear", {}, id="a-vector"),
-        pytest.param("beta_bernoulli", {}, id="a-scalar", marks=pending),
-        pytest.param("eight_schools", {}, id="a-positive-scale", marks=pending),
-        pytest.param("glm_with_dispersion", {"init": _glm_init()}, id="two-fields", marks=pending),
+        pytest.param("beta_bernoulli", {}, id="a-scalar"),
+        pytest.param("eight_schools", {}, id="a-positive-scale"),
+        pytest.param("glm_with_dispersion", {"init": _glm_init()}, id="two-fields"),
     ]
 
 
@@ -234,13 +213,6 @@ class TestDeclarations:
         )(model, data)
         assert posterior.event_spec == target.event_spec
 
-    @pytest.mark.pending(
-        reason=(
-            "bug: a PyMC result declares its own record of the parameters, with a dtype and a "
-            "support its target does not declare"
-        ),
-        raises=AssertionError,
-    )
     def test_a_pymc_posterior_declares_its_targets_event(self):
         pytest.importorskip("pymc")
         method = _pymc_method()
@@ -252,10 +224,6 @@ class TestDeclarations:
         )(model, data)
         assert posterior.event_spec == target.event_spec
 
-    @pytest.mark.pending(
-        reason="an MCMC result is an EmpiricalDistribution carrying provenance",
-        raises=AssertionError,
-    )
     def test_an_mcmc_posterior_is_an_empirical_law(self):
         case = canonical.case("gaussian_linear")
         posterior = condition_on.with_options(
@@ -466,13 +434,6 @@ class _SchoolsSimulator:
 
 
 class TestLearnedKernelOverANestedRecord:
-    @pytest.mark.pending(
-        reason=(
-            "bug: an amortized posterior's law flattens each nested group of its prior, which "
-            "condition_on's declared result refuses"
-        ),
-        raises=ValueError,
-    )
     def test_the_amortized_posterior_of_a_nested_prior_draws_the_nested_record(self):
         """An amortized posterior trained on the nested eight-schools prior yields laws over that record.
 

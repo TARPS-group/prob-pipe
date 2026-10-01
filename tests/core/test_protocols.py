@@ -10,12 +10,13 @@ from probpipe import (
     BootstrapDistribution,
     EmpiricalDistribution,
     Gamma,
-    JointEmpirical,
     JointGaussian,
     MultivariateNormal,
     Normal,
+    NumericRecordBatch,
+    NumericRecordSpec,
+    OpaqueBatch,
     ProductDistribution,
-    RecordEmpiricalDistribution,
     SequentialJointDistribution,
 )
 from probpipe.distributions._capabilities import (
@@ -49,8 +50,8 @@ def empirical():
 
 @pytest.fixture
 def bootstrap():
-    evals = jax.random.normal(jax.random.PRNGKey(1), (50,))
-    return BootstrapDistribution("bootstrap", evals)
+    data = jax.random.normal(jax.random.PRNGKey(1), (50,))
+    return BootstrapDistribution("bootstrap", EmpiricalDistribution("y", data))
 
 
 @pytest.fixture
@@ -191,21 +192,22 @@ class TestSupportsMean:
 
     def test_empirical_generic_no_moments(self):
         """Non-numeric EmpiricalDistribution does not support moments."""
-        dist = EmpiricalDistribution("x", ["a", "b", "c"])
+        dist = EmpiricalDistribution("x", OpaqueBatch("labels", ["a", "b", "c"], "atom"))
         assert not isinstance(dist, SupportsMean)
         assert not isinstance(dist, SupportsVariance)
         assert not isinstance(dist, SupportsCovariance)
 
     def test_array_empirical(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (100, 2))
-        dist = RecordEmpiricalDistribution("x", samples)
+        dist = EmpiricalDistribution("x", samples)
         assert isinstance(dist, SupportsMean)
         assert isinstance(dist, SupportsVariance)
         assert isinstance(dist, SupportsCovariance)
 
     def test_bootstrap(self, bootstrap):
+        """The bootstrap measure's mean is its source; it claims no event-typed variance."""
         assert isinstance(bootstrap, SupportsMean)
-        assert isinstance(bootstrap, SupportsVariance)
+        assert not isinstance(bootstrap, SupportsVariance)
 
 
 # ---------------------------------------------------------------------------
@@ -423,29 +425,27 @@ class TestSampleReturnTypeConvention:
                 a=Normal(loc=0.0, scale=1.0, name="a"),
                 b=Normal(loc=0.0, scale=1.0, name="b"),
             ),
-            RecordEmpiricalDistribution("x", jnp.arange(5.0)),
-            BootstrapDistribution("bootstrap", jnp.arange(5.0)),
+            EmpiricalDistribution("x", jnp.arange(5.0)),
+            BootstrapDistribution("bootstrap", EmpiricalDistribution("y", jnp.arange(5.0))),
         ]
         for d in distributions:
             assert not hasattr(d, "_sample_one"), (
                 f"{type(d).__name__} should not expose _sample_one"
             )
 
-    def test_joint_empirical_return_types(self):
-        import numpy as np
-
-        from probpipe import Record
-        from probpipe.core._numeric_record_batch import NumericRecordBatch
-
-        # Build a small JointEmpirical from stored per-component samples
-        je = JointEmpirical(
-            x=np.asarray([[1.0], [2.0], [3.0]]),
-            y=np.asarray([[0.5], [1.5], [2.5]]),
+    def test_record_empirical_return_types(self):
+        """An empirical law over records draws the raw form, the nested mapping of its leaves."""
+        rows = NumericRecordBatch(
+            "rows",
+            {"x": jnp.asarray([[1.0], [2.0], [3.0]]), "y": jnp.asarray([[0.5], [1.5], [2.5]])},
+            "row",
+            element_spec=NumericRecordSpec(x=(1,), y=(1,)),
         )
+        law = EmpiricalDistribution("joint", rows)
         k = jax.random.PRNGKey(0)
-        assert isinstance(je._sample(k, ()), Record)
-        assert isinstance(je._sample(k, (4,)), NumericRecordBatch)
-        assert je._sample(k, (4,)).batch_shape == (4,)
+        one, many = law._sample(k, ()), law._sample(k, (4,))
+        assert set(one) == {"x", "y"} and one["x"].shape == (1,)
+        assert many["x"].shape == (4, 1) and many["y"].shape == (4, 1)
 
     def test_joint_gaussian_return_types(self):
         from probpipe import Record
@@ -559,10 +559,10 @@ class TestSequentialJointDynamicProtocols:
         assert isinstance(joint, SupportsVariance)
         assert isinstance(joint, SupportsExactConditioning)
 
-    def test_bootstrap_component_drops_log_prob(self):
-        """``BootstrapDistribution`` lacks ``SupportsLogProb``; a
+    def test_empirical_component_drops_log_prob(self):
+        """``EmpiricalDistribution`` lacks ``SupportsLogProb``; a
         sequential joint containing one should not claim it."""
-        boot = BootstrapDistribution("boot", jnp.array([1.0, 2.0, 3.0]))
+        boot = EmpiricalDistribution("boot", jnp.array([1.0, 2.0, 3.0]))
         joint = SequentialJointDistribution(
             z=Normal(loc=0.0, scale=1.0, name="z"),
             b=lambda z: boot,
@@ -572,55 +572,6 @@ class TestSequentialJointDynamicProtocols:
         assert isinstance(joint, SupportsExactConditioning)
         # MRO-level claims reflect missing log-prob on a component.
         assert SupportsLogProb not in type(joint).__mro__
-
-
-class TestJointEmpiricalDispatch:
-    """JointEmpirical auto-dispatches to NumericJointEmpirical for numeric data."""
-
-    def test_numeric_dispatch(self):
-        from probpipe import JointEmpirical, NumericJointEmpirical
-
-        je = JointEmpirical(x=jnp.zeros((5, 2)), y=jnp.zeros(5))
-        assert type(je) is NumericJointEmpirical
-        # Empirical distributions deliberately do not claim
-        # SupportsLogProb; use the converter registry for a
-        # density on top of empirical samples.
-        assert not isinstance(je, SupportsLogProb)
-        assert isinstance(je, SupportsMean)
-        assert isinstance(je, SupportsVariance)
-
-    def test_numeric_rejects_non_numeric(self):
-        import numpy as np
-
-        from probpipe import NumericJointEmpirical
-
-        with pytest.raises(TypeError, match="numeric"):
-            NumericJointEmpirical(
-                labels=np.array(["a", "b", "c"], dtype=object),
-                y=jnp.zeros(3),
-            )
-
-    def test_generic_non_numeric_lacks_numeric_protocols(self):
-        """``JointEmpirical`` with object-dtype fields stays on the
-        generic base class and must not claim the numeric protocols."""
-        import numpy as np
-
-        from probpipe import JointEmpirical, NumericJointEmpirical
-
-        je = JointEmpirical(
-            labels=np.array(["a", "b", "c"], dtype=object),
-            ids=np.array([0, 1, 2]),
-        )
-        assert type(je) is JointEmpirical
-        assert not isinstance(je, NumericJointEmpirical)
-        # Sampling is available on the generic base; conditioning is not offered.
-        assert isinstance(je, SupportsSampling)
-        assert not isinstance(je, SupportsExactConditioning)
-        assert not isinstance(je, SupportsApproximateConditioning)
-        # Numeric protocols are not on the base class.
-        assert SupportsLogProb not in type(je).__mro__
-        assert SupportsMean not in type(je).__mro__
-        assert SupportsVariance not in type(je).__mro__
 
 
 class TestSimpleGenerativeModelSampling:
@@ -670,13 +621,13 @@ class TestProtocolsSupportedByAll:
         """A leaf missing one protocol removes that protocol from the result."""
         from probpipe.core.protocols import protocols_supported_by_all
 
-        boot = BootstrapDistribution("b", jnp.array([1.0, 2.0, 3.0]))
-        leaves = [Normal(loc=0.0, scale=1.0, name="n"), boot]
+        empirical = EmpiricalDistribution("b", jnp.array([1.0, 2.0, 3.0]))
+        leaves = [Normal(loc=0.0, scale=1.0, name="n"), empirical]
         result = protocols_supported_by_all(
             leaves,
             (SupportsLogProb, SupportsMean, SupportsVariance),
         )
-        # Bootstrap has mean+variance but not log_prob.
+        # An empirical law has mean+variance but not log_prob.
         assert SupportsLogProb not in result
         assert SupportsMean in result
         assert SupportsVariance in result
