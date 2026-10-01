@@ -10,8 +10,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..core._dispatch import Feasibility
 from ..core._specs import OutputSpec
-from ..distributions._conversion import converter_registry
+from ..distributions._conversion import _satisfaction, converter_registry
 from ..distributions._distribution import Distribution, DistributionSpec
 from ._operation import BoundCall, operation
 
@@ -58,9 +59,14 @@ def convert(d: Distribution, target: type):
     """
 
 
-def _satisfies_target(call: BoundCall, result: OutputSpec | None) -> bool:
-    """The source is already an instance of the target class or claims the target protocol."""
-    return isinstance(call.operands["d"], call.operands["target"])
+def _satisfies_target(call: BoundCall, result: OutputSpec | None) -> Feasibility:
+    """The source satisfies the target as it is, as the converter registry tests it first.
+
+    A class target is satisfied by its instances, and a capability protocol by
+    a law that claims it and whose guard admits the call. The rejection says
+    which the source is not.
+    """
+    return _satisfaction(call.operands["d"], call.operands["target"])
 
 
 def _unchanged(call: BoundCall, result: OutputSpec | None) -> Any:
