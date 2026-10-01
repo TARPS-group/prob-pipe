@@ -14,6 +14,7 @@ from probpipe import (
     LinearBasisFunction,
     MultivariateNormal,
     Normal,
+    NumericArraySpec,
     OutputSpec,
     RandomFunction,
     SupportsMean,
@@ -211,6 +212,46 @@ class TestDeclarations:
             "f", lambda X: jnp.zeros(X.shape[0]), _rbf_kernel, event_spec=OutputSpec(g=None)
         )
         assert process.event_spec == OutputSpec(g=FunctionSpec(output_spec=OutputSpec(f=None)))
+
+    def test_an_event_that_is_not_a_function_raises(self):
+        with pytest.raises(TypeError, match="FunctionSpec"):
+            GaussianProcess(
+                "f",
+                lambda X: jnp.zeros(X.shape[0]),
+                _rbf_kernel,
+                event_spec=OutputSpec(g=NumericArraySpec(())),
+            )
+
+    def test_an_event_function_naming_another_output_raises(self):
+        with pytest.raises(ValueError, match="names the output"):
+            GaussianProcess(
+                "f",
+                lambda X: jnp.zeros(X.shape[0]),
+                _rbf_kernel,
+                output_spec=OutputSpec(y=None),
+                event_spec=OutputSpec(g=FunctionSpec(output_spec=OutputSpec(z=None))),
+            )
+
+    def test_an_event_function_naming_the_output_is_kept(self):
+        event = OutputSpec(g=FunctionSpec(output_spec=OutputSpec(y=None)))
+        process = GaussianProcess(
+            "f",
+            lambda X: jnp.zeros(X.shape[0]),
+            _rbf_kernel,
+            output_spec=OutputSpec(y=None),
+            event_spec=event,
+        )
+        assert process.event_spec == event
+
+    def test_an_event_function_without_an_output_takes_the_output_declaration(self):
+        process = GaussianProcess(
+            "f",
+            lambda X: jnp.zeros(X.shape[0]),
+            _rbf_kernel,
+            output_spec=OutputSpec(y=None),
+            event_spec=OutputSpec(g=FunctionSpec()),
+        )
+        assert process.event_spec == OutputSpec(g=FunctionSpec(output_spec=OutputSpec(y=None)))
 
     def test_a_record_output_declaration_raises(self):
         from probpipe import NumericRecordSpec
@@ -560,6 +601,33 @@ class TestScale:
         with pytest.raises(ValueError, match="scalar"):
             jnp.array([1.0, 2.0, 3.0]) * weight_grf
 
+    def test_a_traced_scalar_differentiates_and_compiles(self):
+        process = GaussianProcess("g", lambda X: jnp.zeros(X.shape[0]), _rbf_kernel)
+        X = jnp.array([[0.0], [0.5], [1.0]])
+        kernel_sum = float(jnp.sum(_rbf_kernel(X, X)))
+
+        def total(alpha):
+            return jnp.sum((alpha * process).predict_covariance(X).to_dense())
+
+        # d/dα of Σ α² K is 2 α Σ K.
+        for differentiate in (jax.grad(total), jax.jit(jax.grad(total))):
+            assert float(differentiate(2.0)) == pytest.approx(4.0 * kernel_sum, rel=1e-5)
+        assert float(jax.jit(total)(2.0)) == pytest.approx(4.0 * kernel_sum, rel=1e-5)
+
+    def test_the_law_of_a_traced_scaling_differentiates(self):
+        process = GaussianProcess("g", lambda X: jnp.zeros(X.shape[0]), _rbf_kernel)
+        X = jnp.array([[0.0], [0.5], [1.0]])
+        y = jnp.array([0.1, 0.2, -0.1])
+
+        def log_density(alpha):
+            return (alpha * process)(X)._log_prob(y)
+
+        # log N(y; 0, α² K) has the derivative yᵀ K⁻¹ y / α³ - n / α.
+        quadratic = float(y @ jnp.linalg.solve(_rbf_kernel(X, X), y))
+        expected = quadratic / 8.0 - 3.0 / 2.0
+        for differentiate in (jax.grad(log_density), jax.jit(jax.grad(log_density))):
+            assert float(differentiate(2.0)) == pytest.approx(expected, rel=1e-3)
+
 
 class TestIndependentSum:
     def test_mean_is_sum(self):
@@ -601,6 +669,15 @@ class TestIndependentSum:
         h = _ScalarGP() + _MultiOutputGRF()
         with pytest.raises(ValueError, match="one shape"):
             h.predict_mean(jnp.ones((3, 2)))
+
+    def test_a_shape_mismatch_raises_for_the_variance_as_for_the_mean(self):
+        # At two points the scalar member's variance, (2,), broadcasts against (2, 2).
+        h = _ScalarGP() + _MultiOutputGRF()
+        X = jnp.ones((2, 2))
+        with pytest.raises(ValueError, match="one shape"):
+            h.predict_mean(X)
+        with pytest.raises(ValueError, match="one shape"):
+            h.predict_variance(X)
 
     def test_sub_grfs(self):
         gp1, gp2 = _ScalarGP(1.0, 1.0, name="a"), _ScalarGP(0.5, 0.5, name="b")
