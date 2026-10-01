@@ -311,7 +311,12 @@ class TestConditioningProvenance:
         joint = _ShiftKernel() * Normal(loc=0.0, scale=1.0, name="z")
         cond = condition_on_operation(joint, {"z": jnp.array(1.0)})
         assert cond.provenance.operation == "workflow.condition_on"
-        assert [parent.name for parent in cond.provenance.parents] == ["condition_on", joint.name]
+        # The operation, the joint, and the slice's law, whose own record names its stage.
+        assert [parent.name for parent in cond.provenance.parents] == [
+            "condition_on",
+            joint.name,
+            "x",
+        ]
         assert isinstance(cond.provenance.parents[0], ParentInfo)
 
     def test_gaussian_condition_on(self):

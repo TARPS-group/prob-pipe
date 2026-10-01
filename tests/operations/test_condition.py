@@ -1026,10 +1026,6 @@ class TestEndToEnd:
                 _logistic_joint(), {"y": jnp.array([1, 0, 1, 0])}
             )
 
-    @pytest.mark.pending(
-        reason="the engine keeps the selected route's record as a parent of its own",
-        raises=AssertionError,
-    )
     def test_provenance_names_both_stages(self, full_provenance_mode):
         from probpipe import provenance_ancestors
 

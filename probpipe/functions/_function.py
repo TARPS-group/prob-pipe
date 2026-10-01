@@ -426,10 +426,20 @@ def _run_call(
         elif not isinstance(value, TrackedTerm):
             provenance_inputs[ref.label] = value
 
+    # The selected route's result, when it carries a record of its own, which the
+    # call's record keeps as a parent.
+    route_records: list[TrackedTerm] = []
+
     def invoke_point(**point_values: Any) -> Any:
         if selection is not None:
             point, result, candidate, report = selection
             value = candidate.run(point, result, report)
+            if (
+                isinstance(value, TrackedTerm)
+                and value.provenance is not None
+                and id(value) not in seen_parent_ids
+            ):
+                route_records.append(value)
             return _result.declared_term(value, result, function.output_name)
         if candidates is not None:
             return _realized_point(function, point_values, controls, candidates)
@@ -615,7 +625,7 @@ def _run_call(
     controls, diagnostics = _recipe.provenance_recipe_fields(None)
     provenance = Provenance.create(
         f"workflow.{name}",
-        parents=provenance_parents,
+        parents=[*provenance_parents, *route_records],
         metadata={"func": name, **route.metadata},
         inputs=provenance_inputs,
         controls=controls,

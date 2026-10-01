@@ -729,6 +729,13 @@ class Function(Node, TrackedTerm, Annotated):
         ------
         TypeError
             If an argument does not bind to the signature.
+        ApplicabilityError
+            If an argument's kind is not one its parameter accepts, an
+            applicability condition fails, or the declarations conflict, as the
+            call raises.
+        ResolutionError
+            If a conversion has no converter, or the ``method`` control names no
+            route of a Function realized by routes.
         NotImplementedError
             Until the installed engine provides the probe.
         """
@@ -752,7 +759,11 @@ class Function(Node, TrackedTerm, Annotated):
 
         Python binding errors raise TypeError. Input or output declaration
         violations raise ValueError. Dimension bindings are local to this call.
-        Existing returned objects retain their identity and metadata.
+        Existing returned objects retain their identity and metadata. A Function
+        realized by routes admits each argument by its role, with no lifting,
+        raising ``ApplicabilityError`` for a kind its role refuses; runs the
+        route the engine selects, raising ``ResolutionError`` when none
+        applies; and returns the raw form of the result.
         """
         with _apply_scope():
             bound = self.signature.bind_partial(*args, **kwargs)
