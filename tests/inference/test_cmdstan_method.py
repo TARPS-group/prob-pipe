@@ -13,6 +13,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from tests.inference._harness import validate_method
+
 
 def test_cmdstan_method_binds_arviz_base():
     """The CmdStan method binds arviz 1.x by name (``arviz_base``), never bare
@@ -70,3 +72,10 @@ def test_from_cmdstanpy_produces_arviz1x_datatree(tmp_path):
     assert isinstance(idata, DataTree)
     assert "posterior" in idata.children
     assert {"mu", "sigma"} <= set(idata["posterior"].data_vars)
+
+
+# ---------------------------------------------------------------------------
+# The canonical cases of the cross-method validation harness
+# ---------------------------------------------------------------------------
+
+test_cmdstan_nuts_canonical = validate_method("cmdstan_nuts")

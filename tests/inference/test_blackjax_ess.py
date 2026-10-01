@@ -44,6 +44,7 @@ from probpipe.inference._blackjax_ess import (
 )
 from probpipe.inference._inference_utils import observed_target
 from probpipe.modeling._likelihood import Likelihood
+from tests.inference._harness import validate_method
 
 pytestmark = pytest.mark.filterwarnings(
     "ignore:shape requires ndarray or scalar arguments:DeprecationWarning",
@@ -730,3 +731,10 @@ class TestErrors:
                 num_results=10,
                 num_warmup=5,
             )
+
+
+# ---------------------------------------------------------------------------
+# The canonical cases of the cross-method validation harness
+# ---------------------------------------------------------------------------
+
+test_blackjax_elliptical_slice_canonical = validate_method("blackjax_elliptical_slice")

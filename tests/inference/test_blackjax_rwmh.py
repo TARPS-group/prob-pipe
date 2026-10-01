@@ -32,6 +32,7 @@ from probpipe.inference._blackjax_rwmh import (
     _rgg_scale,
     _window_sizes,
 )
+from tests.inference._harness import validate_method
 
 # Suppress an unrelated TFP/JAX deprecation that fires during random-key
 # construction inside the test fixtures.
@@ -805,3 +806,10 @@ class TestClassesExpose:
         m = BlackJAXRWMHMethod()
         info = m.check(iso_gaussian)
         assert info.feasible
+
+
+# ---------------------------------------------------------------------------
+# The canonical cases of the cross-method validation harness
+# ---------------------------------------------------------------------------
+
+test_blackjax_rwmh_canonical = validate_method("blackjax_rwmh")
