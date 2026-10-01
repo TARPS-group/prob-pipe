@@ -12,9 +12,12 @@ import pytest
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
+    HalfNormal,
+    MultivariateNormal,
     Normal,
     NumericArraySpec,
     NumericRecord,
+    NumericRecordSpec,
     OpaqueSpec,
     condition_on,
 )
@@ -328,6 +331,19 @@ class _NoInitHeuristicDist(Distribution):
         return jnp.asarray(0.0)
 
 
+class _MappingDrawDist(Distribution):
+    """A law over the record ``(a, b)`` whose draw is a mapping keyed ``b`` first."""
+
+    def __init__(self):
+        super().__init__("mapping_draw", NumericRecordSpec(a=(), b=(2,)))
+
+    def _sample(self, key, sample_shape=()):
+        return {"b": jnp.array([3.0, 4.0]), "a": jnp.asarray(1.0)}
+
+    def _unnormalized_log_prob(self, value):
+        return jnp.asarray(0.0)
+
+
 class TestGetInitState:
     """Cover every documented branch of ``get_init_state``."""
 
@@ -354,6 +370,27 @@ class TestGetInitState:
         out = get_init_state(prior, init=None, random_seed=0)
         assert out.shape == (1,)  # scalar Normal -> length-1 vector
         assert bool(jnp.all(jnp.isfinite(out)))
+
+    def test_a_factored_prior_starts_at_its_own_draw(self):
+        # A factored prior draws a nested mapping, which is flattened rather
+        # than replaced by the Uniform(-2, 2) box.
+        prior = Normal("a", 0.0, 1.0) * MultivariateNormal(
+            "b", jnp.array([10.0, -10.0]), cov=jnp.eye(2)
+        )
+        out = get_init_state(prior, init=None, random_seed=0)
+        draw = prior._sample(as_prng_key(0), sample_shape=())
+        expected = jnp.concatenate([jnp.ravel(draw["a"]), jnp.ravel(draw["b"])])
+        np.testing.assert_allclose(np.asarray(out), np.asarray(expected))
+
+    @pytest.mark.parametrize("seed", range(12))
+    def test_a_factored_prior_starts_inside_its_support(self, seed):
+        prior = Normal("a", 0.0, 1.0) * HalfNormal("scale", 1.0)
+        out = get_init_state(prior, init=None, random_seed=seed)
+        assert float(out[1]) > 0.0
+
+    def test_a_mapping_draw_flattens_in_the_order_of_the_declaration(self):
+        out = get_init_state(_MappingDrawDist(), init=None, random_seed=0)
+        np.testing.assert_allclose(np.asarray(out), np.array([1.0, 3.0, 4.0]))
 
     def test_stan_uniform_fallback(self):
         # Branch 3: no sampling path, but event_shape exposed -> Uniform(-2, 2).

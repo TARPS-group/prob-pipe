@@ -343,6 +343,21 @@ def flat_vector(value: Any) -> Array:
     return jnp.ravel(jnp.asarray(value))
 
 
+def _declared_vector(law: Any, draw: Record | Mapping[str, Any]) -> Array:
+    """*draw*, a record draw of *law*, as one flat vector laid out as *law* declares its leaves.
+
+    The leaves follow the canonical order of the numeric record :func:`flat_record`
+    names, which :func:`flat_unflatten` reads back, whatever order the draw's own
+    mapping keeps. A law that declares no such record lays the draw out as
+    :func:`flat_vector` does.
+    """
+    record = flat_record(law)
+    if record is None:
+        return flat_vector(draw)
+    value = draw if isinstance(draw, Record) else Record("draw", draw)
+    return jnp.concatenate([jnp.ravel(jnp.asarray(value[path])) for path in record])
+
+
 class ModelFactors(NamedTuple):
     """The prior and the likelihood of a factored joint at observed values of its fields.
 
@@ -518,7 +533,8 @@ def get_init_state(
        prior's dtype).
     2. **Prior sample** — if the prior implements ``SupportsSampling``,
        draw a single sample with the supplied ``random_seed``. A record
-       draw is flattened to a numeric vector via ``NumericRecord``.
+       draw, or the nested mapping a factored prior draws, is flattened
+       to a numeric vector in the order of the prior's declaration.
     3. **Joint draw** — if the prior is an unnormalized conditional
        over a numeric record, return the draw of its joint restricted
        to the unconditioned fields, flattened. A factored joint that
@@ -553,12 +569,8 @@ def get_init_state(
     if isinstance(prior, SupportsSampling):
         try:
             s = prior._sample(key, sample_shape=())
-            if isinstance(s, Record):
-                from ..core._numeric_record import NumericRecord
-
-                if not isinstance(s, NumericRecord):
-                    s = s.to_numeric()
-                s = s.to_vector()
+            if isinstance(s, Record | Mapping):
+                s = _declared_vector(prior, s)
             return jnp.atleast_1d(jnp.asarray(s, dtype=target_dtype))
         except Exception:
             logger.debug(
