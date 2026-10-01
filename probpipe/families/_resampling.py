@@ -949,6 +949,9 @@ class KDEDistribution(
     def _flattened(self, value: Any) -> Array:
         """*value* in the centers' layout: ``(*batch, *event)``, or ``(*batch, d)`` for records.
 
+        A record value's leaves are read by the KDE's leaf paths, so a batch of
+        records whose fields are declared in another order is read correctly.
+
         Raises
         ------
         TypeError
@@ -958,8 +961,6 @@ class KDEDistribution(
         record = self._record_spec()
         if record is None:
             return jnp.asarray(value, dtype=self._bank._centers.dtype)
-        if isinstance(value, NumericRecordBatch):
-            return jnp.asarray(value.to_vector(), dtype=self._bank._centers.dtype)
         raw = _raw_record(value)
         if not isinstance(raw, dict):
             raise TypeError(
