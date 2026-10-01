@@ -1315,14 +1315,21 @@ def _renamed_marginal_capabilities(
 ) -> frozenset[type]:
     """The parent's report of its marginal at the original nodes for *path*.
 
+    A path that holds no single node of the parent, as a regrouping node does,
+    has no exact marginal here, which the marginal guard reports, so its report
+    claims nothing and a view there claims no density.
+
     Raises
     ------
     KeyError
         If a path is not an event path of this law.
-    ValueError
-        If a path holds no single node of the parent.
     """
     paths = (path,) if isinstance(path, str) else tuple(path)
+    for each in paths:
+        if not _has_path(self.event_spec, each):
+            raise KeyError(each)
+    if any(self._event.original(each) is None for each in paths):
+        return frozenset()
     originals = self._originals(paths)
     return _marginal_claims(
         self._parent, originals[0] if isinstance(path, str) else tuple(originals)

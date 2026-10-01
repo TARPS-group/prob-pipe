@@ -532,6 +532,13 @@ class TestRenamedLawMoves:
             renamed._marginal("g")
         assert _capability_guard(renamed, "_marginal", "g/x") == Feasibility(True)
 
+    def test_a_view_at_a_regrouping_node_claims_no_density(self, key):
+        renamed = (Normal("a", 0.0, 1.0) * Normal("b", 1.0, 1.0)).with_path_names({"a": "g/a"})
+        view = renamed["g"]
+        assert isinstance(view, SupportsSampling)
+        assert not isinstance(view, SupportsLogProb)
+        assert jnp.array_equal(view._sample(key)["a"], renamed._sample(key)["g"]["a"])
+
     def test_a_given_at_a_moved_field_reaches_the_parent_at_its_origin(self):
         parent = _NestedLaw()
         parent.with_path_names({"model/theta/tau": "tau"})._condition_on({"tau": jnp.zeros(2)})
