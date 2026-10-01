@@ -32,6 +32,7 @@ import jax.numpy as jnp
 import numpy as np
 import tensorflow_probability.substrates.jax.distributions as tfd
 
+from .._dtype import _default_float_dtype
 from ..core._spec_base import NumericArraySpec, NumericSpec
 from ..core._specs import OutputSpec
 from ..core.constraints import _supports_compatible
@@ -657,6 +658,16 @@ _FITS: dict[
 #: The families whose fit needs a total count, which the option ``total_count`` gives.
 _COUNTED = (Binomial, NegativeBinomial, Multinomial)
 
+#: The fitted families whose draws are integers, with their dtype; every other family
+#: draws the default floating dtype.
+_INTEGER_DRAWS: dict[type, Any] = {Bernoulli: jnp.int32, Categorical: jnp.int32}
+
+
+def _fit_dtype(family: type) -> np.dtype:
+    """The dtype of a draw of the fitted *family*, which its promise declares."""
+    return np.dtype(_INTEGER_DRAWS.get(family, _default_float_dtype()))
+
+
 #: The capability that gives each statistic in closed form.
 _CLOSED_FORM = {
     "mean": SupportsMean,
@@ -815,8 +826,10 @@ class _MomentMatching(Converter):
     def check(self, source: Any, target_type: type, **options: Any) -> ConversionInfo:
         """Promise the family *target_type* over the source's declaration, without fitting it.
 
-        The promised declaration is the source's, with the family's dtype and
-        support left to the fit.
+        The promised declaration is the source's shape with the family's dtype,
+        which the registry holds to the source's by the same-kind rule, so a fit
+        whose draws do not cast to the source's dtype is refused here as the
+        call refuses it. The support is left to the fit.
 
         Raises
         ------
@@ -827,7 +840,9 @@ class _MomentMatching(Converter):
         if isinstance(planned, str):
             return ConversionInfo(False, description=planned)
         declaration = planned.declaration
-        promised = declaration._with_spec(NumericArraySpec(declaration.spec.shape))
+        promised = declaration._with_spec(
+            NumericArraySpec(declaration.spec.shape, _fit_dtype(target_type))
+        )
         return ConversionInfo(
             True,
             method_name=self.name,
