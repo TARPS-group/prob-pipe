@@ -297,6 +297,21 @@ def _slots_of(d: Any) -> frozenset[str]:
 # ---------------------------------------------------------------------------
 
 
+def _curried(kernel: ConditionalDistribution, given: Any, **options: Any) -> Any:
+    """The law or kernel that *kernel* yields at *given*, its provenance recording the curry.
+
+    A result that carries a record of its own keeps it.
+    """
+    result = kernel._condition_on(given, **options)
+    if result is not kernel and result.provenance is None:
+        result.with_provenance(
+            Provenance.create(
+                "condition_on", parents=[kernel], metadata={"stage": "exact", "route": "curry"}
+            )
+        )
+    return result
+
+
 def _unconditioned_event(law: Any, produced: Iterable[str]) -> OutputSpec:
     """The declaration of *law*'s components that *produced* leaves unconditioned.
 
@@ -456,7 +471,7 @@ class _UnnormalizedConditionalKernel(ConditionalDistribution):
         self, given: Record | Mapping[str, Any], /, **kwargs: Any
     ) -> Distribution | ConditionalDistribution:
         """The unnormalized conditional at a value of every given slot, or a kernel over the rest."""
-        return _unnormalized_conditional(self._kernel._condition_on(given, **kwargs), self._given)
+        return _unnormalized_conditional(_curried(self._kernel, given, **kwargs), self._given)
 
 
 def _unnormalized_conditional(law: Any, given: Record) -> Any:
@@ -627,7 +642,7 @@ class _PerValueNormalization(ConditionalDistribution):
 
         *kwargs* are budgets of the method that normalizes the law.
         """
-        result = self._kernel._condition_on(given)
+        result = _curried(self._kernel, given)
         if not _needs_normalization(result):
             return result
         return _normalized(result, self._normalization.with_budgets(kwargs))
@@ -639,7 +654,7 @@ class _PerValueNormalization(ConditionalDistribution):
 
         It computes that law and runs no method.
         """
-        law = self._kernel._condition_on(given)
+        law = _curried(self._kernel, given)
         if not _needs_normalization(law):
             return Feasibility(True)
         return self._normalization.with_budgets(budgets).report(law)
@@ -763,7 +778,7 @@ def _curry(call: BoundCall) -> Any:
     elif isinstance(kernel, SupportsApproximateConditioning):
         budgets = _AMORTIZED_CONDITIONING_CONTROLS
     options = {name: call.controls[name] for name in budgets if name in call.controls}
-    return kernel._condition_on(call.operands["given"], **options)
+    return _curried(kernel, call.operands["given"], **options)
 
 
 def _evaluation_is_exact(call: BoundCall) -> bool:
@@ -836,7 +851,7 @@ def _bayes(call: BoundCall) -> Any:
     evaluated = _evaluated(d)
     slots = _slots_of(d)
     bound = {key: value for key, value in values.items() if _head(key) in slots}
-    law = evaluated._condition_on(bound) if bound else evaluated
+    law = _curried(evaluated, bound) if bound else evaluated
     produced = {key: value for key, value in values.items() if key not in bound}
     return _unnormalized_conditional(law, Record("given", produced))
 

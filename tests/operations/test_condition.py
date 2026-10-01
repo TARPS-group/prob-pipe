@@ -455,6 +455,24 @@ class TestTheNormalizationStage:
         (target,) = exact.targets
         assert isinstance(target, Unnormalized)
 
+    def test_the_target_of_a_curried_law_records_the_curry(self, suite_methods):
+        exact, _ = suite_methods
+        kernel = _UnnormalizedKernel()
+        condition_on(kernel, {"data": 1.0})
+        (target,) = exact.targets
+        assert target.provenance.operation == "condition_on"
+        assert target.provenance.metadata == {"stage": "exact", "route": "curry"}
+        (parent,) = target.provenance.parents
+        assert (parent.type_name, parent.name) == ("_UnnormalizedKernel", kernel.name)
+
+    def test_the_target_of_bayes_rule_records_the_curry_of_its_slots(self, approximate_method):
+        joint = Kernel("y", ("mu",)) * Kernel("z", ("mu",))
+        condition_on(joint, {"mu": 1.0, "y": 0.0})
+        (target,) = approximate_method.targets
+        assert target.provenance.metadata == {"stage": "exact", "route": "bayes"}
+        (law,) = target.provenance.parents
+        assert law.provenance.metadata == {"stage": "exact", "route": "curry"}
+
     def test_check_reports_the_exact_route_and_the_normalization_method(self, suite_methods):
         view = condition_on.with_options(method="operations_suite_approximate")
         curried = view.check(_UnnormalizedKernel(), {"data": 1.0})

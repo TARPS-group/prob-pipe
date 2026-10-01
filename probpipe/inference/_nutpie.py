@@ -40,6 +40,36 @@ def condition_on_nutpie(
     to *data* when it is a kernel, or a :class:`~probpipe.families.PyMCModel`
     at the observed values *data*.
     """
+    return _nutpie_posterior(
+        model,
+        data,
+        model,
+        num_results=num_results,
+        num_warmup=num_warmup,
+        num_chains=num_chains,
+        random_seed=random_seed,
+        **kwargs,
+    )
+
+
+def _nutpie_posterior(
+    model: Any,
+    data: Any,
+    parent: Any,
+    *,
+    num_results: int = 1000,
+    num_warmup: int = 500,
+    num_chains: int = 4,
+    random_seed: int = 0,
+    **kwargs: Any,
+) -> ApproximateDistribution:
+    """nutpie's posterior of *model* at *data*, whose provenance names *parent*.
+
+    Raises
+    ------
+    ImportError
+        If nutpie is not installed.
+    """
     try:
         import nutpie
     except ImportError as e:
@@ -80,7 +110,7 @@ def condition_on_nutpie(
 
     return make_posterior(
         chains,
-        parents=(model,),
+        parents=(parent,),
         algorithm="nutpie_nuts",
         annotations=trace,
         event_spec=event_spec,
@@ -213,6 +243,9 @@ class NutpieNutsMethod(InferenceMethod):
         return Feasibility(feasible=True)
 
     def execute(self, target: Any, /, **kwargs: Any) -> ApproximateDistribution:
-        """nutpie's NUTS on the program the target carries, at the observed values it binds."""
+        """nutpie's NUTS on the program the target carries, at the observed values it binds.
+
+        The posterior's provenance names the target as its parent.
+        """
         dist, observed = joint_and_given(target)
-        return condition_on_nutpie.apply(dist, observed, **kwargs)
+        return _nutpie_posterior(dist, observed, target, **kwargs)

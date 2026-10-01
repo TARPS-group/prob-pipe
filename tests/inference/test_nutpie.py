@@ -336,6 +336,24 @@ class TestNutpieIntegration:
         np.testing.assert_allclose(float(jnp.mean(mu_draws)), post_mean, atol=0.05)
         np.testing.assert_allclose(float(jnp.std(mu_draws)), post_sd, atol=0.05)
 
+    def test_the_registry_method_names_its_target_as_the_parent(self):
+        """The posterior's provenance names the target it normalized, as pymc_nuts' does."""
+        from probpipe.inference._nutpie import NutpieNutsMethod
+        from probpipe.operations._condition import condition_on
+
+        model = PyMCModel("gaussian", _gaussian_pymc_fn)
+        target = condition_on.with_options(method="unnormalized")(
+            model, {"y": np.array([0.0, 1.0])}
+        )
+        result = NutpieNutsMethod().execute(
+            target, num_results=30, num_warmup=30, num_chains=1, random_seed=0
+        )
+        (parent,) = result.provenance.parents
+        assert (parent.type_name, parent.provenance) == (
+            "_UnnormalizedConditional",
+            target.provenance,
+        )
+
     def test_annotations_trace_attached(self):
         model = PyMCModel("gaussian", _gaussian_pymc_fn)
         y_obs = np.array([0.0, 1.0], dtype=float)
