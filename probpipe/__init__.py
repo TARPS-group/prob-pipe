@@ -176,7 +176,7 @@ from probpipe.functions import (
     register_bijector,
     workflow_method,
 )
-from probpipe.functions._call import ApplicabilityError
+from probpipe.functions._call import ApplicabilityError, CallReport
 from probpipe.functions._context import workflow_run
 from probpipe.functions._errors import (
     ReplayCompatibilityError,
@@ -237,6 +237,7 @@ __all__ = [
     "Binomial",
     "BootstrapDistribution",
     "BootstrapReplicateDistribution",
+    "CallReport",
     "Categorical",
     "Cauchy",
     "ConditionallyIndependentLikelihood",

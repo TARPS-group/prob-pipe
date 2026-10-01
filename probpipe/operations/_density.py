@@ -28,8 +28,8 @@ from ..distributions._capabilities import (
     SupportsUnnormalizedLogProb,
 )
 from ..distributions._distribution import Distribution, DistributionSpec
-from ..functions._call import ApplicabilityError
-from ._operation import CallCheck, operation
+from ..functions._call import ApplicabilityError, CallReport
+from ._operation import operation
 
 __all__ = [
     "log_prob",
@@ -191,12 +191,12 @@ unnormalized_log_prob.capability_route(
 )
 
 
-def _log_prob_applies(d: Any, value: Any) -> CallCheck:
+def _log_prob_applies(d: Any, value: Any) -> CallReport:
     """``log_prob`` has a route for the law and the value."""
     return log_prob.check(d, value)
 
 
-def _unnormalized_log_prob_applies(d: Any, value: Any) -> CallCheck:
+def _unnormalized_log_prob_applies(d: Any, value: Any) -> CallReport:
     """``unnormalized_log_prob`` has a route for the law and the value."""
     return unnormalized_log_prob.check(d, value)
 

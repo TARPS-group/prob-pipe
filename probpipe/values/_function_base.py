@@ -703,11 +703,12 @@ class Function(Node, TrackedTerm, Annotated):
 
         Returns
         -------
-        Any
+        CallReport
             The call's report: for each candidate route whether it is feasible,
             infeasible with a reason, or unresolved with the declarations it
-            still needs; the selected route when selection can be decided; and
-            the checks deferred to return.
+            still needs; the selected route when selection can be decided; the
+            planned result declaration; the checks deferred to return; the
+            lifted parameters; and the planned conversions.
 
         Raises
         ------

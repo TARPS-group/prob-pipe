@@ -470,7 +470,7 @@ class TestSelection:
     def test_a_declining_guard_passes_to_the_fallback(self):
         report = center.check(GuardedMean("g", False))
         assert (report.route, report.exact) == ("monte_carlo", False)
-        declined = dict(report.routes)["closed_form"]
+        declined = {info.method_name: info for info in report.routes}["closed_form"]
         assert "The stand-in's answer admits the closed form" in declined.description
 
     def test_an_admitting_guard_selects_the_capability(self):
@@ -492,7 +492,7 @@ class TestSelection:
         )
         report = toy.check(Gaussian("g"))
         assert (report.feasible, report.route, report.exact) == (True, "guarded", True)
-        assert [name for name, _ in report.routes] == ["guarded"]
+        assert [info.method_name for info in report.routes] == ["guarded"]
 
 
 class TestNamingAMethod:
@@ -731,7 +731,7 @@ class TestLiftedChecks:
         batch = _laws(Gaussian("g", 1.0), Gaussian("g", 2.0))
         report = center.check(batch)
         assert (report.feasible, report.route, report.exact) == (True, "closed_form", True)
-        assert report.lifted == (("d", "sweep"),)
+        assert report.lifted == ("d",)
         assert report.result == Gaussian("g").event_spec
         np.testing.assert_array_equal(np.asarray(center(batch).values), [1.0, 2.0])
 
@@ -760,7 +760,7 @@ class TestLiftedChecks:
             "laws", np.empty(0, object), "laws", element_spec=Gaussian("g").spec
         )
         report = center.check(empty)
-        assert (report.feasible, report.route, report.lifted) == (True, None, (("d", "sweep"),))
+        assert (report.feasible, report.route, report.lifted) == (True, None, ("d",))
 
     def test_a_plain_call_lifts_nothing(self):
         assert center.check(Gaussian("g")).lifted == ()

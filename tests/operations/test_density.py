@@ -105,7 +105,7 @@ class TestLiftedScores:
     def test_a_law_at_the_value_is_admitted_and_planned_at_its_event_kind(self):
         report = log_prob.check(Gaussian("g"), Gaussian("v"))
         assert (report.feasible, report.route, report.exact) == (True, "exact", True)
-        assert report.lifted == (("value", "broadcast"),)
+        assert report.lifted == ("value",)
         assert report.result == OutputSpec(log_prob=NumericArraySpec(()))
         assert isinstance(log_prob(Gaussian("g"), Gaussian("v")), Distribution)
 
@@ -117,14 +117,14 @@ class TestLiftedScores:
         laws = DistributionBatch("laws", [Gaussian("g", 1.0), Gaussian("g", 2.0)], "laws")
         report = log_prob.check(laws, Gaussian("v"))
         assert report.feasible is True
-        assert report.lifted == (("d", "sweep"), ("value", "broadcast"))
+        assert report.lifted == ("d", "value")
 
     def test_the_identity_of_prob_is_checked_at_the_points_of_a_lift(self):
         report = prob.check(Gaussian("g"), Gaussian("v"))
         assert (report.feasible, report.route, report.lifted) == (
             True,
             "identity",
-            (("value", "broadcast"),),
+            ("value",),
         )
         assert prob.check(Bare("b"), Gaussian("v")).feasible is False
 
@@ -170,7 +170,7 @@ class TestDerivedDensities:
     def test_the_identity_takes_the_exactness_of_the_route_log_prob_selects(self):
         report = prob.check(Gaussian("g"), 0.5)
         assert (report.feasible, report.route, report.exact) == (True, "identity", True)
-        assert dict(report.routes)["identity"].route == "exact"
+        assert {info.method_name: info for info in report.routes}["identity"].exact is True
 
     def test_the_identity_route_states_its_constituent_as_its_condition(self):
         (route,) = prob.summary().routes

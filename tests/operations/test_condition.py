@@ -284,10 +284,15 @@ class TestCurry:
         assert condition_on.check(joint, {"mu": 1.0, "y": 0.0}).route == "bayes"
 
 
+def _by_name(routes: Any) -> dict[str, Any]:
+    """Each probed route's report, by the route's name."""
+    return {info.method_name: info for info in routes}
+
+
 class TestSlice:
     def test_the_slice_route_declines_a_factored_law_with_a_reason(self):
         joint = Kernel("y", ("mu",)) * Gaussian("mu")
-        declined = dict(condition_on.check(joint, {"y": 0.3}).routes)["slice"]
+        declined = _by_name(condition_on.check(joint, {"y": 0.3}).routes)["slice"]
         assert declined.feasible is False
         assert "factors" in declined.description
 
@@ -434,7 +439,7 @@ class TestTheExactStage:
     def test_unnormalized_is_selected_only_by_name(self, suite_methods):
         report = condition_on.check(_Conjugate("model"), {"y": 0.3})
         assert report.route == "bayes"
-        declined = dict(report.routes).get("unnormalized")
+        declined = _by_name(report.routes).get("unnormalized")
         assert declined is None or declined.feasible is False
 
     def test_the_exact_stage_is_exact_before_an_approximate_stand_in(self):

@@ -204,7 +204,6 @@ class TestConversionPlanning:
 
         assert isinstance(error_of(lambda: consume(standard_normal())), ResolutionError)
 
-    @pytest.mark.pending(reason="the engine's probe of steps 1 to 6")
     def test_a_probe_plans_the_conversion_without_constructing_it(self, monkeypatch):
         from probpipe.converters import converter_registry
 

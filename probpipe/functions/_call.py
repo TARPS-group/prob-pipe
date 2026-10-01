@@ -9,13 +9,21 @@ its parameter accepts. A violation of the call contract raises
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
-from types import UnionType
+from dataclasses import dataclass, field
+from types import MappingProxyType, UnionType
 from typing import Any, Union, get_args, get_origin
 
 from ..core._array_backend import _is_numeric_leaf
 from ..core._batch import Batch, BatchSpec
-from ..core._specs import InputSpec, NumericArraySpec, OpaqueSpec, RecordSpec, TermSpec
+from ..core._dispatch import MethodInfo
+from ..core._specs import (
+    InputSpec,
+    NumericArraySpec,
+    OpaqueSpec,
+    OutputSpec,
+    RecordSpec,
+    TermSpec,
+)
 from ..core.tracked import TrackedTerm
 from ..distributions._capabilities import (
     SupportsConditionalCovariance,
@@ -59,6 +67,77 @@ class ApplicabilityError(TypeError):
     levels do not align, and when the declarations of a call conflict. The
     message names the parameter, what it accepts, and what arrived.
     """
+
+
+@dataclass(frozen=True)
+class CallReport:
+    """What ``check`` reports about a call, without executing it (V.1).
+
+    A route's report is a :class:`~probpipe.core._dispatch.MethodInfo` named
+    by the route, and by ``route/method`` for a method of a registry route.
+
+    Attributes
+    ----------
+    routes : tuple of MethodInfo
+        Each probed route's report, in selection order: feasible, infeasible
+        with a reason, or unresolved with the declarations it needs.
+    selected : MethodInfo or None
+        The selected route's report, or an infeasible report naming no route
+        when none applies; ``None`` when selection cannot be decided, since a
+        route ranked above every feasible one is unresolved.
+    deferred : tuple of str
+        The checks left to the return.
+    result : OutputSpec or None
+        The planned result declaration, or ``None`` when only the return
+        settles it.
+    lifted : tuple of str
+        The parameters whose arguments lift or sweep.
+    conversions : Mapping of str to ConversionInfo
+        The planned conversion of each parameter that converts.
+    """
+
+    routes: tuple[MethodInfo, ...] = ()
+    selected: MethodInfo | None = None
+    deferred: tuple[str, ...] = ()
+    result: OutputSpec | None = None
+    lifted: tuple[str, ...] = ()
+    conversions: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
+
+    @property
+    def feasible(self) -> bool | None:
+        """Whether a route is selected: ``False`` when none applies, ``None`` when undecided."""
+        return None if self.selected is None else self.selected.feasible
+
+    @property
+    def route(self) -> str | None:
+        """The selected route's name, or ``None``."""
+        if self.selected is None or self.selected.feasible is not True:
+            return None
+        return (self.selected.method_name or "").partition("/")[0] or None
+
+    @property
+    def method(self) -> str | None:
+        """The registry method the selected route delegates to, or ``None``."""
+        if self.selected is None or self.selected.feasible is not True:
+            return None
+        return (self.selected.method_name or "").partition("/")[2] or None
+
+    @property
+    def exact(self) -> bool | None:
+        """The selected implementation's exactness, or ``None`` when none is selected."""
+        return None if self.selected is None else self.selected.exact
+
+    @property
+    def pending(self) -> tuple[str, ...]:
+        """What an undecided selection waits on: the needs of each unresolved route."""
+        if self.selected is not None:
+            return self.selected.pending
+        return tuple(dict.fromkeys(item for info in self.routes for item in info.pending))
+
+    @property
+    def description(self) -> str:
+        """The selected report's description, which names every route tried when none applies."""
+        return "" if self.selected is None else self.selected.description
 
 
 @dataclass(frozen=True)

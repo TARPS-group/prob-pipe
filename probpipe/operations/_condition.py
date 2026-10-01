@@ -93,10 +93,10 @@ from ..distributions._factored import SupportsFactors
 from ._convert import convert
 from ._operation import (
     BoundCall,
-    CallCheck,
     Operation,
     RouteSource,
     _CheckedRoute,
+    _PointCheck,
     _RegistryRoute,
     _workflow_draws,
     operation_registry,
@@ -1002,7 +1002,7 @@ class _NormalizingRoute(_RegistryRoute):
             d = call.operands["d"]
             if isinstance(d, _PerValueNormalization) and not self._stage.yields_kernel(call):
                 return self._evaluation_report(call, d, exact)
-            return CallCheck(True, exact=exact)
+            return _PointCheck(True, exact=exact)
         normalization = self._normalization(call, method, exact_only)
         if self._stage.yields_kernel(call):
             return self._per_value_report(call, normalization, exact)
@@ -1040,7 +1040,7 @@ class _NormalizingRoute(_RegistryRoute):
             )
         info = kernel._normalization_report(call.operands["given"], self.method_options(call))
         if not isinstance(info, MethodInfo):
-            return info if info.feasible is not True else CallCheck(True, exact=exact)
+            return info if info.feasible is not True else _PointCheck(True, exact=exact)
         if info.feasible is not True:
             return info
         return replace(info, exact=exact and info.exact)
@@ -1069,7 +1069,7 @@ class _NormalizingRoute(_RegistryRoute):
         if normalization.method is not None:
             method = self.registry.get_method(normalization.method)
             return MethodInfo(True, method_name=normalization.method, exact=exact and method.exact)
-        return CallCheck(True, exact=exact)
+        return _PointCheck(True, exact=exact)
 
     def run(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Any:
         """The exact stage's result, normalized as the declarations, or else its own, require."""
@@ -1098,7 +1098,7 @@ class _Conditioning(Operation):
     stage computable.
     """
 
-    def _check_point(self, values: Mapping[str, Any], *, select: bool = True) -> CallCheck:
+    def _check_point(self, values: Mapping[str, Any], *, select: bool = True) -> _PointCheck:
         token = _CHECKING.set(True)
         try:
             return super()._check_point(values, select=select)
@@ -1225,7 +1225,7 @@ def _exact_stage_by_name(call: BoundCall, result: OutputSpec | None) -> Any:
     for stage in (_CURRY, _EXACT_CONDITIONING, _BAYES):
         report = stage.check(call)
         if report.feasible is not False:
-            return report if report.feasible is None else CallCheck(True, exact=stage.exact(call))
+            return report if report.feasible is None else _PointCheck(True, exact=stage.exact(call))
         reports.append(report.description)
     return Feasibility(False, f"route {_UNNORMALIZED!r} declined: {'; '.join(reports)}")
 

@@ -58,7 +58,7 @@ from ..core.record import Record
 from ..core.tracked import TrackedTerm
 from ..distributions._capabilities import _capability_guard, _guard_condition
 from ..functions import _broker, _descendants
-from ..functions._call import ApplicabilityError, admit_arguments
+from ..functions._call import ApplicabilityError, CallReport, admit_arguments
 from ..functions._plan import BroadcastPlan, build_broadcast_plan
 from ..functions._result import (
     _copy_result_term,
@@ -79,7 +79,6 @@ from ..values._function_base import _validate_function_output
 
 __all__ = [
     "BoundCall",
-    "CallCheck",
     "OperandSummary",
     "Operation",
     "OperationRegistry",
@@ -249,6 +248,11 @@ def _as_feasibility(report: Any, source: Callable[..., Any], owner: str) -> Feas
     """
     if isinstance(report, Feasibility):
         return report
+    if isinstance(report, CallReport):
+        # Another operation's check, as a derived operation's identity reads it.
+        if report.selected is not None:
+            return report.selected
+        return Feasibility(None, pending=report.pending)
     condition = _guard_condition(source)
     suffix = f": {condition}" if condition else ""
     if report is True:
@@ -607,7 +611,7 @@ def _exactness(candidate: _Candidate, report: Feasibility) -> bool | None:
     selected: a registry route's method, or the route a derived operation's
     constituent selects.
     """
-    if candidate.route.exact is None and isinstance(report, (MethodInfo, CallCheck)):
+    if candidate.route.exact is None and isinstance(report, (MethodInfo, _PointCheck)):
         return report.exact
     return candidate.route.exact
 
@@ -618,13 +622,14 @@ def _exactness(candidate: _Candidate, report: Feasibility) -> bool | None:
 
 
 @dataclass(frozen=True)
-class CallCheck(Feasibility):
-    """What :meth:`Operation.check` reports about one call, without executing it.
+class _PointCheck(Feasibility):
+    """What the check of an operation finds at its points, before it becomes a CallReport.
 
     The call is feasible when a route is selected, unresolved when a route
     ranked above every feasible one still needs declarations, and infeasible
     when no route applies. A call the engine lifts is checked at each of its
-    points, and it is feasible when every point is.
+    points, and it is feasible when every point is. A route's probe may return
+    one, to report a feasible route of a stated exactness that runs no method.
 
     Attributes
     ----------
@@ -691,8 +696,8 @@ def _points(
 
 
 def _combined(
-    reports: list[tuple[tuple[int, ...], CallCheck]], lifted: tuple[tuple[str, str], ...]
-) -> CallCheck:
+    reports: list[tuple[tuple[int, ...], _PointCheck]], lifted: tuple[tuple[str, str], ...]
+) -> _PointCheck:
     """The report of a call from those of its points, each with its sweep cell.
 
     The call is infeasible at its first infeasible point, and unresolved when
@@ -724,6 +729,41 @@ def _combined(
         exact=exact,
         deferred=deferred,
         lifted=lifted,
+    )
+
+
+def _call_report(point: _PointCheck) -> CallReport:
+    """The CallReport of a call from the check of its points.
+
+    Each probed candidate's report is named by its label, and a report whose
+    exactness is open states the call approximate.
+    """
+    routes = tuple(
+        MethodInfo(
+            report.feasible,
+            report.description,
+            report.pending,
+            method_name=label,
+            exact=bool(getattr(report, "exact", None)),
+        )
+        for label, report in point.routes
+    )
+    selected: MethodInfo | None
+    if point.feasible is None:
+        selected = None
+    elif point.feasible is False:
+        selected = MethodInfo(False, point.description)
+    else:
+        name = point.route or ""
+        if point.route is not None and point.method is not None:
+            name = f"{point.route}/{point.method}"
+        selected = MethodInfo(True, method_name=name, exact=bool(point.exact))
+    return CallReport(
+        routes=routes,
+        selected=selected,
+        deferred=point.deferred,
+        result=point.result,
+        lifted=tuple(dict.fromkeys(label for label, _ in point.lifted)),
     )
 
 
@@ -1293,7 +1333,7 @@ class Operation(Function):
         wrapped = _wrap_result(value, result, self.output_name)
         return _raw_form(wrapped) if call.controls["raw"] else wrapped
 
-    def check(self, *args: Any, **kwargs: Any) -> CallCheck:
+    def check(self, *args: Any, **kwargs: Any) -> CallReport:
         """Report how a call would resolve, without executing any route.
 
         The arguments bind as the call's would, and admission and planning raise
@@ -1306,10 +1346,12 @@ class Operation(Function):
 
         Returns
         -------
-        CallCheck
-            The selected route, its exactness, the result declaration, each probed
-            candidate's report, the checks deferred to the return, and each lifted
-            argument with how the engine lifts it.
+        CallReport
+            Each probed candidate's report and the selected one, the selected
+            report naming the route, and ``route/method`` for a registry route's
+            method, or an empty name when the points of a lifted call select
+            different routes; the result declaration; the checks deferred to the
+            return; and the parameters whose arguments the engine lifts.
 
         Raises
         ------
@@ -1330,14 +1372,14 @@ class Operation(Function):
         if plan.array_args and plan.n_sweep == 0:
             elements = {ref: _Point(_element_spec(values, ref)) for ref in plan.array_args}
             point = replace_input_refs(values, {**elements, **_draws(values, plan)})
-            return replace(self._check_point(point, select=False), lifted=lifted)
-        reports: list[tuple[tuple[int, ...], CallCheck]] = []
+            return _call_report(replace(self._check_point(point, select=False), lifted=lifted))
+        reports: list[tuple[tuple[int, ...], _PointCheck]] = []
         for cell, point in _points(values, plan):
             report = self._check_point(point)
             reports.append((cell, report))
             if report.feasible is False:
                 break
-        return _combined(reports, lifted)
+        return _call_report(_combined(reports, lifted))
 
     def _lift_plan(
         self, args: tuple[Any, ...], kwargs: Mapping[str, Any]
@@ -1354,7 +1396,7 @@ class Operation(Function):
         )
         return values, build_broadcast_plan(values=values, signature_info=self._signature_info)
 
-    def _check_point(self, values: Mapping[str, Any], *, select: bool = True) -> CallCheck:
+    def _check_point(self, values: Mapping[str, Any], *, select: bool = True) -> _PointCheck:
         """The report of one point of a call: its admission, its planning, and its selection.
 
         Without *select*, the point is admitted and planned, and no route is
@@ -1371,11 +1413,11 @@ class Operation(Function):
         self._admit(call)
         result, deferred = self._plan(call)
         if not select:
-            return CallCheck(True, result=result, deferred=deferred)
+            return _PointCheck(True, result=result, deferred=deferred)
         candidate, report, reports = self._select(call, result)
         probed = tuple((probed_candidate.label, probe) for probed_candidate, probe in reports)
         if candidate is None:
-            return CallCheck(
+            return _PointCheck(
                 False,
                 self._no_route_message(call, reports),
                 result=result,
@@ -1383,11 +1425,11 @@ class Operation(Function):
                 deferred=deferred,
             )
         if report.feasible is None:
-            return CallCheck(
+            return _PointCheck(
                 None, pending=report.pending, result=result, routes=probed, deferred=deferred
             )
         registry = isinstance(candidate.route, _RegistryRoute)
-        return CallCheck(
+        return _PointCheck(
             True,
             route=candidate.route.name,
             method=report.method_name if registry and isinstance(report, MethodInfo) else None,
