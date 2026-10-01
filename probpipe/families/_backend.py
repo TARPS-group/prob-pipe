@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import functools
 from collections.abc import Callable, Generator
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -136,6 +137,41 @@ _BACKEND_METHODS: dict[type, dict[str, Callable[..., Any]]] = {
 
 
 # ---------------------------------------------------------------------------
+# Rebuilding a family from its constructor arguments
+# ---------------------------------------------------------------------------
+
+
+def _recording_arguments(init: Callable[..., None]) -> Callable[..., None]:
+    """*init*, recording on the instance the arguments of the outermost constructor call.
+
+    A family's constructor calls the adapter's, so the arguments recorded are
+    those the family was called with, together with whether it was built in the
+    separate-laws form.
+    """
+
+    @functools.wraps(init)
+    def __init__(self: TFPDistribution, *args: Any, **kwargs: Any) -> None:
+        if getattr(self, "_constructor_arguments", None) is None:
+            recorded = (args, kwargs, _BATCHED_INIT_BYPASS.get())
+            object.__setattr__(self, "_constructor_arguments", recorded)
+        init(self, *args, **kwargs)
+
+    return __init__
+
+
+def _rebuilt_family(
+    cls: type[TFPDistribution],
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    separate_laws: bool,
+) -> TFPDistribution:
+    """The family *cls* constructed from *args* and *kwargs* in the form it was built in."""
+    form = _allow_batched_tfp_init() if separate_laws else contextlib.nullcontext()
+    with form:
+        return cls(*args, **kwargs)
+
+
+# ---------------------------------------------------------------------------
 # The adapter
 # ---------------------------------------------------------------------------
 
@@ -173,8 +209,8 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
     Raises
     ------
     TypeError
-        If *event_spec* is not an :class:`~probpipe.OutputSpec`, or exposes a
-        record.
+        If *backend_dist* is not a backend distribution, or *event_spec* is
+        not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
         If the backend's draws are arrays and its parameters have axes, since
         a batch of separate laws is a ``DistributionBatch``, or *event_spec*
@@ -182,9 +218,11 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
 
     Notes
     -----
-    A subclass that builds its backend after construction passes ``None`` for
-    *backend_dist* and its own complete *event_spec*, and sets ``_tfp_dist``
-    itself.
+    A family pickles and copies by rebuilding from the arguments its
+    constructor was called with, in the form it was built in, and then
+    restoring the state assigned since, such as a new label or provenance. The
+    backend is rebuilt rather than copied, since some backends, such as the
+    one reinterpreting independent coordinates, neither pickle nor deep-copy.
     """
 
     #: The capabilities the family's backend computes beyond sampling and the density.
@@ -193,28 +231,31 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
     _tfp_dist: tfd.Distribution
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
-        """Give a family the method realizing each capability its table lists."""
+        """Give a family the method realizing each capability its table lists.
+
+        A family's own constructor is wrapped to record the arguments it is
+        called with, which :meth:`__reduce__` rebuilds the family from.
+        """
         super().__init_subclass__(**kwargs)
         for protocol in vars(cls).get("_backend_capabilities", ()):
             for method, implementation in _BACKEND_METHODS[protocol].items():
                 if method not in vars(cls):
                     setattr(cls, method, implementation)
+        if "__init__" in vars(cls):
+            cls.__init__ = _recording_arguments(vars(cls)["__init__"])
 
+    @_recording_arguments
     def __init__(
         self,
         name: str,
-        backend_dist: tfd.Distribution | None,
+        backend_dist: tfd.Distribution,
         *,
         event_spec: OutputSpec | None = None,
     ) -> None:
-        if backend_dist is None:
-            if event_spec is None:
-                raise TypeError(
-                    f"{type(self).__name__} builds its backend after construction, so it "
-                    f"must pass its own event_spec"
-                )
-            super().__init__(name, event_spec)
-            return
+        if not isinstance(backend_dist, tfd.Distribution):
+            raise TypeError(
+                f"backend_dist must be a backend distribution, got {type(backend_dist).__name__}"
+            )
         backend_dist = self._reinterpreted(backend_dist)
         self._tfp_dist = backend_dist
         produced = NumericArraySpec(
@@ -260,6 +301,19 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
     def raw(self) -> tfd.Distribution:
         """The wrapped backend distribution."""
         return self._tfp_dist
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        """Rebuild from the recorded constructor arguments, then restore the other state.
+
+        Every attribute but the backend is restored, so a label or provenance
+        assigned after construction is kept.
+        """
+        arguments = getattr(self, "_constructor_arguments", None)
+        if arguments is None:
+            return super().__reduce__()
+        instance_dict, slots = self.__getstate__()
+        kept = {key: value for key, value in (instance_dict or {}).items() if key != "_tfp_dist"}
+        return (_rebuilt_family, (type(self), *arguments), (kept or None, slots))
 
     # -- sampling and the density ---------------------------------------------
 

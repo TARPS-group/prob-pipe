@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import copy
+import pickle
 
 import jax
 import jax.numpy as jnp
@@ -192,9 +194,22 @@ class TestTheAdapter:
         )
         np.testing.assert_allclose(law._quantile(levels), expected, rtol=1e-5)
 
-    def test_the_covariance_is_a_linear_operator(self):
-        law = F.MultivariateNormal("z", jnp.zeros(2), cov=jnp.eye(2))
+    def test_the_covariance_is_the_operator_of_the_given_matrix(self):
+        cov = jnp.array([[4.0, 0.6], [0.6, 0.25]])
+        law = F.MultivariateNormal("z", jnp.zeros(2), cov=cov)
         assert isinstance(law._cov(), LinOp)
+        np.testing.assert_allclose(law._cov().to_dense(), cov, rtol=1e-6)
+
+    def test_the_covariance_from_a_scale_factor_is_its_outer_product(self):
+        scale_tril = jnp.array([[2.0, 0.0], [0.3, 0.4]])
+        law = F.MultivariateNormal("z", jnp.zeros(2), scale_tril)
+        np.testing.assert_allclose(law._cov().to_dense(), scale_tril @ scale_tril.T, rtol=1e-6)
+
+    def test_a_backend_covariance_is_the_backends_dense_matrix(self):
+        law = F.Dirichlet("p", jnp.array([2.0, 3.0, 5.0]))
+        expected = tfd.Dirichlet(jnp.array([2.0, 3.0, 5.0])).covariance()
+        assert np.abs(np.asarray(expected) - np.diag(np.diag(expected))).max() > 0.01
+        np.testing.assert_allclose(law._cov().to_dense(), expected, rtol=1e-6)
 
     def test_a_given_covariance_operator_keeps_its_structure(self):
         operator = DiagonalLinOp(jnp.array([1.0, 4.0]))
@@ -323,17 +338,52 @@ class TestTheSeparateLawsForm:
         assert outside == [(2,)]
 
 
-class TestALateBackend:
-    """A subclass that builds its backend after construction passes its own declaration."""
+class TestTheBackend:
+    """The adapter takes the backend distribution it wraps at construction."""
 
-    def test_a_late_backend_needs_its_own_declaration(self):
-        class _LateBackend(TFPDistribution):
-            def __init__(self, name):
-                super().__init__(name, None)
-                self._tfp_dist = tfd.Normal(0.0, 1.0)
+    def test_the_adapter_takes_a_backend_distribution(self):
+        with pytest.raises(TypeError, match="backend distribution"):
+            TFPDistribution(
+                "x", None, event_spec=OutputSpec(x=NumericArraySpec((), jnp.float32, real))
+            )
 
-            def _event_support(self):
-                return real
 
-        with pytest.raises(TypeError, match=r"_LateBackend builds its backend after .* event_spec"):
-            _LateBackend("late")
+#: A scalar family, two families over vector parameters, and a multivariate family.
+_ROUND_TRIPS = {
+    "scalar": lambda: F.Normal("x", 0.5, 2.0),
+    "vector-parameters": lambda: F.Normal("x", jnp.array([0.0, 1.0]), jnp.array([1.0, 0.5])),
+    "multivariate": lambda: F.MultivariateNormal(
+        "x", jnp.array([1.0, -1.0]), cov=jnp.array([[2.0, 0.5], [0.5, 1.0]])
+    ),
+    "discrete-vector-parameters": lambda: F.Bernoulli("x", probs=jnp.array([0.2, 0.7])),
+}
+
+_COPIES = {
+    "pickle": lambda law: pickle.loads(pickle.dumps(law)),
+    "deepcopy": copy.deepcopy,
+}
+
+
+class TestPickling:
+    """A family pickles and deep-copies, rebuilt from its constructor arguments."""
+
+    @pytest.mark.parametrize("how", list(_COPIES))
+    @pytest.mark.parametrize("family", list(_ROUND_TRIPS))
+    def test_a_family_round_trips(self, family, how):
+        law = _ROUND_TRIPS[family]().with_name("renamed")
+        copied = _COPIES[how](law)
+        assert type(copied) is type(law)
+        assert copied.name == "renamed"
+        assert copied.event_spec == law.event_spec
+        key = jax.random.PRNGKey(3)
+        draws = law._sample(key, (4,))
+        np.testing.assert_array_equal(copied._sample(key, (4,)), draws)
+        np.testing.assert_allclose(copied._log_prob(draws), law._log_prob(draws), rtol=1e-6)
+
+    @pytest.mark.parametrize("how", list(_COPIES))
+    def test_a_family_in_the_separate_laws_form_keeps_its_form(self, how):
+        with _allow_batched_tfp_init():
+            law = F.Normal("x", jnp.zeros(3), 1.0)
+        copied = _COPIES[how](law)
+        assert copied.event_shape == ()
+        assert tuple(copied.raw().batch_shape) == (3,)

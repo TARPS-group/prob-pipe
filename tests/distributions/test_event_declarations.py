@@ -427,29 +427,12 @@ _DRAW_FAILURES = {
 }
 
 # Laws that do not pickle, by the exception each raises.
-_TFP_BACKEND = pytest.mark.xfail(
-    raises=pytest.RaisesExc(TypeError, match="missing a required argument"),
-    strict=True,
-    reason="a TFP backend built from another law does not unpickle",
-)
 _RUNTIME_CLASS = pytest.mark.xfail(
     raises=pickle.PicklingError,
     strict=True,
     reason="a class made at runtime does not pickle (#417)",
 )
 _PICKLE_FAILURES = {
-    MultivariateNormal: _TFP_BACKEND,
-    JointGaussian: _TFP_BACKEND,
-    MinibatchedDistribution: _TFP_BACKEND,
-    _FixedMinibatchDistribution: _TFP_BACKEND,
-    _RandomMinibatchLogProb: _TFP_BACKEND,
-    _MinibatchLogProbAtPoint: _TFP_BACKEND,
-    LinearBasisFunction: _TFP_BACKEND,
-    _LinearMapGRF: _TFP_BACKEND,
-    _ShiftedGRF: _TFP_BACKEND,
-    _ScaledGRF: _TFP_BACKEND,
-    _IndependentSumGRF: _TFP_BACKEND,
-    _LogRatePoisson: _TFP_BACKEND,
     SequentialJointDistribution: _RUNTIME_CLASS,
     _MixtureMarginal: _RUNTIME_CLASS,
     FlattenedDistributionView: _RUNTIME_CLASS,
