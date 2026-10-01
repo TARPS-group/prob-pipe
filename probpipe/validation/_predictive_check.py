@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import jax
 import numpy as np
 
 from ..core._numeric_record import NumericRecord
-from ..core._record_spec import _reshaped_template
+from ..core._record_spec import RecordSpec, _reshaped_template
 from ..core.protocols import GenerativeLikelihood
+from ..core.record import Record
+from ..core.tracked import TrackedTerm
 from ..custom_types import PRNGKey
 from ..distributions._capabilities import SupportsSampling
 from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution, _batch_form
+from ..distributions._factored import _raw_record
 from ..functions import function
 from ._workflow_rng import (
     _require_certified_generative_provider,
@@ -224,6 +227,26 @@ def _record_check_in_annotations(
     aux[f"predictive_check/check_{n_existing}"] = DataTree(dataset=ds)
 
 
+def _drawn(distribution: Any, key: PRNGKey, sample_shape: tuple[int, ...]) -> Any:
+    """Draws of *distribution*, with a record draw at the kind its declaration names.
+
+    A law returns a record draw in its raw form, the nested mapping of its raw
+    leaves. A generative likelihood reads parameters as a ``Record``, or as an
+    array through a record of one field, so one draw is handed on as a
+    ``Record`` and draws along a leading axis as their batch of records on the
+    level ``draw``. Any other draw is handed on as the law returns it.
+    """
+    raw = distribution._sample(key, sample_shape)
+    if not isinstance(raw, Mapping) or isinstance(raw, TrackedTerm):
+        return raw
+    spec = distribution.event_spec.spec
+    if not isinstance(spec, RecordSpec):
+        return raw
+    if sample_shape:
+        return _batch_form(distribution.name, raw, "draw", spec)
+    return Record(distribution.name, _raw_record(raw), event_template=spec)
+
+
 def _supports_key_arg(generative_likelihood: Any) -> bool:
     """Check whether generate_data accepts a ``key`` keyword argument."""
     import inspect
@@ -247,7 +270,7 @@ def _predictive_check_batched(
     key_params, key_data = jax.random.split(key)
 
     # Draw all parameter samples at once: (num_replications, *event_shape)
-    params_batch = distribution._sample(key_params, (num_replications,))
+    params_batch = _drawn(distribution, key_params, (num_replications,))
 
     # Generate all replicated datasets in one call
     y_rep_batch = generative_likelihood.generate_data(
@@ -280,7 +303,7 @@ def _predictive_check_loop(
     stats = []
     for _i in range(num_replications):
         key, subkey = jax.random.split(key)
-        params_i = distribution._sample(subkey, ())
+        params_i = _drawn(distribution, subkey, ())
         y_rep = generative_likelihood.generate_data(params_i, num_observations)
         stats.append(float(test_fn(y_rep)))
     return np.array(stats, dtype=np.float64)
