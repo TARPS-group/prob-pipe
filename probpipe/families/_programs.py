@@ -625,6 +625,7 @@ class _PyMCProgram:
         self.given = tuple(p.name for p in arguments if p.name not in self.observed)
         self.parameters = tuple(name for name in free if name not in self.observed)
         self.shapes = {name: tuple(rv.type.shape) for name, rv in free.items()}
+        self.dtypes = {name: np.dtype(rv.dtype) for name, rv in free.items()}
         self.normalized = not model.potentials and not any(
             type(rv.owner.op).__name__ in _IMPROPER_OPS for rv in model.free_RVs
         )
@@ -661,6 +662,7 @@ class _PyMCProgram:
         import pytensor
         import pytensor.tensor as pt
         from pymc.logprob.basic import conditional_logp
+        from pytensor.graph.replace import clone_replace
 
         model = self.build()
         values = {
@@ -669,18 +671,27 @@ class _PyMCProgram:
         }
         terms = [pt.sum(term) for term in conditional_logp(values).values()]
         if model.potentials:
-            terms += [pt.sum(p) for p in pytensor.clone_replace(list(model.potentials), values)]
+            terms += [pt.sum(p) for p in clone_replace(list(model.potentials), values)]
         return pytensor.function(list(values.values()), pt.sum(terms))
 
 
 def _pymc_density(self: PyMCModel, value: Any) -> Array:
-    """The joint log-density of the free variables at *value*, a record of them."""
+    """The joint log-density of the free variables at *value*, a record of them.
+
+    Each value is cast to its variable's dtype, since PyMC scores a count as an
+    integer, and a count at a value that is not an integer has density zero.
+    """
     memo = transient_memo(self)
     if "log_density" not in memo:
         memo["log_density"] = self._program.log_density()
-    return jnp.asarray(
-        memo["log_density"](*(np.asarray(value[name]) for name in self._program.shapes))
-    )
+    arguments = []
+    for name, dtype in self._program.dtypes.items():
+        given = np.asarray(value[name])
+        cast = given.astype(dtype)
+        if np.issubdtype(dtype, np.integer) and not np.array_equal(cast, given):
+            return jnp.asarray(-jnp.inf)
+        arguments.append(cast)
+    return jnp.asarray(memo["log_density"](*arguments))
 
 
 def _pymc_sample(self: PyMCModel, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:

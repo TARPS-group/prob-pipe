@@ -290,10 +290,6 @@ class TestPyMCModel:
         with pytest.raises(ResolutionError):
             log_prob(model, {"mu": 0.4, "y": _POTENTIAL_DATA})
 
-    @pytest.mark.pending(
-        reason="bug: PyMCModel's density calls pytensor.clone_replace, which PyTensor 3.0 does not export",
-        raises=AttributeError,
-    )
     def test_the_unnormalized_density_of_a_model_with_a_potential_is_pymcs_logp(self):
         model = PyMCModel("penalized", _with_potential)
         expected = _with_potential().compile_logp(jacobian=False)({"mu": 0.4, "y": _POTENTIAL_DATA})
@@ -342,13 +338,6 @@ class TestPyMCModel:
             expected, rel=1e-4, abs=1e-3
         )
 
-    @pytest.mark.pending(
-        reason=(
-            "bug: PyMCModel's density passes each value as given, so a float32 count, which "
-            "its declaration admits, raises PyTensor's TypeError"
-        ),
-        raises=TypeError,
-    )
     def test_a_count_drawn_as_a_float_is_scored(self):
         """The Bernoulli count of ``beta_bernoulli`` conforms to the declaration as float32 and scores."""
         case = canonical.case("beta_bernoulli")
@@ -362,6 +351,14 @@ class TestPyMCModel:
         assert float(log_prob.with_options(raw=True)(pymc, value)) == pytest.approx(
             expected, rel=1e-5
         )
+
+    def test_a_count_at_a_value_that_is_not_an_integer_has_density_zero(self):
+        case = canonical.case("beta_bernoulli")
+        pymc = case.pymc_model()
+        y = np.array(case.data["y"], np.float32)
+        y[0] = 0.5
+        value = {"theta": np.float32(0.3), "y": y}
+        assert float(log_prob.with_options(raw=True)(pymc, value)) == -np.inf
 
 
 # ---------------------------------------------------------------------------
