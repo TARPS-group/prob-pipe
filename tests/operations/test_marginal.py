@@ -53,7 +53,16 @@ class TestMarginal:
         with pytest.raises(ResolutionError, match="The marginal is exact at the field a"):
             marginal(Marginalizing("law"), "b")
 
-    @pytest.mark.pending(reason="an empirical marginal declares the node's event")
+    def test_check_and_the_call_agree_while_the_fallback_is_not_implemented(self):
+        report = marginal.check(Pair("p"), "a")
+        assert report.feasible is False
+        assert "not implemented" in report.description
+        with pytest.raises(ResolutionError, match="not implemented"):
+            marginal(Pair("p"), "a")
+
+    @pytest.mark.pending(
+        reason="an empirical marginal declares the node's event", raises=ResolutionError
+    )
     def test_the_fallback_projects_draws_onto_the_field(self):
         assert marginal(Pair("p"), "a").event_spec == OutputSpec(a=REAL)
 

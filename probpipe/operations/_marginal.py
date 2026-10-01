@@ -10,9 +10,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..core._dispatch import Feasibility
 from ..core._record_spec import RecordSpec
 from ..core._specs import OutputSpec
-from ..distributions._capabilities import SupportsMarginals, SupportsSampling, _capability_guard
+from ..distributions._capabilities import SupportsMarginals, _capability_guard
 from ..distributions._conditional import ConditionalDistributionSpec
 from ..distributions._distribution import Distribution, DistributionSpec
 from ..distributions._factored import SupportsFactors
@@ -94,9 +95,13 @@ def _can_marginalize_path(call: BoundCall, result: OutputSpec | None) -> Any:
 
 
 def _can_sample(call: BoundCall, result: OutputSpec | None) -> Any:
-    """The law samples, so projected draws form an empirical marginal."""
-    d = call.operands["d"]
-    return isinstance(d, SupportsSampling) and _capability_guard(d, "_sample")
+    """The empirical marginal of projected draws is not implemented, so no call selects the route.
+
+    The route is to apply when the law samples, so that projected draws form
+    an empirical marginal; until its execution exists, ``check`` and the call
+    both report it infeasible.
+    """
+    return Feasibility(False, "the empirical marginal of projected draws is not implemented")
 
 
 def _empirical_marginal(call: BoundCall, result: OutputSpec | None) -> Any:
