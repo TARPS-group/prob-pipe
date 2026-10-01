@@ -31,7 +31,6 @@ from probpipe import (
     Cauchy,
     Dirichlet,
     Distribution,
-    DistributionArray,
     EmpiricalDistribution,
     Exponential,
     FlatNumericRecordDistribution,
@@ -265,9 +264,6 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
         z=Normal("z", 0.0, 1.0), x=_conditional
     ),
     JointGaussian: lambda: JointGaussian(mean=jnp.zeros(3), cov=jnp.eye(3), x=1, y=2),
-    DistributionArray: lambda: DistributionArray.from_batched_params(
-        Normal, loc=jnp.zeros(3), scale=1.0, name="x"
-    ),
     BroadcastDistribution: lambda: BroadcastDistribution(
         {"x": jnp.zeros(3)}, jnp.zeros(3), broadcast_args=["x"]
     ),

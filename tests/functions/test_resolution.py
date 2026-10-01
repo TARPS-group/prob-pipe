@@ -17,7 +17,7 @@ import pytest
 from probpipe import (
     Batch,
     Distribution,
-    DistributionArray,
+    DistributionBatch,
     Function,
     Normal,
     NumericArrayBatch,
@@ -44,10 +44,8 @@ def _rows() -> NumericArrayBatch:
     return NumericArrayBatch("rows", jnp.arange(3.0), "row", element_spec=SCALAR)
 
 
-def _normals() -> DistributionArray:
-    return DistributionArray.from_batched_params(
-        Normal, batch_shape=(2,), loc=jnp.zeros(2), scale=jnp.ones(2), name="normals"
-    )
+def _normals() -> DistributionBatch:
+    return DistributionBatch("normals", [Normal("x", 0.0, 1.0), Normal("x", 0.0, 1.0)], "law")
 
 
 def _recording(annotation: Any) -> tuple[Function, list[Any]]:
@@ -218,15 +216,15 @@ class TestTheFloorsAgreeWithTheDirectCall:
             (Any, _rows, {}, False),
             (None, _rows, {"include_inputs": True}, False),
             (None, _normals, {}, True),
-            (DistributionArray, _normals, {}, False),
+            (DistributionBatch, _normals, {}, False),
         ],
         ids=[
             "unannotated",
             "consumes-the-batch",
             "any",
             "include-inputs",
-            "distribution-array",
-            "consumes-the-array",
+            "distribution-batch",
+            "consumes-the-batch-of-laws",
         ],
     )
     def test_the_sweep_is_feasible_where_the_call_sweeps(
@@ -257,8 +255,8 @@ class TestTheFloorsAgreeWithTheDirectCall:
             "unannotated",
             "consumes-the-law",
             "any",
-            "distribution-array",
-            "distribution-array-at-any",
+            "distribution-batch",
+            "distribution-batch-at-any",
         ],
     )
     def test_the_sampling_lift_is_feasible_where_the_call_samples(

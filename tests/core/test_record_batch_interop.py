@@ -29,6 +29,7 @@ from probpipe import (
     NumericArrayBatch,
     NumericArraySpec,
     NumericRecord,
+    Opaque,
     OpaqueBatch,
     OpaqueSpec,
     OutputSpec,
@@ -387,7 +388,7 @@ class TestOpaqueColumnsAreRearrangedRaw:
 
         indexed = _index_along_leading(self._mixed(), jnp.array([1, 2]))
 
-        assert list(indexed["tag"]) == ["b", "c"]
+        assert [element.value for element in indexed["tag"]] == ["b", "c"]
         np.testing.assert_array_equal(np.asarray(indexed["x"]), [1.0, 2.0])
 
 
@@ -974,6 +975,11 @@ class TestAnEmpiricalTakesABatch:
         assert seen <= stored
 
 
+def _stored(element):
+    """What an object batch's element view holds: an Opaque's value, a Function's callable."""
+    return element.value if isinstance(element, Opaque) else element.raw()
+
+
 class TestBatchValuedRowAggregation:
     """A swept body returns one kind of row, and the aggregate is not its rows' class."""
 
@@ -1050,10 +1056,13 @@ class TestBatchValuedRowAggregation:
         assert result.axis_groups == ((3,), (2,))
         for row in range(3):
             for item in range(2):
-                assert result[row, item] is inner[item]
+                assert _stored(result[row, item]) is _stored(inner[item])
 
         if kind == "opaque":
-            evaluate = len
+
+            def evaluate(label):
+                return len(label.value)
+
             expected = [5, 10]
         else:
 
@@ -1243,8 +1252,8 @@ class TestDeclaredOpaqueOutputAcrossDispatches:
 class TestEveryBatchIsAnOperand:
     """A batch is swept because it holds a multiplicity, not because it holds records.
 
-    The planner recognised only `RecordBatch` and `DistributionArray`, so the
-    other batch kinds were handed to a body whole. A body written for one element
+    The planner once recognised only `RecordBatch`, so the other batch kinds
+    were handed to a body whole. A body written for one element
     then saw the whole collection, and the levels collapsed into the value's
     shape on the way out.
     """
@@ -1277,8 +1286,8 @@ class TestEveryBatchIsAnOperand:
         assert (out.batch_shape, out.level_names) == ((3,), ("row",))
 
     def test_an_opaque_batch_hands_the_body_its_stored_element(self):
-        """`OpaqueBatch` stores rather than materializes, so the body sees the
-        caller's own object."""
+        """`OpaqueBatch` stores rather than materializes, so the body sees an
+        `Opaque` holding the caller's own object."""
         seen: list = []
 
         Function(fn=lambda v: (seen.append(v), 0.0)[1], name="f", dispatch="sequential")(
@@ -1289,7 +1298,8 @@ class TestEveryBatchIsAnOperand:
             )
         )
 
-        assert seen == ["a", "b"]
+        assert [element.value for element in seen] == ["a", "b"]
+        assert [element.name for element in seen] == ["rows[row=0]", "rows[row=1]"]
 
     def test_a_function_batch_is_swept_too(self):
         out = Function(fn=lambda f: float(f()), name="call", dispatch="sequential")(

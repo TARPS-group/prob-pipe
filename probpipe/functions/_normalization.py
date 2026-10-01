@@ -7,11 +7,10 @@ It is not a general normalization layer for all values entering a
 The normalization step runs after call resolution and before broadcast
 planning. It performs value-changing work that the planner should not
 do: converting external distribution objects through the converter
-registry, converting distributions to satisfy the ``Distribution`` class or
-the distribution capability protocol a parameter names, and unwrapping
-scalar ``DistributionArray`` inputs when the function expects a scalar
-distribution value. A union annotation names what its arms other than
-``None`` name, so ``Normal | None`` converts as ``Normal`` does.
+registry, and converting distributions to satisfy the ``Distribution`` class
+or the distribution capability protocol a parameter names. A union annotation
+names what its arms other than ``None`` name, so ``Normal | None`` converts as
+``Normal`` does.
 
 Keeping those conversions here lets broadcast planning remain a pure
 classification step over already-normalized values.
@@ -23,7 +22,6 @@ from types import UnionType
 from typing import Any, Union, get_args, get_origin
 
 from ..converters import converter_registry
-from ..core._distribution_array import DistributionArray
 from ..core._numeric_record_distribution import NumericRecordDistribution
 from ..distributions._capabilities import (
     SupportsApproximateConditioning,
@@ -100,15 +98,6 @@ def normalize_distribution_values(
     for ref in _binding.iter_input_refs(signature_info, values):
         value = _binding.input_ref_value(out, ref)
         expected = _binding.input_ref_hint(signature_info, ref)
-
-        if isinstance(value, DistributionArray):
-            if (
-                value.batch_shape == ()
-                and not any(_is_distribution_array_hint(arm) for arm in _arms(expected))
-                and expected is not Any
-            ):
-                out = _binding.replace_input_ref(out, ref, value._flat_component(0))
-            continue
 
         if expected is not None:
             value = _convert_hinted_distribution(value, expected, label=ref.label)
@@ -191,12 +180,5 @@ def _is_concrete_distribution_hint(expected: Any) -> bool:
     try:
         expected_class = _hint_class(expected)
         return isinstance(expected_class, type) and issubclass(expected_class, Distribution)
-    except TypeError:
-        return False
-
-
-def _is_distribution_array_hint(expected: Any) -> bool:
-    try:
-        return isinstance(expected, type) and issubclass(expected, DistributionArray)
     except TypeError:
         return False

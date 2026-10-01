@@ -22,13 +22,12 @@ try:
 except ImportError:
     task = flow = None
 
-from ..core._batch import Batch
 from ..core._broadcast_distributions import BroadcastDistribution, _make_stack, _row_at_its_kind
-from ..core._distribution_array import DistributionArray, _make_distribution_array
 from ..core._numeric_array import NumericArray
 from ..core._numeric_array_batch import NumericArrayBatch, _MappedBatchStore
+from ..core._object_batch import _ObjectBatch
 from ..core._record_batch import RecordBatch, _MappedBatchColumns
-from ..core._specs import OutputSpec, RecordSpec, _components_record
+from ..core._specs import OutputSpec, RecordSpec
 from ..core.config import WorkflowKind, prefect_config
 from ..core.provenance import Provenance
 from ..core.record import Record
@@ -153,15 +152,13 @@ def execute_sweep(
             marginal = inner
         per_row_marginals.append(marginal)
 
-    if output_template is not None and per_row_marginals:
-        output_template = output_template.bind_dims_from_spec(
-            _components_record(per_row_marginals[0].event_spec)
-        )
-    stacked = _make_distribution_array(
+    stacked = _make_stack(
         per_row_marginals,
         batch_shape=plan.sweep_batch_shape,
+        level_names=plan.sweep_level_names,
+        axis_groups=plan.sweep_axis_groups,
         name=output_name,
-        output_template=output_template,
+        field_name=output_name,
     )
     provenance = make_sweep_provenance(
         values=values,
@@ -198,20 +195,13 @@ def slice_sweep_values(
         rem = rem // group.size
         # A batch spanning several axes addresses its element by position, one
         # indexer per axis; a flat index would read the leading axis alone and
-        # run off its end. Positional tuples are used only for Batch values;
-        # other array-like operands retain their flat row-major index.
+        # run off its end.
         position: Any = idx
         if len(group.batch_shape) > 1:
             position = tuple(int(i) for i in np.unravel_index(idx, group.batch_shape))
         replacements: dict[_binding.WorkflowInputRef, Any] = {}
         for ref in group.arg_refs:
-            source = _binding.input_ref_value(values, ref)
-            if isinstance(source, DistributionArray):
-                replacements[ref] = source._flat_component(idx)
-            elif isinstance(source, Batch):
-                replacements[ref] = source[position]
-            else:
-                replacements[ref] = source[idx]
+            replacements[ref] = _binding.input_ref_value(values, ref)[position]
         out = _binding.replace_input_refs(out, replacements)
     return out
 
@@ -242,11 +232,12 @@ def execute_sweep_rows(
     if plan.n_sweep == 0:
         return []
 
-    has_dist_array = any(
-        isinstance(_binding.input_ref_value(values, ref), DistributionArray) for ref in array_args
+    # A batch of stored objects has no columns for the mapped body to read.
+    has_object_batch = any(
+        isinstance(_binding.input_ref_value(values, ref), _ObjectBatch) for ref in array_args
     )
     jax_structure_supported = not (
-        has_dist_array or len(plan.array_groups) > 1 or len(array_args) > 1
+        has_object_batch or len(plan.array_groups) > 1 or len(array_args) > 1
     )
     jax_contract = _execution_contract.make_execution_contract(
         evaluator="jax_vmap",

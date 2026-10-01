@@ -16,6 +16,7 @@ import pytest
 
 import probpipe
 from probpipe import (
+    DistributionBatch,
     EmpiricalDistribution,
     Normal,
     NumericRecord,
@@ -29,6 +30,12 @@ from probpipe import (
 )
 from probpipe.core._specs import RecordSpec
 from probpipe.core.tracked import Annotated, TrackedTerm, auto_name
+
+
+def _normals(name: str, count: int) -> DistributionBatch:
+    """A batch of *count* standard normal laws on a level named ``law``."""
+    return DistributionBatch(name, [Normal("x", 0.0, 1.0) for _ in range(count)], "law")
+
 
 # ===========================================================================
 # 1. Mixin membership — every core object is a tracked term
@@ -61,9 +68,8 @@ class TestMixinMembership:
         )
         assert isinstance(ra, TrackedTerm)
 
-    def test_distribution_array_is_tracked(self):
-        da = Normal.from_batched_params(loc=jnp.zeros(3), scale=1.0, name="batch")
-        assert isinstance(da, TrackedTerm)
+    def test_distribution_batch_is_tracked(self):
+        assert isinstance(_normals("batch", 3), TrackedTerm)
 
 
 # ===========================================================================
@@ -306,12 +312,12 @@ class TestWithNameOnBatchTypes:
         assert nra2["a"] is nrb["a"]
         assert nrb.name == "orig"
 
-    def test_distribution_array(self):
-        da = Normal.from_batched_params(loc=jnp.zeros(3), scale=1.0, name="batch")
-        da2 = da.with_name("renamed_batch")
-        assert da2.name == "renamed_batch"
-        assert da2.batch_shape == da.batch_shape
-        assert da.name == "batch"
+    def test_distribution_batch(self):
+        batch = _normals("batch", 3)
+        renamed = batch.with_name("renamed_batch")
+        assert renamed.name == "renamed_batch"
+        assert renamed.batch_shape == batch.batch_shape
+        assert batch.name == "batch"
 
 
 # ===========================================================================
@@ -395,16 +401,14 @@ class TestNamePreservation:
         cond_named = named_joint._condition_on(mu=0.5)
         assert cond_named.name == named_joint.name
 
-    def test_distribution_array_slice_preserves_names(self):
-        da = Normal.from_batched_params(loc=jnp.zeros(4), scale=1.0, name="batch")
-        assert da[0:2].name == da.name
-        renamed = da.with_name("renamed")
-        assert renamed[0:2].name == "renamed"
+    def test_distribution_batch_slice_derives_its_name_from_the_batch(self):
+        batch = _normals("batch", 4)
+        assert batch[0:2].name == "batch[law=0:2]"
+        renamed = batch.with_name("renamed")
+        assert renamed[0:2].name == "renamed[law=0:2]"
 
-    def test_from_batched_params_cells_derive_names(self):
-        da = Normal.from_batched_params(loc=jnp.zeros(3), scale=1.0, name="x")
-        cell = da[0]
-        assert cell.name == "x_0"
+    def test_distribution_batch_elements_derive_names(self):
+        assert _normals("x", 3)[0].name == "x[law=0]"
 
     def test_full_factorial_design_derives_name(self):
         from probpipe.record import FullFactorialDesign

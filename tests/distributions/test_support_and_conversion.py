@@ -207,7 +207,7 @@ class TestDistributionSupport:
     # ``Binomial(total_count=arr, probs=arr)``. The framework
     # hierarchy ("one random variable per Distribution") no longer
     # permits these forms; migrate to
-    # ``DistributionArray.from_batched_params`` for batched
+    # a ``DistributionBatch`` of separate laws for batched
     # constructions, and use ``Constraint`` directly for per-element
     # support checks (those are a property of the ``Constraint``
     # type, not of a batched ``Distribution``).

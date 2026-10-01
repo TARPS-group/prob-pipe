@@ -21,7 +21,7 @@ from probpipe import (
     Annotated,
     BatchSpec,
     Distribution,
-    DistributionArray,
+    DistributionBatch,
     DistributionSpec,
     Function,
     FunctionSpec,
@@ -966,7 +966,7 @@ class TestSymbolicCalls:
         assert regression_function.input_spec is declaration
         assert declaration == InputSpec(RecordSpec(X=("obs", "p"), p=("p",)).children)
 
-    def test_a_distribution_array_of_laws_is_not_an_array_input(self):
+    def test_a_distribution_batch_of_laws_is_not_an_array_input(self):
         def identity(x):
             return x
 
@@ -976,15 +976,10 @@ class TestSymbolicCalls:
             input_spec=InputSpec(RecordSpec(x=()).children),
             dispatch="sequential",
         )
-        values = DistributionArray(
-            [
-                Normal("left", 0, 1),
-                Normal("right", 1, 1),
-            ]
-        )
+        values = DistributionBatch("laws", [Normal("x", 0, 1), Normal("x", 1, 1)], "law")
 
-        # Each cell is a law, which an array input does not admit.
-        with pytest.raises(ValueError, match=r"input/x does not conform to its field spec"):
+        # Each element is a law, which an array input does not admit.
+        with pytest.raises(ValueError, match=r"input/x .*does not conform"):
             wrapped(values)
 
     def test_repeated_input_symbol_conflict_has_function_path(self, regression_function):
@@ -1270,19 +1265,13 @@ class TestSymbolicCalls:
 
         result = wrapped(rows)
 
-        assert isinstance(result, DistributionArray)
+        assert isinstance(result, DistributionBatch)
         assert result.event_spec == OutputSpec(y=NumericArraySpec((), jnp.asarray(0.0).dtype, real))
-        assert result.size == 3
-        np.testing.assert_allclose(
-            jnp.stack([component.loc for component in result.components]),
-            np.arange(3.0),
-        )
-        np.testing.assert_allclose(
-            jnp.stack([component.scale for component in result.components]),
-            np.ones(3),
-        )
+        assert result.batch_size == 3
+        np.testing.assert_allclose(jnp.stack([law.loc for law in result]), np.arange(3.0))
+        np.testing.assert_allclose(jnp.stack([law.scale for law in result]), np.ones(3))
 
-    def test_nested_broadcast_distribution_array_declares_the_output_record(self):
+    def test_nested_broadcast_distribution_batch_declares_the_output_record(self):
         rows = NumericRecordBatch.stack(
             [NumericRecord("row", offset=jnp.asarray(float(i))) for i in range(2)],
             level_name="draw",
@@ -1304,7 +1293,7 @@ class TestSymbolicCalls:
         with workflow_run(seed=5):
             result = wrapped(rows, Normal("noise", 0, 1))
 
-        assert isinstance(result, DistributionArray)
+        assert isinstance(result, DistributionBatch)
         assert result.event_spec.spec.fields == ("prediction",)
 
 

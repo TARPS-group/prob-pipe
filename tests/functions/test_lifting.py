@@ -130,7 +130,6 @@ class TestTheTrigger:
         assert isinstance(result[0], Distribution)
         assert float(np.mean(atom_leaves(result[1])[0])) > 5.0
 
-    @pytest.mark.pending(reason="a nested sweep returns a DistributionBatch", raises=AssertionError)
     def test_a_nested_sweep_returns_a_batch_of_laws(self):
         @function(n_broadcast_samples=6, dispatch="sequential")
         def shift(a, z):

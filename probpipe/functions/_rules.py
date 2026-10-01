@@ -14,8 +14,8 @@ registered here:
 
 1. the sampling lift, on a distribution operand that samples, which pushes
    draws through the map and returns an empirical law over the outputs;
-2. the elementwise sweep, on a batch or distribution-array operand, which maps
-   the function over the operand's elements.
+2. the elementwise sweep, on a batch operand, which maps the function over
+   the operand's elements.
 
 A floor's check applies the test the planner applies to the argument at its
 parameter, so the floor is feasible where the direct call takes it and nowhere else.
@@ -40,7 +40,6 @@ from ..core._dispatch import (
     Feasibility,
     _Registration,
 )
-from ..core._distribution_array import DistributionArray
 from ..distributions._capabilities import SupportsSampling
 from ..distributions._distribution import Distribution
 from ..values import Function, _binding
@@ -107,9 +106,8 @@ class _SamplingLift(_Floor):
         -------
         Feasibility
             Infeasible when *parameter* consumes the distribution itself, when
-            the call does not sample the operand, as for a distribution array,
-            which it sweeps or passes whole, and when neither the operand nor
-            its parent claims SupportsSampling.
+            the call does not sample the operand, and when neither the operand
+            nor its parent claims SupportsSampling.
         """
         expected = _lifting_hint(f, parameter)
         if _normalization.is_distribution_hint(expected):
@@ -148,8 +146,7 @@ class _ElementwiseSweep(_Floor):
     """The floor on batch operands: the function mapped over the batch's elements.
 
     The result is the batch of the elementwise results on the operand's
-    levels, so the rule is exact. A distribution array is swept over its
-    components.
+    levels, so the rule is exact.
     """
 
     @property
@@ -165,12 +162,12 @@ class _ElementwiseSweep(_Floor):
         return FLOOR_PRIORITY
 
     def supported_types(self) -> tuple[tuple[type, ...], tuple[type, ...]]:
-        return ((Function,), (Batch, DistributionArray))
+        return ((Function,), (Batch,))
 
     def check(
         self,
         f: Function,
-        operand: Batch | DistributionArray,
+        operand: Batch,
         /,
         *,
         parameter: str | None = None,
@@ -200,7 +197,7 @@ class _ElementwiseSweep(_Floor):
     def execute(
         self,
         f: Function,
-        operand: Batch | DistributionArray,
+        operand: Batch,
         /,
         *,
         parameter: str | None = None,

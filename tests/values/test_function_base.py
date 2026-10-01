@@ -318,7 +318,12 @@ class TestCompletedOutputDeclarations:
         operand = {"plain": rows[0], "sweep": rows, "broadcast": Normal("x", 0.0, 1.0)}[mode]
         with workflow_run(seed=0):
             result = factory(operand)
-        laws = (result,) if mode == "plain" else result.components
+        if mode == "plain":
+            laws = (result,)
+        elif mode == "sweep":
+            laws = tuple(result)
+        else:
+            laws = result.components
         for law in laws:
             assert law.spec is stored.spec
             assert law.event_spec.components["y"].dtype == np.dtype("float32")

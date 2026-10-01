@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from math import prod
-from typing import Any
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -50,7 +50,7 @@ from ._specs import (
     RecordSpec,
     TermSpec,
 )
-from .constraints import real
+from .constraints import _known_equal, real
 from .named_tree import _PATH_SEP
 from .record import Record
 from .tracked import auto_name
@@ -156,6 +156,85 @@ def _input_marginal(name: str, rows: Any, weights: Weights) -> EmpiricalDistribu
     return EmpiricalDistribution(name, jnp.asarray(rows), weights, level=DRAW_LEVEL)
 
 
+def _shared_term(specs: list[TermSpec]) -> TermSpec:
+    """The term that every one of *specs* declares, keeping the metadata they share.
+
+    Cells share their shapes, which construction checks, so an array keeps a
+    dtype or a support only when every cell declares it, and a record does so
+    field by field. Terms of different kinds keep the first, an interim
+    implementation detail.
+    """
+    first = specs[0]
+    if all(_same_term(spec, first) for spec in specs[1:]):
+        return first
+    if all(isinstance(spec, NumericArraySpec) for spec in specs):
+        head = cast(NumericArraySpec, first)
+        arrays = cast(list[NumericArraySpec], specs)
+        return NumericArraySpec(
+            head.shape,
+            head.dtype if all(spec.dtype == head.dtype for spec in arrays) else None,
+            head.support
+            if all(_known_equal(spec.support, head.support) for spec in arrays)
+            else None,
+        )
+    if isinstance(first, RecordSpec) and all(
+        isinstance(spec, RecordSpec) and spec.fields == first.fields for spec in specs
+    ):
+        records = cast(list[RecordSpec], specs)
+        return RecordSpec(
+            {
+                field: _shared_term([record.children[field] for record in records])
+                for field in first.fields
+            }
+        )
+    return first
+
+
+def _same_term(a: TermSpec, b: TermSpec) -> bool:
+    """Whether two cells' terms are known to be equal, without reading a traced value.
+
+    Supports whose comparison needs a traced parameter, as for cells built under
+    ``jit``, count as different, so the array keeps no support rather than fail.
+    """
+    if isinstance(a, NumericArraySpec) and isinstance(b, NumericArraySpec):
+        return a.shape == b.shape and a.dtype == b.dtype and _known_equal(a.support, b.support)
+    if isinstance(a, RecordSpec) and isinstance(b, RecordSpec):
+        return a.fields == b.fields and all(
+            _same_term(a.children[field], b.children[field]) for field in a.fields
+        )
+    try:
+        return bool(a == b)
+    except jax.errors.ConcretizationTypeError:
+        return False
+
+
+def _cell_declaration(cells: tuple[Distribution, ...], name: str) -> OutputSpec:
+    """The declaration of one draw of a cell, which a collection of laws declares.
+
+    An interim implementation detail of the classes the design retires. The first
+    cell's declaration stands when every cell shares it. Otherwise the array
+    declares the term every cell draws, with the metadata the cells share, and
+    whole-term cells declare it under the component they share, or under *name*
+    when their components differ. No cells at all leave the draw opaque.
+    """
+    declarations = [cell.event_spec for cell in cells]
+    if not declarations:
+        return OutputSpec(**{name: OpaqueSpec()})
+    first = declarations[0]
+    if all(
+        d.exposes_record == first.exposes_record
+        and tuple(d.components) == tuple(first.components)
+        and _same_term(d.spec, first.spec)
+        for d in declarations[1:]
+    ):
+        return first
+    spec = _shared_term([d.spec for d in declarations])
+    if first.exposes_record:
+        return OutputSpec(cast(RecordSpec, spec))
+    components = {component for d in declarations for component in d.components}
+    return OutputSpec(**{components.pop() if len(components) == 1 else name: spec})
+
+
 class _MixtureMarginal(Distribution):
     """Output marginal when broadcast outputs are Distribution objects.
 
@@ -179,8 +258,6 @@ class _MixtureMarginal(Distribution):
         self._components = components
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         name = auto_name(name, "mixture_marginal")
-        from ._distribution_array import _cell_declaration
-
         # A draw is one component's draw.
         super().__init__(name, _cell_declaration(tuple(components), name))
 
@@ -655,7 +732,7 @@ def _make_marginal(
 # host it is, then the rows aggregate at that kind:
 #
 #   numeric   → NumericArrayBatch          Record       → RecordBatch
-#   opaque    → OpaqueBatch                Distribution → DistributionArray
+#   opaque    → OpaqueBatch                Distribution → DistributionBatch
 #   callable  → FunctionBatch
 #
 # A row that is itself a batch stacks into one batch, the sweep's levels in
@@ -823,9 +900,10 @@ def _make_stack(
 
     Returns
     -------
-    NumericRecordBatch | RecordBatch | DistributionArray
-        Output type depends on the inner-return type; see module
-        docstring for the dispatch table.
+    Batch
+        The batch form of the rows' kind, on the given levels: a
+        ``NumericArrayBatch``, a ``RecordBatch`` or ``NumericRecordBatch``, a
+        ``DistributionBatch``, a ``FunctionBatch``, or an ``OpaqueBatch``.
 
     Raises
     ------
@@ -836,7 +914,7 @@ def _make_stack(
         If rows have incompatible declarations, shapes, or batch levels, or
         the output shape does not match the requested batch shape and grouping.
     """
-    from ._distribution_array import _make_distribution_array
+    from ..distributions._batches import DistributionBatch
     from .record import Record
 
     result_name = field_name if name is None else name
@@ -1074,14 +1152,14 @@ def _make_stack(
                 axes_per_level=_ranks_of(sweep_groups),
             )
 
-        # All Distributions → stacked DistributionArray, shaped to
-        # batch_shape.
+        # All Distributions → a DistributionBatch over the sweep's levels, whose
+        # rows share the first row's declaration.
         if outs and all(isinstance(o, Distribution) for o in outs):
-            return _make_distribution_array(
-                outs,
-                batch_shape=batch_shape,
-                name=name,
-                output_template=output_template,
+            return DistributionBatch(
+                result_name,
+                _from_iterable(outs, kind="_make_stack").reshape(batch_shape),
+                level_names,
+                axes_per_level=_ranks_of(sweep_groups),
             )
 
         # Numeric scalars / arrays → the batch form of their own kind, with the

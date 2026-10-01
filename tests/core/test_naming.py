@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import pytest
 
 from probpipe import (
-    DistributionArray,
+    DistributionBatch,
     Function,
     FunctionBatch,
     Normal,
@@ -433,8 +433,8 @@ class TestRawDrawNaming:
             ),
             pytest.param(
                 lambda: [Normal("component", 0.0, 1.0)],
-                DistributionArray,
-                None,
+                DistributionBatch,
+                ("sample",),
                 id="distribution-list",
             ),
         ],

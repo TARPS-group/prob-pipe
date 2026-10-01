@@ -6,6 +6,7 @@ from math import prod
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from probpipe import (
@@ -30,8 +31,8 @@ from probpipe import (
     sample,
 )
 from probpipe.core._broadcast_distributions import _make_mixture_marginal
-from probpipe.core._distribution_array import DistributionArray
 from probpipe.core.constraints import real
+from probpipe.distributions import DistributionBatch
 
 
 @pytest.fixture
@@ -140,8 +141,7 @@ class _DiracRandomMeasure(
         if sample_shape == ():
             return self._components[int(self._w.choice(key))]
         indices = self._w.choice(key, shape=(prod(sample_shape),))
-        drawn = [self._components[int(i)] for i in indices]
-        return DistributionArray(drawn, batch_shape=tuple(sample_shape))
+        return _object_array([self._components[int(i)] for i in indices], sample_shape)
 
     def _mean(self):
         return _make_mixture_marginal(
@@ -165,13 +165,19 @@ class _SamplingOnlyRandomMeasure(RandomMeasure, SupportsSampling):
     def _sample(self, key, sample_shape=()):
         if sample_shape == ():
             return self._component
-        return DistributionArray(
-            [self._component] * prod(sample_shape), batch_shape=tuple(sample_shape)
-        )
+        return _object_array([self._component] * prod(sample_shape), sample_shape)
+
+
+def _object_array(laws, sample_shape):
+    """*laws* as an object array of shape *sample_shape*, the raw form of a batch of laws."""
+    store = np.empty(len(laws), dtype=object)
+    for position, law in enumerate(laws):
+        store[position] = law
+    return store.reshape(tuple(sample_shape))
 
 
 def _normals(n):
-    return [Normal(loc=float(i), scale=1.0, name=f"n{i}") for i in range(n)]
+    return [Normal(loc=float(i), scale=1.0, name="n") for i in range(n)]
 
 
 class TestInheritance:
@@ -201,9 +207,9 @@ class TestSampling:
         assert isinstance(drawn, Distribution)
         assert drawn in comps
 
-    def test_batched_sample_returns_distribution_array(self, key):
+    def test_batched_sample_returns_distribution_batch(self, key):
         batch = sample(_DiracRandomMeasure(_normals(4)), key=key, sample_shape=(5,))
-        assert isinstance(batch, DistributionArray)
+        assert isinstance(batch, DistributionBatch)
         assert batch.batch_shape == (5,)
         assert len(batch) == 5
         for i in range(5):
@@ -211,9 +217,9 @@ class TestSampling:
 
     def test_multi_d_batched_sample(self, key):
         batch = sample(_DiracRandomMeasure(_normals(4)), key=key, sample_shape=(2, 3))
-        assert isinstance(batch, DistributionArray)
+        assert isinstance(batch, DistributionBatch)
         assert batch.batch_shape == (2, 3)
-        assert batch.size == 6
+        assert batch.batch_size == 6
 
     def test_sampling_protocol_opt_in_present(self):
         assert isinstance(_DiracRandomMeasure(_normals(1)), SupportsSampling)
@@ -319,11 +325,11 @@ class TestTheDrawnLawsDeclaration:
 
 
 class TestBatchOfRandomMeasures:
-    def test_distribution_array_of_random_measures(self):
-        rm1 = _DiracRandomMeasure([Normal(loc=0.0, scale=1.0, name="a")], name="rm1")
-        rm2 = _DiracRandomMeasure([Normal(loc=5.0, scale=1.0, name="b")], name="rm2")
-        batch = DistributionArray([rm1, rm2])
+    def test_a_distribution_batch_of_random_measures(self):
+        rm1 = _DiracRandomMeasure([Normal(loc=0.0, scale=1.0, name="x")], name="rm")
+        rm2 = _DiracRandomMeasure([Normal(loc=5.0, scale=1.0, name="x")], name="rm")
+        batch = DistributionBatch("measures", [rm1, rm2], "measure")
         assert len(batch) == 2
-        assert batch[0] is rm1
-        assert batch[1] is rm2
+        assert batch[0].components is rm1.components
+        assert batch[1].components is rm2.components
         assert isinstance(batch[0], RandomMeasure)

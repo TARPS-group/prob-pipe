@@ -6,8 +6,8 @@ Covers:
   against the recognised shapes (``Normal``, ``MultivariateNormal``,
   ``JointGaussian`` with cross-covariance, ``ProductDistribution`` over
   them — with field-order-sensitive mean and covariance assertions) and
-  the rejected shapes (non-Gaussian families, batched-``Normal``
-  ``DistributionArray``).
+  the rejected shapes (non-Gaussian families, a ``DistributionBatch`` of
+  separate ``Normal`` laws).
 * ``check()`` infeasibility messages for the three failure modes:
   bare ``SupportsLogProb`` (no SimpleModel decomposition), non-Gaussian
   prior, and missing observed data.
@@ -172,7 +172,7 @@ class TestGaussianPriorDetection:
         ``_gaussian_prior_params`` ever serves: a genuinely vector-valued
         ``Normal(loc=[...], scale=[...])`` cannot be constructed — the
         ``Normal`` constructor rejects a non-scalar ``loc``/``scale`` with
-        a ``ValueError`` directing the user to ``from_batched_params``.
+        a ``ValueError``.
         """
         mean, cov = _gaussian_prior_params(Normal(loc=2.0, scale=3.0, name="x"))
         assert mean.shape == (1,)
@@ -180,22 +180,21 @@ class TestGaussianPriorDetection:
         np.testing.assert_allclose(np.asarray(mean), [2.0])
         np.testing.assert_allclose(np.asarray(cov), [[9.0]])
 
-    def test_batched_normal_distribution_array_returns_none(self):
-        """A batched ``Normal`` (a ``DistributionArray``) is *not* recognised.
+    def test_a_batch_of_separate_normal_laws_returns_none(self):
+        """A ``DistributionBatch`` of ``Normal`` laws is *not* recognised.
 
-        The vector-Normal capability that ``from_batched_params`` provides
-        produces a ``DistributionArray``, not a ``Normal``, so it fails the
+        A batch of separate laws is not a ``Normal``, so it fails the
         ``isinstance(prior, Normal)`` check and ``_gaussian_prior_params``
         returns ``None``. ESS therefore declines such priors (cf. the
         finding noted on ``test_normal_scalar_promoted_to_length_one``).
         """
-        da = Normal.from_batched_params(
-            loc=jnp.array([0.0, 1.0]),
-            scale=jnp.array([0.5, 2.0]),
-            name="x",
+        from probpipe import DistributionBatch
+
+        batch = DistributionBatch(
+            "x", [Normal(loc=0.0, scale=0.5, name="x"), Normal(loc=1.0, scale=2.0, name="x")], "law"
         )
-        assert not isinstance(da, Normal)
-        assert _gaussian_prior_params(da) is None
+        assert not isinstance(batch, Normal)
+        assert _gaussian_prior_params(batch) is None
 
     def test_product_of_normals_block_diagonal(self):
         prior = ProductDistribution(

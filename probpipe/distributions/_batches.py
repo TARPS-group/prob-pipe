@@ -54,7 +54,10 @@ class DistributionBatch(_ObjectBatch[Distribution]):
     one joint law over a product space, as a batch of draws is distinct from one
     record of many fields. It is the batch form of ``DistributionSpec``-valued
     terms, and what a sweep of a kernel over a batch of given values produces.
-    The batch stores its elements, so ``batch[i]`` is the law that was put in.
+    The batch stores its elements, and ``batch[i]`` is a view of the stored law:
+    a copy under the name derived from the position, such as ``"laws[law=1]"``,
+    sharing the stored law's representation, whose provenance records the batch
+    and the stored law.
 
     Parameters
     ----------
@@ -133,7 +136,10 @@ class ConditionalDistributionBatch(_ObjectBatch[ConditionalDistribution]):
     """``N`` separate conditional distributions sharing their declarations, along batch axes.
 
     The elements share one given declaration and one event declaration. It is
-    the batch form of ``ConditionalDistributionSpec``-valued terms.
+    the batch form of ``ConditionalDistributionSpec``-valued terms. As for
+    :class:`DistributionBatch`, ``batch[i]`` is a view of the stored kernel under
+    the name derived from the position, with provenance recording the batch and
+    the stored kernel.
 
     Parameters
     ----------

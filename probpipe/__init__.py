@@ -48,7 +48,6 @@ from probpipe.core._array_backend import (
 from probpipe.core._batch import Batch, BatchSpec
 from probpipe.core._broadcast_distributions import BroadcastDistribution
 from probpipe.core._dispatch import MathematicalDomainError, ResolutionError
-from probpipe.core._distribution_array import DistributionArray
 from probpipe.core._function_batch import FunctionBatch
 from probpipe.core._numeric import Numeric
 from probpipe.core._numeric_array import NumericArray
@@ -108,6 +107,7 @@ from probpipe.distributions import (
     ProductDistribution,
     SequentialJointDistribution,
 )
+from probpipe.distributions._batches import DistributionBatch
 from probpipe.distributions._capabilities import (
     SupportsApproximateConditioning,
     SupportsCovariance,
@@ -248,7 +248,7 @@ __all__ = [
     "Design",
     "Dirichlet",
     "Distribution",
-    "DistributionArray",
+    "DistributionBatch",
     "DistributionSpec",
     "EmpiricalDistribution",
     "Exponential",

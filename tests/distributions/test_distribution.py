@@ -22,7 +22,6 @@ from probpipe import (
     Cauchy,
     Dirichlet,
     Distribution,
-    DistributionArray,
     DistributionSpec,
     EmpiricalDistribution,
     Exponential,
@@ -226,9 +225,8 @@ class TestNoBatchShape:
     """``Distribution`` has no ``batch_shape`` attribute. Pins the
     absence across the public Distribution family so a future
     subclass can't silently reintroduce it as a defensive default.
-    Container types (``DistributionArray``, ``RecordBatch``) keep
-    their own ``batch_shape`` — that's a different concept and is
-    asserted separately at the bottom.
+    Container types such as ``DistributionBatch`` and ``RecordBatch`` keep
+    their own ``batch_shape``, which is a different concept.
     """
 
     def test_no_batch_shape_on_base_class(self):
@@ -245,19 +243,6 @@ class TestNoBatchShape:
         assert not hasattr(dist, "batch_shape"), (
             f"{type(dist).__name__} unexpectedly exposes a batch_shape attribute."
         )
-
-    def test_distribution_array_keeps_batch_shape(self):
-        """Container types are unaffected: ``DistributionArray``
-        retains its own ``batch_shape`` (the array's outer shape)."""
-        from probpipe import DistributionArray
-
-        da = DistributionArray.from_batched_params(
-            Normal,
-            loc=jnp.zeros(5),
-            scale=1.0,
-            name="x",
-        )
-        assert da.batch_shape == (5,)
 
 
 class TestAnnotationsDiagnosticsAccessor:
@@ -484,7 +469,6 @@ class TestNoTypeParameter:
             Distribution,
             EmpiricalDistribution,
             BootstrapReplicateDistribution,
-            DistributionArray,
             RandomFunction,
             RandomMeasure,
             *DISTRIBUTION_HINT_PROTOCOLS,
@@ -522,7 +506,6 @@ def _public_distribution_classes() -> list[type]:
 _RETIRING = {
     "ApproximateDistribution",
     "BroadcastDistribution",
-    "DistributionArray",
     "FlattenedDistributionView",
     "JointGaussian",
     "NumericRecordDistributionView",
@@ -999,10 +982,6 @@ class TestFamilyDeclarations:
         assert issubclass(type(law), NumericDistribution)
         assert isinstance(law, NumericDistribution)
 
-    def test_a_batched_backend_declares_one_cell(self):
-        arr = DistributionArray.from_batched_params(Normal, loc=jnp.zeros(4), scale=1.0, name="arr")
-        assert arr._backend._batched_dist.event_spec.spec.shape == ()
-
     @pytest.mark.parametrize(("make", "shape", "dtype", "support"), _FAMILY_SCHEMAS)
     def test_event_spec_names_the_component(self, make, shape, dtype, support):
         law = make(event_spec=OutputSpec(theta=None))
@@ -1118,14 +1097,6 @@ class TestJointDeclarations:
         )
         # An opaque field makes the draw non-numeric, so it has no dtypes.
         assert not hasattr(joint, "dtypes")
-
-    def test_array_cells_must_draw_the_same_record(self):
-        cells = [
-            ProductDistribution(x=Normal("x", 0.0, 1.0), y=Normal("y", 0.0, 1.0)),
-            ProductDistribution(x=Normal("x", 0.0, 1.0), z=Normal("z", 0.0, 1.0)),
-        ]
-        with pytest.raises(ValueError, match="matching event_shape"):
-            DistributionArray(cells)
 
 
 class TestEmpiricalDeclarations:
@@ -1274,27 +1245,7 @@ class TestDerivedDeclarations:
 
 
 class TestViewAndWrapperDeclarations:
-    """Views declare the term they select, and collections of laws their cells'."""
-
-    def test_an_array_of_traced_supports_is_built_under_jit(self):
-        seen = []
-
-        def build(bound):
-            cells = [Uniform("u", 0.0, bound), Uniform("u", 0.0, bound + 1.0)]
-            seen.append(DistributionArray(cells, name="arr").event_spec.spec.support)
-            return jnp.asarray(0.0)
-
-        jax.jit(build)(2.0)
-        assert seen == [None]
-
-    def test_the_array_repr_reads_the_declaration(self):
-        cells = [
-            ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0), name="p"),
-            ProductDistribution(a=Normal("a", 1.0, 1.0), b=Normal("b", 0.0, 1.0), name="q"),
-        ]
-        assert "event_shapes={'a': (), 'b': ()}" in repr(DistributionArray(cells, name="arr"))
-        normals = DistributionArray([Normal("n", 0.0, 1.0), Normal("n", 1.0, 1.0)], name="arr")
-        assert "event_shape=()" in repr(normals)
+    """Views declare the term they select."""
 
     def test_an_empty_mixture_marginal_constructs(self):
         from probpipe.core._broadcast_distributions import _make_mixture_marginal
@@ -1366,52 +1317,6 @@ class TestViewAndWrapperDeclarations:
         assert view.event_spec == OutputSpec(
             RecordSpec(a=NumericArraySpec((), dtype, real), b=NumericArraySpec((2,), dtype, real))
         )
-
-    def test_a_batched_array_declares_one_cell_under_its_name(self):
-        array = DistributionArray.from_batched_params(Normal, loc=jnp.zeros(3), scale=1.0, name="x")
-        assert array.event_spec == OutputSpec(x=NumericArraySpec((), jnp.asarray(0.0).dtype, real))
-
-    def test_an_empty_batch_declares_one_cell_without_one(self):
-        array = Normal.from_batched_params(name="x", loc=jnp.zeros(0), scale=1.0)
-        assert array.batch_shape == (0,)
-        assert list(array) == []
-        assert array.event_spec == OutputSpec(x=NumericArraySpec((), jnp.asarray(0.0).dtype, real))
-
-    def test_a_support_holding_batched_parameters_is_unset(self):
-        array = DistributionArray.from_batched_params(
-            Uniform, low=jnp.zeros(3), high=jnp.arange(1.0, 4.0), name="u"
-        )
-        # Each cell has its own interval, so no one support holds for every cell.
-        assert array.event_spec == OutputSpec(u=NumericArraySpec((), jnp.asarray(0.0).dtype))
-
-    def test_cells_sharing_a_declaration_keep_it(self):
-        cells = [Normal("y", float(i), 1.0) for i in range(3)]
-        assert DistributionArray(cells).event_spec is cells[0].event_spec
-
-    def test_cells_that_differ_keep_the_metadata_they_share(self):
-        dtype = jnp.asarray(0.0).dtype
-        # Each cell has its own interval, so no one support holds for every cell.
-        intervals = DistributionArray([Uniform("a", 0.0, 1.0), Uniform("b", 0.0, 2.0)], name="u")
-        assert intervals.event_spec == OutputSpec(u=NumericArraySpec((), dtype))
-        assert intervals.support is None
-        mixed = DistributionArray([Normal("a", 0.0, 1.0), Bernoulli("b", probs=0.5)], name="m")
-        assert mixed.event_spec == OutputSpec(m=NumericArraySpec(()))
-        records = DistributionArray(
-            [
-                ProductDistribution(a=Uniform("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)),
-                ProductDistribution(a=Uniform("a", 0.0, 2.0), b=Normal("b", 0.0, 1.0)),
-            ],
-            name="r",
-        )
-        assert records.event_spec == OutputSpec(
-            RecordSpec(a=NumericArraySpec((), dtype), b=NumericArraySpec((), dtype, real))
-        )
-
-    def test_cells_that_differ_keep_the_component_they_share(self):
-        theta = OutputSpec(theta=None)
-        cells = [Uniform("a", 0.0, 1.0, event_spec=theta), Uniform("b", 0.0, 2.0, event_spec=theta)]
-        array = DistributionArray(cells, name="u")
-        assert array.event_spec == OutputSpec(theta=NumericArraySpec((), jnp.asarray(0.0).dtype))
 
 
 class TestModelDeclarations:

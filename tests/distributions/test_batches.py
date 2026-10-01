@@ -17,17 +17,25 @@ import pytest
 from probpipe import (
     Batch,
     BatchSpec,
+    EmpiricalDistribution,
     Laplace,
     MultivariateNormal,
     Normal,
+    NumericArrayBatch,
     NumericArraySpec,
+    NumericRecordBatch,
+    NumericRecordSpec,
     OpaqueSpec,
     OutputSpec,
     Record,
     RecordBatch,
     RecordSpec,
     StudentT,
+    log_prob,
     mean,
+    sample,
+    variance,
+    workflow_run,
 )
 from probpipe.core._kinds import batch_class_for_spec, term_class_for_spec
 from probpipe.distributions import (
@@ -82,6 +90,15 @@ def _objects(values: list, shape: tuple[int, ...] | None = None) -> np.ndarray:
 
 def _mean_of(law: Distribution) -> float:
     return float(np.asarray(mean(law)))
+
+
+def _record_law(location: float) -> EmpiricalDistribution:
+    """A law over records ``{x, y}`` whose atoms are all ``x == location`` and ``y == -location``."""
+    x = jnp.full((8,), float(location))
+    spec = NumericRecordSpec(x=NumericArraySpec((), x.dtype), y=NumericArraySpec((), x.dtype))
+    return EmpiricalDistribution(
+        "xy", NumericRecordBatch("atoms", {"x": x, "y": -x}, "atom", element_spec=spec)
+    )
 
 
 # -- Tests --------------------------------------------------------------------
@@ -219,14 +236,26 @@ class TestIndexing:
             assert _mean_of(element) == position
         assert _mean_of(batch[-1]) == 2.0
 
-    @pytest.mark.pending(
-        reason="a batch element is a view named by the batch and its position",
-        raises=AssertionError,
-    )
     def test_an_element_is_a_view_named_by_its_position(self):
         batch = DistributionBatch("laws", _laws(3), "law")
         assert batch[1].name == "laws[law=1]"
         assert batch.at_levels(law=2).name == "laws[law=2]"
+
+    def test_an_element_shares_the_stored_law_and_leaves_it_untouched(self):
+        laws = _laws(3)
+        batch = DistributionBatch("laws", laws, "law")
+        element = batch[1]
+        assert element is not laws[1]
+        assert element._tfp_dist is laws[1]._tfp_dist
+        assert laws[1].name == "x" and laws[1].provenance is None
+
+    def test_an_element_records_the_batch_and_the_stored_law(self):
+        laws = _laws(3)
+        batch = DistributionBatch("laws", laws, "law")
+        provenance = batch[2].provenance
+        assert provenance.operation == "__getitem__"
+        assert [parent.name for parent in provenance.parents] == ["laws", "x"]
+        assert provenance.metadata == {"position": [2]}
 
     def test_iteration_visits_the_laws_along_the_leading_axis(self):
         batch = DistributionBatch("laws", _laws(3), "law")
@@ -359,6 +388,14 @@ class TestConditionalDistributionBatch:
         assert type(batch[1]) is Kernel
         assert batch[1].spec == kernels[1].spec
 
+    def test_an_element_is_a_view_of_the_stored_kernel(self):
+        kernels = _kernels(2)
+        batch = ConditionalDistributionBatch("kernels", kernels, "kernel")
+        element = batch[1]
+        assert element.name == "kernels[kernel=1]"
+        assert [parent.name for parent in element.provenance.parents] == ["kernels", "lik"]
+        assert kernels[1].name == "lik"
+
     def test_a_distribution_batch_refuses_kernels(self):
         with pytest.raises(TypeError, match="Distribution"):
             DistributionBatch("laws", _kernels(2), "law")
@@ -456,3 +493,64 @@ class TestKindRegistration:
         assert column.level_names == ("row",)
         assert column.element_spec == laws[0].spec
         assert [_mean_of(element) for element in column] == [0.0, 1.0, 2.0]
+
+
+class TestOperationsSweepTheLaws:
+    """An operation maps over the laws of a batch, keeping the batch's levels (VI.11)."""
+
+    def test_a_draw_of_each_law_is_a_batch_on_the_laws_level(self):
+        batch = DistributionBatch("laws", _laws(4), "law")
+        with workflow_run(seed=0):
+            drawn = sample(batch)
+        assert isinstance(drawn, NumericArrayBatch)
+        assert (drawn.batch_shape, drawn.level_names) == ((4,), ("law",))
+
+    def test_draws_of_each_law_nest_the_sample_level_inside_the_laws(self):
+        batch = DistributionBatch("laws", _laws(4), "law")
+        with workflow_run(seed=0):
+            drawn = sample(batch, sample_shape=(7,))
+        assert isinstance(drawn, NumericArrayBatch)
+        assert (drawn.batch_shape, drawn.level_names) == ((4, 7), ("law", "sample"))
+        assert tuple(drawn.element_spec.shape) == ()
+
+    def test_each_law_draws_its_own_values(self):
+        laws = [Normal("x", 100.0 * i, 1e-3) for i in range(3)]
+        with workflow_run(seed=0):
+            drawn = sample(DistributionBatch("laws", laws, "law"), sample_shape=(200,))
+        np.testing.assert_allclose(drawn.values.mean(axis=-1), [0.0, 100.0, 200.0], atol=0.2)
+
+    def test_several_levels_stay_in_front_of_the_sample_level(self):
+        batch = DistributionBatch("grid", _objects(_laws(6), shape=(2, 3)), ("row", "col"))
+        with workflow_run(seed=0):
+            drawn = sample(batch, sample_shape=(5,))
+        assert (drawn.batch_shape, drawn.level_names) == ((2, 3, 5), ("row", "col", "sample"))
+
+    def test_record_laws_draw_a_record_batch(self):
+        batch = DistributionBatch("laws", [_record_law(i) for i in range(3)], "law")
+        with workflow_run(seed=0):
+            one = sample(batch)
+            several = sample(batch, sample_shape=(5,))
+        assert isinstance(one, NumericRecordBatch)
+        np.testing.assert_allclose(one["x"], [0.0, 1.0, 2.0])
+        assert several.level_names == ("law", "sample")
+        assert several["x"].shape == several["y"].shape == (3, 5)
+
+    def test_the_moments_of_each_law_form_a_batch(self):
+        batch = DistributionBatch("laws", [Normal("x", float(i), i + 1.0) for i in range(3)], "law")
+        means, variances = mean(batch), variance(batch)
+        assert isinstance(means, NumericArrayBatch) and means.batch_shape == (3,)
+        np.testing.assert_allclose(means.values, [0.0, 1.0, 2.0])
+        np.testing.assert_allclose(variances.values, [1.0, 4.0, 9.0])
+
+    def test_the_mean_of_each_record_law_is_a_record_batch(self):
+        means = mean(DistributionBatch("laws", [_record_law(i) for i in range(3)], "law"))
+        assert isinstance(means, NumericRecordBatch)
+        np.testing.assert_allclose(means["x"], [0.0, 1.0, 2.0])
+        np.testing.assert_allclose(means["y"], [0.0, -1.0, -2.0])
+
+    def test_one_value_is_scored_under_each_law(self):
+        laws = _laws(3)
+        scores = log_prob(DistributionBatch("laws", laws, "law"), value=jnp.asarray(0.0))
+        assert isinstance(scores, NumericArrayBatch) and scores.batch_shape == (3,)
+        expected = [float(law._log_prob(0.0)) for law in laws]
+        np.testing.assert_allclose(scores.values, expected, rtol=1e-5)

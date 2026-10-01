@@ -305,7 +305,7 @@ class TestASequenceAggregatesAtItsRowsKind:
         result = self._returned(["a", "b"])
 
         assert isinstance(result, OpaqueBatch)
-        assert [result[0], result[1]] == ["a", "b"]
+        assert [result[0].value, result[1].value] == ["a", "b"]
 
     def test_callable_rows_batch_as_functions(self):
         from probpipe import FunctionBatch

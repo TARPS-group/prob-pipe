@@ -871,7 +871,7 @@ class TestMakeStack:
         assert isinstance(out, RecordBatch)
         assert not isinstance(out, NumericRecordBatch)
         np.testing.assert_allclose(out["a"], [0.0, 1.0, 2.0])
-        np.testing.assert_array_equal(out["label"], ["row0", "row1", "row2"])
+        assert [element.value for element in out["label"]] == ["row0", "row1", "row2"]
 
     def test_bfloat16_field_inferred_numeric_not_opaque(self):
         """The broadcast-template builder shares the numeric-dtype gate, so an
@@ -889,15 +889,24 @@ class TestMakeStack:
         assert out.event_template["x"] == NumericArraySpec((2,))  # numeric, not None/opaque
         assert out.event_template["label"] == OpaqueSpec()
 
-    def test_list_of_distributions_gives_distribution_array(self):
-        from probpipe import DistributionArray, Normal
+    def test_list_of_distributions_gives_distribution_batch(self):
+        from probpipe import DistributionBatch, Normal
         from probpipe.core._broadcast_distributions import _make_stack
 
-        comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(3)]
+        comps = [Normal(loc=float(i), scale=1.0, name="d") for i in range(3)]
         out = _make_stack(comps, n=3, field_name="demo", level_names=("sweep",))
-        assert isinstance(out, DistributionArray)
-        assert out.batch_shape == (3,)
-        assert out[0] is comps[0]
+        assert isinstance(out, DistributionBatch)
+        assert (out.batch_shape, out.level_names) == ((3,), ("sweep",))
+        assert out[0].name == "demo[sweep=0]"
+        assert out[0]._tfp_dist is comps[0]._tfp_dist
+
+    def test_distributions_that_declare_different_events_do_not_stack(self):
+        from probpipe import Normal
+        from probpipe.core._broadcast_distributions import _make_stack
+
+        comps = [Normal(loc=0.0, scale=1.0, name="a"), Normal(loc=0.0, scale=1.0, name="b")]
+        with pytest.raises(TypeError, match="at 1"):
+            _make_stack(comps, n=2, field_name="demo", level_names=("sweep",))
 
     def test_list_of_record_batches_nests_batch_shape(self):
         """Each inner RecordBatch has its own batch_shape (m,). Stacking
@@ -1063,18 +1072,18 @@ class TestCoerceOutput:
         assert out.provenance.operation == "sweep"
         assert ra.provenance is None
 
-    def test_attaches_to_distribution_array(self):
-        from probpipe import DistributionArray, Normal
+    def test_attaches_to_distribution_batch(self):
+        from probpipe import DistributionBatch, Normal
         from probpipe.core._broadcast_distributions import _make_stack
         from probpipe.functions._result import _coerce_output
 
         da = _make_stack(
-            [Normal(loc=0.0, scale=1.0, name=f"d{i}") for i in range(3)],
+            [Normal(loc=0.0, scale=1.0, name="d") for _ in range(3)],
             n=3,
             field_name="demo",
             level_names=("sweep",),
         )
-        assert isinstance(da, DistributionArray)
+        assert isinstance(da, DistributionBatch)
         assert da.provenance is None
         prov = Provenance("nested", parents=())
         out = _coerce_output(da, broadcast_mode="nested", provenance=prov, field_name="f")

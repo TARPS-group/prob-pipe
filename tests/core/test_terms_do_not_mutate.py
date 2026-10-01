@@ -1,11 +1,10 @@
 """Reading a tracked term does not modify it.
 
 `design/05-operations.md` §V.1 promises an implementer's object is never
-modified. Two terms broke that where a caller could see it: a
-``BroadcastDistribution`` assigned its marginal on first ``marginalize()``, and a
-backend-delegated ``DistributionArray`` assigned its components on first read.
-Both now fill a memo container assigned at construction, so the attributes the
-term was built with stay untouched.
+modified. A ``BroadcastDistribution`` broke that where a caller could see it, by
+assigning its marginal on first ``marginalize()``. It now fills a memo container
+assigned at construction, so the attributes the term was built with stay
+untouched.
 
 The rest of the class is an invariant rather than a regression: those terms wrote
 their fields before the object reached a caller, which is construction by another
@@ -22,7 +21,6 @@ import numpy as np
 import pytest
 
 from probpipe import (
-    DistributionArray,
     Normal,
     ProductDistribution,
     SequentialJointDistribution,
@@ -62,20 +60,6 @@ def _census(value):
     return None
 
 
-class _ScalarBackend:
-    """The smallest thing ``DistributionArray._from_backend`` accepts."""
-
-    def __init__(self, n: int):
-        self.batch_shape = (n,)
-
-    @property
-    def cell_spec(self):
-        return self.cell(0).event_spec.spec
-
-    def cell(self, index: int) -> Normal:
-        return Normal(f"c{index}", float(index), 1.0)
-
-
 class TestTheCheckItself:
     """The helper has to catch the kind of mutation these tests are about.
 
@@ -104,10 +88,12 @@ class TestTheCheckItself:
 
     def test_it_ignores_the_memo(self):
         # The one store a read is meant to fill.
-        array = DistributionArray._from_backend(_ScalarBackend(3), name="x")
-        before = assigned_state(array)
-        assert array.components  # fills the memo
-        assert assigned_state(array) == before
+        from probpipe.inference._approximate_distribution import ApproximateDistribution
+
+        posterior = ApproximateDistribution([np.zeros((4, 1)), np.ones((4, 1))], name="p")
+        before = assigned_state(posterior)
+        assert posterior._concat_chains() is not None  # fills the memo
+        assert assigned_state(posterior) == before
 
 
 class TestAQueryLeavesTheTermUnchanged:
@@ -123,15 +109,6 @@ class TestAQueryLeavesTheTermUnchanged:
         assert assigned_state(broadcast) == before
         # Still memoised: the second read returns the first result.
         assert broadcast.marginalize() is first
-
-    def test_reading_a_backend_delegated_array_s_components(self):
-        # The backend-delegated array is the one that materialises on read; an
-        # array built from a literal component list has them from the start.
-        array = DistributionArray._from_backend(_ScalarBackend(3), name="x")
-        before = assigned_state(array)
-        first = array.components
-        assert assigned_state(array) == before
-        assert array.components is first
 
     def test_an_approximate_distribution_concatenates_at_construction(self):
         # The constructor reads the concatenation, so the memo is filled before
@@ -174,7 +151,7 @@ class TestAnOperationDoesNotMutateItsResultAfterBuildingIt:
 class TestEveryMemoHolderDropsItsMemoOnACopy:
     """Each memo-holding term, across each way of copying one.
 
-    The mixin's own tests cover the mechanism; these cover the three classes
+    The mixin's own tests cover the mechanism; these cover the classes
     that opt into it, so dropping `_transient_state` from one of them, or
     breaking its rebuild path, fails here rather than passing quietly.
 
@@ -194,11 +171,6 @@ class TestEveryMemoHolderDropsItsMemoOnACopy:
         return term, lambda d: d.marginalize()
 
     @staticmethod
-    def _backend_array():
-        term = DistributionArray._from_backend(_ScalarBackend(3), name="x")
-        return term, lambda d: d.components
-
-    @staticmethod
     def _approximate():
         from probpipe.inference._approximate_distribution import ApproximateDistribution
 
@@ -208,7 +180,6 @@ class TestEveryMemoHolderDropsItsMemoOnACopy:
     @pytest.fixture(
         params=[
             pytest.param("_broadcast", id="broadcast-marginal"),
-            pytest.param("_backend_array", id="backend-array-components"),
             pytest.param("_approximate", id="approximate-chains"),
         ]
     )

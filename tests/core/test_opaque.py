@@ -126,8 +126,8 @@ class TestOpaqueCarriesIdentity:
 class TestOpaqueAndItsBatch:
     """A collection is tracked whatever it holds."""
 
-    def test_a_batch_of_opaque_values_still_hands_back_what_was_put_in(self):
-        """Its elements are stored, so a batch hands back the caller's object."""
+    def test_a_batch_of_opaque_values_hands_back_a_view_of_what_was_put_in(self):
+        """Its elements are stored, so an element is an Opaque holding the caller's object."""
         payloads = [_Payload("a"), _Payload("b")]
 
         batch = OpaqueBatch(
@@ -136,7 +136,8 @@ class TestOpaqueAndItsBatch:
             "draw",
         )
 
-        assert batch[0] is payloads[0]
+        assert batch[0].value is payloads[0]
+        assert batch[0].name == "batch[draw=0]"
 
     def test_a_batch_may_hold_opaque_terms_as_its_elements(self):
         """An `Opaque` is itself a non-mapping value."""
@@ -148,5 +149,6 @@ class TestOpaqueAndItsBatch:
             "draw",
         )
 
-        assert batch[1] is terms[1]
-        assert batch[1].name == "second"
+        assert batch[1].value is terms[1].value
+        assert batch[1].name == "batch[draw=1]"
+        assert terms[1].name == "second"

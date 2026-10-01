@@ -19,10 +19,12 @@ import pytest
 from probpipe import (
     Batch,
     BatchSpec,
+    Function,
     FunctionBatch,
     FunctionSpec,
     InputSpec,
     NumericArraySpec,
+    Opaque,
     OpaqueBatch,
     OpaqueSpec,
     OutputSpec,
@@ -139,7 +141,7 @@ class TestConstruction:
         )
 
         assert batch.batch_shape == (3,)
-        assert [batch[i] for i in range(3)] == ["0", "1", "2"]
+        assert [batch[i].value for i in range(3)] == ["0", "1", "2"]
 
 
 class TestConstructionRefusals:
@@ -341,19 +343,36 @@ class TestSpec:
 
 
 class TestElements:
-    def test_an_element_is_the_object_that_was_stored(self, labels):
+    def test_an_element_holds_the_object_that_was_stored(self, labels):
         stored = ["north", "east", "south"]
-        assert [labels[i] for i in range(3)] == stored
+        assert [labels[i].value for i in range(3)] == stored
+
+    def test_an_opaque_element_is_an_opaque_named_by_its_position(self, labels):
+        element = labels[1]
+        assert isinstance(element, Opaque)
+        assert element.name == "s[site=1]"
+        assert element.spec == labels.element_spec
+
+    def test_a_callable_element_is_a_function_named_by_its_position(self, functions):
+        element = functions[1]
+        assert isinstance(element, Function)
+        assert element.name == "f[variant=1]"
+        assert element.apply(5) == 10
+
+    def test_an_element_records_the_batch_it_was_read_from(self, labels):
+        provenance = labels[2].provenance
+        assert provenance.operation == "__getitem__"
+        assert [parent.name for parent in provenance.parents] == ["s"]
+        assert provenance.metadata == {"position": [2]}
 
     def test_a_callable_element_is_callable(self, functions):
         assert functions[1](5) == 10
 
-    def test_a_tracked_element_keeps_its_own_name(self):
-        """A stored element is handed back as given, not renamed to its position.
+    def test_a_tracked_element_is_a_view_under_the_derived_name(self):
+        """A stored tracked term comes back as a view named by its position.
 
-        The identity rule applies to a batch that materializes an element per
-        index; here the caller's own object comes back, so a name that means
-        something is not replaced by one that states a position.
+        The view shares the stored term's representation and records it as its
+        source, and the stored term keeps its own name.
         """
 
         class _Named(TrackedTerm):
@@ -372,8 +391,12 @@ class TestElements:
             "variant",
         )
 
-        assert batch[0] is element
-        assert batch[0].name == "alpha"
+        view = batch[0]
+        assert view is not element
+        assert view.name == "f[variant=0]"
+        assert view() == "f[variant=0]"
+        assert [parent.name for parent in view.provenance.parents] == ["f", "alpha"]
+        assert element.name == "alpha"
 
     def test_iteration_walks_the_leading_axis(self, functions):
         assert [f(2) for f in functions] == [2, 4, 6]
@@ -391,7 +414,7 @@ class TestElements:
         )
 
         assert batch.batch_shape == (2,)
-        np.testing.assert_array_equal(np.asarray(batch[1]), np.ones(3))
+        np.testing.assert_array_equal(np.asarray(batch[1].value), np.ones(3))
 
     def test_an_object_array_of_arrays_is_not_unpacked(self):
         """The other input path: a supplied object array, copied rather than built.
@@ -410,7 +433,7 @@ class TestElements:
         )
 
         assert batch.batch_shape == (2,)
-        np.testing.assert_array_equal(np.asarray(batch[1]), np.ones(3))
+        np.testing.assert_array_equal(np.asarray(batch[1].value), np.ones(3))
 
     def test_elements_holding_sequences_are_not_unpacked(self):
         batch = OpaqueBatch(
@@ -420,7 +443,7 @@ class TestElements:
         )
 
         assert batch.batch_shape == (2,)
-        assert batch[0] == [1, 2]
+        assert batch[0].value == [1, 2]
 
 
 class TestTheStorageContractIsSatisfiable:
@@ -457,7 +480,7 @@ class TestTheStorageContractIsSatisfiable:
         assert np.shares_memory(function_grid[0]._store, function_grid._store)
 
     def test_a_descending_slice_is_presented_in_the_order_given(self, labels):
-        assert [labels[::-1][i] for i in range(3)] == ["south", "east", "north"]
+        assert [labels[::-1][i].value for i in range(3)] == ["south", "east", "north"]
 
     def test_a_stepped_slice_is_presented_in_the_order_given(self, functions):
         assert [f(1) for f in functions[::2]] == [1, 3]
@@ -467,7 +490,7 @@ class TestTheStorageContractIsSatisfiable:
 
         assert whole is not labels
         assert np.shares_memory(whole._store, labels._store)
-        assert [whole[i] for i in range(3)] == [labels[i] for i in range(3)]
+        assert [whole[i].value for i in range(3)] == [labels[i].value for i in range(3)]
 
     def test_the_store_cannot_be_written_through(self, labels):
         """A view shares the buffer, so a writable store would reach the parent."""
@@ -488,8 +511,8 @@ class TestTheStorageContractIsSatisfiable:
 
         store[1] = {"a": 1}
 
-        assert batch[1] == "south"
-        assert batch.element_spec.is_valid(batch[1])
+        assert batch[1].value == "south"
+        assert batch.element_spec.is_valid(batch[1].value)
 
     def test_an_empty_selection_is_a_batch_of_nothing(self, labels):
         """Reachable by selection though the constructor refuses it — see Notes."""
@@ -544,13 +567,13 @@ class TestRoundTrips:
 
         assert restored.name == labels.name
         assert restored.level_names == labels.level_names
-        assert [restored[i] for i in range(3)] == ["north", "east", "south"]
+        assert [restored[i].value for i in range(3)] == ["north", "east", "south"]
 
     def test_a_view_survives_pickling(self, labels):
         restored = pickle.loads(pickle.dumps(labels[0:2]))
 
         assert restored.name == "s[site=0:2]"
-        assert [restored[i] for i in range(2)] == ["north", "east"]
+        assert [restored[i].value for i in range(2)] == ["north", "east"]
 
     def test_the_store_travels_without_being_declared(self, labels):
         """`Batch.__getstate__` walks the MRO, so `_store` needs no restating."""
@@ -575,7 +598,10 @@ class TestProvenance:
         )
         batch.with_provenance(Provenance.create("collect", parents=[]))
 
-        assert batch[0] is element
+        view = batch[0]
+        assert view is not element
+        assert view.name == "recs[site=0]"
+        assert element.name == "r"
         assert element.provenance is None
 
     def test_the_caller_can_still_set_its_own_provenance_afterwards(self, full_provenance_mode):

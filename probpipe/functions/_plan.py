@@ -15,7 +15,6 @@ from types import UnionType
 from typing import Any, Literal, Union, get_args, get_origin
 
 from ..core._batch import Batch
-from ..core._distribution_array import DistributionArray
 from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
 from ..values import _binding
@@ -30,22 +29,18 @@ StructuralRngId = tuple[str | int, ...]
 
 @dataclass(frozen=True)
 class ArrayBroadcastGroup:
-    """One zip group of array-valued sweep arguments — read along the same axes.
+    """One zip group of swept batches, read along the same axes.
 
-    What puts two arguments in one group depends on what they are: a batch is
-    grouped by its level names, since levels are how batches align; a value with
-    a parent — a distribution view — by that parent, since sibling views of one
-    law have no level names to align on.
+    The batches of one group carry the same level names, since levels are how
+    batches align.
     """
 
     arg_refs: tuple[_binding.WorkflowInputRef, ...]
     batch_shape: tuple[int, ...]
     size: int
     # What the group's axes range over, for the aggregate to mint its levels
-    # under. A batched operand already says: its own level names are what an
-    # output must carry to align with it. An operand with no levels of its own is
-    # named for the argument it arrived as, which is a name from the call rather
-    # than one invented here.
+    # under: the batches' own level names are what an output must carry to align
+    # with them.
     level_names: tuple[str, ...]
     axis_groups: tuple[tuple[int, ...], ...]
 
@@ -187,10 +182,9 @@ def _is_batched(value: Any) -> bool:
 
     Any Batch is such an operand: what makes a value sweepable is that it holds
     a multiplicity on named levels, which is the Batch contract rather than
-    anything specific to records. A DistributionArray holds one too, although it
-    is a Distribution rather than a Batch.
+    anything specific to records.
     """
-    return isinstance(value, (Batch, DistributionArray)) and len(value.batch_shape) > 0
+    return isinstance(value, Batch) and len(value.batch_shape) > 0
 
 
 def is_swept(value: Any, expected: Any) -> bool:
@@ -424,41 +418,19 @@ def group_by_alignment(
     values: Mapping[str, Any],
     refs: Sequence[_binding.WorkflowInputRef],
 ) -> list[tuple[Any, tuple[_binding.WorkflowInputRef, ...]]]:
-    """Group input references by what aligns them, with each group's root.
+    """Group the swept batches by their level names, with each group's first batch.
 
-    A value with no parent is its own root, so one group holds every reference
-    that denotes the same underlying random variable: the same distribution
-    passed twice, sibling views of one parent, and a parent passed alongside its
-    own view. References with no common root land in separate groups. Groups and
+    Batches align by level name, so two batches carrying the same levels are
+    two readings of one multiplicity and zip, while batches with no level in
+    common are independent and form a product. Sibling views from one batch's
+    ``select_all`` therefore zip, as do a batch and a view of it. Groups and
     their members keep argument order, so the grouping is a deterministic
     function of the call.
-
-    A view with a ``parent`` is grouped by a single lookup, which is exact for
-    the view types that carry one: such a view's parent is always a distribution,
-    never another view. A nested view type would need this
-    walked transitively.
-
-    A batch has no parent to look up — a view over one is another batch over the
-    same axes — so it is grouped by its **level names** instead. That is the level
-    algebra's own rule: operands align by level name, so two batches carrying the
-    same level are two readings of one multiplicity and zip, while batches with no
-    level in common are independent and form a product. Sibling views from one
-    batch's ``select_all`` therefore zip, as do a batch and a view of it.
     """
-    groups: dict[Any, tuple[Any, list[_binding.WorkflowInputRef]]] = {}
+    groups: dict[tuple[str, ...], tuple[Any, list[_binding.WorkflowInputRef]]] = {}
     for ref in refs:
         value = _binding.input_ref_value(values, ref)
-        parent = getattr(value, "parent", None)
-        if parent is not None:
-            key: Any = id(parent)
-            root = parent
-        elif isinstance(value, Batch):
-            key = value.level_names
-            root = value
-        else:
-            key = id(value)
-            root = value
-        groups.setdefault(key, (root, []))[1].append(ref)
+        groups.setdefault(tuple(value.level_names), (value, []))[1].append(ref)
     return [(root, tuple(group_refs)) for root, group_refs in groups.values()]
 
 
@@ -467,50 +439,41 @@ def build_array_zip_groups(
     values: Mapping[str, Any],
     refs: Sequence[_binding.WorkflowInputRef],
 ) -> tuple[ArrayBroadcastGroup, ...]:
-    """Build the zip groups for array-valued sweep arguments.
+    """Build the zip groups of the swept batches.
 
-    Every argument in a group is read along the same axes, so they must agree on
+    Every batch in a group is read along the same axes, so they must agree on
     what those axes are; a disagreement is a mistake about which multiplicity is
     which rather than a product to be formed silently.
+
+    Raises
+    ------
+    ValueError
+        If two batches carry the same levels on different axes, or two groups
+        share a level without sharing all their levels.
     """
     groups: list[ArrayBroadcastGroup] = []
-    for _root, arg_refs in group_by_alignment(values=values, refs=refs):
-        first = _binding.input_ref_value(values, arg_refs[0])
-        batch_shape = tuple(first.batch_shape)
-        if isinstance(first, Batch):
-            level_names = tuple(first.level_names)
-            group_axes = tuple(first.axis_groups)
-        else:
-            level_names = (arg_refs[0].label,)
-            group_axes = (batch_shape,)
+    for first, arg_refs in group_by_alignment(values=values, refs=refs):
         for ref in arg_refs[1:]:
             other = _binding.input_ref_value(values, ref)
-            if isinstance(first, Batch):
-                # Two operands naming the same levels claim the same axes, group
-                # by group: agreeing on the flat shape alone would zip a
-                # ((2,), (3, 4)) partition with a ((2, 3), (4,)) one and hand the
-                # output whichever arrived first.
-                if tuple(getattr(other, "axis_groups", ())) != tuple(first.axis_groups):
-                    raise ValueError(
-                        f"{arg_refs[0].label!r} and {ref.label!r} carry the same levels but "
-                        f"are batched differently: {tuple(first.axis_groups)} against "
-                        f"{tuple(getattr(other, 'axis_groups', ()))}. Levels align by name, "
-                        f"so operands naming the same levels must hold them on the same axes"
-                    )
-            elif tuple(other.batch_shape) != batch_shape:
+            # Two operands naming the same levels claim the same axes, group by
+            # group: agreeing on the flat shape alone would zip a ((2,), (3, 4))
+            # partition with a ((2, 3), (4,)) one and hand the output whichever
+            # arrived first.
+            if tuple(other.axis_groups) != tuple(first.axis_groups):
                 raise ValueError(
-                    f"{arg_refs[0].label!r} and {ref.label!r} are zipped together but are "
-                    f"batched differently: {batch_shape} against {tuple(other.batch_shape)}. "
-                    f"Arguments sharing a level name are read along the same axes, so give "
-                    f"one of them a level of its own to sweep them independently"
+                    f"{arg_refs[0].label!r} and {ref.label!r} carry the same levels but "
+                    f"are batched differently: {tuple(first.axis_groups)} against "
+                    f"{tuple(other.axis_groups)}. Levels align by name, so operands naming "
+                    f"the same levels must hold them on the same axes"
                 )
+        batch_shape = tuple(first.batch_shape)
         groups.append(
             ArrayBroadcastGroup(
                 arg_refs=tuple(arg_refs),
                 batch_shape=batch_shape,
                 size=prod(batch_shape),
-                level_names=level_names,
-                axis_groups=group_axes,
+                level_names=tuple(first.level_names),
+                axis_groups=tuple(first.axis_groups),
             )
         )
     # A level name in two groups is one multiplicity read at two geometries:
@@ -521,15 +484,7 @@ def build_array_zip_groups(
     # same level twice.
     owners: dict[str, tuple[str, tuple[str, ...]]] = {}
     for group in groups:
-        first = _binding.input_ref_value(values, group.arg_refs[0])
-        if not isinstance(first, Batch):
-            # An operand carrying no levels of its own cannot share one: its
-            # multiplicity is anonymous, so it aligns with nothing by name and
-            # products with everything. Standing the parameter's name in for the
-            # levels it does not have would collide with a real level of that name
-            # on another operand and refuse a call whose axes are independent.
-            continue
-        names = tuple(first.level_names)
+        names = group.level_names
         for level_name in dict.fromkeys(names):
             prior = owners.setdefault(level_name, (group.arg_refs[0].label, names))
             if prior[1] != names or prior[0] != group.arg_refs[0].label:
@@ -575,10 +530,6 @@ def _value_matches_hint(value: Any, expected: Any) -> bool:
         return any(_value_matches_hint(value, arm) for arm in get_args(expected))
     base = origin or expected
     try:
-        return (
-            isinstance(base, type)
-            and issubclass(base, (Batch, DistributionArray))
-            and isinstance(value, base)
-        )
+        return isinstance(base, type) and issubclass(base, Batch) and isinstance(value, base)
     except TypeError:
         return False

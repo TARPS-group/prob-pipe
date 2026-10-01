@@ -437,9 +437,10 @@ class TestBroadcastingProvenance:
             result = wf(rows, noise)
 
         assert result.provenance is not None
-        assert result.components[0].provenance is not None
+        row = result[0].provenance.parents[1].provenance
+        assert row is not None
         assert tuple(result.provenance.inputs) == ("offset",)
-        assert tuple(result.components[0].provenance.inputs) == ("offset",)
+        assert tuple(row.inputs) == ("offset",)
 
 
 # ===========================================================================
