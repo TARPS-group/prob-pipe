@@ -922,6 +922,21 @@ class TestMarginalValues:
         assert marginal.event_spec.exposes_record
         assert list(marginal.event_spec.components) == ["a", "c"]
 
+    def test_a_selection_marginal_follows_the_order_of_its_paths(self):
+        joint = Normal("x", 0.0, 1.0) * Normal("z", 5.0, 2.0)
+        marginal = joint._marginal(("z", "x"))
+        assert list(marginal.event_spec.components) == ["z", "x"]
+        assert marginal.event_spec == FieldView(joint, ("z", "x")).event_spec
+        assert list(marginal._mean()) == ["z", "x"]
+        assert jnp.allclose(marginal._cov().to_dense(), jnp.diag(jnp.array([4.0, 1.0])))
+        value = {"z": jnp.asarray(4.0), "x": jnp.asarray(0.2)}
+        expected = norm.logpdf(4.0, 5.0, 2.0) + norm.logpdf(0.2, 0.0, 1.0)
+        assert jnp.allclose(marginal._log_prob(value), expected)
+
+    def test_a_sub_joint_selected_against_its_factor_order_follows_the_paths(self):
+        marginal = (_likelihood() * _prior())._marginal(("beta", "y"))
+        assert list(marginal.event_spec.components) == ["beta", "y"]
+
     def test_the_marginal_inside_one_factor_is_that_factor_marginal(self):
         pair = _pair(law=MarginalLaw, exact=("a",))
         marginal = (pair * _law("other", "c"))._marginal("a")

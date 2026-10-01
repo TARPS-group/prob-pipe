@@ -1087,9 +1087,10 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
     whole term: a kept factor that exposes a record of that one component is
     returned as the law of its field. A selection of several paths returns an
     exposed record: the one factor itself when it exposes a record, and
-    otherwise the joint of the kept factors in factor order. The marginal is
-    labeled as the view at *path* is: by the path, or by the paths of a
-    selection joined with ``", "``.
+    otherwise the joint of the kept factors in factor order, repackaged when
+    the paths name the fields in another order, so its fields follow the
+    order of the paths (III.8). The marginal is labeled as the view at *path*
+    is: by the path, or by the paths of a selection joined with ``", "``.
 
     Parameters
     ----------
@@ -1133,8 +1134,27 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
             kept.append(factor)
     if len(kept) == 1 and (projection or kept[0].event_spec.exposes_record):
         (marginal,) = kept
-        return marginal if marginal.name == label else marginal.with_name(label)
-    return FactoredDistribution(label, kept)
+        marginal = marginal if marginal.name == label else marginal.with_name(label)
+    else:
+        marginal = FactoredDistribution(label, kept)
+    return marginal if projection else _in_requested_order(marginal, paths)
+
+
+def _in_requested_order(marginal: Distribution, paths: tuple[str, ...]) -> Distribution:
+    """*marginal*, the marginal at the selection *paths*, with its fields in the order of the paths.
+
+    The kept factors declare their fields in factor order, so a selection that
+    names them in another order is repackaged, each field keeping its path.
+    """
+    from ._views import _leaf_paths, _renamed_by_leaves
+
+    order = [requested.rsplit(_PATH_SEP, 1)[-1] for requested in paths]
+    components = marginal.event_spec.components
+    if list(components) == order:
+        return marginal
+    target = OutputSpec(RecordSpec({name: components[name] for name in order}))
+    leaves = {leaf: leaf for leaf in _leaf_paths(marginal.event_spec)}
+    return _renamed_by_leaves(marginal, target, leaves)
 
 
 def _kept_claims(factor: Factor, requested: tuple[str, ...]) -> frozenset[type]:
