@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from probpipe import (
+    ApplicabilityError,
     NumericArrayBatch,
     NumericArraySpec,
     Record,
@@ -40,7 +41,7 @@ from probpipe.operations import (
     operation,
 )
 from probpipe.operations._moments import mean
-from probpipe.operations._operation import ApplicabilityError, _workflow_draws
+from probpipe.operations._operation import _workflow_draws
 from probpipe.operations._sample import sample
 from probpipe.values import Function
 
@@ -257,6 +258,13 @@ class TestRoles:
             center(jnp.zeros(2))
         assert isinstance(caught.value, TypeError)
         assert "NumericArraySpec" in str(caught.value)
+
+    def test_the_refusal_is_the_engines_applicability_error(self):
+        """One class, so a caller catching the engine's refusal catches an operation's."""
+        from probpipe.functions import ApplicabilityError as EngineRefusal
+
+        with pytest.raises(EngineRefusal):
+            center(jnp.zeros(2))
 
 
 # ---------------------------------------------------------------------------

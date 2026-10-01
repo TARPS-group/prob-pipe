@@ -5,11 +5,11 @@ from __future__ import annotations
 import jax.numpy as jnp
 import pytest
 
+from probpipe import ApplicabilityError
 from probpipe.distributions._conditional import ConditionalDistribution
 from probpipe.distributions._factored import FactoredDistribution
 from probpipe.operations import RouteSource
 from probpipe.operations._joint import joint
-from probpipe.operations._operation import ApplicabilityError
 
 from ._laws import Gaussian, Kernel
 

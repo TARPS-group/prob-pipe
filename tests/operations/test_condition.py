@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import MultivariateNormal, Record, RecordSpec
+from probpipe import ApplicabilityError, MultivariateNormal, Record, RecordSpec
 from probpipe.core._dispatch import Feasibility, ResolutionError, UnaryDispatchRegistry
 from probpipe.core._specs import InputSpec, OutputSpec
 from probpipe.distributions._capabilities import (
@@ -37,7 +37,7 @@ from probpipe.operations._condition import (
     inference_method_registry,
 )
 from probpipe.operations._convert import convert
-from probpipe.operations._operation import ApplicabilityError, _RegistryRoute
+from probpipe.operations._operation import _RegistryRoute
 from probpipe.operations._sample import sample
 
 from ._laws import REAL, Amortized, Bare, ExactPosterior, Gaussian, Kernel, Unnormalized

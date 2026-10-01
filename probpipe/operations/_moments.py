@@ -73,9 +73,10 @@ from ..distributions._distribution import Distribution, DistributionSpec
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import _raw_record
 from ..functions import _broker, _descendants, function
+from ..functions._call import ApplicabilityError
 from ..functions._result import SAMPLE_LEVEL
 from ..values import Function, FunctionSpec
-from ._operation import ApplicabilityError, BoundCall, _workflow_draws, operation
+from ._operation import BoundCall, _workflow_draws, operation
 from ._sample import _record_batch
 
 __all__ = [

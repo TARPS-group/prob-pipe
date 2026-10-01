@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from probpipe import RecordSpec
+from probpipe import ApplicabilityError, RecordSpec
 from probpipe.core._dispatch import ResolutionError
 from probpipe.core._specs import OutputSpec
 from probpipe.distributions._conditional import ConditionalDistribution
 from probpipe.distributions._distribution import Distribution, DistributionSpec
 from probpipe.operations._marginal import factor, marginal
-from probpipe.operations._operation import ApplicabilityError
 
 from ._laws import REAL, Gaussian, Kernel, Marginalizing, Pair
 

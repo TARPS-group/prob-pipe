@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from probpipe import (
+    ApplicabilityError,
     NumericArray,
     NumericArrayBatch,
     NumericArraySpec,
@@ -42,7 +43,6 @@ from probpipe.operations._moments import (
     quantile,
     variance,
 )
-from probpipe.operations._operation import ApplicabilityError
 from probpipe.values import Function
 
 from ._laws import (

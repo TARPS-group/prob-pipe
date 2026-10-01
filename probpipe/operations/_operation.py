@@ -58,7 +58,7 @@ from ..core.record import Record
 from ..core.tracked import TrackedTerm
 from ..distributions._capabilities import _capability_guard, _guard_condition
 from ..functions import _broker, _descendants
-from ..functions._call import admit_arguments
+from ..functions._call import ApplicabilityError, admit_arguments
 from ..functions._plan import BroadcastPlan, build_broadcast_plan
 from ..functions._result import (
     _copy_result_term,
@@ -78,7 +78,6 @@ from ..values._binding import (
 from ..values._function_base import _validate_function_output
 
 __all__ = [
-    "ApplicabilityError",
     "BoundCall",
     "CallCheck",
     "OperandSummary",
@@ -102,15 +101,6 @@ _UNREGISTERED_TERM_KINDS: tuple[tuple[type, type[TermSpec]], ...] = (
     (Function, FunctionSpec),
     (Record, RecordSpec),
 )
-
-
-class ApplicabilityError(TypeError):
-    """The arguments or declarations of a call violate the operation's contract.
-
-    Admission raises it for an argument whose kind the parameter's role does not
-    accept, and planning raises it for a failed applicability condition or for a
-    call that the result rule rules out.
-    """
 
 
 class RouteSource(Enum):

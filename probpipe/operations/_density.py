@@ -28,7 +28,8 @@ from ..distributions._capabilities import (
     SupportsUnnormalizedLogProb,
 )
 from ..distributions._distribution import Distribution, DistributionSpec
-from ._operation import ApplicabilityError, CallCheck, operation
+from ..functions._call import ApplicabilityError
+from ._operation import CallCheck, operation
 
 __all__ = [
     "log_prob",

@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import NumericArray, NumericArrayBatch, NumericArraySpec, Record
+from probpipe import ApplicabilityError, NumericArray, NumericArrayBatch, NumericArraySpec, Record
 from probpipe.core._dispatch import ResolutionError
 from probpipe.core._specs import OutputSpec
 from probpipe.core.constraints import non_negative
@@ -24,7 +24,6 @@ from probpipe.operations._density import (
     unnormalized_log_prob,
     unnormalized_prob,
 )
-from probpipe.operations._operation import ApplicabilityError
 
 from ._laws import Bare, Coin, Gaussian, OneField, Polymorphic, RandomDensity, Unnormalized
 

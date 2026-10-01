@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from probpipe import (
+    ApplicabilityError,
     NumericArray,
     NumericArrayBatch,
     NumericRecordBatch,
@@ -19,7 +20,6 @@ from probpipe import (
 from probpipe.core._dispatch import ResolutionError
 from probpipe.distributions._batches import DistributionBatch
 from probpipe.distributions._distribution import Distribution
-from probpipe.operations._operation import ApplicabilityError
 from probpipe.operations._sample import sample
 
 from ._laws import Bare, Gaussian, Kernel, Measure, OneField, Pair, Polymorphic, Vector
