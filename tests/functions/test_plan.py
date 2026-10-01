@@ -46,8 +46,8 @@ def _numeric_record_batch(
     )
 
 
-def _ref(name: str) -> _binding.WorkflowInputRef:
-    return _binding.WorkflowInputRef(name)
+def _ref(name: str) -> _binding.FunctionInputRef:
+    return _binding.FunctionInputRef(name)
 
 
 def _plan(values, hints=None):

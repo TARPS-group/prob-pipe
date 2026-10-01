@@ -79,14 +79,14 @@ def _resolve_call(
     **call_inputs,
 ):
     info = _binding.make_signature_info(func)
-    return _call.resolve_workflow_call(
+    return _call.resolve_function_call(
         info,
         args,
         call_inputs,
         bind=bind or {},
         module=module,
         dependency_type=Node,
-        workflow_name=getattr(func, "__name__", "workflow"),
+        function_name=getattr(func, "__name__", "workflow"),
         default_n_broadcast_samples=default_n_broadcast_samples,
         default_include_inputs=default_include_inputs,
     )
@@ -107,10 +107,10 @@ class TestWorkflowCallHelpers:
         refs = _binding.iter_input_refs(info, values)
 
         assert refs == (
-            _binding.WorkflowInputRef("head"),
-            _binding.WorkflowInputRef("items", subscript=0),
-            _binding.WorkflowInputRef("items", subscript=1),
-            _binding.WorkflowInputRef("extras", subscript="tail"),
+            _binding.FunctionInputRef("head"),
+            _binding.FunctionInputRef("items", subscript=0),
+            _binding.FunctionInputRef("items", subscript=1),
+            _binding.FunctionInputRef("extras", subscript="tail"),
         )
         assert tuple(ref.label for ref in refs) == (
             "head",
@@ -131,18 +131,18 @@ class TestWorkflowCallHelpers:
 
         info = _binding.make_signature_info(collect)
 
-        assert _binding.input_ref_hint(info, _binding.WorkflowInputRef("head")) is Any
+        assert _binding.input_ref_hint(info, _binding.FunctionInputRef("head")) is Any
         assert (
             _binding.input_ref_hint(
                 info,
-                _binding.WorkflowInputRef("items", subscript=0),
+                _binding.FunctionInputRef("items", subscript=0),
             )
             is None
         )
         assert (
             _binding.input_ref_hint(
                 info,
-                _binding.WorkflowInputRef("extras", subscript="tail"),
+                _binding.FunctionInputRef("extras", subscript="tail"),
             )
             is None
         )
@@ -153,9 +153,9 @@ class TestWorkflowCallHelpers:
             "items": (2, 3),
             "extras": {"tail": 4},
         }
-        head = _binding.WorkflowInputRef("head")
-        first_item = _binding.WorkflowInputRef("items", subscript=0)
-        tail = _binding.WorkflowInputRef("extras", subscript="tail")
+        head = _binding.FunctionInputRef("head")
+        first_item = _binding.FunctionInputRef("items", subscript=0)
+        tail = _binding.FunctionInputRef("extras", subscript="tail")
 
         singly_replaced = _binding.replace_input_ref(values, first_item, 20)
         jointly_replaced = _binding.replace_input_refs(

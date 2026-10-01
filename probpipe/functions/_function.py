@@ -1,4 +1,4 @@
-"""Function decorator and the installed workflow call engine."""
+"""Function decorator and the installed Function call engine."""
 
 from __future__ import annotations
 
@@ -100,9 +100,9 @@ def function(
         def my_func(x, y):
             return x + y
 
-    Keyword arguments passed later to the workflow call itself belong to the
+    Keyword arguments passed later to the Function call itself belong to the
     wrapped function whenever they can bind to that function. Use
-    ``workflow.with_options(...)(...)`` for one-call ProbPipe controls.
+    ``wrapped.with_options(...)(...)`` for one-call ProbPipe controls.
 
     Parameters
     ----------
@@ -207,7 +207,7 @@ def _call_with_options(
     function: Function,
     args: tuple[Any, ...],
     call_inputs: dict[str, Any],
-    options: _call.WorkflowCallOptions,
+    options: _call.FunctionCallOptions,
 ) -> Any:
     _context._assert_workflow_admission()
     with _replay._function_replay_scope() as replay_call:
@@ -231,16 +231,16 @@ def _call_with_options_in_context(
     function: Function,
     args: tuple[Any, ...],
     call_inputs: dict[str, Any],
-    options: _call.WorkflowCallOptions,
+    options: _call.FunctionCallOptions,
 ) -> Any:
-    call = _call.resolve_workflow_call(
+    call = _call.resolve_function_call(
         function._signature_info,
         args,
         call_inputs,
         bind=function._bind,
         module=function._module,
         dependency_type=Node,
-        workflow_name=function._name,
+        function_name=function._name,
         default_n_broadcast_samples=function.options["n_broadcast_samples"],
         default_include_inputs=function.options["include_inputs"],
         options=options,
@@ -334,7 +334,7 @@ def _call_with_options_in_context(
 
     def resolve_dispatch(
         dispatch_values: dict[str, Any],
-        broadcast_args: list[_binding.WorkflowInputRef],
+        broadcast_args: list[_binding.FunctionInputRef],
         *,
         jax_supported: bool = True,
     ) -> str:
@@ -361,7 +361,7 @@ def _call_with_options_in_context(
 
     def require_jax_traceable(
         dispatch_values: dict[str, Any],
-        broadcast_args: list[_binding.WorkflowInputRef],
+        broadcast_args: list[_binding.FunctionInputRef],
     ) -> None:
         _require_jax_traceable(
             function,
@@ -390,7 +390,7 @@ def _call_with_options_in_context(
             requested_dispatch=function.options["dispatch"],
             resolve_dispatch=resolve_dispatch,
             require_jax_traceable=require_jax_traceable,
-            workflow_name=function._name,
+            function_name=function._name,
             output_name=function.output_name,
             output_spec=concrete_output_spec,
             workflow_kind=workflow_kind,
@@ -434,7 +434,7 @@ def _call_with_options_in_context(
             resolve_dispatch=resolve_dispatch,
             require_jax_traceable=require_jax_traceable,
             distribution_broadcast=distribution_broadcast,
-            workflow_name=function._name,
+            function_name=function._name,
             output_name=function.output_name,
             output_spec=concrete_output_spec,
             include_inputs=call.overrides.include_inputs,
@@ -486,7 +486,7 @@ def _call_with_options_in_context(
 def _jax_traceability_error(
     function: Function,
     values: dict[str, Any],
-    broadcast_args: list[_binding.WorkflowInputRef],
+    broadcast_args: list[_binding.FunctionInputRef],
     *,
     func: Callable[..., Any],
     stochastic_plan: _plan.StochasticPlan | None,
@@ -506,9 +506,9 @@ def _jax_traceability_error(
     try:
         dummy_kw = dict(values)
         broadcast_refs = set(broadcast_args)
-        batched_sources: dict[_binding.WorkflowInputRef, Any] = {}
+        batched_sources: dict[_binding.FunctionInputRef, Any] = {}
         unvectorized_batches: dict[Any, Any] = {}
-        drawn_refs: list[_binding.WorkflowInputRef] = []
+        drawn_refs: list[_binding.FunctionInputRef] = []
         for ref in _binding.iter_input_refs(function._signature_info, values):
             v = _binding.input_ref_value(values, ref)
             if ref in broadcast_refs:
@@ -666,7 +666,7 @@ def _has_output_support(spec: Any) -> bool:
 def _require_jax_traceable(
     function: Function,
     values: dict[str, Any],
-    broadcast_args: list[_binding.WorkflowInputRef],
+    broadcast_args: list[_binding.FunctionInputRef],
     *,
     func: Callable[..., Any],
     stochastic_plan: _plan.StochasticPlan | None,
@@ -705,7 +705,7 @@ def _require_jax_traceable(
 def _resolve_dispatch(
     function: Function,
     values: dict[str, Any],
-    broadcast_args: list[_binding.WorkflowInputRef],
+    broadcast_args: list[_binding.FunctionInputRef],
     *,
     jax_supported: bool = True,
     func: Callable[..., Any],
@@ -739,7 +739,7 @@ def _resolve_dispatch(
 
 
 def _call_engine(function: Function, *args: Any, **kwargs: Any) -> Any:
-    return _call_with_options(function, args, kwargs, _call.WorkflowCallOptions())
+    return _call_with_options(function, args, kwargs, _call.FunctionCallOptions())
 
 
 @contextmanager

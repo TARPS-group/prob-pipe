@@ -1,4 +1,4 @@
-"""Resolve workflow controls and bind arguments for the call engine."""
+"""Resolve Function controls and bind arguments for the call engine."""
 
 from __future__ import annotations
 
@@ -6,48 +6,48 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from ..values._binding import WorkflowSignatureInfo, resolve_workflow_values
+from ..values._binding import FunctionSignatureInfo, resolve_function_values
 
 
 @dataclass(frozen=True)
-class WorkflowCallOptions:
-    """Optional call-time workflow controls outside user kwargs."""
+class FunctionCallOptions:
+    """Optional call-time Function controls outside user kwargs."""
 
     n_broadcast_samples: int | None = None
     include_inputs: bool | None = None
 
 
 @dataclass(frozen=True)
-class WorkflowCallOverrides:
-    """Resolved call-time workflow settings consumed by ``Function``."""
+class FunctionCallOverrides:
+    """Resolved call-time Function settings consumed by ``Function``."""
 
     n_broadcast_samples: int
     include_inputs: bool
 
 
 @dataclass(frozen=True)
-class ResolvedWorkflowCall:
-    """Fully resolved signature-shaped values plus workflow overrides."""
+class ResolvedFunctionCall:
+    """Fully resolved signature-shaped values plus Function overrides."""
 
     values: dict[str, Any]
-    overrides: WorkflowCallOverrides
+    overrides: FunctionCallOverrides
 
 
 def bind_call_inputs(
-    info: WorkflowSignatureInfo,
+    info: FunctionSignatureInfo,
     args: tuple[Any, ...],
     call_inputs: dict[str, Any],
     *,
     default_n_broadcast_samples: int,
     default_include_inputs: bool,
-    options: WorkflowCallOptions | None = None,
-) -> tuple[dict[str, Any], WorkflowCallOverrides]:
-    """Bind user inputs and resolve workflow controls.
+    options: FunctionCallOptions | None = None,
+) -> tuple[dict[str, Any], FunctionCallOverrides]:
+    """Bind user inputs and resolve Function controls.
 
-    Call inputs bind exactly like the wrapped Python function. Workflow
+    Call inputs bind exactly like the wrapped Python function. Function
     controls come only from explicit ``options`` or construction defaults.
     """
-    explicit_options = options if options is not None else WorkflowCallOptions()
+    explicit_options = options if options is not None else FunctionCallOptions()
 
     def resolve_option(name: str, default: Any = None) -> Any:
         explicit_value = getattr(explicit_options, name)
@@ -56,7 +56,7 @@ def bind_call_inputs(
 
         return default
 
-    overrides = WorkflowCallOverrides(
+    overrides = FunctionCallOverrides(
         n_broadcast_samples=resolve_option(
             "n_broadcast_samples",
             default_n_broadcast_samples,
@@ -71,19 +71,19 @@ def bind_call_inputs(
     return dict(bound.arguments), overrides
 
 
-def resolve_workflow_call(
-    info: WorkflowSignatureInfo,
+def resolve_function_call(
+    info: FunctionSignatureInfo,
     args: tuple[Any, ...],
     call_inputs: dict[str, Any],
     *,
     bind: Mapping[str, Any],
     module: Any | None,
     dependency_type: type,
-    workflow_name: str,
+    function_name: str,
     default_n_broadcast_samples: int,
     default_include_inputs: bool,
-    options: WorkflowCallOptions | None = None,
-) -> ResolvedWorkflowCall:
+    options: FunctionCallOptions | None = None,
+) -> ResolvedFunctionCall:
     """Resolve one ``Function`` call into values plus overrides."""
     bound_inputs, overrides = bind_call_inputs(
         info,
@@ -93,12 +93,12 @@ def resolve_workflow_call(
         default_include_inputs=default_include_inputs,
         options=options,
     )
-    values = resolve_workflow_values(
+    values = resolve_function_values(
         info,
         bound_inputs,
         bind=bind,
         module=module,
         dependency_type=dependency_type,
-        workflow_name=workflow_name,
+        function_name=function_name,
     )
-    return ResolvedWorkflowCall(values=values, overrides=overrides)
+    return ResolvedFunctionCall(values=values, overrides=overrides)

@@ -1,6 +1,6 @@
 """Function distribution-input normalization helpers.
 
-This private module handles only distribution-valued workflow inputs.
+This private module handles only distribution-valued Function inputs.
 It is not a general normalization layer for all values entering a
 ``Function`` call.
 
@@ -75,7 +75,7 @@ def is_distribution_hint(expected: Any) -> bool:
 def normalize_distribution_values(
     *,
     values: dict[str, Any],
-    signature_info: _binding.WorkflowSignatureInfo,
+    signature_info: _binding.FunctionSignatureInfo,
 ) -> dict[str, Any]:
     """Normalize distribution-valued inputs before broadcast planning.
 

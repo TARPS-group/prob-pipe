@@ -42,8 +42,8 @@ def _numeric_record_batch(
     )
 
 
-def _ref(name: str) -> _binding.WorkflowInputRef:
-    return _binding.WorkflowInputRef(name)
+def _ref(name: str) -> _binding.FunctionInputRef:
+    return _binding.FunctionInputRef(name)
 
 
 def _plan(values):
@@ -180,7 +180,7 @@ class TestExecuteSweep:
             resolve_dispatch=resolve_dispatch,
             require_jax_traceable=_require_not_called,
             distribution_broadcast=_unexpected_distribution_broadcast,
-            workflow_name="double",
+            function_name="double",
         )
 
         request = seen["request"]
@@ -212,7 +212,7 @@ class TestExecuteSweep:
                 resolve_dispatch=lambda *args, **kwargs: "sequential",
                 require_jax_traceable=_require_not_called,
                 distribution_broadcast=_unexpected_distribution_broadcast,
-                workflow_name="identity",
+                function_name="identity",
                 include_inputs=True,
             )
 
@@ -262,7 +262,7 @@ class TestExecuteSweep:
             resolve_dispatch=lambda *args, **kwargs: "sequential",
             require_jax_traceable=_require_not_called,
             distribution_broadcast=distribution_broadcast,
-            workflow_name="nested",
+            function_name="nested",
         )
 
         assert result.batch_shape == (2,)

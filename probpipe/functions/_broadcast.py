@@ -29,7 +29,7 @@ from ..core.provenance import Provenance
 from ..core.tracked import TrackedTerm
 from ..custom_types import Array, PRNGKey
 from ..distributions._distribution import Distribution
-from ..values._binding import WorkflowInputRef, input_ref_value, replace_input_refs
+from ..values._binding import FunctionInputRef, input_ref_value, replace_input_refs
 from . import _execution, _plan, _recipe
 from ._broker import _record_active_execution_contract
 from ._context import _workflow_jax_runtime_guard
@@ -59,8 +59,8 @@ def execute_distribution_broadcast(
     ],
     requested_dispatch: str,
     resolve_dispatch: Callable[..., str],
-    require_jax_traceable: Callable[[dict[str, Any], list[WorkflowInputRef]], None],
-    workflow_name: str,
+    require_jax_traceable: Callable[[dict[str, Any], list[FunctionInputRef]], None],
+    function_name: str,
     output_name: str | None = None,
     output_spec: OutputSpec | None = None,
     workflow_kind: WorkflowKind,
@@ -69,7 +69,7 @@ def execute_distribution_broadcast(
     provenance_inputs: Mapping[str, Any] | None = None,
     record_recipe: bool = True,
 ) -> BroadcastDistribution | Distribution:
-    """Execute one distribution-only broadcasted workflow call.
+    """Execute one distribution-only broadcasted Function call.
 
     The caller has already resolved function arguments, normalized any
     distribution-valued inputs, and built a broadcast plan whose regime is
@@ -82,7 +82,7 @@ def execute_distribution_broadcast(
     func : callable
         Wrapped user function to execute for each sampled or enumerated call.
     values : dict[str, Any]
-        Resolved workflow inputs. Entries named in ``broadcast_args`` must be
+        Resolved Function inputs. Entries named in ``broadcast_args`` must be
         scalar ``Distribution`` values; all other entries are passed through to
         every call row.
     stochastic_plan : StochasticPlan
@@ -108,8 +108,8 @@ def execute_distribution_broadcast(
     require_jax_traceable : callable
         Callback used only for explicit JAX dispatch to raise a clear tracing
         error before executing.
-    workflow_name : str
-        Human-readable workflow name recorded in provenance metadata.
+    function_name : str
+        Human-readable Function name recorded in provenance metadata.
     workflow_kind : WorkflowKind
         Effective orchestration mode for this call. The value is recorded in
         provenance and passed to the JAX path so Prefect task/flow requests can
@@ -174,7 +174,7 @@ def execute_distribution_broadcast(
             stochastic_plan=stochastic_plan,
             logical_unit=logical_unit,
             get_key=get_key,
-            workflow_name=workflow_name,
+            function_name=function_name,
             workflow_kind=workflow_kind,
             output_template=output_template,
         )
@@ -195,14 +195,14 @@ def execute_distribution_broadcast(
         dispatch=dispatch,
         workflow_kind=workflow_kind,
         n_broadcast_samples=n_broadcast_samples,
-        workflow_name=workflow_name,
+        function_name=function_name,
         func=func,
         provenance_parents=provenance_parents,
         provenance_inputs=provenance_inputs,
         stochastic_plan=stochastic_plan if record_recipe else None,
         record_recipe=record_recipe,
     )
-    object.__setattr__(result, "_name", output_name or workflow_name)
+    object.__setattr__(result, "_name", output_name or function_name)
     if output_spec is not None:
         output_spec = _aggregate_output_spec(output_spec, result._output_samples)
         object.__setattr__(result, "_output_spec", output_spec)
@@ -235,11 +235,11 @@ def _validate_n_broadcast_samples(n_broadcast_samples: int) -> None:
 def _make_broadcast_provenance(
     *,
     values: dict[str, Any],
-    broadcast_args: Sequence[WorkflowInputRef],
+    broadcast_args: Sequence[FunctionInputRef],
     dispatch: str,
     workflow_kind: WorkflowKind,
     n_broadcast_samples: int,
-    workflow_name: str,
+    function_name: str,
     func: Callable[..., Any],
     provenance_parents: Sequence[TrackedTerm],
     provenance_inputs: Mapping[str, Any] | None,
@@ -256,7 +256,7 @@ def _make_broadcast_provenance(
             "dispatch": dispatch,
             "orchestrate": workflow_kind.value,
             "n_samples": n_broadcast_samples,
-            "func": workflow_name or func.__name__,
+            "func": function_name or func.__name__,
             "broadcast_args": [ref.label for ref in broadcast_args],
         },
         inputs=provenance_inputs,
@@ -271,13 +271,13 @@ def _sample_planned_source_groups(
     sample_shape: tuple[int, ...],
     logical_unit: _plan.LogicalUnit,
     get_key: Callable[[_plan.PlannedRandomEvent], PRNGKey],
-) -> dict[WorkflowInputRef, Array]:
+) -> dict[FunctionInputRef, Array]:
     """Claim and sample each planned source once in one logical unit.
 
     Every group uses the root and consumer evaluators captured during
     preflight, so aliases and record projections share one root draw.
     """
-    sampled: dict[WorkflowInputRef, Array] = {}
+    sampled: dict[FunctionInputRef, Array] = {}
     for group in source_groups:
         if group.execution_mode != "sampled":
             continue
@@ -300,7 +300,7 @@ def _broadcast_jax(
     stochastic_plan: _plan.StochasticPlan,
     logical_unit: _plan.LogicalUnit,
     get_key: Callable[[_plan.PlannedRandomEvent], PRNGKey],
-    workflow_name: str,
+    function_name: str,
     workflow_kind: WorkflowKind,
     output_template: RecordSpec | None,
 ) -> BroadcastDistribution:
@@ -324,11 +324,11 @@ def _broadcast_jax(
 
     if workflow_kind in (WorkflowKind.TASK, WorkflowKind.FLOW):
         if workflow_kind == WorkflowKind.TASK:
-            run_vmap = task(name=f"{workflow_name}_vmap")(run_vmap)
+            run_vmap = task(name=f"{function_name}_vmap")(run_vmap)
         else:
             runner = prefect_config.resolve_task_runner()
             run_vmap = flow(
-                name=f"{workflow_name}_vmap",
+                name=f"{function_name}_vmap",
                 **({"task_runner": runner} if runner is not None else {}),
             )(run_vmap)
 
@@ -421,7 +421,7 @@ def _broadcast_enumerate(
             emp_weight *= float(dist.weights[i])
 
         for _ in range(stochastic_plan.repetitions_per_combination):
-            replacements: dict[WorkflowInputRef, Any] = {}
+            replacements: dict[FunctionInputRef, Any] = {}
 
             for (group, _dist, consumer_batches), i in zip(exact_entries, combo):
                 for consumer, consumer_batch in zip(group.consumers, consumer_batches):
@@ -568,7 +568,11 @@ def _sole_leaf_path(drawn: Any) -> str | None:
     from ..core._record_batch import RecordBatch
     from ..core.record import Record
 
-    return _contract_sole_leaf_path(drawn.event_template) if isinstance(drawn, (Record, RecordBatch)) else None
+    return (
+        _contract_sole_leaf_path(drawn.event_template)
+        if isinstance(drawn, (Record, RecordBatch))
+        else None
+    )
 
 
 def _present_draw(drawn: Any) -> Any:
@@ -597,7 +601,7 @@ def mapped_draw_body(
     *,
     func: Callable[..., Any],
     values: dict[str, Any],
-    broadcast_args: Sequence[WorkflowInputRef],
+    broadcast_args: Sequence[FunctionInputRef],
 ) -> Callable[[Any], Any]:
     """The body ``jax.vmap`` runs for one draw, and the probe traces.
 

@@ -10,7 +10,7 @@ from typing import Any, get_type_hints
 
 
 @dataclass(frozen=True)
-class WorkflowSignatureInfo:
+class FunctionSignatureInfo:
     """Cached signature metadata for one wrapped Function."""
 
     signature: inspect.Signature
@@ -20,7 +20,7 @@ class WorkflowSignatureInfo:
 
 
 @dataclass(frozen=True)
-class WorkflowInputRef:
+class FunctionInputRef:
     """Reference to one planner-visible value in a resolved Python call."""
 
     parameter_name: str
@@ -38,7 +38,7 @@ class WorkflowInputRef:
 
 def make_signature_info(
     func: Callable[..., Any],
-) -> WorkflowSignatureInfo:
+) -> FunctionSignatureInfo:
     """Build reusable signature metadata for a wrapped function."""
     signature = inspect.signature(func)
     hints = _get_type_hints(func)
@@ -49,7 +49,7 @@ def make_signature_info_from_signature(
     signature: inspect.Signature,
     *,
     hints: Mapping[str, Any] | None = None,
-) -> WorkflowSignatureInfo:
+) -> FunctionSignatureInfo:
     """Build reusable metadata from an independently supplied signature."""
     if not isinstance(signature, inspect.Signature):
         raise TypeError(f"signature must be inspect.Signature, got {type(signature).__name__}")
@@ -62,7 +62,7 @@ def make_signature_info_from_signature(
         parameter.kind == inspect.Parameter.VAR_KEYWORD
         for parameter in signature.parameters.values()
     )
-    return WorkflowSignatureInfo(
+    return FunctionSignatureInfo(
         signature=signature,
         hints=resolved_hints,
         param_names=param_names,
@@ -74,7 +74,7 @@ def values_to_bound_arguments(
     signature: inspect.Signature,
     values: Mapping[str, Any],
 ) -> inspect.BoundArguments:
-    """Reconstruct Python call semantics from resolved workflow values."""
+    """Reconstruct Python call semantics from resolved Function values."""
     arguments: OrderedDict[str, Any] = OrderedDict()
     for name in signature.parameters:
         if name in values:
@@ -83,25 +83,25 @@ def values_to_bound_arguments(
 
 
 def iter_input_refs(
-    info: WorkflowSignatureInfo,
+    info: FunctionSignatureInfo,
     values: Mapping[str, Any],
-) -> tuple[WorkflowInputRef, ...]:
+) -> tuple[FunctionInputRef, ...]:
     """Return planner-visible input references in Python parameter order."""
-    refs: list[WorkflowInputRef] = []
+    refs: list[FunctionInputRef] = []
     for name, parameter in info.signature.parameters.items():
         if name not in values:
             continue
         value = values[name]
         if parameter.kind == inspect.Parameter.VAR_POSITIONAL:
-            refs.extend(WorkflowInputRef(name, subscript=index) for index in range(len(value)))
+            refs.extend(FunctionInputRef(name, subscript=index) for index in range(len(value)))
         elif parameter.kind == inspect.Parameter.VAR_KEYWORD:
-            refs.extend(WorkflowInputRef(name, subscript=key) for key in value)
+            refs.extend(FunctionInputRef(name, subscript=key) for key in value)
         else:
-            refs.append(WorkflowInputRef(name))
+            refs.append(FunctionInputRef(name))
     return tuple(refs)
 
 
-def input_ref_hint(info: WorkflowSignatureInfo, ref: WorkflowInputRef) -> Any:
+def input_ref_hint(info: FunctionSignatureInfo, ref: FunctionInputRef) -> Any:
     """Return the informative annotation governing one planner input.
 
     ``Any`` on an expanded variadic slot must not suppress lifting or sweeps.
@@ -112,7 +112,7 @@ def input_ref_hint(info: WorkflowSignatureInfo, ref: WorkflowInputRef) -> Any:
     return hint
 
 
-def input_ref_value(values: Mapping[str, Any], ref: WorkflowInputRef) -> Any:
+def input_ref_value(values: Mapping[str, Any], ref: FunctionInputRef) -> Any:
     """Read one referenced value from signature-shaped call values."""
     value = values[ref.parameter_name]
     return value if ref.subscript is None else value[ref.subscript]
@@ -120,7 +120,7 @@ def input_ref_value(values: Mapping[str, Any], ref: WorkflowInputRef) -> Any:
 
 def replace_input_ref(
     values: Mapping[str, Any],
-    ref: WorkflowInputRef,
+    ref: FunctionInputRef,
     value: Any,
 ) -> dict[str, Any]:
     """Return signature-shaped values with one referenced input replaced."""
@@ -140,7 +140,7 @@ def replace_input_ref(
 
 def replace_input_refs(
     values: Mapping[str, Any],
-    replacements: Mapping[WorkflowInputRef, Any],
+    replacements: Mapping[FunctionInputRef, Any],
 ) -> dict[str, Any]:
     """Return signature-shaped values with referenced inputs replaced."""
     out = dict(values)
@@ -161,12 +161,12 @@ def replace_input_refs(
 
 
 def is_dependency_param(
-    info: WorkflowSignatureInfo,
+    info: FunctionSignatureInfo,
     name: str,
     *,
     dependency_type: type,
 ) -> bool:
-    """Return whether a parameter annotation names a workflow dependency."""
+    """Return whether a parameter annotation names a Function dependency."""
     ann = info.hints.get(name)
     try:
         return isinstance(ann, type) and issubclass(ann, dependency_type)
@@ -174,14 +174,14 @@ def is_dependency_param(
         return False
 
 
-def resolve_workflow_values(
-    info: WorkflowSignatureInfo,
+def resolve_function_values(
+    info: FunctionSignatureInfo,
     call_inputs: dict[str, Any],
     *,
     bind: Mapping[str, Any],
     module: Any | None,
     dependency_type: type,
-    workflow_name: str,
+    function_name: str,
 ) -> dict[str, Any]:
     """Resolve final signature-shaped arguments from every value source."""
     values: dict[str, Any] = {}
@@ -205,7 +205,7 @@ def resolve_workflow_values(
                 if not isinstance(bound_container, Mapping):
                     raise TypeError(
                         f"Construction binding for variadic keyword parameter "
-                        f"'{name}' of workflow '{workflow_name}' must be a mapping"
+                        f"'{name}' of Function '{function_name}' must be a mapping"
                     )
                 extras.update(bound_container)
             known_params = set(info.signature.parameters)
@@ -220,7 +220,7 @@ def resolve_workflow_values(
         if name in call_inputs:
             if module is not None and is_dep and name in mod_child_nodes:
                 raise TypeError(
-                    f"Dependency '{name}' for workflow '{workflow_name}' is provided "
+                    f"Dependency '{name}' for Function '{function_name}' is provided "
                     f"by the module and cannot be overridden at call time."
                 )
             values[name] = call_inputs[name]
@@ -241,16 +241,16 @@ def resolve_workflow_values(
         unexpected = set(bind).difference(info.signature.parameters)
         if unexpected:
             raise TypeError(
-                f"Unexpected construction bindings for workflow '{workflow_name}': "
+                f"Unexpected construction bindings for Function '{function_name}': "
                 f"{sorted(unexpected)}"
             )
 
-    _validate_required_values(info, values, workflow_name=workflow_name)
+    _validate_required_values(info, values, function_name=function_name)
     _validate_dependency_values(
         info,
         values,
         dependency_type=dependency_type,
-        workflow_name=workflow_name,
+        function_name=function_name,
     )
     return values
 
@@ -272,24 +272,24 @@ def _get_type_hints(func: Callable[..., Any]) -> dict[str, Any]:
 
 
 def _validate_required_values(
-    info: WorkflowSignatureInfo,
+    info: FunctionSignatureInfo,
     values: dict[str, Any],
     *,
-    workflow_name: str,
+    function_name: str,
 ) -> None:
     for name, param in info.signature.parameters.items():
         if param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
             continue
         if param.default is param.empty and name not in values:
-            raise TypeError(f"Missing required input '{name}' for workflow '{workflow_name}'")
+            raise TypeError(f"Missing required input '{name}' for Function '{function_name}'")
 
 
 def _validate_dependency_values(
-    info: WorkflowSignatureInfo,
+    info: FunctionSignatureInfo,
     values: dict[str, Any],
     *,
     dependency_type: type,
-    workflow_name: str,
+    function_name: str,
 ) -> None:
     for ref in iter_input_refs(info, values):
         name = ref.parameter_name
@@ -299,6 +299,6 @@ def _validate_dependency_values(
         if not isinstance(value, dependency_type):
             ann = info.hints.get(name)
             raise TypeError(
-                f"Function '{workflow_name}' expects dependency "
+                f"Function '{function_name}' expects dependency "
                 f"'{ref.label}: {ann}' to be a Node, but got {type(value)}."
             )

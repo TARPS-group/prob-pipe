@@ -20,10 +20,10 @@ from ..core.config import WorkflowKind
 from ..core.node import Node
 from ..core.tracked import Annotated, TrackedTerm
 from ._binding import (
-    WorkflowSignatureInfo,
+    FunctionSignatureInfo,
     make_signature_info,
     make_signature_info_from_signature,
-    resolve_workflow_values,
+    resolve_function_values,
     values_to_bound_arguments,
 )
 
@@ -327,7 +327,7 @@ class Function(Node, TrackedTerm, Annotated):
     """An immutable callable with a frozen signature and optional declarations.
 
     ``apply`` binds arguments and validates one raw evaluation, returning the
-    body's result unchanged. Calling the Function runs the installed workflow
+    body's result unchanged. Calling the Function runs the installed Function
     engine, which adds lifting, dispatch, result identity, and provenance.
 
     Parameters
@@ -353,7 +353,7 @@ class Function(Node, TrackedTerm, Annotated):
     module : object or None
         Experimental shared-input container consulted for missing arguments.
     workflow_kind : WorkflowKind
-        Orchestration selection; DEFAULT inherits the workflow configuration.
+        Orchestration selection; DEFAULT inherits the orchestration configuration.
     n_broadcast_samples : int or None
         Sampling-lift count, defaulting to 128.
     dispatch : {"auto", "jax", "sequential", "thread"}
@@ -369,7 +369,7 @@ class Function(Node, TrackedTerm, Annotated):
     Raises
     ------
     TypeError
-        For an invalid name, callable, declaration type, workflow kind, or
+        For an invalid name, callable, declaration type, orchestration mode, or
         worker-count type.
     ValueError
         For mismatched input slots, invalid defaults or bindings, unknown
@@ -387,7 +387,7 @@ class Function(Node, TrackedTerm, Annotated):
     preserved. ``with_options`` returns a shallow copy with revised controls.
     """
 
-    _signature_info: WorkflowSignatureInfo
+    _signature_info: FunctionSignatureInfo
     _bind: Mapping[str, Any]
     _module: Any | None
     _implementation: _FunctionImplementation
@@ -598,13 +598,13 @@ class Function(Node, TrackedTerm, Annotated):
         """
         with _apply_scope():
             bound = self.signature.bind_partial(*args, **kwargs)
-            values = resolve_workflow_values(
+            values = resolve_function_values(
                 self._signature_info,
                 dict(bound.arguments),
                 bind=self._bind,
                 module=self._module,
                 dependency_type=Node,
-                workflow_name=self.name,
+                function_name=self.name,
             )
             _, bindings = _bind_function_inputs(
                 function_name=self.name, input_spec=self.input_spec, values=values

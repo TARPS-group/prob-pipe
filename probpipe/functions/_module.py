@@ -20,21 +20,21 @@ from ..values import Function
 
 
 def workflow_method(func: Callable):
-    """Mark a method as an experimental workflow method for :class:`Module` subclasses.
+    """Mark a method as an experimental Function method for :class:`Module` subclasses.
 
     Methods decorated with ``@workflow_method`` are automatically
     converted to :class:`Function` instances when the
     ``Module`` is instantiated.
     """
-    func._is_workflow = True
+    func._is_function_method = True
     return func
 
 
 def abstract_workflow_method(func: Callable):
-    """Mark a method as an experimental abstract workflow interface.
+    """Mark a method as an experimental abstract Function interface.
 
     Combines ``@abstractmethod`` with ``@workflow_method`` so that
-    :class:`AbstractModule` subclasses can declare workflow-shaped
+    :class:`AbstractModule` subclasses can declare Function-based
     interfaces without providing implementations.
     """
     return abstractmethod(workflow_method(func))
@@ -42,7 +42,7 @@ def abstract_workflow_method(func: Callable):
 
 class Module(Node):
     """
-    Experimental container for workflow nodes with shared inputs and child nodes.
+    Experimental container for Function nodes with shared inputs and child nodes.
 
     New user-facing API:
         MyModule(data=data_node, horizon=30, alpha=0.1)
@@ -54,10 +54,10 @@ class Module(Node):
     Parameters
     ----------
     workflow_kind : WorkflowKind
-        Prefect orchestration mode propagated to workflow methods built
+        Prefect orchestration mode propagated to Function methods built
         from this module.
     **kwargs : Any
-        Shared child nodes and inputs available to workflow methods.
+        Shared child nodes and inputs available to Function methods.
 
     Raises
     ------
@@ -78,23 +78,23 @@ class Module(Node):
             )
         self._workflow_kind = workflow_kind
         super().__init__(**kwargs)
-        # validate abstract workflow implementations before wrapping
-        self._validate_abstract_workflow_implementations()
+        # validate abstract Function implementations before wrapping
+        self._validate_abstract_function_implementations()
 
-        self._build_workflows()
+        self._build_functions()
 
-    def _build_workflows(self):
+    def _build_functions(self):
         """
         Replace @workflow_method methods with Function instances.
         """
         for attr_name in dir(self):
             attr = getattr(self, attr_name)
-            if not callable(attr) or not getattr(attr, "_is_workflow", False):
+            if not callable(attr) or not getattr(attr, "_is_function_method", False):
                 continue
 
             func = attr
 
-            # skip abstract workflows
+            # skip abstract Functions
             if getattr(func, "__isabstractmethod__", False):
                 continue
 
@@ -179,7 +179,7 @@ class Module(Node):
 
             function_name = attr._name
 
-            # Infer dependencies from workflow signature
+            # Infer dependencies from Function signature
             # (Functions don't store child_nodes; they resolve dependencies at runtime)
             for param_name in attr._signature_info.param_names:
                 is_dependency = _binding.is_dependency_param(
@@ -192,10 +192,10 @@ class Module(Node):
 
         return dot
 
-    def _validate_abstract_workflow_implementations(self) -> None:
+    def _validate_abstract_function_implementations(self) -> None:
         """
-        Ensure that any abstract workflow interfaces in the MRO are implemented
-        by a concrete workflow with a compatible signature.
+        Ensure that any abstract Function interfaces in the MRO are implemented
+        by a concrete Function with a compatible signature.
 
         This prevents a common failure mode:
           - base class declares @abstract_workflow_method interface
@@ -204,12 +204,12 @@ class Module(Node):
         """
         cls = self.__class__
 
-        # Walk MRO to find abstract workflow interfaces
+        # Walk MRO to find abstract Function interfaces
         for base in cls.mro():
             for name, obj in base.__dict__.items():
                 if not callable(obj):
                     continue
-                if not getattr(obj, "_is_workflow", False):
+                if not getattr(obj, "_is_function_method", False):
                     continue
                 if not getattr(obj, "__isabstractmethod__", False):
                     continue
@@ -224,27 +224,27 @@ class Module(Node):
                 # If still abstract, ABCMeta will also catch it; but this provides better errors
                 if getattr(impl_attr, "__isabstractmethod__", False):
                     raise TypeError(
-                        f"{cls.__name__} does not implement abstract workflow '{name}'."
+                        f"{cls.__name__} does not implement abstract Function '{name}'."
                     )
 
-                # Must be marked as workflow (@workflow_method)
-                if not getattr(impl_attr, "_is_workflow", False):
+                # Must be marked as Function (@workflow_method)
+                if not getattr(impl_attr, "_is_function_method", False):
                     raise TypeError(
-                        f"{cls.__name__}.{name} implements an abstract workflow interface "
+                        f"{cls.__name__}.{name} implements an abstract Function interface "
                         f"but is not marked with @workflow_method."
                     )
 
                 # Compare signatures (use unbound function signatures to include 'self')
                 impl_func = impl_attr.__func__ if hasattr(impl_attr, "__func__") else impl_attr
 
-                self._assert_workflow_signature_compatible(
+                self._assert_function_signature_compatible(
                     abstract_func=abstract_func,
                     impl_func=impl_func,
                     name=name,
                 )
 
     @staticmethod
-    def _assert_workflow_signature_compatible(
+    def _assert_function_signature_compatible(
         *,
         abstract_func: Callable,
         impl_func: Callable,
@@ -284,9 +284,9 @@ class Module(Node):
 
 class AbstractModule(Module, ABC):
     """
-    Experimental base class for modules that declare workflow interfaces via @abstract_workflow_method.
+    Experimental base class for modules that declare Function interfaces via @abstract_workflow_method.
 
-    ABCMeta will prevent instantiation until all abstract workflows are implemented
+    ABCMeta will prevent instantiation until all abstract Functions are implemented
     by a concrete subclass.
     """
 

@@ -72,8 +72,8 @@ def _resolve_to(dispatch: str):
     return resolve_dispatch
 
 
-def _ref(name: str) -> _binding.WorkflowInputRef:
-    return _binding.WorkflowInputRef(name)
+def _ref(name: str) -> _binding.FunctionInputRef:
+    return _binding.FunctionInputRef(name)
 
 
 def _stochastic_plan(values, n_broadcast_samples):
@@ -118,7 +118,7 @@ class TestExecuteDistributionBroadcast:
             requested_dispatch="sequential",
             resolve_dispatch=_resolve_to("sequential"),
             require_jax_traceable=_require_not_called,
-            workflow_name="difference",
+            function_name="difference",
             workflow_kind=WorkflowKind.OFF,
         )
 
@@ -148,7 +148,7 @@ class TestExecuteDistributionBroadcast:
             requested_dispatch="sequential",
             resolve_dispatch=_resolve_to("sequential"),
             require_jax_traceable=_require_not_called,
-            workflow_name="difference",
+            function_name="difference",
             workflow_kind=WorkflowKind.OFF,
         )
 
@@ -197,7 +197,7 @@ class TestExecuteDistributionBroadcast:
             requested_dispatch="sequential",
             resolve_dispatch=_resolve_to("sequential"),
             require_jax_traceable=_require_not_called,
-            workflow_name="difference",
+            function_name="difference",
             workflow_kind=WorkflowKind.OFF,
         )
 
@@ -223,7 +223,7 @@ class TestExecuteDistributionBroadcast:
             requested_dispatch="sequential",
             resolve_dispatch=_resolve_to("sequential"),
             require_jax_traceable=_require_not_called,
-            workflow_name="difference",
+            function_name="difference",
             workflow_kind=WorkflowKind.OFF,
         )
 
@@ -257,7 +257,7 @@ class TestExecuteDistributionBroadcast:
             requested_dispatch="sequential",
             resolve_dispatch=_resolve_to("sequential"),
             require_jax_traceable=_require_not_called,
-            workflow_name="difference",
+            function_name="difference",
             workflow_kind=WorkflowKind.OFF,
         )
 
@@ -298,7 +298,7 @@ class TestExecuteDistributionBroadcast:
             requested_dispatch="thread",
             resolve_dispatch=_resolve_to("thread"),
             require_jax_traceable=_require_not_called,
-            workflow_name="shift",
+            function_name="shift",
             workflow_kind=WorkflowKind.OFF,
         )
 
@@ -346,7 +346,7 @@ class TestExecuteDistributionBroadcast:
             requested_dispatch="sequential",
             resolve_dispatch=_resolve_to("sequential"),
             require_jax_traceable=_require_not_called,
-            workflow_name="add",
+            function_name="add",
             workflow_kind=WorkflowKind.OFF,
         )
 
@@ -387,7 +387,7 @@ class TestExecuteDistributionBroadcast:
                 requested_dispatch="sequential",
                 resolve_dispatch=_resolve_to("sequential"),
                 require_jax_traceable=_require_not_called,
-                workflow_name="identity",
+                function_name="identity",
                 workflow_kind=WorkflowKind.OFF,
             )
 
@@ -413,7 +413,7 @@ class TestExecuteDistributionBroadcast:
             requested_dispatch="jax",
             resolve_dispatch=_resolve_to("jax"),
             require_jax_traceable=require_jax_traceable,
-            workflow_name="double",
+            function_name="double",
             workflow_kind=WorkflowKind.OFF,
         )
 
@@ -442,7 +442,7 @@ class TestExecuteDistributionBroadcast:
                 requested_dispatch="jax",
                 resolve_dispatch=_resolve_to("jax"),
                 require_jax_traceable=lambda values, broadcast_args: None,
-                workflow_name="identity",
+                function_name="identity",
                 workflow_kind=WorkflowKind.TASK,
             )
 
@@ -554,7 +554,7 @@ class TestExecuteDistributionBroadcast:
             requested_dispatch="sequential",
             resolve_dispatch=_resolve_to("sequential"),
             require_jax_traceable=_require_not_called,
-            workflow_name="add",
+            function_name="add",
             workflow_kind=WorkflowKind.OFF,
         )
 
@@ -597,7 +597,7 @@ class TestExecuteDistributionBroadcast:
                 requested_dispatch="sequential",
                 resolve_dispatch=_resolve_to("sequential"),
                 require_jax_traceable=_require_not_called,
-                workflow_name="identity",
+                function_name="identity",
                 workflow_kind=WorkflowKind.OFF,
             )
 
@@ -616,7 +616,7 @@ class TestExecuteDistributionBroadcast:
                 requested_dispatch="sequential",
                 resolve_dispatch=_resolve_to("sequential"),
                 require_jax_traceable=_require_not_called,
-                workflow_name="identity",
+                function_name="identity",
                 workflow_kind=WorkflowKind.OFF,
             )
 
