@@ -1206,17 +1206,16 @@ class TestDerivedDeclarations:
         assert shifted.event_spec is f.event_spec
 
     def test_a_minibatched_measure_draws_laws_over_the_prior_parameters(self):
-        import tensorflow_probability.substrates.jax.glm as tfp_glm
-
-        from probpipe import GLMLikelihood, MinibatchedDistribution, Record
+        from probpipe import MinibatchedDistribution
+        from probpipe.families import BernoulliFamily, glm_likelihood
 
         X = jnp.eye(4)
-        prior = MultivariateNormal("theta", loc=jnp.zeros(4), cov=jnp.eye(4))
+        prior = MultivariateNormal("beta", loc=jnp.zeros(4), cov=jnp.eye(4))
         measure = MinibatchedDistribution(
             "measure",
             prior,
-            GLMLikelihood(tfp_glm.Bernoulli(), x=X),
-            Record("r", X=X, y=jnp.array([1.0, 0.0, 1.0, 0.0])),
+            glm_likelihood("y", BernoulliFamily(), X=X),
+            jnp.array([1.0, 0.0, 1.0, 0.0]),
             batch_size=2,
         )
         assert measure.event_spec == OutputSpec(measure=DistributionSpec(prior.event_spec))

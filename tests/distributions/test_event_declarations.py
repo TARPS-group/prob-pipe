@@ -18,7 +18,6 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 import tensorflow_probability.substrates.jax.bijectors as tfb
-import tensorflow_probability.substrates.jax.glm as tfp_glm
 
 import probpipe
 from probpipe import (
@@ -35,7 +34,6 @@ from probpipe import (
     EmpiricalDistribution,
     Exponential,
     Gamma,
-    GLMLikelihood,
     HalfCauchy,
     HalfNormal,
     InverseGamma,
@@ -81,6 +79,7 @@ from probpipe.distributions._capabilities import SupportsSampling
 from probpipe.distributions._factored import _SoleField
 from probpipe.distributions._views import _RenamedDistribution
 from probpipe.families import (
+    BernoulliFamily,
     BijectorTransformedDistribution,
     FactoredMultivariateGaussian,
     GaussianProcess,
@@ -88,6 +87,7 @@ from probpipe.families import (
     MixtureDistribution,
     PoissonFamily,
     RandomMeasure,
+    glm_likelihood,
 )
 from probpipe.families._conditional import _LogRatePoisson
 from probpipe.families._gaussian import (
@@ -143,11 +143,9 @@ def _basis_function(name: str = "f", output_shape: tuple[int, ...] = ()) -> Line
 def _measure() -> MinibatchedDistribution:
     X = jax.random.normal(jax.random.PRNGKey(0), (20, 2))
     y = (X[:, 0] > 0).astype(jnp.float32)
-    prior = MultivariateNormal("theta", loc=jnp.zeros(2), cov=jnp.eye(2))
-    likelihood = GLMLikelihood(tfp_glm.Bernoulli(), x=X, fit_intercept=False)
-    return MinibatchedDistribution(
-        "measure", prior, likelihood, Record("r", X=X, y=y), batch_size=5
-    )
+    prior = MultivariateNormal("beta", loc=jnp.zeros(2), cov=jnp.eye(2))
+    likelihood = glm_likelihood("y", BernoulliFamily(), X=X)
+    return MinibatchedDistribution("measure", prior, likelihood, y, batch_size=5)
 
 
 class _Likelihood:

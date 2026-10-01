@@ -1,7 +1,7 @@
 """Tests for BlackJAX-backed SGMCMC methods (``blackjax_sgld`` / ``blackjax_sghmc``).
 
 End-to-end coverage of the inference-method-registry path:
-``condition_on(model, observed, method="blackjax_sgld", batch_size=…, …)``,
+``condition_on(likelihood * prior, y=y, method="blackjax_sgld", batch_size=…, …)``,
 plus checks that the gradient estimator actually drives convergence
 toward the posterior mode on a 200-row Bayesian logistic regression.
 """
@@ -12,17 +12,16 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-import tensorflow_probability.substrates.jax.glm as tfp_glm
+import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
     ApproximateDistribution,
-    GLMLikelihood,
     MultivariateNormal,
-    Record,
-    SimpleModel,
+    NumericArraySpec,
     condition_on,
     inference_method_registry,
 )
+from probpipe.families import BernoulliFamily, glm_likelihood
 from probpipe.inference._blackjax_sgmcmc import (
     BlackJAXSGHMCMethod,
     BlackJAXSGLDMethod,
@@ -31,6 +30,7 @@ from probpipe.inference._blackjax_sgmcmc import (
 from probpipe.inference._inference_utils import observed_target
 from probpipe.inference._minibatch import MinibatchedDistribution
 from tests.inference._harness import validate_method
+from tests.inference.canonical import ObservationKernel
 
 
 def _draws(posterior: ApproximateDistribution) -> jax.Array:
@@ -52,14 +52,16 @@ def logistic_problem():
         jnp.float32
     )
 
-    prior = MultivariateNormal(loc=jnp.zeros(P), cov=jnp.eye(P), name="theta")
+    prior = MultivariateNormal(loc=jnp.zeros(P), cov=jnp.eye(P), name="beta")
     # No-intercept logistic regression: prior dims pair 1-to-1 with X columns.
-    lik = GLMLikelihood(tfp_glm.Bernoulli(), x=X, fit_intercept=False)
-    model = SimpleModel(prior=prior, likelihood=lik)
-    data = Record("r", X=X, y=y)
+    lik = glm_likelihood("y", BernoulliFamily(), X=X)
     return {
-        "model": model,
-        "data": data,
+        "model": lik * prior,
+        "prior": prior,
+        "likelihood": lik,
+        "X": X,
+        "y": y,
+        "data": {"y": y},
         "true_theta": true_theta,
         "N": N,
         "P": P,
@@ -109,13 +111,12 @@ class TestGradEstimatorCorrectness:
     """
 
     def test_grad_matches_full_data_grad_on_same_minibatch(self, logistic_problem):
-        model = logistic_problem["model"]
-        data = logistic_problem["data"]
+        prior, X, y = logistic_problem["prior"], logistic_problem["X"], logistic_problem["y"]
         measure = MinibatchedDistribution(
             "measure",
-            model.prior,
-            model.likelihood,
-            data,
+            prior,
+            logistic_problem["likelihood"],
+            y,
             batch_size=20,
         )
         grad_estimator = _build_grad_estimator(measure)
@@ -126,19 +127,17 @@ class TestGradEstimatorCorrectness:
         actual = grad_estimator(theta, key)
 
         # Independent reference: rebuild the unnormalized log-density from
-        # the captured batch via the prior + per-datum components directly,
-        # then take its grad. The math here doesn't go through
-        # `_FixedMinibatchDistribution._unnormalized_log_prob` at all.
+        # the captured rows via the prior and the Bernoulli log-density of the
+        # logits directly, then take its grad. The math here doesn't go
+        # through `_FixedMinibatchDistribution._unnormalized_log_prob` at all.
         inner = measure._draw_one(key)
-        batch = inner.batch
+        rows = inner.rows
         rescale_factor = inner.rescale_factor
 
         def manual_log_density(t):
-            per_datum = jax.vmap(
-                model.likelihood.per_datum_log_likelihood,
-                in_axes=(None, 0),
-            )(t, batch)
-            return model.prior._log_prob(t) + rescale_factor * jnp.sum(per_datum)
+            logits = X[rows] @ t
+            per_datum = tfd.Bernoulli(logits=logits).log_prob(y[rows])
+            return prior._log_prob(t) + rescale_factor * jnp.sum(per_datum)
 
         expected = jax.grad(manual_log_density)(theta)
         np.testing.assert_allclose(actual, expected, rtol=1e-5)
@@ -196,24 +195,25 @@ class TestReproducibility:
 
 class TestCheck:
     def test_rejects_bare_supports_log_prob(self):
-        """A non-SimpleModel target returns ``feasible=False`` with hint."""
+        """A target that is no factored joint at data returns ``feasible=False`` with hint."""
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="x")
         info = BlackJAXSGLDMethod().check(prior, batch_size=10)
         assert not info.feasible
-        assert "SimpleModel" in info.description
+        assert "factored joint" in info.description
 
-    def test_rejects_non_factorisable_likelihood(self):
-        """SimpleModel + bare Likelihood (no per_datum) is rejected."""
-
-        class _BareLikelihood:
-            def log_likelihood(self, params, data):
-                return jnp.asarray(0.0)
-
+    def test_rejects_a_likelihood_that_scores_no_subset(self):
+        """A likelihood kernel that cannot score a subset of its observations is rejected."""
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="x")
-        model = SimpleModel(prior=prior, likelihood=_BareLikelihood())
-        info = BlackJAXSGLDMethod().check(model, batch_size=10)
+        likelihood = ObservationKernel(
+            "y",
+            {"x": prior.event_spec.spec},
+            NumericArraySpec((5, 2)),
+            lambda x: tfd.Independent(tfd.Normal(jnp.broadcast_to(x, (5, 2)), 1.0), 2),
+        )
+        target = observed_target(likelihood * prior, {"y": jnp.zeros((5, 2))})
+        info = BlackJAXSGLDMethod().check(target, batch_size=2)
         assert not info.feasible
-        assert "ConditionallyIndependentLikelihood" in info.description
+        assert "conditionally independent" in info.description
 
     def test_requires_batch_size_kwarg(self, logistic_problem):
         """Missing ``batch_size=`` returns ``feasible=False`` with hint."""

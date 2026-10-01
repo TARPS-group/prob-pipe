@@ -8,9 +8,9 @@ Covers:
   assertions) and
   the rejected shapes (non-Gaussian families, batched-``Normal``
   ``DistributionArray``).
-* ``check()`` infeasibility messages for the three failure modes:
-  bare ``SupportsLogProb`` (no SimpleModel decomposition), non-Gaussian
-  prior, and missing observed data.
+* ``check()`` infeasibility messages for the failure modes: a target that
+  is no factored joint at observed fields, a non-Gaussian prior, and a
+  non-traceable likelihood.
 * End-to-end posterior recovery on the conjugate Normal-Normal target
   (1-D) and a multivariate-Normal-prior + Gaussian-likelihood target
   (5-D anisotropic) against the closed-form posterior.
@@ -23,13 +23,14 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
     Beta,
     Gamma,
     MultivariateNormal,
     Normal,
-    SimpleModel,
+    NumericArraySpec,
 )
 from probpipe.inference import (
     elliptical_slice,
@@ -41,8 +42,8 @@ from probpipe.inference._blackjax_ess import (
     _gaussian_prior_params,
 )
 from probpipe.inference._inference_utils import observed_target
-from probpipe.modeling._likelihood import Likelihood
 from tests.inference._harness import validate_method
+from tests.inference.canonical import ObservationKernel
 
 pytestmark = pytest.mark.filterwarnings(
     "ignore:shape requires ndarray or scalar arguments:DeprecationWarning",
@@ -54,47 +55,41 @@ pytestmark = pytest.mark.filterwarnings(
 # ---------------------------------------------------------------------------
 
 
-class _GaussianMeanLik(Likelihood):
-    """``log p(y | mu) = sum_i log N(y_i; mu, 1)`` — Gaussian likelihood."""
+def _observations(prior, shape, obs_var=1.0, *, traceable=True):
+    """``y ~ N(theta, obs_var)`` entrywise over *shape*, composed with *prior*.
 
-    def log_likelihood(self, params, data):
-        mu = params["mu"] if hasattr(params, "fields") else params
-        return -0.5 * jnp.sum((data - mu) ** 2)
-
-
-class _ConcatGaussianLik(Likelihood):
-    """``y_i ~ N(theta, obs_var * I)`` over the full flattened parameter.
-
-    Observes noisy copies of the concatenation of all prior fields, in the
-    order of the prior's components, so it is conjugate for any Gaussian
-    prior — used to exercise multi-field priors and correlated ones.
-    ``obs_var > 1`` weakens the likelihood so the
-    prior covariance (its cross-field structure in particular) materially
-    shapes the closed-form posterior.
+    ``theta`` is the concatenation of the prior's fields, in the order of its
+    components, broadcast against the rows of ``y``, so the likelihood is
+    conjugate for any Gaussian prior. ``obs_var > 1`` weakens the likelihood so
+    the prior covariance (its cross-field structure in particular) materially
+    shapes the closed-form posterior. A likelihood that is not traceable reads
+    its parameters through NumPy, as a BridgeStan, SciPy, or external
+    simulator likelihood would.
     """
+    slots = dict(prior.event_spec.components)
 
-    def __init__(self, obs_var: float = 1.0):
-        self.obs_var = obs_var
+    def build(**values):
+        parts = [jnp.atleast_1d(values[slot]) for slot in slots]
+        if not traceable:
+            parts = [jnp.asarray(np.asarray(part)) for part in parts]
+        theta = jnp.concatenate(parts)
+        return tfd.Independent(
+            tfd.Normal(jnp.broadcast_to(theta, shape), jnp.sqrt(obs_var)), len(shape)
+        )
 
-    def log_likelihood(self, params, data):
-        if hasattr(params, "fields"):
-            theta = jnp.concatenate([jnp.atleast_1d(params[f]) for f in params.fields])
-        else:
-            theta = jnp.atleast_1d(jnp.asarray(params))
-        return -0.5 / self.obs_var * jnp.sum((jnp.asarray(data) - theta) ** 2)
+    return ObservationKernel("y", slots, NumericArraySpec(shape), build) * prior
 
 
 @pytest.fixture(scope="module")
 def gaussian_model():
-    """A 1-D ``N(0, 1)`` prior + Gaussian-mean likelihood ``SimpleModel``."""
-    prior = Normal(loc=0.0, scale=1.0, name="mu")
-    return SimpleModel(prior, _GaussianMeanLik(), name="m")
+    """A 1-D ``N(0, 1)`` prior and a Gaussian-mean likelihood over 10 observations."""
+    return _observations(Normal(loc=0.0, scale=1.0, name="mu"), (10,))
 
 
 @pytest.fixture(scope="module")
 def data():
     """Observed data for :func:`gaussian_model` (10 zeros)."""
-    return jnp.zeros(10)
+    return {"y": jnp.zeros(10)}
 
 
 # ---------------------------------------------------------------------------
@@ -234,74 +229,32 @@ class TestRegistration:
 
 
 class TestFeasibilityCheck:
-    """``check()`` infeasibility messages cover the three failure modes."""
+    """``check()`` infeasibility messages cover the failure modes."""
 
     def test_rejects_bare_distribution(self):
         m = BlackJAXESSMethod()
         info = m.check(observed_target(Normal(loc=0.0, scale=1.0, name="x"), jnp.zeros(5)))
         assert not info.feasible
-        assert "SimpleModel" in info.description
+        assert "factored joint" in info.description
 
     def test_rejects_non_gaussian_prior(self):
-        prior = Gamma(concentration=2.0, rate=1.0, name="g")
-
-        class _Lik(Likelihood):
-            def log_likelihood(self, params, data):
-                return jnp.asarray(0.0)
-
-        model = SimpleModel(prior, _Lik(), name="m")
-        info = BlackJAXESSMethod().check(observed_target(model, jnp.zeros(5)))
+        model = _observations(Gamma(concentration=2.0, rate=1.0, name="g"), (5,))
+        info = BlackJAXESSMethod().check(observed_target(model, {"y": jnp.ones(5)}))
         assert not info.feasible
         assert "Gaussian" in info.description
 
     def test_rejects_missing_data(self):
-        prior = Normal(loc=0.0, scale=1.0, name="mu")
-
-        class _Lik(Likelihood):
-            def log_likelihood(self, params, data):
-                return jnp.asarray(0.0)
-
-        model = SimpleModel(prior, _Lik(), name="m")
+        model = _observations(Normal(loc=0.0, scale=1.0, name="mu"), (5,))
         info = BlackJAXESSMethod().check(model)
         assert not info.feasible
-        assert "observed data" in info.description
+        assert "observed values" in info.description
 
-    def test_rejects_dict_observed(self):
-        prior = Normal(loc=0.0, scale=1.0, name="mu")
-
-        class _Lik(Likelihood):
-            def log_likelihood(self, params, data):
-                return jnp.asarray(0.0)
-
-        model = SimpleModel(prior, _Lik(), name="m")
-        info = BlackJAXESSMethod().check(observed_target(model, {"y": jnp.zeros(5)}))
-        assert not info.feasible
-        assert "dict" in info.description
-
-    def test_accepts_gaussian_simple_model(self):
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="m")
-
-        class _Lik(Likelihood):
-            def log_likelihood(self, params, data):
-                return jnp.asarray(0.0)
-
-        model = SimpleModel(prior, _Lik(), name="m")
-        info = BlackJAXESSMethod().check(observed_target(model, jnp.zeros((5, 2))))
+    def test_accepts_a_joint_with_a_gaussian_prior(self):
+        model = _observations(
+            MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="m"), (5, 2)
+        )
+        info = BlackJAXESSMethod().check(observed_target(model, {"y": jnp.zeros((5, 2))}))
         assert info.feasible
-
-
-class _NonTraceableGaussianLik(Likelihood):
-    """Gaussian-shaped likelihood whose body is *not* JAX-traceable.
-
-    The ``np.asarray(...)`` + Python ``float`` coercion forces a
-    concrete value, so ``jax.make_jaxpr`` can't trace it — standing in
-    for a BridgeStan / scipy / external-simulator likelihood.
-    """
-
-    def log_likelihood(self, params, data):
-        mu = params["mu"] if hasattr(params, "fields") else params
-        resid = np.asarray(data) - np.asarray(mu)
-        return float(-0.5 * np.sum(resid**2))
 
 
 class TestDeclinesToRWMH:
@@ -316,11 +269,11 @@ class TestDeclinesToRWMH:
 
     def _model(self):
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="mu")
-        return SimpleModel(prior, _NonTraceableGaussianLik(), name="m")
+        return _observations(prior, (5, 2), traceable=False)
 
     def test_ess_check_infeasible_on_non_traceable_likelihood(self):
         model = self._model()
-        info = BlackJAXESSMethod().check(observed_target(model, np.zeros((5, 2))))
+        info = BlackJAXESSMethod().check(observed_target(model, {"y": np.zeros((5, 2))}))
         assert not info.feasible
         assert "traceable" in info.description.lower()
 
@@ -332,7 +285,7 @@ class TestDeclinesToRWMH:
         # (non-traceable), NUTS/HMC (gradient) decline, so RWMH (55) wins.
         posterior = condition_on.apply(
             model,
-            np.zeros((5, 2)),
+            {"y": np.zeros((5, 2))},
             num_results=50,
             num_warmup=20,
             random_seed=0,
@@ -358,11 +311,11 @@ class TestPosteriorRecovery:
         """N(0, 1) prior + N(mu, 1) likelihood — posterior is N(n*y_bar/(n+1), 1/(n+1))."""
         prior = Normal(loc=0.0, scale=1.0, name="mu")
         data = jax.random.normal(jax.random.PRNGKey(11), shape=(50,)) + 0.7
-        model = SimpleModel(prior, _GaussianMeanLik(), name="m")
+        model = _observations(prior, data.shape)
 
         post = elliptical_slice(
             model,
-            data,
+            {"y": data},
             num_results=3000,
             num_warmup=500,
             num_chains=2,
@@ -409,16 +362,11 @@ class TestPosteriorRecovery:
             rng.standard_normal((n, d)) + truth,
         )
 
-        class _MVNLik(Likelihood):
-            def log_likelihood(self, params, data):
-                theta = params["theta"] if hasattr(params, "fields") else params
-                return -0.5 * jnp.sum((data - theta) ** 2)
-
-        model = SimpleModel(prior, _MVNLik(), name="m")
+        model = _observations(prior, data.shape)
 
         post = elliptical_slice(
             model,
-            data,
+            {"y": data},
             num_results=2000,
             num_warmup=500,
             num_chains=2,
@@ -457,11 +405,11 @@ class TestPosteriorRecovery:
         rng = np.random.default_rng(1)
         truth = np.array([0.8, -1.2])
         data = jnp.asarray(np.sqrt(obs_var) * rng.standard_normal((n, 2)) + truth)
-        model = SimpleModel(prior, _ConcatGaussianLik(obs_var), name="m")
+        model = _observations(prior, data.shape, obs_var)
 
         post = elliptical_slice(
             model,
-            data,
+            {"y": data},
             num_results=3000,
             num_warmup=500,
             num_chains=2,
@@ -503,11 +451,11 @@ class TestPosteriorRecovery:
         rng = np.random.default_rng(2)
         truth = np.array([0.5, -0.7])
         data = jnp.asarray(np.sqrt(obs_var) * rng.standard_normal((n, 2)) + truth)
-        model = SimpleModel(prior, _ConcatGaussianLik(obs_var), name="m")
+        model = _observations(prior, data.shape, obs_var)
 
         post = elliptical_slice(
             model,
-            data,
+            {"y": data},
             num_results=4000,
             num_warmup=800,
             num_chains=2,
@@ -577,7 +525,7 @@ class TestProvenanceAndAnnotations:
     def test_warmup_stored(self, gaussian_model):
         post = elliptical_slice(
             gaussian_model,
-            jnp.zeros(10),
+            {"y": jnp.zeros(10)},
             num_results=20,
             num_warmup=15,
             num_chains=2,
@@ -633,7 +581,7 @@ class TestProvenanceAndAnnotations:
 
 class TestErrors:
     def test_raises_on_bare_distribution(self):
-        with pytest.raises(TypeError, match="SimpleModel"):
+        with pytest.raises(TypeError, match="factored joint"):
             elliptical_slice(
                 Normal(loc=0.0, scale=1.0, name="x"),
                 jnp.zeros(5),
@@ -642,23 +590,17 @@ class TestErrors:
             )
 
     def test_raises_on_non_gaussian_prior(self):
-        prior = Gamma(concentration=2.0, rate=1.0, name="g")
-
-        class _Lik(Likelihood):
-            def log_likelihood(self, params, data):
-                return jnp.asarray(0.0)
-
-        model = SimpleModel(prior, _Lik(), name="m")
+        model = _observations(Gamma(concentration=2.0, rate=1.0, name="g"), (5,))
         with pytest.raises(TypeError, match="Gaussian"):
             elliptical_slice(
                 model,
-                jnp.zeros(5),
+                {"y": jnp.ones(5)},
                 num_results=10,
                 num_warmup=5,
             )
 
     def test_raises_on_none_data(self, gaussian_model):
-        with pytest.raises(TypeError, match="observed data"):
+        with pytest.raises(TypeError, match="observed values"):
             elliptical_slice(
                 gaussian_model,
                 data=None,

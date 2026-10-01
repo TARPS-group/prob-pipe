@@ -166,33 +166,6 @@ class TestFieldExtraction:
         assert np.allclose(joint["a"]._project(batch), batch["a"])
 
 
-class TestMinibatching:
-    """Minibatching reads a batch's row count and gathers its rows."""
-
-    def test_data_size_reads_the_leading_axis(self):
-        from probpipe.inference._minibatch import _data_size
-
-        assert _data_size(_draws(7)) == 7
-
-    def test_indexing_gathers_the_named_columns_into_a_batch(self):
-        """A minibatch of records is a collection of them, so gathering rows
-        gives a *batch*. Handing back a plain ``Record`` of gathered columns
-        would state the batch's shape as one element's — the false type a
-        per-datum transform then reads."""
-        from probpipe.inference._minibatch import _index_along_leading
-
-        batch = _draws(5)
-
-        picked = _index_along_leading(batch, jnp.array([0, 2, 4]))
-
-        assert isinstance(picked, RecordBatch)
-        assert picked.batch_shape == (3,)
-        assert list(picked.event_template.keys()) == ["a", "b"]
-        assert np.allclose(picked["a"], jnp.array([0.0, 2.0, 4.0]))
-        # The element declaration is the source's, not one re-read off the rows.
-        assert picked.element_spec == batch.element_spec
-
-
 class TestDesignCoercion:
     """A GLM design coerces a batch the way it coerces a record."""
 
@@ -365,14 +338,6 @@ class TestOpaqueColumnsAreRearrangedRaw:
 
         assert list(gathered._raw_column("tag")) == ["c", "a"]
         np.testing.assert_array_equal(np.asarray(gathered._raw_column("x")), [2.0, 0.0])
-
-    def test_indexing_a_minibatch_keeps_an_opaque_column(self):
-        from probpipe.inference._minibatch import _index_along_leading
-
-        indexed = _index_along_leading(self._mixed(), jnp.array([1, 2]))
-
-        assert list(indexed["tag"]) == ["b", "c"]
-        np.testing.assert_array_equal(np.asarray(indexed["x"]), [1.0, 2.0])
 
 
 class TestRetypingADeclaredOutputKeepsColumnsWithTheirKeys:

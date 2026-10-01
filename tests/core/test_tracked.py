@@ -349,17 +349,15 @@ class TestNamePreservation:
     """Transformations preserve the names assigned by their constructors."""
 
     def test_minibatched_distribution_keeps_its_name(self):
-        import tensorflow_probability.substrates.jax.glm as tfp_glm
-
         from probpipe import MultivariateNormal
+        from probpipe.families import BernoulliFamily, glm_likelihood
         from probpipe.inference._minibatch import MinibatchedDistribution
-        from probpipe.modeling import GLMLikelihood
 
         X = jnp.eye(4)
         y = jnp.array([1.0, 0.0, 1.0, 0.0])
-        prior = MultivariateNormal(loc=jnp.zeros(4), cov=jnp.eye(4), name="theta")
-        lik = GLMLikelihood(tfp_glm.Bernoulli(), x=X)
-        named = MinibatchedDistribution("mine", prior, lik, Record("r", X=X, y=y), batch_size=2)
+        prior = MultivariateNormal(loc=jnp.zeros(4), cov=jnp.eye(4), name="beta")
+        lik = glm_likelihood("y", BernoulliFamily(), X=X)
+        named = MinibatchedDistribution("mine", prior, lik, y, batch_size=2)
         assert named.name == "mine"
 
     def test_joint_conditioning_preserves_names(self):

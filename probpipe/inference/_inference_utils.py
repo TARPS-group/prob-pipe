@@ -23,7 +23,7 @@ utilities shared across the backend modules; not re-exported through
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 if TYPE_CHECKING:
     from xarray import DataTree
@@ -43,8 +43,16 @@ from ..custom_types import Array, ArrayLike
 from ..distributions._capabilities import SupportsSampling, _is_normalized
 from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution
+from ..distributions._factored import (
+    FactoredConditionalDistribution,
+    FactoredDistribution,
+    _children,
+    _components_of,
+    _event_of,
+    _factor_graph,
+)
 from ..families._backend import TFPDistribution
-from ..operations._condition import _UnnormalizedConditional
+from ..operations._condition import _unnormalized_conditional, _UnnormalizedConditional
 
 logger = logging.getLogger(__name__)
 
@@ -65,9 +73,12 @@ __all__ = [
     "is_jax_traceable",
     "is_simple_model",
     "joint_and_given",
+    "likelihood_flat",
+    "model_factors",
     "observed_parts",
     "observed_target",
     "parallel_chain_map",
+    "parameter_given",
     "posterior_var_order",
     "run_chain_scan",
 ]
@@ -191,25 +202,34 @@ def observed_target(model: Any, observed: Any) -> Any:
     """The target of normalizing *model* at *observed*, as ``probpipe.condition_on`` passes them.
 
     A model with no data, and an object that is not a law, is its own target.
-    A kernel binds the data its given slots name first, as currying does, when
-    the law it yields needs normalizing or observed data remain. Otherwise the
-    target is the unnormalized conditional of the model at the data, over the
-    parameters :func:`get_prior` declares, from which :func:`observed_parts`
-    reads the model and the data back.
+    Data keyed by the model's given slots and fields form the exact stage of
+    ``condition_on`` (VI.6): a kernel binds the slots its data name first, as
+    currying does, and the data of the fields it produces then form the
+    unnormalized conditional of the result, whose joint and given values a
+    method reads back. A law that currying leaves unnormalized, with no data
+    left, is the target itself. Data that name no field, such as one array for
+    a whole program, form the unnormalized conditional of the model at those
+    data, from which :func:`observed_parts` reads them back, and so do data
+    that only curry a kernel to a normalized law, which no method normalizes.
     """
     if observed is None or not isinstance(model, (Distribution, ConditionalDistribution)):
         return model
-    if isinstance(model, ConditionalDistribution) and isinstance(observed, (Record, dict)):
-        values = dict(observed.children if isinstance(observed, Record) else observed)
+    if is_simple_model(model) or not isinstance(observed, (Record, Mapping)):
+        return _UnnormalizedConditional(model, observed, get_prior(model).event_spec, keyed=False)
+    values = dict(observed.children if isinstance(observed, Record) else observed)
+    law = model
+    if isinstance(model, ConditionalDistribution):
         slots = {key: value for key, value in values.items() if key in model.given_spec}
-        rest = {key: value for key, value in values.items() if key not in slots}
+        values = {key: value for key, value in values.items() if key not in slots}
         if slots:
             law = model._condition_on(slots)
-            if rest:
-                return _UnnormalizedConditional(law, rest, get_prior(law).event_spec, keyed=False)
-            if isinstance(law, Distribution) and not _is_normalized(law):
-                return law
-    return _UnnormalizedConditional(model, observed, get_prior(model).event_spec, keyed=False)
+    if not values:
+        if isinstance(law, Distribution) and not _is_normalized(law):
+            return law
+        return _UnnormalizedConditional(model, observed, get_prior(model).event_spec, keyed=False)
+    if not set(values) <= set(law.event_spec.components):
+        return _UnnormalizedConditional(law, values, get_prior(law).event_spec, keyed=False)
+    return _unnormalized_conditional(law, Record("given", values))
 
 
 def observed_parts(target: Any) -> tuple[Any, Any]:
@@ -245,6 +265,24 @@ def _has_flat_view(prior: Any) -> bool:
     return isinstance(prior, TFPDistribution)
 
 
+def _one_array(law: Any) -> NumericArraySpec | None:
+    """The spec of the one numeric array of a concrete shape *law* draws, or None."""
+    declaration = getattr(law, "event_spec", None)
+    if not isinstance(law, Distribution) or declaration is None or declaration.exposes_record:
+        return None
+    spec = declaration.spec
+    return spec if isinstance(spec, NumericArraySpec) and spec.is_concrete else None
+
+
+def _reshape_to(shape: tuple[int, ...]) -> Callable[[Array], Array]:
+    """The map from a flat vector, in row-major order, to an array of *shape*."""
+
+    def unflatten(theta_flat: Array) -> Array:
+        return jnp.reshape(theta_flat, shape)
+
+    return unflatten
+
+
 def _flat_view(prior: Any) -> Callable[[Array], Array] | None:
     """The map from a flat vector to a draw of *prior*, or ``None`` when it is no family.
 
@@ -254,12 +292,7 @@ def _flat_view(prior: Any) -> Callable[[Array], Array] | None:
     if not _has_flat_view(prior):
         return None
     spec = prior.event_spec.spec
-    shape = spec.shape if isinstance(spec, NumericArraySpec) else ()
-
-    def unflatten(theta_flat: Array) -> Array:
-        return jnp.reshape(theta_flat, shape)
-
-    return unflatten
+    return _reshape_to(spec.shape if isinstance(spec, NumericArraySpec) else ())
 
 
 def flat_record(prior: Any) -> NumericRecordSpec | None:
@@ -280,18 +313,21 @@ def flat_record(prior: Any) -> NumericRecordSpec | None:
 def flat_unflatten(law: Any) -> Callable[[Array], Any]:
     """The map from a flat vector to a draw of the numeric *law*, the inverse of :func:`flat_vector`.
 
-    A parametric family's draw is the vector reshaped to its event, and an
-    exposed numeric record's is the record whose leaves the vector lays out in
+    A draw of one array is the vector reshaped to the event, and an exposed
+    numeric record's is the record whose leaves the vector lays out in
     canonical order.
 
     Raises
     ------
     TypeError
-        If *law* draws neither one array of a family nor an exposed numeric record.
+        If *law* draws neither one numeric array nor an exposed numeric record.
     """
     flat_prior = _flat_view(law)
     if flat_prior is not None:
         return flat_prior
+    array = _one_array(law)
+    if array is not None:
+        return _reshape_to(array.shape)
     record = flat_record(law)
     if record is None:
         raise TypeError(f"{type(law).__name__} {law.name!r} draws no value a flat vector lays out")
@@ -313,6 +349,106 @@ def flat_vector(value: Any) -> Array:
     if isinstance(value, Record):
         return value.to_numeric().to_vector()
     return jnp.ravel(jnp.asarray(value))
+
+
+class ModelFactors(NamedTuple):
+    """The prior and the likelihood of a factored joint at observed values of its fields.
+
+    Attributes
+    ----------
+    prior : Distribution
+        The law of the parameters, the joint of the factors that produce no
+        observed field.
+    likelihood : Distribution or ConditionalDistribution
+        The law of the observed fields given the parameters, the joint of the
+        factors that produce them.
+    observed : Any
+        The observed value of the likelihood's event.
+    """
+
+    prior: Distribution
+    likelihood: Distribution | ConditionalDistribution
+    observed: Any
+
+
+def _joint_of(name: str, factors: list[Any]) -> Any:
+    """The joint of *factors*, the one factor itself when there is one."""
+    if len(factors) == 1:
+        return factors[0]
+    if _factor_graph(tuple(factors)).unmet is None:
+        return FactoredDistribution(name, factors)
+    return FactoredConditionalDistribution(name, factors)
+
+
+def model_factors(target: Any) -> ModelFactors | None:
+    """The prior and the likelihood factors of the joint *target* carries, or None.
+
+    *target* is the unnormalized conditional of a factored joint at observed
+    values of some of its fields (VI.6). The likelihood is the joint of the
+    factors that produce the observed fields, and the prior is the joint of the
+    others. None when *target* is no such conditional, when a factor produces
+    observed and unobserved fields both, when the prior is not a law, or when the
+    likelihood conditions on anything but the prior's fields.
+    """
+    if not isinstance(target, _UnnormalizedConditional) or not target.keyed:
+        return None
+    joint, given = target.joint, target.given
+    factors = getattr(joint, "factors", None)
+    if not isinstance(joint, Distribution) or not factors:
+        return None
+    observed = set(given.fields)
+    prior_factors: list[Any] = []
+    likelihood_factors: list[Any] = []
+    for factor in factors:
+        produced = set(factor.event_spec.components)
+        if not produced & observed:
+            prior_factors.append(factor)
+        elif produced <= observed:
+            likelihood_factors.append(factor)
+        else:
+            return None
+    if not prior_factors or not likelihood_factors:
+        return None
+    prior = _joint_of(joint.name, prior_factors)
+    likelihood = _joint_of(joint.name, likelihood_factors)
+    if not isinstance(prior, Distribution):
+        return None
+    slots = set(likelihood.given_spec) if isinstance(likelihood, ConditionalDistribution) else set()
+    if not slots <= set(prior.event_spec.components):
+        return None
+    children = dict(given.children)
+    value = _event_of(
+        likelihood.event_spec,
+        {component: children[component] for component in likelihood.event_spec.components},
+    )
+    return ModelFactors(prior, likelihood, value)
+
+
+def parameter_given(factors: ModelFactors, draw: Any) -> dict[str, Any]:
+    """The likelihood's given values at *draw*, a draw of the prior."""
+    if not isinstance(factors.likelihood, ConditionalDistribution):
+        return {}
+    components = _components_of(factors.prior.event_spec, draw)
+    return {slot: components[slot] for slot in factors.likelihood.given_spec}
+
+
+def likelihood_flat(factors: ModelFactors) -> Callable[[Array], Array]:
+    """The log-likelihood at a flat parameter vector, up to a constant in the parameters.
+
+    The vector unflattens to a draw of the prior, whose values bind the
+    likelihood's given slots, and the likelihood's unnormalized density is read
+    at the observed value.
+    """
+    unflatten = flat_unflatten(factors.prior)
+    likelihood = factors.likelihood
+
+    def loglikelihood_fn(theta_flat: Array) -> Array:
+        if isinstance(likelihood, ConditionalDistribution):
+            given = parameter_given(factors, unflatten(theta_flat))
+            return likelihood._conditional_unnormalized_log_prob(given, factors.observed)
+        return likelihood._unnormalized_log_prob(factors.observed)
+
+    return loglikelihood_fn
 
 
 def flat_density(dist: Any) -> Callable[[Array], Array]:
@@ -344,7 +480,7 @@ def _joint_draw(target: Any, key: Array, record: NumericRecordSpec) -> Array | N
         return None
     try:
         if isinstance(joint, SupportsSampling):
-            children = joint._sample(key, sample_shape=()).children
+            children = dict(_children(joint._sample(key, sample_shape=())))
         else:
             children = {}
             laws = [

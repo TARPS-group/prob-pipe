@@ -28,23 +28,23 @@ unnormalized log-density is
 where :math:`B \\subset \\mathcal{D}` is a uniform random size-:math:`b`
 subset of the data. The :math:`N/b` rescaling makes the gradient an
 unbiased estimator of the full-data log-posterior gradient.
+
+The likelihood is a kernel whose observations are conditionally independent
+along the leading axis of its event, as a GLM likelihood's are, so the
+log-density of a subset of them is read through the kernel's
+``_observation_log_prob(given, value, rows)``.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from math import prod
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 
-from ..core._object_batch import _is_object_array
-from ..core._record_batch import RecordBatch, _batch_class_for
-from ..core._record_spec import _reshaped_template
 from ..core._specs import NumericArraySpec, OpaqueSpec, OutputSpec
-from ..core.record import Record
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..distributions._capabilities import (
     SupportsLogProb,
@@ -52,12 +52,11 @@ from ..distributions._capabilities import (
     SupportsSampling,
     SupportsUnnormalizedLogProb,
 )
+from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution, DistributionSpec
+from ..distributions._factored import _components_of
 from ..families._random_functions import RandomFunction, RandomMeasure
 from ..values._function_base import FunctionSpec
-
-if TYPE_CHECKING:
-    from ..core.protocols import ConditionallyIndependentLikelihood
 
 __all__ = ["MinibatchedDistribution"]
 
@@ -68,103 +67,19 @@ __all__ = ["MinibatchedDistribution"]
 
 
 def _data_size(data: Any) -> int:
-    """Return the leading-axis length of *data*.
+    """The number of observations in *data*, the length of its leading axis.
 
-    Accepts a batch of records (uses ``batch_shape[0]``), a flat
-    ``Record`` of equal-leading-axis array leaves, an array-like with
-    ``.shape``, or any object with ``__len__``. Nested Records are
-    rejected — minibatching expects a flat-field layout.
+    Raises
+    ------
+    ValueError
+        If *data* has no leading axis.
     """
-    if isinstance(data, RecordBatch):
-        return data.batch_shape[0]
-    if isinstance(data, Record):
-        children = dict(data.children)
-        for f, leaf in children.items():
-            if isinstance(leaf, Record):
-                raise ValueError(
-                    f"MinibatchedDistribution requires a flat Record "
-                    f"(no nested fields). Got nested Record at field "
-                    f"{f!r}; flatten the structure or use a "
-                    f"RecordBatch instead."
-                )
-        leading = {jnp.asarray(leaf).shape[0] for leaf in children.values()}
-        if len(leading) != 1:
-            raise ValueError(
-                f"Record leaves have differing leading-axis lengths: "
-                f"{ {f: jnp.asarray(leaf).shape[0] for f, leaf in children.items()} }. "
-                f"All leaves must share a common N for minibatching."
-            )
-        return leading.pop()
-    if hasattr(data, "shape") and len(data.shape) > 0:
-        return data.shape[0]
-    return len(data)
-
-
-DATUM_LEVEL = "datum"
-
-
-def _index_column(column: Any, indices: Array) -> Any:
-    """One column's rows at *indices*, keeping an object column out of ``jnp``."""
-    if _is_object_array(column):
-        return column[np.asarray(indices)]
-    return jnp.asarray(column)[indices]
-
-
-def _refuse_multi_axis_rows(data: Any) -> None:
-    """Refuse a batch whose rows are not a single axis.
-
-    Rows are the leading axis, so a batch spanning more than one is a grid whose
-    trailing axes have no agreed per-datum reading: gathering from a ``(N, K)``
-    batch leaves ``(b, K)`` columns with one rows axis to name two, and the
-    per-datum transform downstream removes one axis rather than one *of two*.
-    Checked where the distribution is built, so an unusable one cannot exist —
-    ``dataset_size`` would otherwise report the leading axis and the first draw
-    would raise.
-    """
-    if isinstance(data, RecordBatch) and len(data.batch_shape) != 1:
+    shape = jnp.shape(data)
+    if not shape:
         raise ValueError(
-            f"MinibatchedDistribution takes a batch whose rows are one axis; got "
-            f"{data.batch_shape} over levels {data.level_names}. Index the batch down to a "
-            f"single rows axis before minibatching — what its trailing axes mean per datum "
-            f"is not defined"
+            "MinibatchedDistribution takes observations along a leading axis; got a scalar"
         )
-
-
-def _index_along_leading(data: Any, indices: Array) -> Any:
-    """The rows of *data* at *indices*, in the kind *data* is.
-
-    A batch of records comes back a **batch** of the same elements. Handing back
-    a plain ``Record`` of gathered columns would state the batch's shape as one
-    element's, which is a false type and one a per-datum transform then reads;
-    a minibatch of records is a collection of them, so it is one here too.
-
-    A flat ``Record`` of equal-leading-axis leaves is the other accepted data
-    layout, and it is a batch in all but name — the leading axis *is* the rows.
-    It comes back as one, declared over what a row holds, so everything
-    downstream sees the same kind whichever way the data was supplied.
-
-    Positions are gathered a column at a time: neither kind indexes by an array
-    of positions, and a non-array field is read raw so an object column is not
-    handed to ``jnp``.
-    """
-    if isinstance(data, RecordBatch):
-        columns = {
-            path: _index_column(data._raw_column(path), indices) for path in data.event_template
-        }
-        return _batch_class_for(data.element_spec)(
-            data.name,
-            columns,
-            DATUM_LEVEL,
-            element_spec=data.element_spec,
-        )
-    if isinstance(data, Record):
-        columns = {path: jnp.asarray(leaf)[indices] for path, leaf in data.children.items()}
-        # The record's template describes the stacked leaves, so one row's is
-        # that template with the rows axis taken off — carried, not re-derived,
-        # so a pinned dtype or support reaches the per-datum call.
-        element = _reshaped_template(data.event_template, lambda shape: shape[1:])
-        return _batch_class_for(element)(data.name, columns, DATUM_LEVEL, element_spec=element)
-    return jnp.asarray(data)[indices]
+    return int(shape[0])
 
 
 def _draw_indices(
@@ -191,6 +106,19 @@ def _parameter_declaration(prior: Any, component: str) -> OutputSpec:
         return prior.event_spec
     except AttributeError:
         return OutputSpec(**{component: OpaqueSpec()})
+
+
+def _reads_observations(likelihood: Any) -> bool:
+    """Whether *likelihood* is a kernel that scores a subset of its observations."""
+    return isinstance(likelihood, ConditionalDistribution) and callable(
+        getattr(likelihood, "_observation_log_prob", None)
+    )
+
+
+def _likelihood_given(prior: Any, likelihood: ConditionalDistribution, theta: Any) -> dict:
+    """The likelihood's given values at *theta*, a draw of *prior*."""
+    components = _components_of(prior.event_spec, theta)
+    return {slot: components[slot] for slot in likelihood.given_spec}
 
 
 # ---------------------------------------------------------------------------
@@ -228,13 +156,15 @@ class MinibatchedDistribution(
     prior : SupportsLogProb
         Prior distribution over parameters; provides the log-prior
         term :math:`\\log p(\\theta)`.
-    likelihood : ConditionallyIndependentLikelihood
-        Likelihood that factorises as
-        :math:`\\log p(\\mathcal{D} \\mid \\theta) = \\sum_i \\log p(d_i \\mid \\theta)`;
-        supplies the per-datum log-density used in the rescaled sum.
-    data : array-like, Record, or RecordBatch
-        Observed data. Indexed along its leading axis to draw
-        minibatches; must have leading-axis length ``>= batch_size``.
+    likelihood : ConditionalDistribution
+        The kernel of the observations given the prior's fields, whose
+        observations are conditionally independent along the leading axis of
+        its event and which scores a subset of them through
+        ``_observation_log_prob(given, value, rows)``, as the kernel
+        :func:`~probpipe.families.glm_likelihood` returns does.
+    data : array-like
+        The observed value of the likelihood's event, with the observations
+        along its leading axis, of length ``>= batch_size``.
     batch_size : int
         Minibatch size :math:`b`. Must be ``1 <= b <= len(data)``.
     with_replacement : bool, default False
@@ -244,43 +174,36 @@ class MinibatchedDistribution(
     Raises
     ------
     TypeError
-        If ``prior`` is not :class:`~probpipe.SupportsLogProb` or
-        ``likelihood`` is not
-        :class:`~probpipe.ConditionallyIndependentLikelihood`.
+        If ``prior`` is not :class:`~probpipe.SupportsLogProb`, or
+        ``likelihood`` is not a kernel that scores a subset of its
+        observations.
     ValueError
-        If ``batch_size`` is not in ``[1, len(data)]``; or if ``data`` is a
-        batch of records whose rows span more than one axis, since what its
-        trailing axes mean per datum is not defined.
+        If ``data`` has no leading axis, or ``batch_size`` is not in
+        ``[1, len(data)]``.
     """
 
     def __init__(
         self,
         name: str,
         prior: SupportsLogProb,
-        likelihood: ConditionallyIndependentLikelihood,
-        data: ArrayLike | Record | RecordBatch,
+        likelihood: ConditionalDistribution,
+        data: ArrayLike,
         batch_size: int,
         *,
         with_replacement: bool = False,
     ):
-        from ..core.protocols import ConditionallyIndependentLikelihood
-
         if not isinstance(prior, SupportsLogProb):
             raise TypeError(
                 f"MinibatchedDistribution requires prior to satisfy "
                 f"SupportsLogProb; got {type(prior).__name__}."
             )
-        if not isinstance(likelihood, ConditionallyIndependentLikelihood):
+        if not _reads_observations(likelihood):
             raise TypeError(
-                f"MinibatchedDistribution requires likelihood to satisfy "
-                f"ConditionallyIndependentLikelihood; got "
-                f"{type(likelihood).__name__}. Implement "
-                f"per_datum_log_likelihood(params, datum) on the "
-                f"likelihood class."
+                f"MinibatchedDistribution requires a likelihood kernel whose observations "
+                f"are conditionally independent and which scores a subset of them, such as "
+                f"glm_likelihood's kernel; got {type(likelihood).__name__}."
             )
 
-        # Validate data + batch_size.
-        _refuse_multi_axis_rows(data)
         n = _data_size(data)
         if batch_size < 1 or batch_size > n:
             raise ValueError(f"batch_size must be in [1, len(data)={n}]; got {batch_size}.")
@@ -288,7 +211,7 @@ class MinibatchedDistribution(
         self._prior = prior
         self._likelihood = likelihood
         self._data = data
-        self._n = int(n)
+        self._n = n
         self._batch_size = int(batch_size)
         self._with_replacement = bool(with_replacement)
         self._rescale_factor = float(self._n / batch_size)
@@ -329,8 +252,8 @@ class MinibatchedDistribution(
         return self._prior
 
     @property
-    def likelihood(self) -> ConditionallyIndependentLikelihood:
-        """The conditionally-independent likelihood."""
+    def likelihood(self) -> ConditionalDistribution:
+        """The kernel of the conditionally independent observations."""
         return self._likelihood
 
     @property
@@ -342,17 +265,17 @@ class MinibatchedDistribution(
 
     def _draw_one(self, key: PRNGKey) -> _FixedMinibatchDistribution:
         """Draw one minibatch and return the corresponding fixed-minibatch target."""
-        indices = _draw_indices(
+        rows = _draw_indices(
             key,
             self._n,
             self._batch_size,
             with_replacement=self._with_replacement,
         )
-        batch = _index_along_leading(self._data, indices)
         return _FixedMinibatchDistribution(
             prior=self._prior,
             likelihood=self._likelihood,
-            batch=batch,
+            data=self._data,
+            rows=rows,
             rescale_factor=self._rescale_factor,
             name=f"{self.name}/draw",
             event_spec=self._draw_event_spec,
@@ -384,9 +307,9 @@ class _FixedMinibatchDistribution(
 ):
     """One sampled inner distribution from a :class:`MinibatchedDistribution`.
 
-    Holds a single fixed minibatch :math:`B` and the rescale factor
-    :math:`N / b`. Its unnormalized log-density at parameters
-    :math:`\\theta` is
+    Holds a single fixed minibatch :math:`B`, the indices of its observations,
+    and the rescale factor :math:`N / b`. Its unnormalized log-density at
+    parameters :math:`\\theta` is
 
     .. math::
 
@@ -397,15 +320,16 @@ class _FixedMinibatchDistribution(
     :math:`B`) of the full-data unnormalized log-posterior. **Not** a
     posterior in the strict (normalized) sense.
 
-    Returned by :meth:`MinibatchedDistribution._sample`; users do not
+    Returned by :meth:`MinibatchedDistribution._draw_one`; users do not
     construct this class directly.
     """
 
     def __init__(
         self,
         prior: SupportsLogProb,
-        likelihood: ConditionallyIndependentLikelihood,
-        batch: Any,
+        likelihood: ConditionalDistribution,
+        data: Any,
+        rows: Array,
         rescale_factor: float,
         *,
         name: str | None = None,
@@ -418,7 +342,8 @@ class _FixedMinibatchDistribution(
         super().__init__(name, event_spec)
         self._prior = prior
         self._likelihood = likelihood
-        self._batch = batch
+        self._data = data
+        self._rows = rows
         self._rescale_factor = rescale_factor
 
     @property
@@ -427,14 +352,14 @@ class _FixedMinibatchDistribution(
         return self._prior
 
     @property
-    def likelihood(self) -> ConditionallyIndependentLikelihood:
-        """The CIL likelihood carried from the parent measure."""
+    def likelihood(self) -> ConditionalDistribution:
+        """The likelihood kernel carried from the parent measure."""
         return self._likelihood
 
     @property
-    def batch(self) -> Any:
-        """The fixed minibatch this realisation was built from."""
-        return self._batch
+    def rows(self) -> Array:
+        """The indices of the observations in this realisation's minibatch."""
+        return self._rows
 
     @property
     def rescale_factor(self) -> float:
@@ -442,12 +367,10 @@ class _FixedMinibatchDistribution(
         return self._rescale_factor
 
     def _unnormalized_log_prob(self, theta: Any) -> Array:
-        """Stochastic-surrogate unnormalized log-density at ``theta``."""
-        per_datum = jax.vmap(
-            self._likelihood.per_datum_log_likelihood,
-            in_axes=(None, 0),
-        )(theta, self._batch)
-        return self._prior._log_prob(theta) + self._rescale_factor * jnp.sum(per_datum)
+        """Stochastic-surrogate unnormalized log-density at ``theta``, a draw of the prior."""
+        given = _likelihood_given(self._prior, self._likelihood, theta)
+        batch = self._likelihood._observation_log_prob(given, self._data, self._rows)
+        return self._prior._log_prob(theta) + self._rescale_factor * batch
 
     def __repr__(self) -> str:
         return f"_FixedMinibatchDistribution(rescale_factor={self._rescale_factor:.3g})"

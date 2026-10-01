@@ -27,7 +27,6 @@ from probpipe import (
     Distribution,
     EmpiricalDistribution,
     Gamma,
-    GLMLikelihood,
     KDEDistribution,
     MinibatchedDistribution,
     MultivariateNormal,
@@ -124,13 +123,13 @@ DISTRIBUTIONS = [
 
 def _make_minibatched_distribution():
     """Build a MinibatchedDistribution at parametrise time."""
-    import tensorflow_probability.substrates.jax.glm as tfp_glm
+    from probpipe.families import BernoulliFamily, glm_likelihood
 
     X = jnp.eye(4)
     y = jnp.array([1.0, 0.0, 1.0, 0.0])
-    prior = MultivariateNormal(loc=jnp.zeros(4), cov=jnp.eye(4), name="theta")
-    lik = GLMLikelihood(tfp_glm.Bernoulli(), x=X)
-    return MinibatchedDistribution("measure", prior, lik, Record("r", X=X, y=y), batch_size=2)
+    prior = MultivariateNormal(loc=jnp.zeros(4), cov=jnp.eye(4), name="beta")
+    lik = glm_likelihood("y", BernoulliFamily(), X=X)
+    return MinibatchedDistribution("measure", prior, lik, y, batch_size=2)
 
 
 @pytest.mark.parametrize("make_dist", DISTRIBUTIONS)

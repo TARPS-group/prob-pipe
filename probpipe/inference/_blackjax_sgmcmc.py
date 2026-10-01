@@ -8,9 +8,10 @@ Two :class:`~probpipe.core._dispatch.UnaryDispatchMethod` subclasses registered 
 * ``blackjax_sghmc`` — Stochastic Gradient Hamiltonian Monte Carlo
   ([Chen, Fox & Guestrin, 2014](https://arxiv.org/abs/1402.4102)).
 
-Both methods consume a :class:`~probpipe.SimpleModel` whose
-``likelihood`` satisfies
-:class:`~probpipe.ConditionallyIndependentLikelihood`. Internally they
+Both methods consume the unnormalized conditional of a factored joint at
+observed fields, reading its prior and likelihood factors (VI.6). The
+likelihood is a kernel whose observations are conditionally independent and
+which scores a subset of them, as a GLM likelihood does. Internally they
 construct a :class:`~probpipe.MinibatchedDistribution` to produce
 unbiased stochastic gradient estimates and feed it to the BlackJAX
 kernel via the ``grad_estimator(position, measure_key)`` closure
@@ -19,13 +20,14 @@ opaque ``minibatch`` slot.
 
 Both methods require ``batch_size=`` to be passed, so SGMCMC applies only
 when the user has opted into minibatching, as in
-``condition_on(model, observed, method="blackjax_sgld", batch_size=…)``.
+``condition_on(likelihood * prior, y=y, method="blackjax_sgld", batch_size=…)``.
 ``blackjax_sgld`` is registered at priority 45 and ``blackjax_sghmc`` is
 opt-in-only; the method classes state why.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import blackjax
@@ -33,12 +35,13 @@ import jax
 import jax.numpy as jnp
 
 from ..core._dispatch import Feasibility
-from ..custom_types import PRNGKey
+from ..custom_types import Array, PRNGKey
+from ..distributions._capabilities import SupportsLogProb
 from ..families._random_functions import RandomMeasure
-from ..operations._condition import InferenceMethod
+from ..operations._condition import InferenceMethod, _UnnormalizedConditional
 from ._approximate_distribution import ApproximateDistribution, make_posterior
-from ._inference_utils import as_prng_key, get_init_state, is_simple_model, observed_parts
-from ._minibatch import MinibatchedDistribution
+from ._inference_utils import as_prng_key, flat_unflatten, get_init_state, model_factors
+from ._minibatch import MinibatchedDistribution, _reads_observations
 
 __all__ = ["BlackJAXSGHMCMethod", "BlackJAXSGLDMethod"]
 
@@ -48,7 +51,7 @@ __all__ = ["BlackJAXSGHMCMethod", "BlackJAXSGLDMethod"]
 # ---------------------------------------------------------------------------
 
 
-def _build_grad_estimator(measure: RandomMeasure):
+def _build_grad_estimator(measure: RandomMeasure, unflatten: Callable[[Array], Any] | None = None):
     """Build the BlackJAX-compatible gradient estimator from a random measure.
 
     BlackJAX's SGMCMC kernels take a callable
@@ -59,13 +62,17 @@ def _build_grad_estimator(measure: RandomMeasure):
     :meth:`~probpipe.MinibatchedDistribution._random_unnormalized_log_prob`.
     The kernel stays oblivious to the minibatching convention, so the
     same builder works for any future ``RandomMeasure`` subclass
-    that supplies :class:`SupportsRandomUnnormalizedLogProb`.
+    that supplies :class:`SupportsRandomUnnormalizedLogProb`. With
+    *unflatten*, the position is a flat vector that it maps to a draw of the
+    measure's parameters, and the gradient is taken in the flat coordinates.
     """
     rand_logp = measure._random_unnormalized_log_prob()
 
     def grad_estimator(position: Any, measure_key: PRNGKey) -> Any:
         realised_log_density = rand_logp._sample(measure_key)
-        return jax.grad(realised_log_density)(position)
+        if unflatten is None:
+            return jax.grad(realised_log_density)(position)
+        return jax.grad(lambda flat: realised_log_density(unflatten(flat)))(position)
 
     return grad_estimator
 
@@ -92,11 +99,7 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
         return self._method_name
 
     def supported_types(self) -> tuple[type, ...]:
-        # Filter at the registry-level by Distribution; the SimpleModel +
-        # ConditionallyIndependentLikelihood constraint is enforced in check().
-        from ..distributions._distribution import Distribution
-
-        return (Distribution,)
+        return (_UnnormalizedConditional,)
 
     @property
     def priority(self) -> int | None:
@@ -105,22 +108,31 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
     # -- feasibility checks --------------------------------------------------
 
     def check(self, target: Any, /, **kwargs: Any) -> Feasibility:
-        """Require SimpleModel + ConditionallyIndependentLikelihood + batch_size."""
-        from ..core.protocols import ConditionallyIndependentLikelihood
-
-        dist, _ = observed_parts(target)
-        if not is_simple_model(dist):
-            return Feasibility(
-                feasible=False,
-                description=(f"{self.name} requires a SimpleModel; got {type(dist).__name__}."),
-            )
-        if not isinstance(dist.likelihood, ConditionallyIndependentLikelihood):
+        """Require a joint whose likelihood scores a subset of its observations, and a batch size."""
+        factors = model_factors(target)
+        if factors is None:
             return Feasibility(
                 feasible=False,
                 description=(
-                    f"{self.name} requires model.likelihood to satisfy "
-                    f"ConditionallyIndependentLikelihood; got "
-                    f"{type(dist.likelihood).__name__}."
+                    f"{self.name} requires a factored joint at observed values of its fields, "
+                    f"whose other factors form the prior"
+                ),
+            )
+        if not isinstance(factors.prior, SupportsLogProb):
+            return Feasibility(
+                feasible=False,
+                description=(
+                    f"{self.name} requires a prior with a log-density; got "
+                    f"{type(factors.prior).__name__}."
+                ),
+            )
+        if not _reads_observations(factors.likelihood):
+            return Feasibility(
+                feasible=False,
+                description=(
+                    f"{self.name} requires a likelihood whose observations are conditionally "
+                    f"independent and which scores a subset of them, such as glm_likelihood's "
+                    f"kernel; got {type(factors.likelihood).__name__}."
                 ),
             )
         if "batch_size" not in kwargs:
@@ -137,7 +149,7 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
 
     def execute(self, target: Any, /, **kwargs: Any) -> ApproximateDistribution:
         """Run the SGMCMC kernel; return an :class:`ApproximateDistribution`."""
-        dist, observed = observed_parts(target)
+        factors = model_factors(target)
         batch_size: int = kwargs["batch_size"]
         num_results: int = kwargs.get("num_results", 1000)
         num_warmup: int = kwargs.get("num_warmup", 0)
@@ -145,29 +157,21 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
         random_seed: int | PRNGKey = kwargs.get("random_seed", 0)
         with_replacement: bool = kwargs.get("with_replacement", False)
 
-        # Build the minibatched random measure that supplies stochastic
-        # grads. ``dist`` is a SimpleModel (validated by ``check()``);
-        # unpack its prior + CIL likelihood for the random measure.
+        # The minibatched random measure supplies the stochastic gradients from
+        # the prior and likelihood factors ``check()`` validated.
         measure = MinibatchedDistribution(
             "measure",
-            dist.prior,
-            dist.likelihood,
-            observed,
+            factors.prior,
+            factors.likelihood,
+            factors.observed,
             batch_size=batch_size,
             with_replacement=with_replacement,
         )
 
-        # Build the BlackJAX-compatible gradient estimator + algorithm.
-        grad_estimator = _build_grad_estimator(measure)
+        # The chain moves in the prior's flat coordinates.
+        grad_estimator = _build_grad_estimator(measure, flat_unflatten(factors.prior))
         algorithm = self._build_algorithm(grad_estimator, **kwargs)
-
-        # Initial position from prior or user-supplied init.
-        prior = dist.prior
-        init = get_init_state(
-            dist,
-            kwargs.get("init"),
-            random_seed=random_seed,
-        )
+        init = get_init_state(factors.prior, kwargs.get("init"), random_seed=random_seed)
         state = algorithm.init(init)
 
         # Iterate. The kernel itself jits within run_loop's step closure.
@@ -180,15 +184,13 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
             num_results,
         )
 
-        # ``check()`` rejects any non-SimpleModel target, whose prior names the
-        # posterior's fields through its declaration.
         chain = jnp.stack(positions, axis=0)
         return make_posterior(
             [chain],
-            parents=(prior,),
+            parents=(target,),
             algorithm=self._method_name,
             annotations=None,
-            event_spec=prior.event_spec,
+            event_spec=target.event_spec,
             num_results=num_results,
             num_warmup=num_warmup,
             num_chains=1,

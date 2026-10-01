@@ -5,6 +5,7 @@ from typing import ClassVar
 import jax.numpy as jnp
 import numpy as np
 import pytest
+import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
     GLMLikelihood,
@@ -16,11 +17,11 @@ from probpipe import (
     mean,
 )
 from probpipe.core._dispatch import ResolutionError
-from probpipe.distributions import Distribution, FactoredDistribution
+from probpipe.distributions import Distribution
 from probpipe.distributions._capabilities import SupportsSampling
 from probpipe.inference import inference_method_registry
 from probpipe.inference._inference_utils import observed_target
-from probpipe.modeling._likelihood import Likelihood
+from tests.inference.canonical import ObservationKernel
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -382,30 +383,28 @@ class TestUnnormalizedLogProbInference:
 # ---------------------------------------------------------------------------
 
 
-class _GaussianMeanLikelihood(Likelihood):
-    """JAX-traceable Gaussian likelihood: ``mu`` is the flat parameter."""
-
-    def log_likelihood(self, params, data):
-        mu = jnp.reshape(jnp.asarray(params), ())
-        return jnp.sum(-0.5 * (jnp.asarray(data) - mu) ** 2)
-
-
 @pytest.fixture
 def gaussian_model():
-    """Gaussian-prior, JAX-traceable SimpleModel.
+    """A Gaussian prior and a JAX-traceable Gaussian likelihood, ``y_i ~ N(mu, 1)``.
 
     Both ``blackjax_nuts`` (needs a traceable joint) and
     ``blackjax_elliptical_slice`` (needs a Gaussian prior + traceable
     likelihood + data) pass ``check()`` on this target — so it is the
     canonical case for testing the 85-vs-75 tier ordering.
     """
-    prior = FactoredDistribution("prior", [Normal(loc=0.0, scale=1.0, name="mu")])
-    return SimpleModel(prior, _GaussianMeanLikelihood(), name="gauss")
+    prior = Normal(loc=0.0, scale=1.0, name="mu")
+    likelihood = ObservationKernel(
+        "y",
+        {"mu": prior.event_spec.spec},
+        NumericArraySpec((3,)),
+        lambda mu: tfd.Independent(tfd.Normal(jnp.broadcast_to(mu, (3,)), 1.0), 1),
+    )
+    return likelihood * prior
 
 
 @pytest.fixture
 def gaussian_data():
-    return jnp.array([1.0, -1.0, 0.5])
+    return {"y": jnp.array([1.0, -1.0, 0.5])}
 
 
 class TestNutsEssDispatch:
