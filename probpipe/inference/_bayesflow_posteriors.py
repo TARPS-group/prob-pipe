@@ -235,8 +235,8 @@ class _AmortizedPosterior(
         Raises
         ------
         KeyError
-            If a mapping or record *given* names a key other than the
-            observation slot, or not that slot.
+            If a mapping or record *given* lacks the observation slot or names
+            another key.
         ValueError
             If the observation's size is not the trained one.
         """

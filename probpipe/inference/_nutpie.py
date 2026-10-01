@@ -182,8 +182,9 @@ def _extract_chains(
     keep_names : list of str or None
         If given, extract exactly these variables, in this order, instead
         of ``posterior.data_vars`` order (which nutpie sorts
-        alphabetically). PyMC callers pass the param names so chain
-        columns align with the template; Stan callers pass ``None``.
+        alphabetically). Callers pass the parameter names, so the chain
+        columns align with the template and omit a Stan program's
+        transformed and generated variables.
 
     Returns
     -------
