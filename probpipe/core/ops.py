@@ -646,9 +646,10 @@ def _split_data_kwargs(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Separate named data kwargs from inference kwargs.
 
-    Uses the distribution's ``fields`` as the sole signal:
-    any kwarg whose name matches a component name is data (conditioning
-    target); everything else is an inference parameter.
+    The names a given may bind are the signal: a law's ``fields`` where it
+    defines them and its event components otherwise, and a kernel's given
+    slots. Any kwarg whose name matches one is data (a conditioning target);
+    everything else is an inference parameter.
 
     Guards against case-mismatched field names: a kwarg that matches a field
     only up to case (e.g. ``x=`` when the field is ``X``) is almost certainly a
@@ -660,7 +661,12 @@ def _split_data_kwargs(
 
     Returns ``(data_kwargs, inference_kwargs)``.
     """
-    comp_names = tuple(dist.fields) if hasattr(dist, "fields") else ()
+    if hasattr(dist, "fields"):
+        comp_names = tuple(dist.fields)
+    else:
+        declaration = getattr(dist, "event_spec", None)
+        comp_names = tuple(declaration.components) if declaration is not None else ()
+    comp_names += tuple(getattr(dist, "given_spec", None) or ())
     comp_set = frozenset(comp_names)
     by_lower = {name.lower(): name for name in comp_names}
 
@@ -795,36 +801,36 @@ def condition_on(
     # inference kwargs (everything else like num_results, num_warmup).
     data_kwargs, inference_kwargs = _split_data_kwargs(dist, kwargs)
 
+    # Named data join the given, so every given value reaches the primitive in
+    # one argument and the remaining keywords are the method's options.
+    given = _registry_observed(observed, data_kwargs)
+
     # Explicit method override → always use the registry
     if method is not None:
         return inference_method_registry.execute(
             dist,
-            _registry_observed(observed, data_kwargs),
+            given,
             method=method,
             exact_only=exact_only,
             **inference_kwargs,
         )
 
-    # An exact built-in path. Only the data and inference kwargs pass through
-    # to _condition_on, which handles its own validation (e.g.,
-    # ProductDistribution raises KeyError on unknown names); the controls
-    # stay here.
+    # An exact built-in path. The given and the options pass through to
+    # _condition_on, which validates the given itself; the controls stay here.
     if isinstance(dist, SupportsExactConditioning):
-        return dist._condition_on(observed, **data_kwargs, **inference_kwargs)
+        return dist._condition_on(given, **inference_kwargs)
 
     # An approximate built-in path runs only when no exact route applies, so
     # an exact registered method outranks it and exact_only skips it.
     if not exact_only and isinstance(dist, SupportsApproximateConditioning):
         exact_candidate = inference_method_registry.check(
-            dist, _registry_observed(observed, data_kwargs), exact_only=True, **inference_kwargs
+            dist, given, exact_only=True, **inference_kwargs
         )
         if exact_candidate.feasible is not True:
-            return dist._condition_on(observed, **data_kwargs, **inference_kwargs)
+            return dist._condition_on(given, **inference_kwargs)
 
     # Registry auto-selects the first feasible method in selection order.
-    return inference_method_registry.execute(
-        dist, _registry_observed(observed, data_kwargs), exact_only=exact_only, **inference_kwargs
-    )
+    return inference_method_registry.execute(dist, given, exact_only=exact_only, **inference_kwargs)
 
 
 @function

@@ -147,8 +147,8 @@ class ObservationKernel(
             self.name, self._build(**values), self._support, event_spec=self.event_spec
         )
 
-    def _condition_on(self, given: Any, /, **kwargs: Any) -> Distribution:
-        return self._law({**_top(given), **kwargs})
+    def _condition_on(self, given: Any, /, **options: Any) -> Distribution:
+        return self._law(_top(given))
 
     def _conditional_sample(self, given: Any, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
         return self._law(given)._sample(key, sample_shape)

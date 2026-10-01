@@ -10,6 +10,7 @@ from __future__ import annotations
 import jax
 
 from ..core._record_distribution import RecordDistribution
+from ..core.record import Record
 from ..custom_types import ArrayLike
 from ._distribution import Distribution
 
@@ -246,6 +247,8 @@ def _parse_condition_args(
         raise TypeError(
             "condition_on() accepts either a positional dict or keyword arguments, not both."
         )
+    if isinstance(observed, Record):
+        observed = observed.to_nested_dict()
     tree = observed if observed is not None else kwargs
     if not tree:
         raise ValueError("condition_on() requires at least one observed value.")

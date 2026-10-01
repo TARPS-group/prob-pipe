@@ -31,7 +31,11 @@ from probpipe import (
     RecordSpec,
 )
 from probpipe.core._dispatch import Feasibility
-from probpipe.distributions import ConditionalDistribution, Distribution
+from probpipe.distributions import (
+    ConditionalDistribution,
+    Distribution,
+    FactoredConditionalDistribution,
+)
 from probpipe.distributions._capabilities import (
     SupportsConditionalLogProb,
     SupportsConditionalMean,
@@ -693,11 +697,26 @@ class TestRenamedKernelMoves:
         assert law.event_spec == renamed.event_spec
 
     def test_a_factored_kernel_renames_through_its_factors(self):
+        first = _RecordingKernel("k1", {"x": _SCALAR}, OutputSpec(a=_SCALAR))
+        joint = first * _RecordingKernel("k2", {"w": _SCALAR}, OutputSpec(b=_SCALAR))
+        renamed = joint.with_path_names(x="u", b="c")
+        assert isinstance(renamed, FactoredConditionalDistribution)
+        assert set(renamed.given_spec) == {"u", "w"}
+        assert list(renamed.event_spec.components) == ["a", "c"]
+        assert list(renamed.factors[0].given_spec) == ["u"]
+        assert list(renamed.factors[1].event_spec.components) == ["c"]
+        renamed._condition_on({"u": 1.0, "w": 2.0})
+        assert first.calls == [{"x": 1.0}]
+
+    def test_a_rename_the_factors_cannot_carry_renames_at_the_joint_boundary(self):
+        """Moving a whole term's component into a group changes no factor, so the joint holds it."""
         joint = _RecordingKernel("k1", {"x": _SCALAR}, OutputSpec(a=_SCALAR)) * _RecordingKernel(
             "k2", {"w": _SCALAR}, OutputSpec(b=_SCALAR)
         )
-        with pytest.raises(NotImplementedError):
-            joint.with_path_names(x="u")
+        renamed = joint.with_path_names({"a": "g/a"})
+        assert not isinstance(renamed, FactoredConditionalDistribution)
+        assert renamed.event_spec == OutputSpec(RecordSpec(b=_SCALAR, g=RecordSpec(a=_SCALAR)))
+        assert set(renamed.given_spec) == {"x", "w"}
 
 
 class TestRenamedKernelCapabilities:

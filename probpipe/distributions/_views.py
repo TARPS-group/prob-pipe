@@ -58,7 +58,13 @@ from ._conditional import (
     _install_renamed_kernel,
 )
 from ._distribution import Distribution, _install_renamed_law, _whole_term_component
-from ._factored import SupportsFactors, _raw_record
+from ._factored import (
+    FactoredConditionalDistribution,
+    FactoredDistribution,
+    SupportsFactors,
+    _FactorGraph,
+    _raw_record,
+)
 
 if TYPE_CHECKING:
     from ..custom_types import Array, ArrayLike, PRNGKey
@@ -358,7 +364,7 @@ def _view_marginal_guard(self: FieldView, path: str | tuple[str, ...]) -> Feasib
     )
 
 
-def _view_condition_on(self: FieldView, given: Any, /, **kwargs: Any) -> Distribution:
+def _view_condition_on(self: FieldView, given: Any, /, **options: Any) -> Distribution:
     """Conditioning commutes with marginalization: the parent conditioned, then viewed.
 
     *given* is keyed by event paths of the view. The parent is conditioned at
@@ -378,7 +384,7 @@ def _view_condition_on(self: FieldView, given: Any, /, **kwargs: Any) -> Distrib
     if not kept:
         raise ValueError(f"the given covers every field of {self.name!r}, so no law remains")
     conditioned = self._parent._condition_on(
-        {parent_path: value for parent_path, (_, value) in zip(parent_paths, items)}, **kwargs
+        {parent_path: value for parent_path, (_, value) in zip(parent_paths, items)}, **options
     )
     if isinstance(self._path, str):
         return _named_as(FieldView(conditioned, self._path), kept)
@@ -1124,7 +1130,9 @@ def _renamed_marginal_guard(self: _RenamedDistribution, path: str | tuple[str, .
     )
 
 
-def _renamed_condition_on(self: _RenamedDistribution, given: Any, /, **kwargs: Any) -> Distribution:
+def _renamed_condition_on(
+    self: _RenamedDistribution, given: Any, /, **options: Any
+) -> Distribution:
     """The parent conditioned on *given* under the original names, then renamed.
 
     Raises
@@ -1140,7 +1148,7 @@ def _renamed_condition_on(self: _RenamedDistribution, given: Any, /, **kwargs: A
         original: self._event.undraw_at(path, value)
         for original, (path, value) in zip(originals, items, strict=True)
     }
-    return self._event.law(self._parent._condition_on(translated, **kwargs))
+    return self._event.law(self._parent._condition_on(translated, **options))
 
 
 def _renamed_condition_on_guard(self: _RenamedDistribution, paths: tuple[str, ...]) -> Feasibility:
@@ -1261,14 +1269,7 @@ def _renamed(law: Distribution, event: _EventRenames, arguments: Mapping[str, st
     """The law that translates the values of *law* by *event*, with the rename's provenance.
 
     A renamed law's parent is translated by both renames at once.
-
-    Raises
-    ------
-    NotImplementedError
-        If *law* is factored, since a joint renames through its factors.
     """
-    if isinstance(law, SupportsFactors):
-        raise NotImplementedError("FactoredDistribution.with_path_names")
     if isinstance(law, _RenamedDistribution):
         renamed = _RenamedDistribution(law._parent, law._event.followed_by(event))
     else:
@@ -1284,12 +1285,93 @@ def _renamed_law(
 ) -> Distribution:
     """The law ``with_path_names`` returns for *parent* when a rename reaches a record field.
 
-    Raises
-    ------
-    NotImplementedError
-        If *parent* is factored, since a joint renames through its factors.
+    A factored law renames through its factors where they carry the rename, and
+    any other law, or a rename its factors cannot carry, is translated at the
+    boundary of the law that holds it.
     """
+    if isinstance(parent, SupportsFactors):
+        joint = _renamed_through_factors(parent, renames, event_spec)
+        if joint is not None:
+            return joint
     return _renamed(parent, _EventRenames.of(parent.event_spec, event_spec, renames), renames)
+
+
+# ---------------------------------------------------------------------------
+# Renaming a factored law through its factors
+# ---------------------------------------------------------------------------
+
+
+def _leaf_specs(declaration: OutputSpec) -> dict[str, TermSpec]:
+    """The spec of each leaf of *declaration*, keyed by its path."""
+    return {path: _node_at(declaration, path) for path in _leaf_paths(declaration)}
+
+
+def _factor_renames(graph: _FactorGraph, pairs: Mapping[str, str]) -> list[dict[str, str]]:
+    """The renames each factor of *graph* applies for the joint's renames *pairs*.
+
+    The factor that produces a renamed component renames the event path, each
+    factor that conditions on the component renames the matching given path,
+    and a renamed unmet given is renamed in every factor that names it. A
+    joint's path that starts with a factor's component is the same path in the
+    factor's own declaration, and so is a path into a given slot.
+    """
+    renames: list[dict[str, str]] = [{} for _ in graph.factors]
+    for old, new in pairs.items():
+        head = old.split(_PATH_SEP, 1)[0]
+        producer = graph.producers.get(head)
+        if producer is not None:
+            renames[producer][old] = new
+        for index, factor in enumerate(graph.factors):
+            if isinstance(factor, ConditionalDistribution) and head in factor.given_spec:
+                renames[index][old] = new
+    return renames
+
+
+def _renamed_through_factors(
+    joint: Any, pairs: Mapping[str, str], event_spec: OutputSpec
+) -> Distribution | ConditionalDistribution | None:
+    """*joint* renamed by *pairs* through its factors, or None when the factors cannot carry it.
+
+    The result is the factored joint of the renamed factors over the same
+    graph, under the joint's name. Its components follow the factors, so a
+    moved node joins its factor's components rather than the end of the joint's.
+    The factors cannot carry a rename that changes a factor's packaging, as
+    moving a whole term's component into a group does, that places components of
+    two factors under one node, or that changes which factor conditions on
+    which.
+
+    Parameters
+    ----------
+    joint : FactoredDistribution or FactoredConditionalDistribution
+        The joint renamed.
+    pairs : Mapping[str, str]
+        The new exact path of each renamed node, keyed by its exact path; a key
+        starts with a component or, for a conditional joint, a given slot.
+    event_spec : OutputSpec
+        The joint's event declaration with the renames applied, whose leaves
+        the result must declare.
+    """
+    graph: _FactorGraph = joint._graph
+    try:
+        factors = [
+            factor.with_path_names(renames) if renames else factor
+            for factor, renames in zip(graph.factors, _factor_renames(graph, pairs), strict=True)
+        ]
+        kind = (
+            FactoredConditionalDistribution
+            if isinstance(joint, ConditionalDistribution)
+            else FactoredDistribution
+        )
+        renamed = kind(joint.name, factors, _scope=graph.scope)
+    except (KeyError, ValueError):
+        return None
+    if _leaf_specs(renamed.event_spec) != _leaf_specs(event_spec):
+        return None
+    if {edge[:2] for edge in renamed._graph.edges} != {edge[:2] for edge in graph.edges}:
+        return None
+    return renamed.with_provenance(
+        Provenance.create("with_path_names", parents=[joint], metadata=dict(pairs))
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1598,7 +1680,7 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
         return complete
 
     def _condition_on(
-        self, given: Record | Mapping[str, Any], /, **kwargs: Any
+        self, given: Record | Mapping[str, Any], /, **options: Any
     ) -> Distribution | ConditionalDistribution:
         """The parent bound at *given*, translated to its slots, under the new names.
 
@@ -1606,7 +1688,7 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
         ----------
         given : Record or Mapping[str, Any]
             Values for some or all of this kernel's slots, by slot name.
-        **kwargs : Any
+        **options : Any
             Options for the parent's primitive.
 
         Returns
@@ -1623,7 +1705,7 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
             If *given* binds part of a slot.
         """
         complete, pending, slots = self._translated(given)
-        result = self._parent._condition_on(complete, **kwargs) if complete else self._parent
+        result = self._parent._condition_on(complete, **options) if complete else self._parent
         if not isinstance(result, ConditionalDistribution):
             return self._event.law(result)
         remaining = InputSpec(
@@ -1649,13 +1731,16 @@ def _renamed_kernel(
 ) -> ConditionalDistribution:
     """The kernel ``with_path_names`` returns for *parent*, with the rename's provenance.
 
-    Raises
-    ------
-    NotImplementedError
-        If *parent* is factored, since a joint renames through its factors.
+    A factored kernel renames through its factors where they carry the rename,
+    and any other kernel, or a rename its factors cannot carry, renames at the
+    boundary of the kernel that holds it.
     """
     if isinstance(parent, SupportsFactors):
-        raise NotImplementedError("FactoredConditionalDistribution.with_path_names")
+        joint = _renamed_through_factors(parent, pairs, event_spec)
+        if joint is not None and _given_leaf_specs(joint.given_spec) == _given_leaf_specs(
+            given_spec
+        ):
+            return joint
     event = _EventRenames.of(parent.event_spec, event_spec, renames)
     kernel = _RenamedConditionalDistribution(parent, given_spec, event_spec, origins, event)
     kernel.with_provenance(

@@ -568,9 +568,6 @@ class TestRenames:
                 _at(mean.with_options(raw=True)(law), path),
             )
 
-    @pytest.mark.pending(
-        reason="a factored joint renames a field of its record draw through its factors"
-    )
     def test_a_factored_joint_moves_a_component_into_a_group(self):
         joint = Normal("a", 0.0, 1.0) * Normal("b", 2.0, 1.0)
         renamed = joint.with_path_names({"a": "g/a"})

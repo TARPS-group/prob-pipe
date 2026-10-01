@@ -433,6 +433,27 @@ class TestConditionOn:
         ops.condition_on(Recorder(), 1.0, exact_only=True, num_results=5)
         assert Recorder.seen == {"num_results": 5}
 
+    def test_named_data_reach_the_primitive_in_the_given(self):
+        """A keyword naming a field joins the given; the other keywords are options."""
+        from probpipe import OutputSpec, RecordSpec
+        from probpipe.distributions import Distribution
+
+        class Recorder(Distribution, SupportsExactConditioning):
+            seen: ClassVar[tuple[Any, ...]] = ()
+
+            def __init__(self):
+                spec = NumericArraySpec(())
+                super().__init__("joint", OutputSpec(RecordSpec(x=spec, y=spec)))
+
+            def _condition_on(self, given, /, **options):
+                Recorder.seen = (dict(given.children), dict(options))
+                return Normal("posterior", 0, 1)
+
+        ops.condition_on(Recorder(), x=jnp.array(2.0), num_results=5)
+        given, options = Recorder.seen
+        assert set(given) == {"x"} and float(given["x"]) == 2.0
+        assert options == {"num_results": 5}
+
     def test_an_exact_registered_method_outranks_the_approximate_capability(self, monkeypatch):
         """Exactness is compared across route sources, not only within the registry."""
         from probpipe.core._dispatch import Feasibility, UnaryDispatchMethod, UnaryDispatchRegistry

@@ -1472,9 +1472,17 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
         return _rebuilt(self, "with_dim_names", names)
 
     def _condition_on(
-        self, given: Record | Mapping[str, Any], /, **kwargs: Any
+        self, given: Record | Mapping[str, Any], /, **options: Any
     ) -> Distribution | ConditionalDistribution:
         """Bind given slots in every factor that names them, and rebuild the joint.
+
+        Parameters
+        ----------
+        given : Record or Mapping[str, Any]
+            Values for some or all of the joint's given slots, by slot name;
+            every given value arrives here.
+        **options : Any
+            Options for the primitive of each factor that a value binds.
 
         Returns
         -------
@@ -1490,7 +1498,7 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
             not match the factor's.
         """
         top = given.children if hasattr(given, "children") else given
-        values = {**dict(top.items()), **kwargs}
+        values = dict(top.items())
         unknown = set(values) - set(self.given_spec)
         if unknown:
             raise KeyError(f"{sorted(unknown)} are not given slots of {self.name!r}")
@@ -1499,15 +1507,17 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
             if isinstance(factor, ConditionalDistribution):
                 bound = {slot: value for slot, value in values.items() if slot in factor.given_spec}
                 if bound:
-                    factor = _bound_factor(factor, bound)
+                    factor = _bound_factor(factor, bound, options)
             factors.append(factor)
         if set(values) == set(self.given_spec):
             return FactoredDistribution(self.name, factors)
         return FactoredConditionalDistribution(self.name, factors)
 
 
-def _bound_factor(factor: ConditionalDistribution, bound: Mapping[str, Any]) -> Factor:
-    """*factor* conditioned on *bound*, checked to keep the factor's declarations.
+def _bound_factor(
+    factor: ConditionalDistribution, bound: Mapping[str, Any], options: Mapping[str, Any]
+) -> Factor:
+    """*factor* conditioned on *bound* under *options*, checked to keep its declarations.
 
     Raises
     ------
@@ -1515,7 +1525,7 @@ def _bound_factor(factor: ConditionalDistribution, bound: Mapping[str, Any]) -> 
         If the primitive returns a law or kernel whose event declaration, or whose
         remaining given slots, differ from the factor's.
     """
-    result = factor._condition_on(bound)
+    result = factor._condition_on(bound, **options)
     remaining = {slot: spec for slot, spec in factor.given_spec.items() if slot not in bound}
     expected = (
         ConditionalDistributionSpec(remaining, factor.event_spec)

@@ -1263,7 +1263,7 @@ class TestNestedProductDistribution:
 
     def test_condition_on_positional_and_kwargs_exclusive(self, nested_joint):
         """Cannot mix positional dict and kwargs."""
-        with pytest.raises(TypeError, match="either a positional dict or keyword"):
+        with pytest.raises(ValueError, match="Cannot provide both positional"):
             condition_on(
                 nested_joint,
                 {"physics": {"force": jnp.array(1.0)}},
