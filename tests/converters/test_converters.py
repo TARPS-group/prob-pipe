@@ -686,6 +686,13 @@ class TestFromDistributionDelegation:
         result = from_distribution(n, Beta, check_support=False)
         assert isinstance(result, Beta)
 
+    @pytest.mark.parametrize("target", [EmpiricalDistribution, KDEDistribution])
+    def test_check_support_reaches_only_a_converter_that_reads_it(self, target):
+        """The sampled representations read no support option, and the conversion runs."""
+        n = Normal(loc=0.0, scale=1.0, name="n")
+        result = from_distribution(n, target, check_support=False, num_samples=20)
+        assert isinstance(result, target)
+
     def test_from_distribution_to_empirical(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
         emp = from_distribution(n, EmpiricalDistribution, num_samples=50)
