@@ -29,6 +29,7 @@ from probpipe.distributions._conditional import (
 )
 from probpipe.distributions._distribution import Distribution, DistributionSpec
 from probpipe.distributions._empirical import EmpiricalDistribution
+from probpipe.distributions._factored import FactoredDistribution
 from probpipe.operations._condition import (
     InferenceMethod,
     _UnnormalizedConditional,
@@ -39,7 +40,16 @@ from probpipe.operations._convert import convert
 from probpipe.operations._operation import _RegistryRoute
 from probpipe.operations._sample import sample
 
-from ._laws import REAL, Amortized, Bare, ExactPosterior, Gaussian, Kernel, Unnormalized
+from ._laws import (
+    REAL,
+    Amortized,
+    Bare,
+    ExactPosterior,
+    Gaussian,
+    Kernel,
+    Pair,
+    Unnormalized,
+)
 
 
 class _Conjugate(Distribution, SupportsLogProb):
@@ -291,9 +301,74 @@ def _by_name(routes: Any) -> dict[str, Any]:
 class TestSlice:
     def test_the_slice_route_declines_a_factored_law_with_a_reason(self):
         joint = Kernel("y", ("mu",)) * Gaussian("mu")
-        declined = _by_name(condition_on.check(joint, {"y": 0.3}).routes)["slice"]
+        declined = _by_name(condition_on.check(joint, {"y": 0.3}).routes)["slice (exact methods)"]
         assert declined.feasible is False
         assert "factors" in declined.description
+
+    def test_fixing_a_root_field_leaves_its_consumer_at_the_value(self):
+        joint = _NormalKernel("y", ("mu",)) * Gaussian("mu")
+        report = condition_on.check(joint, {"mu": 1.5})
+        assert (report.route, report.method, report.exact) == ("slice", None, True)
+        law = condition_on(joint, {"mu": 1.5})
+        assert isinstance(law, Gaussian)
+        assert law.loc == 1.5
+
+    def test_fixing_an_independent_factor_leaves_the_others(self):
+        law = condition_on(Gaussian("a", 1.0) * Gaussian("b", 2.0), {"a": 0.0})
+        assert isinstance(law, Gaussian)
+        assert law.loc == 2.0
+
+    def test_fixing_the_root_of_a_chain_keeps_the_joint_downstream(self):
+        joint = _NormalKernel("c", ("b",)) * _NormalKernel("b", ("a",), 1.0) * Gaussian("a")
+        law = condition_on(joint, {"a": 2.0})
+        assert isinstance(law, FactoredDistribution)
+        assert tuple(law.event_spec.components) == ("c", "b")
+        (_, upstream) = law.factors
+        assert upstream.loc == 3.0
+
+    def test_a_field_whose_parent_stays_free_is_conditioned_by_bayes_rule(self, approximate_method):
+        joint = _NormalKernel("c", ("b",)) * _NormalKernel("b", ("a",)) * Gaussian("a")
+        report = condition_on.check(joint, {"b": 0.5})
+        declined = _by_name(report.routes)["slice (exact methods)"]
+        assert "conditions on ['a']" in declined.description
+        assert report.route == "bayes"
+
+    def test_part_of_a_law_is_fixed_by_its_exact_conditioning(self):
+        model = ExactPosterior("model")
+        joint = _NormalKernel("w", ("theta",)) * model
+        assert condition_on.check(joint, {"y": 0.3}).route == "slice"
+        law = condition_on(joint, {"y": 0.3})
+        assert tuple(law.event_spec.components) == ("w", "theta")
+        assert [dict(given) for given in model.givens] == [{"y": 0.3}]
+
+    def test_part_of_a_law_without_exact_conditioning_is_not_sliced(self):
+        joint = Kernel("w", ("a",)) * Pair("p")
+        declined = _by_name(condition_on.check(joint, {"a": 0.3}).routes)["slice (exact methods)"]
+        assert declined.feasible is False
+        assert "not assumed independent" in declined.description
+
+    def test_fixing_every_field_leaves_no_law(self):
+        joint = Gaussian("a") * Gaussian("b")
+        declined = _by_name(condition_on.check(joint, {"a": 0.0, "b": 0.0}).routes)
+        assert "leaving no law" in declined["slice (exact methods)"].description
+
+    def test_currying_an_approximate_kernel_makes_the_slice_approximate(self):
+        joint = _AmortizedKernel() * Gaussian("y")
+        report = condition_on.check(joint, {"y": 0.3})
+        assert (report.route, report.exact) == ("slice", False)
+        assert condition_on(joint, {"y": 0.3}).loc == 3.0
+        with pytest.raises(ResolutionError, match="exact_only"):
+            condition_on.with_options(exact_only=True)(joint, {"y": 0.3})
+
+    def test_a_consumer_that_declares_nothing_leaves_the_check_unresolved(self):
+        joint = Kernel("y", ("beta",)) * Gaussian("beta")
+        assert condition_on.check(joint, {"beta": 0.5}).feasible is None
+        assert condition_on(joint, {"beta": 0.5}).loc == 0.5
+
+    def test_the_slice_records_its_stage(self):
+        joint = _NormalKernel("y", ("mu",)) * Gaussian("mu")
+        law = condition_on.with_options(method="unnormalized")(joint, {"mu": 1.5})
+        assert law.provenance is not None
 
     def test_fixing_a_produced_field_of_a_factored_joint_reaches_bayes_rule(
         self, approximate_method
@@ -723,10 +798,6 @@ class TestTheOperation:
         ):
             condition_on(jnp.zeros(2), {"x": 1.0})
 
-    @pytest.mark.pending(
-        reason="an exact slice assembles the conditional from normalized factors",
-        raises=ResolutionError,
-    )
     def test_fixing_an_upstream_field_leaves_the_existing_kernel(self):
         joint = Kernel("y", ("beta",)) * Gaussian("beta")
         conditional = condition_on(joint, {"beta": 0.5})

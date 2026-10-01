@@ -25,12 +25,12 @@ from probpipe import (
     provenance_dag,
     workflow_run,
 )
-from probpipe.core._dispatch import ResolutionError
 from probpipe.core._specs import NumericArraySpec, OutputSpec
 from probpipe.core.provenance import ParentInfo
 from probpipe.distributions import ConditionalDistribution, SupportsConditionalSampling
 from probpipe.families import BijectorTransformedDistribution
 from probpipe.values._function_base import Function
+from tests._ops import condition_on as condition_on_operation
 
 
 class _ShiftKernel(ConditionalDistribution, SupportsConditionalSampling):
@@ -307,15 +307,11 @@ class TestConditioningProvenance:
             at_five.provenance.inputs["**kwargs['x']"].fingerprint
         )
 
-    @pytest.mark.pending(
-        reason="an exact slice assembles the conditional from normalized factors",
-        raises=ResolutionError,
-    )
     def test_dependent_joint_condition_on(self):
         joint = _ShiftKernel() * Normal(loc=0.0, scale=1.0, name="z")
-        cond = condition_on(joint, z=jnp.array(1.0))
+        cond = condition_on_operation(joint, {"z": jnp.array(1.0)})
         assert cond.provenance.operation == "workflow.condition_on"
-        assert len(cond.provenance.parents) == 2
+        assert [parent.name for parent in cond.provenance.parents] == ["condition_on", joint.name]
         assert isinstance(cond.provenance.parents[0], ParentInfo)
 
     def test_gaussian_condition_on(self):

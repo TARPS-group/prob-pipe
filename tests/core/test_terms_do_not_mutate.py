@@ -18,13 +18,10 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import (
-    Normal,
-    condition_on,
-)
-from probpipe.core._dispatch import ResolutionError
+from probpipe import Normal
 from probpipe.core._specs import NumericArraySpec, OutputSpec
 from probpipe.distributions import ConditionalDistribution, SupportsConditionalSampling
+from tests._ops import condition_on
 
 
 def assigned_state(term) -> dict:
@@ -127,17 +124,13 @@ class TestAQueryLeavesTheTermUnchanged:
 
 
 class TestAnOperationDoesNotMutateItsResultAfterBuildingIt:
-    @pytest.mark.pending(
-        reason="an exact slice assembles the conditional from normalized factors",
-        raises=ResolutionError,
-    )
     def test_conditioning_a_dependent_joint(self):
         joint = _ShiftKernel() * Normal(loc=0.0, scale=1.0, name="z")
-        conditioned = condition_on(joint, z=jnp.asarray(2.0))
+        conditioned = condition_on(joint, {"z": jnp.asarray(2.0)})
         # The result is complete when it is returned, and conditioning again
         # builds another result rather than editing this one.
         before = assigned_state(conditioned)
-        again = condition_on(joint, z=jnp.asarray(3.0))
+        again = condition_on(joint, {"z": jnp.asarray(3.0)})
         assert assigned_state(conditioned) == before
         assert again is not conditioned
         # The operand is untouched, which is what §V.1 promises.

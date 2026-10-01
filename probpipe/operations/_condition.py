@@ -19,8 +19,9 @@ The routes, in selection order:
 1. ``curry`` binds given slots of a kernel through its ``_condition_on``, which
    is exact unless the kernel claims ``SupportsApproximateConditioning``, and
    normalizes the result.
-2. ``slice`` assembles the conditional from a factored law's normalized factors
-   when the conditioned fields admit an exact slice.
+2. ``slice`` assembles the conditional from a factored law's factors when the
+   conditioned fields are the whole event of factors upstream of the rest, or
+   part of a law's that conditions on them exactly, and normalizes the result.
 3. ``exact_conditioning`` calls ``_condition_on`` on a law claiming
    ``SupportsExactConditioning``.
 4. ``bayes`` curries any given slots the given names, forms the unnormalized
@@ -88,7 +89,11 @@ from ..distributions._capabilities import (
 from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
 from ..distributions._distribution import Distribution, DistributionSpec
 from ..distributions._empirical import EmpiricalDistribution
-from ..distributions._factored import SupportsFactors
+from ..distributions._factored import (
+    FactoredDistribution,
+    SupportsFactors,
+    _bound_factor,
+)
 from ._convert import convert
 from ._operation import (
     BoundCall,
@@ -841,11 +846,191 @@ def _never(call: BoundCall) -> bool:
     return False
 
 
+def _slice_plan(d: Any, keys: tuple[str, ...]) -> tuple[Feasibility, dict[int, frozenset[str]]]:
+    """Whether the slice applies to the factored law *d* at *keys*, and what it fixes in each factor.
+
+    Returns
+    -------
+    tuple
+        The report, and the components the given fixes in each factor it
+        touches, by the factor's index.
+    """
+    factors = d.factors
+    producer = {
+        component: index
+        for index, factor in enumerate(factors)
+        for component in factor.event_spec.components
+    }
+    fixed: dict[int, set[str]] = {}
+    for key in keys:
+        if key not in producer:
+            reason = (
+                f"conditioning the interior path {key!r} is not implemented"
+                if _head(key) in producer
+                else f"{key!r} is not a component of the factors"
+            )
+            return Feasibility(False, f"route 'slice' declined: {reason}"), {}
+        fixed.setdefault(producer[key], set()).add(key)
+    whole = {
+        index
+        for index, components in fixed.items()
+        if components == set(factors[index].event_spec.components)
+    }
+    if len(whole) == len(factors):
+        return Feasibility(
+            False, "route 'slice' declined: the given names every produced field, leaving no law"
+        ), {}
+    for index, components in sorted(fixed.items()):
+        factor = factors[index]
+        slots = factor.given_spec if isinstance(factor, ConditionalDistribution) else {}
+        free = sorted(
+            component
+            for parent in sorted({producer[slot] for slot in slots if slot in producer} - whole)
+            for component in factors[parent].event_spec.components
+        )
+        if free:
+            return Feasibility(
+                False,
+                f"route 'slice' declined: the factor producing {sorted(components)} conditions "
+                f"on {free}, which the given leaves free, so the conditional is not a product "
+                f"of the factors",
+            ), {}
+        if index in whole:
+            continue
+        others = sorted(set(factor.event_spec.components) - components)
+        if not isinstance(factor, SupportsExactConditioning) or isinstance(
+            factor, ConditionalDistribution
+        ):
+            return Feasibility(
+                False,
+                f"route 'slice' declined: the factor producing {sorted(components)} produces "
+                f"{others} as well, and it does not condition on them exactly, since its fields "
+                f"are not assumed independent",
+            ), {}
+        guard = _capability_guard(factor, "_condition_on", tuple(sorted(components)))
+        if guard.feasible is not True:
+            return guard, {}
+    return Feasibility(True), {index: frozenset(components) for index, components in fixed.items()}
+
+
+def _can_slice(call: BoundCall) -> Feasibility:
+    """The given fixes whole factors upstream of every factor it touches, or part of a law's.
+
+    Every key names a component of a factored law. A factor the given touches
+    either has every component fixed, or is a law whose exact conditioning
+    admits the fixed components, and every factor it conditions on has every
+    component fixed, so the conditional is the product of the other factors at
+    the fixed values. At least one component stays unconditioned.
+    """
+    d, keys = call.operands["d"], _given_keys(call.operands["given"])
+    if not isinstance(d, SupportsFactors) or isinstance(d, ConditionalDistribution):
+        return Feasibility(
+            False, "route 'slice' declined: the conditioned object is not a joint law"
+        )
+    if not keys:
+        return Feasibility(False, "route 'slice' declined: the given names no field")
+    return _slice_plan(d, keys)[0]
+
+
+def _sliced_factors(call: BoundCall) -> list[tuple[Any, frozenset[str], dict[str, Any]]]:
+    """Each factor the slice keeps, with the components it fixes there and the values it binds.
+
+    A factor whose components are all fixed drops out, and a kernel binds the
+    fixed components it conditions on.
+    """
+    d = call.operands["d"]
+    values = _given_values(call.operands["given"])
+    _, fixed = _slice_plan(d, tuple(values))
+    kept = []
+    for index, factor in enumerate(d.factors):
+        components = fixed.get(index, frozenset())
+        if components == set(factor.event_spec.components):
+            continue
+        slots = factor.given_spec if isinstance(factor, ConditionalDistribution) else {}
+        bound = {slot: values[slot] for slot in slots if slot in values}
+        kept.append((factor, components, bound))
+    return kept
+
+
+def _slice(call: BoundCall) -> Any:
+    """The product of the factors the given leaves unconditioned, at the fixed values.
+
+    A law fixed in part is replaced by its exact conditional, and a kernel is
+    curried at the fixed components it conditions on, receiving the call's
+    ``method_options`` where evaluating it runs a method, as in currying. One
+    factor kept is the result itself.
+
+    Raises
+    ------
+    ValueError
+        If a law's exact conditional does not produce the components the given
+        leaves free in it.
+    """
+    d = call.operands["d"]
+    values = _given_values(call.operands["given"])
+    factors = []
+    for factor, components, bound in _sliced_factors(call):
+        if components:
+            free = set(factor.event_spec.components) - components
+            factor = factor._condition_on({key: values[key] for key in sorted(components)})
+            if set(factor.event_spec.components) != free:
+                raise ValueError(
+                    f"the exact conditional of {d.name!r}'s factor on {sorted(components)} "
+                    f"produces {sorted(factor.event_spec.components)}, not {sorted(free)}"
+                )
+        if bound:
+            options: dict[str, Any] = {}
+            if isinstance(factor, (_PerValueNormalization, SupportsApproximateConditioning)):
+                options = dict(call.controls.get("method_options", {}))
+            factor = _bound_factor(factor, bound, options)
+        factors.append(factor)
+    law = factors[0] if len(factors) == 1 else FactoredDistribution(d.name, factors)
+    if law.provenance is None:
+        law.with_provenance(
+            Provenance.create(
+                "condition_on", parents=[d], metadata={"stage": "exact", "route": "slice"}
+            )
+        )
+    return law
+
+
+def _slice_is_exact(call: BoundCall) -> bool:
+    """The slice is exact unless it curries a kernel that claims SupportsApproximateConditioning."""
+    return not any(
+        bound and isinstance(factor, SupportsApproximateConditioning)
+        for factor, _, bound in _sliced_factors(call)
+    )
+
+
+def _sliced_is_normalized(call: BoundCall) -> bool | None:
+    """Whether every factor the slice keeps is normalized, as the factors declare.
+
+    A law's exact conditional is normalized, and a kernel's laws are as its
+    conditional capabilities state.
+    """
+    states = []
+    for factor, components, _ in _sliced_factors(call):
+        if isinstance(factor, ConditionalDistribution):
+            states.append(_laws_are_normalized(factor))
+        else:
+            states.append(True if components else _is_normalized(factor))
+    if False in states:
+        return False
+    return True if all(states) else None
+
+
 _CURRY = _ExactStage(
     check=_can_curry,
     compute=_curry,
     exact=_evaluation_is_exact,
     normalized=_curried_is_normalized,
+    yields_kernel=_leaves_a_slot,
+)
+_SLICE = _ExactStage(
+    check=_can_slice,
+    compute=_slice,
+    exact=_slice_is_exact,
+    normalized=_sliced_is_normalized,
     yields_kernel=_leaves_a_slot,
 )
 _BAYES = _ExactStage(
@@ -1123,27 +1308,6 @@ def condition_on(d: Distribution, given: Any):
     """
 
 
-def _slice_check(call: BoundCall, result: OutputSpec | None) -> Any:
-    """The conditioned fields leave a conditional assembled from normalized factors.
-
-    A field's slice is exact when the conditional is a product of available
-    factors and exact local conditioning operations, which graph position alone
-    does not establish.
-    """
-    d, keys = call.operands["d"], _given_keys(call.operands["given"])
-    if not isinstance(d, SupportsFactors) or isinstance(d, ConditionalDistribution) or not keys:
-        return False
-    return Feasibility(
-        False,
-        "route 'slice' declined: assembling a conditional from the factors is not implemented",
-    )
-
-
-def _slice(call: BoundCall, result: OutputSpec | None) -> Any:
-    """The conditional assembled from the factors the slice keeps."""
-    raise NotImplementedError("condition_on.slice")
-
-
 def _given_paths(d: Any, given: Any) -> tuple[str, ...]:
     """The paths *given* binds: its keys, or every component when the value is a whole draw."""
     keys = _given_keys(given)
@@ -1159,15 +1323,15 @@ def _conditioning_guard(call: BoundCall, result: OutputSpec | None) -> Any:
 def _exact_stage_by_name(call: BoundCall, result: OutputSpec | None) -> Any:
     """Selected only by name, as ``method="unnormalized"``; the exact stage alone then runs.
 
-    The exact stage is the first of currying, exact conditioning, and the
-    unnormalized conditional that applies.
+    The exact stage is the first of currying, slicing, exact conditioning, and
+    the unnormalized conditional that applies.
     """
     if call.controls["method"] != _UNNORMALIZED:
         return Feasibility(
             False, f'route {_UNNORMALIZED!r} declined: it is selected only by method="unnormalized"'
         )
     reports = []
-    for stage in (_CURRY, _EXACT_CONDITIONING, _BAYES):
+    for stage in (_CURRY, _SLICE, _EXACT_CONDITIONING, _BAYES):
         report = stage.check(call)
         if report.feasible is not False:
             return report if report.feasible is None else _PointCheck(True, exact=stage.exact(call))
@@ -1177,7 +1341,7 @@ def _exact_stage_by_name(call: BoundCall, result: OutputSpec | None) -> Any:
 
 def _exact_stage_result(call: BoundCall, result: OutputSpec | None) -> Any:
     """The result of the exact stage that applies, normalized or not."""
-    for stage in (_CURRY, _EXACT_CONDITIONING, _BAYES):
+    for stage in (_CURRY, _SLICE, _EXACT_CONDITIONING, _BAYES):
         if stage.check(call).feasible is True:
             return stage.compute(call)
     raise AssertionError("the exact stage ran with no stage that applies")
@@ -1188,7 +1352,11 @@ condition_on.register_route(
         "curry", source=RouteSource.STRUCTURAL, stage=_CURRY, registry=inference_method_registry
     )
 )
-condition_on.structural_route("slice", check=_slice_check, execute=_slice, exact=True)
+condition_on.register_route(
+    _NormalizingRoute(
+        "slice", source=RouteSource.STRUCTURAL, stage=_SLICE, registry=inference_method_registry
+    )
+)
 _exact_conditioning_route = condition_on.capability_route(
     "exact_conditioning",
     operand="d",
