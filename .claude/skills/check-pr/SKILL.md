@@ -7,8 +7,8 @@ argument-hint: [base-branch]
 
 # ProbPipe pre-PR check
 
-Check the current branch against base branch **$ARGUMENTS** (if no base is
-given, use `main`), then draft the PR body. Each step cites the document that
+Check the current branch against base branch **$ARGUMENTS**, or against `main`
+when no base is given, then draft the PR body. Each step cites the document that
 owns its rule; read that section rather than relying on memory of it.
 
 This skill changes no code. It reports findings, writes the draft body to a
@@ -23,7 +23,7 @@ git diff --name-only <base>...HEAD
 ```
 
 Note what the branch changes and which packages, design sections, and
-documents it touches. Read every changed file in full.
+documents it changes. Read every changed file in full.
 
 ## Step 2: Check the branch, the title, and the commits
 
@@ -57,11 +57,11 @@ Record each command and its counts for the test plan.
 - For each abstraction the branch adds or changes, apply the directives of
   `CONTRACTS.md` and note whether its contract is unambiguous. List each
   ambiguity and the decision that resolved it, for the contract assessment.
-- Audit each touched docstring against `CONTRACTS.md` directive 2: its Raises
+- Audit each changed docstring against `CONTRACTS.md` directive 2: its Raises
   section, its shapes, and drift from the behavior.
 - Check the CHANGELOG entry against `CONTRIBUTING.md` § Opening the PR.
-- Check that the documents a convention change touches are updated, as
-  `CONTRIBUTING.md` § Documentation requires.
+- Check that a convention change updates the documents that state the
+  convention, as `CONTRIBUTING.md` § Documentation requires.
 
 ## Step 5: Draft the PR body
 
@@ -78,10 +78,12 @@ Copy `.github/PULL_REQUEST_TEMPLATE.md` and fill each section:
 
 Write the body to a file, which `gh pr create --body-file` or
 `gh pr edit --body-file` takes, and run `scripts/ci/pr_hygiene.py` again with
-`PR_BODY="$(cat <file>)"`.
+`PR_BODY="$(cat <file>)"`. Run `scripts/design/prose.py` on the body file and on
+each changed Markdown file, and revise each candidate that breaks
+`STYLE_GUIDE.md` §10.
 
 ## Step 6: Report
 
-Present the findings, grouped as blocking (a failing test or check) and
-recommended, followed by the path of the draft body. Wait for the user before
+Present the findings in two groups, blocking and recommended, followed by the
+path of the draft body. A failing test or check is blocking. Wait for the user before
 pushing or opening the PR.

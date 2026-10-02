@@ -53,11 +53,10 @@ A few conventions keep PRs consistent; the PR template
   the affected subpackage or area.
 - **Description = final state.** The title and body describe the change as
   it stands, and are updated whenever the scope shifts during review — a
-  stale description is a review blocker. No internal process jargon
-  ("Phase 1b", plan-file references, review-round narration): an outside
-  reader must be able to follow the description on its own. Scratch planning
-  artifacts (`*_plan.md` files, references to local plan directories) never
-  land on the branch.
+  stale description is a review blocker. The PR text follows the writing
+  rules of `STYLE_GUIDE.md` §10, whose rules 9 and 10 keep it free of plan
+  labels and self-contained. Scratch planning artifacts, such as `*_plan.md`
+  files, stay off the branch.
 - **CHANGELOG** — a PR with a user-visible change adds its entry to
   `CHANGELOG.md` in the same PR, under `## [Unreleased]` and the one heading
   of its change type, such as `### Added` or `### Changed (breaking)`.
@@ -137,9 +136,9 @@ backends — see *Package Structure* below.
 
 ### Everyday commands
 
-`AGENTS.md` § Commands lists the commands for the tests, the linter, the
-formatter, the type checker, the docs build, and the design checks.
-`AGENTS.md` § Verify states how to choose and check the tests a change needs.
+`AGENTS.md` § Commands lists the everyday commands, such as those that run the
+tests, the linter, and the docs build. `AGENTS.md` § Verify states how to choose
+and check the tests a change needs.
 
 ### Test quality
 
@@ -180,22 +179,13 @@ keep their compact, hand-curated layout.
 
 ### Code comments & docstrings
 
-Comments state constraints and contracts the code cannot express — not
-the development process. Match the comment density of the surrounding
-code, and when in doubt, delete: an over-explained obvious line is worse
-than no comment.
+Comments state constraints and contracts the code cannot express. Match the
+comment density of the surrounding code, and when in doubt, delete: an
+over-explained obvious line is worse than no comment.
 
-- **No process narration.** Never record provenance in code — which PR
-  or plan phase introduced a line, which review comment prompted it
-  ("addressed in review", "previously this was..."). Such comments are
-  noise the moment the PR merges. CONTRACTS.md directive 2 states the ban
-  on citing PRs and issues in code.
-- **Describe what something *is*, not what it *isn't*.** Negative
-  documentation ("this is not a mixture") usually signals that the name
-  or design needs fixing instead.
-- **Public docstrings describe behavior and usage, not implementation
-  internals.** Internals discussion belongs on private helpers, or
-  nowhere.
+The prose of comments and docstrings follows the writing rules of
+`STYLE_GUIDE.md` §10. `CONTRACTS.md` directive 2 states what a public docstring
+documents, and it bans references to PRs and issues in code.
 
 ### Linting & pre-commit
 
@@ -219,8 +209,8 @@ files at commit time. The hooks see only the files you're
 changing, so a commit is checked without re-linting the whole tree.
 `AGENTS.md` § Commands runs the linter and the hooks over the whole tree.
 
-A full `pre-commit run --all-files` run may surface pre-existing file-hygiene nits (trailing
-whitespace, end-of-file) in files you did not touch; the fixer hooks clean those
+A full `pre-commit run --all-files` run may report pre-existing file-hygiene nits (trailing
+whitespace, end-of-file) in files you did not change; the fixer hooks clean those
 as the relevant files are next edited.
 
 **The ruff gate is blocking.** The `lint & format` CI job runs `ruff check .`
@@ -241,7 +231,7 @@ to match CI (`pyright[nodejs]==<version from ci.yml>`) if you need exact
 parity.
 
 Like ruff, **pyright is advisory in CI for now** — the `typecheck
-(advisory)` job reports type issues (and surfaces the count in the run's
+(advisory)` job reports type issues (and shows the count in the run's
 job summary) but does not gate merges. The source carries a type-debt
 baseline (much of it noise from JAX/TFP untyped attributes), so enforcing
 immediately would block unrelated work. The plan is to burn the baseline
@@ -250,7 +240,7 @@ gate blocking. New code should be clean under the current `basic` mode
 where practical.
 
 ProbPipe ships a `py.typed` marker, so the package's annotations are
-consumed by downstream users' type checkers — keeping the public surface
+consumed by downstream users' type checkers — keeping the public API
 well-typed is user-facing quality, not just an internal nicety.
 
 ### Documentation
@@ -264,6 +254,17 @@ docstrings, the user-guide notebooks, README / `docs/index.md`, the
 CHANGELOG, and STYLE_GUIDE.md / CONTRIBUTING.md when conventions change.
 Examples and notebooks show idiomatic usage — never add a compat shim to
 keep an example running against an old API.
+
+The prose of the docs follows the writing rules of `STYLE_GUIDE.md` §10, and
+each notebook follows three more:
+
+1. **Labeled output:** every printed line names what it shows, as
+   `print("mean:", value)` does, or each value gets a cell or a table row of
+   its own.
+2. **Public names:** output uses public names and says what each number means,
+   such as a level's size printed as `levels={'school': 8}`.
+3. **No design citations:** a notebook for users cites no section of `design/`
+   and no decision identifier, except where it reports a bug against the design.
 
 ### Prefect orchestration
 

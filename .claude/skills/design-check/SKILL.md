@@ -1,23 +1,23 @@
 ---
 name: design-check
-description: Check the design sections a ProbPipe change touches against the code and the design's conventions, with scripts/design/design_blocks.py, the conformance tests, and the ledger. Use when a change edits design/ or a module that realizes a design section.
+description: Check the design sections a ProbPipe change edits or realizes against the code and the design's conventions, with scripts/design/design_blocks.py, the conformance tests, and the ledger. Use when a change edits design/ or a module that realizes a design section.
 allowed-tools: Read Grep Glob Bash(git *) Bash(uv run *) Bash(python3 *)
 argument-hint: [base-branch or section ids]
 ---
 
 # ProbPipe design check
 
-Check the design sections that a change touches. **$ARGUMENTS** is a base
+Check the design sections that a change edits or realizes. **$ARGUMENTS** is a base
 branch (default `main`) or a list of section ids, such as `III.7 VI.3`.
 
 This check is read-only: it reports findings and edits nothing.
 
-## Step 1: Find the touched sections
+## Step 1: Find the sections
 
-- For a change to `design/`, a touched section is one whose text the diff
-  changes: the nearest `## <id> — ` heading above each hunk of
-  `git diff -U0 <base>...HEAD -- design/`.
-- For a change to `probpipe/`, the touched sections are those that
+- A change to `design/` edits each section whose text a hunk of
+  `git diff -U0 <base>...HEAD -- design/` changes, and that section is the
+  nearest `## <id> — ` heading above the hunk.
+- A change to `probpipe/` realizes the sections that
   `design/package-structure.md` § The tree lists beside each changed module.
 
 ## Step 2: Compare each section's declarations with the code
@@ -50,9 +50,16 @@ make into `design/`.
 
 ## Step 4: Check the design's conventions
 
-Read `design/README.md` § Conventions and check each touched section against
+Read `design/README.md` § Conventions and check each section of Step 1 against
 it, and check that each term `design/glossary.md` defines keeps its defined
-sense.
+sense. Then run the prose checker on the changed design files:
+
+```
+uv run python scripts/design/prose.py design/<file>.md ...
+```
+
+It prints candidates, not verdicts: judge each one against `STYLE_GUIDE.md` §10
+and `design/README.md` § Conventions, and report the ones that hold.
 
 ## Step 5: Report
 

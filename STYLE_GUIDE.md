@@ -1,6 +1,6 @@
 # ProbPipe Style Guide
 
-This document defines the coding conventions for the ProbPipe project.
+This document defines the coding and writing conventions for the ProbPipe project.
 It is intended for contributors and AI assistants working on the codebase.
 
 > **Spelling:** Always write **ProbPipe** — not "probpipe", "prob-pipe",
@@ -135,8 +135,8 @@ definition site.
   `EmpiricalDistribution`, `BootstrapReplicateDistribution`.
 - **Base / mixin classes:** `Distribution`, `NumericDistribution`,
   `TFPDistribution`, `RandomFunction`.
-- **View classes:** end in "View" — `FieldView` (a distribution's field view,
-  `d[path]`), `DiagnosticsView` (the read-only accessor `Distribution.diagnostics`).
+- **View classes:** end in "View" — `FieldView` (the field view `d[path]`),
+  `DiagnosticsView` (the accessor `Distribution.diagnostics`).
 - **Private helper classes:** Leading underscore — `_LinearMapGRF`, `_ShiftedGRF`.
 
 ### 1.6 Modules
@@ -160,7 +160,7 @@ nutpie_nuts, cmdstan_nuts, pymc_nuts, pymc_advi
 ```
 
 Method classes are CamelCase: ``TFPNutsMethod``, ``CmdStanNutsMethod``,
-``PyMCNutsMethod``.  Factory functions that return parameterized instances
+``PyMCNutsMethod``. Factory functions that return parameterized instances
 (e.g., ``TFPNutsMethod() -> _TFPGradientMethod``) use the same naming.
 
 ### 1.8 Workflow option namespace
@@ -277,8 +277,8 @@ Iteration visits views of the laws along the leading axis.
 A new `Distribution` subclass defines no `__iter__`.
 The regression test in `tests/core/test_iteration_protocol.py` enforces
 this rule across the user-constructible distribution classes, such as
-`Normal`, `KDEDistribution`, `BootstrapDistribution`, and
-`MinibatchedDistribution`. A lifted call's result is an
+`Normal`, `KDEDistribution`, and `MinibatchedDistribution`. A lifted call's
+result is an
 `EmpiricalDistribution`, which the test covers with the others.
 
 ### 1.12 Naming accuracy
@@ -297,9 +297,9 @@ uses:
   vocabulary.
 - **Symmetry.** Paired APIs get symmetric names — e.g.,
   `NumericRecord.to_vector` / `NumericRecord.from_vector`.
-- **Rename sweeps are complete.** Renaming a symbol includes every
-  analogous symbol (a renamed attribute renames its `with_*` method too),
-  the test files named after the old symbol, and the docs that mention it.
+- **Rename sweeps are complete.** A rename covers every analogous symbol,
+  such as the `with_*` method of a renamed attribute. It also covers the test
+  files named after the old symbol and the docs that mention it.
 
 ---
 
@@ -366,7 +366,7 @@ factor implementation off the foundational class, it is private.*
 ## 3. Docstring Conventions
 
 Use **NumPy-style** docstrings with `Parameters`, `Returns`, and `Raises`
-sections as needed.
+sections as needed. Their prose follows the writing rules of §10.
 
 ### 3.1 Module docstrings
 
@@ -549,7 +549,7 @@ Use modern Python 3.12+ syntax everywhere:
 | `str \| None`        | `Optional[str]`         |
 | `X \| Y`             | `Union[X, Y]`           |
 
-Type aliases live in `probpipe/custom_types.py`:
+Type aliases are defined in `probpipe/custom_types.py`:
 
 ```python
 type Array = jnp.ndarray
@@ -596,8 +596,7 @@ The private helper modules (`_array_utils.py`, `_dtype.py`, `_weights.py`)
 import only `custom_types` and each other, so every package may import them.
 
 `values/_function_base.py` owns `Function` and `FunctionSpec`, and `functions/`
-owns the engine: binding, planning, broadcasting, sweeping, RNG, execution,
-replay, and result wrapping. The base never imports the engine:
+owns the engine, from binding through result wrapping. The base never imports the engine:
 `install_call_engine` installs it when `functions/_function.py` is imported.
 The pure Python binding helpers are in `values/_binding.py`, so raw evaluation
 works without the engine. `functions/__init__.py` resolves its exports lazily.
@@ -611,12 +610,13 @@ works without the engine. `functions/__init__.py` resolves its exports lazily.
 >   `iterate`, `with_conversion`, and `with_resampling` build `Function`s over
 >   distributions, and their placement is an open point of
 >   `design/package-structure.md`.
-> - `core/` → `families/` (a lazy import inside `core/_fingerprint.py`, which
->   fingerprints a `KDEDistribution`)
+> - `core/` → `families/`: the function of `core/_fingerprint.py` that
+>   fingerprints a `KDEDistribution` imports the class lazily.
 > - `distributions/` → `diagnostics.views` (lazy import inside
 >   `Distribution.diagnostics` to construct the read-only diagnostics accessor)
-> - `diagnostics/` → `inference/` (lazy imports of the chain helpers of
->   `inference/_approximate_distribution.py` and `inference/_minibatch.py`)
+> - `diagnostics/` → `inference/`: four diagnostics modules import private
+>   helpers of `inference/` lazily, such as the chain helpers of
+>   `inference/_approximate_distribution.py`.
 >
 > A new reverse edge needs a maintainer's agreement first, and a lazy
 > (in-function) import keeps it from creating a cycle at module load time.
@@ -762,7 +762,7 @@ bugs; too tight is flaky on other platforms.
 ### 9.1 `__all__` exports
 
 Every public module defines `__all__`. Package `__init__.py` files
-aggregate exports from private submodules.  Private implementation
+aggregate exports from private submodules. Private implementation
 modules (`_*.py`) whose symbols are re-exported through the package
 `__init__.py` are exempt.
 
@@ -803,3 +803,48 @@ if not isinstance(dist, SupportsMean):
         f"it must implement the SupportsMean protocol"
     )
 ```
+
+---
+
+## 10. Writing
+
+These rules govern the prose of the repository: docstrings and comments, the
+documentation and `design/`, and PR and issue text. `scripts/design/prose.py`
+lists the places that may break the rules a script can detect, for a reader to
+judge.
+
+1. **One claim per sentence.** Write declarative sentences that each make one
+   claim. Connect clauses with a word, such as *therefore*, *which*, or
+   *because*, rather than with an appositive comma. A parenthetical is a short
+   gloss or a citation. Use em-dashes sparingly, and never two in one sentence.
+2. **State rules positively.** Say what a thing is. Cut a contrast that only
+   says what a thing is not, and cut historical asides.
+3. **Cut what adds nothing.** Cut each clause that adds nothing, and prefer the
+   plain statement to a compressed parallel one.
+4. **Justify truly.** A justification implies the rule it justifies.
+5. **Format lists.** Where a list illustrates, give two or three examples.
+   Three or more parallel items become a numbered or bulleted list with a colon
+   gloss for each.
+6. **Use plain words.** Prefer plain words to metaphor and jargon, and use none
+   of these as a figure of speech:
+   - words and phrases: "surface" for an API, "load-bearing", "machinery",
+     "escape hatch", "door", "hook" unless it is a literal callback,
+     "plumbing", "under the hood", "sugar", "elide", "knob", "dial", "seams",
+     "fine print", "story", and "picture";
+   - vague verbs: "reach", "touch", "hand back", "walk", "live", "ride",
+     "land", and "sit".
+
+   Use a generic word only in its literal sense, so "shape" is an array shape.
+   Use a term that `design/glossary.md` defines only in that sense, so a "path"
+   is a tree address.
+7. **Name exactly.** Use no intensifier: "precisely", "deliberately",
+   "genuinely", "of course", and "exactly" outside its mathematical sense. Name
+   attributes, methods, and APIs exactly, and let each relational noun name its
+   object.
+8. **State each rule once.** State a rule in the section that owns it, and
+   point to that section from every other place.
+9. **Name things by behavior.** Code, comments, tests, and PR text name each
+   thing by its behavior, and never by a development-plan label: a phase, a
+   tier, a wave, or a stage letter.
+10. **Keep PR and issue text self-contained.** Motivate each change from the
+    repository's code, merged PRs, `design/`, and open issues.

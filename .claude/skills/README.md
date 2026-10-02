@@ -124,7 +124,7 @@ Runs the pre-PR procedure on the current branch and drafts the PR body.
 - Checks the branch, the title, and the commits against `CONTRIBUTING.md`, with
   `scripts/ci/pr_hygiene.py`
 - Runs the verification steps of `AGENTS.md` § Verify
-- Audits the touched contracts and docstrings against `CONTRACTS.md`
+- Audits the changed contracts and docstrings against `CONTRACTS.md`
 - Drafts the body from `.github/PULL_REQUEST_TEMPLATE.md`, with the contract
   assessment and the test plan filled in, and writes it to a file
 
@@ -140,18 +140,19 @@ Runs the pre-PR procedure on the current branch and drafts the PR body.
 
 ### `/design-check [base-branch or section ids]`
 
-Checks the design sections a change touches against the code and the design's
-conventions.
+Checks the design sections a change edits or realizes against the code and the
+design's conventions.
 
 **When to use:** When a change edits `design/` or a module that realizes a
 design section.
 
 **What it does:**
-- Finds the touched sections from the diff, or takes them as arguments
+- Finds the sections from the diff, or takes them as arguments
 - Runs `scripts/design/design_blocks.py` `list` and `check` on them, and the
   four conformance tests
 - Runs `scripts/design/ledger.py` and `tests/docs/`
-- Checks the touched sections against `design/README.md` § Conventions
+- Checks those sections against `design/README.md` § Conventions, and runs
+  `scripts/design/prose.py` on the changed design files
 
 **Usage:**
 ```

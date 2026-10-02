@@ -34,7 +34,7 @@ knowledge of ProbPipe conventions, as they may have changed.
 - `STYLE_GUIDE.md` — naming, imports, types, protocols, testing, module layout
 - `CONTRIBUTING.md` — the PR workflow, test quality, documentation, and CI
 - `design/README.md`, `design/glossary.md`, and the design section of each
-  abstraction the PR touches, which `design/package-structure.md` § The tree
+  abstraction the PR changes, which `design/package-structure.md` § The tree
   lists beside each module
 
 ### 1b. Fetch the PR
@@ -55,7 +55,7 @@ already available in the codebase. Scan these areas for classes, utilities, and
 patterns that the PR's code should be using rather than reimplementing:
 
 - `probpipe/__init__.py` — the public API
-- the packages of `design/package-structure.md` § The tree that the PR touches
+- the packages of `design/package-structure.md` § The tree that the PR changes
 - Any utility modules (`_weights.py`, `_array_utils.py`, `_dtype.py`, etc.)
 
 ## Step 2: Run the review checklist
@@ -67,7 +67,7 @@ that section as it stands at the base ref.
 
 ### 2.1 ProbPipe philosophy and conventions
 
-- **Design** — each touched abstraction follows its design section, and the
+- **Design** — each changed abstraction follows its design section, and the
   principles of `design/01-design-principles.md`. Classify a disagreement as
   `CONTRACTS.md` directive 5 does: the design decides.
 - **Contracts** — the directives of `CONTRACTS.md`.
@@ -137,7 +137,7 @@ documentation:
 - `# TODO` or `# FIXME` comments that were not in the original code and seem
   like AI planning artifacts rather than genuine action items
 - Comments and docstrings that break `CONTRIBUTING.md` § Code comments &
-  docstrings, such as process narration or negative documentation
+  docstrings or the writing rules of `STYLE_GUIDE.md` §10
 
 ### 2.6 General concerns
 

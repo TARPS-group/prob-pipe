@@ -24,7 +24,7 @@ unambiguous, and record each decision that resolved an ambiguity
 <!--
 What verifies the change?
 - New tests added (pytest paths)
-- Existing tests touched
+- Existing tests changed
 - Manual verification steps (if applicable)
 - For docs PRs: `mkdocs serve` checked locally
 -->
@@ -53,7 +53,7 @@ Tick what applies; leave blank if not relevant.
 
 The contract items follow the directives of CONTRACTS.md:
 
-- [ ] Directive 1: the contract of every touched abstraction was clear before coding, and the contract assessment records each ambiguity resolved
+- [ ] Directive 1: the contract of every changed abstraction was clear before coding, and the contract assessment records each ambiguity resolved
 - [ ] Directive 2: new and changed contracts are documented in full in their docstrings (types, shapes, orderings, raises, invariants), and each docstring opens with the API
 - [ ] Directive 3: the code obeys each documented contract, tests assert it (shapes, orderings, and error cases), and names follow `design/glossary.md` § Canonical names
 - [ ] Directive 4: a contract found wrong, missing, or unclear in `design/` or a docstring is fixed or raised with the maintainer

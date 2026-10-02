@@ -1000,6 +1000,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Writing rules and a prose checker.** `STYLE_GUIDE.md` §10 states the
+  writing rules for docstrings, comments, the documentation, `design/`, and PR
+  and issue text, and `design/README.md` § Conventions adds two rules for the
+  design reference alone. `CONTRIBUTING.md` § Documentation states the rules for
+  notebook output. `scripts/design/prose.py` lists the candidate breaches that
+  a script can detect, for a reader to judge, and exits with status 0 unless
+  `--strict` is given.
 - **The `check-pr` and `design-check` skills.** `check-pr` runs the pre-PR
   checks of a branch and drafts its PR body from the template. `design-check`
   compares the design sections a change touches with the code, through

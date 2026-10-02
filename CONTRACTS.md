@@ -14,15 +14,15 @@ Write every docstring as reference text for a user.
 ## Standing directives (apply to every PR)
 
 1. **Contract-first — clarify before you implement.** Before writing code, make
-   the contract of every abstraction you touch clear in your own understanding.
+   the contract of every abstraction you change clear in your own understanding.
    Its design section states the target contract, and its docstrings state the
    contract as implemented. If they leave **any** part ambiguous — shape
    conventions, single-vs-batched behavior, canonical orderings, error/raise
    cases, return types, invariants — **resolve the ambiguity before coding**: ask
    the maintainer, or pin it explicitly, and record the decision in the PR. Do
-   not guess and do not let an unclear contract reach the code.
+   not guess and do not let an unclear contract into the code.
 
-2. **Document the contract fully, where it lives.** When you implement an abstraction, document its
+2. **Document the contract fully, in the docstring.** When you implement an abstraction, document its
    contract *completely* in the **docstring** (NumPy style: Parameters / Returns / Raises). The
    docstring must state the *precise* contract, not a vague summary:
    - exact return type and **shape**, distinguishing single vs batched
@@ -33,28 +33,27 @@ Write every docstring as reference text for a user.
 
    **Lead with the contract; defer the rationale.** The opening of every docstring — the one-line
    summary and the first paragraph(s) — must describe the **API**: what the abstraction *is*, what it
-   accepts and returns, and how a caller uses it. Write it as precise, clear reference text for a
-   *user*, not as a design log: prefer plain language, define or avoid jargon, and state the contract
-   directly. Keep design reasoning, motivation, history, and implementation trade-offs *out* of the
+   accepts and returns, and how a caller uses it. Write it as reference text for a *user*, by the
+   writing rules of `STYLE_GUIDE.md` §10, and state the contract directly. Keep design reasoning, motivation, history, and implementation trade-offs *out* of the
    opening; when including them is justified, put them **later** — typically in a NumPy-style
-   **Notes** section (or an explicitly labelled interim-detail note, per directive 5). A reader
+   **Notes** section, or in an interim-detail note labeled as directive 5 describes. A reader
    skimming the first lines should learn how to *use* the abstraction correctly, not why it was built
    that way.
 
    **Code documentation must stand on its own — no references to transient artifacts.** Do not cite
    PRs, issues, tracking numbers, or other out-of-band discussion in docstrings or code comments.
    The contract is whatever the docstring states; a reader should never need to open a PR or issue to
-   understand it. (Such references belong in commit messages and PR descriptions, not the code.)
+   understand it. Such references belong in commit messages and PR descriptions.
    The `no-issue-numbers` pre-commit hook rejects an issue or PR number in `probpipe/`.
 
 3. **Analyze clarity; make the code obey the contract.** As part of every PR:
-   - explicitly assess whether the contracts you touched are unambiguous, and call out any that
+   - explicitly assess whether the contracts you changed are unambiguous, and call out any that
      are not;
    - verify the **code obeys the documented contract** — there must be no drift between docstring
-     and behavior — and add tests that *assert the contract* (shapes, orderings, and error cases,
-     not just happy-path values);
+     and behavior — and add tests that *assert the contract*: its shapes, orderings, and error
+     cases, beyond the happy-path values;
    - use **consistent variable names** for the same concept across the codebase: the names of
-     `design/glossary.md` § Canonical names. Renaming for consistency within the files you touch
+     `design/glossary.md` § Canonical names. Renaming for consistency within the files you change
      is in scope; flag larger inconsistencies you cannot fix within scope. A new contract that
      introduces a recurring parameter adds its name to that table.
 
@@ -64,18 +63,21 @@ Write every docstring as reference text for a user.
 
 5. **Document to the design's target, not the stale status quo.** The design reference in
    `design/` describes the target state, and most PRs move the code only part of the way toward
-   it. When you implement or touch an abstraction, its docstrings and naming must describe the
+   it. When you implement or change an abstraction, its docstrings and naming must describe the
    **design's target contract and terminology**, *not* the current behavior of code elsewhere in
    the repo that the design will change. Stale neighboring code is not the reference; the design is.
    - **Precedence.** Where `design/` disagrees with the code or with a contributor document, the
      design decides, and the PR brings the code toward the design without asking. Ask the
-     maintainer when two parts of the design disagree, when the design leaves a real choice open,
-     when the change names a public API, or when the change would amend the design.
+     maintainer in four cases:
+     - a conflict: two parts of the design disagree;
+     - a gap: the design leaves a real choice open;
+     - a public name: the change names a public API;
+     - an amendment: the change would amend the design.
    - Where your change must temporarily coexist with or delegate to not-yet-migrated code, you
      *may* note that as an explicit, clearly-labeled **interim implementation detail** — but never
      let it define the contract or blur a distinction the design draws.
    - In particular, keep the design's **vocabulary distinctions** intact even before the code that
-     enforces them lands. *Example:* `to_vector` / `from_vector` are **value**
+     enforces them exists. *Example:* `to_vector` / `from_vector` are **value**
      operations — a spec describes structure and does not depend on the value
      type, so it carries neither. `to_vector` is `NumericRecord.to_vector` /
      `NumericRecordBatch.to_vector`; `from_vector(label, spec, vec)` is the

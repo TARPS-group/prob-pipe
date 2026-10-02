@@ -59,3 +59,16 @@ Every numbered section in Parts II through VII leads with a **Contract** subsect
 Class and method names are set in code font. Design principles are cited only in the **Rationale** subsections, by identifier and short name, drawing on the *core principles* (the C-series), *derived principles* (the D-series), and *boundary principles* (the B-series) of Part I. For example, the fourth core principle would be cited as `C4 – Function lifting`. An abstraction is referred to by its class name rather than by the underlying mathematical concept, except in mathematical statements. For example, `ConditionalDistribution` is used throughout, with *kernel* reserved for mathematical statements such as its definition as a probability kernel `K : S → P(T)`.
 
 A code comment states what the signature does not, for example a default or a constraint, and never the sentence above the block. A **Rationale** names the principle and the reason; it never restates the contract.
+
+#### Prose
+
+The writing rules of `STYLE_GUIDE.md` §10 govern the prose of the reference, and two more apply to the reference alone:
+
+1. **Deliberate forward references:** a section refers to a later section only where the reference is deliberate.
+2. **Mechanisms in order:** a paragraph that defines a mechanism gives parallel cases as a numbered list and follows this order:
+   1. what the mechanism is;
+   2. how it is addressed;
+   3. its cases;
+   4. what raises;
+   5. any ordering;
+   6. a worked example.
