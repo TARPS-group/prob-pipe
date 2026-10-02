@@ -155,8 +155,19 @@ A function has three independent names: its own label, its result's
 defaults to the initial function name. `with_name` changes only the function
 label; results keep their output name, and provenance identifies the function
 actually called. Function labels do not participate in `FunctionSpec` matching.
-This naming rule also applies to operation wrappers: `sample(law)` has the
-label `sample`, while the law's component names and the draw levels are retained.
+In B1 this naming rule applies to every operation implemented as a Function:
+
+| Call | Result label |
+| --- | --- |
+| `sample(law)` | `sample` |
+| `condition_on(model, ...)` | `condition_on` |
+| `from_distribution(law, Target)` | `from_distribution` |
+| `mean(law)` | `mean` |
+
+These are object labels: component names, record fields, and existing batch
+levels are retained. For example, conditioning a model named `params` produces
+a law labeled `condition_on`, whose unobserved components keep their names.
+Operation-specific result rules from design VI.0 are not implemented in B1.
 Use `result.with_name("draws")` to label a result explicitly, or `apply` to
 preserve the raw implementation's name and identity.
 

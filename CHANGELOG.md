@@ -23,8 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `with_name`. Arrays remain arrays and single-field records remain records.
   Type holes and symbolic output dimensions are completed per call. Existing
   tracked returns are copied and relabeled by `__call__`; `apply` preserves them.
-  This includes operation wrappers: `sample(law)` uses the label `sample`,
-  independently of the law's component names and the result's batch levels.
+  This includes every Function-based operation: `sample`, `condition_on`,
+  `from_distribution`, and `mean` label their results with those operation names,
+  replacing implementation labels such as `params` or the source law's name.
+  Component names, record fields, and existing batch levels are retained;
+  `apply` preserves implementation labels. This is B1's naming behavior pending
+  operation-specific result rules.
   `Function`/`FunctionSpec` live in `values/`, and workflow helpers move from
   `core/_workflow_*` into `functions/`; old imports have no shims. Declaration
   fingerprints and replay anchors change, so regenerate persisted artifacts.

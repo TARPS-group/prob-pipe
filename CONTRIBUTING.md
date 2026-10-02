@@ -513,14 +513,19 @@ uv build packaging/probpipe   # probpipe (metapackage)
    authoritative InputSpec and OutputSpec declarations. A distribution takes its name
    as the required first argument (`Normal("x", 0.0, 1.0)`), as `Record`
    does; the classes the design retires, such as `ProductDistribution`, still
-   take it as a keyword. Names are set at construction and preserved by every transform;
-   only `with_name` replaces them. `ProductDistribution` validates that each
+   take it as a keyword. Structural transforms preserve names, and `with_name`
+   explicitly relabels a copy. A Function call creates an independent result
+   under `output_name`, including every Function-based operation in B1:
+   `sample`, `condition_on`, `from_distribution`, and `mean` use those labels.
+   Component names, record fields, and existing batch levels are separate from
+   the result label and remain unchanged. `ProductDistribution` validates that each
    component distribution's `name` matches its keyword key (e.g.,
    `ProductDistribution(x=Normal("x", 0, 1))`).  `Record` and
    `NumericRecord` take the name as the required first positional
-   argument (`Record(name, ...)`); an operation that produces a record
-   supplies a meaningful name — the producing distribution's or model's
-   name, or a domain term such as `"data"` / `"observed"`. A nested
+   argument (`Record(name, ...)`); raw operation implementations may supply
+   domain names such as the model's name or `"data"` / `"observed"`.
+   `apply` preserves these implementation labels; ordinary operation calls use
+   `output_name` until operation-specific result rules are implemented. A nested
    record view takes its field key as its name at construction.
 7. **Every return is wrapped at its own kind** — a `@function` return becomes
    the tracked term of the kind it already is, named by `output_name`.

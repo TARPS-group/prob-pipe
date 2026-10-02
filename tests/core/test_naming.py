@@ -30,6 +30,8 @@ from probpipe import (
 )
 from probpipe.core._specs import NumericRecordSpec
 from probpipe.core.ops import (
+    condition_on,
+    from_distribution,
     log_prob,
     mean,
     prob,
@@ -201,9 +203,47 @@ class TestADerivedNameSaysSo:
 
 
 class TestAnOperationNamesItsResult:
-    """Sampling retains supplied names; summaries and densities derive theirs."""
+    """Operation calls use output_name; apply preserves implementation labels."""
 
     LAW = Normal("height", 0.0, 1.0)
+
+    def test_record_mean_uses_operation_label_and_keeps_fields(self, full_provenance_mode):
+        law = ProductDistribution(x=Normal("x", 0.0, 1.0), y=Normal("y", 2.0, 3.0), name="params")
+        raw = mean.apply(law)
+        result = mean(law)
+        assert raw.name == law.name == "params"
+        assert result.name == mean.output_name == "mean"
+        assert result.fields == ("x", "y")
+        assert float(result["x"]) == 0.0
+        assert float(result["y"]) == 2.0
+        assert result.provenance.parents[0].parent is mean
+        assert result.provenance.parents[1].parent is law
+
+    def test_conditioning_uses_operation_label_and_keeps_posterior(self, full_provenance_mode):
+        law = ProductDistribution(x=Normal("x", 0.0, 1.0), y=Normal("y", 2.0, 3.0), name="params")
+        raw = condition_on.apply(law, x=1.0)
+        result = condition_on(law, x=1.0)
+        assert raw.name == law.name == "params"
+        assert law.fields == ("x", "y")
+        assert result.name == condition_on.output_name == "condition_on"
+        assert result.fields == ("y",)
+        assert float(mean.apply(result)["y"]) == 2.0
+        assert float(variance.apply(result)["y"]) == 9.0
+        assert result.provenance.parents[0].parent is condition_on
+        assert result.provenance.parents[1].parent is law
+
+    def test_conversion_uses_operation_label_and_keeps_law(self, full_provenance_mode):
+        law = Normal("theta", 2.0, 3.0)
+        raw = from_distribution.apply(law, Normal)
+        result = from_distribution(law, Normal)
+        assert raw.name == law.name == "theta"
+        assert result is not law
+        assert result.name == from_distribution.output_name == "from_distribution"
+        assert result.fields == ("theta",)
+        assert float(mean.apply(result)) == 2.0
+        assert float(variance.apply(result)) == 9.0
+        assert result.provenance.parents[0].parent is from_distribution
+        assert result.provenance.parents[1].parent is law
 
     @pytest.mark.parametrize(
         ("label", "compute"),
