@@ -184,6 +184,10 @@ def _copy_result_term(value: TrackedTerm, *, output_spec: OutputSpec | None = No
         if isinstance(spec, FunctionSpec) and isinstance(clone, Function):
             from ..values._function_base import _validate_function_declarations
 
+            spec = FunctionSpec(
+                input_spec=clone.input_spec if spec.input_spec is None else spec.input_spec,
+                output_spec=clone.output_spec if spec.output_spec is None else spec.output_spec,
+            )
             _validate_function_declarations(
                 function_name=clone.name,
                 signature=clone.signature,

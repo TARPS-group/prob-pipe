@@ -367,6 +367,39 @@ class TestLiftedInputDeclarations:
 
 
 class TestCompletedOutputDeclarations:
+    @pytest.mark.parametrize("mode", ["plain", "sweep", "broadcast"])
+    @pytest.mark.parametrize("declared_side", [None, "input", "output"])
+    def test_returned_function_preserves_unspecified_declarations(self, mode, declared_side):
+        inputs = InputSpec(x=NumericArraySpec(()))
+        outputs = OutputSpec(value=NumericArraySpec((), support=positive))
+        inner = Function("inner", lambda x: x, input_spec=inputs, output_spec=outputs)
+        declaration = FunctionSpec(
+            input_spec=inputs if declared_side == "input" else None,
+            output_spec=outputs if declared_side == "output" else None,
+        )
+        factory = Function(
+            "outer", lambda row: inner, output_spec=declaration, dispatch="sequential"
+        )
+        if mode == "plain":
+            returned = [factory(0)]
+        elif mode == "sweep":
+            rows = NumericArrayBatch(
+                "rows", jnp.arange(2.0), "row", element_spec=NumericArraySpec(())
+            )
+            returned = list(factory(rows))
+        else:
+            returned = factory(EmpiricalDistribution("row", jnp.arange(2.0))).items
+        for result in returned:
+            assert result is not inner
+            assert result.spec == inner.spec
+            with pytest.raises(ValueError):
+                result.apply(jnp.ones(2))
+            with pytest.raises(ValueError, match="support positive"):
+                result.apply(-1.0)
+        assert inner.input_spec is inputs
+        assert inner.output_spec is outputs
+        assert factory.apply(0) is inner
+
     @pytest.fixture
     def rows(self):
         return NumericRecordBatch(
