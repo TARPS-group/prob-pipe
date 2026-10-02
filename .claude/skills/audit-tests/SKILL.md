@@ -11,7 +11,7 @@ argument-hint: [test-file-or-pattern]
 Audit the test suite for quality, correctness, and completeness.
 
 **Scope:** If `$ARGUMENTS` is provided, audit only the specified files or
-patterns (e.g., `tests/test_continuous.py`, `tests/test_joint*`). Otherwise,
+patterns (e.g., `tests/families/test_continuous.py`, `tests/families/test_*`). Otherwise,
 audit the entire `tests/` directory.
 
 ## Instructions

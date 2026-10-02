@@ -1,8 +1,9 @@
 """Reading a tracked term does not modify it.
 
-`design/05-operations.md` §V.1 promises an implementer's object is never
-modified. A term that memoises a derived value fills a memo container assigned
-at construction, so the attributes the term was built with stay untouched.
+Principle C2 of `design/01-design-principles.md` promises that an object is
+never modified in place, and design II.4 makes every tracked term immutable. A
+term that memoises a derived value fills a memo container of its own, so the
+attributes the term was built with stay untouched.
 
 The rest of the class is an invariant rather than a regression: those terms wrote
 their fields before the object reached a caller, which is construction by another

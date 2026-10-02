@@ -308,10 +308,9 @@ def _record_check_in_annotations(
 
     Mutates ``distribution._annotations`` in place. This is the
     documented exception to ``Distribution`` immutability (see
-    :attr:`Distribution.annotations` and ``CONTRIBUTING.md`` §"Design
-    principles" §1) — diagnostic ops attach results under named
-    groups rather than returning renamed clones, which would break
-    source/identity tracking.
+    :attr:`Distribution.annotations` and design II.4) — diagnostic ops
+    attach results under named groups rather than returning renamed
+    clones, which would break source/identity tracking.
 
     Encoding:
 

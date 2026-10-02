@@ -128,7 +128,7 @@ if it were user-guide reference text.
 | independent-draw shape prefix for `sample` | `sample_shape` |
 | a distribution's event declaration | `event_spec` (an `OutputSpec`) |
 | PRNG key | `key` |
-| a tracked object's own identity name (the required first arg of `Record` / a distribution) | `name` |
+| a tracked object's own identity (the required first arg of `Record` / a distribution) | `label` |
 | a field key within a tree / the name being assigned to a field | `field_name` / `key` |
 | attributes an immutable class keeps out of its state round-trip (memos) | `_transient_state` |
 | attributes an immutable class restores into their own container (stores written in place) | `_decoupled_state` |
@@ -142,4 +142,4 @@ if it were user-guide reference text.
 - [ ] Docstrings describe the plan's **target** contract/terminology, not stale neighboring code; any temporary coexistence is labeled as an interim implementation detail.
 - [ ] Variable names consistent with the canonical table above.
 - [ ] This `CONTRACTS.md` index updated if a cross-cutting contract changed.
-- [ ] `ruff format` and `ruff check` are clean (both are **blocking** in CI).
+- [ ] `ruff format` and `ruff check` are clean (CONTRIBUTING.md § Linting & pre-commit).

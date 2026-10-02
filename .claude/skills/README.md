@@ -67,8 +67,8 @@ refactor, or to audit specific test files before a release.
 **Usage:**
 ```
 /audit-tests                          # audits the entire test suite
-/audit-tests tests/test_continuous.py # audits a specific file
-/audit-tests tests/test_joint*        # audits by pattern
+/audit-tests tests/families/test_continuous.py # audits a specific file
+/audit-tests tests/families/test_*            # audits by pattern
 ```
 
 **Behavior:** Claude reads both the test files and the source code they

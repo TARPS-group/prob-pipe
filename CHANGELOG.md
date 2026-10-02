@@ -690,6 +690,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ran one chain, so a fit under the default budget had no R-hat. They now run
   four, as `cmdstan_nuts`, `pymc_nuts`, and `nutpie_nuts` do. Pass
   `method_options={"num_chains": 1}` for one chain.
+- **The rule documents cite only what exists.** `STYLE_GUIDE.md`,
+  `CONTRIBUTING.md`, and `CONTRACTS.md` drop the packages, modules, and classes
+  the code no longer has, and `tests/docs/test_rule_documents.py` checks that
+  each path, name, link, and section pointer they cite exists. `CONTRIBUTING.md`
+  replaces its architecture overview with a pointer to `design/`, states the
+  ruff gate once, and asks for the CHANGELOG entry in the PR that makes the
+  change.
 - **Contributors install pre-commit as a uv tool.** The hooks are installed
   with `uv tool install pre-commit` and then `pre-commit install`, replacing
   `uvx pre-commit install`: its hook called an interpreter in the uv cache, so

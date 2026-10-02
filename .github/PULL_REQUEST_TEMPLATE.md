@@ -36,10 +36,9 @@ Tick what applies; leave blank if not relevant.
 
 - [ ] Docstrings updated for changed public APIs
 - [ ] User Guide / tutorials updated where relevant
-- [ ] CHANGELOG (or release-notes entry) noted in the linked issue
+- [ ] CHANGELOG entry added in this PR for a user-visible change
 
 ## Checklist
 
 - [ ] PR title follows `<type>(<scope>): <subject>` (e.g. `refactor(core): ...`, `feat(inference): ...`)
-- [ ] At least one `area:*` label applied
 - [ ] Linked to an issue above — or N/A for a small standalone fix (see CONTRIBUTING.md)
