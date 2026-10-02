@@ -42,6 +42,14 @@ def test_a_map_pushes_a_distribution_forward():
     assert law.provenance.operation == "workflow.evaluate"
 
 
+def test_a_maps_own_sample_count_survives_evaluate():
+    """evaluate forwards a control only when its caller set it, so the map keeps its own count."""
+    double = Function("double", lambda x: 2.0 * x, n_broadcast_samples=9, dispatch="sequential")
+    with workflow_run(seed=0):
+        assert evaluate(double, Gaussian("g")).num_atoms == 9
+        assert evaluate.with_options(n_broadcast_samples=5)(double, Gaussian("g")).num_atoms == 5
+
+
 def test_the_result_takes_the_maps_output_name():
     double = Function("double", lambda x: 2.0 * x, output_label="doubled")
     with workflow_run(seed=0):

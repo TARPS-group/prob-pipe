@@ -118,8 +118,8 @@ def _lifts(f: Function, parameter: str, operand: Any) -> bool:
     return _plan.lift_at(f, parameter, operand) != "whole"
 
 
-#: The engine controls evaluate forwards to the direct call of its map, beside the
-#: rule the route selects and its exactness.
+#: The engine controls evaluate forwards to the direct call of its map when its caller
+#: set them, beside the rule the route selects and its exactness.
 _FORWARDED_CONTROLS = (
     "n_broadcast_samples",
     "dispatch",
@@ -181,18 +181,22 @@ class _EvaluationRules(_RegistryRoute):
             exact_only=exact_only,
             parameter=parameter,
             fixed_args=fixed,
-            controls=call.controls,
+            controls={**f.options, **self._forwarded_controls(call)},
         )
+
+    def _forwarded_controls(self, call: BoundCall) -> dict[str, Any]:
+        """The controls the caller set on the operation, which the call of the map takes over its own.
+
+        A control the caller left unset keeps the map's value, so a map
+        constructed with its own sample count draws that many.
+        """
+        set_controls = call.operation._options
+        return {name: set_controls[name] for name in self._forwarded if name in set_controls}
 
     def run(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Any:
         """The direct call of the map on the operand, by the rule *method* names, if any."""
         f, parameter, operand, fixed = self._values(call)
-        # An unset control is None, which would reset the map's own setting.
-        forwarded = {
-            name: call.controls[name]
-            for name in self._forwarded
-            if call.controls.get(name) is not None
-        }
+        forwarded = self._forwarded_controls(call)
         forwarded["exact_only"] = exact_only
         if method is not None:
             forwarded["method"] = method
