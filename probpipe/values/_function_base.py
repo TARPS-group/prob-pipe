@@ -648,7 +648,7 @@ def _validate_options(options: Mapping[str, Any]) -> None:
         raise TypeError("workflow_kind must be a WorkflowKind enum member")
 
 
-def _plain_call(function: Function, *args: Any, **kwargs: Any) -> Any:
+def _plain_call(function: Function, /, *args: Any, **kwargs: Any) -> Any:
     return function.apply(*args, **kwargs)
 
 
@@ -663,7 +663,9 @@ def install_call_engine(
 ) -> None:
     """Install the process's Function call engine once at package initialization.
 
-    The callable receives the Function followed by its call arguments. Before
+    The callable receives the Function as a positional-only first parameter,
+    followed by its call arguments. This keeps keyword arguments such as
+    ``function`` available to the wrapped callable. Before
     installation, calling a Function performs plain apply. Reinstalling the
     same engine is harmless; replacing it raises RuntimeError. A non-callable
     engine raises TypeError. The optional apply_scope preserves workflow RNG

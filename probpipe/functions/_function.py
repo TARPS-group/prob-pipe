@@ -738,7 +738,7 @@ def _resolve_dispatch(
         return "sequential"
 
 
-def _call_engine(function: Function, *args: Any, **kwargs: Any) -> Any:
+def _call_engine(function: Function, /, *args: Any, **kwargs: Any) -> Any:
     return _call_with_options(function, args, kwargs, _call.FunctionCallOptions())
 
 

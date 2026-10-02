@@ -19,6 +19,20 @@ from probpipe.values import _binding
 from probpipe.values._function_base import Function
 
 
+@pytest.mark.parametrize("engine", ["installed", "plain"])
+def test_function_keyword_reaches_wrapped_callable(engine, monkeypatch):
+    from probpipe.values import _function_base
+
+    if engine == "plain":
+        monkeypatch.setattr(_function_base, "_call_engine", _function_base._plain_call)
+    wrapped = Function("apply_fn", lambda function, x: function(x))
+
+    result = wrapped(function=jnp.sin, x=1.0)
+
+    assert float(result) == pytest.approx(float(jnp.sin(1.0)))
+    assert float(wrapped.apply(function=jnp.sin, x=1.0)) == pytest.approx(float(result))
+
+
 @pytest.fixture
 def add_func():
     def add(x, y):
