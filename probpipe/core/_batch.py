@@ -601,7 +601,7 @@ class Batch[E](TrackedTerm, ABC):
             )
         return self._with_level_names(renamed)
 
-    def with_label(self, label: str) -> Self:
+    def _with_label(self, label: str) -> Self:
         """Relabel the batch, which becomes the root its view labels derive from.
 
         The new label starts a new view root, so the copy selects all of
@@ -626,7 +626,7 @@ class Batch[E](TrackedTerm, ABC):
         TypeError
             If *label* is not a non-empty string.
         """
-        renamed = super().with_label(label)
+        renamed = super()._with_label(label)
         object.__setattr__(renamed, "_root_name", label)
         object.__setattr__(renamed, "_root_spec", renamed._spec)
         object.__setattr__(renamed, "_root_selection", _whole_of(renamed._spec))

@@ -291,3 +291,27 @@ def test_bindable_workflow_control_name_does_not_override():
         result = wf(x=normal, n_broadcast_samples=4)
 
     assert result.num_atoms == 5
+
+
+@pytest.mark.parametrize("entrypoint", ["constructor", "decorator", "with_options"])
+def test_max_workers_warning_points_to_the_user_call(entrypoint):
+    def identity(x):
+        return x
+
+    wrapped = Function("identity", identity)
+    frame = inspect.currentframe()
+    assert frame is not None
+    with pytest.warns(UserWarning, match="max_workers configures only") as caught:
+        if entrypoint == "constructor":
+            line = frame.f_lineno + 1
+            Function("identity", identity, max_workers=2)
+        elif entrypoint == "decorator":
+            decorate = function(max_workers=2)
+            line = frame.f_lineno + 1
+            decorate(identity)
+        else:
+            line = frame.f_lineno + 1
+            wrapped.with_options(max_workers=2)
+    assert len(caught) == 1
+    assert caught[0].filename == __file__
+    assert caught[0].lineno == line

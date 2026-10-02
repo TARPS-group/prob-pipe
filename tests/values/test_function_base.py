@@ -499,7 +499,8 @@ class TestCompletedOutputDeclarations:
         assert wrapped.apply() is value
 
     @pytest.mark.parametrize("tracked", [False, True])
-    def test_returned_function_declaration_must_match_its_signature(self, tracked):
+    @pytest.mark.parametrize("raw", [False, True])
+    def test_returned_function_declaration_must_match_its_signature(self, tracked, raw):
         def body(x):
             return x
 
@@ -507,12 +508,13 @@ class TestCompletedOutputDeclarations:
         declaration = FunctionSpec(input_spec=InputSpec(y=NumericArraySpec(())))
         factory = Function("factory", lambda: returned, output_spec=declaration)
         with pytest.raises(ValueError, match=r"input_spec slots.*signature parameters"):
-            factory()
+            (factory.apply if raw else factory)()
         if tracked:
             assert returned.input_spec is None
 
     @pytest.mark.parametrize("bound", [False, True])
-    def test_returned_function_checks_defaults_and_bindings(self, bound):
+    @pytest.mark.parametrize("raw", [False, True])
+    def test_returned_function_checks_defaults_and_bindings(self, bound, raw):
         default = jnp.ones(2)
         returned = (
             Function("inner", lambda x: x, bind={"x": default})
@@ -525,8 +527,20 @@ class TestCompletedOutputDeclarations:
             output_spec=FunctionSpec(input_spec=InputSpec(x=NumericArraySpec(()))),
         )
         with pytest.raises(ValueError, match=r"default/x|construction binding/x"):
-            factory()
+            (factory.apply if raw else factory)()
         assert returned.input_spec is None
+
+    def test_apply_validates_a_callable_without_invoking_or_wrapping_it(self):
+        def returned(*, x=1.0):
+            raise AssertionError("A return contract must not execute the callable")
+
+        factory = Function(
+            "factory",
+            lambda: returned,
+            output_spec=FunctionSpec(input_spec=InputSpec(x=NumericArraySpec(()))),
+        )
+        assert factory.apply() is returned
+        assert factory().signature == inspect.signature(returned)
 
     @pytest.mark.parametrize("dispatch", ["sequential", "thread"])
     def test_nested_lift_carries_completed_output_dimensions(self, rows, dispatch):
@@ -640,3 +654,40 @@ def test_a_returned_function_keeps_the_declarations_its_result_leaves_open(mode,
             result.apply(-1.0)
     assert inner.input_spec is inputs
     assert inner.output_spec is outputs
+
+
+@pytest.mark.parametrize("sliced", [False, True])
+def test_a_returned_batch_is_relabeled_as_the_root_of_its_views(sliced, full_provenance_mode):
+    stored = NumericArrayBatch(
+        "pts",
+        jnp.arange(6.0).reshape(2, 3),
+        ("chain", "row"),
+        axes_per_level=(1, 1),
+        element_spec=NumericArraySpec(()),
+    )
+    if sliced:
+        stored = stored[1]
+    original_label = stored.label
+    factory = Function("factory", lambda: stored, output_label="f")
+    result = factory()
+    assert result.label == "f"
+    assert result[0].label == ("f[row=0]" if sliced else "f[chain=0]")
+    if not sliced:
+        assert result[0][1].label == "f[chain=0, row=1]"
+    assert result.provenance.parents[0].parent is factory
+    assert stored.label == original_label
+    assert stored.provenance is None
+    relabeled = result.with_label("display")
+    assert relabeled[0].label.startswith("display[")
+    assert relabeled.provenance.operation == "with_label"
+    np.testing.assert_array_equal(result.values, stored.values)
+
+
+def test_a_returned_function_is_relabeled_with_its_python_names(full_provenance_mode):
+    stored = Function("inner", lambda: 1, output_label="value")
+    factory = Function("factory", lambda: stored, output_label="result")
+    result = factory()
+    assert result.label == result.__name__ == result.__qualname__ == "result"
+    assert result.output_label == "value"
+    assert result.provenance.parents[0].parent is factory
+    assert stored.label == stored.__name__ == "inner"

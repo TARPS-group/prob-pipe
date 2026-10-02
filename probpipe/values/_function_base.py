@@ -14,6 +14,7 @@ Provides:
 from __future__ import annotations
 
 import inspect
+import os
 import warnings
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager, nullcontext
@@ -44,6 +45,10 @@ if TYPE_CHECKING:
     from ..core._numeric import Numeric
     from ..core.named_tree import NamedTree
     from ..custom_types import Array
+
+
+#: A warning about a user's call skips the frames inside the package, so it points at the call.
+_WARNING_SKIP_PREFIXES = (os.path.dirname(os.path.dirname(__file__)) + os.sep,)
 
 
 @dataclass(frozen=True, init=False)
@@ -241,6 +246,19 @@ def _validate_function_output(
     spec._bind_dims_from_value(result, resolved, path)
     concrete = spec._substitute_dims(resolved)
     _validate_output_values(concrete, result, path)
+    if isinstance(concrete, FunctionSpec) and concrete.input_spec is not None and callable(result):
+        # A returned callable's signature must match the declared input slots,
+        # under apply as under a call, and checking it does not invoke it.
+        _validate_function_declarations(
+            function_name=function_name,
+            signature=(
+                result.signature
+                if isinstance(result, Function)
+                else make_signature_info(result).signature
+            ),
+            input_spec=concrete.input_spec,
+            construction_bindings=result._bind if isinstance(result, Function) else {},
+        )
     if not isinstance(actual_spec, TermSpec):
         actual_spec = RecordSpec.infer_from({"result": result}).children["result"]
     return output_spec._with_spec(_complete_output_metadata(concrete, actual_spec))
@@ -809,9 +827,9 @@ class Function(Node, TrackedTerm, Annotated):
         """
         return _check_engine(self, *args, **kwargs)
 
-    def with_label(self, label: str) -> Self:
-        """Relabel the function, preserving output_label and its declaration."""
-        renamed = cast(Self, TrackedTerm.with_label(self, label))
+    def _with_label(self, label: str) -> Self:
+        """Relabel the function and its Python names, preserving output_label and its declaration."""
+        renamed = cast(Self, TrackedTerm._with_label(self, label))
         object.__setattr__(renamed, "__name__", label)
         object.__setattr__(renamed, "__qualname__", label)
         return renamed
@@ -960,7 +978,7 @@ def _validate_options(options: Mapping[str, Any], signature: inspect.Signature) 
         if dispatch != "thread":
             warnings.warn(
                 f"max_workers configures only dispatch='thread'; ignoring it for dispatch={dispatch!r}.",
-                stacklevel=3,
+                skip_file_prefixes=_WARNING_SKIP_PREFIXES,
             )
     if not isinstance(options["workflow_kind"], WorkflowKind):
         raise TypeError("workflow_kind must be a WorkflowKind enum member")

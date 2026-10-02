@@ -230,11 +230,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         TypeError
             If *label* is not a non-empty string.
         """
-        if not isinstance(label, str) or not label:
-            raise TypeError(f"{type(self).__name__}.with_label() requires a non-empty string label")
-        clone = self._shallow_copy()
-        object.__setattr__(clone, "_label", label)
-        object.__setattr__(clone, "_provenance", None)
+        clone = self._with_label(label)
         clone.with_provenance(
             Provenance.create(
                 "with_label",
@@ -242,6 +238,24 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
                 metadata={"old_label": self._label, "new_label": label},
             )
         )
+        return clone
+
+    def _with_label(self, label: str) -> Self:
+        """A shallow copy under *label*, with no provenance, for a boundary that records its own.
+
+        A kind whose state derives from its label overrides this, so the state
+        follows the label under ``with_label`` and at a result boundary alike.
+
+        Raises
+        ------
+        TypeError
+            If *label* is not a non-empty string.
+        """
+        if not isinstance(label, str) or not label:
+            raise TypeError(f"{type(self).__name__}.with_label() requires a non-empty string label")
+        clone = self._shallow_copy()
+        object.__setattr__(clone, "_label", label)
+        object.__setattr__(clone, "_provenance", None)
         return clone
 
     # -- the representation --------------------------------------------------
