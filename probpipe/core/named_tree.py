@@ -600,6 +600,15 @@ class NamedTree[L]:
         """
         return leaf
 
+    def _node_paths(self) -> Iterator[str]:
+        """Every node's path, interior nodes included, in canonical order."""
+        node_type = self._node_type()
+        for name, child in self._tree.items():
+            yield name
+            if isinstance(child, node_type):
+                for sub_path in child._node_paths():
+                    yield f"{name}{_PATH_SEP}{sub_path}"
+
     def _walk_leaves(self) -> Iterator[tuple[str, L]]:
         """Yield ``(path, leaf_object)`` for every field, in canonical order.
 
@@ -831,7 +840,7 @@ class NamedTree[L]:
         Raises
         ------
         KeyError
-            If a key is not the path of a node.
+            If a key is not the path of a node, naming the paths the tree has.
         ValueError
             If a target is empty or has an empty segment, two keys resolve to the
             same node, no renames are given, a target lies inside its own node,
@@ -848,8 +857,14 @@ class NamedTree[L]:
                         f"(no leading, trailing, or doubled {_PATH_SEP!r})"
                     )
                 segments = self._split_path((old,))
-                self._node_at(segments)  # KeyError if absent
                 resolved = _PATH_SEP.join(segments)
+                try:
+                    self._node_at(segments)
+                except KeyError:
+                    raise KeyError(
+                        f"with_path_names(): {resolved!r} is not the path of a node; the paths "
+                        f"are {list(self._node_paths())}"
+                    ) from None
                 if resolved in pairs:
                     raise ValueError(f"node {resolved!r} is renamed more than once")
                 pairs[resolved] = new

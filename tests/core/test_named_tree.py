@@ -10,7 +10,7 @@ from __future__ import annotations
 import jax.numpy as jnp
 import pytest
 
-from probpipe import NumericRecord, Record, RecordSpec
+from probpipe import NumericRecord, OutputSpec, Record, RecordBatch, RecordSpec
 from probpipe.core._opaque import OpaqueSpec
 from probpipe.core._specs import NumericArraySpec, NumericRecordSpec, TermSpec
 from probpipe.core.named_tree import NamedTree
@@ -135,6 +135,20 @@ class TestWithPathNames:
     def test_missing_key_raises(self, record):
         with pytest.raises(KeyError):
             record.with_path_names(nope="x")
+
+    @pytest.mark.parametrize(
+        "tree",
+        [
+            lambda r: r,
+            lambda r: r.event_template,
+            lambda r: RecordBatch.stack([r, r], level_name="draw"),
+            lambda r: OutputSpec(r.event_template),
+        ],
+        ids=["record", "spec", "batch", "declaration"],
+    )
+    def test_a_missing_key_names_the_paths_the_tree_has(self, record, tree):
+        with pytest.raises(KeyError, match=r"the paths are \['x', 'g', 'g/mu', 'g/sigma'\]"):
+            tree(record).with_path_names(mu="loc")
 
     def test_sibling_collision_raises(self, record):
         with pytest.raises(ValueError, match="collide"):

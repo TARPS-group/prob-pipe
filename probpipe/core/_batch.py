@@ -811,23 +811,20 @@ class Batch[E](TrackedTerm, ABC):
 
     @abstractmethod
     def _element_at(self, index: tuple[int, ...], *, name: str) -> E:
-        """The single element at a fully-integer positional *index*.
+        """The single element at a fully-integer positional *index*, as a view named *name*.
 
-        *name* is the identity this class derived for the element view, and the
-        same split governs it as governs provenance below. A batch that
-        *materializes* an element gives it that name. A batch
-        that *stores* its elements hands back the stored object under the name it
-        already carries: renaming it would mean returning a copy, and an object
-        placed in a batch by name already means something. An element that is a
-        bare value has no identity to carry either way.
+        *name* is the identity this class derived for the element view. A batch
+        that *materializes* an element, as columnar storage builds a row, builds
+        a term of the element kind under *name* and gives it this batch's
+        provenance through :meth:`_inherit_provenance`. A batch that *stores*
+        its elements returns a view of the stored object under *name*: a copy of
+        a stored tracked term that shares its representation, or the stored
+        value wrapped as a term of the element kind. That view's provenance
+        records this batch and the stored term, and the stored object keeps its
+        own name and provenance, since the caller may still hold it.
 
-        **Provenance is this hook's own**, because only it knows whether the
-        element was built or borrowed. A batch that *materializes* an element —
-        a row of columnar storage does not exist until it is built — calls
-        :meth:`_inherit_provenance` on what it built. A batch that *stores* its
-        elements returns the stored object untouched: it did not produce that
-        object, so it cannot truthfully claim its lineage, and writing to it
-        would reach into something the caller still holds.
+        Provenance is this hook's own, because only it knows whether the element
+        was built or borrowed.
         """
 
     @abstractmethod

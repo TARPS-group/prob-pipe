@@ -591,6 +591,17 @@ class TestProvenance:
 
         assert produced[0:2].provenance is produced.provenance
 
+    def test_an_element_records_the_batch_and_the_stored_term(self, full_provenance_mode):
+        """Its parents are identity descriptors, so a read hashes no content."""
+        element = Record("r", x=1.0)
+        batch = OpaqueBatch("recs", [element, Record("r2", x=2.0)], "site")
+
+        parents = batch[0].provenance.parents
+
+        assert [parent.parent for parent in parents] == [batch, element]
+        assert all(parent.fingerprint_is_weak for parent in parents)
+        assert batch[0].provenance.metadata == {"position": [0]}
+
     def test_reading_an_element_leaves_the_caller_object_untouched(self, full_provenance_mode):
         """These batches store what they were given, so a read writes to nothing."""
         element = Record("r", x=1.0)

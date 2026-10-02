@@ -676,7 +676,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         if isinstance(leaf, jax.core.Tracer):
             return leaf
         source = leaf if isinstance(leaf, TrackedTerm) else None
-        provenance = Provenance.of_view(self, source, path=key)
+        provenance = Provenance.of_view(self, source, metadata={"path": key})
         if isinstance(leaf, TrackedTerm) and not isinstance(leaf, NumericArray | Opaque):
             view = leaf.with_name(key) if leaf.name != key else leaf._shallow_copy()
             object.__setattr__(view, "_provenance", None)
