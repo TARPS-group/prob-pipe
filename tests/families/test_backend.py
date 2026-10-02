@@ -106,7 +106,16 @@ _EXPECTED = {
 }
 
 #: The families whose mean, variance, and covariance do not exist at any parameters.
-_WITHOUT_MOMENTS = {"Cauchy", "HalfCauchy"}
+#: The families whose moments do not all converge: each moment that is undefined and
+#: raises, and each that diverges and is ``inf``.
+_UNDEFINED_MOMENTS = {
+    ("Cauchy", "_mean"),
+    ("Cauchy", "_variance"),
+    ("Cauchy", "_cov"),
+    ("HalfCauchy", "_variance"),
+    ("HalfCauchy", "_cov"),
+}
+_INFINITE_MOMENTS = {("HalfCauchy", "_mean")}
 
 
 def _dense_or_array(moment):
@@ -175,12 +184,16 @@ class TestTheAdapter:
         law = _families()[name]
         if not isinstance(law, _PROTOCOLS[method]):
             pytest.skip(f"{name} does not claim {method}")
-        if name in _WITHOUT_MOMENTS:
-            # The claim answers that the moment does not exist (II.7).
+        if (name, method) in _UNDEFINED_MOMENTS:
+            # The claim answers that the moment is undefined (II.7).
             with pytest.raises(MathematicalDomainError):
                 getattr(law, method)()
             return
-        assert np.all(np.isfinite(np.asarray(_dense_or_array(getattr(law, method)()))))
+        value = np.asarray(_dense_or_array(getattr(law, method)()))
+        if (name, method) in _INFINITE_MOMENTS:
+            assert np.all(np.isposinf(value))
+            return
+        assert np.all(np.isfinite(value))
 
     @pytest.mark.parametrize("name", [n for n in _NAMES if SupportsQuantile in _EXPECTED[n]])
     def test_the_quantiles_put_the_levels_first(self, name):

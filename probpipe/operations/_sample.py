@@ -21,7 +21,7 @@ from ..distributions._distribution import Distribution, DistributionSpec
 from ..distributions._factored import _raw_record
 from ..functions._call import ApplicabilityError
 from ..functions._result import SAMPLE_LEVEL
-from ._operation import BoundCall, _workflow_draws, operation
+from ._operation import BoundCall, _call_label, _workflow_draws, operation
 
 __all__ = ["sample"]
 
@@ -34,7 +34,7 @@ def _record_batch(value: Any, call: BoundCall, result: OutputSpec | None) -> Any
     from arrays, records of columns, and object arrays, so a mapping is
     assembled here: as the ``RecordBatch`` or ``NumericRecordBatch`` the
     declared element calls for, on the declared levels and under the
-    operation's result label. A record held inside the mapping is read as its
+    call's result label. A record held inside the mapping is read as its
     own nested mapping. Under ``raw`` the mapping is the result. Any other value
     is returned as it is, and so is a value whose declared result is not a
     batch of records.
@@ -45,7 +45,7 @@ def _record_batch(value: Any, call: BoundCall, result: OutputSpec | None) -> Any
     if not isinstance(spec, BatchSpec) or not isinstance(spec.element_spec, RecordSpec):
         return value
     return _batch_class_for(spec.element_spec)(
-        call.operation.output_name,
+        _call_label(call),
         _raw_record(value),
         tuple(spec.level_names),
         element_spec=spec.element_spec,

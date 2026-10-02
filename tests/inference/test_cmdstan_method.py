@@ -13,9 +13,13 @@ from __future__ import annotations
 import sys
 import types
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from probpipe import NumericArraySpec
+from probpipe.core.constraints import real
+from tests._stanc import require_stanc
 from tests.inference._harness import validate_method
 
 _PROGRAM = (
@@ -78,6 +82,7 @@ def fake_cmdstanpy(monkeypatch):
 def _posterior(tmp_path):
     from probpipe.families import StanModel
 
+    require_stanc()
     program = tmp_path / "program.stan"
     program.write_text(_PROGRAM)
     return StanModel("program", str(program), data={"N": 2, "y": [1.0, 2.0]})
@@ -91,12 +96,14 @@ def test_the_posterior_keeps_the_parameter_record_chain_by_chain(fake_cmdstanpy,
     )
     assert fake_cmdstanpy.data == {"N": 2, "y": [1.0, 2.0]}
     assert tuple(result.event_spec.components) == ("mu", "theta")
+    assert result.event_spec.spec["theta"] == NumericArraySpec((2,), jnp.result_type(float), real)
     np.testing.assert_array_equal(
         np.asarray(result.chains[1]), [[10, 100, 1000], [11, 101, 1001], [12, 102, 1002]]
     )
     assert np.shape(result.draws()["theta"]) == (6, 2)
 
 
+@pytest.mark.usefixtures("_stanc")
 def test_condition_on_a_stan_model_returns_its_parameter_record(
     fake_cmdstanpy, tmp_path, monkeypatch
 ):

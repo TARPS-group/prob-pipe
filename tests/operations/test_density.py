@@ -32,7 +32,7 @@ class TestLogProb:
     def test_log_prob_returns_the_normalized_log_density(self):
         score = log_prob(Gaussian("g", 1.0, 2.0), 0.5)
         assert isinstance(score, NumericArray)
-        assert score.name == "log_prob"
+        assert score.name == "g"
         np.testing.assert_allclose(
             float(jnp.asarray(score)), jax.scipy.stats.norm.logpdf(0.5, 1.0, 2.0), rtol=1e-6
         )
@@ -139,7 +139,7 @@ class TestDerivedDensities:
     def test_prob_is_the_exponential_of_log_prob(self):
         law = Gaussian("g", 0.0, 1.5)
         density = prob(law, 0.7)
-        assert density.name == "prob"
+        assert density.name == "g"
         assert density.spec.support is non_negative
         assert float(jnp.asarray(density)) == pytest.approx(
             float(np.exp(jax.scipy.stats.norm.logpdf(0.7, 0.0, 1.5))), rel=1e-6

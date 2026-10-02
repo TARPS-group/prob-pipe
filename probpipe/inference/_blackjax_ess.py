@@ -273,7 +273,7 @@ def _elliptical_slice(
     return make_posterior(
         chains,
         parents=(target,),
-        algorithm="elliptical_slice",
+        method="elliptical_slice",
         annotations=annotations,
         event_spec=target.event_spec,
         num_results=num_results,

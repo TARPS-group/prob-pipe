@@ -52,6 +52,7 @@ from ._bayesflow_common import (
     _simulate_offline,
     _validate_learn_inputs,
 )
+from ._inference_utils import integer_seed, run_seed
 
 if TYPE_CHECKING:
     # Type-only: bayesflow/keras load at runtime in _import_bayesflow.
@@ -187,8 +188,6 @@ class _AmortizedPosterior(
         The flattened size of the observation the network conditions on.
     num_results : int
         The default number of draws of the law at an observation.
-    random_seed : int
-        The default seed of those draws.
     bijectors : dict of str to Function, optional
         The forward bijector of each constrained leaf.
     """
@@ -202,7 +201,6 @@ class _AmortizedPosterior(
         method: AmortizedMethod,
         data_dim: int,
         num_results: int = 2000,
-        random_seed: int = 0,
         bijectors: dict[str, Function] | None = None,
     ):
         slot = _observation_slot(prior)
@@ -220,7 +218,6 @@ class _AmortizedPosterior(
             "_method": method,
             "_data_dim": data_dim,
             "_num_results": num_results,
-            "_random_seed": random_seed,
             # Forward bijectors (unconstrained -> support); missing entries mean identity.
             "_bijectors": bijectors or {},
         }
@@ -300,8 +297,9 @@ class _AmortizedPosterior(
         """The network's draws at the observation *given* binds, as an empirical posterior.
 
         *given* is a mapping or record keyed by the observation slot, or the
-        observation itself. ``num_results`` and ``random_seed`` set the number
-        of draws and their seed.
+        observation itself. ``num_results`` sets the number of draws, and
+        ``random_seed`` their seed; without it the draws are a workflow-owned
+        random event, so ``workflow_run(seed=...)`` fixes them.
 
         Raises
         ------
@@ -322,12 +320,12 @@ class _AmortizedPosterior(
         num_results = int(kwargs.get("num_results", self._num_results))
         if num_results < 1:
             raise ValueError(f"num_results must be a positive integer, got {num_results}.")
-        random_seed = int(kwargs.get("random_seed", self._random_seed))
-        flat = self._network_draws(self._observation(given), num_results, random_seed)
+        seed = integer_seed(run_seed(kwargs, f"bayesflow_{self._method}"))
+        flat = self._network_draws(self._observation(given), num_results, seed)
         return make_posterior(
             [flat],
             parents=(self,),
-            algorithm=f"bayesflow_{self._method}",
+            method=f"bayesflow_{self._method}",
             event_spec=self._prior.event_spec,
             num_results=num_results,
         )
@@ -427,10 +425,12 @@ def learn_amortized_posterior(
     num_results : int
         Default number of posterior draws per ``condition_on`` call.
     random_seed : int
-        Seed for offline simulation (``jax.random``), keras network init + training
-        (via ``keras.utils.set_random_seed``), and sampling. The caller's global
+        Seed for offline simulation (``jax.random``) and keras network init +
+        training (via ``keras.utils.set_random_seed``). The caller's global
         NumPy / Python RNG state is snapshotted and restored after training, so the
-        call does not perturb unrelated random streams.
+        call does not perturb unrelated random streams. The learned posterior's
+        draws are seeded by the workflow scope, or by a ``random_seed`` method
+        option of the conditioning call.
     optimizer : str or keras.Optimizer
         Passed to ``approximator.compile``.
     **fit_kwargs
@@ -523,6 +523,5 @@ def learn_amortized_posterior(
         method=method,
         data_dim=int(y.shape[-1]),
         num_results=num_results,
-        random_seed=random_seed,
         bijectors=bijectors,
     )

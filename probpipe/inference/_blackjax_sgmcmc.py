@@ -208,7 +208,7 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
         return make_posterior(
             [chain],
             parents=(target,),
-            algorithm=self._method_name,
+            method=self._method_name,
             annotations=None,
             event_spec=target.event_spec,
             num_results=num_results,

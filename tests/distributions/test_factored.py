@@ -1019,8 +1019,8 @@ class TestMarginalValues:
         assert isinstance(value, dict) and list(value) == ["u", "v"]
         assert (float(value["u"]), float(value["v"])) == (1.0, 2.0)
 
-    def test_a_marginal_the_guard_rejects_raises(self):
-        with pytest.raises(ResolutionError, match=_mentions("'y'", "'prior'")):
+    def test_a_marginal_the_guard_rejects_raises_naming_the_fields(self):
+        with pytest.raises(ResolutionError, match=_mentions("['y']", "['beta']")):
             (_likelihood() * _prior())._marginal("y")
 
 
@@ -1259,13 +1259,17 @@ class TestPathRenames:
         ]
         assert [info.name for info in renamed.provenance.parents] == [joint.name]
 
-    def test_gathering_components_of_two_factors_renames_at_the_joint_boundary(self, key):
+    def test_gathering_components_of_two_factors_regroups_them(self, key):
+        """The node ``g`` is one factor: the sub-joint of the two factors, packaged as ``g``."""
         joint = Normal("a", 0.0, 1.0) * Normal("b", 2.0, 1.0)
         renamed = joint.with_path_names({"a": "g/a", "b": "g/b"})
-        assert not isinstance(renamed, SupportsFactors)
+        assert isinstance(renamed, SupportsFactors)
         assert list(renamed.event_spec.components) == ["g"]
-        draw, original = renamed._sample(key), joint._sample(key)
-        assert float(draw["g"]["b"]) == float(original["b"])
+        (group,) = renamed.factors
+        assert [part.name for part in group.factors] == ["a", "b"]
+        assert list(group.event_spec.components) == ["g"]
+        assert not group.event_spec.exposes_record
+        assert list(renamed._sample(key)["g"]) == ["a", "b"]
 
 
 # -- Round trips ----------------------------------------------------------------------

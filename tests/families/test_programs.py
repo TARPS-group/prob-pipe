@@ -11,7 +11,16 @@ import pytest
 import scipy.stats as st
 
 import probpipe
-from probpipe import NumericArraySpec, OutputSpec
+from probpipe import NumericArraySpec, OutputSpec, RecordSpec
+from probpipe.core.constraints import (
+    greater_than,
+    interval,
+    positive,
+    positive_definite,
+    real,
+    simplex,
+    unit_interval,
+)
 from probpipe.distributions import ConditionalDistribution, Distribution
 from probpipe.distributions._capabilities import (
     SupportsConditionalLogProb,
@@ -55,17 +64,62 @@ def _data():
     return {"N": 3, "K": 2, "X": np.ones((3, 2)), "y": np.zeros(3)}
 
 
+#: The dtypes the array backend gives a Stan real and a Stan int.
+_FLOAT, _INT = jnp.result_type(float), jnp.result_type(int)
+
+_CONSTRAINED = """
+parameters {
+  real<lower=-1, upper=1> rho;
+  real<lower=2> above;
+  real<upper=0> below;
+  real<offset=1, multiplier=2> shifted;
+  simplex[3] w;
+  cov_matrix[2] S;
+  ordered[2] cut;
+}
+model { }
+"""
+
+
+@pytest.mark.usefixtures("_stanc")
 class TestStanModel:
-    def test_the_given_slots_are_the_data_block_entries(self, regression_file):
+    def test_the_given_slots_are_the_typed_data_block_entries(self, regression_file):
         model = StanModel("regression", regression_file)
         assert isinstance(model, ConditionalDistribution)
-        assert list(model.given_spec) == ["N", "K", "X", "y"]
+        assert dict(model.given_spec) == {
+            "N": NumericArraySpec((), _INT),
+            "K": NumericArraySpec((), _INT),
+            "X": NumericArraySpec(("N", "K"), _FLOAT),
+            "y": NumericArraySpec(("N",), _FLOAT),
+        }
 
-    def test_the_event_is_the_parameter_record(self, regression_file):
+    def test_the_event_is_the_parameter_record_with_dtypes_and_supports(self, regression_file):
         model = StanModel("regression", regression_file)
         assert model.event_spec == OutputSpec(
-            probpipe.RecordSpec(beta=NumericArraySpec(("K",)), sigma=NumericArraySpec(()))
+            RecordSpec(
+                beta=NumericArraySpec(("K",), _FLOAT, real),
+                sigma=NumericArraySpec((), _FLOAT, positive),
+            )
         )
+
+    def test_each_parameter_carries_its_declared_constraint(self, tmp_path):
+        path = tmp_path / "constrained.stan"
+        path.write_text(_CONSTRAINED)
+        assert dict(StanModel("constrained", str(path)).supports) == {
+            "rho": interval(-1.0, 1.0),
+            "above": greater_than(2.0),
+            "below": None,
+            "shifted": real,
+            "w": simplex,
+            "S": positive_definite,
+            "cut": None,
+        }
+
+    def test_a_program_stanc_rejects_raises_value_error(self, tmp_path):
+        path = tmp_path / "broken.stan"
+        path.write_text("parameters { real x } model { }")
+        with pytest.raises(ValueError, match="stanc"):
+            StanModel("broken", str(path))
 
     def test_it_claims_the_conditional_unnormalized_density_alone(self, regression_file):
         model = StanModel("regression", regression_file)
@@ -83,7 +137,7 @@ class TestStanModel:
         assert isinstance(posterior, Distribution)
         assert isinstance(posterior, SupportsUnnormalizedLogProb)
         assert not _is_normalized(posterior)
-        assert posterior.event_spec.spec["beta"].shape == (2,)
+        assert posterior.event_spec.spec["beta"] == NumericArraySpec((2,), _FLOAT, real)
 
     def test_a_construction_that_binds_every_entry_is_the_posterior(self, regression_file):
         posterior = StanModel("regression", regression_file, data=_data())
@@ -162,6 +216,19 @@ def _regression(x=None, y=None):
     return model
 
 
+def _constrained_model(y=None):
+    import pymc as pm
+
+    with pm.Model() as model:
+        pm.Normal("a", 0, 1)
+        pm.HalfCauchy("b", 1.0)
+        pm.Uniform("c", -1.0, 2.0)
+        pm.Beta("d", 1.0, 1.0)
+        pm.Dirichlet("e", np.ones(3))
+        pm.Poisson("y", 2.0, observed=y)
+    return model
+
+
 def _flat_prior(y=None):
     import pymc as pm
 
@@ -234,6 +301,25 @@ class TestPyMCModel:
             st.norm.logpdf(0.3, 0, 10) + st.halfnorm.logpdf(1.2) + st.norm.logpdf(0.5, 0.3, 1.2)
         )
         assert float(model._log_prob(value)) == pytest.approx(expected, rel=1e-6)
+
+    def test_the_event_carries_the_variables_dtypes_and_supports(self):
+        spec = PyMCModel("m", _constrained_model).event_spec.spec
+        assert spec["a"] == NumericArraySpec((), _FLOAT, real)
+        assert spec["b"] == NumericArraySpec((), _FLOAT, positive)
+        assert spec["c"].support == interval(-1.0, 2.0)
+        assert spec["d"].support == unit_interval
+        assert spec["e"] == NumericArraySpec((3,), _FLOAT, simplex)
+        assert spec["y"] == NumericArraySpec((), _INT, None)
+
+    def test_the_posterior_record_carries_the_dtypes_and_supports(self):
+        model = PyMCModel("m", _constrained_model)
+        conditioned = model._pymc_model(data={"y": np.array(2)})
+        record = model._parameter_record_for(conditioned, ("a", "b", "e"))
+        assert record == RecordSpec(
+            a=NumericArraySpec((), _FLOAT, real),
+            b=NumericArraySpec((), _FLOAT, positive),
+            e=NumericArraySpec((3,), _FLOAT, simplex),
+        )
 
     def test_it_samples_the_prior_predictive_of_every_free_variable(self):
         model = PyMCModel("normal", _normal_model)

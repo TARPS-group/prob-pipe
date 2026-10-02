@@ -4,10 +4,12 @@ A lifted argument is a law, and the law whose draws it reads, transitively, is
 its **root**. An element of a batch of laws reads its stored law's draw, a field
 view reads its parent's draw and projects its node, and a law registered as a
 descendant type reads its ancestor's draw and maps it, as a bijector-transformed
-law pushes its base's draw through its bijector. The lift groups the arguments
-by root, so each group contributes one root draw per repetition and every member
-evaluates on it. Hence sibling views co-sample, two accesses of one batch element
-co-sample, and a law co-samples with its own transform.
+law pushes its base's draw through its bijector and a renamed law moves its
+parent's draw to the new paths. The lift groups the arguments by root, so each
+group contributes one root draw per repetition and every member evaluates on
+it. Hence sibling views co-sample, two accesses of one batch element co-sample,
+a law co-samples with its own transform and its own rename, and the empirical
+enumeration enumerates a renamed empirical law's atoms as the law's.
 
 The capture of an argument records its root, the root's sampler, the event
 path a projection reads, a canonical descriptor of the descendant graph between
@@ -25,7 +27,7 @@ from typing import Any
 
 from ..distributions._batches import _element_source
 from ..distributions._distribution import Distribution
-from ..distributions._views import FieldView, _projector
+from ..distributions._views import FieldView, _projector, _RenamedDistribution
 
 _DISTRIBUTION_SAMPLING_ABI = "probpipe.distribution_sampling/v1"
 _DESCRIPTOR_DOMAIN = b"ProbPipe-descendant-descriptor-v1\0"
@@ -382,3 +384,16 @@ def _compose(
 
 def _identity(value: Any) -> Any:
     return value
+
+
+def _renamed_descent(renamed: _RenamedDistribution) -> _Descent:
+    """A renamed law's descent: its parent's draws, moved to the renamed paths."""
+    event = renamed._event
+    return _Descent(
+        ancestor=renamed._parent,
+        forward=event.draw,
+        descriptor=("renamed", tuple(sorted(event.leaves.items()))),
+    )
+
+
+_register_descendant_type(_RenamedDistribution, _renamed_descent)

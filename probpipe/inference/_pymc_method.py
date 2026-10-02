@@ -99,7 +99,7 @@ class PyMCNutsMethod(InferenceMethod):
         return make_posterior(
             chains,
             parents=(target,),
-            algorithm="pymc_nuts",
+            method="pymc_nuts",
             annotations=trace,
             event_spec=event_spec,
             field_order=order,
@@ -173,12 +173,12 @@ class PyMCADVIMethod(InferenceMethod):
         # draws; extract in natural order and realign by name.
         order = posterior_var_order(trace, param_names)
         chains = extract_chain_columns(trace, order, num_chains=1)
-        algorithm = f"pymc_{vi_method}"
+        name = f"pymc_{vi_method}"
 
         return make_posterior(
             chains,
             parents=(target,),
-            algorithm=algorithm,
+            method=name,
             annotations=trace,
             event_spec=event_spec,
             field_order=order,

@@ -46,6 +46,8 @@ from probpipe import (
     NegativeBinomial,
     Normal,
     NumericDistribution,
+    NumericRecordBatch,
+    NumericRecordSpec,
     NumericSpec,
     OpaqueBatch,
     OutputSpec,
@@ -111,6 +113,7 @@ from probpipe.inference._minibatch import (
 )
 from probpipe.linalg import DenseLinOp
 from probpipe.operations._condition import _unnormalized_conditional, _UnnormalizedConditional
+from tests._stanc import require_stanc
 
 # -- Constructions ------------------------------------------------------------
 
@@ -157,6 +160,7 @@ def _pymc_model() -> PyMCModel:
 
 
 def _stan_model() -> _StanPosterior:
+    require_stanc()
     stan_file = pathlib.Path(tempfile.mkdtemp()) / "declared.stan"
     stan_file.write_text("parameters { real mu; } model { mu ~ normal(0, 1); }")
     return StanModel("model", str(stan_file))
@@ -226,7 +230,7 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     ApproximateDistribution: lambda: make_posterior(
         [jnp.zeros((10, 2))],
         parents=(MultivariateNormal("z", jnp.zeros(2), cov=jnp.eye(2)),),
-        algorithm="test",
+        method="test",
     ),
     _LearnedDensity: lambda: BayesFlowLikelihood(
         None, Normal("theta", 0.0, 1.0), _Simulator(), data_dim=2
@@ -263,9 +267,15 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     FactoredMultivariateGaussian: lambda: Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0),
     GaussianProcess: lambda: GaussianProcess("f", _zero_mean, _squared_exponential),
     _SoleField: lambda: _SoleField(FactoredDistribution("record", [Normal("beta", 0.0, 1.0)])),
-    _RenamedDistribution: lambda: (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)).with_path_names(
-        {"a": "g/a"}
-    ),
+    _RenamedDistribution: lambda: EmpiricalDistribution(
+        "e",
+        NumericRecordBatch(
+            "rows",
+            {"a": jnp.zeros(2), "b": jnp.ones(2)},
+            "row",
+            element_spec=NumericRecordSpec(a=(), b=()),
+        ),
+    ).with_path_names({"a": "g/a"}),
 }
 
 # The catalog's families whose implementation has not merged construct by raising.

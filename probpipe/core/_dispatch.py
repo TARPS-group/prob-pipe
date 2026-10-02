@@ -69,8 +69,8 @@ class ResolutionError(Exception):
 class MathematicalDomainError(ValueError):
     """The mathematical operation is known to be undefined.
 
-    Raised by a method that can establish nonexistence, such as a
-    requested mean that does not exist.
+    Raised by a method that can establish that its operation is undefined,
+    such as the mean of a Cauchy law.
     """
 
 

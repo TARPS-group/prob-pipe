@@ -235,8 +235,10 @@ class TestSurrogateContract:
         )
 
     def test_repr(self, nle, nre):
-        assert repr(nle) == "BayesFlowLikelihood(theta_dim=2, data_dim=2)"
-        assert repr(nre) == "BayesFlowRatio(theta_dim=2, data_dim=2)"
+        for kernel, cls in ((nle, "BayesFlowLikelihood"), (nre, "BayesFlowRatio")):
+            text = repr(kernel)
+            assert text.startswith(f"{cls}(\n    '{kernel.name}',\n")
+            assert "theta_dim=2," in text and "data_dim=2," in text
 
     def test_data_width_guard(self, nle):
         """Wrong-width data fails fast with an actionable message."""

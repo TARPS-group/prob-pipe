@@ -76,7 +76,7 @@ from ..functions import _broker, _descendants, function
 from ..functions._call import ApplicabilityError
 from ..functions._result import SAMPLE_LEVEL
 from ..values import Function, FunctionSpec
-from ._operation import BoundCall, _workflow_draws, operation
+from ._operation import BoundCall, _call_label, _workflow_draws, operation
 from ._sample import _record_batch
 
 __all__ = [
@@ -416,6 +416,36 @@ def _can_sample(call: BoundCall, result: OutputSpec | None) -> Feasibility:
     return _capability_guard(d, "_sample")
 
 
+def _can_average(call: BoundCall, result: OutputSpec | None) -> Feasibility:
+    """The law samples numeric draws, which average coordinatewise, or laws, which average to a mixture.
+
+    The estimate assumes the mean is finite. The average of function-valued
+    draws is not implemented.
+    """
+    event = call.operands["d"].event_spec.spec
+    if isinstance(event, FunctionSpec):
+        return Feasibility(False, "the average of function-valued draws is not implemented")
+    if not isinstance(event, (NumericSpec, DistributionSpec)):
+        return Feasibility(False, f"the draws of a {type(event).__name__} event have no average")
+    return _can_sample(call, result)
+
+
+def _can_average_squares(call: BoundCall, result: OutputSpec | None) -> Feasibility:
+    """The law samples numeric draws, whose variance is taken coordinatewise.
+
+    The estimate assumes the variance is finite. The pointwise variance of
+    function-valued draws is not implemented.
+    """
+    event = call.operands["d"].event_spec.spec
+    if isinstance(event, FunctionSpec):
+        return Feasibility(
+            False, "the pointwise variance of function-valued draws is not implemented"
+        )
+    if not isinstance(event, NumericSpec):
+        return Feasibility(False, f"the draws of a {type(event).__name__} event have no variance")
+    return _can_sample(call, result)
+
+
 def _monte_carlo_draws(call: BoundCall, operation_kind: str) -> Any:
     """``n_broadcast_samples`` workflow-owned draws of the law, the draw axis leading."""
     return _workflow_draws(
@@ -434,7 +464,7 @@ def _empirical_of(call: BoundCall, draws: Any) -> EmpiricalDistribution:
     declaration calls for, whether they arrive as a nested mapping of raw
     columns or as a record of columns. A batch of records is taken as it is.
     """
-    name = call.operation.name
+    name = _call_label(call)
     event = call.operands["d"].event_spec.spec
     if isinstance(draws, Batch) or not isinstance(event, RecordSpec):
         return EmpiricalDistribution(
@@ -461,17 +491,14 @@ def _mc_mean(call: BoundCall, result: OutputSpec | None) -> Any:
     whose draws are laws it is their finite mixture with equal weights, the
     Monte Carlo estimate of the mean measure.
     """
-    event = call.operands["d"].event_spec.spec
-    if isinstance(event, NumericSpec):
+    if isinstance(call.operands["d"].event_spec.spec, NumericSpec):
         return _empirical_of(call, _monte_carlo_draws(call, "mean"))._mean()
-    if isinstance(event, DistributionSpec):
-        if _mixture_factory is None:
-            raise RuntimeError("the mixture family is not installed; import probpipe")
-        draws = _monte_carlo_draws(call, "mean")
-        stored = draws.raw() if isinstance(draws, Batch) else draws
-        laws = list(np.asarray(stored, dtype=object).reshape(-1))
-        return _mixture_factory(call.operation.name, laws, jnp.full(len(laws), 1.0 / len(laws)))
-    raise NotImplementedError("mean.monte_carlo: the average of function-valued draws")
+    if _mixture_factory is None:
+        raise RuntimeError("the mixture family is not installed; import probpipe")
+    draws = _monte_carlo_draws(call, "mean")
+    stored = draws.raw() if isinstance(draws, Batch) else draws
+    laws = list(np.asarray(stored, dtype=object).reshape(-1))
+    return _mixture_factory(_call_label(call), laws, jnp.full(len(laws), 1.0 / len(laws)))
 
 
 def _mc_variance(call: BoundCall, result: OutputSpec | None) -> Any:
@@ -480,9 +507,7 @@ def _mc_variance(call: BoundCall, result: OutputSpec | None) -> Any:
     Each coordinate's variance is the mean squared deviation of the draws from
     their mean, dividing by the number of draws.
     """
-    if isinstance(call.operands["d"].event_spec.spec, NumericSpec):
-        return _empirical_of(call, _monte_carlo_draws(call, "variance"))._variance()
-    raise NotImplementedError("variance.monte_carlo: the pointwise variance of function draws")
+    return _empirical_of(call, _monte_carlo_draws(call, "variance"))._variance()
 
 
 def _dense(covariance: Any) -> Any:
@@ -557,7 +582,7 @@ def mean(d: Distribution):
 
 
 mean.capability_route("closed_form", operand="d", protocol=SupportsMean, method="_mean", exact=True)
-mean.fallback_route("monte_carlo", check=_can_sample, execute=_mc_mean, exact=False)
+mean.fallback_route("monte_carlo", check=_can_average, execute=_mc_mean, exact=False)
 
 
 @operation(result=_variance_result, conditions=(_event_typed_variance,))
@@ -582,7 +607,9 @@ def variance(d: Distribution):
 variance.capability_route(
     "closed_form", operand="d", protocol=SupportsVariance, method="_variance", exact=True
 )
-variance.fallback_route("monte_carlo", check=_can_sample, execute=_mc_variance, exact=False)
+variance.fallback_route(
+    "monte_carlo", check=_can_average_squares, execute=_mc_variance, exact=False
+)
 
 
 @operation(result=_cov_result, conditions=(_numeric_event,))

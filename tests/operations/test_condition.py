@@ -9,9 +9,10 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import ApplicabilityError, MultivariateNormal, Record, RecordSpec
+from probpipe import ApplicabilityError, MultivariateNormal, NumericRecordBatch, Record, RecordSpec
 from probpipe.core._dispatch import Feasibility, ResolutionError, UnaryDispatchRegistry
 from probpipe.core._specs import InputSpec, OutputSpec
+from probpipe.distributions._batches import DistributionBatch
 from probpipe.distributions._capabilities import (
     SupportsApproximateConditioning,
     SupportsConditionalLogProb,
@@ -267,6 +268,9 @@ class TestCurry:
 
     def test_a_record_given_binds_its_fields(self):
         assert condition_on(_NormalKernel(), Record("given", {"mu": 2.0})).loc == 2.0
+
+    def test_the_law_is_labeled_by_the_conditioned_kernel(self):
+        assert condition_on(_NormalKernel("likelihood"), {"mu": 1.5}).name == "likelihood"
 
     def test_binding_some_slots_leaves_a_kernel_over_the_rest(self):
         kernel = _NormalKernel("y", ("a", "b"))
@@ -539,6 +543,10 @@ class TestTheExactStage:
 
 
 class TestTheNormalizationStage:
+    def test_the_posterior_is_labeled_by_the_conditioned_law(self, approximate_method):
+        joint = (Kernel("y", ("mu",)) * Gaussian("mu")).with_name("model")
+        assert condition_on(joint, {"y": 0.0}).name == "model"
+
     def test_a_normalized_result_is_returned_without_inference(self, suite_methods):
         exact, approximate = suite_methods
         assert condition_on(_NormalKernel(), {"mu": 1.5}).loc == 1.5
@@ -614,6 +622,7 @@ class TestTheNormalizationStage:
         draws = kernel._conditional_sample({"b": 2.0}, jax.random.PRNGKey(0), (3,))
         assert draws.shape == (3,)
 
+    @pytest.mark.usefixtures("_stanc")
     def test_a_per_value_kernel_passes_the_budgets_to_its_method_only(
         self, approximate_method, tmp_path
     ):
@@ -804,6 +813,46 @@ class TestTheOperation:
         assert conditional.event_spec.components.keys() == {"y"}
 
 
+def _givens(field: str, values: list[float]) -> NumericRecordBatch:
+    """A batch of givens of one scalar field, on the level ``dataset``."""
+    return NumericRecordBatch(
+        "data",
+        {field: jnp.asarray(values, jnp.float32)},
+        "dataset",
+        element_spec=RecordSpec(**{field: REAL}),
+    )
+
+
+class TestABatchOfGivens:
+    def test_a_batch_of_givens_yields_the_batch_of_conditioned_laws(self):
+        laws = condition_on(_NormalKernel(), _givens("mu", [1.0, 2.0, 3.0]))
+        assert isinstance(laws, DistributionBatch)
+        assert laws.batch_shape == (3,)
+        assert laws.level_names == ("dataset",)
+        assert [law.loc for law in laws] == [1.0, 2.0, 3.0]
+
+    def test_each_given_is_conditioned_as_one_given_alone_is(self, approximate_method):
+        # Sequential dispatch, so the method records each target at concrete values.
+        joint = Kernel("y", ("mu",)) * Gaussian("mu")
+        posteriors = condition_on.with_options(dispatch="sequential")(
+            joint, _givens("y", [0.0, 1.0])
+        )
+        assert isinstance(posteriors, DistributionBatch)
+        assert posteriors.batch_shape == (2,)
+        assert [float(target.given["y"]) for target in approximate_method.targets] == [0.0, 1.0]
+        assert all(tuple(law.event_spec.components) == ("mu",) for law in posteriors)
+
+    def test_the_batch_is_labeled_by_the_kernel_and_each_law_by_its_position(self):
+        laws = condition_on(_NormalKernel("likelihood"), _givens("mu", [1.0, 2.0]))
+        assert laws.name == "likelihood"
+        assert laws[0].name == "likelihood[dataset=0]"
+
+    def test_check_selects_the_elementwise_sweep(self):
+        report = condition_on.check(_NormalKernel(), _givens("mu", [1.0, 2.0]))
+        assert report.lifted == ("given",)
+        assert report.selected is not None
+
+
 # ---------------------------------------------------------------------------
 # End to end: condition_on returns a normalized law for each kind of model
 # ---------------------------------------------------------------------------
@@ -876,6 +925,35 @@ class TestEndToEnd:
         law = condition_on(likelihood, {"beta": beta})
         assert _is_normalized(law)
         np.testing.assert_allclose(law._mean(), X @ beta, rtol=1e-6)
+
+    def test_the_posterior_is_labeled_by_the_model_and_names_its_method(self):
+        model = _logistic_joint().with_name("logistic")
+        posterior = condition_on.with_options(method_options=_MCMC)(
+            model, {"y": jnp.array([1, 0, 1, 0])}
+        )
+        assert posterior.name == "logistic"
+        assert posterior.method == "blackjax_nuts"
+        assert posterior.provenance.metadata["method"] == "blackjax_nuts"
+
+    def test_each_posterior_of_a_batch_names_its_method(self, full_provenance_mode):
+        from probpipe import NumericArraySpec, provenance_ancestors
+
+        givens = NumericRecordBatch(
+            "data",
+            {"y": jnp.array([[1, 0, 1, 0], [0, 0, 1, 1]])},
+            "dataset",
+            element_spec=RecordSpec(y=NumericArraySpec((4,), jnp.int32)),
+        )
+        posteriors = condition_on.with_options(method_options=_MCMC)(_logistic_joint(), givens)
+        element = posteriors[1]
+        assert element.method == "blackjax_nuts"
+        operations = {
+            ancestor.parent.provenance.operation
+            for ancestor in provenance_ancestors(element)
+            if getattr(ancestor, "parent", None) is not None
+            and ancestor.parent.provenance is not None
+        }
+        assert "blackjax_nuts" in operations
 
     def test_a_joint_conditioned_on_its_observation_is_normalized_by_a_method(self):
         joint, y = _logistic_joint(), {"y": jnp.array([1, 0, 1, 0])}
@@ -977,6 +1055,7 @@ class TestEndToEnd:
         assert _is_normalized(posterior)
         assert set(posterior.event_spec.components) == {"sigma"}
 
+    @pytest.mark.usefixtures("_stanc")
     def test_a_stan_model_bound_to_its_data_is_normalized_by_a_stan_method(self, tmp_path):
         from probpipe.families import StanModel
 

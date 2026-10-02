@@ -883,6 +883,44 @@ class TestCoSamplingThroughACall:
             np.array([10.0, 20.0, 30.0]),
         )
 
+    def test_a_renamed_empirical_law_enumerates_its_atoms(self):
+        """A rename moves the atoms' fields, so the renamed law enumerates as the law does."""
+        empirical = _empirical_of_rows(
+            "e",
+            Record("r", x=jnp.array([1.0, 2.0, 3.0]), y=jnp.array([10.0, 20.0, 30.0])),
+        )
+        renamed = empirical.with_path_names({"x": "group/x", "y": "group/y"})
+        lifted = Function(
+            name="function",
+            fn=lambda a: a.at_path("group")["y"],
+            dispatch="sequential",
+            n_broadcast_samples=8,
+        )
+
+        assert lifted.check(renamed).selected.method_name == "empirical_enumeration"
+        np.testing.assert_array_equal(
+            np.asarray(self._run(lifted, renamed).atoms).ravel(),
+            np.array([10.0, 20.0, 30.0]),
+        )
+
+    def test_a_renamed_law_lifts_together_with_its_parent(self):
+        """A renamed law reads its parent's draws, so the two are one draw per repetition."""
+        empirical = _empirical_of_rows(
+            "e",
+            Record("r", x=jnp.array([1.0, 2.0, 3.0]), y=jnp.array([10.0, 20.0, 30.0])),
+        )
+        renamed = empirical.with_path_names({"x": "group/x", "y": "group/y"})
+        lifted = Function(
+            name="function",
+            fn=lambda a, b: a["y"] - b.at_path("group")["y"],
+            dispatch="sequential",
+            n_broadcast_samples=8,
+        )
+
+        np.testing.assert_array_equal(
+            np.asarray(self._run(lifted, empirical, renamed).atoms).ravel(), np.zeros(3)
+        )
+
     def test_a_record_valued_lift_can_be_resampled(self):
         """The joint over a record-valued input is a distribution, so it samples.
 

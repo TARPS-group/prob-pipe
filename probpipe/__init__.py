@@ -102,6 +102,7 @@ from probpipe.distributions._capabilities import (
     SupportsUnnormalizedLogProb,
     SupportsVariance,
 )
+from probpipe.distributions._conditional import conditional_distribution
 from probpipe.distributions._conversion import ConversionInfo, Converter, converter_registry
 from probpipe.distributions._distribution import (
     DEFAULT_NUM_EVALUATIONS,
@@ -307,6 +308,7 @@ __all__ = [
     "bijector_for",
     "boolean",
     "condition_on_nutpie",
+    "conditional_distribution",
     "converter_registry",
     "elliptical_slice",
     "evaluation_rule_registry",

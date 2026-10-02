@@ -734,7 +734,7 @@ def rwmh(
     return make_posterior(
         chains,
         parents=(dist,),
-        algorithm="blackjax_rwmh",
+        method="blackjax_rwmh",
         annotations=annotations,
         event_spec=event_spec,
         num_results=num_results,

@@ -233,7 +233,7 @@ class TestBayesFlowNPE:
         result is a named ``ApproximateDistribution``."""
         post = condition_on.apply(npe_model, _observe(0.0, 0.0, 1), num_results=300)
         assert isinstance(post, ApproximateDistribution)
-        assert post.algorithm == "bayesflow_npe"
+        assert post.method == "bayesflow_npe"
         draws = post.draws()
         # Fields named by the prior's declaration, 300 draws.
         assert np.asarray(draws["a"]).reshape(-1).shape[0] == 300
@@ -364,7 +364,7 @@ class TestBayesFlowMethods:
             verbose=0,
         )
         post = condition_on.apply(model, _observe(0.5, 0.0, 0))
-        assert post.algorithm == f"bayesflow_{method}"
+        assert post.method == f"bayesflow_{method}"
         draws = post.draws()
         assert np.isfinite(np.asarray(draws["a"])).all()
         assert np.asarray(draws["a"]).reshape(-1).shape[0] == 200
@@ -453,7 +453,7 @@ class TestBayesFlowMethods:
             verbose=0,
         )
         post = condition_on.apply(model, _observe(0.5, 0.0, 0))
-        assert post.algorithm == "bayesflow_npe"
+        assert post.method == "bayesflow_npe"
         draws = post.draws()
         assert np.asarray(draws["a"]).reshape(-1).shape[0] == 200
         assert np.isfinite(np.asarray(draws["a"])).all()
@@ -845,8 +845,11 @@ class TestBayesFlowMethods:
             )
 
         obs = _observe(0.4, -0.2, 5)
-        d1 = np.asarray(condition_on(_fit(), obs).draws()["a"]).reshape(-1)
-        d2 = np.asarray(condition_on(_fit(), obs).draws()["a"]).reshape(-1)
+        # The draws are seeded by the workflow scope, so each call has the same one.
+        with pp.workflow_run(seed=0):
+            d1 = np.asarray(condition_on(_fit(), obs).draws()["a"]).reshape(-1)
+        with pp.workflow_run(seed=0):
+            d2 = np.asarray(condition_on(_fit(), obs).draws()["a"]).reshape(-1)
         np.testing.assert_array_equal(d1, d2)
 
     def test_global_rng_state_restored(self):

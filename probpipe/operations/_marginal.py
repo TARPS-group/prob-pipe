@@ -130,10 +130,29 @@ def _factor_result(d: Any, component_name: str) -> OutputSpec:
     return OutputSpec(factor=None)
 
 
+def _factor_of(d: Any, component_name: str) -> Any:
+    """The factor of *d* whose event declaration has the component, or None."""
+    return next(
+        (
+            part
+            for part in getattr(d, "factors", ())
+            if component_name in part.event_spec.components
+        ),
+        None,
+    )
+
+
+def _factor_label(d: Any, component_name: str) -> str:
+    """The factor's own label, since the result is the factor itself; the joint's without one."""
+    part = _factor_of(d, component_name)
+    return d.name if part is None else part.name
+
+
 @operation(
     result=_factor_result,
     conditions=(_names_a_component,),
     roles={"d": (DistributionSpec, ConditionalDistributionSpec)},
+    label=_factor_label,
 )
 def factor(d: Distribution, component_name: str):
     """The complete factor of the joint *d* that produces the component *component_name*.
@@ -148,7 +167,8 @@ def factor(d: Distribution, component_name: str):
     Returns
     -------
     Distribution or ConditionalDistribution
-        The factor, a kernel when it conditions on another factor's output.
+        The factor under its own label, a kernel when it conditions on another
+        factor's output.
 
     Raises
     ------
@@ -161,14 +181,12 @@ def factor(d: Distribution, component_name: str):
 
 def _can_find_factor(call: BoundCall, result: OutputSpec | None) -> Any:
     """One of the joint's factors produces the named component."""
-    name = call.operands["component_name"]
-    return any(name in part.event_spec.components for part in call.operands["d"].factors)
+    return _factor_of(call.operands["d"], call.operands["component_name"]) is not None
 
 
 def _factor_producing(call: BoundCall, result: OutputSpec | None) -> Any:
     """The factor whose event declaration has the named component."""
-    name = call.operands["component_name"]
-    return next(part for part in call.operands["d"].factors if name in part.event_spec.components)
+    return _factor_of(call.operands["d"], call.operands["component_name"])
 
 
 factor.capability_route(

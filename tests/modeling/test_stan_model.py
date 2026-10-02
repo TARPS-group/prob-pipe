@@ -1,9 +1,10 @@
 """Tests for StanModel: the kernel from a Stan program's data to its unnormalized posterior.
 
-The pure tests read the program text and the parameter-name parser, and run
-everywhere. The behaviour tests evaluate densities through BridgeStan; the
-``_stan_toolchain`` fixture gates them with ``importorskip`` plus a probe
-compile, so they run where the ``stan`` extra is installed and skip elsewhere.
+The parameter-name parser's tests run everywhere. A StanModel reads its
+program with BridgeStan's stanc, so the ``_stanc`` fixture gates the tests that
+construct one, and the ``_stan_toolchain`` fixture gates those that evaluate a
+density through BridgeStan with a probe compile; both run where the ``stan``
+extra is installed and skip elsewhere.
 """
 
 from unittest.mock import MagicMock, patch
@@ -14,7 +15,7 @@ import pytest
 
 from probpipe import Record, SupportsLogProb, SupportsUnnormalizedLogProb, unnormalized_log_prob
 from probpipe.families import StanModel
-from probpipe.families._programs import _param_blocks, _StanPosterior
+from probpipe.families._programs import _param_blocks
 from probpipe.operations._condition import condition_on
 
 # ---------------------------------------------------------------------------
@@ -80,8 +81,9 @@ def _program(tmp_path, text: str) -> str:
     return str(path)
 
 
+@pytest.mark.usefixtures("_stanc")
 class TestTheProgramText:
-    """The given slots and the parameter record are read from the program text."""
+    """The given slots and the parameter record are read from stanc and the program text."""
 
     def test_bounds_arrays_and_matrix_types_are_read(self, tmp_path):
         stan_file = _program(
@@ -89,8 +91,7 @@ class TestTheProgramText:
             """
             data {
               int<lower=0> N;       // the observations
-              array[N] real<lower=0, upper=10> x;
-              real w[N];            /* the old array syntax */
+              array[N] real<lower=0, upper=10> x;  /* a bounded array */
             }
             transformed data { real scale = 2; }
             parameters {
@@ -103,7 +104,7 @@ class TestTheProgramText:
             """,
         )
         model = StanModel("program", stan_file)
-        assert list(model.given_spec) == ["N", "x", "w"]
+        assert list(model.given_spec) == ["N", "x"]
         shapes = {name: spec.shape for name, spec in model.event_spec.spec.children.items()}
         assert shapes == {"L": (3, 3), "z": (2, "N"), "p": (4,), "B": ("N", 2)}
 
@@ -128,12 +129,15 @@ class TestTheProgramText:
 
 
 class TestTheDensityBackend:
-    def test_construction_needs_no_bridgestan(self, tmp_path):
-        stan_file = _program(tmp_path, "parameters { real mu; } model { mu ~ normal(0, 1); }")
-        with patch.dict("sys.modules", {"bridgestan": None}):
-            posterior = StanModel("model", stan_file)
-        assert isinstance(posterior, _StanPosterior)
+    def test_construction_needs_bridgestans_stanc(self, tmp_path):
+        stan_file = _program(tmp_path, "parameters { real nu; } model { nu ~ normal(0, 1); }")
+        with (
+            patch.dict("sys.modules", {"bridgestan": None, "bridgestan.compile": None}),
+            pytest.raises(ImportError, match="pip install bridgestan"),
+        ):
+            StanModel("model", stan_file)
 
+    @pytest.mark.usefixtures("_stanc")
     def test_the_density_needs_bridgestan(self, tmp_path):
         """The density raises ImportError with install instructions when bridgestan
         is missing — this *must* simulate bridgestan's absence, so it patches

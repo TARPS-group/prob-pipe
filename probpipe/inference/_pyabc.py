@@ -342,7 +342,7 @@ class PyABCSMCMethod(InferenceMethod):
         return make_posterior(
             [jnp.asarray(flat)],
             parents=(target,),
-            algorithm="pyabc_smcabc",
+            method="pyabc_smcabc",
             weights=jnp.asarray(weights / weights.sum()),
             event_spec=target.event_spec,
             field_order=list(target.event_spec.components),

@@ -12,14 +12,15 @@ broadcast shape. Each family claims the mean, the variance, the covariance,
 and, except ``Pareto``, whose backend has no quantile function, the quantile of
 each coordinate.
 
-A moment known not to exist raises ``MathematicalDomainError``: the mean and
-the variance of a ``Cauchy`` and a ``HalfCauchy``, the mean of a ``StudentT``
-for degrees of freedom at most one and its variance at most two, and the mean
-of an ``InverseGamma`` or a ``Pareto`` for a concentration at most one and its
-variance at most two, a covariance with its variance. A moment that diverges
-to infinity is reported as not existing too, since infinity is not a value of
-the event. Where existence depends on a parameter that is traced, the
-capability's guard reports that it needs values not yet known.
+A moment that diverges is the extended real ``inf``, and a moment known to be
+undefined raises ``MathematicalDomainError``. The mean of a ``HalfCauchy`` is
+``inf``, and so is the mean of an ``InverseGamma`` or a ``Pareto`` for a
+concentration at most one. The mean of a ``Cauchy``, and of a ``StudentT`` for
+degrees of freedom at most one, is undefined. A variance is ``inf`` where the
+tail parameter lies between one and two, and undefined where the mean is
+infinite or undefined, and a covariance follows its variance. Where the
+answer depends on a parameter that is traced, the capability's guard reports
+that it needs values not yet known.
 """
 
 from __future__ import annotations
@@ -49,8 +50,8 @@ from ..distributions._capabilities import (
     SupportsQuantile,
     SupportsVariance,
 )
-from ..linalg import LinOp
-from ._backend import TFPDistribution, _backend_cov
+from ..linalg import DiagonalLinOp, LinOp
+from ._backend import TFPDistribution
 
 __all__ = [
     "Beta",
@@ -74,12 +75,12 @@ _CLOSED_FORM = frozenset({SupportsMean, SupportsVariance, SupportsCovariance, Su
 
 
 # ---------------------------------------------------------------------------
-# Moments that do not exist
+# Moments that diverge or are undefined
 # ---------------------------------------------------------------------------
 
 
 def _no_moment(law: TFPDistribution, moment: str, reason: str) -> NoReturn:
-    """Raise that the *moment* of *law* does not exist, for *reason*.
+    """Raise that the *moment* of *law* is undefined, for *reason*.
 
     Raises
     ------
@@ -110,65 +111,87 @@ def _decided(*parameters: Array) -> bool | None:
 
 
 class _TailBoundedMoments:
-    """The moments of a family whose tail parameter decides which exist.
+    """The moments of a family whose tail parameter decides which converge.
 
-    The mean exists where the parameter named by ``_tail_parameter`` exceeds
-    one, and the variance, with the covariance, where it exceeds two. Each
-    guard decides existence once the parameter is concrete.
+    The mean is finite where the parameter named by ``_tail_parameter``
+    exceeds one. At most one it is ``inf`` when ``_mean_diverges`` is set, and
+    undefined otherwise. The variance, with the covariance, is finite where the
+    parameter exceeds two, ``inf`` where it lies between one and two, and
+    undefined at most one, where the mean is infinite or undefined. Each guard
+    decides once the parameter is concrete.
     """
 
     _tail_parameter: str
     _tail_description: str
+    _mean_diverges: bool
 
     def _tail(self) -> Array:
         return getattr(self, self._tail_parameter)
 
     def _mean(self) -> Array:
-        """The backend's mean, where it exists.
+        """The backend's mean, ``inf`` at each coordinate where it diverges.
 
         Raises
         ------
         MathematicalDomainError
-            If the parameter is at most one for a coordinate.
+            If the mean is undefined at a coordinate, where the parameter is at
+            most one and the mean does not diverge.
         """
-        reason = f"it is finite only for {self._tail_description} above one"
-        _require_moment(self, self._tail() > 1, "mean", reason)
-        return self._tfp_dist.mean()
+        tail = self._tail()
+        if self._mean_diverges:
+            return jnp.where(tail > 1, self._tfp_dist.mean(), jnp.inf)
+        reason = f"it is defined only for {self._tail_description} above one"
+        _require_moment(self, tail > 1, "mean", reason)
+        return jnp.where(tail > 1, self._tfp_dist.mean(), jnp.nan)
 
     def _mean_guard(self) -> bool | None:
-        """The parameter that decides whether the mean exists is concrete."""
+        """The parameter that decides whether the mean is defined is concrete."""
         return _decided(self._tail())
 
-    def _variance(self) -> Array:
-        """The backend's variance, where it exists.
+    def _variance_values(self, moment: str, reason: str) -> Array:
+        """The variance, ``inf`` where the parameter lies between one and two.
 
         Raises
         ------
         MathematicalDomainError
-            If the parameter is at most two for a coordinate.
+            If the parameter is at most one for a coordinate, naming *moment*
+            and *reason*.
         """
-        reason = f"it is finite only for {self._tail_description} above two"
-        _require_moment(self, self._tail() > 2, "variance", reason)
-        return self._tfp_dist.variance()
+        tail = self._tail()
+        _require_moment(self, tail > 1, moment, reason)
+        diverging = jnp.where(tail > 1, jnp.inf, jnp.nan)
+        return jnp.where(tail > 2, self._tfp_dist.variance(), diverging)
+
+    def _variance(self) -> Array:
+        """The backend's variance, ``inf`` at each coordinate where it diverges.
+
+        Raises
+        ------
+        MathematicalDomainError
+            If the parameter is at most one for a coordinate, where the mean is
+            infinite or undefined.
+        """
+        reason = f"it is defined only for {self._tail_description} above one"
+        return self._variance_values("variance", reason)
 
     def _variance_guard(self) -> bool | None:
-        """The parameter that decides whether the variance exists is concrete."""
+        """The parameter that decides whether the variance is defined is concrete."""
         return _decided(self._tail())
 
     def _cov(self) -> LinOp:
-        """The diagonal covariance of the independent coordinates, where the variance exists.
+        """The diagonal covariance of the independent coordinates, ``inf`` where the variance is.
 
         Raises
         ------
         MathematicalDomainError
-            If the parameter is at most two for a coordinate.
+            If the parameter is at most one for a coordinate, where the
+            variance is undefined.
         """
-        reason = f"its variance is finite only for {self._tail_description} above two"
-        _require_moment(self, self._tail() > 2, "covariance", reason)
-        return _backend_cov(self)
+        reason = f"its variance is defined only for {self._tail_description} above one"
+        return DiagonalLinOp(jnp.reshape(self._variance_values("covariance", reason), (-1,)))
 
     def _cov_guard(self) -> bool | None:
-        """The parameter that decides whether the covariance exists is concrete."""
+        """The parameter that decides whether the covariance is defined is concrete."""
         return _decided(self._tail())
 
 
@@ -343,8 +366,9 @@ class Gamma(TFPDistribution):
 class InverseGamma(_TailBoundedMoments, TFPDistribution):
     """Inverse-gamma distribution.
 
-    The mean exists for a concentration above one and the variance above two;
-    elsewhere each raises ``MathematicalDomainError``.
+    The mean is finite for a concentration above one and ``inf`` at most one.
+    The variance is finite above two, ``inf`` between one and two, and
+    undefined at most one, where it raises ``MathematicalDomainError``.
 
     Parameters
     ----------
@@ -371,6 +395,7 @@ class InverseGamma(_TailBoundedMoments, TFPDistribution):
     _backend_capabilities = _CLOSED_FORM
     _tail_parameter = "_concentration"
     _tail_description = "a concentration"
+    _mean_diverges = True
 
     def __init__(
         self,
@@ -503,8 +528,9 @@ class LogNormal(TFPDistribution):
 class StudentT(_TailBoundedMoments, TFPDistribution):
     """Student's t-distribution.
 
-    The mean exists for degrees of freedom above one and the variance above
-    two; elsewhere each raises ``MathematicalDomainError``.
+    The mean is the location for degrees of freedom above one and undefined at
+    most one, where it raises ``MathematicalDomainError``. The variance is
+    finite above two, ``inf`` between one and two, and undefined at most one.
 
     Parameters
     ----------
@@ -533,6 +559,7 @@ class StudentT(_TailBoundedMoments, TFPDistribution):
     _backend_capabilities = _CLOSED_FORM
     _tail_parameter = "_df"
     _tail_description = "degrees of freedom"
+    _mean_diverges = False
 
     def __init__(
         self,
@@ -799,8 +826,8 @@ class HalfNormal(TFPDistribution):
 class HalfCauchy(TFPDistribution):
     """Half-Cauchy distribution (support on [loc, inf)).
 
-    Its mean is infinite, and its variance and covariance do not exist, so each
-    raises ``MathematicalDomainError``.
+    Its mean is ``inf``, and its variance and covariance are undefined, since
+    the mean is infinite, so each raises ``MathematicalDomainError``.
 
     Parameters
     ----------
@@ -847,15 +874,9 @@ class HalfCauchy(TFPDistribution):
     def _event_support(self) -> Constraint:
         return greater_than(self._loc)
 
-    def _mean(self) -> NoReturn:
-        """The mean, which is infinite.
-
-        Raises
-        ------
-        MathematicalDomainError
-            Always, since ``E[X]`` diverges.
-        """
-        _no_moment(self, "mean", "E[X] is infinite")
+    def _mean(self) -> Array:
+        """The mean, ``inf`` at each coordinate, since ``E[X]`` diverges."""
+        return jnp.full(jnp.shape(self._tfp_dist.mean()), jnp.inf, self._tfp_dist.dtype)
 
     def _variance(self) -> NoReturn:
         """The variance, which does not exist.
@@ -886,8 +907,9 @@ class HalfCauchy(TFPDistribution):
 class Pareto(_TailBoundedMoments, TFPDistribution):
     """Pareto distribution.
 
-    The mean exists for a concentration above one and the variance above two;
-    elsewhere each raises ``MathematicalDomainError``.
+    The mean is finite for a concentration above one and ``inf`` at most one.
+    The variance is finite above two, ``inf`` between one and two, and
+    undefined at most one, where it raises ``MathematicalDomainError``.
 
     Parameters
     ----------
@@ -914,6 +936,7 @@ class Pareto(_TailBoundedMoments, TFPDistribution):
     _backend_capabilities = frozenset({SupportsMean, SupportsVariance, SupportsCovariance})
     _tail_parameter = "_concentration"
     _tail_description = "a concentration"
+    _mean_diverges = True
 
     def __init__(
         self,

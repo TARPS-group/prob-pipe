@@ -41,6 +41,13 @@ def test_a_map_pushes_a_distribution_forward():
     assert law.provenance.operation == "workflow.evaluate"
 
 
+def test_the_result_takes_the_maps_output_name():
+    double = Function("double", lambda x: 2.0 * x, output_name="doubled")
+    with workflow_run(seed=0):
+        assert evaluate(double, Gaussian("g")).name == "doubled"
+    assert evaluate(double, 1.0).name == "doubled"
+
+
 def test_the_registry_is_exported_beside_the_converter_registry():
     import probpipe
 

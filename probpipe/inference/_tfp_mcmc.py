@@ -221,7 +221,7 @@ class _TFPGradientMethod(InferenceMethod):
         return make_posterior(
             chains,
             parents=(target,),
-            algorithm=self._method_name,
+            method=self._method_name,
             annotations=annotations,
             event_spec=event_spec,
             num_results=num_results,

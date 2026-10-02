@@ -107,11 +107,11 @@ class TestDistributions:
         joint = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
         assert repr(joint["a"]) == "FieldView('a·b', path='a')"
 
-    def test_a_renamed_law_reads_as_the_law_it_renames(self):
+    def test_a_regrouped_rename_reads_as_a_factored_joint(self):
         joint = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
         renamed = repr(joint.with_path_names({"a": "g/a"}))
-        assert renamed.startswith(f"{type(joint).__name__}(\n    'a·b',\n    factors=(")
-        assert "_Renamed" not in renamed and "event_spec=OutputSpec(" in renamed
+        assert renamed.startswith("FactoredDistribution(\n    'a·b',\n    factors=(")
+        assert "_Renamed" not in renamed
 
     def test_an_empirical_law_reads_by_its_atoms(self):
         law = EmpiricalDistribution("e", jnp.arange(5.0))

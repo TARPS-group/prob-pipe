@@ -18,6 +18,7 @@ from ..core._object_batch import _as_object_array, _ObjectBatch
 from ..core._specs import InputSpec, OutputSpec
 from ..core.provenance import Provenance
 from ._conditional import ConditionalDistribution, ConditionalDistributionSpec
+from ._conversion import _event_difference
 from ._distribution import _ELEMENT_SOURCE, Distribution, DistributionSpec
 
 __all__ = ["ConditionalDistributionBatch", "DistributionBatch"]
@@ -102,8 +103,8 @@ class DistributionBatch(_ObjectBatch[Distribution]):
         axes_per_level: Iterable[int] | None = None,
         provenance: Provenance | None = None,
     ) -> None:
+        elements = _as_object_array(elements, kind=type(self).__name__)
         if element_spec is None:
-            elements = _as_object_array(elements, kind=type(self).__name__)
             element_spec = cast(
                 DistributionSpec,
                 _first_element_spec(elements, Distribution, "a DistributionBatch"),
@@ -113,6 +114,7 @@ class DistributionBatch(_ObjectBatch[Distribution]):
                 f"DistributionBatch.element_spec must be a DistributionSpec, "
                 f"got {type(element_spec).__name__}"
             )
+        _check_declarations(elements, element_spec, self._element_rule)
         super().__init__(
             name,
             elements,
@@ -143,6 +145,32 @@ class DistributionBatch(_ObjectBatch[Distribution]):
         view = super()._element_at(index, name=name)
         object.__setattr__(view, _ELEMENT_SOURCE, self._store[index])
         return view
+
+
+def _check_declarations(store: np.ndarray, element_spec: DistributionSpec, rule: str) -> None:
+    """Raise ``TypeError`` for the first law of *store* whose declaration departs from *element_spec*.
+
+    The message names the position and how the law's declaration departs, such
+    as the components each declares. An element that is not a law, or a
+    departure this reading does not name, is left to the batch's own check.
+
+    Raises
+    ------
+    TypeError
+        Naming the law's position and the difference.
+    """
+    for index, element in np.ndenumerate(store):
+        if not isinstance(element, Distribution) or element_spec.is_valid(element):
+            continue
+        position = index[0] if len(index) == 1 else index
+        difference = _event_difference(
+            element_spec.event_spec, element.event_spec, ("the batch", "the law")
+        )
+        if difference is not None:
+            raise TypeError(
+                f"every element of a DistributionBatch must {rule}, and the law at {position} "
+                f"departs from it: {difference}"
+            )
 
 
 def _element_source(law: Distribution) -> Distribution | None:

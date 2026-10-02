@@ -58,6 +58,7 @@ from probpipe.families._continuous import (
     TruncatedNormal,
     Uniform,
 )
+from probpipe.families._converters import _MomentMatching
 from probpipe.families._discrete import Binomial, NegativeBinomial
 from probpipe.families._multivariate import Dirichlet, Multinomial, VonMisesFisher, Wishart
 
@@ -286,19 +287,60 @@ class TestAllCrossFamilyConversions:
         with pytest.raises(ValueError, match="total_count"):
             converter_registry.convert(p, Binomial, check_support=False)
 
-    def test_poisson_from_bernoulli_does_not_carry_the_integer_declaration(self):
+    def test_poisson_from_bernoulli_is_infeasible(self):
         """A Poisson draws floats, which do not cast to the Bernoulli's integers."""
         b = Bernoulli(probs=0.3, name="b")
-        with pytest.raises(ValueError, match="does not cast"):
+        with pytest.raises(ResolutionError, match="does not cast"):
             converter_registry.convert(b, Poisson, check_support=False)
 
-    def test_check_refuses_a_fit_whose_draws_do_not_cast_as_the_call_does(self):
+    def test_a_fit_whose_draws_do_not_cast_is_reported_infeasible_at_check(self):
         """A Normal draws floats, which do not cast to the Bernoulli's integers."""
         b = Bernoulli(probs=0.3, name="b")
-        with pytest.raises(ValueError, match="does not cast"):
-            converter_registry.check(b, Normal)
-        with pytest.raises(ValueError, match="does not cast"):
+        info = converter_registry.check(b, Normal)
+        assert info.feasible is False
+        assert "moment_match" in info.description
+        assert "does not cast" in info.description
+        assert info.target_spec is None
+        with pytest.raises(ResolutionError, match="does not cast"):
             converter_registry.convert(b, Normal)
+
+    def test_the_registry_tries_the_next_converter_after_an_infeasible_fit(self):
+        """A converter that follows moment matching in selection order is selected."""
+
+        class FollowingConverter(Converter):
+            @property
+            def name(self):
+                return "following"
+
+            @property
+            def exact(self):
+                return False
+
+            @property
+            def priority(self):
+                return 0
+
+            def supported_types(self):
+                return ((Bernoulli,), (Normal,))
+
+            def check(self, source, target_type, **options):
+                return ConversionInfo(
+                    True,
+                    method_name=self.name,
+                    exact=False,
+                    target_spec=source.spec,
+                    target_class=Normal,
+                )
+
+            def execute(self, source, target_type, **options):
+                raise AssertionError("the test only checks")
+
+        registry = ConverterRegistry()
+        registry.register(_MomentMatching())
+        registry.register(FollowingConverter())
+        info = registry.check(Bernoulli(probs=0.3, name="b"), Normal)
+        assert info.feasible is True
+        assert info.method_name == "following"
 
     @pytest.mark.parametrize(
         ("source", "target"),

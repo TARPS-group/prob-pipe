@@ -8,6 +8,7 @@ density, and its moments combine componentwise when every component has them.
 
 from __future__ import annotations
 
+import math
 import pickle
 
 import jax
@@ -34,6 +35,7 @@ from probpipe.distributions._capabilities import (
 from probpipe.families import MixtureDistribution
 from probpipe.operations._moments import mean
 from probpipe.operations._sample import sample
+from tests.operations._laws import Sampler
 
 
 def _components():
@@ -132,6 +134,52 @@ def test_the_draws_follow_the_mixture():
     np.testing.assert_allclose(jnp.mean(draws, axis=0), mixture._mean(), atol=0.1)
     one = mixture._sample(jax.random.PRNGKey(1))
     assert one.shape == (2,)
+
+
+def _counting_components() -> list[Sampler]:
+    """Three scalar samplers at locations 0, 10, and 20, which record each sample shape."""
+    return [Sampler("x", 0.0), Sampler("x", 10.0), Sampler("x", 20.0)]
+
+
+def _draw_count(component: Sampler) -> int:
+    """How many draws *component* has been asked for."""
+    return sum(math.prod(shape) for shape in component.shapes)
+
+
+def test_each_component_draws_as_many_times_as_it_is_chosen():
+    components = _counting_components()
+    mixture = MixtureDistribution("m", components, jnp.array([0.5, 0.5, 0.0]))
+    draws = mixture._sample(jax.random.PRNGKey(0), (200,))
+    assert draws.shape == (200,)
+    counts = [_draw_count(component) for component in components]
+    assert sum(counts) == 200
+    assert counts[2] == 0
+
+
+def test_each_draw_comes_from_its_chosen_component():
+    """The chosen components' locations, 10 apart, show which component drew each value."""
+    mixture = MixtureDistribution("m", _counting_components(), jnp.array([0.2, 0.3, 0.5]))
+    draws = np.asarray(mixture._sample(jax.random.PRNGKey(3), (20, 100)))
+    assert draws.shape == (20, 100)
+    nearest = np.rint(draws / 10.0)
+    assert set(np.unique(nearest)) <= {0.0, 1.0, 2.0}
+    shares = [np.mean(nearest == index) for index in range(3)]
+    np.testing.assert_allclose(shares, [0.2, 0.3, 0.5], atol=4 * np.sqrt(0.25 / 2000))
+
+
+def test_one_draw_draws_one_component_once():
+    components = _counting_components()
+    one = MixtureDistribution("m", components, jnp.array([0.2, 0.3, 0.5]))._sample(
+        jax.random.PRNGKey(4)
+    )
+    assert np.shape(one) == ()
+    assert sum(_draw_count(component) for component in components) == 1
+
+
+def test_a_traced_draw_still_follows_the_mixture():
+    mixture = MixtureDistribution("m", _components(), jnp.array([0.25, 0.75]))
+    draws = jax.jit(lambda key: mixture._sample(key, (4000,)))(jax.random.PRNGKey(0))
+    np.testing.assert_allclose(jnp.mean(draws, axis=0), mixture._mean(), atol=0.1)
 
 
 def test_it_claims_what_every_component_claims():

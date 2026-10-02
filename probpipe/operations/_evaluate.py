@@ -34,7 +34,16 @@ def _evaluate_result(f: Any, v: Any, fixed_args: Any) -> OutputSpec | None:
     return None
 
 
-@operation(result=_evaluate_result, roles={"f": (FunctionSpec,), "v": (TermSpec,)})
+def _map_output_label(f: Any) -> str:
+    """The map's output name, which the map's own result takes (V.10)."""
+    return f.output_name if isinstance(f, Function) else "evaluate"
+
+
+@operation(
+    result=_evaluate_result,
+    roles={"f": (FunctionSpec,), "v": (TermSpec,)},
+    label=_map_output_label,
+)
 def evaluate(f: Any, v: Any, fixed_args: Mapping[str, Any] | None = None):
     """Apply the map *f* to the operand *v*.
 
@@ -52,7 +61,7 @@ def evaluate(f: Any, v: Any, fixed_args: Mapping[str, Any] | None = None):
     -------
     TrackedTerm
         ``f(v)`` for a value, the pushforward law for a distribution, and the
-        elementwise result for a batch.
+        elementwise result for a batch, labeled by the map's output name.
 
     Raises
     ------

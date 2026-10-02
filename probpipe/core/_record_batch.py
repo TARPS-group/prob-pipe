@@ -344,13 +344,33 @@ class RecordBatch(Batch[Record]):
 
     # -- field access -------------------------------------------------------
 
-    def raw(self) -> dict[str, Any]:
-        """The storage view: the nested mapping of the raw columns, in canonical order.
+    def raw(self, path: str | tuple[str, ...] | None = None) -> Any:
+        """The storage view: the nested mapping of the raw columns, or one node's.
 
         Each column is its field's raw batch form, the stacked array for an
-        array field and the frozen object array for any other field.
+        array field and the frozen object array for any other field. With
+        *path*, a field gives its column and an interior node the nested mapping
+        of the columns beneath it, as a record's ``raw(path)`` does.
+
+        Raises
+        ------
+        KeyError
+            If *path* addresses no node of the batch's records.
         """
-        return _unflatten_paths(self._columns)
+        if path is None:
+            return _unflatten_paths(self._columns)
+        key = _PATH_SEP.join(path) if isinstance(path, tuple) else path
+        if key in self._columns:
+            return self._columns[key]
+        prefix = key + _PATH_SEP
+        beneath = {
+            p[len(prefix) :]: column for p, column in self._columns.items() if p.startswith(prefix)
+        }
+        if not beneath:
+            raise KeyError(
+                f"{key!r} is no path of {self.name!r}; its fields are {sorted(self._columns)}"
+            )
+        return _unflatten_paths(beneath)
 
     def _raw_column(self, path: str) -> Any:
         """One field's column exactly as stored, before any presentation.

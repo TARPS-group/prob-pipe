@@ -55,7 +55,7 @@ class TestApproximateDistribution:
         return make_posterior(
             chains,
             parents=(prior,),
-            algorithm="test",
+            method="test",
             annotations=annotations,
         )
 
@@ -76,8 +76,8 @@ class TestApproximateDistribution:
         assert two_chain_dist.num_atoms == 100  # 50 * 2 chains
 
     def test_algorithm_from_provenance(self, two_chain_dist):
-        assert two_chain_dist.algorithm == "test"
-        assert two_chain_dist.provenance.metadata["algorithm"] == "test"
+        assert two_chain_dist.method == "test"
+        assert two_chain_dist.provenance.metadata["method"] == "test"
 
     def test_annotations_contains_arviz_data(self, two_chain_dist):
         assert two_chain_dist.annotations is not None
@@ -144,7 +144,7 @@ class TestApproximateDistribution:
         posterior = make_posterior(
             [chain],
             parents=(prior,),
-            algorithm="test",
+            method="test",
             annotations={"posterior": xr.Dataset()},
         )
 
@@ -159,7 +159,7 @@ class TestApproximateDistribution:
         posterior = make_posterior(
             [chain],
             parents=(prior,),
-            algorithm="test",
+            method="test",
             annotations={
                 "/": xr.Dataset(attrs={"ignored": True}),
                 "posterior": xr.Dataset(),
@@ -224,7 +224,7 @@ class TestApproximateDistribution:
         post = make_posterior(
             [chain],
             parents=(prior,),
-            algorithm="test",
+            method="test",
             weights=jnp.array([0.2, 0.8]),
         )
         assert post.weights is not None
@@ -235,7 +235,7 @@ class TestApproximateDistribution:
         (the weighted-mean change is opt-in, not a default behaviour shift)."""
         chain = jnp.array([[0.0], [10.0]])
         prior = Normal(loc=0.0, scale=1.0, name="theta")
-        post = make_posterior([chain], parents=(prior,), algorithm="test")
+        post = make_posterior([chain], parents=(prior,), method="test")
         np.testing.assert_allclose(np.asarray(mean(post)).ravel(), [5.0], atol=1e-6)
 
 
@@ -254,7 +254,7 @@ class TestApproximateDistributionValuesTemplate:
         return make_posterior(
             [chain],
             parents=(prior,),
-            algorithm="test",
+            method="test",
             event_spec=template,
         )
 
@@ -291,7 +291,7 @@ class TestApproximateDistributionValuesTemplate:
     def test_without_template_returns_array(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (50, 3))
         prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
-        post = make_posterior([chain], parents=(prior,), algorithm="test")
+        post = make_posterior([chain], parents=(prior,), method="test")
         draws = post.draws()
         assert isinstance(draws, jnp.ndarray)
         assert draws.shape == (50, 3)
@@ -304,9 +304,7 @@ class TestApproximateDistributionValuesTemplate:
         """A posterior over a one-field record declares the field's shape, as its draws have it."""
         width = int(np.prod(shape))
         chains = [jnp.zeros((5, width)), jnp.ones((5, width))]
-        post = make_posterior(
-            chains, parents=(), algorithm="test", event_spec=RecordSpec(theta=shape)
-        )
+        post = make_posterior(chains, parents=(), method="test", event_spec=RecordSpec(theta=shape))
         assert post.event_spec.spec["theta"].shape == shape
         assert post.draws()["theta"].shape == (10, *shape)
         assert jnp.shape(post._mean()["theta"]) == shape
@@ -329,7 +327,7 @@ class TestApproximateDistributionValuesTemplate:
         post = make_posterior(
             [chain],
             parents=(prior,),
-            algorithm="test",
+            method="test",
             event_spec=template,
             field_order=["b", "a"],
         )
@@ -346,7 +344,7 @@ class TestApproximateDistributionValuesTemplate:
         post = make_posterior(
             [chain],
             parents=(prior,),
-            algorithm="test",
+            method="test",
             event_spec=template,
         )
         draws = post.draws()
@@ -362,7 +360,7 @@ class TestApproximateDistributionValuesTemplate:
             make_posterior(
                 [chain],
                 parents=(prior,),
-                algorithm="test",
+                method="test",
                 event_spec=template,
                 field_order=["a", "c"],
             )
@@ -378,7 +376,7 @@ class TestApproximateDistributionValuesTemplate:
             make_posterior(
                 [chain],
                 parents=(prior,),
-                algorithm="test",
+                method="test",
                 event_spec=template,
                 field_order=["a", "b"],
             )
@@ -394,7 +392,7 @@ class TestApproximateDistributionValuesTemplate:
             make_posterior(
                 [chain],
                 parents=(prior,),
-                algorithm="test",
+                method="test",
                 event_spec=template,
                 field_order=["a", "b", "c"],
             )
@@ -408,7 +406,7 @@ class TestApproximateDistributionValuesTemplate:
             make_posterior(
                 [chain],
                 parents=(prior,),
-                algorithm="test",
+                method="test",
                 field_order=["a", "b"],
             )
 
@@ -422,7 +420,7 @@ class TestApproximateDistributionValuesTemplate:
             make_posterior(
                 [chain],
                 parents=(prior,),
-                algorithm="test",
+                method="test",
                 event_spec=template,
                 field_order=["b"],
             )
@@ -437,7 +435,7 @@ class TestApproximateDistributionValuesTemplate:
             make_posterior(
                 [chain],
                 parents=(prior,),
-                algorithm="test",
+                method="test",
                 event_spec=template,
                 field_order=["a"],
             )
@@ -451,7 +449,7 @@ class TestApproximateDistributionValuesTemplate:
             make_posterior(
                 [chain],
                 parents=(prior,),
-                algorithm="test",
+                method="test",
                 event_spec=template,
                 field_order=["a", "b"],
             )
@@ -465,7 +463,7 @@ class TestApproximateDistributionValuesTemplate:
             make_posterior(
                 [chain],
                 parents=(prior,),
-                algorithm="test",
+                method="test",
                 event_spec=template,
             )
 
@@ -481,7 +479,7 @@ class TestApproximateDistributionValuesTemplate:
         post = make_posterior(
             [chain],
             parents=(prior,),
-            algorithm="test",
+            method="test",
             event_spec=template,
         )
         draws = post.draws()
@@ -498,7 +496,7 @@ class TestApproximateDistributionValuesTemplate:
         post = make_posterior(
             [chain],
             parents=(prior,),
-            algorithm="test",
+            method="test",
             annotations=annotations,
             event_spec=template,
         )
@@ -519,7 +517,7 @@ class TestApproximateDistributionValuesTemplate:
         post = make_posterior(
             [chain],
             parents=(prior,),
-            algorithm="test",
+            method="test",
             event_spec=template,
         )
         draws = post.draws()
@@ -537,9 +535,7 @@ class TestApproximateDistributionValuesTemplate:
             {"a": "params/a", "b": "params/b"}
         ) * Normal("s", 0.0, 1.0)
         chain = jax.random.normal(jax.random.PRNGKey(0), (40, 3))
-        post = make_posterior(
-            [chain], parents=(prior,), algorithm="test", event_spec=prior.event_spec
-        )
+        post = make_posterior([chain], parents=(prior,), method="test", event_spec=prior.event_spec)
         assert post["params/a"].event_spec.spec == prior.event_spec.spec.at_path(("params", "a"))
         assert from_distribution(post, KDEDistribution).event_spec == prior.event_spec
 
@@ -559,7 +555,7 @@ class TestApproximateDistributionValuesTemplate:
         post = make_posterior(
             [chain],
             parents=(prior,),
-            algorithm="test",
+            method="test",
             event_spec=template,
         )
         expected_fields = ("params", "scale")
@@ -606,7 +602,7 @@ class TestApproximateDistributionValuesTemplate:
         post = make_posterior(
             [chain],
             parents=(prior,),
-            algorithm="test",
+            method="test",
             annotations=annotations,
         )
 
@@ -620,7 +616,7 @@ class TestApproximateDistributionValuesTemplate:
     def test_algorithm_default_without_annotations(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
         dist = ApproximateDistribution([chain], name="x")
-        assert dist.algorithm == "unknown"
+        assert dist.method == "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -645,7 +641,7 @@ class TestRWMH:
         assert result.num_draws == 100
         assert result.num_chains == 1
         assert result.event_shape == (2,)
-        assert result.algorithm == "blackjax_rwmh"
+        assert result.method == "blackjax_rwmh"
 
     def test_inference_data_produced(self):
         """RWMH produces an annotations DataTree with posterior group."""
@@ -922,7 +918,7 @@ class TestPosteriorFieldView:
         return make_posterior(
             [chain],
             parents=(prior,),
-            algorithm="test",
+            method="test",
             event_spec=template,
         )
 
@@ -967,7 +963,7 @@ class TestPosteriorFieldView:
         template = RecordSpec(vec=(5,), scalar=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (50, 6))
         prior = MultivariateNormal(loc=jnp.zeros(6), cov=jnp.eye(6), name="z")
-        post = make_posterior([chain], parents=(prior,), algorithm="test", event_spec=template)
+        post = make_posterior([chain], parents=(prior,), method="test", event_spec=template)
         assert post["scalar"].event_shape == ()
         assert post["vec"].event_shape == (5,)
 
@@ -1000,7 +996,7 @@ class TestPosteriorFieldView:
         template = RecordSpec(a=(), b=())
         chain = jnp.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
-        post = make_posterior([chain], parents=(prior,), algorithm="test", event_spec=template)
+        post = make_posterior([chain], parents=(prior,), method="test", event_spec=template)
         view = post["a"]
         # Mean of column 0 (field "a"): (1+3+5)/3 = 3.0
         np.testing.assert_allclose(float(view._mean()), 3.0, atol=1e-5)
@@ -1041,7 +1037,7 @@ class TestViewProtocolDuckTyping:
         template = RecordSpec(a=(), b=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (50, 2))
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
-        post = make_posterior([chain], parents=(prior,), algorithm="test", event_spec=template)
+        post = make_posterior([chain], parents=(prior,), method="test", event_spec=template)
         view = post["a"]
         assert not isinstance(view, SupportsLogProb)
 
@@ -1055,7 +1051,7 @@ class TestViewProtocolDuckTyping:
         template = RecordSpec(a=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 1))
         prior = Normal("x", 0, 1)
-        post = make_posterior([chain], parents=(prior,), algorithm="test", event_spec=template)
+        post = make_posterior([chain], parents=(prior,), method="test", event_spec=template)
         assert isinstance(post["a"], SupportsSampling)
 
     def test_view_always_isinstance_mean_variance(self):
@@ -1095,7 +1091,7 @@ class TestViewProtocolDuckTyping:
         template = RecordSpec(a=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 1))
         prior = Normal("x", 0, 1)
-        post = make_posterior([chain], parents=(prior,), algorithm="test", event_spec=template)
+        post = make_posterior([chain], parents=(prior,), method="test", event_spec=template)
         view_without = post["a"]
         assert not isinstance(view_without, SupportsLogProb)
 
@@ -1269,7 +1265,7 @@ class TestEndToEndValuesPipeline:
         post = make_posterior(
             [chain],
             parents=(prior,),
-            algorithm="test",
+            method="test",
             event_spec=template,
         )
         draws = post.draws()

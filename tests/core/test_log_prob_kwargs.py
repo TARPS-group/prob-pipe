@@ -138,6 +138,9 @@ class TestStanViewsPackValue:
     def stan_view(self, request, tmp_path):
         from probpipe.core._immutable import transient_memo
         from probpipe.families import StanModel
+        from tests._stanc import require_stanc
+
+        require_stanc()
 
         program = tmp_path / "blocks.stan"
         program.write_text("parameters { real mu; vector[3] theta; } model { }")

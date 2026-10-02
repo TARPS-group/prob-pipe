@@ -16,6 +16,10 @@ import numpy as np
 
 from probpipe import ApproximateDistribution, PyMCModel
 from probpipe.core._specs import NumericArraySpec
+from probpipe.core.constraints import real
+
+#: The dtype the array backend gives a PyMC float variable.
+_FLOAT = np.dtype(jnp.result_type(float))
 
 
 @contextmanager
@@ -136,7 +140,7 @@ class TestPyMCModel:
         assert isinstance(result, ApproximateDistribution)
         assert result.num_chains == 1
         assert result.num_draws == 20
-        assert result.algorithm == "pymc_nuts"
+        assert result.method == "pymc_nuts"
         assert result.inference_data is not None
         assert hasattr(result.inference_data, "posterior")
         assert hasattr(result.inference_data, "sample_stats")
@@ -172,7 +176,7 @@ class TestPyMCModel:
         assert isinstance(result, ApproximateDistribution)
         assert result.num_chains == 2
         assert result.num_draws == 50
-        assert result.algorithm == "pymc_nuts"
+        assert result.method == "pymc_nuts"
 
     def test_multicore_passes_spawn_to_pm_sample(self, model):
         """Deterministically prove production calls ``pm.sample`` with
@@ -202,7 +206,7 @@ class TestPyMCModel:
         assert captured["cores"] >= 2
         assert captured["chains"] == 2
         assert isinstance(result, ApproximateDistribution)
-        assert result.algorithm == "pymc_nuts"
+        assert result.method == "pymc_nuts"
 
     def test_default_chains_pass_spawn_to_pm_sample(self, model):
         """The default path (no ``cores`` kwarg, ``num_chains`` defaults to 4)
@@ -276,8 +280,8 @@ class TestRecordSpec:
 
         tpl = PyMCModel("model", model_fn).event_spec.spec
         assert tpl.fields == ("intercept", "slope", "y")
-        assert tpl["intercept"] == NumericArraySpec(())
-        assert tpl["slope"] == NumericArraySpec((3,))
+        assert tpl["intercept"] == NumericArraySpec((), _FLOAT, real)
+        assert tpl["slope"] == NumericArraySpec((3,), _FLOAT, real)
 
     def test_the_declaration_is_the_free_rv_record(self):
         """The model declares one field per free RV; an unknown size is symbolic."""
@@ -295,10 +299,10 @@ class TestRecordSpec:
         model = PyMCModel("model", model_fn)
         assert model.event_spec == OutputSpec(
             RecordSpec(
-                intercept=NumericArraySpec(()),
-                slope=NumericArraySpec((3,)),
-                z=NumericArraySpec(("z_0",)),
-                y=NumericArraySpec(()),
+                intercept=NumericArraySpec((), _FLOAT, real),
+                slope=NumericArraySpec((3,), _FLOAT, real),
+                z=NumericArraySpec(("z_0",), _FLOAT, real),
+                y=NumericArraySpec((), _FLOAT, real),
             )
         )
 
@@ -313,7 +317,7 @@ class TestRecordSpec:
 
         tpl = PyMCModel("model", model_fn).event_spec.spec
         assert tpl.fields == ("mu", "y")
-        assert tpl["y"] == NumericArraySpec(())
+        assert tpl["y"] == NumericArraySpec((), _FLOAT, real)
 
     def test_data_dependent_shape_reflects_conditioned_build(self):
         """``_parameter_record_for(model)`` reports the data-conditioned
@@ -331,17 +335,17 @@ class TestRecordSpec:
         # X is a covariate, a given slot, so the event's shapes are symbolic.
         tpl = kernel.event_spec.spec
         assert tpl.fields == ("intercept", "alpha", "y")
-        assert tpl["alpha"] == NumericArraySpec(("alpha_0",))
+        assert tpl["alpha"] == NumericArraySpec(("alpha_0",), _FLOAT, real)
 
         # Binding X, then building at the data, picks up the real shape.
         N = 50
         model = kernel._condition_on({"X": np.zeros(N, dtype=np.float32)})
-        assert model.event_spec.spec["alpha"] == NumericArraySpec((N,))
+        assert model.event_spec.spec["alpha"] == NumericArraySpec((N,), _FLOAT, real)
         conditioned = model._pymc_model(data={"y": np.zeros(N, dtype=np.float32)})
         names = model._conditioned_param_names(conditioned)
         tpl_c = model._parameter_record_for(conditioned, names)
         assert tpl_c.fields == ("intercept", "alpha")
-        assert tpl_c["alpha"] == NumericArraySpec((N,))
+        assert tpl_c["alpha"] == NumericArraySpec((N,), _FLOAT, real)
         assert not hasattr(model, "_last_conditioned_model")
 
     def test_data_dependent_shape_inference_recovers_correct_layout(self):
@@ -401,7 +405,7 @@ class TestRecordSpec:
             num_results=25,
             random_seed=0,
         )
-        assert result.algorithm == "pymc_advi"
+        assert result.method == "pymc_advi"
         draws = result.draws()
         assert draws.event_template.fields == ("intercept", "alpha")
         assert jnp.asarray(draws["intercept"]).shape == (25,)

@@ -13,6 +13,8 @@ import pytest
 
 nutpie = pytest.importorskip("nutpie")
 
+from probpipe import NumericArraySpec
+from probpipe.core.constraints import real
 from probpipe.inference import ApproximateDistribution
 from probpipe.inference._nutpie import (
     _compile_for_nutpie,
@@ -45,6 +47,7 @@ class TestCompileForNutpie:
     """_compile_for_nutpie dispatch — still uses mocks since we only test
     which nutpie function is called, not that it produces a runnable model."""
 
+    @pytest.mark.usefixtures("_stanc")
     def test_a_stan_posterior_compiles_from_its_file_with_its_data(self, tmp_path):
         """A Stan posterior compiles through nutpie.compile_stan_model from its
         program's file, and nutpie's compiled model takes its data."""
@@ -62,6 +65,7 @@ class TestCompileForNutpie:
         assert (compiled.filename, compiled.data) == (str(program), {"N": 3})
         assert pymc_build is None  # Stan target — no PyMC build to thread
 
+    @pytest.mark.usefixtures("_stanc")
     def test_a_stan_kernel_curries_to_its_posterior_at_the_data(self, tmp_path):
         """A StanModel given its remaining data curries to the posterior first,
         whose data are the construction data and the conditioning data together."""
@@ -74,6 +78,7 @@ class TestCompileForNutpie:
             compiled, _ = _compile_for_nutpie(kernel, data={"y": [1.0, 2.0]})
         assert compiled.data == {"N": 2, "y": [1.0, 2.0]}
 
+    @pytest.mark.usefixtures("_stanc")
     def test_a_stan_posterior_keeps_its_parameter_record(self, tmp_path):
         """The posterior holds the parameter blocks alone, each in its own shape."""
         import xarray as xr
@@ -104,10 +109,14 @@ class TestCompileForNutpie:
         ):
             result = condition_on_nutpie.apply(posterior, num_results=3, num_chains=2)
         assert tuple(result.event_spec.components) == ("mu", "theta")
+        assert result.event_spec.spec["theta"] == NumericArraySpec(
+            (2,), jnp.result_type(float), real
+        )
         np.testing.assert_array_equal(
             np.asarray(result.chains[1]), [[10, 110, 1010], [11, 111, 1011], [12, 112, 1012]]
         )
 
+    @pytest.mark.usefixtures("_stanc")
     def test_a_posterior_builds_its_bridgestan_model_once(self, tmp_path):
         """The posterior's BridgeStan model is built at its data on first use and reused."""
         from probpipe.families import StanModel
@@ -141,6 +150,7 @@ class TestCompileForNutpie:
         with pytest.raises(TypeError, match="does not support"):
             _compile_for_nutpie(model, data=None)
 
+    @pytest.mark.usefixtures("_stanc")
     def test_a_stan_posterior_conditioned_on_a_parameter_is_declined(self, tmp_path):
         """nutpie samples a Stan program at its data, so it cannot fix a parameter."""
         from probpipe.families import StanModel
@@ -158,6 +168,39 @@ class TestCompileForNutpie:
         assert report.feasible is False
         assert "parameter" in report.description
         assert NutpieNutsMethod().check(posterior).feasible is True
+
+
+def _stan_trace():
+    """A nutpie trace of two chains of three draws of a scalar ``mu``."""
+    import xarray as xr
+
+    mu = np.array([[0.0, 1.0, 2.0], [10.0, 11.0, 12.0]])
+    return xr.DataTree.from_dict({"posterior": xr.Dataset({"mu": (("chain", "draw"), mu)})})
+
+
+@pytest.mark.usefixtures("_stanc")
+class TestMethodOptions:
+    """The method's options pass to nutpie's sampler, whose defaults stand otherwise."""
+
+    def _sampled_with(self, tmp_path, **options):
+        from probpipe.families import StanModel
+        from probpipe.inference._nutpie import NutpieNutsMethod
+
+        program = tmp_path / "program.stan"
+        program.write_text("parameters { real mu; } model { }")
+        posterior = StanModel("program", str(program))
+        with (
+            patch.object(nutpie, "compile_stan_model", _compile_stan_model),
+            patch.object(nutpie, "sample", return_value=_stan_trace()) as sample,
+        ):
+            NutpieNutsMethod().execute(posterior, num_results=3, num_chains=2, **options)
+        return sample.call_args.kwargs
+
+    def test_progress_bar_is_passed_to_the_sampler(self, tmp_path):
+        assert self._sampled_with(tmp_path, progress_bar=False)["progress_bar"] is False
+
+    def test_without_progress_bar_the_sampler_keeps_its_default(self, tmp_path):
+        assert "progress_bar" not in self._sampled_with(tmp_path)
 
 
 class TestImportError:
@@ -314,7 +357,7 @@ class TestNutpieStanIntegration:
         )
         assert isinstance(result, ApproximateDistribution)
         assert result.num_chains == 2
-        assert result.algorithm == "nutpie_nuts"
+        assert result.method == "nutpie_nuts"
         post = result.inference_data.posterior
         assert "alpha" in post and "beta" in post
         beta_mean = float(np.asarray(post["beta"]).mean())
@@ -387,7 +430,7 @@ class TestNutpieIntegration:
         )
         assert isinstance(result, ApproximateDistribution)
         assert result.num_chains == 2
-        assert result.algorithm == "nutpie_nuts"
+        assert result.method == "nutpie_nuts"
         assert result.provenance is not None
         assert result.provenance.operation == "nutpie_nuts"
         # Analytical posterior: prior N(0, 10), likelihood N(mu, 1) with n=5

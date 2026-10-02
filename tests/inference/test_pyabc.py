@@ -176,7 +176,7 @@ class TestPyABCRecovery:
             max_populations=4,
             random_seed=0,
         )
-        assert post.algorithm == "pyabc_smcabc"
+        assert post.method == "pyabc_smcabc"
         assert _means(post)["theta"][0] == pytest.approx(2.0, abs=0.2)
 
 

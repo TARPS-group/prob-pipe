@@ -159,6 +159,10 @@ class TestDistributionBatchConstruction:
         with pytest.raises(TypeError, match="at 1"):
             DistributionBatch("laws", laws, "law")
 
+    def test_a_law_of_other_components_raises_naming_the_components(self):
+        with pytest.raises(TypeError, match=r"at 1 .*components \['x'\] and the law \['other'\]"):
+            DistributionBatch("laws", [Normal("x", 0.0, 1.0), Normal("other", 0.0, 1.0)], "law")
+
     def test_a_mismatch_in_a_batch_of_several_axes_names_its_index(self):
         laws = _laws(6)
         laws[5] = Normal("other", 0.0, 1.0)
