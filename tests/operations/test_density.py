@@ -25,7 +25,16 @@ from probpipe.operations._density import (
     unnormalized_prob,
 )
 
-from ._laws import Bare, Coin, Gaussian, OneField, Polymorphic, RandomDensity, Unnormalized
+from ._laws import (
+    Bare,
+    Coin,
+    CountedVector,
+    Gaussian,
+    OneField,
+    Polymorphic,
+    RandomDensity,
+    Unnormalized,
+)
 
 
 class TestLogProb:
@@ -99,6 +108,54 @@ class TestTheScoredValue:
             jax.scipy.stats.norm.logpdf(np.linspace(-1.0, 1.0, 6).reshape(2, 3)),
             rtol=1e-6,
         )
+
+
+class TestABatchOfArraysIsScoredInOneMappedCall:
+    @staticmethod
+    def _points(n: int) -> NumericArrayBatch:
+        return NumericArrayBatch(
+            "points", jax.random.normal(jax.random.PRNGKey(n), (n, 3)), "point"
+        )
+
+    @pytest.mark.parametrize("score", [log_prob, unnormalized_log_prob])
+    def test_the_density_runs_as_often_for_a_thousand_values_as_for_five(self, score):
+        law = CountedVector("v")
+        points = self._points(1000)
+        scores = score(law, points)
+        thousand = len(law.calls)
+        law.calls.clear()
+        score(law, self._points(5))
+        assert len(law.calls) == thousand < 5
+        assert all(jnp.shape(jnp.asarray(value)) == (3,) for value in law.calls)
+        assert (scores.level_names, scores.batch_shape) == (("point",), (1000,))
+        np.testing.assert_allclose(
+            np.asarray(scores.values),
+            np.sum(jax.scipy.stats.norm.logpdf(np.asarray(points.values)), axis=-1),
+            rtol=1e-6,
+        )
+
+    @pytest.mark.parametrize("score", [log_prob, unnormalized_log_prob])
+    def test_the_mapped_scores_equal_the_sequential_ones_at_every_level(self, score):
+        points = NumericArrayBatch(
+            "grid",
+            jax.random.normal(jax.random.PRNGKey(1), (2, 4, 3)),
+            ("rows", "cols"),
+            element_spec=NumericArraySpec((3,)),
+            axes_per_level=(1, 1),
+        )
+        mapped_law, sequential_law = CountedVector("v"), CountedVector("v")
+        mapped = score(mapped_law, points)
+        sequential = score.with_options(dispatch="sequential")(sequential_law, points)
+        assert len(sequential_law.calls) == 8 > len(mapped_law.calls)
+        assert mapped.level_names == sequential.level_names == ("rows", "cols")
+        assert mapped.batch_shape == sequential.batch_shape == (2, 4)
+        np.testing.assert_allclose(
+            np.asarray(mapped.values), np.asarray(sequential.values), rtol=1e-6
+        )
+
+    def test_a_batch_of_values_of_another_shape_raises_applicability_error(self):
+        with pytest.raises(ApplicabilityError, match="does not conform"):
+            log_prob(CountedVector("v"), NumericArrayBatch("points", jnp.zeros((4, 2)), "point"))
 
 
 class TestLiftedScores:

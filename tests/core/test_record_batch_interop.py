@@ -1169,17 +1169,26 @@ class TestSweepingASingleStoreBatchAgreesAcrossDispatch:
             element_spec=NumericArraySpec(shape=()),
         )
 
-    @pytest.mark.parametrize("dispatch", ["auto", "sequential"])
+    @pytest.mark.parametrize("dispatch", ["auto", "sequential", "jax"])
     def test_the_rows_own_level_survives(self, dispatch):
         out = Function(fn=self._inner, label="f", dispatch=dispatch)(v=self._rows())
 
         assert (out.batch_shape, out.level_names) == ((3, 2), ("row", "inner"))
+        np.testing.assert_allclose(out.values, np.repeat(np.arange(3.0), 2).reshape(3, 2))
 
-    def test_explicit_jax_says_what_it_cannot_do(self):
-        """The probe builds one leaf per field, which a single-store batch lacks.
+    def test_explicit_jax_maps_the_store_and_feeds_each_row_as_an_array(self):
+        """One map over the batch's store serves every row, and the body receives each
+        row as a NumericArray under the batch's element spec."""
+        seen: list = []
 
-        Declining beats mis-reading it as a law: `auto` sweeps it correctly, and
-        an explicit `jax` should not silently differ from that.
-        """
-        with pytest.raises(TypeError, match="cannot vectorize over NumericArrayBatch"):
-            Function(fn=self._inner, label="f", dispatch="jax")(v=self._rows())
+        def double(v):
+            seen.append(v)
+            return jnp.asarray(v) * 2.0
+
+        out = Function(fn=double, label="double", dispatch="jax")(v=self._rows(5))
+
+        assert seen and len(seen) < 5
+        assert all(isinstance(row, NumericArray) for row in seen)
+        assert all(row.spec == NumericArraySpec(shape=()) for row in seen)
+        assert (out.batch_shape, out.level_names) == ((5,), ("row",))
+        np.testing.assert_allclose(out.values, 2.0 * np.arange(5.0))

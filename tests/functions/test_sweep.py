@@ -832,3 +832,52 @@ class TestNumericArraySweep:
         assert result.level_names == source.level_names
         assert result.axis_groups == source.axis_groups
         np.testing.assert_array_equal(np.asarray(result), expected)
+
+
+class TestASweptBatchOfArrays:
+    @staticmethod
+    def _grid() -> NumericArrayBatch:
+        return NumericArrayBatch(
+            "grid",
+            jnp.arange(24.0).reshape(2, 4, 3),
+            ("rows", "cols"),
+            element_spec=NumericArraySpec((3,)),
+            axes_per_level=(1, 1),
+        )
+
+    def test_the_mapped_storage_flattens_the_levels_in_row_major_order(self):
+        storage = _sweep.mapped_storage(self._grid(), 8)
+        np.testing.assert_array_equal(np.asarray(storage), np.arange(24.0).reshape(8, 3))
+
+    def test_a_batch_of_records_maps_one_column_per_field(self):
+        source = NumericRecordBatch(
+            "rows",
+            {"a": jnp.arange(4.0).reshape(2, 2), "b": jnp.ones((2, 2, 3))},
+            ("rows", "cols"),
+            axes_per_level=(1, 1),
+        )
+        storage = _sweep.mapped_storage(source, 4)
+        assert list(storage) == ["a", "b"]
+        assert (storage["a"].shape, storage["b"].shape) == ((4,), (4, 3))
+
+    def test_a_batch_that_stores_objects_raises_type_error(self):
+        laws = DistributionBatch("laws", [Normal("x", 0.0, 1.0), Normal("x", 1.0, 1.0)], "law")
+        with pytest.raises(TypeError, match="DistributionBatch stores objects"):
+            _sweep.mapped_storage(laws, 2)
+
+    @pytest.mark.parametrize("dispatch", ["auto", "sequential", "jax"])
+    def test_every_dispatch_sweeps_it_alike_at_its_levels(self, dispatch):
+        rows: list = []
+
+        def norm(v):
+            rows.append(v)
+            return jnp.sum(jnp.asarray(v) ** 2)
+
+        result = Function(fn=norm, label="norm", dispatch=dispatch)(self._grid())
+
+        assert all(isinstance(row, NumericArray) for row in rows)
+        assert len(rows) == 8 if dispatch == "sequential" else len(rows) < 8
+        assert (result.level_names, result.axis_groups) == (("rows", "cols"), ((2,), (4,)))
+        np.testing.assert_allclose(
+            np.asarray(result), np.sum(np.arange(24.0).reshape(2, 4, 3) ** 2, axis=-1)
+        )

@@ -13,6 +13,7 @@ from itertools import product as cartesian_product
 from typing import Any
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 
 from ..values import _binding
@@ -22,6 +23,7 @@ try:
 except ImportError:
     task = flow = None
 
+from ..core._batch import Batch
 from ..core._numeric_array import NumericArray
 from ..core._numeric_array_batch import NumericArrayBatch, _MappedBatchStore
 from ..core._object_batch import _ObjectBatch
@@ -251,7 +253,7 @@ def execute_sweep_rows(
     )
     if requested_dispatch == "jax" and not jax_supported:
         raise ValueError(
-            "dispatch='jax' supports only a single plain batched-record sweep; "
+            "dispatch='jax' supports a sweep over one batch of records or arrays; "
             "use dispatch='auto', 'sequential', or 'thread' for this path."
         )
 
@@ -306,6 +308,44 @@ def execute_sweep_rows(
     return _execution.execute_many(request)
 
 
+def mapped_storage(batch: Batch, n_rows: int) -> Any:
+    """The raw storage the map reads from the swept *batch*, as *n_rows* rows on one leading axis.
+
+    The batch axes are flattened in row-major order, which is the order of the
+    sweep's cells. A batch of arrays is read as its store, and a batch of records
+    as one column per field, keyed by the field's path.
+
+    Raises
+    ------
+    TypeError
+        If *batch* stores objects, as a batch of laws or of functions does.
+    """
+    n_batch = len(batch.batch_shape)
+
+    def rows(column: Any) -> Any:
+        column = jnp.asarray(column)
+        # The row count is stated, since ``-1`` cannot be inferred over a
+        # zero-width event.
+        return jnp.reshape(column, (n_rows, *jnp.shape(column)[n_batch:]))
+
+    if isinstance(batch, NumericArrayBatch):
+        return rows(batch.as_jax())
+    if isinstance(batch, RecordBatch):
+        return {path: rows(batch._raw_column(path)) for path in batch.event_template}
+    raise TypeError(f"a {type(batch).__name__} stores objects, which a mapped sweep cannot read")
+
+
+def _mapped_row(batch: Batch, label: str, row: Any) -> NumericArray | Record:
+    """One element of the swept *batch*, rebuilt from the raw *row* the map reads.
+
+    The element is labeled *label*. A batch of arrays yields an array under the
+    batch's element spec, and a batch of records a record of the row's fields.
+    """
+    if isinstance(batch, NumericArrayBatch):
+        return NumericArray(label, row, spec=batch.element_spec)
+    return Record(label, row)
+
+
 def mapped_row_body(
     *,
     func: Callable[..., Any],
@@ -320,21 +360,24 @@ def mapped_row_body(
     to trace exactly what the executor runs, which two separately maintained
     functions cannot promise.
 
-    A row's batched-record argument is rebuilt from raw leaf columns inside the
-    traced call, so nothing infers a batch axis on the way in. On the way out the
-    row takes the kind of its own return, as a row-wise row does, and a numeric
-    array, record, or batch is then taken apart into :class:`_MappedBatchColumns` or
-    :class:`_MappedBatchStore`: the map is about to add an axis that neither
-    class's unflatten hook could name, and the executor names it afterwards from
-    the sweep's levels.
+    *values* holds each swept batch at its reference in *array_args*, and the
+    body receives one row of each batch's :func:`mapped_storage`. Inside the
+    traced call each row is rebuilt at the kind of its batch's elements, which
+    is an array or a record, so nothing infers a batch axis on the way in. On
+    the way out the row takes the kind of its own return, as a row-wise row
+    does, and a numeric array, record, or batch is then taken apart into
+    :class:`_MappedBatchColumns` or :class:`_MappedBatchStore`: the map is about
+    to add an axis that neither class's unflatten hook could name, and the
+    executor names it afterwards from the sweep's levels.
 
     *output_is_declared* says *func* already gave the row a declared template, in
     which case that template is the row's kind and nothing here re-derives one.
     """
 
-    def one_row(array_slice_leaves):
+    def one_row(storage_rows):
         replacements = {
-            ref: Record(ref.label, leaves) for ref, leaves in zip(array_args, array_slice_leaves)
+            ref: _mapped_row(_binding.input_ref_value(values, ref), ref.label, row)
+            for ref, row in zip(array_args, storage_rows)
         }
         out = func(**_binding.replace_input_refs(values, replacements))
         if not output_is_declared:
@@ -378,18 +421,9 @@ def execute_sweep_rows_jax(
         output_is_declared=output_is_declared,
     )
 
-    vmap_input = []
-    for ref in array_args:
-        array_value = _binding.input_ref_value(values, ref)
-        n_batch = len(array_value.batch_shape)
-        vmap_input.append(
-            {
-                leaf: array_value._raw_column(leaf).reshape(
-                    (n_total, *array_value._raw_column(leaf).shape[n_batch:])
-                )
-                for leaf in array_value.event_template
-            }
-        )
+    vmap_input = [
+        mapped_storage(_binding.input_ref_value(values, ref), n_total) for ref in array_args
+    ]
 
     def run_vmap():
         with _context._workflow_jax_runtime_guard():

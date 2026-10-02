@@ -3,10 +3,11 @@
 ``log_prob(d, value)`` requires ``SupportsLogProb`` and returns the normalized
 log-density, and ``unnormalized_log_prob`` requires only
 ``SupportsUnnormalizedLogProb`` and returns it up to an additive constant. The
-value conforms to the law's event declaration, its packaging included, and a
-batch of values is scored at once, keeping its levels. ``prob`` and
-``unnormalized_prob`` are derived operations, defined by exponentiating the
-matching log-density. ``random_log_prob(M)`` and
+value conforms to the law's event declaration, its packaging included. A batch
+of values is swept, and the scores keep the batch's levels: the law scores every
+element in one vectorized call when its density traces, and one element at a
+time otherwise. ``prob`` and ``unnormalized_prob`` are derived operations,
+defined by exponentiating the matching log-density. ``random_log_prob(M)`` and
 ``random_unnormalized_log_prob(M)`` return the law of a random measure's
 log-density function.
 """
@@ -17,7 +18,6 @@ from typing import Any
 
 import jax.numpy as jnp
 
-from ..core._batch import BatchSpec
 from ..core._spec_base import NumericArraySpec, TermSpec, _unify_specs
 from ..core._specs import OutputSpec
 from ..core.constraints import non_negative
@@ -44,25 +44,24 @@ __all__ = [
 def _score_declaration(
     d: DistributionSpec, value: TermSpec, component: str, spec: NumericArraySpec
 ) -> OutputSpec:
-    """The declaration of a score of *value*: *spec*, or a batch of it at a batch value's levels.
+    """The declaration of the score of one *value*: *spec* under the component *component*.
+
+    A batch of values is swept, so the rule reads one element's spec.
 
     Raises
     ------
     ApplicabilityError
-        If the value, or a batch value's element, does not conform to the law's
-        event declaration, packaging included.
+        If the value does not conform to the law's event declaration,
+        packaging included.
     """
-    scored = value.element_spec if isinstance(value, BatchSpec) else value
     try:
         # The bindings are local to this call, so a polymorphic law scores
         # values of any size.
-        _unify_specs(d.event_spec.spec, scored, {}, f"{component} value")
+        _unify_specs(d.event_spec.spec, value, {}, f"{component} value")
     except (TypeError, ValueError) as error:
         raise ApplicabilityError(
             f"{component}: the value does not conform to the event declaration: {error}"
         ) from None
-    if isinstance(value, BatchSpec):
-        return OutputSpec(**{component: BatchSpec(spec, value.axis_groups, value.level_names)})
     return OutputSpec(**{component: spec})
 
 

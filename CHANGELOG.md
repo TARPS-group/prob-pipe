@@ -627,6 +627,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A sweep over a batch of arrays runs in one `vmap`.** A batch of records at
+  a parameter that expects one value runs its rows in one `jax.vmap` when the
+  call traces, but a `NumericArrayBatch` ran row by row under
+  `dispatch="auto"`, and `dispatch="jax"` refused it. The density operations
+  sweep a batch of values, so `log_prob(law, NumericArrayBatch(...))` called the
+  law's `_log_prob` once per element: 1,000 points at a coupling-flow amortized
+  posterior took 21 s, where one call of its density takes about 1 s. A batch of
+  arrays now maps as a batch of records does, the 1,000 points take under 2 s,
+  and the scores keep the batch's levels. A batch that stores objects, such as a
+  `DistributionBatch`, still runs row by row.
 - **A record view of a law with a joint support leaves each leaf's support
   unset.** A record view of a `Dirichlet` gave every leaf `simplex`, which holds
   for the joint vector only. A leaf keeps the source's support only when the

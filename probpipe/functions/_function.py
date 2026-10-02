@@ -48,7 +48,6 @@ except ImportError:
 from ..core._batch import Batch
 from ..core._dispatch import MethodInfo, ResolutionError
 from ..core._numeric_record_batch import NumericRecordBatch
-from ..core._record_batch import RecordBatch
 from ..core._spec_base import NumericSpec, TermSpec
 from ..core._specs import InputSpec, NumericArraySpec, NumericRecordSpec, OutputSpec, RecordSpec
 from ..core.config import ProvenanceMode, WorkflowKind, prefect_config
@@ -85,18 +84,6 @@ from ._contract import _bind_planned_function_inputs
 from ._result import _output_record_spec, _wrap_declared_function_output
 
 logger = logging.getLogger(__name__)
-
-
-class _UnvectorizableBatchSignal(Exception):
-    """The probe met a batch whose rows the mapped body cannot be built from.
-
-    Raised so the reason survives to the caller: the generic tracing message
-    would say the function is not JAX-traceable, which is not what went wrong.
-    """
-
-    def __init__(self, kinds: list[str]) -> None:
-        super().__init__(", ".join(kinds))
-        self.kinds = kinds
 
 
 @overload
@@ -694,36 +681,24 @@ def _jax_traceability_error(
     body: a body can trace cleanly bare yet be impossible under the
     transform its executor applies — one that returns a batch, whose added
     axis no level can name. So every executor that maps is probed under a
-    map, each argument fed the way its own executor will feed it: a
-    batched-record argument over one row, a distribution over one draw. A
-    probe failure means sequential dispatch, which is always able to run the
-    call — the two paths agree on results by contract, so falling back costs
-    speed, never correctness.
+    map, each argument fed the way its own executor will feed it: a swept
+    batch over its first row, a distribution over one draw. A probe failure
+    means sequential dispatch, which is always able to run the call — the two
+    paths agree on results by contract, so falling back costs speed, never
+    correctness.
     """
     try:
         dummy_kw = dict(values)
         broadcast_refs = set(broadcast_args)
         batched_sources: dict[_binding.FunctionInputRef, Any] = {}
-        unvectorized_batches: dict[Any, Any] = {}
         drawn_refs: list[_binding.FunctionInputRef] = []
         for ref in _binding.iter_input_refs(function._signature_info, values):
             v = _binding.input_ref_value(values, ref)
             if ref in broadcast_refs:
-                # Batched-record input: take row 0 so the dummy call
-                # sees what an inner sweep iteration will actually
-                # receive.
-                if isinstance(v, RecordBatch):
+                if isinstance(v, Batch):
+                    # A swept batch stays at its reference, where the mapped
+                    # body reads the kind of its elements.
                     batched_sources[ref] = v
-                    dummy_kw = _binding.replace_input_ref(dummy_kw, ref, v[0])
-                elif isinstance(v, Batch):
-                    # A batch that is not a batch of records is still a swept
-                    # source, not a draw. The probe's synthesis below builds a
-                    # leaf per field, which a single-store batch does not have,
-                    # so this route declines rather than mis-reading it as a
-                    # law: ``auto`` runs it sequentially and gets the right
-                    # answer, which an explicit ``jax`` should not silently
-                    # differ from.
-                    unvectorized_batches[ref] = v
                 else:
                     # Nothing to synthesize: the draw itself supplies the
                     # structure and dtype below, which is what lets a
@@ -739,14 +714,11 @@ def _jax_traceability_error(
                     replacement = v
                 dummy_kw = _binding.replace_input_ref(dummy_kw, ref, replacement)
         with _context._workflow_probe():
-            if unvectorized_batches:
-                raise _UnvectorizableBatchSignal(
-                    sorted({type(b).__name__ for b in unvectorized_batches.values()})
-                )
             if batched_sources:
                 refs = list(batched_sources)
                 # The executor's own body, not a copy maintained in the
-                # probe. ``dummy_kw`` already carries non-batched inputs.
+                # probe. ``dummy_kw`` carries the swept batches at their
+                # references and the other inputs as the probe feeds them.
                 _row_call = _sweep.mapped_row_body(
                     func=func,
                     values=dummy_kw,
@@ -756,24 +728,15 @@ def _jax_traceability_error(
                         function.output_spec is not None and function.output_spec.spec is not None
                     ),
                 )
-
-                probe_leaves = []
-                for source in batched_sources.values():
-                    n_batch = len(source.batch_shape)
-                    # The flat size is stated, exactly as the executor states it:
-                    # a ``-1`` cannot be inferred over a zero-width event, which
-                    # is a shape the real reshape handles.
-                    n_rows = int(math.prod(source.batch_shape))
-                    probe_leaves.append(
-                        {
-                            leaf: jnp.reshape(
-                                jnp.asarray(source._raw_column(leaf)),
-                                (n_rows, *jnp.shape(source._raw_column(leaf))[n_batch:]),
-                            )[:1]
-                            for leaf in source.event_template
-                        }
+                # The first row of the storage the executor maps.
+                probe_rows = tuple(
+                    jax.tree.map(
+                        lambda column: column[:1],
+                        _sweep.mapped_storage(source, int(math.prod(source.batch_shape))),
                     )
-                jax.make_jaxpr(jax.vmap(_row_call))(tuple(probe_leaves))
+                    for source in batched_sources.values()
+                )
+                jax.make_jaxpr(jax.vmap(_row_call))(probe_rows)
             elif drawn_refs:
                 if stochastic_plan is None:  # pragma: no cover - planner contract guard
                     raise RuntimeError("distribution probe is missing its stochastic plan")
@@ -889,12 +852,6 @@ def _require_jax_traceable(
         return
     if isinstance(trace_error, (_result.ResultSchemaError, _result.ResultKindError)):
         raise trace_error
-    if isinstance(trace_error, _UnvectorizableBatchSignal):
-        raise TypeError(
-            f"dispatch='jax' cannot vectorize over {', '.join(trace_error.kinds)}: the "
-            f"mapped row body is built from one leaf per field, which a single-store batch "
-            f"does not have. Use dispatch='auto' or 'sequential', which sweep it correctly."
-        ) from trace_error
     if isinstance(trace_error, _context._StochasticProbeSignal):
         raise TypeError(
             "dispatch='jax' cannot execute a wrapped function that requests "

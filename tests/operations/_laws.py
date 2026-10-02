@@ -184,6 +184,18 @@ class Polymorphic(Distribution, SupportsLogProb):
         return jnp.sum(jax.scipy.stats.norm.logpdf(jnp.asarray(value)), axis=-1)
 
 
+class CountedVector(Distribution, SupportsLogProb):
+    """A standard normal law on R³ that records each value its density is called with."""
+
+    def __init__(self, label: str) -> None:
+        super().__init__(label, NumericArraySpec((3,), jnp.float32, real))
+        self.calls: list[Any] = []
+
+    def _log_prob(self, value: Any) -> Any:
+        self.calls.append(value)
+        return jnp.sum(jax.scipy.stats.norm.logpdf(jnp.asarray(value)), axis=-1)
+
+
 class Measure(Distribution, SupportsSampling):
     """A random measure whose draws are normal laws with standard-normal locations."""
 
