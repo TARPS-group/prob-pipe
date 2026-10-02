@@ -20,6 +20,7 @@ from ._conditional import (
     ConditionalNumericDistribution,
     FullyNumericConditionalDistribution,
     NumericConditionalDistribution,
+    conditional_distribution,
 )
 from ._conversion import ConversionInfo, Converter, ConverterRegistry, converter_registry
 from ._distribution import Distribution, DistributionSpec, NumericDistribution
@@ -70,5 +71,6 @@ __all__ = [
     "SupportsConditionalVariance",
     "SupportsFactors",
     "SupportsMarginals",
+    "conditional_distribution",
     "converter_registry",
 ]
