@@ -55,6 +55,7 @@ from ._inference_utils import (
     parallel_chain_map,
     run_chain_scan,
     run_seed,
+    unconstrained_chain,
 )
 
 logger = logging.getLogger(__name__)
@@ -627,7 +628,8 @@ def rwmh(
         Ignored when ``adapt=False``.
     proposal_cov
         Explicit ``(d, d)`` proposal Cholesky factor, where ``d`` is the
-        target dimension. Overrides both the adaptive fit and
+        dimension of the chain's state, whose coordinates are unconstrained
+        for a leaf on a constrained support. Overrides both the adaptive fit and
         ``step_size``. Useful when the user has a precomputed covariance
         estimate from elsewhere. A wrong-shape matrix raises
         ``ValueError``.
@@ -705,6 +707,15 @@ def rwmh(
 
     random_seed = run_seed({"random_seed": random_seed}, "blackjax_rwmh")
     init_state = get_init_state(dist, init, random_seed=random_seed)
+    if log_prob_fn is None or data is None:
+        target_log_prob, init_state, constrain = unconstrained_chain(
+            target_log_prob, init_state, dist
+        )
+    else:
+
+        def constrain(states: Array) -> Array:
+            return states
+
     proposal_sigma_override = None
     if proposal_cov is not None:
         proposal_sigma_override = jnp.asarray(proposal_cov)
@@ -729,6 +740,9 @@ def rwmh(
         random_seed=random_seed,
     )
 
+    chains = [constrain(chain) for chain in chains]
+    if warmups is not None:
+        warmups = [constrain(warmup) for warmup in warmups]
     annotations = build_mcmc_datatree(chains, sample_stats, warmup_chains=warmups)
     event_spec = extract_event_spec(dist)
     return make_posterior(

@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 if TYPE_CHECKING:
     from xarray import DataTree
 
+import itertools
 import logging
 
 import jax
@@ -80,6 +81,7 @@ __all__ = [
     "posterior_var_order",
     "run_chain_scan",
     "run_seed",
+    "unconstrained_chain",
 ]
 
 
@@ -766,6 +768,151 @@ def build_target_log_prob_flat(
     # Bare array-shaped target: ``target_record`` already accepts a
     # flat array and no template is available to lift the chain.
     return target_record, flat_init, None
+
+
+def _flat_leaves(law: Any) -> list[tuple[tuple[int, ...], Any]] | None:
+    """The shape and declared support of each leaf a flat chain over *law* lays out, in its order.
+
+    ``None`` when *law* declares no array or numeric record that a flat vector
+    lays out, as a bare target over a flat array does.
+    """
+    if _has_flat_view(law):
+        spec = law.event_spec.spec
+        if isinstance(spec, NumericArraySpec):
+            return [(tuple(spec.shape), spec.support)]
+        return None
+    record = flat_record(law)
+    if record is not None:
+        return [(tuple(record[path].shape), record[path].support) for path in record]
+    array = _one_array(law)
+    if array is not None:
+        return [(tuple(array.shape), array.support)]
+    return None
+
+
+class _LeafMap(NamedTuple):
+    """One leaf's segment of a flat chain state: its sizes, shapes, and bijector, if any."""
+
+    size: int
+    shape: tuple[int, ...]
+    unconstrained_size: int
+    unconstrained_shape: tuple[int, ...]
+    bijector: Any
+
+
+def _leaf_maps(law: Any) -> list[_LeafMap] | None:
+    """The segment maps of a flat chain over *law*, or ``None`` when every leaf keeps its coordinates.
+
+    A leaf whose declared support is other than the reals takes the bijector
+    :func:`~probpipe.bijector_for` gives it. A leaf of the reals, of no declared
+    support, or of a support with no smooth bijector, such as a discrete one,
+    keeps its coordinates.
+    """
+    from ..core._dispatch import MathematicalDomainError, ResolutionError
+    from ..core.constraints import real
+    from ..functions import bijector_for
+
+    leaves = _flat_leaves(law)
+    if leaves is None:
+        return None
+    maps: list[_LeafMap] = []
+    for shape, support in leaves:
+        size = int(np.prod(shape, dtype=int))
+        bijector = None
+        if support is not None and not isinstance(support, type(real)):
+            try:
+                bijector = bijector_for(support)
+            except (MathematicalDomainError, ResolutionError):
+                bijector = None
+        if bijector is None:
+            maps.append(_LeafMap(size, shape, size, shape, None))
+            continue
+        point = jax.ShapeDtypeStruct(shape, jnp.float32)
+        unconstrained = tuple(jax.eval_shape(bijector._inverse, point).shape)
+        maps.append(
+            _LeafMap(size, shape, int(np.prod(unconstrained, dtype=int)), unconstrained, bijector)
+        )
+    if all(leaf.bijector is None for leaf in maps):
+        return None
+    return maps
+
+
+def _segments(vector: Array, sizes: Iterable[int]) -> list[Array]:
+    """*vector*'s consecutive segments of *sizes*, along its last axis."""
+    bounds = np.cumsum([0, *sizes])
+    return [vector[..., start:stop] for start, stop in itertools.pairwise(bounds)]
+
+
+def unconstrained_chain(
+    density: Callable[[Array], Array], init: Array, law: Any
+) -> tuple[Callable[[Array], Array], Array, Callable[[Array], Array]]:
+    """The density, initial state, and draw map of a flat chain run in unconstrained coordinates.
+
+    Each leaf of *law* on a constrained support is moved by the bijector onto
+    that support, so the chain's state ranges over all of ``R^n`` and every
+    draw lies in the support. The density in the new coordinates adds each
+    bijector's log-Jacobian. An initial coordinate outside a leaf's support has
+    no preimage, and that leaf starts at the preimage of the bijector's center,
+    the origin.
+
+    Parameters
+    ----------
+    density : callable
+        The log-density at a flat state of *law*'s leaves.
+    init : Array
+        The flat initial state.
+    law : Distribution
+        The law whose declaration lays out the flat state.
+
+    Returns
+    -------
+    tuple
+        ``(density, init, constrain)``: the log-density at an unconstrained
+        state, the unconstrained initial state, and the map from unconstrained
+        states, with any leading axes, to flat states of *law*. Every leaf
+        keeping its coordinates gives *density*, *init*, and the identity.
+    """
+    maps = _leaf_maps(law)
+    if maps is None:
+        return density, init, lambda states: states
+
+    def forward(z: Array) -> Array:
+        parts = []
+        for leaf, segment in zip(maps, _segments(z, [m.unconstrained_size for m in maps])):
+            if leaf.bijector is None:
+                parts.append(segment)
+                continue
+            value = leaf.bijector.raw()(jnp.reshape(segment, leaf.unconstrained_shape))
+            parts.append(jnp.reshape(value, (leaf.size,)))
+        return jnp.concatenate(parts)
+
+    def log_jacobian(z: Array) -> Array:
+        total = jnp.zeros(())
+        for leaf, segment in zip(maps, _segments(z, [m.unconstrained_size for m in maps])):
+            if leaf.bijector is not None:
+                point = jnp.reshape(segment, leaf.unconstrained_shape)
+                total = total + leaf.bijector._log_det_jacobian(point)
+        return total
+
+    def unconstrained_density(z: Array) -> Array:
+        return density(forward(z)) + log_jacobian(z)
+
+    parts = []
+    for leaf, segment in zip(maps, _segments(jnp.asarray(init), [m.size for m in maps])):
+        if leaf.bijector is None:
+            parts.append(segment)
+            continue
+        preimage = jnp.ravel(leaf.bijector._inverse(jnp.reshape(segment, leaf.shape)))
+        finite = bool(jnp.all(jnp.isfinite(preimage)))
+        parts.append(preimage if finite else jnp.zeros(leaf.unconstrained_size, preimage.dtype))
+    unconstrained_init = jnp.concatenate(parts)
+
+    def constrain(states: Array) -> Array:
+        states = jnp.asarray(states)
+        flat = jnp.reshape(states, (-1, states.shape[-1]))
+        return jnp.reshape(jax.vmap(forward)(flat), (*states.shape[:-1], -1))
+
+    return unconstrained_density, unconstrained_init, constrain
 
 
 # ---------------------------------------------------------------------------

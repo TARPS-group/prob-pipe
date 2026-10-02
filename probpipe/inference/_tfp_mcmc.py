@@ -27,6 +27,7 @@ from ._inference_utils import (
     is_jax_traceable,
     observed_parts,
     run_seed,
+    unconstrained_chain,
 )
 
 
@@ -185,6 +186,7 @@ class _TFPGradientMethod(InferenceMethod):
                 init=kwargs.get("init"),
                 random_seed=kwargs.get("random_seed", 0),
             )
+            density, init, _ = unconstrained_chain(density, init, model)
             if not is_jax_traceable(density, init):
                 return Feasibility(
                     feasible=False,
@@ -202,6 +204,7 @@ class _TFPGradientMethod(InferenceMethod):
         density, init, event_spec = _chain_target(
             model, observed, init=kwargs.get("init"), random_seed=random_seed
         )
+        density, init, constrain = unconstrained_chain(density, init, model)
 
         num_results = kwargs.get("num_results", 1000)
         num_warmup = kwargs.get("num_warmup", 500)
@@ -217,6 +220,7 @@ class _TFPGradientMethod(InferenceMethod):
             step_size=kwargs.get("step_size", 0.1),
             random_seed=random_seed,
         )
+        chains = [constrain(chain) for chain in chains]
         annotations = build_mcmc_datatree(chains, sample_stats)
         return make_posterior(
             chains,

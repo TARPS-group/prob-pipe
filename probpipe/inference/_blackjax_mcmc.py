@@ -62,6 +62,7 @@ from ._inference_utils import (
     parallel_chain_map,
     run_chain_scan,
     run_seed,
+    unconstrained_chain,
 )
 
 __all__ = ["BlackJAXHmcMethod", "BlackJAXNutsMethod"]
@@ -327,7 +328,8 @@ class _BlackJAXMCMCMethod(InferenceMethod):
             )
         try:
             target_flat, flat_init, _ = build_target_log_prob_flat(model, observed)
-            if not is_jax_traceable(target_flat, flat_init):
+            density, init, _ = unconstrained_chain(target_flat, flat_init, model)
+            if not is_jax_traceable(density, init):
                 return Feasibility(
                     feasible=False,
                     description="Log-prob is not JAX-traceable",
@@ -356,9 +358,10 @@ class _BlackJAXMCMCMethod(InferenceMethod):
         step_size: float = kwargs.get("step_size", 0.1)
         num_integration_steps: int = kwargs.get("num_integration_steps", 10)
 
+        density, init, constrain = unconstrained_chain(target_flat, flat_init, model)
         chains, sample_stats = _run_blackjax_chains(
-            target_flat,
-            flat_init,
+            density,
+            init,
             algorithm=self._algorithm,
             num_results=num_results,
             num_warmup=num_warmup,
@@ -367,6 +370,7 @@ class _BlackJAXMCMCMethod(InferenceMethod):
             random_seed=random_seed,
             num_integration_steps=num_integration_steps,
         )
+        chains = [constrain(chain) for chain in chains]
         annotations = build_mcmc_datatree(chains, sample_stats)
         return make_posterior(
             chains,

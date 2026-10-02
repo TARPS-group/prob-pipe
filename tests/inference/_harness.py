@@ -136,21 +136,6 @@ PROFILES: dict[str, MethodProfile] = {
 #: pending test, so the suite stays green and the ledger lists it.
 KNOWN_FAILURES: dict[tuple[str, str, str], tuple[str, type[BaseException]]] = {}
 
-#: The methods that start from the library's initial state of a factored joint's conditional.
-_FLAT_CHAIN_METHODS = ("blackjax_nuts", "blackjax_hmc", "blackjax_rwmh", "tfp_nuts", "tfp_hmc")
-
-_UNCONSTRAINED_SIMPLEX = (
-    "bug: the chain starts outside the simplex and moves its coordinates in R^3 with no "
-    "reparameterization onto the simplex"
-)
-_CONSTRAINED_SCALE = (
-    "bug: tau is sampled in its constrained coordinate, so a random walk started at a draw "
-    "of the joint, whose half-Cauchy tau may lie far out, mixes too slowly"
-)
-KNOWN_FAILURES[("blackjax_rwmh", "probpipe", "eight_schools")] = (
-    _CONSTRAINED_SCALE,
-    AssertionError,
-)
 _ABC_BUDGET = (
     "the harness's SMC-ABC budget, 200 particles over four populations, leaves a "
     "coordinate's mean further from the reference than a quarter of its posterior sd"
@@ -165,13 +150,6 @@ KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "beta_bernoulli")] = (
     _ABC_OUTSIDE_THE_SUPPORT,
     ValueError,
 )
-# A result declares its target's supports, so the mean of draws outside the
-# support fails the mean's check of its declared support.
-for _method in _FLAT_CHAIN_METHODS:
-    KNOWN_FAILURES[(_method, "probpipe", "dirichlet_multinomial")] = (
-        _UNCONSTRAINED_SIMPLEX,
-        ValueError,
-    )
 
 
 # ---------------------------------------------------------------------------

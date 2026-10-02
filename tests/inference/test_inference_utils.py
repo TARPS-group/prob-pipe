@@ -12,6 +12,8 @@ import pytest
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
+    Dirichlet,
+    Gamma,
     HalfNormal,
     MultivariateNormal,
     Normal,
@@ -38,6 +40,7 @@ from probpipe.inference._inference_utils import (
     observed_target,
     posterior_var_order,
     run_chain_scan,
+    unconstrained_chain,
 )
 from tests.inference.canonical import ObservationKernel
 
@@ -593,3 +596,50 @@ class TestPosteriorVarOrder:
         trace = _StubTrace(["mu"])
         with pytest.raises(ValueError, match="sigma"):
             posterior_var_order(trace, ["mu", "sigma"])
+
+
+# ---------------------------------------------------------------------------
+# Unconstrained chain coordinates
+# ---------------------------------------------------------------------------
+
+
+class TestUnconstrainedChain:
+    """A flat chain over a constrained leaf runs in unconstrained coordinates."""
+
+    def test_a_law_of_the_reals_keeps_its_coordinates(self):
+        law = Normal("x", 0.0, 1.0)
+        density = law._unnormalized_log_prob
+        same, init, constrain = unconstrained_chain(density, jnp.zeros(()), law)
+        assert same is density
+        assert float(init) == 0.0
+        np.testing.assert_array_equal(constrain(jnp.ones((4, 1))), jnp.ones((4, 1)))
+
+    def test_a_positive_leaf_adds_the_log_jacobian(self):
+        law = Gamma("g", 2.0, 1.0)
+
+        def log_density(theta):
+            return law._log_prob(jnp.reshape(theta, ()))
+
+        density, init, constrain = unconstrained_chain(log_density, jnp.ones(1), law)
+        z = jnp.array([0.3])
+        x = float(jnp.squeeze(constrain(z[None])))
+        slope = jax.grad(lambda u: jnp.squeeze(constrain(jnp.reshape(u, (1, 1)))))(0.3)
+        assert x > 0
+        assert init.shape == (1,)
+        expected = float(log_density(jnp.asarray(x))) + float(jnp.log(slope))
+        np.testing.assert_allclose(float(density(z)), expected, rtol=1e-5)
+
+    def test_a_simplex_leaf_has_one_fewer_coordinate_and_its_draws_sum_to_one(self):
+        law = Dirichlet("p", jnp.ones(3))
+        density, init, constrain = unconstrained_chain(law._log_prob, jnp.full(3, 1.0 / 3.0), law)
+        assert init.shape == (2,)
+        draws = constrain(jax.random.normal(jax.random.PRNGKey(0), (5, 2)))
+        assert draws.shape == (5, 3)
+        np.testing.assert_allclose(jnp.sum(draws, axis=-1), 1.0, rtol=1e-5)
+        assert bool(jnp.all(jnp.isfinite(jax.vmap(density)(jnp.zeros((2, 2))))))
+
+    def test_an_initial_state_outside_the_support_starts_at_the_center(self):
+        law = Gamma("g", 2.0, 1.0)
+        _, init, constrain = unconstrained_chain(lambda theta: 0.0, jnp.array([-1.0]), law)
+        assert bool(jnp.all(jnp.isfinite(init)))
+        assert float(jnp.squeeze(constrain(init[None]))) > 0
