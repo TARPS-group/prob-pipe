@@ -45,7 +45,7 @@ class _FakePosterior:
         seed: int = 0,
     ) -> None:
         rng = np.random.default_rng(seed)
-        self.name = "posterior"
+        self.label = "posterior"
         self._param_names = param_names
         self._n_chains = n_chains
         self._n_draws = n_draws

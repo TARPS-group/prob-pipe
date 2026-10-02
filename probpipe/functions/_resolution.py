@@ -191,7 +191,7 @@ def check_point(
     if candidate is None or report is None:
         return PointReport(
             False,
-            _no_route(function.name, controls, probed),
+            _no_route(function.label, controls, probed),
             result=result,
             routes=reports,
             deferred=deferred,

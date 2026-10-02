@@ -738,7 +738,7 @@ def _update_distribution(
     h.update(b"dist:")
     h.update(type(dist).__name__.encode())
     h.update(b":")
-    name = getattr(dist, "name", None) or ""
+    name = getattr(dist, "label", None) or ""
     h.update(name.encode())
     h.update(b":")
 
@@ -789,7 +789,7 @@ def _update_distribution(
         _update(h, dist._bank._scales, depth + 1, max_array_bytes, state)
     else:
         # Generic fallback for other non-TFP distributions.
-        _SKIP = frozenset({"_name", "_provenance", "_annotations"})
+        _SKIP = frozenset({"_label", "_provenance", "_annotations"})
         for attr, val in sorted(vars(dist).items()):
             if attr in _SKIP or attr.startswith("__"):
                 continue

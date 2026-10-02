@@ -76,7 +76,7 @@ class TestARawReturnWrapsIntoItsOwnKind:
         def scaled(x):
             return x * 3
 
-        assert scaled(jnp.asarray(1.0)).name == "scaled"
+        assert scaled(jnp.asarray(1.0)).label == "scaled"
 
 
 class TestTheKindsAreOrderedNotDisjoint:
@@ -246,7 +246,7 @@ class TestAReturnedSequenceIsOpaque:
         result = self._returned(value)
 
         assert isinstance(result, Opaque)
-        assert result.name == "f"
+        assert result.label == "f"
         assert result.value == value
 
     def test_a_declared_batch_takes_the_sequence_as_its_elements(self):

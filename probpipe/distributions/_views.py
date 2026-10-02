@@ -258,7 +258,7 @@ def _projector(declaration: OutputSpec, path: str | tuple[str, ...]) -> Callable
             if single:
                 return nodes[0]
             return Record(
-                value.name,
+                value.label,
                 {component: _raw_record(node) for component, node in zip(components, nodes)},
             )
         raw = _raw_record(value)
@@ -271,7 +271,7 @@ def _projector(declaration: OutputSpec, path: str | tuple[str, ...]) -> Callable
 def _detached(law: Distribution, name: str) -> Distribution:
     """*law* detached from the workflow under *name*: no provenance and no annotations."""
     clone = law._shallow_copy()
-    object.__setattr__(clone, "_name", name)
+    object.__setattr__(clone, "_label", name)
     object.__setattr__(clone, "_provenance", None)
     object.__setattr__(clone, "_annotations", None)
     return clone
@@ -279,7 +279,7 @@ def _detached(law: Distribution, name: str) -> Distribution:
 
 def _labeled(law: Distribution, name: str) -> Distribution:
     """*law* under the label *name*, which a marginal takes from the law it is a marginal of."""
-    return law if law.name == name else law.with_name(name)
+    return law if law.label == name else law.with_label(name)
 
 
 def _named_as(law: Distribution, components: Sequence[str]) -> Distribution:
@@ -399,7 +399,7 @@ def _view_log_prob(self: FieldView, value: Any) -> Array:
     marginal = self._parent._marginal(self._path)
     if not isinstance(marginal, SupportsLogProb):
         raise TypeError(
-            f"the marginal of {self._parent.name!r} at {self._path!r} has no normalized density"
+            f"the marginal of {self._parent.label!r} at {self._path!r} has no normalized density"
         )
     return marginal._log_prob(value)
 
@@ -414,7 +414,7 @@ def _view_unnormalized_log_prob(self: FieldView, value: Any) -> Array:
     """
     marginal = self._parent._marginal(self._path)
     if not isinstance(marginal, SupportsUnnormalizedLogProb):
-        raise TypeError(f"the marginal of {self._parent.name!r} at {self._path!r} has no density")
+        raise TypeError(f"the marginal of {self._parent.label!r} at {self._path!r} has no density")
     return marginal._unnormalized_log_prob(value)
 
 
@@ -444,7 +444,7 @@ def _view_marginal(self: FieldView, path: str | tuple[str, ...]) -> Distribution
     marginal = self._parent._marginal(
         parent_paths[0] if isinstance(path, str) else tuple(parent_paths)
     )
-    return _labeled(_named_as(marginal, [_final_segment(each) for each in paths]), self.name)
+    return _labeled(_named_as(marginal, [_final_segment(each) for each in paths]), self.label)
 
 
 def _view_marginal_guard(self: FieldView, path: str | tuple[str, ...]) -> Feasibility:
@@ -503,7 +503,7 @@ def _view_condition_on(self: FieldView, given: Any, /, **options: Any) -> Distri
     parent_paths = self._parent_paths([path for path, _ in items])
     kept = self._kept_components([path for path, _ in items])
     if not kept:
-        raise ValueError(f"the given covers every field of {self.name!r}, so no law remains")
+        raise ValueError(f"the given covers every field of {self.label!r}, so no law remains")
     conditioned = self._parent._condition_on(
         {parent_path: value for parent_path, (_, value) in zip(parent_paths, items)}, **options
     )
@@ -560,7 +560,7 @@ def _moment_guard(protocol: type) -> Callable[..., Feasibility]:
         if not isinstance(marginal, protocol):
             return Feasibility(
                 False,
-                f"the marginal of {self._parent.name!r} at {self._path!r} claims no "
+                f"the marginal of {self._parent.label!r} at {self._path!r} claims no "
                 f"{protocol.__name__}",
             )
         return _capability_guard(marginal, method, *arguments)
@@ -729,7 +729,7 @@ class FieldView(Distribution):
 
     def __init__(self, parent: Distribution, path: str | tuple[str, ...]) -> None:
         declaration = _view_declaration(parent.event_spec, path)
-        self._init_tracked(parent.name)
+        self._init_tracked(parent.label)
         self._init_annotations(None)
         object.__setattr__(self, "_parent", parent)
         object.__setattr__(self, "_path", path)
@@ -869,15 +869,15 @@ class FieldView(Distribution):
         parent = self._parent
         if not isinstance(parent, SupportsMarginals):
             raise ResolutionError(
-                f"{parent.name!r} has no marginals, so the view {self.name!r} has no detached law"
+                f"{parent.label!r} has no marginals, so the view {self.label!r} has no detached law"
             )
         report = _capability_guard(parent, "_marginal", self._path)
         if report.feasible is not True:
             reason = report.description or "; ".join(report.pending)
             raise ResolutionError(
-                f"{parent.name!r} has no exact marginal at {self._path!r}: {reason}"
+                f"{parent.label!r} has no exact marginal at {self._path!r}: {reason}"
             )
-        return _detached(parent._marginal(self._path), self.name)
+        return _detached(parent._marginal(self._path), self.label)
 
     def with_dim_sizes(self, **sizes: int) -> FieldView:
         """Bind named symbolic dimensions in the parent, and view the result at the same path.
@@ -904,7 +904,7 @@ class FieldView(Distribution):
         unbound = set(sizes) - self.event_spec.spec.free_dims
         if unbound:
             raise ValueError(
-                f"the view {self.name!r} has no free dimensions {sorted(unbound)} to bind"
+                f"the view {self.label!r} has no free dimensions {sorted(unbound)} to bind"
             )
         return self._viewed(self._parent.with_dim_sizes(**sizes))
 
@@ -927,7 +927,7 @@ class FieldView(Distribution):
     def _viewed(self, parent: Distribution) -> FieldView:
         """The view of *parent* at this view's path, under this view's name."""
         view = FieldView(parent, self._path)
-        return view if view.name == self.name else view.with_name(self.name)
+        return view if view.label == self.label else view.with_label(self.label)
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The parent's path that the view reads."""
@@ -1026,7 +1026,7 @@ def _moved_value(value: Any, moves: Mapping[str, str] | None) -> Any:
     if isinstance(value, Record):
         template = value.event_template
         return Record(
-            value.name,
+            value.label,
             {new: value[old] for new, old in moves.items()},
             event_template=RecordSpec({new: template[old] for new, old in moves.items()}),
         )
@@ -1387,7 +1387,7 @@ def _renamed_marginal(self: _RenamedDistribution, path: str | tuple[str, ...]) -
             f"would collide"
         )
     marginal = self._parent._marginal(originals[0] if isinstance(path, str) else tuple(originals))
-    return _labeled(self._event.marginal(marginal, paths, originals), self.name)
+    return _labeled(self._event.marginal(marginal, paths, originals), self.label)
 
 
 def _renamed_marginal_guard(self: _RenamedDistribution, path: str | tuple[str, ...]) -> Feasibility:
@@ -1397,7 +1397,7 @@ def _renamed_marginal_guard(self: _RenamedDistribution, path: str | tuple[str, .
     several nodes, whose final segments must differ.
     """
     paths = (path,) if isinstance(path, str) else tuple(path)
-    unreached = _unreached(self._event, self.event_spec, paths, self.name)
+    unreached = _unreached(self._event, self.event_spec, paths, self.label)
     if unreached is not None:
         return unreached
     if _shared_final_segment(paths):
@@ -1457,7 +1457,7 @@ def _renamed_condition_on(
 
 def _renamed_condition_on_guard(self: _RenamedDistribution, paths: tuple[str, ...]) -> Feasibility:
     """The parent's conditioning guard at the original nodes for *paths*, paths of this law."""
-    unreached = _unreached(self._event, self.event_spec, paths, self.name)
+    unreached = _unreached(self._event, self.event_spec, paths, self.label)
     if unreached is not None:
         return unreached
     return _capability_guard(self._parent, "_condition_on", tuple(self._originals(paths)))
@@ -1538,7 +1538,7 @@ class _RenamedDistribution(Distribution):
         )
 
     def __init__(self, parent: Distribution, event: _EventRenames) -> None:
-        self._init_tracked(parent.name)
+        self._init_tracked(parent.label)
         self._init_annotations(None)
         object.__setattr__(self, "_parent", parent)
         object.__setattr__(self, "_event", event)
@@ -1584,7 +1584,7 @@ class _RenamedDistribution(Distribution):
         ValueError
             If a path holds no single node of the parent.
         """
-        return _original_nodes(self._event, self.event_spec, paths, self._parent.name)
+        return _original_nodes(self._event, self.event_spec, paths, self._parent.label)
 
     def _repr_class_name(self) -> str:
         """The class of the law this one renames, which it presents under new paths."""
@@ -1708,7 +1708,7 @@ def _renamed_through_factors(
             if isinstance(joint, ConditionalDistribution)
             else FactoredDistribution
         )
-        renamed = kind(joint.name, factors, _scope=graph.scope, **packaging)
+        renamed = kind(joint.label, factors, _scope=graph.scope, **packaging)
     except (KeyError, ValueError):
         return None
     if _leaf_specs(renamed.event_spec) != _leaf_specs(event_spec):
@@ -1900,7 +1900,7 @@ def _regrouped(
                 if _factor_graph(parts, graph.scope).unmet is None
                 else FactoredConditionalDistribution
             )
-            label = _LABEL_SEP.join(part.name for part in parts)
+            label = _LABEL_SEP.join(part.label for part in parts)
             units.append((indices[0], kind(label, parts, _scope=graph.scope, _component=node)))
     except (KeyError, TypeError, ValueError):
         return None
@@ -1914,7 +1914,7 @@ def _regrouped(
         else FactoredDistribution
     )
     try:
-        result = kind(joint.name, [units[position][1] for position in order], _scope=graph.scope)
+        result = kind(joint.label, [units[position][1] for position in order], _scope=graph.scope)
     except (KeyError, TypeError, ValueError):
         return None
     if _leaf_specs(result.event_spec) != _leaf_specs(event_spec):
@@ -2084,7 +2084,7 @@ def _renamed_conditional_marginal(
         share their final segment.
     """
     paths = (path,) if isinstance(path, str) else tuple(path)
-    originals = _original_nodes(self._event, self.event_spec, paths, self._parent.name)
+    originals = _original_nodes(self._event, self.event_spec, paths, self._parent.label)
     if _shared_final_segment(paths):
         raise ValueError(
             f"the selected paths {list(paths)} share a final segment, so their components "
@@ -2110,7 +2110,7 @@ def _renamed_conditional_marginal_guard(
         return unreached
     if _shared_final_segment(paths):
         return Feasibility(False, f"the paths {list(paths)} share a final segment")
-    originals = _original_nodes(self._event, self.event_spec, paths, self._parent.name)
+    originals = _original_nodes(self._event, self.event_spec, paths, self._parent.label)
     return _capability_guard(
         self._parent,
         "_conditional_marginal",
@@ -2209,7 +2209,7 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
         *,
         pending: Mapping[str, Any] | None = None,
     ) -> None:
-        self._init_tracked(parent.name)
+        self._init_tracked(parent.label)
         self._init_annotations(None)
         object.__setattr__(self, "_parent", parent)
         object.__setattr__(self, "_origins", dict(origins))
@@ -2247,7 +2247,7 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
             if path.partition(_PATH_SEP)[0] in slots and path not in values
         ]
         if missing:
-            raise ValueError(f"the given binds part of a slot of {self.name!r}, without {missing}")
+            raise ValueError(f"the given binds part of a slot of {self.label!r}, without {missing}")
         bound = {
             **self._pending,
             **{
@@ -2283,7 +2283,7 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
         """
         complete, pending, _ = self._translated(given)
         if pending or len(complete) != len(self._parent.given_spec):
-            raise ValueError(f"{self.name!r} needs a value for every slot {list(self.given_spec)}")
+            raise ValueError(f"{self.label!r} needs a value for every slot {list(self.given_spec)}")
         return complete
 
     def _condition_on(

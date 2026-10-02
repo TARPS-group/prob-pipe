@@ -76,7 +76,7 @@ class TestConstruction:
         """A record is a named tree, and the tree with no branches is one."""
         empty = Record("r")
 
-        assert (empty.name, list(empty.event_template)) == ("r", [])
+        assert (empty.label, list(empty.event_template)) == ("r", [])
 
     def test_all_numeric_promotes_and_coerces(self):
         from probpipe import NumericRecord
@@ -427,7 +427,7 @@ class TestNumericAPIOnRecord:
         # traversal on Record; the JAX-pytree flatten/unflatten are NOT Record
         # methods.
         v = Record("r", a=1.0, label="x")
-        assert Record.from_field_values(v.name, v.event_template, v.values()) == v
+        assert Record.from_field_values(v.label, v.event_template, v.values()) == v
         assert not hasattr(Record, "flatten")
         assert not hasattr(Record, "unflatten")
 
@@ -461,7 +461,7 @@ class TestGeneralDecomposition:
     def test_roundtrip_with_opaque_leaf(self):
         # Opaque (non-numeric) leaves round-trip — unlike to_vector.
         v = Record("r", x=jnp.array([1.0, 2.0]), label="horseshoe", count=3)
-        assert Record.from_field_values(v.name, v.event_template, v.values()) == v
+        assert Record.from_field_values(v.label, v.event_template, v.values()) == v
 
     def test_roundtrip_with_backend_leaf(self):
         # A native backend leaf (xarray) round-trips through
@@ -475,7 +475,7 @@ class TestGeneralDecomposition:
         v = Record("obs", x=da)
         assert isinstance(v, NumericRecord)
         assert isinstance(v.event_template, NumericRecordSpec)
-        rebuilt = Record.from_field_values(v.name, v.event_template, v.values())
+        rebuilt = Record.from_field_values(v.label, v.event_template, v.values())
         assert type(rebuilt) is type(v)
         assert rebuilt.raw("x") is da
         assert rebuilt == v
@@ -485,7 +485,7 @@ class TestGeneralDecomposition:
         # the template in that same order, so a record built with an explicitly
         # out-of-order template round-trips without transposing field values.
         v = Record("r", {"b": 2.0, "a": 1.0}, event_template=RecordSpec(a=(), b=()))
-        rebuilt = Record.from_field_values(v.name, v.event_template, v.values())
+        rebuilt = Record.from_field_values(v.label, v.event_template, v.values())
         assert rebuilt == v
         assert float(rebuilt["a"]) == 1.0
         assert float(rebuilt["b"]) == 2.0
@@ -494,8 +494,8 @@ class TestGeneralDecomposition:
         # ``==`` ignores the name, so assert name fidelity separately: the
         # reconstructed record carries exactly the name passed in.
         v = Record("mine", theta=Record("theta", loc=jnp.array([0.0, 1.0]), label="p"), tag="t")
-        rebuilt = Record.from_field_values(v.name, v.event_template, v.values())
-        assert rebuilt.name == "mine"
+        rebuilt = Record.from_field_values(v.label, v.event_template, v.values())
+        assert rebuilt.label == "mine"
 
     def test_numeric_record_roundtrip(self):
         from probpipe import NumericRecord
@@ -503,7 +503,7 @@ class TestGeneralDecomposition:
         v = NumericRecord(
             "nr", a=jnp.array([1.0, 2.0, 3.0]), b=NumericRecord("nr", c=jnp.array(5.0))
         )
-        rebuilt = Record.from_field_values(v.name, v.event_template, v.values())
+        rebuilt = Record.from_field_values(v.label, v.event_template, v.values())
         assert rebuilt == v
         assert isinstance(rebuilt, NumericRecord)
         assert isinstance(rebuilt.at_path("b"), NumericRecord)
@@ -515,7 +515,7 @@ class TestGeneralDecomposition:
             theta=Record("theta", loc=jnp.array([0.0, 1.0]), label="prior"),
             tag="run-7",
         )
-        assert Record.from_field_values(v.name, v.event_template, v.values()) == v
+        assert Record.from_field_values(v.label, v.event_template, v.values()) == v
 
     def test_wrong_leaf_count_raises(self):
         v = Record("r", a=1.0, b=2.0)
@@ -747,7 +747,7 @@ class TestEnsure:
         v = Record.ensure({"summary": {"mean": 1.0, "count": 2.0}, "x": 3.0})
         assert isinstance(v, Record)
         assert list(v.keys()) == ["summary/mean", "summary/count", "x"]
-        assert v.name == "record(summary,x)"
+        assert v.label == "record(summary,x)"
 
     def test_array_coercion(self):
         v = Record.ensure(jnp.array([1.0, 2.0]))
@@ -1062,8 +1062,8 @@ class TestProvenance:
         middle = Record("r", theta=1.0).with_provenance(Provenance("draw", parents=(prior,)))
         outer = Record("r", result=2.0).with_provenance(Provenance("transform", parents=(middle,)))
         ancestors = provenance_ancestors(outer)
-        names = [getattr(a, "name", None) for a in ancestors]
-        assert names == [middle.name, "prior"]
+        names = [getattr(a, "label", None) for a in ancestors]
+        assert names == [middle.label, "prior"]
 
 
 # ---------------------------------------------------------------------------

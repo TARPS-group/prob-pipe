@@ -73,7 +73,7 @@ class TestGeneric:
         assert type(discrete_dist).__name__ in r
 
     def test_name(self, discrete_dist):
-        assert discrete_dist.name == "x"
+        assert discrete_dist.label == "x"
 
 
 _NAMED_DISTS = {
@@ -89,7 +89,7 @@ _NAMED_DISTS = {
 def test_name_set(name):
     """Every discrete distribution must store the ``name`` constructor arg."""
     dist = _NAMED_DISTS[name](name="my_dist")
-    assert dist.name == "my_dist"
+    assert dist.label == "my_dist"
 
 
 # ---------------------------------------------------------------------------

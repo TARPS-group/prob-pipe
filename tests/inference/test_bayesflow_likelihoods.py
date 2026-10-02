@@ -74,7 +74,7 @@ def _nested_prior():
     outer = (
         Normal(loc=0.0, scale=1.0, name="a") * Normal(loc=0.0, scale=1.0, name="b")
     ).with_path_names({"a": "outer/a", "b": "outer/b"})
-    return (outer * Normal(loc=0.0, scale=1.0, name="m")).with_name("joint")
+    return (outer * Normal(loc=0.0, scale=1.0, name="m")).with_label("joint")
 
 
 def _analytic_posterior(y_rows: np.ndarray) -> tuple[np.ndarray, float]:
@@ -237,7 +237,7 @@ class TestSurrogateContract:
     def test_repr(self, nle, nre):
         for kernel, cls in ((nle, "BayesFlowLikelihood"), (nre, "BayesFlowRatio")):
             text = repr(kernel)
-            assert text.startswith(f"{cls}(\n    '{kernel.name}',\n")
+            assert text.startswith(f"{cls}(\n    '{kernel.label}',\n")
             assert "theta_dim=2," in text and "data_dim=2," in text
 
     def test_data_width_guard(self, nle):

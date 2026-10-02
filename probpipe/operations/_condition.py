@@ -363,7 +363,7 @@ class _UnnormalizedConditional(Distribution):
     def __init__(
         self, joint: Distribution, given: Any, event_spec: OutputSpec, *, keyed: bool = True
     ) -> None:
-        super().__init__(joint.name, event_spec)
+        super().__init__(joint.label, event_spec)
         self._joint = joint
         self._given = given
         self._keyed = keyed
@@ -438,7 +438,7 @@ class _UnnormalizedConditionalKernel(ConditionalDistribution):
     def __init__(
         self, kernel: ConditionalDistribution, given: Record, event_spec: OutputSpec
     ) -> None:
-        super().__init__(kernel.name, kernel.given_spec, event_spec)
+        super().__init__(kernel.label, kernel.given_spec, event_spec)
         self._kernel = kernel
         self._given = given
 
@@ -510,7 +510,7 @@ def _as_declared(source: Any, law: Any) -> EmpiricalDistribution:
     since a posterior over a whole-term event draws a one-field record of it.
     """
     empirical = EmpiricalDistribution(
-        source.name, law.draws(), law.weights, event_spec=source.event_spec
+        source.label, law.draws(), law.weights, event_spec=source.event_spec
     )
     return empirical.with_provenance(law.provenance)
 
@@ -647,7 +647,7 @@ class _PerValueNormalization(ConditionalDistribution):
         return object.__new__(_capability_subclass(_PerValueNormalization, claimed))
 
     def __init__(self, kernel: ConditionalDistribution, normalization: _Normalization) -> None:
-        super().__init__(kernel.name, kernel.given_spec, kernel.event_spec)
+        super().__init__(kernel.label, kernel.given_spec, kernel.event_spec)
         self._kernel = kernel
         self._normalization = normalization
 
@@ -1023,7 +1023,7 @@ def _slice(call: BoundCall) -> Any:
             factor = factor._condition_on({key: values[key] for key in sorted(components)})
             if set(factor.event_spec.components) != free:
                 raise ValueError(
-                    f"the exact conditional of {d.name!r}'s factor on {sorted(components)} "
+                    f"the exact conditional of {d.label!r}'s factor on {sorted(components)} "
                     f"produces {sorted(factor.event_spec.components)}, not {sorted(free)}"
                 )
         if bound:
@@ -1032,7 +1032,7 @@ def _slice(call: BoundCall) -> Any:
                 options = dict(call.controls.get("method_options", {}))
             factor = _bound_factor(factor, bound, options)
         factors.append(factor)
-    law = factors[0] if len(factors) == 1 else FactoredDistribution(d.name, factors)
+    law = factors[0] if len(factors) == 1 else FactoredDistribution(d.label, factors)
     if law.provenance is None:
         law.with_provenance(
             Provenance.create(
@@ -1614,10 +1614,10 @@ def _empirical_of(call: BoundCall, law: Any) -> Any:
         if isinstance(candidate, target) and candidate.event_spec == source.event_spec:
             return candidate
     empirical = EmpiricalDistribution(
-        source.name, law.draws(), law.weights, event_spec=source.event_spec
+        source.label, law.draws(), law.weights, event_spec=source.event_spec
     )
     if not isinstance(empirical, target):
-        raise TypeError(f"the normalized law of {source.name!r} is not a {target.__name__}")
+        raise TypeError(f"the normalized law of {source.label!r} is not a {target.__name__}")
     return empirical
 
 

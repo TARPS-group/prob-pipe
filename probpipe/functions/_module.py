@@ -100,7 +100,7 @@ class Module(Node):
 
             function_instance = Function(
                 fn=func,
-                output_name=func.__name__,
+                output_label=func.__name__,
                 workflow_kind=self._workflow_kind,
                 name=f"{self.__class__.__name__}.{func.__name__}",
                 module=self,
@@ -158,7 +158,7 @@ class Module(Node):
                 if not isinstance(attr, Function):
                     continue
 
-                function_name = attr._name  # e.g. PM25ForecastingModule.fit
+                function_name = attr._label  # e.g. PM25ForecastingModule.fit
                 function_label = function_name.split(".")[-1]
 
                 cluster.node(
@@ -177,7 +177,7 @@ class Module(Node):
             if not isinstance(attr, Function):
                 continue
 
-            function_name = attr._name
+            function_name = attr._label
 
             # Infer dependencies from workflow signature
             # (Functions don't store child_nodes; they resolve dependencies at runtime)

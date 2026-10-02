@@ -103,7 +103,7 @@ def predictive_check[P, D](
 
     # -- A NumericRecord of stacked draws is the empirical law of its rows --
     if isinstance(distribution, NumericRecord):
-        name = getattr(distribution, "name", "posterior")
+        name = getattr(distribution, "label", "posterior")
         row = _reshaped_template(distribution.event_template, lambda shape: shape[1:])
         distribution = EmpiricalDistribution(name, _batch_form(name, distribution, "draw", row))
     if not callable(getattr(distribution, "_sample", None)):
@@ -243,8 +243,8 @@ def _drawn(distribution: Any, key: PRNGKey, sample_shape: tuple[int, ...]) -> An
     if not isinstance(spec, RecordSpec):
         return raw
     if sample_shape:
-        return _batch_form(distribution.name, raw, "draw", spec)
-    return Record(distribution.name, _raw_record(raw), event_template=spec)
+        return _batch_form(distribution.label, raw, "draw", spec)
+    return Record(distribution.label, _raw_record(raw), event_template=spec)
 
 
 def _supports_key_arg(generative_likelihood: Any) -> bool:

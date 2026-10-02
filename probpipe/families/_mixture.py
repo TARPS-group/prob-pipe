@@ -292,7 +292,7 @@ def _components(components: Sequence[Distribution]) -> tuple[Distribution, ...]:
             )
     declaration = laws[0].event_spec
     for index, law in enumerate(laws[1:], start=1):
-        sides = (f"component 0 ({laws[0].name!r})", f"component {index} ({law.name!r})")
+        sides = (f"component 0 ({laws[0].label!r})", f"component {index} ({law.label!r})")
         difference = _event_difference(declaration, law.event_spec, sides, dtypes=False)
         if difference is not None:
             raise ValueError(

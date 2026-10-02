@@ -80,7 +80,7 @@ class TestConditionalRoundTrip:
             Record("r", physics=Record("r", force=jnp.zeros(3), mass=2.0), obs="y"),  # nested mixed
             NumericRecord("nr", a=jnp.zeros(2), b=NumericRecord("nr", c=1.0)),  # nested numeric
         ]:
-            assert type(r)(r.name, dict(r), event_template=r.event_template) == r
+            assert type(r)(r.label, dict(r), event_template=r.event_template) == r
 
     def test_value_only_dict_is_lossy_for_dtype(self):
         # A template carrying dtype is not recoverable from a value-only dict.
@@ -152,7 +152,7 @@ class TestSubtreeTemplateInvariant:
         tpl = RecordSpec(physics=child.event_template, obs=())
         r = Record("r", physics=child, obs=3.0, event_template=tpl)
         assert r.at_path("physics") is child
-        assert r.at_path("physics").name == "physics"
+        assert r.at_path("physics").label == "physics"
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +201,7 @@ class TestConvenienceConstructors:
             # layout, which from_field_values reconstructs).
             Record("r", physics=NumericRecord("nr", force=jnp.zeros(2), mass=1.0), obs="tag"),
         ]:
-            rebuilt = Record.from_field_values(r.name, r.event_template, r.values())
+            rebuilt = Record.from_field_values(r.label, r.event_template, r.values())
             assert rebuilt == r
 
     def test_from_field_values_count_mismatch_raises(self):

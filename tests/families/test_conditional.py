@@ -101,7 +101,7 @@ class TestTheResponseFamilies:
     )
     def test_the_canonical_links_and_dispersions(self, family, link, has_dispersion):
         assert isinstance(family.canonical_link, Function)
-        assert family.canonical_link.name == link
+        assert family.canonical_link.label == link
         assert family.has_dispersion is has_dispersion
 
     @pytest.mark.parametrize("family", _FAMILIES)
@@ -179,7 +179,7 @@ class TestTheResponseFamilies:
         law = family().build(
             "y", jnp.array([0.2, 0.5]), _dispersion(family), event_spec=OutputSpec(counts=None)
         )
-        assert law.name == "y"
+        assert law.label == "y"
         assert list(law.event_spec.components) == ["counts"]
 
     def test_a_missing_dispersion_raises(self):
@@ -277,8 +277,8 @@ class TestTheDeclarations:
         assert list(law.event_spec.components) == ["counts"]
 
     def test_a_renamed_kernel_keeps_its_response_component(self, X):
-        likelihood = glm_likelihood("y", PoissonFamily(), X=X).with_name("L")
-        assert likelihood.name == "L"
+        likelihood = glm_likelihood("y", PoissonFamily(), X=X).with_label("L")
+        assert likelihood.label == "L"
         assert list(likelihood.event_spec.components) == ["y"]
 
 
@@ -364,8 +364,10 @@ class TestTheLaw:
         assert law.event_spec.spec.shape == (4,)
 
     def test_the_law_of_a_renamed_kernel_keeps_the_response_component(self, X, beta):
-        law = glm_likelihood("y", PoissonFamily(), X=X).with_name("L")._condition_on({"beta": beta})
-        assert law.name == "L"
+        law = (
+            glm_likelihood("y", PoissonFamily(), X=X).with_label("L")._condition_on({"beta": beta})
+        )
+        assert law.label == "L"
         assert list(law.event_spec.components) == ["y"]
 
     def test_a_fixed_integer_dispersion_builds_the_law(self, X, beta):

@@ -912,7 +912,7 @@ class NamedTree[L]:
         """Return a same-family tree with the given nodes renamed or moved, ``old -> new``.
 
         Acts on the nodes *within* the tree, leaves or whole subtrees; the object
-        itself is renamed by ``with_name`` on the tracked value types. Each key is
+        itself is renamed by ``with_label`` on the tracked value types. Each key is
         the exact path of a node, so a keyword addresses a top-level node and the
         positional mapping any node. Each target is the node's new exact path,
         so a bare name is a top-level path::

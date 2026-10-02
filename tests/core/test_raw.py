@@ -133,7 +133,7 @@ class TestDistributions:
         object.__setattr__(law, "_annotations", {"diagnostics": {"n_eff": 42}})
         detached = law.raw()
         assert isinstance(detached, Distribution) and detached is not law
-        assert (detached.name, detached.spec) == (law.name, law.spec)
+        assert (detached.label, detached.spec) == (law.label, law.spec)
         assert detached.provenance is None and detached.annotations is None
         assert detached.loc == 1.0
 
@@ -155,5 +155,5 @@ class TestDistributions:
         kernel = Kernel("k")
         detached = kernel.raw()
         assert isinstance(detached, ConditionalDistribution) and detached is not kernel
-        assert (detached.name, detached.spec) == (kernel.name, kernel.spec)
+        assert (detached.label, detached.spec) == (kernel.label, kernel.spec)
         assert detached.provenance is None

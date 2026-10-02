@@ -114,13 +114,13 @@ class TestConstruction:
         assert labels.level_names == ("site",)
 
     def test_a_given_name_is_kept(self, labels):
-        assert labels.name == "s"
+        assert labels.label == "s"
 
     def test_a_constructor_keeps_a_derived_name(self):
         """The shape an operation deriving a batch name needs: named, but re-derivable."""
         batch = OpaqueBatch("given", ["a"], "site")
 
-        assert batch.name == "given"
+        assert batch.label == "given"
 
     def test_a_provenance_is_carried_as_given(self):
         record = Provenance.create("sample", parents=[])
@@ -350,13 +350,13 @@ class TestElements:
     def test_an_opaque_element_is_an_opaque_named_by_its_position(self, labels):
         element = labels[1]
         assert isinstance(element, Opaque)
-        assert element.name == "s[site=1]"
+        assert element.label == "s[site=1]"
         assert element.spec == labels.element_spec
 
     def test_a_callable_element_is_a_function_named_by_its_position(self, functions):
         element = functions[1]
         assert isinstance(element, Function)
-        assert element.name == "f[variant=1]"
+        assert element.label == "f[variant=1]"
         assert element.apply(5) == 10
 
     def test_an_element_records_the_batch_it_was_read_from(self, labels):
@@ -376,7 +376,7 @@ class TestElements:
         """
 
         class _Named(TrackedTerm):
-            __slots__ = ("_name", "_provenance")
+            __slots__ = ("_label", "_provenance")
 
             def __init__(self, name):
                 self._init_tracked(name)
@@ -385,7 +385,7 @@ class TestElements:
                 return self
 
             def __call__(self):
-                return self._name
+                return self._label
 
         element = _Named("alpha")
         batch = FunctionBatch(
@@ -396,10 +396,10 @@ class TestElements:
 
         view = batch[0]
         assert view is not element
-        assert view.name == "f[variant=0]"
+        assert view.label == "f[variant=0]"
         assert view() == "f[variant=0]"
         assert [parent.name for parent in view.provenance.parents] == ["f", "alpha"]
-        assert element.name == "alpha"
+        assert element.label == "alpha"
 
     def test_iteration_walks_the_leading_axis(self, functions):
         assert [f(2) for f in functions] == [2, 4, 6]
@@ -533,20 +533,20 @@ class TestTheStorageContractIsSatisfiable:
 
 class TestNaming:
     def test_a_view_is_named_by_what_it_selects(self, grid):
-        assert grid.at_levels(chain=0).name == "post[chain=0]"
-        assert grid.at_levels(draw=slice(1, 3)).name == "post[draw=1:3]"
+        assert grid.at_levels(chain=0).label == "post[chain=0]"
+        assert grid.at_levels(draw=slice(1, 3)).label == "post[draw=1:3]"
 
     def test_positional_and_named_indexing_derive_one_name(self, grid):
-        assert grid[0].name == grid.at_levels(chain=0).name
+        assert grid[0].label == grid.at_levels(chain=0).label
 
     def test_level_names_can_be_repinned(self, labels):
         renamed = labels.with_level_names(site="place")
 
         assert renamed.level_names == ("place",)
-        assert renamed[0:2].name == "s[place=0:2]"
+        assert renamed[0:2].label == "s[place=0:2]"
 
     def test_with_name_re_roots_a_view(self, labels):
-        assert labels[0:2].with_name("q")[0:1].name == "q[site=0:1]"
+        assert labels[0:2].with_label("q")[0:1].label == "q[site=0:1]"
 
 
 class TestFieldKeys:
@@ -568,14 +568,14 @@ class TestRoundTrips:
     def test_a_batch_survives(self, labels, clone):
         restored = clone(labels)
 
-        assert restored.name == labels.name
+        assert restored.label == labels.label
         assert restored.level_names == labels.level_names
         assert [restored[i].value for i in range(3)] == ["north", "east", "south"]
 
     def test_a_view_survives_pickling(self, labels):
         restored = pickle.loads(pickle.dumps(labels[0:2]))
 
-        assert restored.name == "s[site=0:2]"
+        assert restored.label == "s[site=0:2]"
         assert [restored[i].value for i in range(2)] == ["north", "east"]
 
     def test_the_store_travels_without_being_declared(self, labels):
@@ -614,8 +614,8 @@ class TestProvenance:
 
         view = batch[0]
         assert view is not element
-        assert view.name == "recs[site=0]"
-        assert element.name == "r"
+        assert view.label == "recs[site=0]"
+        assert element.label == "r"
         assert element.provenance is None
 
     def test_the_caller_can_still_set_its_own_provenance_afterwards(self, full_provenance_mode):

@@ -94,7 +94,9 @@ def _atom_spec(atoms: Any) -> TermSpec:
                 f"{type(atoms).__name__}"
             )
         if atoms.batch_size == 0:
-            raise ValueError(f"an empirical law has at least one atom, and {atoms.name!r} is empty")
+            raise ValueError(
+                f"an empirical law has at least one atom, and {atoms.label!r} is empty"
+            )
         return atoms.element_spec
     if _is_numeric_array(atoms):
         if atoms.ndim == 0:
@@ -431,7 +433,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
             raise TypeError(f"level is the name of a level, got {type(level).__name__}")
         if level is not None and isinstance(atoms, Batch):
             raise TypeError(
-                f"level names the level of a plain array's atoms; the batch {atoms.name!r} keeps "
+                f"level names the level of a plain array's atoms; the batch {atoms.label!r} keeps "
                 f"its own levels {list(atoms.level_names)}, which with_level_names renames"
             )
         if event_spec is None:
@@ -570,7 +572,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         else:
             atoms = self._selection_batch(selected)
             declaration = OutputSpec(atoms.element_spec)
-        return EmpiricalDistribution(self.name, atoms, self._w, event_spec=declaration)
+        return EmpiricalDistribution(self.label, atoms, self._w, event_spec=declaration)
 
     def _marginal_guard(self, path: str | tuple[str, ...]) -> Feasibility | bool:
         """Whether *path* is an event path, or a selection of them with distinct final segments.
@@ -608,7 +610,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
                 node = _node_at(self.event_spec, requested)
             except KeyError:
                 raise KeyError(
-                    f"{requested!r} is not an event path of {self.name!r}, whose components "
+                    f"{requested!r} is not an event path of {self.label!r}, whose components "
                     f"are {list(self.event_spec.components)}"
                 ) from None
             segments = tuple(requested.split(_PATH_SEP))
@@ -659,7 +661,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         element = RecordSpec(fields)
         batch_class = NumericRecordBatch if isinstance(element, NumericRecordSpec) else RecordBatch
         return batch_class(
-            f"{atoms.name}[{tuple(requested for requested, _, _ in selected)!r}]",
+            f"{atoms.label}[{tuple(requested for requested, _, _ in selected)!r}]",
             columns,
             atoms.level_names,
             element_spec=element,

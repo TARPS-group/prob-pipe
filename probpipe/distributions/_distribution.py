@@ -279,13 +279,13 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     Abstract base for all ProbPipe distributions.
 
     Every distribution is a tracked term: it is
-    :class:`~probpipe.core.tracked.TrackedTerm` (a :attr:`~TrackedTerm.name` and a write-once
+    :class:`~probpipe.core.tracked.TrackedTerm` (a :attr:`~TrackedTerm.label` and a write-once
     :attr:`~TrackedTerm.provenance`) and
     :class:`~probpipe.core.tracked.Annotated` (free-form
     :attr:`~Annotated.annotations`).  A distribution's constructor takes
     its name as the required first argument, as ``Normal("x", 0.0, 1.0)``
     does; a joint that ``*`` composes is named by its operands' labels. Every
-    transform preserves the name; only ``with_name`` replaces it.
+    transform preserves the name; only ``with_label`` replaces it.
 
     Sampling and expectation capabilities are provided by the
     :class:`~probpipe.SupportsSampling` protocol.
@@ -349,7 +349,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     ):
         if not isinstance(name, str) or not name:
             raise TypeError(
-                f"{type(self).__name__} requires a non-empty name as its first argument"
+                f"{type(self).__name__} requires a non-empty label as its first argument"
             )
         # ``_provenance`` and ``_annotations`` carry state a reconstruction
         # already holds and that construction cannot otherwise reach: provenance
@@ -367,7 +367,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         the constructor calls it itself.
         """
         object.__setattr__(
-            self, "_spec", DistributionSpec(_complete_event_spec(event_spec, self._name))
+            self, "_spec", DistributionSpec(_complete_event_spec(event_spec, self._label))
         )
 
     # -- the representation ---------------------------------------------------
@@ -412,13 +412,13 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         spec = self.event_spec.spec
         if not isinstance(spec, NumericArraySpec):
             raise AttributeError(
-                f"{type(self).__name__} {self.name!r} does not draw a single array; "
+                f"{type(self).__name__} {self.label!r} does not draw a single array; "
                 f"event_shape is defined only for one"
             )
         free = spec.free_dims
         if free:
             raise ValueError(
-                f"{type(self).__name__} {self.name!r} has unbound dimensions "
+                f"{type(self).__name__} {self.label!r} has unbound dimensions "
                 f"{sorted(free)}; bind them with with_dim_sizes"
             )
         return spec.shape
@@ -475,7 +475,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         unbound = set(sizes) - self.event_spec.spec.free_dims
         if unbound:
             raise ValueError(
-                f"{type(self).__name__} {self.name!r} has no free dimensions "
+                f"{type(self).__name__} {self.label!r} has no free dimensions "
                 f"{sorted(unbound)} to bind"
             )
         return self._with_declaration(
@@ -570,7 +570,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         """The law itself at a whole term's component, or the field view at another event path.
 
         A whole-term law is itself under its component, so ``d[name]`` returns
-        ``d``; the component is fixed at construction, so after ``with_name`` the
+        ``d``; the component is fixed at construction, so after ``with_label`` the
         law is still addressed by it. Any other event path, a field of an exposed
         record or a path below a whole record's component, gives the
         ``FieldView`` of the node there, which holds a reference to this law, and
@@ -809,11 +809,11 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         """The public class, the label, the family parameters, and a declaration that is not the default.
 
         The event declaration is shown when it differs from the one a bare spec
-        completes to under the law's label (III.7), as after ``with_name`` or
+        completes to under the law's label (III.7), as after ``with_label`` or
         for a declared component.
         """
         fields = [*self._repr_arguments(), *self._event_repr_arguments()]
-        return term_repr(self._repr_class_name(), self.name, fields)
+        return term_repr(self._repr_class_name(), self.label, fields)
 
     def _repr_class_name(self) -> str:
         """The first public class in this law's method-resolution order, which the repr names."""
@@ -825,7 +825,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
 
     def _event_repr_arguments(self) -> list[tuple[str, str]]:
         """The event declaration, unless it is the default for this law's label."""
-        if _is_default_declaration(self.event_spec, self.name):
+        if _is_default_declaration(self.event_spec, self.label):
             return []
         return [("event_spec", repr(self.event_spec))]
 

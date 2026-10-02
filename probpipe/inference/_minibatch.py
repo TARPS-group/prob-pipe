@@ -277,7 +277,7 @@ class MinibatchedDistribution(
             data=self._data,
             rows=rows,
             rescale_factor=self._rescale_factor,
-            name=f"{self.name}/draw",
+            name=f"{self.label}/draw",
             event_spec=self._draw_event_spec,
         )
 
@@ -409,7 +409,7 @@ class _RandomMinibatchLogProb(
 
     def __init__(self, measure: MinibatchedDistribution):
         super().__init__(
-            f"{measure.name}/random_log_prob", OutputSpec(random_log_prob=FunctionSpec())
+            f"{measure.label}/random_log_prob", OutputSpec(random_log_prob=FunctionSpec())
         )
         self._measure = measure
 
@@ -468,7 +468,7 @@ class _MinibatchLogProbAtPoint(Distribution, SupportsSampling):
 
     def __init__(self, measure: MinibatchedDistribution, theta: Any):
         # A draw is one scalar log-density value.
-        super().__init__(f"{measure.name}@theta", OutputSpec(log_prob=NumericArraySpec(())))
+        super().__init__(f"{measure.label}@theta", OutputSpec(log_prob=NumericArraySpec(())))
         self._measure = measure
         self._theta = theta
 

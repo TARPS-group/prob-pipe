@@ -578,7 +578,7 @@ def admit_arguments(
         ):
             raise ApplicabilityError(
                 f"parameter {ref.label!r} expects a value, and a value parameter accepts no "
-                f"ConditionalDistribution: got {type(value).__name__} {value.name!r}, which is "
+                f"ConditionalDistribution: got {type(value).__name__} {value.label!r}, which is "
                 f"a kernel with no marginal law to lift over. Condition it on a given value "
                 f"first, or annotate the parameter ConditionalDistribution to consume the "
                 f"kernel itself"

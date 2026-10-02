@@ -1,14 +1,14 @@
 """Identity and metadata mixins: ``TrackedTerm`` and ``Annotated``.
 
 Every object a ProbPipe operation returns is a **tracked term**: it carries a
-:attr:`~TrackedTerm.name` (what the object is called) and, optionally, a
+:attr:`~TrackedTerm.label` (what the object is called) and, optionally, a
 :attr:`~TrackedTerm.provenance` (how it was produced). Some objects additionally
 carry free-form :attr:`~Annotated.annotations` (auxiliary information supplied
 by the user or an algorithm). These identity and metadata attributes are orthogonal
 to what an object *is* mathematically, so they are defined once, here, as two
 mixins:
 
-- :class:`TrackedTerm` — name + provenance. Every ProbPipe value, distribution,
+- :class:`TrackedTerm` — label + provenance. Every ProbPipe value, distribution,
   and batch is ``TrackedTerm``.
 - :class:`Annotated` — free-form annotations. Carried by the single value and
   distribution types (``Record``, ``Distribution``), not required of batches.
@@ -35,25 +35,25 @@ from typing import Any, Self, _ProtocolMeta
 from ._immutable import Immutable, constructing, decoupled_container
 from .provenance import Provenance
 
-__all__ = ["Annotated", "TrackedTerm", "auto_name"]
+__all__ = ["Annotated", "TrackedTerm", "auto_label"]
 
 
-def auto_name(name: str | None, default: str) -> str:
-    """Resolve an optional name against its construction-time default.
+def auto_label(label: str | None, default: str) -> str:
+    """Resolve an optional label against its construction-time default.
 
     Parameters
     ----------
-    name : str or None
-        The caller-supplied name, or ``None`` to use *default*.
+    label : str or None
+        The caller-supplied label, or ``None`` to use *default*.
     default : str
-        The name to use when none was supplied.
+        The label to use when none was supplied.
 
     Returns
     -------
     str
-        The supplied name or its default.
+        The supplied label or its default.
     """
-    return default if name is None else name
+    return default if label is None else label
 
 
 def _decoupled_annotations(annotations: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -70,7 +70,7 @@ def _decoupled_annotations(annotations: Mapping[str, Any]) -> Mapping[str, Any]:
 
 
 class _TrackedTermMeta(_ProtocolMeta):
-    """Metaclass running construction in a window, and enforcing a non-empty name.
+    """Metaclass running construction in a window, and enforcing a non-empty label.
 
     A tracked term is immutable, so it can only be built by assigning to it
     before anyone holds it. This runs ``__init__`` inside
@@ -79,10 +79,10 @@ class _TrackedTermMeta(_ProtocolMeta):
     is per instance and per thread, and closes even when ``__init__`` raises.
 
     The check runs after ``__init__`` so it covers every construction
-    path: classes that call ``super().__init__(name=...)``, classes that
+    path: classes that call ``super().__init__(label=...)``, classes that
     call :meth:`TrackedTerm._init_tracked` directly, and classes that assign
-    ``self._name`` themselves. The only failure case is a class that
-    finishes ``__init__`` without setting ``_name`` to a non-empty
+    ``self._label`` themselves. The only failure case is a class that
+    finishes ``__init__`` without setting ``_label`` to a non-empty
     string — then construction raises ``TypeError``.
 
     Extends ``typing._ProtocolMeta`` (rather than the more obvious
@@ -109,30 +109,30 @@ class _TrackedTermMeta(_ProtocolMeta):
                 returned = instance.__init__(*args, **kwargs)
             if returned is not None:
                 raise TypeError(f"__init__() should return None, not {type(returned).__name__!r}")
-        name = getattr(instance, "_name", None)
-        if not isinstance(name, str) or not name:
+        label = getattr(instance, "_label", None)
+        if not isinstance(label, str) or not label:
             raise TypeError(
-                f"{cls.__name__}.__init__ must set a non-empty name "
-                f"(via _init_tracked(name, ...) / super().__init__(name=...) "
-                f"or by assigning self._name to a non-empty string) "
+                f"{cls.__name__}.__init__ must set a non-empty label "
+                f"(via _init_tracked(label, ...) / super().__init__(label=...) "
+                f"or by assigning self._label to a non-empty string) "
                 f"before returning."
             )
         return instance
 
 
 class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
-    """Identity mixin: a :attr:`name` and a write-once :attr:`provenance`.
+    """Identity mixin: a :attr:`label` and a write-once :attr:`provenance`.
 
     A ``TrackedTerm`` object carries, alongside its mathematical content, the two
-    pieces of identity every ProbPipe object needs: a human-readable **name**
+    pieces of identity every ProbPipe object needs: a human-readable **label**
     and an optional **provenance** describing how it was produced. Any such
     object is a *tracked term* — the kind of object ProbPipe operations
     consume and produce.
 
-    The name is set at construction, either supplied by the caller or derived
-    from the inputs. Every transform preserves it; only :meth:`with_name`
+    The label is set at construction, either supplied by the caller or derived
+    from the inputs. Every transform preserves it; only :meth:`with_label`
     replaces it, returning a copy. ``with_path_names`` on the named-tree types
-    renames the fields within an object and preserves the object's name.
+    renames the fields within an object and preserves the object's label.
 
     Provenance is **write-once**: it is attached at most once via
     :meth:`with_provenance`, and a subsequent attempt raises. Transformations
@@ -151,8 +151,8 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
 
     Attributes
     ----------
-    name : str
-        Human-readable name of this object.
+    label : str
+        Human-readable label of this object.
     provenance : Provenance or None
         How this object was produced, or ``None`` if no provenance has been
         attached (an original user-constructed object, or provenance tracking
@@ -161,50 +161,50 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     Notes
     -----
     The mixin holds no per-instance storage of its own (``__slots__ = ()``);
-    the state lives in the ``_name`` / ``_provenance``
+    the state lives in the ``_label`` / ``_provenance``
     attributes, which a host class declares in its ``__slots__`` (when it uses
     slots) and initializes via :meth:`_init_tracked`. All writes go through
     ``object.__setattr__`` so the mixin also works on immutable hosts that
     block normal attribute assignment.
 
-    The non-empty-name guarantee is enforced at construction by the mixin's
+    The non-empty-label guarantee is enforced at construction by the mixin's
     metaclass (:class:`_TrackedTermMeta`): finishing ``__init__`` without a
-    non-empty ``_name`` raises ``TypeError``. Host classes therefore never
-    need their own name check.
+    non-empty ``_label`` raises ``TypeError``. Host classes therefore never
+    need their own label check.
     """
 
-    _name: str
+    _label: str
     _provenance: Provenance | None
     __slots__ = ()
 
     def _init_tracked(
         self,
-        name: str,
+        label: str,
         *,
         provenance: Provenance | None = None,
     ) -> None:
         """Initialize the identity state (constructor helper for host classes).
 
-        Assigns ``_name`` and ``_provenance`` via
+        Assigns ``_label`` and ``_provenance`` via
         ``object.__setattr__`` so immutable hosts can call it from their
         constructor. Performs no validation — the host constructor owns its
-        own ``name`` policy (required vs. auto-derived default).
+        own ``label`` policy (required vs. auto-derived default).
         """
-        object.__setattr__(self, "_name", name)
+        object.__setattr__(self, "_label", label)
         object.__setattr__(self, "_provenance", provenance)
 
     # -- identity ------------------------------------------------------------
 
     @property
-    def name(self) -> str:
-        """Human-readable name of this object."""
-        return self._name
+    def label(self) -> str:
+        """Human-readable label of this object."""
+        return self._label
 
-    def with_name(self, name: str) -> Self:
-        """Return a copy of this object under a new name.
+    def with_label(self, label: str) -> Self:
+        """Return a copy of this object under a new label.
 
         The copy is shallow: it shares its data with the original but has
-        ``name`` set to *name*. The copy's :attr:`provenance`
+        ``label`` set to *label*. The copy's :attr:`provenance`
         records the rename, with the original as parent, so the lineage
         chain is preserved. On an ``Annotated`` host the annotations
         *container* is its own (its entries are shared), so annotations
@@ -217,29 +217,29 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
 
         Parameters
         ----------
-        name : str
-            The new name. Must be a non-empty string.
+        label : str
+            The new label. Must be a non-empty string.
 
         Returns
         -------
         Self
-            A shallow copy with the new name; the original is unchanged.
+            A shallow copy with the new label; the original is unchanged.
 
         Raises
         ------
         TypeError
-            If *name* is not a non-empty string.
+            If *label* is not a non-empty string.
         """
-        if not isinstance(name, str) or not name:
-            raise TypeError(f"{type(self).__name__}.with_name() requires a non-empty string name")
+        if not isinstance(label, str) or not label:
+            raise TypeError(f"{type(self).__name__}.with_label() requires a non-empty string label")
         clone = self._shallow_copy()
-        object.__setattr__(clone, "_name", name)
+        object.__setattr__(clone, "_label", label)
         object.__setattr__(clone, "_provenance", None)
         clone.with_provenance(
             Provenance.create(
-                "with_name",
+                "with_label",
                 parents=[self],
-                metadata={"old_name": self.name, "new_name": name},
+                metadata={"old_label": self._label, "new_label": label},
             )
         )
         return clone
@@ -251,7 +251,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         """The term's representation, detached from the workflow.
 
         Detachment removes the provenance, the annotations, and any reference to
-        a container or a parent, and it keeps the spec and the name. A kind
+        a container or a parent, and it keeps the spec and the label. A kind
         represented by an object from outside ProbPipe returns that object, such
         as a backing array or a wrapped callable, and a kind represented by a
         ProbPipe object returns that object detached.
@@ -303,7 +303,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         has assigned **except** what the class declares transient, and a store
         the class declares decoupled arrives in a container of its own. Writes
         bypass both ``__init__`` and the immutability guard, as construction
-        does. Used by :meth:`with_name`; host classes with exotic storage may
+        does. Used by :meth:`with_label`; host classes with exotic storage may
         override.
 
         Allocation uses ``object.__new__`` directly: ``type(self)`` is
@@ -365,7 +365,7 @@ class Annotated:
         so :attr:`annotations` stays ``None`` until a writer attaches something.
 
         The container is decoupled from the one passed in, for the reason
-        :meth:`TrackedTerm.with_name` gives: writers add entries in place, so a
+        :meth:`TrackedTerm.with_label` gives: writers add entries in place, so a
         shared container would let a write on this object show through on
         whatever it was built from. Writes go through ``object.__setattr__`` so
         an immutable host can call this from its constructor.

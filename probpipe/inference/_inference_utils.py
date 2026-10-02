@@ -366,10 +366,10 @@ def flat_unflatten(law: Any) -> Callable[[Array], Any]:
         return _reshape_to(array.shape)
     record = flat_record(law)
     if record is None:
-        raise TypeError(f"{type(law).__name__} {law.name!r} draws no value a flat vector lays out")
+        raise TypeError(f"{type(law).__name__} {law.label!r} draws no value a flat vector lays out")
 
     def unflatten(theta_flat: Array) -> Any:
-        return _reconstruct_from_vector(law.name, record, theta_flat)
+        return _reconstruct_from_vector(law.label, record, theta_flat)
 
     return unflatten
 
@@ -460,8 +460,8 @@ def model_factors(target: Any) -> ModelFactors | None:
             return None
     if not prior_factors or not likelihood_factors:
         return None
-    prior = _joint_of(joint.name, prior_factors)
-    likelihood = _joint_of(joint.name, likelihood_factors)
+    prior = _joint_of(joint.label, prior_factors)
+    likelihood = _joint_of(joint.label, likelihood_factors)
     if not isinstance(prior, Distribution):
         return None
     slots = set(likelihood.given_spec) if isinstance(likelihood, ConditionalDistribution) else set()
@@ -513,7 +513,7 @@ def flat_density(dist: Any) -> Callable[[Array], Array]:
         return dist._unnormalized_log_prob
 
     def density(theta: Array) -> Array:
-        return dist._unnormalized_log_prob(_reconstruct_from_vector(dist.name, record, theta))
+        return dist._unnormalized_log_prob(_reconstruct_from_vector(dist.label, record, theta))
 
     return density
 
@@ -761,7 +761,7 @@ def build_target_log_prob_flat(
     if record is not None:
 
         def target_unflattened(theta_flat: Array) -> Array:
-            return target_record(_reconstruct_from_vector(prior.name, record, theta_flat))
+            return target_record(_reconstruct_from_vector(prior.label, record, theta_flat))
 
         return target_unflattened, flat_init, prior.event_spec
 

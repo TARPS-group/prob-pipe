@@ -81,7 +81,7 @@ class SimulatorKernel(ConditionalDistribution, SupportsConditionalSampling):
         object.__setattr__(self, "_simulate", simulate)
 
     def _condition_on(self, given: Any, /, **options: Any) -> _SimulatedLaw:
-        return _SimulatedLaw(self.name, self.event_spec, lambda key: self._simulate(given, key))
+        return _SimulatedLaw(self.label, self.event_spec, lambda key: self._simulate(given, key))
 
     def _conditional_sample(
         self, given: Any, key: PRNGKey, sample_shape: tuple[int, ...] = ()

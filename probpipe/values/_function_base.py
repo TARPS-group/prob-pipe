@@ -181,14 +181,14 @@ class _CallableFunctionImplementation:
 
 
 def _complete_output_spec(
-    output_spec: OutputSpec | TermSpec | None, output_name: str
+    output_spec: OutputSpec | TermSpec | None, output_label: str
 ) -> OutputSpec | None:
     if output_spec is None or isinstance(output_spec, OutputSpec):
         return output_spec
     if isinstance(output_spec, RecordSpec):
         return OutputSpec(output_spec)
     if isinstance(output_spec, TermSpec):
-        return OutputSpec(**{output_name: output_spec})
+        return OutputSpec(**{output_label: output_spec})
     raise TypeError("output_spec must be an OutputSpec, TermSpec, or None")
 
 
@@ -461,10 +461,10 @@ class Function(Node, TrackedTerm, Annotated):
         construction bindings must satisfy the declaration.
     output_spec : OutputSpec or TermSpec or None
         Authoritative result declaration. A bare RecordSpec exposes its fields;
-        any other bare term spec declares a whole term under output_name. A
+        any other bare term spec declares a whole term under output_label. A
         named type hole is inferred independently for each call.
-    output_name : str or None
-        Result label. Defaults to the initial name and survives with_name.
+    output_label : str or None
+        Result label. Defaults to the initial name and survives with_label.
         Whole-term components default to this name, which must then be a Python
         identifier; an explicit OutputSpec can supply a different component.
     differentiable : NumericSpec or None
@@ -526,8 +526,8 @@ class Function(Node, TrackedTerm, Annotated):
     Only the engine's controls are admitted, since a registered method declares
     no controls of its own: its budgets are entries of ``method_options``.
 
-    ``spec`` contains only input/output declarations. ``with_name`` changes the
-    function label and callable metadata; output_name and component names are
+    ``spec`` contains only input/output declarations. ``with_label`` changes the
+    function label and callable metadata; output_label and component names are
     preserved. ``with_options`` returns a shallow copy with revised controls.
     A Function stores only the controls set on it, so ``options`` reads every
     other control's default when it is read.
@@ -550,7 +550,7 @@ class Function(Node, TrackedTerm, Annotated):
     _module: Any | None
     _implementation: _FunctionImplementation
     _spec: FunctionSpec
-    _output_name: str
+    _output_label: str
     _options: Mapping[str, Any]
 
     DEFAULT_N_BROADCAST_SAMPLES = 128
@@ -562,7 +562,7 @@ class Function(Node, TrackedTerm, Annotated):
         *,
         input_spec: InputSpec | Mapping[str, TermSpec] | None = None,
         output_spec: OutputSpec | TermSpec | None = None,
-        output_name: str | None = None,
+        output_label: str | None = None,
         differentiable: NumericSpec | None = None,
         bind: Mapping[str, Any] | None = None,
         module: Any | None = None,
@@ -590,7 +590,7 @@ class Function(Node, TrackedTerm, Annotated):
             name,
             input_spec=input_spec,
             output_spec=output_spec,
-            output_name=output_name,
+            output_label=output_label,
             differentiable=differentiable,
             metadata_source=fn,
             bind=bind,
@@ -606,7 +606,7 @@ class Function(Node, TrackedTerm, Annotated):
         *,
         input_spec: InputSpec | Mapping[str, TermSpec] | None = None,
         output_spec: OutputSpec | TermSpec | None = None,
-        output_name: str | None = None,
+        output_label: str | None = None,
         differentiable: NumericSpec | None = None,
         metadata_source: Any = None,
         bind: Mapping[str, Any] | None = None,
@@ -619,16 +619,16 @@ class Function(Node, TrackedTerm, Annotated):
         if differentiable is not None:
             raise NotImplementedError("Function.__init__: the differentiability claim")
         if not isinstance(name, str) or not name:
-            raise TypeError("Function requires a non-empty name")
-        if output_name is None:
-            output_name = name
-        if not isinstance(output_name, str) or not output_name:
-            raise TypeError("Function output_name must be a non-empty string")
+            raise TypeError("Function requires a non-empty label")
+        if output_label is None:
+            output_label = name
+        if not isinstance(output_label, str) or not output_label:
+            raise TypeError("Function output_label must be a non-empty string")
         if input_spec is not None and not isinstance(input_spec, InputSpec):
             if not isinstance(input_spec, Mapping):
                 raise TypeError("input_spec must be an InputSpec, a mapping, or None")
             input_spec = InputSpec(input_spec)
-        output_spec = _complete_output_spec(output_spec, output_name)
+        output_spec = _complete_output_spec(output_spec, output_label)
         construction_bindings = dict(bind or {})
         _validate_function_declarations(
             function_name=name,
@@ -648,7 +648,7 @@ class Function(Node, TrackedTerm, Annotated):
         set_attribute("_implementation", implementation)
         set_attribute("_signature_info", signature_info)
         set_attribute("_spec", FunctionSpec(input_spec, output_spec))
-        set_attribute("_output_name", output_name)
+        set_attribute("_output_label", output_label)
         set_attribute("_options", MappingProxyType(options))
         set_attribute("_bind", MappingProxyType(construction_bindings))
         set_attribute("_module", module)
@@ -701,9 +701,9 @@ class Function(Node, TrackedTerm, Annotated):
         return self.spec.output_spec
 
     @property
-    def output_name(self) -> str:
+    def output_label(self) -> str:
         """The result label captured at construction."""
-        return self._output_name
+        return self._output_label
 
     @property
     def options(self) -> Mapping[str, Any]:
@@ -773,11 +773,11 @@ class Function(Node, TrackedTerm, Annotated):
         """
         return _check_engine(self, *args, **kwargs)
 
-    def with_name(self, name: str) -> Self:
-        """Rename the function label, preserving output_name and its declaration."""
-        renamed = cast(Self, TrackedTerm.with_name(self, name))
-        object.__setattr__(renamed, "__name__", name)
-        object.__setattr__(renamed, "__qualname__", name)
+    def with_label(self, label: str) -> Self:
+        """Relabel the function, preserving output_label and its declaration."""
+        renamed = cast(Self, TrackedTerm.with_label(self, label))
+        object.__setattr__(renamed, "__name__", label)
+        object.__setattr__(renamed, "__qualname__", label)
         return renamed
 
     def raw(self) -> Callable[..., Any]:
@@ -805,14 +805,14 @@ class Function(Node, TrackedTerm, Annotated):
                 bind=self._bind,
                 module=self._module,
                 dependency_type=Node,
-                workflow_name=self.name,
+                workflow_name=self.label,
             )
             _, bindings = _bind_function_inputs(
-                function_name=self.name, input_spec=self.input_spec, values=values
+                function_name=self.label, input_spec=self.input_spec, values=values
             )
             result = self._invoke_resolved(values, context=_FunctionInvocationContext(bindings))
             _validate_function_output(
-                function_name=self.name,
+                function_name=self.label,
                 output_spec=self.output_spec,
                 result=result,
                 bindings=bindings,
@@ -866,13 +866,13 @@ class Function(Node, TrackedTerm, Annotated):
 
         The result label is shown where it differs from the function's own.
         """
-        return term_repr(public_class_name(type(self)), self.name, self._repr_arguments())
+        return term_repr(public_class_name(type(self)), self.label, self._repr_arguments())
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The arguments the repr shows after the label, each by name and formatted value."""
         fields = [("parameters", format_names(self.signature.parameters))]
-        if self.output_name != self.name:
-            fields.append(("output_name", repr(self.output_name)))
+        if self.output_label != self.label:
+            fields.append(("output_label", repr(self.output_label)))
         for side, declaration in (
             ("input_spec", self.input_spec),
             ("output_spec", self.output_spec),

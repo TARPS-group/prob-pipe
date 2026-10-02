@@ -315,13 +315,13 @@ class _NumericLaw(
         fields = self._fields(flat)
         if sample_shape:
             return NumericRecordBatch(
-                self.name,
+                self.label,
                 fields,
                 "sample",
                 element_spec=self.event_spec.spec,
                 axes_per_level=(len(sample_shape),),
             )
-        return Record(self.name, fields, event_template=self.event_spec.spec)
+        return Record(self.label, fields, event_template=self.event_spec.spec)
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
         return self._record(jax.random.normal(key, (*sample_shape, 6)), sample_shape)
@@ -516,7 +516,7 @@ class TestDeclaration:
     def test_a_view_keeps_its_parent_label_and_reads_its_parent_there(self, event_spec, path):
         parent = _Law("parent", event_spec)
         view = FieldView(parent, path)
-        assert view.name == "parent"
+        assert view.label == "parent"
         assert view.parent is parent
         assert view.path == path
 
@@ -540,8 +540,8 @@ class TestDeclaration:
     def test_a_renamed_view_keeps_its_parent_path_and_declaration(self):
         parent = _Law("parent", _EVENT)
         view = FieldView(parent, "model/theta")
-        renamed = view.with_name("coefficients")
-        assert renamed.name == "coefficients"
+        renamed = view.with_label("coefficients")
+        assert renamed.label == "coefficients"
         assert renamed.parent is parent
         assert renamed.path == "model/theta"
         assert renamed.event_spec == view.event_spec
@@ -550,7 +550,7 @@ class TestDeclaration:
         parent = _product()
         view = FieldView(parent, "a")
         assert view.provenance is not None
-        assert [info.name for info in view.provenance.parents] == [parent.name]
+        assert [info.name for info in view.provenance.parents] == [parent.label]
 
     def test_binding_a_dimension_of_a_view_binds_it_in_the_parent(self):
         parent = _Law("parent", OutputSpec(RecordSpec(a=("n",), b=("n",))))
@@ -639,7 +639,7 @@ class TestIndexing:
             view[key]
 
     def test_a_view_renamed_by_label_is_still_addressed_by_its_component(self):
-        view = FieldView(_Law("parent", _EVENT), "model/theta").with_name("coefficients")
+        view = FieldView(_Law("parent", _EVENT), "model/theta").with_label("coefficients")
         assert view["theta"] is view
 
     def test_a_view_renamed_by_path_is_addressed_by_its_new_component(self):
@@ -666,7 +666,7 @@ class TestIndexing:
         selection = FieldView(parent, "model/theta")[("theta/tau", "theta/mu")]
         assert selection.parent is parent
         assert selection.path == ("model/theta/tau", "model/theta/mu")
-        assert selection.name == "parent"
+        assert selection.label == "parent"
 
     def test_a_selection_of_one_path_exposes_a_record_of_one_field(self):
         selection = FieldView(_Law("parent", _EVENT), ("model/theta",))
@@ -869,7 +869,7 @@ class TestGuards:
     def test_the_density_refusal_names_the_fields_rather_than_the_factors(self):
         joint = _ScoringKernel("likelihood", {"beta": _REAL}, OutputSpec(y=_REAL)) * Normal(
             "beta", 0.0, 1.0
-        ).with_name("prior")
+        ).with_label("prior")
         report = _capability_guard(FieldView(joint, "y"), "_log_prob")
         assert report.feasible is False
         assert "['y']" in report.description and "['beta']" in report.description
@@ -1096,9 +1096,9 @@ class TestDerivedBehavior:
 
     def test_the_view_marginal_keeps_the_view_label(self):
         parent = _UnguardedMarginalLaw("parent", _EVENT)
-        assert FieldView(parent, "model/theta")._marginal("theta/mu").name == "parent"
-        relabeled = FieldView(parent, "model/theta").with_name("theta")
-        assert relabeled._marginal(("theta/mu", "theta/tau")).name == "theta"
+        assert FieldView(parent, "model/theta")._marginal("theta/mu").label == "parent"
+        relabeled = FieldView(parent, "model/theta").with_label("theta")
+        assert relabeled._marginal(("theta/mu", "theta/tau")).label == "theta"
 
     def test_conditioning_a_view_conditions_its_parent_at_the_given_paths(self):
         parent = _ConditioningLaw("parent", _EVENT)
@@ -1213,7 +1213,7 @@ class TestDerivedBehavior:
         raw = view.raw()
         assert parent.marginal_calls == ["model/theta/mu"]
         assert not isinstance(raw, FieldView)
-        assert (raw.name, raw.spec, raw.provenance) == (view.name, view.spec, None)
+        assert (raw.label, raw.spec, raw.provenance) == (view.label, view.spec, None)
 
 
 class TestTheViewOfAWeightedLaw:
@@ -1343,8 +1343,8 @@ class TestSelections:
         selection = FieldView(_product(), ("b", "a"))
         restored = pickle.loads(pickle.dumps(selection))
         assert type(restored) is type(selection)
-        assert (restored.name, restored.path, restored.spec) == (
-            selection.name,
+        assert (restored.label, restored.path, restored.spec) == (
+            selection.label,
             selection.path,
             selection.spec,
         )
@@ -1388,7 +1388,7 @@ class TestCapabilityClasses:
         view = FieldView(make(), path)
         restored = pickle.loads(pickle.dumps(view))
         assert type(restored) is type(view)
-        assert (restored.name, restored.path, restored.spec) == (view.name, view.path, view.spec)
+        assert (restored.label, restored.path, restored.spec) == (view.label, view.path, view.spec)
         assert restored.parent.spec == view.parent.spec
         assert _claimed(restored) == _claimed(view)
 
@@ -1398,7 +1398,7 @@ class TestCapabilityClasses:
         restored = copy.copy(view)
         assert type(restored) is type(view)
         assert restored.parent is view.parent
-        assert (restored.name, restored.path, restored.spec) == (view.name, view.path, view.spec)
+        assert (restored.label, restored.path, restored.spec) == (view.label, view.path, view.spec)
 
     @pytest.mark.parametrize(("make", "path"), _ROUND_TRIP_PARENTS)
     def test_deepcopy_restores_the_view_with_a_copy_of_its_parent(self, make, path):
@@ -1407,12 +1407,12 @@ class TestCapabilityClasses:
         assert type(restored) is type(view)
         assert restored.parent is not view.parent
         assert restored.parent.spec == view.parent.spec
-        assert (restored.name, restored.path, restored.spec) == (view.name, view.path, view.spec)
+        assert (restored.label, restored.path, restored.spec) == (view.label, view.path, view.spec)
 
     @pytest.mark.parametrize(("make", "path"), _ROUND_TRIP_PARENTS)
     def test_a_rename_keeps_the_view_in_its_capability_class(self, make, path):
         view = FieldView(make(), path)
-        renamed = view.with_name("renamed")
+        renamed = view.with_label("renamed")
         assert type(renamed) is type(view)
         assert renamed.parent is view.parent
 
@@ -1435,7 +1435,7 @@ class TestCapabilityClasses:
                 if isinstance(view, getattr(_capabilities, name))
             )
             print(json.dumps(
-                [type(view).__name__, type(view) is FieldView, view.name, view.path, claimed]
+                [type(view).__name__, type(view) is FieldView, view.label, view.path, claimed]
             ))
             """
         )
@@ -1452,4 +1452,4 @@ class TestCapabilityClasses:
         assert result.returncode == 0, result.stderr
         restored = json.loads(result.stdout.strip().splitlines()[-1])
         claimed = sorted(protocol.__name__ for protocol in _claimed(view))
-        assert restored == ["FieldView", False, view.name, view.path, claimed]
+        assert restored == ["FieldView", False, view.label, view.path, claimed]

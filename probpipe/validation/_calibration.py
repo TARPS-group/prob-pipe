@@ -243,10 +243,12 @@ def simulation_based_calibration(
     components = tuple(model.event_spec.components)
     unknown = [name for name in observed if name not in components]
     if unknown:
-        raise ValueError(f"{unknown} are not fields of {model.name!r}; its fields are {components}")
+        raise ValueError(
+            f"{unknown} are not fields of {model.label!r}; its fields are {components}"
+        )
     parameters = tuple(name for name in components if name not in observed)
     if not parameters:
-        raise ValueError(f"observing {list(observed)} leaves no parameter of {model.name!r}")
+        raise ValueError(f"observing {list(observed)} leaves no parameter of {model.label!r}")
     if key is None:
         # The joint is a ProbPipe law, so its draws follow the distribution ABI.
         key = _resolve_validation_key(

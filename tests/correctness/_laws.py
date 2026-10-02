@@ -198,7 +198,7 @@ class RecordObservationKernel(ObservationKernel):
         top = dict(given.children if isinstance(given, Record) else given)
         values = {slot: _fields(value) for slot, value in top.items()}
         return _Observations(
-            self.name, self._build(**values), self._support, event_spec=self.event_spec
+            self.label, self._build(**values), self._support, event_spec=self.event_spec
         )
 
 

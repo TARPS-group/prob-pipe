@@ -385,8 +385,8 @@ class TestDeclaration:
     @pytest.mark.parametrize(("cls", "make"), _rows())
     def test_a_rename_keeps_the_declaration(self, cls, make):
         law = make()
-        renamed = law.with_name("renamed")
-        assert renamed.name == "renamed"
+        renamed = law.with_label("renamed")
+        assert renamed.label == "renamed"
         assert renamed.event_spec == law.event_spec
 
     @pytest.mark.parametrize(("cls", "make"), _rows())
@@ -414,19 +414,19 @@ class TestRoundTrips:
 
     @pytest.mark.parametrize(("cls", "make"), _rows(_PICKLE_FAILURES))
     def test_pickle(self, cls, make):
-        law = make().with_name("renamed")
+        law = make().with_label("renamed")
         restored = pickle.loads(pickle.dumps(law))
-        assert (restored.name, restored.spec) == (law.name, law.spec)
+        assert (restored.label, restored.spec) == (law.label, law.spec)
 
     @pytest.mark.parametrize(("cls", "make"), _rows())
     def test_copy(self, cls, make):
-        law = make().with_name("renamed")
+        law = make().with_label("renamed")
         restored = copy.copy(law)
-        assert (restored.name, restored.spec) == (law.name, law.spec)
+        assert (restored.label, restored.spec) == (law.label, law.spec)
 
     @pytest.mark.parametrize(("cls", "make"), _rows())
     def test_pytree(self, cls, make):
-        law = make().with_name("renamed")
+        law = make().with_label("renamed")
         leaves, treedef = jax.tree_util.tree_flatten(law)
         restored = jax.tree_util.tree_unflatten(treedef, leaves)
-        assert (restored.name, restored.spec) == (law.name, law.spec)
+        assert (restored.label, restored.spec) == (law.label, law.spec)

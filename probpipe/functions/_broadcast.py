@@ -104,7 +104,7 @@ def execute_distribution_broadcast(
     resolve_dispatch: Callable[..., str],
     require_jax_traceable: Callable[[dict[str, Any], list[WorkflowInputRef]], None],
     workflow_name: str,
-    output_name: str | None = None,
+    output_label: str | None = None,
     output_spec: OutputSpec | None = None,
     workflow_kind: WorkflowKind,
     output_template: RecordSpec | None = None,
@@ -153,7 +153,7 @@ def execute_distribution_broadcast(
         error before executing.
     workflow_name : str
         Human-readable workflow name recorded in provenance metadata.
-    output_name : str or None
+    output_label : str or None
         The result's label, and the component of an undeclared whole-term
         output; the workflow name by default.
     output_spec : OutputSpec or None
@@ -181,7 +181,7 @@ def execute_distribution_broadcast(
         Atoms on the level ``draw``, one per evaluation. The event declaration is
         the completed output declaration: a declared output completed by the
         returned values, or else an exposed record for a record return and a
-        whole term under *output_name* for any other. Under *include_inputs* the
+        whole term under *output_label* for any other. Under *include_inputs* the
         event exposes one field per lifted parameter, holding its complete draw,
         followed by the output's components.
 
@@ -256,7 +256,7 @@ def execute_distribution_broadcast(
         draws,
         values=values,
         broadcast_args=broadcast_args,
-        output_name=output_name or workflow_name,
+        output_label=output_label or workflow_name,
         output_spec=output_spec,
         include_inputs=include_inputs,
     )
@@ -282,7 +282,7 @@ def _lift_result(
     *,
     values: Mapping[str, Any],
     broadcast_args: Sequence[WorkflowInputRef],
-    output_name: str,
+    output_label: str,
     output_spec: OutputSpec | None,
     include_inputs: bool,
 ) -> EmpiricalDistribution:
@@ -300,21 +300,21 @@ def _lift_result(
     ResultSchemaError
         If the outputs do not satisfy the output declaration.
     """
-    atoms, declaration = _output_atoms(draws.outputs, draws.count, output_name, output_spec)
+    atoms, declaration = _output_atoms(draws.outputs, draws.count, output_label, output_spec)
     if not include_inputs:
-        return EmpiricalDistribution(output_name, atoms, draws.weights, event_spec=declaration)
-    joint = _joint_atoms(atoms, declaration, draws, values, broadcast_args, output_name)
-    return EmpiricalDistribution(output_name, joint, draws.weights)
+        return EmpiricalDistribution(output_label, atoms, draws.weights, event_spec=declaration)
+    joint = _joint_atoms(atoms, declaration, draws, values, broadcast_args, output_label)
+    return EmpiricalDistribution(output_label, joint, draws.weights)
 
 
 def _output_atoms(
-    outputs: Any, count: int, output_name: str, output_spec: OutputSpec | None
+    outputs: Any, count: int, output_label: str, output_spec: OutputSpec | None
 ) -> tuple[Batch, OutputSpec]:
     """The outputs as a batch on the level ``draw``, and the declaration they complete.
 
     A declared output completes to its declaration with the shared dimensions
     bound by the outputs and any type hole filled; an undeclared one completes to
-    ``OutputSpec.default`` of the outputs' spec under *output_name*.
+    ``OutputSpec.default`` of the outputs' spec under *output_label*.
 
     Raises
     ------
@@ -332,18 +332,18 @@ def _output_atoms(
         if tuple(element.shape) != point:
             element = NumericArraySpec(point, element.dtype, element.support)
         atoms: Batch = NumericArrayBatch(
-            output_name, outputs.value, DRAW_LEVEL, element_spec=element
+            output_label, outputs.value, DRAW_LEVEL, element_spec=element
         )
     else:
-        rows = _rows_of(outputs, output_name)
+        rows = _rows_of(outputs, output_label)
         completed = None if output_spec is None else _aggregate_output_spec(output_spec, rows)
         try:
             atoms = _make_stack(
                 rows,
                 n=count,
                 level_names=(DRAW_LEVEL,),
-                field_name=output_name,
-                name=output_name,
+                field_name=output_label,
+                name=output_label,
                 output_spec=completed,
                 output_template=None if completed is None else _output_record_spec(completed),
             )
@@ -352,18 +352,18 @@ def _output_atoms(
     if len(atoms.level_names) > 1:
         raise NotImplementedError("_SamplingLift.execute: a lifted function that returns a batch")
     if output_spec is None:
-        return atoms, OutputSpec.default(atoms.element_spec, component=output_name)
+        return atoms, OutputSpec.default(atoms.element_spec, component=output_label)
     return atoms, output_spec.with_spec(atoms.element_spec)
 
 
-def _rows_of(outputs: Any, output_name: str) -> Any:
+def _rows_of(outputs: Any, output_label: str) -> Any:
     """The outputs in a form the row aggregator reads.
 
     Row-wise dispatch returns a list of results, and the mapped dispatch one
     stacked array, record, or mapping, which is read as a record of columns.
     """
     if isinstance(outputs, Mapping) and not isinstance(outputs, TrackedTerm):
-        return Record(output_name, dict(outputs))
+        return Record(output_label, dict(outputs))
     return outputs
 
 
@@ -373,7 +373,7 @@ def _joint_atoms(
     draws: _LiftDraws,
     values: Mapping[str, Any],
     broadcast_args: Sequence[WorkflowInputRef],
-    output_name: str,
+    output_label: str,
 ) -> RecordBatch:
     """The batch of joint atoms: each lifted argument's draw, then the output's components.
 
@@ -398,7 +398,7 @@ def _joint_atoms(
         raise ApplicabilityError(
             f"include_inputs gives each lifted parameter a field of the joint law, and the "
             f"parameters {clash} share their names with components of the output of "
-            f"{output_name!r}; rename the parameters, or declare output components of other names"
+            f"{output_label!r}; rename the parameters, or declare output components of other names"
         )
     stored = _batch_columns(atoms)
     if declaration.exposes_record:
@@ -409,7 +409,7 @@ def _joint_atoms(
         fields[component] = spec
         columns.update(_prefixed(component, stored))
     element = RecordSpec(fields)
-    return _batch_class_for(element)(output_name, columns, DRAW_LEVEL, element_spec=element)
+    return _batch_class_for(element)(output_label, columns, DRAW_LEVEL, element_spec=element)
 
 
 def _draw_columns(label: str, draws: Any) -> dict[str, Any]:
@@ -516,7 +516,7 @@ def _sample_planned_source_groups(
         )
         key = get_key(event)
         binding = stochastic_plan.runtime_bindings[group.index]
-        root_sample = _record_columns(binding.sample_root(key, sample_shape), binding.root.name)
+        root_sample = _record_columns(binding.sample_root(key, sample_shape), binding.root.label)
         for consumer, evaluate in zip(group.consumers, binding.consumer_evaluators):
             sampled[consumer.arg_ref] = evaluate(root_sample)
     return sampled
@@ -627,7 +627,7 @@ def _broadcast_enumerate(
                 f"planned {group.exact_size}, found {dist.num_atoms}"
             )
         # Every atom along one leading axis, in its raw form.
-        atoms = _record_columns(dist._atoms_at(jnp.arange(dist.num_atoms)), dist.name)
+        atoms = _record_columns(dist._atoms_at(jnp.arange(dist.num_atoms)), dist.label)
         exact_entries.append(
             (
                 group,
@@ -798,11 +798,11 @@ def _index_sample(s: Any, i: int) -> Any:
     if isinstance(s, RecordBatch):
         # The raw columns, so a field that is not an array reaches the body as
         # the value it holds rather than as a view of its column.
-        return Record(s.name, {p: s._raw_column(p)[i] for p in s.event_template})
+        return Record(s.label, {p: s._raw_column(p)[i] for p in s.event_template})
     if isinstance(s, Record):
         # Index each leaf field's batch row; rebuild by path key so a nested
         # sample is reconstructed with its structure intact.
-        return Record(s.name, {p: s.raw(p)[i] for p in s.event_template})
+        return Record(s.label, {p: s.raw(p)[i] for p in s.event_template})
     return s[i]
 
 

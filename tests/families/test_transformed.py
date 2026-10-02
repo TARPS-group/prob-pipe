@@ -143,7 +143,7 @@ class TestTheBijectorTransform:
 
     def test_the_label_names_the_event_and_the_base_is_its_parent(self, standard):
         transformed = BijectorTransformedDistribution("log_normal", standard, tfb.Exp())
-        assert transformed.name == "log_normal"
+        assert transformed.label == "log_normal"
         assert list(transformed.event_spec.components) == ["log_normal"]
         assert transformed.base is standard
         assert transformed.provenance.operation == "transform"

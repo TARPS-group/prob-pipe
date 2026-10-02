@@ -416,7 +416,7 @@ class Batch[E](TrackedTerm, ABC):
     """
 
     __slots__ = (
-        "_name",
+        "_label",
         "_provenance",
         "_root_name",
         "_root_selection",
@@ -427,7 +427,7 @@ class Batch[E](TrackedTerm, ABC):
     # The three ``_root_*`` slots are the machinery of view naming: the name and
     # spec of the batch a derivation starts from, and which of *that* batch's
     # positions this object selects — one entry per root axis, an integer where an
-    # axis has been dropped and a range of positions where one is kept. ``_name``
+    # axis has been dropped and a range of positions where one is kept. ``_label``
     # is read off them, which is what makes two routes to one selection agree: the
     # reading is a function of the selection, not of the calls that reached it.
     #
@@ -437,7 +437,7 @@ class Batch[E](TrackedTerm, ABC):
     # head of the chain. Leaving them unset for a non-view would put a
     # "means everything" reading on ``None`` — the reading positional ``[]``
     # refuses — and every site that composes or renders a selection would carry a
-    # branch for it. :meth:`with_name` re-roots a view: a user-given name replaces
+    # branch for it. :meth:`with_label` re-roots a view: a user-given name replaces
     # the derivation and discards the selection accumulated before it.
 
     # -- construction -------------------------------------------------------
@@ -601,33 +601,33 @@ class Batch[E](TrackedTerm, ABC):
             )
         return self._with_level_names(renamed)
 
-    def with_name(self, name: str) -> Self:
-        """Rename the batch, which becomes the root its view names derive from.
+    def with_label(self, label: str) -> Self:
+        """Relabel the batch, which becomes the root its view labels derive from.
 
-        The new name starts a new view root, so the copy selects all of
-        itself: its own name is *name*, and a view of it reads
-        ``name[level=...]`` rather than carrying any selection the original had
-        accumulated. This is the way to rename a level a view derives its name
+        The new label starts a new view root, so the copy selects all of
+        itself: its own label is *label*, and a view of it reads
+        ``label[level=...]`` rather than carrying any selection the original had
+        accumulated. This is the way to rename a level a view derives its label
         from but no longer carries, which :meth:`with_level_names` refuses.
 
         Parameters
         ----------
-        name : str
-            The new name, preserved by later transforms.
+        label : str
+            The new label, preserved by later transforms.
 
         Returns
         -------
         Self
-            A shallow copy over the same axes, elements, and spec, named *name*
-            and rooted at itself.
+            A shallow copy over the same axes, elements, and spec, labeled
+            *label* and rooted at itself.
 
         Raises
         ------
         TypeError
-            If *name* is not a non-empty string.
+            If *label* is not a non-empty string.
         """
-        renamed = super().with_name(name)
-        object.__setattr__(renamed, "_root_name", name)
+        renamed = super().with_label(label)
+        object.__setattr__(renamed, "_root_name", label)
         object.__setattr__(renamed, "_root_spec", renamed._spec)
         object.__setattr__(renamed, "_root_selection", _whole_of(renamed._spec))
         return renamed
@@ -651,7 +651,7 @@ class Batch[E](TrackedTerm, ABC):
         """
         levels = ("levels", format_levels(self.level_names, self.axis_groups))
         return term_repr(
-            public_class_name(type(self)), self.name, [levels, *self._element_repr_arguments()]
+            public_class_name(type(self)), self.label, [levels, *self._element_repr_arguments()]
         )
 
     def _element_repr_arguments(self) -> list[tuple[str, str]]:
@@ -927,7 +927,7 @@ class Batch[E](TrackedTerm, ABC):
         selection = self._compose_selection(normalized)
         label = _render_index(self._root_spec, selection)
         if selection == self._root_selection:
-            name = self.name
+            name = self.label
         elif label:
             name = f"{self._root_name}[{label}]"
         else:

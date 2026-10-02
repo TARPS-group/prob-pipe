@@ -112,7 +112,7 @@ class TestMakeStack:
         out = _make_stack(comps, n=3, field_name="demo", level_names=("sweep",))
         assert isinstance(out, DistributionBatch)
         assert (out.batch_shape, out.level_names) == ((3,), ("sweep",))
-        assert out[0].name == "demo[sweep=0]"
+        assert out[0].label == "demo[sweep=0]"
         assert out[0]._tfp_dist is comps[0]._tfp_dist
 
     def test_distributions_that_declare_different_events_do_not_stack(self):
@@ -283,7 +283,7 @@ class TestCoerceOutput:
         prov = Provenance("sweep", parents=())
         out = _coerce_output(ra, broadcast_mode="stack", provenance=prov, field_name="f")
         assert out is not ra
-        assert out.name == "f"
+        assert out.label == "f"
         assert out.provenance.operation == "sweep"
         assert ra.provenance is None
 
@@ -301,7 +301,7 @@ class TestCoerceOutput:
         assert da.provenance is None
         prov = Provenance("nested", parents=())
         out = _coerce_output(da, broadcast_mode="nested", provenance=prov, field_name="f")
-        assert out.name == "f"
+        assert out.label == "f"
         assert out.provenance.operation == "nested"
         assert da.provenance is None
 

@@ -309,7 +309,7 @@ class TestStanPosteriorBlocks:
 class TestUnconstrainedStanView:
     def test_blocks_follow_unconstrained_names(self, structured_model):
         view = structured_model.as_unconstrained_distribution()
-        assert view.name == "structured_unconstrained"
+        assert view.label == "structured_unconstrained"
         assert view.event_spec.spec.leaf_shapes["p"] == (2,)
 
     def test_the_density_is_finite_and_unnormalized(self, structured_model):

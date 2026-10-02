@@ -284,7 +284,7 @@ class TestConditioningProvenance:
         # The operation, the joint, and the slice's law, whose own record names its stage.
         assert [parent.name for parent in cond.provenance.parents] == [
             "condition_on",
-            joint.name,
+            joint.label,
             "y",
         ]
 
@@ -310,7 +310,7 @@ class TestConditioningProvenance:
         # The operation, the joint, and the slice's law, whose own record names its stage.
         assert [parent.name for parent in cond.provenance.parents] == [
             "condition_on",
-            joint.name,
+            joint.label,
             "x",
         ]
         assert isinstance(cond.provenance.parents[0], ParentInfo)
@@ -323,7 +323,7 @@ class TestConditioningProvenance:
         assert cond.provenance.operation == "workflow.condition_on"
         assert [parent.name for parent in cond.provenance.parents] == [
             "condition_on",
-            jg.name,
+            jg.label,
             "y",
         ]
 
@@ -814,7 +814,7 @@ class TestProvenanceDag:
         result = wf(jnp.asarray(2.0))
 
         ancestors = provenance_ancestors(result)
-        assert [ancestor.name for ancestor in ancestors] == [wf.name]
+        assert [ancestor.name for ancestor in ancestors] == [wf.label]
         dag = provenance_dag(result)
         assert _count_dag_entries(dag) == (2, 1)
 

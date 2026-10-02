@@ -95,13 +95,13 @@ class _NestedLaw(
         }
         if sample_shape:
             return RecordBatch(
-                self.name,
+                self.label,
                 fields,
                 "sample",
                 element_spec=self.event_spec.spec,
                 axes_per_level=(len(sample_shape),),
             )
-        return Record(self.name, fields, event_template=self.event_spec.spec)
+        return Record(self.label, fields, event_template=self.event_spec.spec)
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
         return self._record(jax.random.normal(key, (*sample_shape, 6)), sample_shape)
@@ -236,9 +236,9 @@ class _RecordingKernel(ConditionalDistribution):
         remaining = {slot: spec for slot, spec in self.given_spec.items() if slot not in given}
         if remaining:
             return _RecordingKernel(
-                self.name, remaining, self.event_spec, calls=self.calls, bound=bound
+                self.label, remaining, self.event_spec, calls=self.calls, bound=bound
             )
-        return _Law(self.name, self.event_spec)
+        return _Law(self.label, self.event_spec)
 
 
 class _MeanKernel(ConditionalDistribution, SupportsConditionalSampling, SupportsConditionalMean):
@@ -308,11 +308,11 @@ class TestRenamedLawDeclaration:
     def test_renaming_a_field_keeps_the_name_and_renames_the_declaration(self):
         parent = _product()
         renamed = parent.with_path_names(a="x")
-        assert renamed.name == parent.name
+        assert renamed.label == parent.label
         assert renamed.event_spec == parent.event_spec.with_path_names(a="x")
         assert renamed.provenance is not None
         assert renamed.provenance.operation == "with_path_names"
-        assert [info.name for info in renamed.provenance.parents] == [parent.name]
+        assert [info.name for info in renamed.provenance.parents] == [parent.label]
 
     def test_a_renamed_law_claims_the_capabilities_of_its_parent(self):
         parent = MultivariateNormal("x", _MEAN[:1], cov=_COV[:1, :1]) * MultivariateNormal(
@@ -333,7 +333,7 @@ class TestRenamedLawDeclaration:
         renamed = _product().with_path_names(a="x")
         restored = pickle.loads(pickle.dumps(renamed))
         assert type(restored) is type(renamed)
-        assert (restored.name, restored.spec) == (renamed.name, renamed.spec)
+        assert (restored.label, restored.spec) == (renamed.label, renamed.spec)
 
 
 class TestRenamedLawValues:
@@ -655,7 +655,7 @@ class TestRenamedKernelBinding:
         kernel = _RecordingKernel("k", {"mu": _SCALAR}, OutputSpec(y=_SCALAR))
         renamed = kernel.with_path_names(mu="loc")
         restored = pickle.loads(pickle.dumps(renamed))
-        assert (restored.name, restored.spec) == (renamed.name, renamed.spec)
+        assert (restored.label, restored.spec) == (renamed.label, renamed.spec)
 
 
 class TestRenamedKernelMoves:

@@ -40,20 +40,20 @@ class TestARecordFieldIsAViewOfItsKind:
 
         view = record["effect"]
 
-        assert isinstance(view, NumericArray) and view.name == "effect"
+        assert isinstance(view, NumericArray) and view.label == "effect"
         assert view.spec == record.spec["effect"]
         assert view.raw() is record.raw("effect")
 
     def test_an_opaque_field_is_an_opaque_under_its_key(self):
         view = _mixed()["label"]
 
-        assert isinstance(view, Opaque) and view.name == "label"
+        assert isinstance(view, Opaque) and view.label == "label"
         assert view.raw() == "A"
 
     def test_a_callable_field_is_a_function_under_its_key(self):
         view = _mixed()["model"]
 
-        assert isinstance(view, Function) and view.name == "model"
+        assert isinstance(view, Function) and view.label == "model"
         assert view.raw() is _square
 
     def test_a_stored_law_is_a_copy_under_its_key(self):
@@ -62,14 +62,14 @@ class TestARecordFieldIsAViewOfItsKind:
 
         view = record["theta"]
 
-        assert type(view) is type(law) and view.name == "theta"
-        assert law.name == "prior"
+        assert type(view) is type(law) and view.label == "theta"
+        assert law.label == "prior"
 
     def test_a_nested_field_is_named_by_its_key(self):
         record = Record("r", {"g/x": jnp.zeros(2), "y": 1.0})
 
-        assert record["g/x"].name == "g/x"
-        assert record.at_path("g", "x").name == "g/x"
+        assert record["g/x"].label == "g/x"
+        assert record.at_path("g", "x").label == "g/x"
         assert isinstance(record.at_path("g"), Record)
 
     def test_values_and_items_give_the_views_indexing_gives(self):
@@ -77,7 +77,7 @@ class TestARecordFieldIsAViewOfItsKind:
 
         for (key, view), value in zip(record.items(), record.values(), strict=True):
             assert type(view) is type(record[key]) is type(value)
-            assert view.name == key == value.name
+            assert view.label == key == value.label
 
 
 class TestAViewRecordsItsContainer:
@@ -129,7 +129,7 @@ class TestARecordOfViewsIsTheRecord:
     def test_a_rebuilt_record_is_equal_hashes_alike_and_fingerprints_alike(self):
         record = _mixed()
 
-        rebuilt = Record(record.name, dict(record))
+        rebuilt = Record(record.label, dict(record))
 
         assert rebuilt == record
         assert hash(rebuilt) == hash(record)
@@ -150,7 +150,7 @@ class TestABatchColumnIsTheBatchOfItsKind:
         column = batch["x"]
 
         assert isinstance(column, NumericArrayBatch)
-        assert column.name == "draws['x']" and column.level_names == ("draw",)
+        assert column.label == "draws['x']" and column.level_names == ("draw",)
         assert column.element_spec == NumericArraySpec((2,))
         assert column.raw() is batch._raw_column("x")
 
@@ -174,5 +174,5 @@ class TestAMomentReadsTheSameWay:
     def test_a_record_mean_gives_views_of_its_fields(self):
         moment = mean(Normal("a", 0.0, 1.0) * Normal("b", 2.0, 1.0))
 
-        assert isinstance(moment["b"], NumericArray) and moment["b"].name == "b"
+        assert isinstance(moment["b"], NumericArray) and moment["b"].label == "b"
         assert float(moment["b"]) == pytest.approx(2.0)

@@ -250,7 +250,7 @@ class _AmortizedPosterior(
         if isinstance(given, Mapping):
             others = sorted(set(given) - {self._slot})
             if others:
-                raise KeyError(f"{others} are not the given slot {self._slot!r} of {self.name!r}")
+                raise KeyError(f"{others} are not the given slot {self._slot!r} of {self.label!r}")
             given = given[self._slot]
         obs_flat = np.ravel(np.asarray(given, dtype="float32"))
         if obs_flat.size != self._data_dim:
@@ -315,7 +315,7 @@ class _AmortizedPosterior(
         if unread:
             raise TypeError(
                 f"method_options {unread} are not options of the amortized posterior "
-                f"{self.name!r}, which reads ['num_results', 'random_seed']"
+                f"{self.label!r}, which reads ['num_results', 'random_seed']"
             )
         num_results = int(kwargs.get("num_results", self._num_results))
         if num_results < 1:
@@ -345,7 +345,7 @@ class _AmortizedPosterior(
         if not self.event_spec.exposes_record:
             return flat.reshape(*sample_shape, *spec.shape)
         vector = flat.reshape(*sample_shape, flat.shape[-1]) if sample_shape else flat[0]
-        return _reconstruct_from_vector(self.name, spec, vector)
+        return _reconstruct_from_vector(self.label, spec, vector)
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The network the posterior was learned with, and how many draws it returns."""

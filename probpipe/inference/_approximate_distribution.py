@@ -482,7 +482,7 @@ class ApproximateDistribution(EmpiricalDistribution):
         if record is not None:
             # Reconstruct: batch_shape is inferred from the leading axes of
             # the concatenated draws (a matrix ``(n, vector_size)``).
-            return _reconstruct_from_vector(self.name, record, samples)
+            return _reconstruct_from_vector(self.label, record, samples)
         return samples
 
     def _repr_arguments(self) -> list[tuple[str, str]]:

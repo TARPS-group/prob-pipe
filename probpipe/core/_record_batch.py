@@ -368,7 +368,7 @@ class RecordBatch(Batch[Record]):
         }
         if not beneath:
             raise KeyError(
-                f"{key!r} is no path of {self.name!r}; its fields are {sorted(self._columns)}"
+                f"{key!r} is no path of {self.label!r}; its fields are {sorted(self._columns)}"
             )
         return _unflatten_paths(beneath)
 
@@ -420,7 +420,7 @@ class RecordBatch(Batch[Record]):
             column_cls._over_store(
                 column,
                 spec=BatchSpec(spec, self.axis_groups, self.level_names),
-                name=f"{self.name}[{key!r}]",
+                name=f"{self.label}[{key!r}]",
             )
         )
 
@@ -442,7 +442,7 @@ class RecordBatch(Batch[Record]):
         object.__setattr__(view, "_columns", columns)
         view._init_batch(
             BatchSpec(template, self.axis_groups, self.level_names),
-            name=f"{self.name}[{path!r}]",
+            name=f"{self.label}[{path!r}]",
         )
         return self._inherit_provenance(view)
 
@@ -462,7 +462,7 @@ class RecordBatch(Batch[Record]):
                 self.axis_groups,
                 self.level_names,
             ),
-            name=f"{self.name}[{key!r}]",
+            name=f"{self.label}[{key!r}]",
         )
         return self._inherit_provenance(view)
 
@@ -677,7 +677,7 @@ class RecordBatch(Batch[Record]):
         transform.
         """
         return _batch_class_for(template)(
-            self.name,
+            self.label,
             dict(columns),
             self.level_names,
             element_spec=template,
@@ -763,7 +763,7 @@ class RecordBatch(Batch[Record]):
             for key in fields
         }
         return cls(
-            name if name is not None else records[0].name,
+            name if name is not None else records[0].label,
             columns,
             (level_name,),
             element_spec=spec,
@@ -1209,7 +1209,7 @@ def _record_batch_flatten(batch: RecordBatch) -> tuple[list, tuple[BatchSpec, st
     # ``_columns`` is already in the template's canonical order at every
     # construction site, so the order the aux spec expects needs no second walk —
     # this runs at every jit / vmap / grad boundary and every ``tree_map``.
-    return list(batch._columns.values()), (batch._spec, batch._name)
+    return list(batch._columns.values()), (batch._spec, batch._label)
 
 
 def _unflatten_with(cls: type[RecordBatch]):
@@ -1488,7 +1488,7 @@ class _MappedBatchColumns:
     def of(cls, batch: RecordBatch) -> _MappedBatchColumns:
         """Take *batch* apart, keeping what unflattening could not have inferred."""
         return cls(
-            batch._name,
+            batch._label,
             {path: batch._raw_column(path) for path in batch.event_template},
             element_spec=batch.element_spec,
             level_names=tuple(batch.level_names),
@@ -1504,7 +1504,7 @@ class _MappedBatchColumns:
         says so.
         """
         return cls(
-            record._name,
+            record._label,
             {path: record.raw(path) for path in record.event_template},
             element_spec=record.spec,
             level_names=(),

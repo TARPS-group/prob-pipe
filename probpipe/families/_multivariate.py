@@ -252,7 +252,7 @@ class MultivariateNormal(TFPDistribution):
         positive_definite = self._positive_definite
         if positive_definite is False:
             raise MathematicalDomainError(
-                f"the covariance of {self.name!r} is singular, so the law is concentrated on an "
+                f"the covariance of {self.label!r} is singular, so the law is concentrated on an "
                 f"affine subspace and has no density with respect to Lebesgue measure"
             )
         log_density = super()._log_prob(value)

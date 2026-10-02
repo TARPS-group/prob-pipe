@@ -54,7 +54,7 @@ class TestFunctionDeclarations:
     @pytest.mark.parametrize("kind", ["partial", "instance"])
     def test_an_unnamed_callable_wraps_under_an_explicit_name(self, kind):
         wrapped = function(name="add1")(_unnamed_callables()[kind])
-        assert (wrapped.name, wrapped.output_name) == ("add1", "add1")
+        assert (wrapped.label, wrapped.output_label) == ("add1", "add1")
         assert float(wrapped(2.0)) == 3.0
 
     @pytest.mark.parametrize("with_parentheses", [True, False], ids=["called", "bare"])
@@ -77,48 +77,48 @@ class TestFunctionDeclarations:
             Function(fn=add)
 
     def test_names_are_independent(self, full_provenance_mode):
-        @function(name="predict", output_name="prediction", output_spec=OutputSpec(mean=None))
+        @function(name="predict", output_label="prediction", output_spec=OutputSpec(mean=None))
         def predict_impl(x):
             return x + 1
 
-        renamed = predict_impl.with_name("renamed_predict")
+        renamed = predict_impl.with_label("renamed_predict")
         result = renamed(2)
         assert isinstance(result, NumericArray)
-        assert result.name == "prediction"
+        assert result.label == "prediction"
         assert result.provenance.parents[0].parent is renamed
         assert float(result) == 3
-        assert renamed.output_name == "prediction"
+        assert renamed.output_label == "prediction"
         assert renamed.output_spec is predict_impl.output_spec
         assert renamed.output_spec.components == {"mean": None}
-        assert result.with_name("display").name == "display"
+        assert result.with_label("display").label == "display"
         assert predict_impl.output_spec.components == {"mean": None}
 
     def test_default_output_name_is_captured_once(self):
         wrapped = Function("score", lambda x: x, output_spec=NumericArraySpec(()))
-        renamed = wrapped.with_name("other")
-        assert renamed.output_name == "score"
+        renamed = wrapped.with_label("other")
+        assert renamed.output_label == "score"
         assert renamed.output_spec.components == {"score": NumericArraySpec(())}
-        assert renamed(4).name == "score"
+        assert renamed(4).label == "score"
 
     def test_decorator_can_be_reused_with_its_name_override(self):
-        decorate = function(name="shared", output_name="value")
+        decorate = function(name="shared", output_label="value")
         first = decorate(lambda: 1)
         second = decorate(lambda: 2)
-        assert first.name == second.name == "shared"
-        assert first.output_name == second.output_name == "value"
+        assert first.label == second.label == "shared"
+        assert first.output_label == second.output_label == "value"
         assert float(first()) == 1
         assert float(second()) == 2
 
     def test_returned_function_keeps_its_own_output_contract(self):
         returned = Function("inner", lambda: 3, output_spec=NumericArraySpec(()))
-        factory = Function("factory", lambda: returned, output_name="created")
+        factory = Function("factory", lambda: returned, output_label="created")
         result = factory()
         assert isinstance(result, Function)
-        assert result.name == result.__name__ == "created"
-        assert result.output_name == "inner"
+        assert result.label == result.__name__ == "created"
+        assert result.output_label == "inner"
         assert result.spec is returned.spec
-        assert returned.name == returned.__name__ == "inner"
-        assert result().name == "inner"
+        assert returned.label == returned.__name__ == "inner"
+        assert result().label == "inner"
 
     def test_raw_callable_return_receives_its_declared_function_spec(self):
         declaration = FunctionSpec(
@@ -148,8 +148,8 @@ class TestFunctionDeclarations:
 
     def test_labels_are_outside_spec_equality(self):
         declaration = OutputSpec(mean=NumericArraySpec(()))
-        left = Function("left", lambda x: x, output_spec=declaration, output_name="a")
-        right = Function("right", lambda x: x, output_spec=declaration, output_name="b")
+        left = Function("left", lambda x: x, output_spec=declaration, output_label="a")
+        right = Function("right", lambda x: x, output_spec=declaration, output_label="b")
         assert left.spec == right.spec == FunctionSpec(output_spec=declaration)
 
     @pytest.mark.parametrize("exposed", [True, False])
@@ -159,7 +159,7 @@ class TestFunctionDeclarations:
         wrapped = Function("pack", lambda x: {"x": x}, output_spec=declaration)
         result = wrapped(2)
         assert isinstance(result, Record)
-        assert result.name == "pack"
+        assert result.label == "pack"
         assert float(result["x"]) == 2
         assert tuple(wrapped.output_spec.components) == (("x",) if exposed else ("bundle",))
 
@@ -183,13 +183,13 @@ class TestFunctionDeclarations:
 
     def test_returned_term_is_copied_and_relabelled(self):
         value = NumericArray("stored", jnp.array([1.0, 2.0]))
-        wrapped = Function("load", lambda: value, output_name="loaded")
+        wrapped = Function("load", lambda: value, output_label="loaded")
         assert wrapped.apply() is value
         result = wrapped()
         assert result is not value
         assert result.value is value.value
-        assert result.name == "loaded"
-        assert value.name == "stored"
+        assert result.label == "loaded"
+        assert value.label == "stored"
 
     def test_input_and_output_kinds_are_checked(self):
         wrapped = Function(
@@ -226,7 +226,7 @@ class TestLiftedNames:
         wrapped = Function(
             "double",
             lambda x: x["x"] * 2,
-            output_name="doubled",
+            output_label="doubled",
             output_spec=OutputSpec(value=NumericArraySpec(())),
             dispatch=dispatch,
         )
@@ -237,21 +237,21 @@ class TestLiftedNames:
         )
         result = wrapped(rows)
         assert isinstance(result, NumericArrayBatch)
-        assert result.name == "doubled"
+        assert result.label == "doubled"
         np.testing.assert_array_equal(result.values, [0.0, 2.0, 4.0])
 
     def test_empty_sweep_uses_declared_array_kind(self):
         wrapped = Function(
             "double",
             lambda x: x * 2,
-            output_name="doubled",
+            output_label="doubled",
             output_spec=NumericArraySpec(()),
             dispatch="sequential",
         )
         rows = NumericArrayBatch("inputs", jnp.empty(0), "case", element_spec=NumericArraySpec(()))
         result = wrapped(rows)
         assert isinstance(result, NumericArrayBatch)
-        assert result.name == "doubled"
+        assert result.label == "doubled"
         assert result.batch_shape == (0,)
 
     @pytest.mark.parametrize(
@@ -269,14 +269,14 @@ class TestLiftedNames:
         wrapped = Function(
             "empty",
             unexpected,
-            output_name="results",
+            output_label="results",
             output_spec=declaration,
             dispatch="sequential",
         )
         rows = NumericArrayBatch("inputs", jnp.empty(0), "case", element_spec=NumericArraySpec(()))
         result = wrapped(rows)
         assert type(result).__name__ == kind
-        assert result.name == "results"
+        assert result.label == "results"
         assert result.element_spec == declaration
         assert result.batch_shape == (0,)
 
@@ -291,14 +291,14 @@ class TestLiftedNames:
         wrapped = Function(
             "double",
             lambda x: x * 2,
-            output_name="doubled",
+            output_label="doubled",
             output_spec=OutputSpec(value=NumericArraySpec(())),
             dispatch="sequential",
             n_broadcast_samples=8,
         )
         with workflow_run(seed=1):
             result = wrapped(Normal("x", 0, 1))
-        assert result.name == "doubled"
+        assert result.label == "doubled"
         assert tuple(result.event_spec.components) == ("value",)
         assert result.num_atoms == 8
 
@@ -311,13 +311,13 @@ class TestLiftedNames:
         wrapped = Function(
             "pair",
             lambda x: [x["x"], x["x"] + 1.0],
-            output_name="outs",
+            output_label="outs",
         )
         if renamed is not None:
-            wrapped = wrapped.with_name(renamed)
+            wrapped = wrapped.with_label(renamed)
         result = wrapped.with_options(dispatch=dispatch)(rows)
         assert isinstance(result, OpaqueBatch)
-        assert result.name == "outs"
+        assert result.label == "outs"
         assert result.level_names == ("rows",)
         assert [float(value) for value in result[1].value] == [1.0, 2.0]
 
@@ -466,14 +466,14 @@ class TestCompletedOutputDeclarations:
         wrapped = Function(
             "f",
             body,
-            output_name="result",
+            output_label="result",
             output_spec=declaration,
             dispatch=dispatch,
             n_broadcast_samples=8,
         )
         with workflow_run(seed=4):
             joint = wrapped.with_options(include_inputs=True)(Normal("x", 0, 1))
-        assert joint.name == "result"
+        assert joint.label == "result"
         assert tuple(joint.event_spec.components) == ("x", "component")
         column = joint._rows["component/component" if kind == "record_hole" else "component"]
         assert column.shape == (8, 2)
@@ -570,8 +570,8 @@ class TestModuleReturnInference:
         result = method()
         expected = ordinary()
         assert method.output_spec is None
-        assert method.name == "Example.numbers"
-        assert result.name == method.output_name == "numbers"
+        assert method.label == "Example.numbers"
+        assert result.label == method.output_label == "numbers"
         assert type(result) is type(expected)
         assert result.spec == expected.spec
         assert result.value == expected.value == sequence

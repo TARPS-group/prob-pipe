@@ -84,7 +84,7 @@ class TestIterate:
         assert produced.operation == "iterate"
         assert produced.metadata["step"] == 0
         assert len(produced.parents) == 1
-        assert produced.parents[0].name == initial.name
+        assert produced.parents[0].name == initial.label
 
     def test_provenance_preserved(self, initial):
         """Provenance set by step function is not overwritten."""
@@ -175,9 +175,9 @@ class TestWithConversion:
         """with_conversion returns a Function."""
         step = with_conversion(shift_step, MultivariateNormal)
         assert isinstance(step, Function)
-        assert "with_conversion" in step._name
-        assert "shift_step" in step._name
-        assert "MultivariateNormal" in step._name
+        assert "with_conversion" in step._label
+        assert "shift_step" in step._label
+        assert "MultivariateNormal" in step._label
 
     def test_converts_output(self, initial):
         """Output is converted to target type."""
@@ -219,8 +219,8 @@ class TestWithResampling:
         """with_resampling returns a Function."""
         step = with_resampling(shift_step, ess_threshold=0.5)
         assert isinstance(step, Function)
-        assert "with_resampling" in step._name
-        assert "shift_step" in step._name
+        assert "with_resampling" in step._label
+        assert "shift_step" in step._label
 
     def test_no_resample_uniform(self):
         """Uniform weights -> no resampling (ESS = N)."""

@@ -87,7 +87,7 @@ def _no_moment(law: TFPDistribution, moment: str, reason: str) -> NoReturn:
     MathematicalDomainError
         Always.
     """
-    raise MathematicalDomainError(f"the {moment} of {law.name!r} does not exist: {reason}")
+    raise MathematicalDomainError(f"the {moment} of {law.label!r} does not exist: {reason}")
 
 
 def _require_moment(law: TFPDistribution, holds: Array, moment: str, reason: str) -> None:

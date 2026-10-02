@@ -133,14 +133,14 @@ _PROTOCOLS = {
 class TestTheEventDeclaration:
     def test_event_spec_names_the_component_and_the_label_stays(self):
         prior = F.Normal("prior", 0.0, 1.0, event_spec=OutputSpec(beta=None))
-        assert prior.name == "prior"
+        assert prior.label == "prior"
         assert list(prior.event_spec.components) == ["beta"]
         assert prior.event_spec.spec.shape == ()
 
     def test_the_component_defaults_to_the_label_captured_at_construction(self):
         law = F.Normal("x", 0.0, 1.0)
         assert list(law.event_spec.components) == ["x"]
-        assert list(law.with_name("y").event_spec.components) == ["x"]
+        assert list(law.with_label("y").event_spec.components) == ["x"]
 
     def test_the_event_spec_is_derived_from_the_parameters(self):
         law = F.MultivariateNormal("z", jnp.zeros(3), cov=jnp.eye(3))
@@ -317,7 +317,7 @@ class TestVectorParameters:
     def test_a_batch_of_separate_laws_is_a_distribution_batch(self):
         batch = DistributionBatch("x", [F.Normal("x", float(i), 1.0) for i in range(5)], "x")
         assert batch.batch_shape == (5,)
-        assert batch[0].name == "x[x=0]"
+        assert batch[0].label == "x[x=0]"
         assert batch[0].event_shape == ()
 
 
@@ -397,10 +397,10 @@ class TestPickling:
     @pytest.mark.parametrize("how", list(_COPIES))
     @pytest.mark.parametrize("family", list(_ROUND_TRIPS))
     def test_a_family_round_trips(self, family, how):
-        law = _ROUND_TRIPS[family]().with_name("renamed")
+        law = _ROUND_TRIPS[family]().with_label("renamed")
         copied = _COPIES[how](law)
         assert type(copied) is type(law)
-        assert copied.name == "renamed"
+        assert copied.label == "renamed"
         assert copied.event_spec == law.event_spec
         key = jax.random.PRNGKey(3)
         draws = law._sample(key, (4,))

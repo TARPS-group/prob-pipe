@@ -184,7 +184,7 @@ class TestGaussianRandomFunction:
     def test_the_law_carries_the_label_and_the_output_component(self):
         grf = _ScalarGP(name="gp")
         dist = grf(jnp.ones((3, 2)))
-        assert dist.name == "gp"
+        assert dist.label == "gp"
         assert list(dist.event_spec.components) == ["gp"]
 
     def test_the_mean_and_variance_are_functions(self):
@@ -204,7 +204,7 @@ class TestDeclarations:
             "f", lambda X: jnp.zeros(X.shape[0]), _rbf_kernel, output_spec=OutputSpec(y=None)
         )
         law = process(jnp.ones((3, 2)))
-        assert law.name == "f"
+        assert law.label == "f"
         assert list(law.event_spec.components) == ["y"]
         assert list(process.event_spec.components) == ["f"]
 
@@ -747,7 +747,7 @@ class TestAlgebraNames:
         ],
     )
     def test_a_result_is_named_from_its_operands(self, build, expected):
-        assert build(_named_weight_grf("f"), _named_weight_grf("g")).name == expected
+        assert build(_named_weight_grf("f"), _named_weight_grf("g")).label == expected
 
 
 # ---------------------------------------------------------------------------
@@ -1189,7 +1189,7 @@ class TestTheFactoredGaussian:
     def test_composition_of_gaussian_factors_derives_it(self):
         joint = _gaussian_joint()
         assert isinstance(joint, FactoredMultivariateGaussian)
-        assert joint.name == "a·b"
+        assert joint.label == "a·b"
         assert list(joint.event_spec.components) == ["a", "b"]
 
     def test_constructing_the_factored_law_refines_to_it(self):
@@ -1234,7 +1234,7 @@ class TestTheFactoredGaussian:
         assert isinstance(conditioned, FactoredMultivariateGaussian)
         assert list(conditioned.event_spec.components) == ["b"]
         assert conditioned.factors == (joint.factors[1],)
-        assert conditioned.name == joint.name
+        assert conditioned.label == joint.label
 
     def test_the_conditioning_guard_needs_components_and_a_remainder(self):
         from probpipe.distributions._capabilities import _capability_guard
@@ -1254,7 +1254,7 @@ class TestTheFactoredGaussian:
 
     def test_the_marginal_at_a_component_is_its_factor(self):
         joint = _gaussian_joint()
-        assert joint._marginal("b").name == joint.name
+        assert joint._marginal("b").label == joint.label
         np.testing.assert_allclose(
             np.asarray(joint._marginal("b")._mean()), np.asarray(joint.factors[1]._mean())
         )

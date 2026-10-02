@@ -79,7 +79,7 @@ class TestTheGivenSlots:
     def test_given_spec_declares_the_parameters_as_slots(self):
         kernel = conditional_distribution("y", _location, given_spec=SLOTS)
         assert isinstance(kernel, ConditionalDistribution)
-        assert kernel.name == "y"
+        assert kernel.label == "y"
         assert kernel.given_spec == InputSpec(SLOTS)
 
     def test_an_annotation_declares_its_parameter(self):
@@ -253,7 +253,7 @@ class TestTheForms:
             return Normal("y", mu, tau)
 
         assert isinstance(likelihood, ConditionalDistribution)
-        assert likelihood.name == "likelihood"
+        assert likelihood.label == "likelihood"
 
     def test_the_bare_decorator_reads_the_annotations(self):
         @conditional_distribution
@@ -265,7 +265,7 @@ class TestTheForms:
 
     def test_the_decorator_takes_a_name(self):
         kernel = conditional_distribution("y_model", given_spec=SLOTS)(_location)
-        assert kernel.name == "y_model"
+        assert kernel.label == "y_model"
 
     def test_it_is_exported_from_probpipe(self):
         assert probpipe.conditional_distribution is conditional_distribution
@@ -282,7 +282,7 @@ class TestEightSchools:
     def test_the_joint_agrees_with_the_canonical_model(self):
         model = canonical.eight_schools().model
         _, *priors = model.factors
-        slots = {prior.name: prior.event_spec.spec for prior in priors}
+        slots = {prior.label: prior.event_spec.spec for prior in priors}
         joint = conditional_distribution("y", _school_effects, given_spec=slots)
         for prior in priors:
             joint = joint * prior

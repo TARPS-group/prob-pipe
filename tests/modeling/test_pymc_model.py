@@ -74,7 +74,7 @@ class TestPyMCModel:
 
     def test_construction(self, model):
         assert isinstance(model, PyMCModel)
-        assert model.name == "test_pymc"
+        assert model.label == "test_pymc"
 
     def test_the_components_are_the_free_variables(self, model):
         assert tuple(model.event_spec.components) == ("mu", "sigma", "y")

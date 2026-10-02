@@ -76,7 +76,9 @@ class NormalKernel(ConditionalDistribution):
         if rest:
             return type(self)(self.name, rest, self.event_spec, loc=self._loc, bound=values)
         (component,) = self.event_spec.components
-        return Normal(self.name, self._loc(values), 1.0, event_spec=OutputSpec(**{component: None}))
+        return Normal(
+            self.label, self._loc(values), 1.0, event_spec=OutputSpec(**{component: None})
+        )
 
 
 class Law(Distribution):
@@ -118,9 +120,9 @@ def _structure(joint: Any) -> tuple:
     """What composition decides: the kind, the label, the declarations, and the factors."""
     return (
         type(joint),
-        joint.name,
+        joint.label,
         joint.spec,
-        tuple((type(factor), factor.name, factor.spec) for factor in joint.factors),
+        tuple((type(factor), factor.label, factor.spec) for factor in joint.factors),
     )
 
 
@@ -370,7 +372,7 @@ class TestFlattening:
     def test_direct_construction_flattens_a_factored_factor(self):
         a, b, c = (_law(name, name) for name in "abc")
         joint = FactoredDistribution("j", [a * b, c])
-        assert [factor.name for factor in joint.factors] == ["a", "b", "c"]
+        assert [factor.label for factor in joint.factors] == ["a", "b", "c"]
 
     def test_a_chain_of_three_operands_is_one_joint_of_three_factors(self):
         lik, prior, other = _likelihood(), _prior(), _law("other", "c")
@@ -384,7 +386,7 @@ class TestFlattening:
 
     def test_a_relabeled_joint_contributes_its_factors(self):
         lik, prior, other = _likelihood(), _prior(), _law("d", "d")
-        joint = (lik * prior).with_name("posterior") * other
+        joint = (lik * prior).with_label("posterior") * other
         assert joint.factors == (lik, prior, other)
 
     def test_the_components_follow_the_flattened_factor_order(self):
@@ -486,25 +488,25 @@ class TestLabels:
     """The joint's label joins the operands' current labels with ``·``, as ordinary strings."""
 
     def test_the_label_joins_the_operand_labels_with_a_middle_dot(self):
-        assert (_likelihood() * _prior()).name == "lik·prior"
+        assert (_likelihood() * _prior()).label == "lik·prior"
 
     def test_a_chain_has_one_label_under_either_grouping(self):
         a, b, c = (_law(name, name) for name in "abc")
-        assert ((a * b) * c).name == (a * (b * c)).name == "a·b·c"
+        assert ((a * b) * c).label == (a * (b * c)).label == "a·b·c"
 
     def test_a_relabeled_joint_contributes_its_new_label(self):
-        posterior = (_likelihood() * _prior()).with_name("posterior")
-        assert (posterior * _law("d", "d")).name == "posterior·d"
+        posterior = (_likelihood() * _prior()).with_label("posterior")
+        assert (posterior * _law("d", "d")).label == "posterior·d"
 
     def test_labels_join_without_escaping(self):
         left = _law("x·y", "u") * _law("z", "v")
         right = _law("x", "u") * _law("y·z", "v")
-        assert left.name == right.name == "x·y·z"
+        assert left.label == right.label == "x·y·z"
 
     def test_exchanging_independent_operands_changes_the_label_and_the_order(self):
         a, b = _law("a", "a"), _law("b", "b")
         ab, ba = a * b, b * a
-        assert (ab.name, ba.name) == ("a·b", "b·a")
+        assert (ab.label, ba.label) == ("a·b", "b·a")
         assert list(ab.event_spec.components) == ["a", "b"]
         assert list(ba.event_spec.components) == ["b", "a"]
         assert (ab.factors, ba.factors) == ((a, b), (b, a))
@@ -516,18 +518,18 @@ class TestLabels:
 
 
 class TestWithName:
-    """``with_name`` changes only the text a joint contributes to a later label."""
+    """``with_label`` changes only the text a joint contributes to a later label."""
 
     def test_relabeling_a_joint_keeps_its_factors_and_declaration(self):
         joint = _likelihood() * _prior()
-        posterior = joint.with_name("posterior")
-        assert posterior.name == "posterior"
+        posterior = joint.with_label("posterior")
+        assert posterior.label == "posterior"
         assert isinstance(posterior, FactoredDistribution)
         assert (posterior.spec, posterior.factors) == (joint.spec, joint.factors)
 
     def test_a_joint_relabeled_with_its_own_label_composes_as_the_same_joint(self):
         joint, other = _likelihood() * _prior(), _law("c", "c")
-        assert _structure(joint.with_name(joint.name) * other) == _structure(joint * other)
+        assert _structure(joint.with_label(joint.label) * other) == _structure(joint * other)
 
 
 class TestLabelsNeverDecideStructure:
@@ -544,14 +546,14 @@ class TestLabelsNeverDecideStructure:
         assert isinstance(joint, FactoredDistribution)
 
     def test_a_law_keeps_its_component_after_with_name(self):
-        joint = _likelihood() * Normal("beta", 0.0, 1.0).with_name("renamed")
+        joint = _likelihood() * Normal("beta", 0.0, 1.0).with_label("renamed")
         assert isinstance(joint, FactoredDistribution)
         assert list(joint.event_spec.components) == ["y", "beta"]
 
     def test_relabeling_the_operands_changes_only_the_label(self):
         lik, prior = _likelihood(), _prior()
-        plain, relabeled = lik * prior, lik.with_name("L") * prior.with_name("P")
-        assert relabeled.name == "L·P"
+        plain, relabeled = lik * prior, lik.with_label("L") * prior.with_label("P")
+        assert relabeled.label == "L·P"
         assert type(relabeled) is type(plain)
         assert relabeled.spec == plain.spec
         assert [factor.spec for factor in relabeled.factors] == [
@@ -560,8 +562,8 @@ class TestLabelsNeverDecideStructure:
 
     def test_factor_labels_may_repeat(self):
         joint = _law("x", "a") * _law("x", "b")
-        assert joint.name == "x·x"
-        assert [factor.name for factor in joint.factors] == ["x", "x"]
+        assert joint.label == "x·x"
+        assert [factor.label for factor in joint.factors] == ["x", "x"]
         assert list(joint.event_spec.components) == ["a", "b"]
 
 

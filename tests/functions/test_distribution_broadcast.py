@@ -1016,7 +1016,7 @@ class TestCoSamplingThroughACall:
         nested = (
             (Normal(loc=0.0, scale=1.0, name="x") * Normal(loc=10.0, scale=1.0, name="y"))
             .with_path_names({"x": "group/x", "y": "group/y"})
-            .with_name("nested")
+            .with_label("nested")
         )
         lifted = Function(
             name="function",
@@ -1032,7 +1032,7 @@ class TestCoSamplingThroughACall:
         nested = (
             (Normal(loc=0.0, scale=1.0, name="x") * Normal(loc=10.0, scale=1.0, name="y"))
             .with_path_names({"x": "group/x", "y": "group/y"})
-            .with_name("nested")
+            .with_label("nested")
         )
         mapped = Function(
             name="function",

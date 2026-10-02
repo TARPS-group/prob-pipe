@@ -48,7 +48,7 @@ def _compose(
     # Each operand enters with its factors and its dimension scope; the factor
     # graph flattens a factored operand and carries its scope.
     operands = (left, right)
-    label = f"{left.name}{_LABEL_SEP}{right.name}"
+    label = f"{left.label}{_LABEL_SEP}{right.label}"
     if _factor_graph(operands).unmet is None:
         return FactoredDistribution(label, operands)
     return FactoredConditionalDistribution(label, operands)

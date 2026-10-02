@@ -36,7 +36,7 @@ def _evaluate_result(f: Any, v: Any, fixed_args: Any) -> OutputSpec | None:
 
 def _map_output_label(f: Any) -> str:
     """The map's output name, which the map's own result takes (V.10)."""
-    return f.output_name if isinstance(f, Function) else "evaluate"
+    return f.output_label if isinstance(f, Function) else "evaluate"
 
 
 @operation(
@@ -84,7 +84,7 @@ def _bound_parameter(f: Function, fixed_args: Mapping[str, Any] | None) -> str:
     unknown = sorted(set(fixed) - set(parameters))
     if unknown:
         raise ApplicabilityError(
-            f"evaluate: fixed_args names {unknown}, which are not parameters of {f.name!r}"
+            f"evaluate: fixed_args names {unknown}, which are not parameters of {f.label!r}"
         )
     open_parameters = [
         name
@@ -95,7 +95,7 @@ def _bound_parameter(f: Function, fixed_args: Mapping[str, Any] | None) -> str:
     ]
     if len(open_parameters) != 1:
         raise ApplicabilityError(
-            f"evaluate applies {f.name!r} over exactly one parameter, and fixed_args leaves "
+            f"evaluate applies {f.label!r} over exactly one parameter, and fixed_args leaves "
             f"{open_parameters or 'none'} open; supply the others by name in fixed_args"
         )
     return open_parameters[0]
@@ -170,7 +170,7 @@ class _EvaluationRules(_RegistryRoute):
             if method is not None:
                 return Feasibility(
                     False,
-                    f"the call lifts nothing, so the body of {f.name!r} realizes it and the "
+                    f"the call lifts nothing, so the body of {f.label!r} realizes it and the "
                     f"rule {method!r} does not",
                 )
             return PointReport(True, exact=True)

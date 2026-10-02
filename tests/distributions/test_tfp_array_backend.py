@@ -161,7 +161,7 @@ class TestCellMaterialisation:
             scale=jnp.ones(3),
         )
         for i in range(3):
-            assert backend.cell(i).name == f"weights_{i}"
+            assert backend.cell(i).label == f"weights_{i}"
 
     def test_cell_returns_unbatched_distribution(self):
         """Cells materialise as scalar distributions

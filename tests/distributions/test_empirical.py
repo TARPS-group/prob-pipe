@@ -133,7 +133,7 @@ class TestEventCompletion:
         assert law.event_spec == OutputSpec(measure=laws.element_spec)
 
     def test_the_component_is_captured_once(self):
-        renamed = EmpiricalDistribution("theta", jnp.zeros((5, 2))).with_name("other")
+        renamed = EmpiricalDistribution("theta", jnp.zeros((5, 2))).with_label("other")
         assert list(renamed.event_spec.components) == ["theta"]
 
     def test_a_batch_keeps_its_element_declaration(self):
@@ -153,7 +153,7 @@ class TestEventCompletion:
     )
     def test_a_type_hole_is_filled_from_the_atoms(self, atoms, spec):
         law = EmpiricalDistribution("posterior", atoms, event_spec=OutputSpec(beta=None))
-        assert law.name == "posterior"
+        assert law.label == "posterior"
         assert law.event_spec == OutputSpec(beta=spec)
 
     def test_a_declared_type_binds_its_dimensions_from_the_atoms(self):
@@ -268,7 +268,7 @@ class TestConstructionErrors:
             EmpiricalDistribution("x", atoms)
 
     def test_the_name_is_required(self):
-        with pytest.raises(TypeError, match="non-empty name"):
+        with pytest.raises(TypeError, match="non-empty label"):
             EmpiricalDistribution("", _VALUES)
 
 
@@ -581,7 +581,7 @@ class TestMarginals:
         marginal = law._marginal("b")
         assert isinstance(marginal, EmpiricalDistribution)
         assert not isinstance(marginal, FieldView)
-        assert marginal.name == law.name
+        assert marginal.label == law.label
         assert marginal.event_spec == OutputSpec(b=_RECORD_SPEC["b"])
         assert jnp.array_equal(marginal.atoms.values, _B)
         assert np.allclose(marginal.weights, _RECORD_WEIGHTS)
@@ -599,7 +599,7 @@ class TestMarginals:
 
     def test_the_marginal_of_a_nested_leaf_takes_its_final_segment(self):
         marginal = EmpiricalDistribution("m", _mixed_atoms())._marginal("g/v")
-        assert marginal.name == "m"
+        assert marginal.label == "m"
         assert marginal.event_spec == OutputSpec(v=NumericArraySpec((2,)))
         assert jnp.allclose(marginal._mean(), jnp.mean(_V, axis=0))
 
@@ -611,7 +611,7 @@ class TestMarginals:
     def test_a_selection_of_paths_is_an_exposed_record_that_keeps_the_rows(self):
         law = EmpiricalDistribution("m", _mixed_atoms())
         marginal = law._marginal(("label", "g/v"))
-        assert marginal.name == "m"
+        assert marginal.label == "m"
         assert marginal.event_spec == OutputSpec(RecordSpec(label=OpaqueSpec(), v=(2,)))
         rows = {(label, *np.asarray(v)) for label, v in zip(_LABELS, _V)}
         for key in jax.random.split(jax.random.PRNGKey(0), 10):
@@ -677,9 +677,9 @@ class TestCapabilities:
         assert type(law).__name__ == "EmpiricalDistribution"
 
     def test_a_numeric_instance_round_trips_through_pickle(self):
-        law = _record_law().with_name("renamed")
+        law = _record_law().with_label("renamed")
         restored = pickle.loads(pickle.dumps(law))
         assert type(restored) is type(law)
-        assert (restored.name, restored.spec) == (law.name, law.spec)
+        assert (restored.label, restored.spec) == (law.label, law.spec)
         assert jnp.allclose(restored._mean()["b"], law._mean()["b"])
         assert np.allclose(restored.weights, law.weights)

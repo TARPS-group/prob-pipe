@@ -2,7 +2,7 @@
 
 Return validates the produced terms against the completed declaration and
 wraps a raw host into the kind its spec names. It labels the result by
-``output_name`` and gives it provenance, or returns it detached under
+``output_label`` and gives it provenance, or returns it detached under
 ``raw=True``. A result that violates its declaration raises ResultKindError or
 ResultSchemaError, which are return-contract defects.
 """
@@ -74,25 +74,25 @@ class TestTheKindDirectedWrap:
 
     def test_a_tracked_return_keeps_its_kind_under_a_fresh_identity(self):
         stored = NumericArray("stored", jnp.ones(2))
-        result = Function("load", lambda: stored, output_name="loaded")()
+        result = Function("load", lambda: stored, output_label="loaded")()
 
         assert isinstance(result, NumericArray)
         assert result is not stored
-        assert result.name == "loaded" and stored.name == "stored"
+        assert result.label == "loaded" and stored.label == "stored"
         assert result.value is stored.value
 
 
 class TestLabelAndProvenance:
     def test_a_result_is_labeled_by_output_name(self):
-        wrapped = Function("predict", lambda x: 2.0 * x, output_name="prediction")
+        wrapped = Function("predict", lambda x: 2.0 * x, output_label="prediction")
 
-        assert wrapped(1.0).name == "prediction"
+        assert wrapped(1.0).label == "prediction"
 
     def test_a_lifted_result_is_labeled_by_output_name(self):
         wrapped = Function(
             "predict",
             lambda x: 2.0 * x,
-            output_name="prediction",
+            output_label="prediction",
             n_broadcast_samples=6,
             dispatch="sequential",
         )
@@ -101,8 +101,8 @@ class TestLabelAndProvenance:
             law = wrapped(standard_normal())
         rows = wrapped(NumericArrayBatch("rows", jnp.arange(3.0), "row", element_spec=SCALAR))
 
-        assert isinstance(law, Distribution) and law.name == "prediction"
-        assert isinstance(rows, Batch) and rows.name == "prediction"
+        assert isinstance(law, Distribution) and law.label == "prediction"
+        assert isinstance(rows, Batch) and rows.label == "prediction"
 
     def test_provenance_records_the_function_its_dependencies_and_its_inputs(self):
         wrapped = Function("add", lambda x, y: x + y)

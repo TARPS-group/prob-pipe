@@ -157,7 +157,7 @@ class TestAccessors:
         assert m.prior is prior
         assert m.likelihood is likelihood
         assert m.data is response
-        assert m.name == "custom_name"
+        assert m.label == "custom_name"
 
 
 # -- Protocol membership -------------------------------------------------------

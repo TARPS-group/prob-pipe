@@ -690,10 +690,10 @@ class TestCapabilitySubclass:
     # The term specs in a law's state pickle from protocol 2.
     @pytest.mark.parametrize("protocol", range(2, pickle.HIGHEST_PROTOCOL + 1))
     def test_pickle_restores_the_subclass_under_each_protocol_a_law_supports(self, protocol):
-        host = _Host("h", [SupportsMean, SupportsMarginals]).with_name("renamed")
+        host = _Host("h", [SupportsMean, SupportsMarginals]).with_label("renamed")
         restored = pickle.loads(pickle.dumps(host, protocol=protocol))
         assert type(restored) is type(host)
-        assert (restored.name, restored.spec) == (host.name, host.spec)
+        assert (restored.label, restored.spec) == (host.label, host.spec)
         assert restored._mean() == 0.5
 
     def test_pickle_restores_the_base_as_itself(self):
@@ -704,8 +704,8 @@ class TestCapabilitySubclass:
         host = _Host("h", [SupportsVariance])
         restored = duplicate(host)
         assert type(restored) is type(host)
-        assert (restored.name, restored.spec) == (host.name, host.spec)
+        assert (restored.label, restored.spec) == (host.label, host.spec)
 
     def test_a_rename_keeps_the_subclass(self):
         host = _Host("h", [SupportsVariance])
-        assert type(host.with_name("g")) is type(host)
+        assert type(host.with_label("g")) is type(host)

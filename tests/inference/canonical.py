@@ -144,7 +144,7 @@ class ObservationKernel(
     def _law(self, given: Any) -> Distribution:
         values = {slot: jnp.asarray(value) for slot, value in _top(given).items()}
         return _Observations(
-            self.name, self._build(**values), self._support, event_spec=self.event_spec
+            self.label, self._build(**values), self._support, event_spec=self.event_spec
         )
 
     def _condition_on(self, given: Any, /, **options: Any) -> Distribution:

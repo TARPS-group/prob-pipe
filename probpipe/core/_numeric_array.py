@@ -100,7 +100,7 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
     __slots__ = (
         "_annotations",
         "_jax_cache",
-        "_name",
+        "_label",
         "_provenance",
         "_spec",
         "_value",
@@ -307,7 +307,7 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
         fields = [("shape", repr(tuple(spec.shape))), ("dtype", format_dtype(dtype))]
         if spec.support is not None:
             fields.append(("support", repr(spec.support)))
-        return term_repr("NumericArray", self.name, fields)
+        return term_repr("NumericArray", self.label, fields)
 
     # -- the array surface --------------------------------------------------
 
@@ -364,7 +364,7 @@ def _operand_label(operand: Any) -> str:
     parenthesized, so the name states the order of evaluation.
     """
     if isinstance(operand, NumericArray):
-        return f"({operand.name})" if " " in operand.name else operand.name
+        return f"({operand.label})" if " " in operand.label else operand.label
     return format_value(operand)
 
 
@@ -432,7 +432,7 @@ def _install_array_operators() -> None:
         def method(self: NumericArray) -> Any:
             value = getattr(self._value, f"__{name}__")()
             # A call form brackets its operand already.
-            operand = self.name if form.endswith("({})") else _operand_label(self)
+            operand = self.label if form.endswith("({})") else _operand_label(self)
             return _tracked_result(value, form.format(operand), f"__{name}__", (self,))
 
         method.__name__ = f"__{name}__"
@@ -475,7 +475,7 @@ def _numeric_array_flatten(
     """
     # The boundary presents a bare array, as a ``NumericRecord``'s does: this
     # is one of the compute boundaries native form converts at.
-    return [value.as_jax()], (value._spec, value._name)
+    return [value.as_jax()], (value._spec, value._label)
 
 
 def _numeric_array_unflatten(aux: tuple[NumericArraySpec, str], children: list) -> NumericArray:

@@ -108,8 +108,8 @@ class TestConvert:
         assert (report.route, report.exact) == ("identity", True)
 
     def test_the_converted_law_is_labeled_by_the_source(self, suite_converters):
-        assert convert(Gaussian("g"), Gaussian).name == "g"
-        assert convert(_Source("s"), _Target).name == "s"
+        assert convert(Gaussian("g"), Gaussian).label == "g"
+        assert convert(_Source("s"), _Target).label == "s"
 
     def test_a_source_claiming_the_target_protocol_needs_no_conversion(self):
         assert convert.check(Gaussian("g"), SupportsSampling).route == "identity"

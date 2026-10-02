@@ -170,7 +170,7 @@ class _DiracRandomMeasure(
         return _object_array([self._components[int(i)] for i in indices], sample_shape)
 
     def _mean(self):
-        return _Mixture(self._components, self._w, name=f"{self.name}_expected")
+        return _Mixture(self._components, self._w, name=f"{self.label}_expected")
 
     def _random_log_prob(self):
         return _DiracLogProbFunction(self._components, self._w)

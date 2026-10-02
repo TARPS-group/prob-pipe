@@ -101,20 +101,20 @@ class TestGeneric:
         assert name in repr(multivariate_dist)
 
     def test_name_required(self, multivariate_dist):
-        assert multivariate_dist.name is not None
+        assert multivariate_dist.label is not None
 
     def test_name_set(self):
         d = Dirichlet(concentration=[1.0, 2.0, 3.0], name="alpha")
-        assert d.name == "alpha"
+        assert d.label == "alpha"
 
         m = Multinomial(total_count=10, probs=[0.2, 0.3, 0.5], name="counts")
-        assert m.name == "counts"
+        assert m.label == "counts"
 
         w = Wishart(df=5.0, scale_tril=jnp.eye(3), name="sigma")
-        assert w.name == "sigma"
+        assert w.label == "sigma"
 
         v = VonMisesFisher(mean_direction=[1.0, 0.0, 0.0], concentration=5.0, name="dir")
-        assert v.name == "dir"
+        assert v.label == "dir"
 
 
 # ---------------------------------------------------------------------------

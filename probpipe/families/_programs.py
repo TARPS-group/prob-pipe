@@ -737,7 +737,7 @@ class _UnconstrainedStanView(Distribution, SupportsUnnormalizedLogProb):
         self._posterior = posterior
         self._blocks = _param_blocks(posterior._bridgestan_model().param_unc_names())
         super().__init__(
-            f"{posterior.name}_unconstrained",
+            f"{posterior.label}_unconstrained",
             OutputSpec(NumericRecordSpec({b.name: b.shape for b in self._blocks})),
         )
 
@@ -844,8 +844,8 @@ class StanModel(
         KeyError
             If a name is not an unbound data-block variable.
         """
-        values = _given_values(self.name, given, kwargs, self.given_spec)
-        return StanModel(self.name, self.stan_file, data={**self._data, **values})
+        values = _given_values(self.label, given, kwargs, self.given_spec)
+        return StanModel(self.label, self.stan_file, data={**self._data, **values})
 
     def _conditional_unnormalized_log_prob(
         self, given: Record | Mapping[str, Any], value: Any
@@ -859,7 +859,7 @@ class StanModel(
         """
         law = self._condition_on(given)
         if isinstance(law, ConditionalDistribution):
-            raise KeyError(f"{self.name!r} needs a value for every data-block variable")
+            raise KeyError(f"{self.label!r} needs a value for every data-block variable")
         return law._unnormalized_log_prob(value)
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
@@ -1055,7 +1055,7 @@ def _pymc_sample(self: PyMCModel, key: Any, sample_shape: tuple[int, ...] = ()) 
         fields[name] = (
             values[0] if not sample_shape else values.reshape(*sample_shape, *values.shape[1:])
         )
-    return Record(self.name, fields)
+    return Record(self.label, fields)
 
 
 class _PyMCModelMeta(type(Distribution)):
@@ -1312,8 +1312,8 @@ class _PyMCKernel(ConditionalDistribution):
         KeyError
             If a name is not a given slot.
         """
-        values = _given_values(self.name, given, kwargs, self.given_spec)
-        return PyMCModel(self.name, self._program.bind(values))
+        values = _given_values(self.label, given, kwargs, self.given_spec)
+        return PyMCModel(self.label, self._program.bind(values))
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The model function, by its name, and its free variables."""

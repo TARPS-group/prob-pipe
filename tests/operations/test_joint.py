@@ -31,7 +31,7 @@ class TestJoint:
 
     def test_the_joint_is_labeled_as_composition_labels_it(self):
         likelihood, prior = Kernel("y", ("slope",)), Gaussian("beta")
-        assert joint(likelihood, prior, beta="slope").name == (likelihood * prior).name
+        assert joint(likelihood, prior, beta="slope").label == (likelihood * prior).label
 
     def test_joint_equals_composition_with_the_renamed_right_factor(self):
         likelihood, prior = Kernel("y", ("slope",)), Gaussian("beta")

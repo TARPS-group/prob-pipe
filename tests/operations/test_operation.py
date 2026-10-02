@@ -362,7 +362,7 @@ class TestResultRule:
         law = Gaussian("g")
         pick(law, "x", jnp.ones(3))
         (call,) = calls
-        assert call.operation.name == "pick"
+        assert call.operation.label == "pick"
         assert set(call.specs) == {"d", "scale"}
         assert call.specs["d"] == law.spec
         assert call.specs["scale"].shape == (3,)
@@ -967,13 +967,13 @@ class TestResultAndRandomness:
     def test_a_call_returns_a_tracked_term_labeled_by_its_primary_operand(self):
         result = center(Gaussian("g"))
         assert isinstance(result, TrackedTerm)
-        assert result.name == "g"
+        assert result.label == "g"
         assert result.provenance is not None
 
     def test_a_label_rule_derives_the_label_from_the_arguments(self):
-        toy = _toy(label=lambda d: f"{d.name}_toy")
+        toy = _toy(label=lambda d: f"{d.label}_toy")
         toy.structural_route("value", **_route(True, 1.0), exact=True)
-        assert toy(Gaussian("g")).name == "g_toy"
+        assert toy(Gaussian("g")).label == "g_toy"
 
     def test_a_label_rule_reads_only_the_declarations_parameters(self):
         with pytest.raises(TypeError, match="label rule reading"):
@@ -982,8 +982,8 @@ class TestResultAndRandomness:
     def test_a_sweep_is_labeled_by_the_batch_it_sweeps(self):
         laws = DistributionBatch("laws", [Gaussian("g", 1.0), Gaussian("g", 2.0)], "law")
         centers = center(laws)
-        assert centers.name == "laws"
-        assert centers[0].name == "laws[law=0]"
+        assert centers.label == "laws"
+        assert centers[0].label == "laws[law=0]"
 
     def test_an_operation_takes_no_key(self):
         assert "key" not in inspect.signature(center).parameters

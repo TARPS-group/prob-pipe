@@ -160,7 +160,7 @@ class TestMean:
     def test_the_closed_form_mean_has_the_event_declaration(self):
         result = mean(Gaussian("g", 2.0))
         assert isinstance(result, NumericArray)
-        assert result.name == "g"
+        assert result.label == "g"
         assert result.spec == NumericArraySpec((), jnp.float32, real)
         assert _value(result) == 2.0
 

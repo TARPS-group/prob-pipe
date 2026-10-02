@@ -309,7 +309,7 @@ class TestTransformedLaws:
         base = Normal("base", 0.0, 1.0)
         shift = BijectorTransformedDistribution("first", base, tfb.Shift(1.0)).bijector
         first = BijectorTransformedDistribution("first", base, shift)
-        relabeled = BijectorTransformedDistribution("second", base.with_name("other"), shift)
+        relabeled = BijectorTransformedDistribution("second", base.with_label("other"), shift)
         changed = BijectorTransformedDistribution("first", base, tfb.Shift(2.0))
 
         def descriptor(law):

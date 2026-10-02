@@ -91,7 +91,7 @@ class TestOpaqueCarriesIdentity:
     def test_a_name_is_kept(self):
         wrapped = Opaque("model", _Payload())
 
-        assert wrapped.name == "model"
+        assert wrapped.label == "model"
 
     def test_a_name_is_required(self):
         """The name is what says which opaque value this is."""
@@ -101,7 +101,7 @@ class TestOpaqueCarriesIdentity:
     def test_a_derived_name_is_kept(self):
         wrapped = Opaque("batch[draw=0]", _Payload())
 
-        assert wrapped.name == "batch[draw=0]"
+        assert wrapped.label == "batch[draw=0]"
 
     def test_provenance_is_write_once(self):
         wrapped = Opaque("p", _Payload()).with_provenance(Provenance.create("fit", parents=[]))
@@ -124,7 +124,7 @@ class TestOpaqueCarriesIdentity:
         rebuilt = roundtrip(wrapped)
 
         assert isinstance(rebuilt, Opaque)
-        assert rebuilt.name == "model"
+        assert rebuilt.label == "model"
         assert rebuilt.value == _Payload("kept")
 
 
@@ -142,7 +142,7 @@ class TestOpaqueAndItsBatch:
         )
 
         assert batch[0].value is payloads[0]
-        assert batch[0].name == "batch[draw=0]"
+        assert batch[0].label == "batch[draw=0]"
 
     def test_a_batch_may_hold_opaque_terms_as_its_elements(self):
         """An `Opaque` is itself a non-mapping value."""
@@ -155,5 +155,5 @@ class TestOpaqueAndItsBatch:
         )
 
         assert batch[1].value is terms[1].value
-        assert batch[1].name == "batch[draw=1]"
-        assert terms[1].name == "second"
+        assert batch[1].label == "batch[draw=1]"
+        assert terms[1].label == "second"

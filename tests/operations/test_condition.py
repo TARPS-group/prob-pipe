@@ -206,7 +206,7 @@ class _NormalKernel(Kernel, SupportsConditionalSampling, SupportsConditionalLogP
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
         law = super()._condition_on(given)
         if isinstance(law, Kernel):
-            return _NormalKernel(law.name, law.slots, law.offset, law.component)
+            return _NormalKernel(law.label, law.slots, law.offset, law.component)
         return law
 
     def _conditional_sample(self, given: Any, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
@@ -225,7 +225,7 @@ class _UnnormalizedKernel(ConditionalDistribution, SupportsConditionalUnnormaliz
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
         left = tuple(slot for slot in self.slots if slot not in given)
-        return _UnnormalizedKernel(self.name, left) if left else Unnormalized(self.name)
+        return _UnnormalizedKernel(self.label, left) if left else Unnormalized(self.label)
 
     def _conditional_unnormalized_log_prob(self, given: Any, value: Any) -> Any:
         return Unnormalized(self.name)._unnormalized_log_prob(value)
@@ -238,7 +238,7 @@ class _UndeclaredKernel(ConditionalDistribution):
         super().__init__(name, {"data": REAL}, REAL)
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
-        return Unnormalized(self.name)
+        return Unnormalized(self.label)
 
 
 class _AmortizedKernel(
@@ -251,7 +251,7 @@ class _AmortizedKernel(
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
         object.__setattr__(self, "options", kwargs)
-        return Gaussian(self.name, 3.0)
+        return Gaussian(self.label, 3.0)
 
     def _conditional_sample(self, given: Any, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
         return self._condition_on(given)._sample(key, sample_shape)
@@ -270,7 +270,7 @@ class TestCurry:
         assert condition_on(_NormalKernel(), Record("given", {"mu": 2.0})).loc == 2.0
 
     def test_the_law_is_labeled_by_the_conditioned_kernel(self):
-        assert condition_on(_NormalKernel("likelihood"), {"mu": 1.5}).name == "likelihood"
+        assert condition_on(_NormalKernel("likelihood"), {"mu": 1.5}).label == "likelihood"
 
     def test_binding_some_slots_leaves_a_kernel_over_the_rest(self):
         kernel = _NormalKernel("y", ("a", "b"))
@@ -544,8 +544,8 @@ class TestTheExactStage:
 
 class TestTheNormalizationStage:
     def test_the_posterior_is_labeled_by_the_conditioned_law(self, approximate_method):
-        joint = (Kernel("y", ("mu",)) * Gaussian("mu")).with_name("model")
-        assert condition_on(joint, {"y": 0.0}).name == "model"
+        joint = (Kernel("y", ("mu",)) * Gaussian("mu")).with_label("model")
+        assert condition_on(joint, {"y": 0.0}).label == "model"
 
     def test_a_normalized_result_is_returned_without_inference(self, suite_methods):
         exact, approximate = suite_methods
@@ -568,7 +568,7 @@ class TestTheNormalizationStage:
         assert target.provenance.operation == "condition_on"
         assert target.provenance.metadata == {"stage": "exact", "route": "curry"}
         (parent,) = target.provenance.parents
-        assert (parent.type_name, parent.name) == ("_UnnormalizedKernel", kernel.name)
+        assert (parent.type_name, parent.name) == ("_UnnormalizedKernel", kernel.label)
 
     def test_the_target_of_bayes_rule_records_the_curry_of_its_slots(self, approximate_method):
         joint = Kernel("y", ("mu",)) * Kernel("z", ("mu",))
@@ -844,8 +844,8 @@ class TestABatchOfGivens:
 
     def test_the_batch_is_labeled_by_the_kernel_and_each_law_by_its_position(self):
         laws = condition_on(_NormalKernel("likelihood"), _givens("mu", [1.0, 2.0]))
-        assert laws.name == "likelihood"
-        assert laws[0].name == "likelihood[dataset=0]"
+        assert laws.label == "likelihood"
+        assert laws[0].label == "likelihood[dataset=0]"
 
     def test_check_selects_the_elementwise_sweep(self):
         report = condition_on.check(_NormalKernel(), _givens("mu", [1.0, 2.0]))
@@ -927,11 +927,11 @@ class TestEndToEnd:
         np.testing.assert_allclose(law._mean(), X @ beta, rtol=1e-6)
 
     def test_the_posterior_is_labeled_by_the_model_and_names_its_method(self):
-        model = _logistic_joint().with_name("logistic")
+        model = _logistic_joint().with_label("logistic")
         posterior = condition_on.with_options(method_options=_MCMC)(
             model, {"y": jnp.array([1, 0, 1, 0])}
         )
-        assert posterior.name == "logistic"
+        assert posterior.label == "logistic"
         assert posterior.method == "blackjax_nuts"
         assert posterior.provenance.metadata["method"] == "blackjax_nuts"
 

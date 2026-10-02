@@ -73,7 +73,7 @@ class _LearnedLaw(Distribution):
     """The law a learned kernel yields at a value of every parameter, over datasets of rows."""
 
     def __init__(self, kernel: _BayesFlowLikelihoodBase, values: Mapping[str, Any]) -> None:
-        super().__init__(kernel.name, kernel.event_spec)
+        super().__init__(kernel.label, kernel.event_spec)
         self._kernel = kernel
         self._values = dict(values)
 
@@ -217,7 +217,7 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
         values = {**dict(given.children if isinstance(given, Record) else given), **kwargs}
         unknown = sorted(set(values) - set(self.given_spec))
         if unknown:
-            raise KeyError(f"{unknown} are not given slots of {self.name!r}")
+            raise KeyError(f"{unknown} are not given slots of {self.label!r}")
         return {**self._bound, **values}
 
     def _score(self, values: Mapping[str, Any], data: Any) -> Array:

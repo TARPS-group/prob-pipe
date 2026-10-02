@@ -802,7 +802,8 @@ class Operation(Function):
         if not callable(declaration):
             raise TypeError(f"an operation is declared by a function; got {declaration!r}")
         super().__init__(declaration.__name__, declaration)
-        owner = f"operation {self.name!r}"
+        object.__setattr__(self, "_declaration_name", declaration.__name__)
+        owner = f"operation {self.label!r}"
         if not callable(result):
             raise TypeError(f"{owner} needs a callable result rule; got {result!r}")
         conditions = tuple(conditions)
@@ -846,6 +847,13 @@ class Operation(Function):
         if derived:
             self.register_route(_identity_route(declaration, self.signature, identity_check))
 
+    # -- identity ----------------------------------------------------------
+
+    @property
+    def name(self) -> str:
+        """The operation's key in :data:`operation_registry`, the name of its declaration."""
+        return self._declaration_name
+
     # -- declarations ------------------------------------------------------
 
     def _derived_label(self, values: Mapping[str, Any]) -> str:
@@ -860,7 +868,7 @@ class Operation(Function):
         if rule is not None:
             return rule(**{name: values.get(name) for name in _parameter_names(rule)})
         primary = values.get(next(iter(self.signature.parameters), ""))
-        return primary.name if isinstance(primary, TrackedTerm) else self.output_name
+        return primary.label if isinstance(primary, TrackedTerm) else self.output_label
 
     @property
     def is_derived(self) -> bool:
@@ -901,7 +909,7 @@ class Operation(Function):
         ValueError
             If the operation already has a route of that name.
         """
-        self._route_table.add(route, f"operation {self.name!r}")
+        self._route_table.add(route, f"operation {self.label!r}")
         return route
 
     def structural_route(
@@ -999,7 +1007,7 @@ class Operation(Function):
             If the operation already has a route named *name*.
         """
         if operand not in self.signature.parameters:
-            raise TypeError(f"operation {self.name!r} has no parameter {operand!r}")
+            raise TypeError(f"operation {self.label!r} has no parameter {operand!r}")
         return self.register_route(
             _CapabilityRoute(
                 name,
@@ -1124,7 +1132,7 @@ class Operation(Function):
         """
         unknown = set(controls) - set(self.options)
         if unknown:
-            raise TypeError(f"Unknown controls for operation {self.name!r}: {sorted(unknown)}")
+            raise TypeError(f"Unknown controls for operation {self.label!r}: {sorted(unknown)}")
         return super().with_options(**controls)
 
     def raw(self) -> Callable[..., Any]:
@@ -1191,7 +1199,7 @@ class Operation(Function):
         for condition in self._conditions:
             arguments = {name: declarations[name] for name in _parameter_names(condition)}
             report = _as_feasibility(
-                condition(**arguments), condition, f"{self.name} condition {condition.__name__}"
+                condition(**arguments), condition, f"{self.label} condition {condition.__name__}"
             )
             if report.feasible is False:
                 raise ApplicabilityError(report.description)
@@ -1199,7 +1207,7 @@ class Operation(Function):
         result = self._result_rule(**{name: declarations[name] for name in self._rule_parameters})
         if result is not None and not isinstance(result, OutputSpec):
             raise TypeError(
-                f"the result rule of {self.name!r} returned {result!r}; it returns an "
+                f"the result rule of {self.label!r} returned {result!r}; it returns an "
                 f"OutputSpec or None"
             )
         if result is None or result.spec is None:
@@ -1258,7 +1266,7 @@ class Operation(Function):
                 ):
                     return [_Candidate(route, None, index, method_name)]
             raise ResolutionError(
-                f"{self.name}: no registry route {route_name!r} holds a method named "
+                f"{self.label}: no registry route {route_name!r} holds a method named "
                 f"{method_name!r}; {self._names_available()}"
             )
         named = [(index, route) for index, route in enumerate(routes) if route.name == method]
@@ -1272,7 +1280,7 @@ class Operation(Function):
             forms = [route.name for _, route in named]
             forms += [f"{route.name}/{method}" for _, route in holders]
             raise ResolutionError(
-                f"{self.name}: method={method!r} matches {', '.join(forms)}; name one of "
+                f"{self.label}: method={method!r} matches {', '.join(forms)}; name one of "
                 f"them, a registry method as route/method"
             )
         if named:
@@ -1281,13 +1289,13 @@ class Operation(Function):
                 return [_Candidate(route, True, index), _Candidate(route, False, index)]
             if exact_only and route.exact is not True:
                 raise ResolutionError(
-                    f"{self.name}: route {method!r} is not exact and exact_only was requested"
+                    f"{self.label}: route {method!r} is not exact and exact_only was requested"
                 )
             return [_Candidate(route, route.exact, index)]
         if holders:
             return [_Candidate(route, None, index, method) for index, route in holders]
         raise ResolutionError(
-            f"{self.name}: no route or registered method named {method!r}; "
+            f"{self.label}: no route or registered method named {method!r}; "
             f"{self._names_available()}"
         )
 
@@ -1315,7 +1323,7 @@ class Operation(Function):
         )
         doc = inspect.getdoc(self) or ""
         return OperationSummary(
-            name=self.name,
+            name=self.label,
             supported_types=operands[0].accepts if operands else (),
             description=doc.split("\n\n", 1)[0].replace("\n", " "),
             module_path=self.__module__,
@@ -1509,9 +1517,9 @@ class OperationRegistry:
         """
         if not isinstance(op, Operation):
             raise TypeError(f"only an operation registers here; got {type(op).__name__}")
-        if op.name in self._operations:
-            raise ValueError(f"an operation named {op.name!r} is already registered")
-        self._operations[op.name] = op
+        if op.label in self._operations:
+            raise ValueError(f"an operation named {op.label!r} is already registered")
+        self._operations[op.label] = op
 
     def list(self) -> list[OperationSummary]:
         """One summary per operation, in registration order."""

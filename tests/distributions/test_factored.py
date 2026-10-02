@@ -143,11 +143,11 @@ class NormalKernel(ConditionalDistribution):
         rest = {slot: spec for slot, spec in self.given_spec.items() if slot not in values}
         if rest:
             return type(self)(
-                self.name, rest, self.event_spec, loc=self._loc, scale=self._scale, bound=values
+                self.label, rest, self.event_spec, loc=self._loc, scale=self._scale, bound=values
             )
         (component,) = self.event_spec.components
         return Normal(
-            self.name, self._loc(values), self._scale, event_spec=OutputSpec(**{component: None})
+            self.label, self._loc(values), self._scale, event_spec=OutputSpec(**{component: None})
         )
 
 
@@ -204,7 +204,7 @@ class RenamingKernel(NormalKernel):
     """A kernel whose bound law declares a component other than the kernel's own."""
 
     def _condition_on(self, given, /, **kwargs):
-        return Normal(self.name, 0.0, 1.0, event_spec=OutputSpec(elsewhere=None))
+        return Normal(self.label, 0.0, 1.0, event_spec=OutputSpec(elsewhere=None))
 
 
 class MarginalKernel(NormalKernel, SupportsConditionalMarginals):
@@ -271,7 +271,7 @@ class MarginalLaw(Law, SupportsMarginals):
     def _marginal_guard(self, path):
         if path in self.exact:
             return Feasibility(True)
-        return Feasibility(False, f"{self.name!r} has no exact marginal at {path!r}")
+        return Feasibility(False, f"{self.label!r} has no exact marginal at {path!r}")
 
 
 class TotalMarginalLaw(Law, SupportsMarginals):
@@ -453,7 +453,7 @@ class TestConstruction:
     def test_the_joint_holds_its_factors_in_order(self):
         lik, prior = _likelihood(), _prior()
         joint = FactoredDistribution("model", [lik, prior])
-        assert joint.name == "model"
+        assert joint.label == "model"
         assert joint.factors == (lik, prior)
 
     def test_a_conditional_joint_holds_its_factors_in_order(self):
@@ -466,8 +466,8 @@ class TestConstruction:
         lik, prior = _likelihood(), _prior()
         composed, constructed = lik * prior, FactoredDistribution("lik·prior", [lik, prior])
         assert type(composed) is type(constructed)
-        assert (composed.name, composed.spec, composed.factors) == (
-            constructed.name,
+        assert (composed.label, composed.spec, composed.factors) == (
+            constructed.label,
             constructed.spec,
             constructed.factors,
         )
@@ -956,7 +956,7 @@ class TestMarginalValues:
 
     def test_the_marginal_of_a_group_keeps_the_joint_label(self):
         joint = _law("u", "a") * _law("v", "b") * _law("w", "c")
-        assert joint._marginal(("a", "c")).name == joint.name
+        assert joint._marginal(("a", "c")).label == joint.label
 
     @pytest.mark.parametrize(
         "path",
@@ -972,7 +972,7 @@ class TestMarginalValues:
         record = OneFieldNormal("one", OutputSpec(RecordSpec(record=SCALAR)))
         params = MarginalLaw("p", OutputSpec(params=RecordSpec(u=SCALAR)), exact=("params/u",))
         joint = _likelihood() * _prior() * record * params
-        assert joint._marginal(path).name == FieldView(joint, path).name == joint.name
+        assert joint._marginal(path).label == FieldView(joint, path).label == joint.label
 
     def test_a_selection_of_one_whole_term_is_an_exposed_record(self):
         prior = _prior()
@@ -985,7 +985,7 @@ class TestMarginalValues:
         joint = pair * _law("other", "c")
         marginal = joint._marginal(("a", "b"))
         assert type(marginal) is type(pair) and marginal.spec == pair.spec
-        assert (marginal.name, pair.name) == (joint.name, "pair")
+        assert (marginal.label, pair.label) == (joint.label, "pair")
 
     @pytest.mark.parametrize(
         "path",
@@ -1163,7 +1163,7 @@ class TestNumericMarkers:
     def test_a_class_inheriting_the_marker_constructs_as_itself(self):
         joint = NumericJoint("model", [Normal("a", 0.0, 1.0)])
         assert isinstance(joint, NumericJoint)
-        assert joint.factors[0].name == "a"
+        assert joint.factors[0].label == "a"
 
     def test_a_class_inheriting_the_marker_has_its_claim_checked(self):
         with pytest.raises(TypeError, match="inherits FactoredNumericDistribution"):
@@ -1191,7 +1191,7 @@ class TestDimensionTransforms:
         joint = _symbolic_joint()
         bound = joint.with_dim_sizes(n=3)
         assert isinstance(bound, FactoredDistribution)
-        assert bound.name == joint.name
+        assert bound.label == joint.label
         assert [factor.event_spec.spec.shape for factor in bound.factors] == [(3,), (3,), ()]
         assert bound.event_spec.spec.free_dims == frozenset()
 
@@ -1202,7 +1202,7 @@ class TestDimensionTransforms:
 
     def test_the_declaration_follows_the_transformed_factors(self):
         bound = _symbolic_joint().with_dim_sizes(n=3)
-        assert bound.spec == FactoredDistribution(bound.name, bound.factors).spec
+        assert bound.spec == FactoredDistribution(bound.label, bound.factors).spec
 
     def test_binding_a_dimension_that_is_not_free_raises(self):
         with pytest.raises(ValueError, match=_mentions("'k'", "free dimension")):
@@ -1253,11 +1253,11 @@ class TestPathRenames:
     def test_a_rename_keeps_the_graph_and_the_label(self):
         joint = _likelihood() * _prior()
         renamed = joint.with_path_names(beta="theta", y="obs")
-        assert renamed.name == joint.name
+        assert renamed.label == joint.label
         assert [edge[:2] for edge in renamed._graph.edges] == [
             edge[:2] for edge in joint._graph.edges
         ]
-        assert [info.name for info in renamed.provenance.parents] == [joint.name]
+        assert [info.name for info in renamed.provenance.parents] == [joint.label]
 
     def test_gathering_components_of_two_factors_regroups_them(self, key):
         """The node ``g`` is one factor: the sub-joint of the two factors, packaged as ``g``."""
@@ -1266,7 +1266,7 @@ class TestPathRenames:
         assert isinstance(renamed, SupportsFactors)
         assert list(renamed.event_spec.components) == ["g"]
         (group,) = renamed.factors
-        assert [part.name for part in group.factors] == ["a", "b"]
+        assert [part.label for part in group.factors] == ["a", "b"]
         assert list(group.event_spec.components) == ["g"]
         assert not group.event_spec.exposes_record
         assert list(renamed._sample(key)["g"]) == ["a", "b"]
@@ -1279,16 +1279,16 @@ _JOINTS = [
     pytest.param(lambda: _likelihood(FullKernel) * _prior(), id="dependent"),
     pytest.param(lambda: Normal("a", 0.0, 1.0) * Normal("b", 1.0, 2.0), id="edge-free"),
     pytest.param(lambda: _likelihood(FullKernel) * Normal("c", 0.0, 1.0), id="conditional"),
-    pytest.param(lambda: (_likelihood() * _prior()).with_name("posterior"), id="relabeled"),
+    pytest.param(lambda: (_likelihood() * _prior()).with_label("posterior"), id="relabeled"),
     pytest.param(lambda: _symbolic_joint().with_dim_sizes(n=3), id="bound"),
 ]
 
 
 def _assert_same_joint(restored: Any, joint: Any) -> None:
     assert type(restored) is type(joint)
-    assert (restored.name, restored.spec) == (joint.name, joint.spec)
-    assert [(type(f), f.name, f.spec) for f in restored.factors] == [
-        (type(f), f.name, f.spec) for f in joint.factors
+    assert (restored.label, restored.spec) == (joint.label, joint.spec)
+    assert [(type(f), f.label, f.spec) for f in restored.factors] == [
+        (type(f), f.label, f.spec) for f in joint.factors
     ]
     assert _claimed(restored) == _claimed(joint)
 

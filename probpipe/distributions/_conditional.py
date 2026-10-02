@@ -450,7 +450,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
     ) -> None:
         if not isinstance(name, str) or not name:
             raise TypeError(
-                f"{type(self).__name__} requires a non-empty name as its first argument"
+                f"{type(self).__name__} requires a non-empty label as its first argument"
             )
         self._init_tracked(name, provenance=_provenance)
         self._init_annotations(_annotations)
@@ -468,7 +468,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
             self,
             "_spec",
             ConditionalDistributionSpec(
-                _complete_given_spec(given_spec), _complete_event_spec(event_spec, self._name)
+                _complete_given_spec(given_spec), _complete_event_spec(event_spec, self._label)
             ),
         )
 
@@ -527,7 +527,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         unbound = set(sizes) - self.spec.free_dims
         if unbound:
             raise ValueError(
-                f"{type(self).__name__} {self.name!r} has no free dimensions "
+                f"{type(self).__name__} {self.label!r} has no free dimensions "
                 f"{sorted(unbound)} to bind"
             )
         return self._with_declarations(
@@ -689,7 +689,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
             ("given", format_names(self.given_spec)),
             *self._event_repr_arguments(),
         ]
-        return term_repr(self._repr_class_name(), self.name, fields)
+        return term_repr(self._repr_class_name(), self.label, fields)
 
     def _repr_class_name(self) -> str:
         """The first public class in this kernel's method-resolution order, which the repr names."""
@@ -701,7 +701,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
 
     def _event_repr_arguments(self) -> list[tuple[str, str]]:
         """The event declaration, unless it is the default for this kernel's label."""
-        if _is_default_declaration(self.event_spec, self.name):
+        if _is_default_declaration(self.event_spec, self.label):
             return []
         return [("event_spec", repr(self.event_spec))]
 
@@ -934,7 +934,7 @@ class _FunctionKernel(ConditionalDistribution):
         """
         if options:
             raise TypeError(
-                f"the kernel {self.name!r} evaluates its function exactly and reads no options; "
+                f"the kernel {self.label!r} evaluates its function exactly and reads no options; "
                 f"got {sorted(options)}"
             )
         values = self._given_values(given)
@@ -962,7 +962,7 @@ class _FunctionKernel(ConditionalDistribution):
         unknown = sorted(set(values) - set(self.given_spec))
         if unknown:
             raise KeyError(
-                f"{unknown} are not given slots of {self.name!r}, whose slots are "
+                f"{unknown} are not given slots of {self.label!r}, whose slots are "
                 f"{list(self.given_spec)}"
             )
         return values
@@ -991,10 +991,10 @@ class _FunctionKernel(ConditionalDistribution):
         values = self._given_values(given)
         missing = [slot for slot in self.given_spec if slot not in values]
         if missing:
-            raise KeyError(f"{self.name!r} needs a value of every given slot; {missing} have none")
+            raise KeyError(f"{self.label!r} needs a value of every given slot; {missing} have none")
         self._check_conformance(values)
         law = self._fn(**self._bound, **self._arguments(values))
-        return _declared_law(law, self.event_spec, self.name)
+        return _declared_law(law, self.event_spec, self.label)
 
 
 @dataclass(frozen=True)

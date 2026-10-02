@@ -252,7 +252,7 @@ class BijectorTransformedDistribution(Distribution):
         ]
         if missing:
             raise ResolutionError(
-                f"the bijector {bijector.name!r} of {name!r} does not claim "
+                f"the bijector {bijector.label!r} of {name!r} does not claim "
                 f"{' and '.join(missing)}, which a change of variables needs"
             )
         base_spec = base.event_spec.spec
@@ -262,7 +262,7 @@ class BijectorTransformedDistribution(Distribution):
         object.__setattr__(self, "_bijector", bijector)
         super().__init__(name, NumericArraySpec(tuple(image.shape), image.dtype, _image(bijector)))
         self.with_provenance(
-            Provenance.create("transform", parents=[base], metadata={"bijector": bijector.name})
+            Provenance.create("transform", parents=[base], metadata={"bijector": bijector.label})
         )
 
     @property

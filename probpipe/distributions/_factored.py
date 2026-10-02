@@ -257,7 +257,7 @@ def _factor_graph(
             if component in producers:
                 raise ValueError(
                     f"the component {component!r} is produced by both "
-                    f"{factors[producers[component]].name!r} and {factor.name!r}; each "
+                    f"{factors[producers[component]].label!r} and {factor.label!r}; each "
                     f"component is produced once, so rename one with with_path_names"
                 )
             producers[component] = index
@@ -280,7 +280,7 @@ def _factor_graph(
                 continue
             if producer < index:
                 raise ValueError(
-                    f"{factor.name!r} conditions on {slot!r}, which {factors[producer].name!r} "
+                    f"{factor.label!r} conditions on {slot!r}, which {factors[producer].label!r} "
                     f"produces to its left; composition is conditional-first, so put the "
                     f"producer on the right"
                 )
@@ -417,10 +417,10 @@ def _given_values(joint: Any, given: Record | Mapping[str, Any]) -> dict[str, An
     values = dict(top.items())
     unknown = set(values) - set(joint.given_spec)
     if unknown:
-        raise KeyError(f"{sorted(unknown)} are not given slots of {joint.name!r}")
+        raise KeyError(f"{sorted(unknown)} are not given slots of {joint.label!r}")
     missing = [slot for slot in joint.given_spec if slot not in values]
     if missing:
-        raise KeyError(f"the given of {joint.name!r} omits the given slots {missing}")
+        raise KeyError(f"the given of {joint.label!r} omits the given slots {missing}")
     return values
 
 
@@ -728,7 +728,7 @@ def _sole_field_marginal(self: _SoleField, path: str | tuple[str, ...]) -> Distr
     if path == self._component:
         return self
     marginal = self._law._marginal(path)
-    return marginal if marginal.name == self.name else marginal.with_name(self.name)
+    return marginal if marginal.label == self.label else marginal.with_label(self.label)
 
 
 def _sole_field_marginal_guard(self: _SoleField, path: str | tuple[str, ...]) -> Feasibility:
@@ -808,7 +808,7 @@ class _SoleField(Distribution):
 
     def __init__(self, law: Distribution) -> None:
         ((component, spec),) = law.event_spec.components.items()
-        super().__init__(law.name, OutputSpec(**{component: spec}))
+        super().__init__(law.label, OutputSpec(**{component: spec}))
         object.__setattr__(self, "_law", law)
         object.__setattr__(self, "_component", component)
 
@@ -857,13 +857,13 @@ def _requested_paths(joint: Any, path: str | tuple[str, ...]) -> tuple[str, ...]
             if head != component or not within:
                 raise KeyError(
                     f"{requested!r} is not a path below the component {component!r} of "
-                    f"{joint.name!r}"
+                    f"{joint.label!r}"
                 )
         try:
             record.at_path(*within.split(_PATH_SEP))
         except KeyError:
             raise KeyError(
-                f"{requested!r} is not an event path of {joint.name!r}, whose components are "
+                f"{requested!r} is not an event path of {joint.label!r}, whose components are "
                 f"{list(joint.event_spec.components)}"
             ) from None
         inner.append(within)
@@ -1205,10 +1205,10 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
     report = _marginal_guard(self, path)
     if report.feasible is not True:
         reason = report.description or "; ".join(report.pending)
-        raise ResolutionError(f"{self.name!r} has no exact marginal at {path!r}: {reason}")
+        raise ResolutionError(f"{self.label!r} has no exact marginal at {path!r}: {reason}")
     graph: _FactorGraph = self._graph
     projection = isinstance(path, str)
-    label = self.name
+    label = self.label
     kept: list[Distribution] = []
     for index, requested in _requests(graph, paths).items():
         factor = graph.factors[index]
@@ -1220,7 +1220,7 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
             kept.append(factor)
     if len(kept) == 1 and (projection or kept[0].event_spec.exposes_record):
         (marginal,) = kept
-        marginal = marginal if marginal.name == label else marginal.with_name(label)
+        marginal = marginal if marginal.label == label else marginal.with_label(label)
     else:
         marginal = FactoredDistribution(label, kept)
     return marginal if projection else _in_requested_order(marginal, paths)
@@ -1432,7 +1432,7 @@ def _rebuilt(joint: Any, method: str, mapping: Mapping[str, Any], *, free: Any =
         unbound = set(mapping) - set(free)
         if unbound:
             raise ValueError(
-                f"{type(joint).__name__} {joint.name!r} has no free dimensions "
+                f"{type(joint).__name__} {joint.label!r} has no free dimensions "
                 f"{sorted(unbound)} to bind"
             )
     base = vars(type(joint)).get("_capability_base", type(joint))
@@ -1440,7 +1440,7 @@ def _rebuilt(joint: Any, method: str, mapping: Mapping[str, Any], *, free: Any =
     if method == "with_dim_sizes":
         scope.update(mapping)
     rebuilt = base(
-        joint.name, _each_factor(joint.factors, method, mapping), _scope=scope, **_packaging(joint)
+        joint.label, _each_factor(joint.factors, method, mapping), _scope=scope, **_packaging(joint)
     )
     return rebuilt.with_provenance(
         Provenance.create(method, parents=[joint], metadata=dict(mapping))
@@ -1764,7 +1764,7 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
         values = dict(top.items())
         unknown = set(values) - set(self.given_spec)
         if unknown:
-            raise KeyError(f"{sorted(unknown)} are not given slots of {self.name!r}")
+            raise KeyError(f"{sorted(unknown)} are not given slots of {self.label!r}")
         factors: list[Factor] = []
         for factor in self.factors:
             if isinstance(factor, ConditionalDistribution):
@@ -1773,8 +1773,8 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
                     factor = _bound_factor(factor, bound, options)
             factors.append(factor)
         if set(values) == set(self.given_spec):
-            return FactoredDistribution(self.name, factors, **_packaging(self))
-        return FactoredConditionalDistribution(self.name, factors, **_packaging(self))
+            return FactoredDistribution(self.label, factors, **_packaging(self))
+        return FactoredConditionalDistribution(self.label, factors, **_packaging(self))
 
 
 def _bound_factor(
@@ -1797,8 +1797,8 @@ def _bound_factor(
     )
     if not expected.is_valid(result):
         raise ValueError(
-            f"{factor.name!r} conditioned on {sorted(bound)} returned "
-            f"{type(result).__name__} {getattr(result, 'name', '')!r}, whose declarations do not "
+            f"{factor.label!r} conditioned on {sorted(bound)} returned "
+            f"{type(result).__name__} {getattr(result, 'label', '')!r}, whose declarations do not "
             f"match the factor's"
         )
     return result

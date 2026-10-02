@@ -134,7 +134,7 @@ class TestSliceSweepValues:
         assert isinstance(second["d"], Normal)
         assert float(first["d"].loc) == 3.0
         assert float(second["d"].loc) == 4.0
-        assert (first["d"].name, second["d"].name) == ("d[law=0]", "d[law=1]")
+        assert (first["d"].label, second["d"].label) == ("d[law=0]", "d[law=1]")
 
 
 class TestExecuteSweep:
@@ -501,7 +501,7 @@ class TestNumericArraySweep:
         assert value.spec is declared
         assert value.spec.shape == declared_shape
         assert value.value is native
-        assert value.name == "original"
+        assert value.label == "original"
         assert value.provenance is None
 
     @pytest.mark.parametrize("reverse", [False, True], ids=["forward", "reverse"])
@@ -611,7 +611,7 @@ class TestNumericArraySweep:
             np.asarray(result), np.broadcast_to([1.0, 2.0], (*numeric_sweep_source.batch_shape, 2))
         )
         assert value.value is native
-        assert value.name == "original"
+        assert value.label == "original"
         assert value.spec == declared
         assert value.provenance is None
 

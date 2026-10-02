@@ -235,7 +235,7 @@ class TestNumericArrayCarriesIdentity:
             jnp.arange(3.0),
         )
 
-        assert value.name == "draw"
+        assert value.label == "draw"
 
     def test_a_name_is_required(self):
         """A value carries no fields to describe it, so the name is what says
@@ -247,7 +247,7 @@ class TestNumericArrayCarriesIdentity:
         """Set by an operation that derives one, as the output boundary does."""
         value = NumericArray("outer", jnp.arange(3.0))
 
-        assert value.name == "outer"
+        assert value.label == "outer"
 
     def test_provenance_is_write_once(self):
         value = NumericArray(
@@ -309,7 +309,7 @@ class TestNumericArrayComputesAsAnArray:
         result = compute(NumericArray("v", jnp.arange(3.0)))
 
         assert isinstance(result, NumericArray)
-        assert result.name == name
+        assert result.label == name
         assert isinstance(result.raw(), jax.Array)
 
     def test_a_result_records_the_operator_and_its_tracked_operands(self):
@@ -347,7 +347,7 @@ class TestNumericArrayComputesAsAnArray:
     def test_two_numeric_arrays_combine(self):
         pair = NumericArray("v", jnp.arange(3.0)) + NumericArray("v", jnp.ones(3))
 
-        assert pair.name == "v + v"
+        assert pair.label == "v + v"
         np.testing.assert_array_equal(np.asarray(pair), np.asarray(jnp.arange(1.0, 4.0)))
 
     def test_the_reflected_operators_agree_with_the_forward_ones(self):
@@ -373,8 +373,8 @@ class TestNumericArrayComputesAsAnArray:
 
         value += 1.0
 
-        assert value is not original and value.name == "kept + 1.0"
-        assert original.name == "kept"
+        assert value is not original and value.label == "kept + 1.0"
+        assert original.label == "kept"
         np.testing.assert_array_equal(np.asarray(value), np.arange(1.0, 4.0))
 
     def test_arithmetic_inside_a_trace_is_bare(self):
@@ -575,7 +575,7 @@ class TestNumericArrayBatchSelection:
     def test_an_element_takes_the_derived_name(self):
         element = _batch(name="posterior")[1]
 
-        assert element.name == "posterior[draw=1]"
+        assert element.label == "posterior[draw=1]"
         pass
 
     def test_an_element_inherits_the_batch_lineage(self):
@@ -611,7 +611,7 @@ class TestNumericArrayBatchSelection:
 
         assert isinstance(sub, NumericArrayBatch)
         assert sub.batch_shape == (2,)
-        assert sub.name == "posterior[draw=1:3]"
+        assert sub.label == "posterior[draw=1:3]"
 
     def test_iteration_yields_elements(self):
         assert [type(e) for e in _batch()] == [NumericArray] * 4
@@ -801,7 +801,7 @@ class TestNumericArrayIsAPyTree:
         rebuilt = jax.tree_util.tree_unflatten(treedef, leaves)
 
         assert isinstance(rebuilt, NumericArray)
-        assert rebuilt.name == "draw"
+        assert rebuilt.label == "draw"
         np.testing.assert_array_equal(np.asarray(rebuilt), np.arange(3.0))
 
     def test_a_transform_that_changes_the_shape_keeps_the_declaration(self):
@@ -873,7 +873,7 @@ class TestNumericArrayIsAPyTree:
         skeleton = jax.tree_util.tree_map(lambda x: None, value)
 
         assert isinstance(skeleton, NumericArray)
-        assert skeleton.name == "draw"
+        assert skeleton.label == "draw"
 
     def test_a_sentinel_child_rebuilds(self):
         _, treedef = jax.tree_util.tree_flatten(
@@ -908,13 +908,13 @@ class TestABatchIsNamed:
     def test_a_given_name_is_marked_user_given(self):
         batch = _batch(name="posterior")
 
-        assert batch.name == "posterior"
+        assert batch.label == "posterior"
 
     def test_a_derived_name_says_so(self):
         """A view derives its name, and marks it, rather than defaulting."""
         sub = _batch(name="posterior")[1:3]
 
-        assert sub.name == "posterior[draw=1:3]"
+        assert sub.label == "posterior[draw=1:3]"
 
 
 class TestNumericArrayBatchIsAPyTree:
@@ -1101,7 +1101,7 @@ class TestTheFlatVector:
         spec = NumericArraySpec((2, 3), jnp.float32)
         x = NumericArray("x", jnp.arange(6.0, dtype=jnp.float32).reshape(2, 3), spec=spec)
         rebuilt = NumericArray.from_vector("y", spec, x.to_vector())
-        assert rebuilt.name == "y"
+        assert rebuilt.label == "y"
         assert rebuilt.spec is spec
         np.testing.assert_array_equal(rebuilt.value, x.value)
 

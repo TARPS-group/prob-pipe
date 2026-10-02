@@ -53,7 +53,7 @@ def test_the_components_share_one_event_declaration_and_labels_may_differ():
     second = Normal("b", 1.0, 1.0, event_spec=OutputSpec(x=None))
     mixture = MixtureDistribution("m", [first, second], jnp.array([0.5, 0.5]))
     assert mixture.event_spec == first.event_spec
-    assert mixture.name == "m"
+    assert mixture.label == "m"
 
 
 def test_components_with_different_declarations_raise():

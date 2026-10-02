@@ -87,7 +87,7 @@ class LocationKernel(ConditionalDistribution):
         super().__init__(name, {"mu": SCALAR}, OutputSpec(y=SCALAR))
 
     def _condition_on(self, given, /, **kwargs):
-        return Normal(self.name, given["mu"], 1.0, event_spec=self.event_spec)
+        return Normal(self.label, given["mu"], 1.0, event_spec=self.event_spec)
 
 
 def _kernel(given=None, event=None, name: str = "k") -> Kernel:
@@ -147,9 +147,9 @@ class TestConstruction:
 
     def test_the_default_component_is_captured_once(self):
         kernel = _kernel(event=SCALAR, name="lik")
-        renamed = kernel.with_name("other")
-        assert renamed.name == "other"
-        assert kernel.name == "lik"
+        renamed = kernel.with_label("other")
+        assert renamed.label == "other"
+        assert kernel.label == "lik"
         assert renamed.spec == kernel.spec
         assert list(renamed.event_spec.components) == ["lik"]
 
@@ -204,7 +204,7 @@ class TestConstructionErrors:
 
     @pytest.mark.parametrize("name", ["", None, 3])
     def test_a_name_that_is_not_a_non_empty_string_raises(self, name):
-        with pytest.raises(TypeError, match="non-empty name"):
+        with pytest.raises(TypeError, match="non-empty label"):
             _kernel(name=name)
 
     @pytest.mark.parametrize("event", [3.0, (3,), "y", None])
@@ -405,7 +405,7 @@ class TestDimensionTransforms:
         bound = kernel.with_dim_sizes(n=3, m=2)
         assert bound is not kernel
         assert type(bound) is Kernel
-        assert bound.name == kernel.name
+        assert bound.label == kernel.label
         assert bound.spec.is_concrete
         assert kernel.spec.free_dims == {"n", "m"}
 
@@ -439,7 +439,7 @@ class TestDimensionTransforms:
         renamed = kernel.with_dim_names(n="rows")
         assert renamed is not kernel
         assert type(renamed) is Kernel
-        assert renamed.name == kernel.name
+        assert renamed.label == kernel.label
         assert renamed.spec.free_dims == {"rows", "m"}
         assert kernel.spec.free_dims == {"n", "m"}
 
@@ -603,7 +603,7 @@ class TestWithPathNames:
         assert list(renamed.given_spec) == ["a", "beta", "c"]
         assert renamed.given_spec["beta"] == _array(2)
         assert renamed.event_spec == kernel.event_spec
-        assert renamed.name == kernel.name
+        assert renamed.label == kernel.label
 
     def test_a_renamed_event_component_renames_the_draws(self):
         kernel = _kernel(event=OutputSpec(y=_array(2)))

@@ -326,7 +326,7 @@ class TestEveryTrackedTermIsImmutable:
         with pytest.raises(AttributeError, match="Record is immutable"):
             term.attribute = 1
         with pytest.raises(AttributeError, match="Record is immutable"):
-            del term._name
+            del term._label
 
     def test_a_term_outside_that_layer_refuses_assignment_and_names_itself(self):
         term = RecordBatch.stack([Record("r", {"x": jnp.ones(2)})] * 2, level_name="draw")
@@ -424,8 +424,8 @@ class TestTheConstructionWindow:
         # (A distribution accepts assignment either way — see the exemption
         # above — so what is asserted is that both terms came out intact.)
         joint = FactoredDistribution("j", [Normal("a", 0.0, 1.0)])
-        assert joint.name == "j"
-        assert joint.factors[0].name == "a"
+        assert joint.label == "j"
+        assert joint.factors[0].label == "a"
 
 
 class TestAClassBuiltAtRuntime:

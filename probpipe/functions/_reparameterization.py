@@ -153,7 +153,7 @@ class _BackendBijector(Function, SupportsInverse, SupportsLogDetJacobian):
 
     def __reduce__(self) -> tuple[Any, ...]:
         """Rebuild from the backend bijector, whose state pickles where a Function's controls do not."""
-        return (_rebuilt_backend_bijector, (self._bijector, self._image, self.name))
+        return (_rebuilt_backend_bijector, (self._bijector, self._image, self.label))
 
 
 def _rebuilt_backend_bijector(
@@ -161,7 +161,7 @@ def _rebuilt_backend_bijector(
 ) -> _BackendBijector:
     """The backend-bijector Function of *bijector* under the label *name*, for unpickling."""
     rebuilt = _BackendBijector(bijector, image)
-    return rebuilt if rebuilt.name == name else rebuilt.with_name(name)
+    return rebuilt if rebuilt.label == name else rebuilt.with_label(name)
 
 
 def _as_bijector(value: Any, image: Constraint | None = None) -> Function:
@@ -241,7 +241,7 @@ def bijector_for(constraint: Constraint) -> Function:
     ]
     if missing:
         raise ResolutionError(
-            f"the bijector {bijector.name!r} registered for {constraint!r} does not claim "
+            f"the bijector {bijector.label!r} registered for {constraint!r} does not claim "
             f"{' and '.join(missing)}"
         )
     return bijector

@@ -157,7 +157,7 @@ def _declared(source: Any, options: dict[str, Any]) -> OutputSpec | None:
         return None
     if isinstance(source, Distribution):
         raise TypeError(
-            f"event_spec declares a backend distribution's event, and {source.name!r} is a "
+            f"event_spec declares a backend distribution's event, and {source.label!r} is a "
             f"ProbPipe law that carries its own declaration"
         )
     if not isinstance(declared, OutputSpec):
@@ -746,7 +746,7 @@ def _check_support(result: Distribution, law: Distribution) -> None:
     if source is not None:
         if not _supports_compatible(source, target):
             raise ValueError(
-                f"Cannot convert {type(law).__name__} {law.name!r} (support={source}) to "
+                f"Cannot convert {type(law).__name__} {law.label!r} (support={source}) to "
                 f"{type(result).__name__} (support={target}). Pass check_support=False to "
                 f"override."
             )
@@ -755,7 +755,7 @@ def _check_support(result: Distribution, law: Distribution) -> None:
         jnp.all(target.check(jnp.asarray(law._rows)))
     ):
         raise ValueError(
-            f"Cannot convert {type(law).__name__} {law.name!r} to {type(result).__name__} "
+            f"Cannot convert {type(law).__name__} {law.label!r} to {type(result).__name__} "
             f"(support={target}): its atoms lie outside that support. Pass check_support=False "
             f"to override."
         )
@@ -827,7 +827,7 @@ class _MomentMatching(Converter):
         if law is None:
             declaration, label = _scipy_declaration(source, declared), source.dist.name
         else:
-            declaration, label = law.event_spec, law.name
+            declaration, label = law.event_spec, law.label
         needs, parameters, rank = fit
         reason = _array_event(declaration, label, target_type, rank) or _cast_event(
             declaration, label, target_type
@@ -919,13 +919,13 @@ def _sampled_source(
     if law is None:
         return None, _scipy_declaration(source, declared)
     if not isinstance(law, SupportsSampling):
-        return f"{law.name!r} does not sample"
+        return f"{law.label!r} does not sample"
     return law, law.event_spec
 
 
 def _label(source: Any, law: Distribution | None, declaration: OutputSpec) -> str:
     """The label of a sampled representation: the law's, or a SciPy distribution's name."""
-    return law.name if law is not None else source.dist.name
+    return law.label if law is not None else source.dist.name
 
 
 class _EmpiricalDraws(Converter):

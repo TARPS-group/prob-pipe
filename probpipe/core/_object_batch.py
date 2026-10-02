@@ -171,8 +171,8 @@ class _ObjectBatch[E](Batch[E]):
         source = stored if isinstance(stored, TrackedTerm) else None
         provenance = Provenance.of_view(self, source, metadata={"position": list(index)})
         if isinstance(stored, TrackedTerm):
-            view = stored.with_name(name)
-            # ``with_name`` records a rename; the view's lineage is its selection.
+            view = stored.with_label(name)
+            # ``with_label`` records a rename; the view's lineage is its selection.
             object.__setattr__(view, "_provenance", None)
             return view.with_provenance(provenance)
         return self._wrap_element(stored, name).with_provenance(provenance)

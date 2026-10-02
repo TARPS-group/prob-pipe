@@ -105,8 +105,8 @@ class TestTheRegroupedJoint:
         assert population.event_spec == OutputSpec(
             population=RecordSpec(mu=_mu().event_spec.spec, tau=_tau().event_spec.spec)
         )
-        assert [part.name for part in population.factors] == ["mu", "tau"]
-        assert population.name == "mu·tau"
+        assert [part.label for part in population.factors] == ["mu", "tau"]
+        assert population.label == "mu·tau"
 
     def test_a_group_of_one_factor_packages_it(self):
         groups = factor(_non_centered().with_path_names(NON_CENTERED), "groups")
@@ -114,7 +114,7 @@ class TestTheRegroupedJoint:
         assert not groups.event_spec.exposes_record
         assert list(groups.event_spec.components) == ["groups"]
         assert list(groups.event_spec.spec.children) == ["theta_tilde"]
-        assert groups.name == "theta_tilde"
+        assert groups.label == "theta_tilde"
 
     def test_a_consumer_conditions_on_the_sub_joint_through_its_renamed_slot(self):
         groups = factor(_centered().with_path_names(CENTERED), "groups")
@@ -198,7 +198,7 @@ class TestTheFactoredRoutes:
         view = prior["population"]
         assert isinstance(view, SupportsLogProb)
         np.testing.assert_allclose(view._log_prob(value), expected, rtol=1e-6)
-        assert factor(prior, "population").factors[0].name == "mu"
+        assert factor(prior, "population").factors[0].label == "mu"
 
     @pytest.mark.parametrize(("make", "renames", "field"), _MODELS)
     def test_the_marginal_inside_a_sub_joint_is_its_factor(self, make, renames, field):

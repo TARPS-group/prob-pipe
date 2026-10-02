@@ -28,7 +28,7 @@ def _joint_result(A: Any, B: Any, align: Any) -> OutputSpec:
 
 def _composed_label(A: Any, B: Any) -> str:
     """The factors' labels joined as composition joins them (IV.2); a rename keeps a label."""
-    return f"{A.name}{_LABEL_SEP}{B.name}"
+    return f"{A.label}{_LABEL_SEP}{B.label}"
 
 
 @operation(

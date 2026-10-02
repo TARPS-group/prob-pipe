@@ -50,13 +50,13 @@ class Opaque(TrackedTerm, Annotated):
     Examples
     --------
     >>> fitted = Opaque("sklearn_model", object())
-    >>> fitted.name
+    >>> fitted.label
     'sklearn_model'
     """
 
     __slots__ = (
         "_annotations",
-        "_name",
+        "_label",
         "_provenance",
         "_spec",
         "_value",
@@ -116,7 +116,7 @@ class Opaque(TrackedTerm, Annotated):
 
     def __repr__(self) -> str:
         """The label, then the declared type and the metadata where the spec sets them."""
-        return term_repr("Opaque", self.name, self._spec._repr_arguments())
+        return term_repr("Opaque", self.label, self._spec._repr_arguments())
 
     def __str__(self) -> str:
         """The wrapped value's string, as ``print`` and an f-string show the value."""

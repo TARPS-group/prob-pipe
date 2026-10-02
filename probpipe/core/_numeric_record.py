@@ -55,7 +55,7 @@ class NumericRecord(Record, Numeric):
     holds the same named, ordered, possibly-nested collection of fields, but
     constrains every field to be numeric. It inherits the full
     :class:`Record` interface — the leaf-keyed mapping, the tree navigation,
-    the metadata (:attr:`~Record.name`, :attr:`~Record.provenance`), and the
+    the metadata (:attr:`~Record.label`, :attr:`~Record.provenance`), and the
     equality and hashing rules — and adds the array-only features described
     below.
 
@@ -591,7 +591,7 @@ def _reconstruct_from_vector(
             axes_per_level=(len(batch_shape),) if len(names) == 1 else None,
         )
     value = jax.tree_util.tree_unflatten(_value_treedef(template), leaves)
-    object.__setattr__(value, "_name", name)
+    object.__setattr__(value, "_label", name)
     return value
 
 
@@ -621,7 +621,7 @@ def _numeric_record_flatten(v: NumericRecord) -> tuple[list, tuple[RecordSpec, s
         child if isinstance(child, Record) else v._child_field_as_jax(name)
         for name, child in ((n, v._tree[n]) for n in v.event_template.children)
     ]
-    return children, (v._spec, v._name)
+    return children, (v._spec, v._label)
 
 
 def _numeric_record_unflatten(aux: tuple[RecordSpec, str], children: list) -> NumericRecord:

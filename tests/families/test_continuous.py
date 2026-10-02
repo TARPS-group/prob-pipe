@@ -123,7 +123,7 @@ class TestContinuousGeneric:
         assert class_name in r
 
     def test_name(self, continuous_dist):
-        assert continuous_dist.name == "x"
+        assert continuous_dist.label == "x"
 
 
 # ---------------------------------------------------------------------------

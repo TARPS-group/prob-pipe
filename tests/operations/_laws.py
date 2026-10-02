@@ -118,7 +118,7 @@ class Pair(Distribution, SupportsSampling, SupportsMean):
         ka, kb = jax.random.split(key)
         shape = tuple(sample_shape)
         return Record(
-            self.name,
+            self.label,
             {
                 "a": normal_draws(ka, 1.0, 1.0, shape),
                 "b": normal_draws(kb, -1.0, 1.0, (*shape, 2)),
@@ -126,7 +126,7 @@ class Pair(Distribution, SupportsSampling, SupportsMean):
         )
 
     def _mean(self) -> Any:
-        return Record(self.name, {"a": jnp.float32(1.0), "b": -jnp.ones(2, jnp.float32)})
+        return Record(self.label, {"a": jnp.float32(1.0), "b": -jnp.ones(2, jnp.float32)})
 
 
 class OneField(Distribution, SupportsSampling, SupportsLogProb):
@@ -136,7 +136,7 @@ class OneField(Distribution, SupportsSampling, SupportsLogProb):
         super().__init__(name, RecordSpec(x=REAL))
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
-        return Record(self.name, {"x": normal_draws(key, 0.0, 1.0, tuple(sample_shape))})
+        return Record(self.label, {"x": normal_draws(key, 0.0, 1.0, tuple(sample_shape))})
 
     def _log_prob(self, value: Any) -> Any:
         return jax.scipy.stats.norm.logpdf(jnp.asarray(value["x"]))
@@ -261,7 +261,7 @@ class Kernel(ConditionalDistribution):
         left = tuple(slot for slot in self.slots if slot not in values)
         offset = self.offset + sum(float(values[slot]) for slot in self.slots if slot in values)
         if left:
-            return Kernel(self.name, left, offset, self.component)
+            return Kernel(self.label, left, offset, self.component)
         return Gaussian(self.component, offset, 1.0)
 
 
@@ -276,7 +276,7 @@ class ExactPosterior(Distribution, SupportsSampling, SupportsExactConditioning):
         kt, ky = jax.random.split(key)
         shape = tuple(sample_shape)
         return Record(
-            self.name,
+            self.label,
             {"theta": normal_draws(kt, 0.0, 1.0, shape), "y": normal_draws(ky, 0.0, 1.0, shape)},
         )
 

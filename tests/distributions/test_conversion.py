@@ -116,7 +116,7 @@ class GuardedScored(_Scores, Distribution):
 
     def _log_prob_guard(self) -> bool:
         """The label is not "rejects"."""
-        return self.name != "rejects"
+        return self.label != "rejects"
 
 
 class Sampled(Distribution):
@@ -218,7 +218,7 @@ class ToyConverter(Converter):
             raise self._raises
         if self._result is not None:
             return self._result
-        return self._target_class(source.name, source.event_spec)
+        return self._target_class(source.label, source.event_spec)
 
 
 def _registry(*converters: Converter) -> ConverterRegistry:
@@ -331,7 +331,7 @@ _CONVERTER_MEMBERS: dict[str, Any] = {
         target_spec=source.spec,
         target_class=Target,
     ),
-    "execute": lambda self, source, target_type: Target(source.name, source.event_spec),
+    "execute": lambda self, source, target_type: Target(source.label, source.event_spec),
 }
 
 

@@ -109,7 +109,7 @@ def _replicate_size(source: Distribution, replicate_size: Any) -> int:
         if isinstance(source, EmpiricalDistribution):
             return source.num_atoms
         raise ValueError(
-            f"replicate_size is required for a source without atoms; {source.name!r} is a "
+            f"replicate_size is required for a source without atoms; {source.label!r} is a "
             f"{type(source).__name__}"
         )
     if isinstance(replicate_size, bool):
@@ -150,7 +150,7 @@ def _replicate_level(source: Distribution, level: str | None) -> str:
     if len(components) == 1:
         return components[0]
     raise ValueError(
-        f"level is required for a source exposing several components, and {source.name!r} "
+        f"level is required for a source exposing several components, and {source.label!r} "
         f"exposes {components}"
     )
 
@@ -374,8 +374,8 @@ class BootstrapDistribution(RandomMeasure, SupportsSampling, SupportsMean):
 
     def _measure(self, raw: Any) -> EmpiricalDistribution:
         """The empirical measure of the replicate *raw*, the source's raw draws along one axis."""
-        atoms = _batch_form(self.name, raw, self._level, self._source.event_spec.spec)
-        return EmpiricalDistribution(self.name, atoms, event_spec=self._source.event_spec)
+        atoms = _batch_form(self.label, raw, self._level, self._source.event_spec.spec)
+        return EmpiricalDistribution(self.label, atoms, event_spec=self._source.event_spec)
 
     def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Any:
         """Draw empirical measures, each of one replicate of the source.
@@ -961,7 +961,7 @@ class KDEDistribution(
         raw = _raw_record(value)
         if not isinstance(raw, dict):
             raise TypeError(
-                f"a value of {self.name!r} is a record, as a mapping of its fields or a batch "
+                f"a value of {self.label!r} is a record, as a mapping of its fields or a batch "
                 f"of records; got {type(value).__name__}"
             )
         blocks = []

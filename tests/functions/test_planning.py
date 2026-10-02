@@ -51,7 +51,7 @@ def _lifted_rate() -> Function:
 class TestTheDeclaredOutput:
     def test_a_bare_term_spec_completes_to_the_default_declaration(self):
         spec = NumericArraySpec(())
-        wrapped = Function("f", lambda x: x, output_name="value", output_spec=spec)
+        wrapped = Function("f", lambda x: x, output_label="value", output_spec=spec)
 
         assert wrapped.output_spec == OutputSpec.default(spec, component="value")
 
@@ -136,7 +136,7 @@ class TestTheResultOfALift:
 class TestIncludingTheInputs:
     def _predict(self) -> Function:
         @function(
-            output_name="prediction",
+            output_label="prediction",
             output_spec=OutputSpec(mean=None),
             include_inputs=True,
             n_broadcast_samples=6,
@@ -152,7 +152,7 @@ class TestIncludingTheInputs:
             result = self._predict()(theta=standard_normal(), x=jnp.ones(3))
 
         assert "x" not in result.event_spec.components
-        assert result.name == "prediction"
+        assert result.label == "prediction"
 
     def test_the_joint_is_an_empirical_law(self):
         with workflow_run(seed=0):

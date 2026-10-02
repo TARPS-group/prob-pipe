@@ -155,7 +155,7 @@ class TestFieldExtraction:
     def test_a_field_view_extracts_its_column_from_a_batch(self):
         joint = (
             Normal(loc=0.0, scale=1.0, name="a") * Normal(loc=0.0, scale=1.0, name="b")
-        ).with_name("joint")
+        ).with_label("joint")
         batch = NumericRecordBatch(
             "batch",
             {"a": jnp.arange(4.0), "b": jnp.ones(4)},
@@ -1138,7 +1138,7 @@ class TestEveryBatchIsAnOperand:
         )
 
         assert [element.value for element in seen] == ["a", "b"]
-        assert [element.name for element in seen] == ["rows[row=0]", "rows[row=1]"]
+        assert [element.label for element in seen] == ["rows[row=0]", "rows[row=1]"]
 
     def test_a_function_batch_is_swept_too(self):
         out = Function(fn=lambda f: float(f()), name="call", dispatch="sequential")(

@@ -985,7 +985,7 @@ class TestPosteriorFieldView:
         view = posterior["r"]
         r = repr(view)
         assert "FieldView" in r
-        assert repr(posterior.name) in r
+        assert repr(posterior.label) in r
         assert "'r'" in r
 
     def test_view_mean_fallback_without_supports_mean(self):
@@ -1005,13 +1005,13 @@ class TestPosteriorFieldView:
     def test_a_view_keeps_the_posterior_label_and_exposes_its_field(self, posterior):
         """A view keeps its parent's label, and its event exposes the selected field."""
         for field in ("K", "phi", "r"):
-            assert posterior[field].name == posterior.name
+            assert posterior[field].label == posterior.label
             assert list(posterior[field].event_spec.components) == [field]
 
     def test_a_view_of_a_factored_joint_keeps_the_joint_label(self):
         """The views of a factored joint keep its label, and their events expose the fields."""
         p = Normal(loc=0.0, scale=1.0, name="x") * Normal(loc=0.0, scale=1.0, name="y")
-        assert p["x"].name == p["y"].name == p.name
+        assert p["x"].label == p["y"].label == p.label
         assert list(p["x"].event_spec.components) == ["x"]
 
 

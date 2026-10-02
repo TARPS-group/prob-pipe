@@ -152,8 +152,8 @@ class TestStanModel:
     def test_the_posterior_pickles(self, regression_file):
         posterior = StanModel("regression", regression_file, data=_data())
         restored = pickle.loads(pickle.dumps(posterior))
-        assert (restored.name, restored.spec, restored.stan_file) == (
-            posterior.name,
+        assert (restored.label, restored.spec, restored.stan_file) == (
+            posterior.label,
             posterior.spec,
             posterior.stan_file,
         )
@@ -373,7 +373,7 @@ class TestPyMCModel:
     def test_it_pickles(self):
         model = PyMCModel("normal", _normal_model)
         restored = pickle.loads(pickle.dumps(model))
-        assert (restored.name, restored.spec) == (model.name, model.spec)
+        assert (restored.label, restored.spec) == (model.label, model.spec)
 
 
 class TestUnnormalizedDistribution:

@@ -145,7 +145,7 @@ def _factor_of(d: Any, component_name: str) -> Any:
 def _factor_label(d: Any, component_name: str) -> str:
     """The factor's own label, since the result is the factor itself; the joint's without one."""
     part = _factor_of(d, component_name)
-    return d.name if part is None else part.name
+    return d.label if part is None else part.label
 
 
 @operation(

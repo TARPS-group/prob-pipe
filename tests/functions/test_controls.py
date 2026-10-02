@@ -69,7 +69,7 @@ class TestTwoNamespaces:
         assert lifted.num_atoms == Function.DEFAULT_N_BROADCAST_SAMPLES
         assert lifted.provenance is not None
 
-    @pytest.mark.parametrize("name", ["name", "output_name", "output_spec", "input_spec"])
+    @pytest.mark.parametrize("name", ["name", "output_label", "output_spec", "input_spec"])
     def test_construction_metadata_is_not_a_control(self, name):
         wrapped = Function("identity", _identity)
 
@@ -114,7 +114,7 @@ class TestResolution:
 
         assert view.options["n_broadcast_samples"] == 11
         assert identity.options["n_broadcast_samples"] == 7
-        assert view.name == identity.name
+        assert view.label == identity.label
         assert view.spec is identity.spec
 
     def test_the_resolved_sample_count_governs_the_lift(self):

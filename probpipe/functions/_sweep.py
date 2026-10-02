@@ -60,7 +60,7 @@ def execute_sweep(
         Distribution,
     ],
     workflow_name: str,
-    output_name: str | None = None,
+    output_label: str | None = None,
     output_spec: OutputSpec | None = None,
     include_inputs: bool = False,
     output_template: RecordSpec | None = None,
@@ -77,7 +77,7 @@ def execute_sweep(
     if plan.regime not in ("sweep", "nested"):
         raise ValueError(f"execute_sweep requires a sweep plan; got {plan.regime!r}")
 
-    output_name = workflow_name if output_name is None else output_name
+    output_label = workflow_name if output_label is None else output_label
     array_args = list(plan.array_args)
     dist_args = list(plan.dist_args)
 
@@ -101,7 +101,7 @@ def execute_sweep(
             workflow_kind=workflow_kind,
             workflow_name=workflow_name,
             output_is_declared=output_spec is not None and output_spec.spec is not None,
-            output_name=output_name,
+            output_label=output_label,
         )
         if output_spec is not None:
             output_spec = _result._aggregate_output_spec(output_spec, per_row)
@@ -113,8 +113,8 @@ def execute_sweep(
             # by name with the batch it swept.
             level_names=plan.sweep_level_names,
             axis_groups=plan.sweep_axis_groups,
-            name=output_name,
-            field_name=output_name,
+            name=output_label,
+            field_name=output_label,
             output_spec=output_spec,
             output_template=output_template,
         )
@@ -134,7 +134,7 @@ def execute_sweep(
             aggregate,
             broadcast_mode=_result.BROADCAST_STACK,
             provenance=provenance,
-            field_name=output_name,
+            field_name=output_label,
         )
 
     if stochastic_plan is None:  # pragma: no cover - Function planning contract guard
@@ -156,8 +156,8 @@ def execute_sweep(
         batch_shape=plan.sweep_batch_shape,
         level_names=plan.sweep_level_names,
         axis_groups=plan.sweep_axis_groups,
-        name=output_name,
-        field_name=output_name,
+        name=output_label,
+        field_name=output_label,
     )
     provenance = make_sweep_provenance(
         values=values,
@@ -175,7 +175,7 @@ def execute_sweep(
         stacked,
         broadcast_mode=_result.BROADCAST_NESTED,
         provenance=provenance,
-        field_name=output_name,
+        field_name=output_label,
     )
 
 
@@ -222,7 +222,7 @@ def execute_sweep_rows(
     workflow_kind: WorkflowKind = WorkflowKind.OFF,
     workflow_name: str,
     output_is_declared: bool = False,
-    output_name: str,
+    output_label: str,
 ) -> Any:
     """Execute pure sweep rows through JAX vmap or row-wise execution."""
     # Zero rows run nothing, so there is no body for a dispatch to trace and no
@@ -273,7 +273,7 @@ def execute_sweep_rows(
             workflow_kind=workflow_kind,
             workflow_name=workflow_name,
             output_is_declared=output_is_declared,
-            output_name=output_name,
+            output_label=output_label,
         )
 
     per_row_values = [
@@ -367,14 +367,14 @@ def execute_sweep_rows_jax(
     workflow_kind: WorkflowKind = WorkflowKind.OFF,
     workflow_name: str,
     output_is_declared: bool = False,
-    output_name: str,
+    output_label: str,
 ) -> Any:
     """Execute the limited single-batch sweep through ``jax.vmap``."""
     single_call = mapped_row_body(
         func=func,
         values=values,
         array_args=array_args,
-        field_name=output_name,
+        field_name=output_label,
         output_is_declared=output_is_declared,
     )
 

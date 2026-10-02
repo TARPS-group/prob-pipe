@@ -135,7 +135,7 @@ def iterate[S](
 def _step_fn_name(step_fn: Callable) -> str:
     """Extract a human-readable name from a step function."""
     if isinstance(step_fn, Function):
-        return step_fn._name
+        return step_fn._label
     return getattr(step_fn, "__name__", type(step_fn).__name__)
 
 
@@ -253,13 +253,13 @@ def with_resampling(
                 indices = weighted_choice(key, n, weights=out_dist.weights, shape=(n,))
                 # The drawn atoms, equally weighted, on the one level resampling mints.
                 atoms = _batch_form(
-                    out_dist.name,
+                    out_dist.label,
                     out_dist._atoms_at(indices),
                     "resample",
                     out_dist.event_spec.spec,
                 )
                 resampled = EmpiricalDistribution(
-                    out_dist.name, atoms, event_spec=out_dist.event_spec
+                    out_dist.label, atoms, event_spec=out_dist.event_spec
                 )
                 resampled.with_provenance(
                     Provenance.create(

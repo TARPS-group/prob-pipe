@@ -617,7 +617,7 @@ class _PushforwardMean(_EvaluationRules):
         if not _lifts(f, parameter, operand):
             return Feasibility(
                 False,
-                f"{f.name!r} takes the law itself at {parameter!r}, so it has no draws to "
+                f"{f.label!r} takes the law itself at {parameter!r}, so it has no draws to "
                 f"integrate",
             )
         return super().probe(call, method=method, exact_only=exact_only)

@@ -71,8 +71,8 @@ class TestMarginal:
         assert marginal(joint, "beta").event_spec == Gaussian("beta").event_spec
 
     def test_the_marginal_is_labeled_by_the_law(self):
-        joint = (Kernel("y", ("beta",)) * Gaussian("beta")).with_name("model")
-        assert marginal(joint, "beta").name == "model"
+        joint = (Kernel("y", ("beta",)) * Gaussian("beta")).with_label("model")
+        assert marginal(joint, "beta").label == "model"
 
 
 class TestFactor:
@@ -83,9 +83,9 @@ class TestFactor:
         assert isinstance(factor(joint, "y"), ConditionalDistribution)
 
     def test_the_factor_keeps_its_own_label(self):
-        joint = (Kernel("likelihood", ("beta",), component="y") * Gaussian("beta")).with_name("m")
-        assert factor(joint, "y").name == "likelihood"
-        assert factor(joint, "beta").name == "beta"
+        joint = (Kernel("likelihood", ("beta",), component="y") * Gaussian("beta")).with_label("m")
+        assert factor(joint, "y").label == "likelihood"
+        assert factor(joint, "beta").label == "beta"
 
     def test_a_conditional_joint_exposes_its_factors_too(self):
         joint = Kernel("y", ("beta",)) * Kernel("beta", ("alpha",))

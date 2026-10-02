@@ -166,7 +166,7 @@ class TestEveryMemoHolderDropsItsMemoOnACopy:
 
     @pytest.fixture(
         params=[
-            pytest.param(lambda t: t.with_name("renamed"), id="with_name"),
+            pytest.param(lambda t: t.with_label("renamed"), id="with_label"),
             pytest.param(copy.copy, id="copy"),
             pytest.param(copy.deepcopy, id="deepcopy"),
             pytest.param(lambda t: pickle.loads(pickle.dumps(t)), id="pickle"),

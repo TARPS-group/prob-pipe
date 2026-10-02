@@ -61,7 +61,7 @@ class TestFunctionValueContract:
 
         assert isinstance(wrapped, TrackedTerm)
         assert isinstance(wrapped, Annotated)
-        assert wrapped.name == "increment"
+        assert wrapped.label == "increment"
         assert wrapped.provenance is None
         assert wrapped.annotations == {}
         wrapped.annotations["note"] = "append-only metadata"
@@ -76,17 +76,17 @@ class TestFunctionValueContract:
 
         named = Function(fn=lambda x: x, name="chosen")
 
-        assert automatic.name == "automatic"
-        assert named.name == "chosen"
+        assert automatic.label == "automatic"
+        assert named.label == "chosen"
 
     def test_rename_synchronizes_callable_metadata_and_records_provenance(
         self, full_provenance_mode
     ):
         wrapped = Function(name="function", fn=lambda x: x)
 
-        renamed = wrapped.with_name("identity")
+        renamed = wrapped.with_label("identity")
 
-        assert renamed.name == renamed.__name__ == renamed.__qualname__ == "identity"
+        assert renamed.label == renamed.__name__ == renamed.__qualname__ == "identity"
         assert inspect.signature(renamed) == wrapped.signature
         assert renamed.provenance is not None
         assert renamed.provenance.parents[0].parent is wrapped
@@ -844,7 +844,7 @@ class TestApplyContract:
 
         assert isinstance(result, Function)
         assert result.spec == learned.spec
-        assert result.output_name == learned.output_name
+        assert result.output_label == learned.output_label
         assert result is not learned
         assert result.provenance.parents[0].parent is wrapped
 
@@ -1336,7 +1336,7 @@ class TestDynamicImplementation:
             [inspect.Parameter("x", inspect.Parameter.POSITIONAL_OR_KEYWORD)]
         )
 
-        with pytest.raises(TypeError, match="non-empty name"):
+        with pytest.raises(TypeError, match="non-empty label"):
             Function._from_implementation(
                 _AddImplementation(1),
                 signature=signature,

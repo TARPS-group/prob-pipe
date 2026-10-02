@@ -53,7 +53,7 @@ def cloudpickle_roundtrip(obj):
 def test_record_pickle_roundtrip():
     r = Record("myrecord", x=jnp.array(1.0), y=jnp.array([2.0, 3.0]))
     r2 = roundtrip(r)
-    assert r2.name == "myrecord"
+    assert r2.label == "myrecord"
     assert r2.fields == ("x", "y")
     assert float(r2["x"]) == pytest.approx(1.0)
     assert list(r2["y"]) == pytest.approx([2.0, 3.0])
@@ -62,7 +62,7 @@ def test_record_pickle_roundtrip():
 def test_record_pickle_auto_name():
     r = Record("r", {"a": jnp.array(1.0), "b": jnp.array(2.0)})
     r2 = roundtrip(r)
-    assert r2.name == r.name
+    assert r2.label == r.label
     pass
     assert r2.fields == ("a", "b")
 

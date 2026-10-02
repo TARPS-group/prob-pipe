@@ -161,11 +161,11 @@ class TestMultivariateNormal:
         np.testing.assert_allclose(gaussian.cov, cov_matrix, atol=1e-5)
 
     def test_name(self, gaussian):
-        assert gaussian.name == "test_gaussian"
+        assert gaussian.label == "test_gaussian"
 
     def test_name_set(self, loc, cov_matrix):
         g = MultivariateNormal(loc=loc, cov=cov_matrix, name="z")
-        assert g.name == "z"
+        assert g.label == "z"
 
     def test_repr(self, gaussian):
         assert repr(gaussian) == (
@@ -182,7 +182,7 @@ class TestMultivariateNormal:
         )
         g2 = convert(ed, MultivariateNormal)
         np.testing.assert_allclose(g2.loc, gaussian.loc, atol=0.2)
-        assert g2.name == gaussian.name
+        assert g2.label == gaussian.label
         assert g2.provenance is not None
         assert g2.provenance.operation == "workflow.convert"
 
@@ -288,7 +288,7 @@ class TestEmpiricalDistribution:
 
     def test_name(self, simple_samples):
         ed = EmpiricalDistribution("emp", simple_samples)
-        assert ed.name == "emp"
+        assert ed.label == "emp"
 
     def test_from_distribution(self, gaussian):
         ed = convert.with_options(method_options={"num_samples": 50})(
@@ -298,14 +298,14 @@ class TestEmpiricalDistribution:
         assert ed.event_shape == gaussian.event_shape
         assert ed.provenance is not None
         assert ed.provenance.operation == "workflow.convert"
-        assert ed.name == gaussian.name
+        assert ed.label == gaussian.label
 
     def test_convert_keeps_the_source_label(self, gaussian):
         """A conversion changes the representation, so the raw result keeps the label."""
         ed = convert.with_options(raw=True, method_options={"num_samples": 10})(
             gaussian, EmpiricalDistribution
         )
-        assert ed.name == gaussian.name
+        assert ed.label == gaussian.label
         assert ed.event_spec == gaussian.event_spec
 
     def test_convert_default_key(self, gaussian):
@@ -485,7 +485,7 @@ class TestDistributionABC:
 
     def test_name(self, loc, cov_matrix):
         g = MultivariateNormal(loc=loc, cov=cov_matrix, name="z")
-        assert g.name == "z"
+        assert g.label == "z"
 
 
 # ---------------------------------------------------------------------------

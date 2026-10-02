@@ -285,7 +285,7 @@ def _numeric_array_batch_flatten(batch: NumericArrayBatch):
     ``__jax_array__`` is ever consulted, so a pandas- or xarray-backed batch
     could not enter a trace at all.
     """
-    return [batch.as_jax()], (batch._spec, batch._name)
+    return [batch.as_jax()], (batch._spec, batch._label)
 
 
 def _numeric_array_batch_unflatten(aux, children):
@@ -409,7 +409,7 @@ class _MappedBatchStore:
         """Carry *value*'s array, bound event declaration, and any batch levels."""
         if isinstance(value, NumericArrayBatch):
             return cls(
-                value._name,
+                value._label,
                 value._values,
                 element_spec=value.element_spec,
                 level_names=tuple(value.level_names),
@@ -419,10 +419,10 @@ class _MappedBatchStore:
             element_spec = value.spec
             if element_spec.free_dims:
                 bindings: dict[str, int] = {}
-                element_spec._bind_dims_from_value(value, bindings, value.name)
+                element_spec._bind_dims_from_value(value, bindings, value.label)
                 element_spec = element_spec._substitute_dims(bindings)
             return cls(
-                value.name,
+                value.label,
                 value.as_jax(),
                 element_spec=element_spec,
                 level_names=(),

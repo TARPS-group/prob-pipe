@@ -34,7 +34,7 @@ class TestTheFunction:
         wrapped = function(predict)
 
         assert isinstance(wrapped, Function)
-        assert wrapped.name == "predict"
+        assert wrapped.label == "predict"
         assert wrapped.raw() is predict
 
     def test_the_decorator_takes_construction_time_controls(self):

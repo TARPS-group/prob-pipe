@@ -361,7 +361,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
     __slots__ = (
         "_annotations",
-        "_name",
+        "_label",
         "_provenance",
         "_spec",
         "_tree",
@@ -509,10 +509,10 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         identity copy (fields and template shared) is stored under the key
         name. Access names the nested view at its construction.
         """
-        if child._name == field_name:
+        if child._label == field_name:
             return child
         renamed = child._shallow_copy()
-        object.__setattr__(renamed, "_name", field_name)
+        object.__setattr__(renamed, "_label", field_name)
         return renamed
 
     def _validate_event_template(
@@ -569,7 +569,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
     # -- Name & provenance --------------------------------------------------
     #
-    # ``name`` / ``provenance`` / ``with_name`` /
+    # ``name`` / ``provenance`` / ``with_label`` /
     # ``with_provenance`` are provided by the
     # :class:`~probpipe.core.tracked.TrackedTerm` mixin, and ``annotations`` by
     # :class:`~probpipe.core.tracked.Annotated`. Semantic transformations
@@ -678,7 +678,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         source = leaf if isinstance(leaf, TrackedTerm) else None
         provenance = Provenance.of_view(self, source, metadata={"path": key})
         if isinstance(leaf, TrackedTerm) and not isinstance(leaf, NumericArray | Opaque):
-            view = leaf.with_name(key) if leaf.name != key else leaf._shallow_copy()
+            view = leaf.with_label(key) if leaf.label != key else leaf._shallow_copy()
             object.__setattr__(view, "_provenance", None)
             return view.with_provenance(provenance)
         value = _leaf_value(leaf)
@@ -708,7 +708,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
     def _rebuild_node(self, leaves: Mapping[str, Any], *, node_name: str | None) -> Record:
         # A new nested view takes its field key; a transformed root keeps its name.
-        name = self._name if node_name is None else node_name
+        name = self._label if node_name is None else node_name
         return self._rebuild_class()(name, leaves)
 
     # -- Selection ----------------------------------------------------------
@@ -774,7 +774,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         The rebuilt record preserves the root's name and derives its numeric
         kind from the resulting template.
         """
-        return self._rebuild_class()(self._name, children, event_template=event_template)
+        return self._rebuild_class()(self._label, children, event_template=event_template)
 
     def without(self, *paths: str) -> Record:
         """Return a new Record without the fields/subtrees at *paths*.
@@ -897,7 +897,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                 new_children[name] = child
                 specs[name] = self._child_spec(name, child)
         return self._rebuild_class()(
-            self._name,
+            self._label,
             new_children,
             event_template=RecordSpec(specs),
         )
@@ -917,7 +917,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         is the exact path of a node and each target its new exact path. The
         authoritative :attr:`event_template` is renamed by the same rule, so the
         subtree invariant holds on the result. The record keeps its name, since
-        ``with_name`` renames the record itself, and the result carries no
+        ``with_label`` renames the record itself, and the result carries no
         provenance.
 
         Raises
@@ -991,7 +991,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         from ._numeric_record import NumericRecord
 
         return NumericRecord(
-            self._name,
+            self._label,
             {
                 field_name: val.to_numeric() if isinstance(val, Record) else val
                 for field_name, val in self._tree.items()
@@ -1101,7 +1101,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     def __repr__(self) -> str:
         """The label, then the field paths in canonical order, read from the schema."""
         return term_repr(
-            public_class_name(type(self)), self.name, [("fields", format_names(self.keys()))]
+            public_class_name(type(self)), self.label, [("fields", format_names(self.keys()))]
         )
 
     # -- Call-forwarding shim for single-field Records ----------------------
@@ -1307,7 +1307,7 @@ def _record_flatten(v: Record) -> tuple[list, tuple[RecordSpec, str]]:
     # record built with an explicit template ordered differently would
     # otherwise zip each value against the wrong field name.
     children = [v._tree[name] for name in v.event_template.children]
-    return children, (v._spec, v._name)
+    return children, (v._spec, v._label)
 
 
 def _record_unflatten(aux: tuple[RecordSpec, str], children: list) -> Record:

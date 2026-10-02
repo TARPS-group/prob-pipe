@@ -96,7 +96,7 @@ class Provenance:
     ----------
     operation : str
         The operation that produced the object (e.g. ``"broadcast"``,
-        ``"condition_on"``, ``"with_name"``).
+        ``"condition_on"``, ``"with_label"``).
     parents : tuple of ParentInfo
         Descriptors of tracked terms the operation consumed. Only these
         descriptors participate in ancestry traversal.
@@ -134,7 +134,7 @@ class Provenance:
         )
 
     def __repr__(self) -> str:
-        parent_names = ", ".join(p.name or p.type_name for p in self.parents)
+        parent_names = ", ".join(p.label or p.type_name for p in self.parents)
         return f"Provenance({self.operation!r}, parents=[{parent_names}])"
 
     # -- Serialization -----------------------------------------------------
@@ -226,7 +226,7 @@ class Provenance:
         parents = tuple(
             ParentInfo(
                 type_name=type(parent).__name__,
-                name=getattr(parent, "name", None),
+                name=getattr(parent, "label", None),
                 provenance=getattr(parent, "provenance", None),
                 fingerprint=_identity_fingerprint(parent),
                 parent=parent if keep else None,
@@ -290,13 +290,13 @@ class Provenance:
                 logger.warning(
                     "fingerprint() failed for %s %r: %s",
                     type(p).__name__,
-                    getattr(p, "name", None),
+                    getattr(p, "label", None),
                     exc,
                 )
                 fp = None
             return ParentInfo(
                 type_name=type(p).__name__,
-                name=getattr(p, "name", None),
+                name=getattr(p, "label", None),
                 provenance=getattr(p, "provenance", None),
                 fingerprint=fp,
                 parent=p if keep else None,
@@ -458,7 +458,7 @@ def provenance_dag(node: ProvenanceNode):
         if id(value) in visited:
             return nid
         visited.add(id(value))
-        dot.node(nid, _label(type(value).__name__, value.name or ""))
+        dot.node(nid, _label(type(value).__name__, value.label or ""))
         if value.provenance is not None:
             for p in value.provenance.parents:
                 _visit_parent(p, nid, value.provenance.operation)

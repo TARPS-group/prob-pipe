@@ -118,7 +118,7 @@ def function(
     name: str | None = None,
     input_spec: InputSpec | Mapping[str, TermSpec] | None = None,
     output_spec: OutputSpec | TermSpec | None = None,
-    output_name: str | None = None,
+    output_label: str | None = None,
     differentiable: NumericSpec | None = None,
     bind: Mapping[str, Any] | None = None,
     module: Any | None = None,
@@ -150,7 +150,7 @@ def function(
     name : str or None
         The function label, defaulting to the decorated callable's ``__name__``.
         A callable with none, such as a ``functools.partial``, needs it.
-    input_spec, output_spec, output_name, differentiable, bind, module
+    input_spec, output_spec, output_label, differentiable, bind, module
         The declarations and construction bindings :class:`Function` takes.
     **controls : Any
         The engine's controls, which :class:`Function` lists.
@@ -182,7 +182,7 @@ def function(
             func,
             input_spec=input_spec,
             output_spec=output_spec,
-            output_name=output_name,
+            output_label=output_label,
             differentiable=differentiable,
             bind=bind,
             module=module,
@@ -256,7 +256,7 @@ def _make_execution_config(
     return _execution.WorkflowExecutionConfig(
         mode=mode,
         max_workers=function.options["max_workers"] if mode == "thread" else None,
-        name=function._name,
+        name=function._label,
         prefect_task_runner=(prefect_config.resolve_task_runner() if is_prefect else None),
     )
 
@@ -307,7 +307,7 @@ def _result_label(function: Function, values: Mapping[str, Any]) -> str:
     label its operands give it (II.4).
     """
     derive = getattr(function, "_derived_label", None)
-    return function.output_name if derive is None else derive(values)
+    return function.output_label if derive is None else derive(values)
 
 
 def _keeping_route_record(term: Any, value: Any) -> Any:
@@ -350,7 +350,7 @@ def _realized_point(
         If the result does not satisfy the declaration.
     """
     point, result, _ = function._plan_point(values, controls)
-    candidate, report = _resolution.selected(function.name, controls, candidates, point, result)
+    candidate, report = _resolution.selected(function.label, controls, candidates, point, result)
     value = candidate.run(point, result, report)
     term = _result.declared_term(value, result, _result_label(function, values))
     return _keeping_route_record(term, value)
@@ -369,7 +369,7 @@ def _run_call(
         bind=function._bind,
         module=function._module,
         dependency_type=Node,
-        workflow_name=function._name,
+        workflow_name=function._label,
         default_n_broadcast_samples=function.options["n_broadcast_samples"],
         default_include_inputs=function.options["include_inputs"],
         options=options,
@@ -384,7 +384,7 @@ def _run_call(
         function._signature_info,
         values,
         input_spec=function.input_spec,
-        function_name=function._name,
+        function_name=function._label,
         roles=function._roles,
     )
     broadcast_plan = _plan.build_broadcast_plan(
@@ -399,7 +399,9 @@ def _run_call(
     if candidates is not None and broadcast_plan.regime == "none":
         # The routes realize the one point, so the selection is the call's route.
         point, result, _ = function._plan_point(values, controls)
-        candidate, report = _resolution.selected(function.name, controls, candidates, point, result)
+        candidate, report = _resolution.selected(
+            function.label, controls, candidates, point, result
+        )
         selection = (point, result, candidate, report)
         route = _Route(
             candidate.route_name,
@@ -439,7 +441,7 @@ def _run_call(
     )
     _replay._validate_active_plan(_recipe.serialize_stochastic_plan(stochastic_plan))
     _, invocation_bindings = _bind_planned_function_inputs(
-        function_name=function._name,
+        function_name=function._label,
         input_spec=function.input_spec,
         values=values,
         lifted_names={
@@ -484,7 +486,7 @@ def _run_call(
             return _realized_point(function, point_values, controls, candidates)
         try:
             _, point_bindings = _bind_function_inputs(
-                function_name=function._name,
+                function_name=function._label,
                 input_spec=function.input_spec,
                 values=point_values,
                 bindings=invocation_bindings,
@@ -494,12 +496,12 @@ def _run_call(
         context = _FunctionInvocationContext(point_bindings)
         result = _result._batch_from_declared_sequence(
             function._invoke_resolved(point_values, context=context),
-            function_name=function.output_name,
+            function_name=function.output_label,
             output_spec=function.output_spec,
         )
         try:
             point_output_spec = _validate_function_output(
-                function_name=function._name,
+                function_name=function._label,
                 output_spec=function.output_spec,
                 result=result,
                 bindings=context.dimension_bindings,
@@ -509,7 +511,7 @@ def _run_call(
         if point_output_spec is not None:
             result = _wrap_declared_function_output(
                 result,
-                function_name=function.output_name,
+                function_name=function.output_label,
                 output_spec=point_output_spec,
             )
         return result
@@ -575,8 +577,8 @@ def _run_call(
             requested_dispatch=function.options["dispatch"],
             resolve_dispatch=resolve_dispatch,
             require_jax_traceable=require_jax_traceable,
-            workflow_name=function._name,
-            output_name=label,
+            workflow_name=function._label,
+            output_label=label,
             output_spec=concrete_output_spec,
             workflow_kind=workflow_kind,
             output_template=concrete_output_template,
@@ -628,8 +630,8 @@ def _run_call(
             resolve_dispatch=resolve_dispatch,
             require_jax_traceable=require_jax_traceable,
             distribution_broadcast=distribution_broadcast,
-            workflow_name=function._name,
-            output_name=label,
+            workflow_name=function._label,
+            output_label=label,
             output_spec=concrete_output_spec,
             include_inputs=call.overrides.include_inputs,
             output_template=concrete_output_template,
@@ -660,7 +662,7 @@ def _run_call(
         ),
     )
     result = _execution.execute_many(request)[0]
-    name = function._name
+    name = function._label
     controls, diagnostics = _recipe.provenance_recipe_fields(None)
     provenance = Provenance.create(
         f"workflow.{name}",
@@ -749,7 +751,7 @@ def _jax_traceability_error(
                     func=func,
                     values=dummy_kw,
                     array_args=refs,
-                    field_name=function.output_name,
+                    field_name=function.output_label,
                     output_is_declared=(
                         function.output_spec is not None and function.output_spec.spec is not None
                     ),
@@ -816,7 +818,7 @@ def _jax_traceability_error(
                     # names, as the law's own draws are.
                     if root.event_spec.exposes_record:
                         root_probe = NumericRecordBatch(
-                            root.name,
+                            root.label,
                             columns,
                             "draw",
                             element_spec=template,
@@ -937,7 +939,7 @@ def _resolve_dispatch(
     else:
         logger.info(
             "Function '%s' is not JAX-traceable; using sequential dispatch.",
-            function._name,
+            function._label,
         )
         return "sequential"
 
@@ -1025,7 +1027,7 @@ def _resolve_route(
         )
         restriction = " with exact_only" if function.options["exact_only"] else ""
         raise ResolutionError(
-            f"{function.name}: no evaluation rule realizes the call lifting {ref.label!r}"
+            f"{function.label}: no evaluation rule realizes the call lifting {ref.label!r}"
             f"{restriction}. {detail}"
         )
     return route
@@ -1048,7 +1050,7 @@ def _route_report(
         if method is not None:
             return MethodInfo(
                 False,
-                f"{function.name}: a call that lifts nothing has its body as its one route, "
+                f"{function.label}: a call that lifts nothing has its body as its one route, "
                 f"so method={method!r} names no route; a method names an evaluation rule of a "
                 f"call that lifts an argument",
             ), None
@@ -1113,7 +1115,7 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
         bind=function._bind,
         module=function._module,
         dependency_type=Node,
-        workflow_name=function._name,
+        workflow_name=function._label,
         default_n_broadcast_samples=function.options["n_broadcast_samples"],
         default_include_inputs=function.options["include_inputs"],
         options=_call.WorkflowCallOptions(),
@@ -1127,7 +1129,7 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
         function._signature_info,
         values,
         input_spec=function.input_spec,
-        function_name=function._name,
+        function_name=function._label,
         roles=function._roles,
     )
     broadcast_plan = _plan.build_broadcast_plan(
@@ -1140,7 +1142,7 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
         )
     lifted_refs = (*broadcast_plan.array_args, *broadcast_plan.dist_args)
     _, bindings = _bind_planned_function_inputs(
-        function_name=function._name,
+        function_name=function._label,
         input_spec=function.input_spec,
         values=values,
         lifted_names={ref.parameter_name for ref in lifted_refs},
@@ -1246,9 +1248,9 @@ def _run_registered_rule(
     )
     controls, diagnostics = _recipe.provenance_recipe_fields(None)
     provenance = Provenance.create(
-        f"workflow.{function._name}",
+        f"workflow.{function._label}",
         parents=provenance_parents,
-        metadata={"func": function._name, **route.metadata},
+        metadata={"func": function._label, **route.metadata},
         inputs=provenance_inputs,
         controls=controls,
         diagnostics=diagnostics,
@@ -1307,7 +1309,7 @@ class _CallEngine:
         _call.admit_arguments(
             function._signature_info,
             values,
-            function_name=function._name,
+            function_name=function._label,
             roles=function._roles,
             lifts=False,
         )

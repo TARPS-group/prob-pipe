@@ -1,7 +1,7 @@
 """Naming across the tracked terms, the batches, and the operations.
 
 Every tracked term receives its name at construction and preserves it through
-structural transforms. Only ``with_name`` replaces it. New operation results
+structural transforms. Only ``with_label`` replaces it. New operation results
 and accessed views receive their names when constructed, across every kind.
 """
 
@@ -106,16 +106,16 @@ class TestNamesAreKept:
 
     @pytest.mark.parametrize("kind", EVERY_KIND)
     def test_a_given_name_is_kept_verbatim(self, kind):
-        assert _named(kind).name == "given"
+        assert _named(kind).label == "given"
 
     @pytest.mark.parametrize("kind", EVERY_KIND)
     def test_name_origin_is_not_part_of_the_public_term(self, kind):
         term = _named(kind)
         assert not hasattr(term, "name_is_auto")
         assert not hasattr(term, "_name_is_auto")
-        renamed = term.with_name("replacement")
-        assert renamed.name == "replacement"
-        assert term.name == "given"
+        renamed = term.with_label("replacement")
+        assert renamed.label == "replacement"
+        assert term.label == "given"
         assert not hasattr(renamed, "name_is_auto")
 
     @pytest.mark.parametrize("kind", [Record, NumericRecord])
@@ -123,7 +123,7 @@ class TestNamesAreKept:
         record = kind("flags", name_is_auto=True)
         assert tuple(record) == ("name_is_auto",)
         assert bool(record["name_is_auto"])
-        assert record.name == "flags"
+        assert record.label == "flags"
 
 
 class TestWhichKindsRequireAName:
@@ -168,7 +168,7 @@ class TestWhichKindsRequireAName:
         def predict():
             return 1.0
 
-        assert Function(name="predict", fn=predict).name == "predict"
+        assert Function(name="predict", fn=predict).label == "predict"
 
 
 class TestADerivedNameSaysSo:
@@ -186,16 +186,16 @@ class TestADerivedNameSaysSo:
     def test_an_element_is_named_for_its_position(self):
         element = self._batch()[1]
 
-        assert element.name == "posterior[draw=1]"
+        assert element.label == "posterior[draw=1]"
 
     def test_a_sub_batch_is_named_for_its_slice(self):
         sub = self._batch()[1:3]
 
-        assert sub.name == "posterior[draw=1:3]"
+        assert sub.label == "posterior[draw=1:3]"
 
     def test_a_derived_name_builds_on_the_given_one(self):
         """So the lineage reads back to the batch a caller actually named."""
-        assert self._batch()[1].name.startswith("posterior")
+        assert self._batch()[1].label.startswith("posterior")
 
 
 class TestAnOperationLabelsItsResultByItsLaw:
@@ -213,19 +213,19 @@ class TestAnOperationLabelsItsResultByItsLaw:
         ids=["mean", "variance", "log_prob"],
     )
     def test_a_scalar_law_result_takes_the_laws_label(self, compute):
-        assert compute(self.LAW).name == "height"
+        assert compute(self.LAW).label == "height"
 
     def test_a_record_law_draw_takes_the_laws_label(self):
         joint = FactoredDistribution("joint", [Normal("a", 0.0, 1.0)])
 
-        assert sample(joint).name == "joint"
+        assert sample(joint).label == "joint"
 
     @pytest.mark.parametrize("sample_shape", [(), (4,)], ids=["single", "batch"])
     def test_draws_take_the_laws_label(self, sample_shape):
         """Both a single draw and a batch cross the same result boundary."""
         given = sample(Normal("height", 0.0, 1.0), sample_shape=sample_shape)
 
-        assert given.name == "height"
+        assert given.label == "height"
 
 
 class TestTheOutputBoundaryNamesEveryKindAlike:
@@ -246,7 +246,7 @@ class TestTheOutputBoundaryNamesEveryKindAlike:
     def test_the_result_takes_the_functions_name(self, label, body):
         result = Function(fn=body, name="myfunc")()
 
-        assert result.name == "myfunc"
+        assert result.label == "myfunc"
 
 
 class TestLevelsAreNamedForWhatMintsThem:
@@ -313,7 +313,7 @@ class TestLevelsAreNamedForWhatMintsThem:
             sample_shape=(3,),
         )
 
-        assert drawn.name == "atoms"
+        assert drawn.label == "atoms"
 
 
 class TestABatchOperandKeepsItsLevelsThroughAnOperation:
@@ -333,7 +333,7 @@ class TestABatchOperandKeepsItsLevelsThroughAnOperation:
     LAW = Normal("height", 0.0, 1.0)
 
     @pytest.fixture(
-        params=[log_prob, prob, unnormalized_log_prob, unnormalized_prob], ids=lambda op: op.name
+        params=[log_prob, prob, unnormalized_log_prob, unnormalized_prob], ids=lambda op: op.label
     )
     def density_op(self, request):
         return request.param
@@ -348,7 +348,7 @@ class TestABatchOperandKeepsItsLevelsThroughAnOperation:
     def test_the_result_takes_the_laws_label(self, density_op):
         drawn = sample(self.LAW, sample_shape=(3,))
 
-        assert density_op(self.LAW, drawn).name == "height"
+        assert density_op(self.LAW, drawn).label == "height"
 
     def test_several_levels_are_all_restated(self, density_op):
         """The operand's own tiling, not one flat axis."""
@@ -386,7 +386,7 @@ class TestRawDrawNaming:
             OutputSpec(template) if isinstance(value, dict) else OutputSpec(x=template["x"])
         )
         result = _wrap_as_term(value, "sample", declaration, name="law")
-        assert result.name == "law"
+        assert result.label == "law"
         assert result.spec == declaration.spec
         assert float(result["x"] if isinstance(result, Record) else result) == 2.0
 
@@ -428,14 +428,14 @@ class TestEveryAggregateIsNamedForItsFunction:
     def test_an_undeclared_aggregate_is_named_for_the_function(self, label, body):
         result = self._swept(body)
 
-        assert result.name == "double"
+        assert result.label == "double"
 
     def test_a_declared_aggregate_is_named_the_same_way(self):
         from probpipe import RecordSpec
 
         result = self._swept(lambda v: {"y": jnp.asarray(v["x"])}, output_spec=RecordSpec(y=()))
 
-        assert result.name == "double"
+        assert result.label == "double"
 
     def test_a_multi_axis_sweep_is_named_the_same_way(self):
         """The re-cut to the sweep's own geometry is a separate construction, and
@@ -453,7 +453,7 @@ class TestEveryAggregateIsNamedForItsFunction:
             fn=lambda v: {"y": jnp.asarray(v["x"])}, name="double", dispatch="sequential"
         )(v=grid)
 
-        assert result.name == "double"
+        assert result.label == "double"
         assert result.level_names == ("a", "b")
 
 
@@ -479,14 +479,14 @@ class TestNoKindInventsAName:
 
         batch = NumericRecordBatch.stack(rows, level_name="row")
 
-        assert batch.name == "draw"
+        assert batch.label == "draw"
 
     def test_stack_takes_a_better_name_when_offered(self):
         rows = [NumericRecord("draw", a=float(i)) for i in range(3)]
 
         batch = NumericRecordBatch.stack(rows, level_name="row", name="posterior")
 
-        assert batch.name == "posterior"
+        assert batch.label == "posterior"
 
     def test_a_structural_transform_preserves_the_name(self):
         """There is no class-name default to re-derive from, and an auto name is
@@ -500,4 +500,4 @@ class TestNoKindInventsAName:
 
         edited = batch.without("b")
 
-        assert edited.name == "derived"
+        assert edited.label == "derived"

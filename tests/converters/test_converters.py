@@ -133,7 +133,7 @@ class TestMomentMatching:
     def test_the_fit_keeps_the_source_label_and_component(self):
         g = Gamma(concentration=9.0, rate=1.0, name="g", event_spec=OutputSpec(theta=None))
         result = converter_registry.convert(g, Normal)
-        assert result.name == "g"
+        assert result.label == "g"
         assert list(result.event_spec.components) == ["theta"]
 
     def test_support_mismatch_raises_by_default(self):

@@ -78,7 +78,7 @@ _FORWARDED_CONTROLS = (
 
 def _describe(operand: Any) -> str:
     """The operand's kind and name, for a report."""
-    name = getattr(operand, "name", None)
+    name = getattr(operand, "label", None)
     return type(operand).__name__ if name is None else f"{type(operand).__name__} {name!r}"
 
 

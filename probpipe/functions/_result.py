@@ -188,7 +188,7 @@ def _coerce_output(
 ) -> Any:
     """Return an independently labeled term with this call's provenance.
 
-    ``field_name`` is the Function's output_name, separate from the function
+    ``field_name`` is the Function's output_label, separate from the function
     label in provenance and the declared output components. A tracked
     return is shallow-copied, sharing value data while owning its metadata.
     """
@@ -198,7 +198,7 @@ def _coerce_output(
     if isinstance(value, TrackedTerm):
         if value is raw_value or value.provenance is not None:
             value = _copy_result_term(value)
-        object.__setattr__(value, "_name", field_name)
+        object.__setattr__(value, "_label", field_name)
         from ..values import Function
 
         if isinstance(value, Function):
@@ -233,7 +233,7 @@ def _copy_result_term(value: TrackedTerm, *, output_spec: OutputSpec | None = No
             from ..values._function_base import _validate_function_declarations
 
             _validate_function_declarations(
-                function_name=clone.name,
+                function_name=clone.label,
                 signature=clone.signature,
                 input_spec=spec.input_spec,
                 construction_bindings=clone._bind,

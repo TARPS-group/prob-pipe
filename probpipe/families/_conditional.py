@@ -126,8 +126,8 @@ class _Link(Function, SupportsInverse):
 
     def __reduce__(self) -> tuple[Any, ...]:
         """A canonical link pickles as a reference to the module's own instance."""
-        if _CANONICAL_LINKS.get(self.name) is self:
-            return (_canonical_link, (self.name,))
+        if _CANONICAL_LINKS.get(self.label) is self:
+            return (_canonical_link, (self.label,))
         return super().__reduce__()
 
 
@@ -148,7 +148,7 @@ _LOGIT_LINK = _Link("logit", _logit, jax.nn.sigmoid)
 _LOG_LINK = _Link("log", _log, jnp.exp)
 
 #: The canonical links by name, which a pickle of one names.
-_CANONICAL_LINKS = {link.name: link for link in (_IDENTITY_LINK, _LOGIT_LINK, _LOG_LINK)}
+_CANONICAL_LINKS = {link.label: link for link in (_IDENTITY_LINK, _LOGIT_LINK, _LOG_LINK)}
 
 
 def _canonical_link(name: str) -> _Link:
@@ -171,7 +171,7 @@ def _require_invertible(link: Any, owner: str) -> None:
         raise TypeError(f"{owner} takes a link Function, got {type(link).__name__}")
     if not is_invertible(link):
         raise ResolutionError(
-            f"the link {link.name!r} of {owner} is not invertible: it does not claim "
+            f"the link {link.label!r} of {owner} is not invertible: it does not claim "
             f"SupportsInverse"
         )
 
@@ -537,7 +537,7 @@ class _GLMLikelihood(
         """
         bindings: dict[str, int] = {}
         for slot, value in values.items():
-            self.given_spec[slot]._bind_dims_from_value(value, bindings, f"{self.name}/{slot}")
+            self.given_spec[slot]._bind_dims_from_value(value, bindings, f"{self.label}/{slot}")
         remaining = InputSpec(
             {
                 slot: spec._substitute_dims(bindings)
@@ -599,7 +599,7 @@ class _GLMLikelihood(
         values = {**dict(top.items()), **kwargs}
         unknown = set(values) - set(self.given_spec)
         if unknown:
-            raise KeyError(f"{sorted(unknown)} are not given slots of {self.name!r}")
+            raise KeyError(f"{sorted(unknown)} are not given slots of {self.label!r}")
         return {slot: jnp.asarray(value) for slot, value in values.items()}
 
     def _complete_values(self, given: Record | Mapping[str, Any]) -> dict[str, Array]:
@@ -613,7 +613,7 @@ class _GLMLikelihood(
         values = self._given_values(given, {})
         missing = set(self.given_spec) - set(values)
         if missing:
-            raise KeyError(f"{self.name!r} needs a value for every given slot; {sorted(missing)}")
+            raise KeyError(f"{self.label!r} needs a value for every given slot; {sorted(missing)}")
         return values
 
     def _law(self, values: Mapping[str, Array]) -> Distribution:
@@ -636,10 +636,10 @@ class _GLMLikelihood(
         dispersion = every.get("dispersion")
         if self._canonical:
             return self._family._build_canonical(
-                self.name, predictor, dispersion, event_spec=event_spec
+                self.label, predictor, dispersion, event_spec=event_spec
             )
         return self._family.build(
-            self.name, self._link._inverse(predictor), dispersion, event_spec=event_spec
+            self.label, self._link._inverse(predictor), dispersion, event_spec=event_spec
         )
 
     def _observation_log_prob(

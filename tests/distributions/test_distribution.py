@@ -111,53 +111,53 @@ _NO_BATCH_SHAPE_DISTS = [
 
 
 class TestWithNameBasics:
-    """Distribution.with_name() returns a new object with a new name."""
+    """Distribution.with_label() returns a new object with a new name."""
 
     def test_returns_new_object(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
-        n2 = n.with_name("y")
+        n2 = n.with_label("y")
         assert n is not n2
-        assert n.name == "x"  # original unchanged
-        assert n2.name == "y"
+        assert n.label == "x"  # original unchanged
+        assert n2.label == "y"
 
     def test_is_same_type(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
-        assert type(n.with_name("y")) is type(n)
+        assert type(n.with_label("y")) is type(n)
 
     def test_is_shallow_copy(self):
         """Underlying parameters are shared (not deep-copied)."""
         n = Normal(loc=0.0, scale=1.0, name="x")
-        n2 = n.with_name("y")
+        n2 = n.with_label("y")
         assert n2._loc is n._loc  # shared array
         assert n2._scale is n._scale
 
 
 class TestWithNameProvenance:
-    """with_name() attaches a 'with_name' Provenance pointing to the original."""
+    """with_label() attaches a 'with_label' Provenance pointing to the original."""
 
     def test_provenance_operation(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
-        n2 = n.with_name("y")
+        n2 = n.with_label("y")
         assert n2.provenance is not None
-        assert n2.provenance.operation == "with_name"
+        assert n2.provenance.operation == "with_label"
 
     def test_provenance_parents(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
-        n2 = n.with_name("y")
+        n2 = n.with_label("y")
         assert len(n2.provenance.parents) == 1
         assert n2.provenance.parents[0].name == "x"
 
     def test_provenance_metadata(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
-        n2 = n.with_name("y")
-        assert n2.provenance.metadata["old_name"] == "x"
-        assert n2.provenance.metadata["new_name"] == "y"
+        n2 = n.with_label("y")
+        assert n2.provenance.metadata["old_label"] == "x"
+        assert n2.provenance.metadata["new_label"] == "y"
 
     def test_rename_chain_preserves_ancestry(self, full_provenance_mode):
-        """a.with_name("b").with_name("c") keeps a in the ancestor DAG."""
+        """a.with_label("b").with_label("c") keeps a in the ancestor DAG."""
         a = Normal(loc=0.0, scale=1.0, name="a")
-        b = a.with_name("b")
-        c = b.with_name("c")
+        b = a.with_label("b")
+        c = b.with_label("c")
         ancestors = provenance_ancestors(c)
         assert any(anc.parent is a for anc in ancestors)
         assert any(anc.parent is b for anc in ancestors)
@@ -166,7 +166,7 @@ class TestWithNameProvenance:
         """Renaming does not alter the original's source."""
         n = Normal(loc=0.0, scale=1.0, name="x")
         n.with_provenance(Provenance("construction", parents=()))
-        n.with_name("y")
+        n.with_label("y")
         assert n.provenance.operation == "construction"
 
 
@@ -175,7 +175,7 @@ class TestWithNameSampling:
 
     def test_sample_statistics_match(self):
         n = Normal(loc=2.0, scale=0.5, name="x")
-        n2 = n.with_name("mu")
+        n2 = n.with_label("mu")
         key = jax.random.PRNGKey(0)
         s1 = n._sample(key, (2000,))
         s2 = n2._sample(key, (2000,))
@@ -184,7 +184,7 @@ class TestWithNameSampling:
 
     def test_log_prob_matches(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
-        n2 = n.with_name("z")
+        n2 = n.with_label("z")
         x = jnp.asarray(1.23)
         np.testing.assert_allclose(
             float(n._log_prob(x)),
@@ -194,23 +194,23 @@ class TestWithNameSampling:
 
     def test_event_shape_matches(self):
         mvn = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="a")
-        renamed = mvn.with_name("b")
+        renamed = mvn.with_label("b")
         assert renamed.event_shape == mvn.event_shape
 
 
 class TestWithNameRecordSpec:
-    """with_name() changes the name and keeps the event component (III.7)."""
+    """with_label() changes the name and keeps the event component (III.7)."""
 
     def test_template_field_stays_the_component(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
-        n2 = n.with_name("growth_rate")
-        assert n2.name == "growth_rate"
+        n2 = n.with_label("growth_rate")
+        assert n2.label == "growth_rate"
         assert n2.event_spec is n.event_spec
         assert tuple(n2.event_spec.components) == ("x",)
 
     def test_template_shape_preserved(self):
         mvn = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="a")
-        b = mvn.with_name("b")
+        b = mvn.with_label("b")
         assert tuple(b.event_spec.components) == ("a",)
         assert b.event_spec.spec.shape == mvn.event_spec.spec.shape == (3,)
 
@@ -292,7 +292,7 @@ class TestDistributionRepr:
                 super().__init__("x", OutputSpec(beta=OpaqueSpec()))
 
         assert repr(Named()) == "Named('x', event_spec=OutputSpec(beta=OpaqueSpec()))"
-        assert repr(Named().with_name("y")) == (
+        assert repr(Named().with_label("y")) == (
             "Named('y', event_spec=OutputSpec(beta=OpaqueSpec()))"
         )
 
@@ -308,7 +308,7 @@ class TestConstructorNameCheck:
             def __init__(self, name):
                 super().__init__(name, OpaqueSpec())
 
-        with pytest.raises(TypeError, match="requires a non-empty name"):
+        with pytest.raises(TypeError, match="requires a non-empty label"):
             _Dist(name)
 
 
@@ -330,7 +330,7 @@ class TestMetaclassEnforcement:
                 # setting self._name.
                 pass
 
-        with pytest.raises(TypeError, match="non-empty name"):
+        with pytest.raises(TypeError, match="non-empty label"):
             _NoNameDist()
 
     def test_subclass_with_empty_string_name_raises(self):
@@ -342,7 +342,7 @@ class TestMetaclassEnforcement:
             def __init__(self):
                 self._name = ""
 
-        with pytest.raises(TypeError, match="non-empty name"):
+        with pytest.raises(TypeError, match="non-empty label"):
             _EmptyNameDist()
 
     def test_subclass_with_non_string_name_raises(self):
@@ -353,23 +353,23 @@ class TestMetaclassEnforcement:
             def __init__(self):
                 self._name = 123
 
-        with pytest.raises(TypeError, match="non-empty name"):
+        with pytest.raises(TypeError, match="non-empty label"):
             _NonStringNameDist()
 
     def test_subclass_setting_name_directly_succeeds(self):
         """Bypassing ``super().__init__`` is fine as long as
-        ``self._name`` ends up set to a non-empty string and the event is
+        ``self._label`` ends up set to a non-empty string and the event is
         declared."""
         from probpipe import Distribution
 
         class _DirectNameDist(Distribution):
             def __init__(self):
                 # Skip super().__init__ deliberately.
-                self._name = "direct"
+                self._label = "direct"
                 self._init_declaration(OpaqueSpec())
 
         dist = _DirectNameDist()
-        assert dist.name == "direct"
+        assert dist.label == "direct"
         assert dist.event_spec == OutputSpec(direct=OpaqueSpec())
 
     @pytest.mark.parametrize("base", [Distribution, NumericDistribution])
@@ -379,14 +379,14 @@ class TestMetaclassEnforcement:
 
         class _NoDeclaration(base):
             def __init__(self):
-                self._name = "undeclared"
+                self._label = "undeclared"
 
         with pytest.raises(TypeError, match=r"_NoDeclaration\.__init__ left the event undeclared"):
             _NoDeclaration()
 
 
 class TestWithNameTemplateRoundtrip:
-    """``with_name`` keeps a declared law's event component; explicit and
+    """``with_label`` keeps a declared law's event component; explicit and
     multi-field templates are preserved.
     """
 
@@ -397,10 +397,10 @@ class TestWithNameTemplateRoundtrip:
         from probpipe import Normal
 
         original = Normal(loc=0.0, scale=1.0, name="x")
-        clone = original.with_name("y")
-        assert clone.name == "y"
+        clone = original.with_label("y")
+        assert clone.label == "y"
         assert tuple(clone.event_spec.components) == ("x",)
-        assert original.name == "x"
+        assert original.label == "x"
         assert tuple(original.event_spec.components) == ("x",)
 
     def test_with_name_preserves_multi_field_template(self):
@@ -412,7 +412,7 @@ class TestWithNameTemplateRoundtrip:
             "y", jnp.zeros(1), cov=jnp.eye(1)
         )
         original_fields = tuple(jg.event_spec.components)
-        clone = jg.with_name("renamed_jg")
+        clone = jg.with_label("renamed_jg")
         assert tuple(clone.event_spec.components) == original_fields == ("x", "y")
 
     def test_with_name_preserves_a_non_numeric_declaration(self):
@@ -429,7 +429,7 @@ class TestWithNameTemplateRoundtrip:
         )
         law = EmpiricalDistribution("rows", rows)
         original_fields = tuple(law.event_spec.components)
-        clone = law.with_name("renamed")
+        clone = law.with_label("renamed")
         assert tuple(clone.event_spec.components) == original_fields == ("labels", "ids")
 
 
@@ -539,10 +539,10 @@ class TestNameFirstSignature:
 
 class TestNameBinding:
     def test_positional_name_binds(self):
-        assert Normal("x", 0.0, 1.0).name == "x"
+        assert Normal("x", 0.0, 1.0).label == "x"
 
     def test_keyword_name_binds(self):
-        assert Normal(loc=0.0, scale=1.0, name="x").name == "x"
+        assert Normal(loc=0.0, scale=1.0, name="x").label == "x"
 
     def test_name_given_both_ways_raises(self):
         with pytest.raises(TypeError, match="multiple values for argument 'name'"):
@@ -560,13 +560,13 @@ class TestNameBinding:
     def test_keyword_atoms_reach_the_numeric_capabilities(self, make):
         law = make(jnp.arange(4.0))
         assert isinstance(law, SupportsMean)
-        assert law.name == "x"
+        assert law.label == "x"
 
     def test_a_keyword_source_reaches_the_bootstrap(self):
         source = EmpiricalDistribution("r", jnp.arange(4.0))
         law = BootstrapReplicateDistribution("b", source=source)
         assert law.replicate_size == 4
-        assert law.name == "b"
+        assert law.label == "b"
 
 
 class TestDerivedNames:
@@ -605,7 +605,7 @@ class TestDerivedNames:
     def test_an_expectation_takes_the_laws_label(self, make_operand, f):
         law = make_operand()
         result = expectation.with_options(n_broadcast_samples=3)(law, f)
-        assert result.name == law.name
+        assert result.label == law.label
 
 
 class TestPublicImportPaths:
@@ -659,11 +659,11 @@ class TestEventDeclaration:
 
     def test_with_name_keeps_the_component(self):
         law = _DeclaredLaw("x", NumericArraySpec(()))
-        renamed = law.with_name("y")
-        assert renamed.name == "y"
+        renamed = law.with_label("y")
+        assert renamed.label == "y"
         assert renamed.event_spec == law.event_spec
         # A label need not be a component name at all.
-        assert list(law.with_name("a-b").event_spec.components) == ["x"]
+        assert list(law.with_label("a-b").event_spec.components) == ["x"]
 
     @pytest.mark.parametrize("name", ["my-param", "class", "post-1", "product(a,b)"])
     def test_a_whole_term_component_is_any_field_name(self, name):
@@ -698,7 +698,7 @@ class TestComponentAccess:
         assert selection.event_spec == OutputSpec(RecordSpec(x=NumericArraySpec(())))
 
     def test_the_component_addresses_a_renamed_law(self):
-        renamed = _DeclaredLaw("x", NumericArraySpec(())).with_name("y")
+        renamed = _DeclaredLaw("x", NumericArraySpec(())).with_label("y")
         assert renamed["x"] is renamed
         with pytest.raises(KeyError):
             renamed["y"]
@@ -984,7 +984,7 @@ class TestFamilyDeclarations:
     def test_event_spec_names_the_component(self, make, shape, dtype, support):
         law = make(event_spec=OutputSpec(theta=None))
         dtype = np.dtype(dtype) if dtype is not None else jnp.asarray(0.0).dtype
-        assert law.name == "x"
+        assert law.label == "x"
         assert law.event_spec == OutputSpec(theta=NumericArraySpec(shape, dtype, support))
         assert law["theta"] is law
         with pytest.raises(KeyError):
@@ -1067,7 +1067,7 @@ class TestEmpiricalDeclarations:
     """An empirical or bootstrap law declares what one draw is, read off its atoms or source."""
 
     def test_a_replicate_of_a_record_valued_law_declares_a_batch_of_records(self):
-        source = (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)).with_name("p")
+        source = (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)).with_label("p")
         replicate = BootstrapReplicateDistribution("rep", source, replicate_size=3, level="row")
         spec = replicate.event_spec.spec
         assert isinstance(spec, BatchSpec)
@@ -1179,7 +1179,7 @@ class TestDerivedDeclarations:
         assert f.event_spec == OutputSpec(f=FunctionSpec(output_spec=OutputSpec(f=None)))
         # A derived function keeps its base's component; its label is not one.
         shifted = f + 1.0
-        assert shifted.name == "shift(f)"
+        assert shifted.label == "shift(f)"
         assert shifted.event_spec is f.event_spec
 
     def test_a_minibatched_measure_draws_laws_over_the_prior_parameters(self):
@@ -1233,13 +1233,13 @@ class TestViewAndWrapperDeclarations:
         law = _DeclaredLaw("p", RecordSpec(a=a, b=RecordSpec(c=c)))
         assert law["a"].event_spec == OutputSpec(a=a)
         nested = law["b"]["b/c"]
-        assert nested.name == "p"
+        assert nested.label == "p"
         assert nested.event_spec == OutputSpec(c=c)
 
     def test_a_slash_path_selects_the_field_it_names(self):
         law = _DeclaredLaw("p", RecordSpec(a=(), b=RecordSpec(c=())))
         view = law["b/c"]
-        assert view.name == "p"
+        assert view.label == "p"
         assert view.event_spec == law["b"]["b/c"].event_spec
 
 
@@ -1269,7 +1269,7 @@ class TestDimensionTransforms:
         law = _DeclaredLaw("x", NumericArraySpec(("n",)))
         bound = law.with_dim_sizes(n=3)
         assert type(bound) is type(law)
-        assert bound.name == "x"
+        assert bound.label == "x"
         assert bound.event_spec == OutputSpec(x=NumericArraySpec((3,)))
         assert law.event_spec == OutputSpec(x=NumericArraySpec(("n",)))
 

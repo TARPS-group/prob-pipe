@@ -44,8 +44,8 @@ class TestOneDraw:
         assert isinstance(sample(Measure("m")), Distribution)
 
     def test_the_draw_is_labeled_by_the_law(self):
-        assert sample(Gaussian("g")).name == "g"
-        assert sample(Gaussian("g"), sample_shape=(3,)).name == "g"
+        assert sample(Gaussian("g")).label == "g"
+        assert sample(Gaussian("g"), sample_shape=(3,)).label == "g"
 
 
 class TestBatches:

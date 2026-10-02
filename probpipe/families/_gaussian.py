@@ -151,7 +151,7 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactCon
         conditioned = set(dict(top.items()))
         unknown = sorted(conditioned - set(self.event_spec.components))
         if unknown:
-            raise KeyError(f"{unknown} are not components of {self.name!r}")
+            raise KeyError(f"{unknown} are not components of {self.label!r}")
         kept = [
             factor
             for factor in self.factors
@@ -159,9 +159,9 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactCon
         ]
         if not kept:
             raise ValueError(
-                f"the given covers every component of {self.name!r}, so no law remains"
+                f"the given covers every component of {self.label!r}, so no law remains"
             )
-        law = FactoredDistribution(self.name, kept)
+        law = FactoredDistribution(self.label, kept)
         return law.with_provenance(
             Provenance.create(
                 "condition_on", parents=[self], metadata={"conditioned": sorted(conditioned)}
@@ -173,9 +173,9 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactCon
         components = set(self.event_spec.components)
         outside = sorted(set(paths) - components)
         if outside:
-            return Feasibility(False, f"{outside} are not components of {self.name!r}")
+            return Feasibility(False, f"{outside} are not components of {self.label!r}")
         if components <= set(paths):
-            return Feasibility(False, f"the paths cover every component of {self.name!r}")
+            return Feasibility(False, f"the paths cover every component of {self.label!r}")
         return Feasibility(True)
 
 
@@ -345,10 +345,10 @@ class GaussianRandomFunction(RandomFunction, SupportsMean, SupportsVariance, ABC
         if mean.size > 1 and self._joint:
             cov = self.predict_covariance(X)
             return MultivariateNormal(
-                self.name, jnp.reshape(mean, (-1,)), cov=cov, event_spec=event_spec
+                self.label, jnp.reshape(mean, (-1,)), cov=cov, event_spec=event_spec
             )
         scale = jnp.sqrt(jnp.asarray(self.predict_variance(X)))
-        return Normal(self.name, mean, scale, event_spec=event_spec)
+        return Normal(self.label, mean, scale, event_spec=event_spec)
 
     def _mean(self) -> Callable[[Array], Array]:
         """The mean function on stacked inputs."""
@@ -532,7 +532,7 @@ class LinearBasisFunction(GaussianRandomFunction, SupportsSampling):
         phi = jnp.asarray(self._basis(_stacked(X)))
         if phi.ndim < 2 or phi.shape[-1] != self._w_mean.shape[0]:
             raise ValueError(
-                f"the basis of {self.name!r} returns features of shape {phi.shape}, whose last "
+                f"the basis of {self.label!r} returns features of shape {phi.shape}, whose last "
                 f"axis must be the weights' dimension {self._w_mean.shape[0]}"
             )
         return phi
@@ -589,7 +589,7 @@ class _LinearMapGRF(GaussianRandomFunction):
         self._base = base
         self._A = A
         super().__init__(
-            f"linear_map({base.name})", output_spec=base._output_spec, event_spec=base.event_spec
+            f"linear_map({base.label})", output_spec=base._output_spec, event_spec=base.event_spec
         )
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
@@ -606,7 +606,7 @@ class _LinearMapGRF(GaussianRandomFunction):
         if len(shape) != 2 or shape[1] != self._A.shape[1]:
             raise ValueError(
                 f"A @ f maps an output vector of size {self._A.shape[1]}, but the value of "
-                f"{self._base.name!r} at each point has shape {tuple(shape[1:])}"
+                f"{self._base.label!r} at each point has shape {tuple(shape[1:])}"
             )
 
     def predict_mean(self, X: Array) -> Array:
@@ -648,7 +648,7 @@ class _ShiftedGRF(GaussianRandomFunction):
         self._base = base
         self._b = b
         super().__init__(
-            f"shift({base.name})", output_spec=base._output_spec, event_spec=base.event_spec
+            f"shift({base.label})", output_spec=base._output_spec, event_spec=base.event_spec
         )
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
@@ -680,7 +680,7 @@ class _ScaledGRF(GaussianRandomFunction):
         self._base = base
         self._alpha = alpha
         super().__init__(
-            f"scale({base.name})", output_spec=base._output_spec, event_spec=base.event_spec
+            f"scale({base.label})", output_spec=base._output_spec, event_spec=base.event_spec
         )
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
@@ -734,7 +734,7 @@ class _IndependentSumGRF(GaussianRandomFunction):
         self._left = left
         self._right = right
         super().__init__(
-            f"sum({left.name},{right.name})",
+            f"sum({left.label},{right.label})",
             output_spec=left._output_spec,
             event_spec=left.event_spec,
         )

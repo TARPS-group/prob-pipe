@@ -75,7 +75,7 @@ class TestStaleDocs:
         _notebook(
             root / "docs" / "guide.ipynb",
             "add = Function(name='add', fn=lambda x, y: x + y, bind={'y': 2.0}, raw=True)",
-            "@function(name='f', output_name='value', dispatch='jax', workflow_kind=None)\n"
+            "@function(name='f', output_label='value', dispatch='jax', workflow_kind=None)\n"
             "def f(x):\n    return x",
             "g = Function('g', lambda **kw: 0, **controls)",
         )

@@ -166,7 +166,7 @@ def _nested_prior():
     outer = (pp.Gamma("r", 3.0, 1.0) * Normal(loc=0.0, scale=1.0, name="m")).with_path_names(
         {"r": "outer/r", "m": "outer/m"}
     )
-    return (outer * Normal(loc=0.0, scale=1.0, name="c")).with_name("joint")
+    return (outer * Normal(loc=0.0, scale=1.0, name="c")).with_label("joint")
 
 
 def _nested(params, key):
@@ -342,8 +342,8 @@ class TestBayesFlowNPE:
     def test_provenance_names_the_joint_it_was_trained_on(self, npe_model):
         record = npe_model.provenance
         parents = [parent.name for parent in record.parents]
-        assert npe_model.prior.name in parents
-        assert npe_model.simulator.name in parents
+        assert npe_model.prior.label in parents
+        assert npe_model.simulator.label in parents
 
     def test_condition_random_seed_reproducible(self, npe_model):
         """The amortized path honours ``random_seed`` at condition time: the same
@@ -675,7 +675,7 @@ class TestBayesFlowMethods:
         outer = (
             Normal(loc=0.0, scale=1.0, name="a") * Normal(loc=0.0, scale=1.0, name="b")
         ).with_path_names({"a": "outer/a", "b": "outer/b"})
-        prior = (outer * Normal(loc=0.0, scale=1.0, name="m")).with_name("joint")
+        prior = (outer * Normal(loc=0.0, scale=1.0, name="m")).with_label("joint")
         model = learn_amortized_posterior(
             prior,
             _conjugate_simulator(prior),
@@ -714,7 +714,7 @@ class TestBayesFlowMethods:
         outer = (
             pp.Wishart(df=4.0, scale=jnp.eye(2), name="cov") * Normal(loc=0.0, scale=1.0, name="m")
         ).with_path_names({"cov": "outer/cov", "m": "outer/m"})
-        prior = (outer * Normal(loc=0.0, scale=1.0, name="c")).with_name("joint")
+        prior = (outer * Normal(loc=0.0, scale=1.0, name="c")).with_label("joint")
         model = learn_amortized_posterior(
             prior,
             _conjugate_simulator(prior),

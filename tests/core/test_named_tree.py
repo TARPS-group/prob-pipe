@@ -185,10 +185,10 @@ class TestWithPathNames:
     def test_field_renaming_preserves_both_default_and_explicit_names(self):
         auto = Record("record(a,b)", {"a": 1.0, "b": 2.0})  # operation-derived (auto)
         renamed = auto.with_path_names(a="alpha")
-        assert renamed.name == auto.name
+        assert renamed.label == auto.label
         named = Record("mine", a=1.0, b=2.0)
         renamed_named = named.with_path_names(a="alpha")
-        assert renamed_named.name == "mine"
+        assert renamed_named.label == "mine"
 
     def test_explicit_template_metadata_survives(self):
         spec = NumericArraySpec((), dtype=jnp.float32)
@@ -369,14 +369,14 @@ class TestPytreeAuxSplit:
         leaves, treedef = jax.tree_util.tree_flatten(r)
         back = jax.tree_util.tree_unflatten(treedef, leaves)
         assert back.event_template["a"] == spec  # explicit template threaded, not re-inferred
-        assert back.name == "mine"
+        assert back.label == "mine"
 
     def test_derived_name_survives_roundtrip(self):
         import jax
 
         r = Record("record(a)", {"a": jnp.array(1.0)})  # operation-derived (auto)
         back = jax.tree_util.tree_unflatten(*reversed(jax.tree_util.tree_flatten(r)))
-        assert back.name == r.name
+        assert back.label == r.label
 
     def test_provenance_and_annotations_do_not_cross(self):
         import jax
@@ -508,9 +508,9 @@ class TestValueLevelEntryPoints:
     def test_from_field_values_round_trip_with_name(self):
         r = Record("mine", a=jnp.array(1.0), b="tag")
         assert list(r.keys()) == ["a", "b"]  # name is positional-only, not a field
-        rebuilt = Record.from_field_values(r.name, r.event_template, r.values())
+        rebuilt = Record.from_field_values(r.label, r.event_template, r.values())
         assert rebuilt == r
-        assert rebuilt.name == "mine"
+        assert rebuilt.label == "mine"
 
     def test_from_field_values_numeric_template_promotes(self):
         tpl = RecordSpec(a=(), b=(2,))
@@ -526,7 +526,7 @@ class TestValueLevelEntryPoints:
         nr = NumericRecord("nr", x=jnp.arange(3.0), g=NumericRecord("nr", y=jnp.array(2.0)))
         back = NumericRecord.from_vector("mine", nr.event_template, nr.to_vector())
         assert back == nr
-        assert back.name == "mine"
+        assert back.label == "mine"
 
     def test_numeric_record_from_vector_rejects_batched(self):
         nr = NumericRecord("nr", x=jnp.arange(3.0))

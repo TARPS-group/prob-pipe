@@ -85,7 +85,7 @@ def _from_draws(posterior, target) -> EmpiricalDistribution:
         element_spec=target.event_spec.spec,
         axes_per_level=(1, 1),
     )
-    return EmpiricalDistribution(posterior.name, batch)
+    return EmpiricalDistribution(posterior.label, batch)
 
 
 # ---------------------------------------------------------------------------

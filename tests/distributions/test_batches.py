@@ -242,8 +242,8 @@ class TestIndexing:
 
     def test_an_element_is_a_view_named_by_its_position(self):
         batch = DistributionBatch("laws", _laws(3), "law")
-        assert batch[1].name == "laws[law=1]"
-        assert batch.at_levels(law=2).name == "laws[law=2]"
+        assert batch[1].label == "laws[law=1]"
+        assert batch.at_levels(law=2).label == "laws[law=2]"
 
     def test_an_element_shares_the_stored_law_and_leaves_it_untouched(self):
         laws = _laws(3)
@@ -251,7 +251,7 @@ class TestIndexing:
         element = batch[1]
         assert element is not laws[1]
         assert element._tfp_dist is laws[1]._tfp_dist
-        assert laws[1].name == "x" and laws[1].provenance is None
+        assert laws[1].label == "x" and laws[1].provenance is None
 
     def test_an_element_records_the_batch_and_the_stored_law(self):
         laws = _laws(3)
@@ -270,7 +270,7 @@ class TestIndexing:
         batch = DistributionBatch("laws", _laws(4), "law")
         for sub in (batch[1:3], batch.at_levels(law=slice(1, 3))):
             assert isinstance(sub, DistributionBatch)
-            assert sub.name == "laws[law=1:3]"
+            assert sub.label == "laws[law=1:3]"
             assert sub.batch_shape == (2,)
             assert sub.level_names == ("law",)
             assert sub.event_spec == batch.event_spec
@@ -282,7 +282,7 @@ class TestIndexing:
         assert _mean_of(batch.at_levels(row=1, col=2)) == 5.0
         row = batch[1]
         assert isinstance(row, DistributionBatch)
-        assert row.name == "grid[row=1]"
+        assert row.label == "grid[row=1]"
         assert [_mean_of(element) for element in row] == [3.0, 4.0, 5.0]
 
 
@@ -317,9 +317,9 @@ class TestLevels:
         batch = DistributionBatch("laws", _laws(3), "law")
         renamed = batch.with_level_names(law="model")
         assert isinstance(renamed, DistributionBatch)
-        assert renamed.name == "laws"
+        assert renamed.label == "laws"
         assert renamed.level_names == ("model",)
-        assert renamed[0:2].name == "laws[model=0:2]"
+        assert renamed[0:2].label == "laws[model=0:2]"
         assert batch.level_names == ("law",)
 
 
@@ -396,9 +396,9 @@ class TestConditionalDistributionBatch:
         kernels = _kernels(2)
         batch = ConditionalDistributionBatch("kernels", kernels, "kernel")
         element = batch[1]
-        assert element.name == "kernels[kernel=1]"
+        assert element.label == "kernels[kernel=1]"
         assert [parent.name for parent in element.provenance.parents] == ["kernels", "lik"]
-        assert kernels[1].name == "lik"
+        assert kernels[1].label == "lik"
 
     def test_a_distribution_batch_refuses_kernels(self):
         with pytest.raises(TypeError, match="Distribution"):
