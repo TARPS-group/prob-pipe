@@ -845,8 +845,11 @@ class TestBayesFlowMethods:
             )
 
         obs = _observe(0.4, -0.2, 5)
-        d1 = np.asarray(condition_on(_fit(), obs).draws()["a"]).reshape(-1)
-        d2 = np.asarray(condition_on(_fit(), obs).draws()["a"]).reshape(-1)
+        # The draws are seeded by the workflow scope, so each call has the same one.
+        with pp.workflow_run(seed=0):
+            d1 = np.asarray(condition_on(_fit(), obs).draws()["a"]).reshape(-1)
+        with pp.workflow_run(seed=0):
+            d2 = np.asarray(condition_on(_fit(), obs).draws()["a"]).reshape(-1)
         np.testing.assert_array_equal(d1, d2)
 
     def test_global_rng_state_restored(self):
