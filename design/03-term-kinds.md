@@ -28,7 +28,7 @@ class NumericArraySpec(NumericSpec):  # the numeric-array kind's spec, a Numeric
     support: Constraint            # the support (II.3)
 ```
 
-It carries the full set of array operators, for example arithmetic and comparison, and the coordinate protocols. Its arithmetic returns tracked terms under a deterministically derived, evaluation-order name, with identity attached as for any operation (II.4).
+It carries the full set of array operators, for example arithmetic and comparison, and the coordinate protocols. An operator returns a tracked term under a deterministically derived, evaluation-order name, such as `x + 1` or `(x + y) * x`, with identity attached as for any operation (II.4). The result declares its value's shape, and its value's dtype when every tracked operand declares a dtype. Indexing and iteration return bare arrays.
 
 `NumericArray` implements the `Numeric` interface of II.3. Its vector is the array raveled in row-major order, and its coordinate protocols present the array itself, so NumPy and JAX functions see its shape:
 
@@ -261,7 +261,7 @@ Since the structure of `Record` matches that of its schema, the following invari
 
 Construction binds the schema, so a `Record` always carries the concrete, bound form, and the data and its schema agree.
 
-Two records are equal when they share a class, a `RecordSpec`, and field-by-field equal data. Because the schema is carried, an identity transform that threads it through compares equal to its input. A transform that instead rebuilds the schema by inference matches only when that inference recovers the original, for instance when the original schema was itself produced by `infer_from`.
+Two records are equal when they share a class, a `RecordSpec`, and field-by-field equal data. A stored array, opaque value, or function counts by its raw value, so a record built from the views of another record equals it. Because the schema is carried, an identity transform that threads it through compares equal to its input. A transform that instead rebuilds the schema by inference matches only when that inference recovers the original, for instance when the original schema was itself produced by `infer_from`.
 
 ```python
 class Record(NamedTree[Any], TrackedTerm):
@@ -293,7 +293,13 @@ class Record(NamedTree[Any], TrackedTerm):
 
 `select` resolves each argument with `at_path`, so a key selects a leaf and a partial path a subtree view, and returns a plain `dict` of tracked values carrying no schema; its purpose is `**`-splatting a value's parts into a `Function` call, with `select_all` the whole-record form over the top-level children.
 
-**Storage and access are separate contracts.** Storage retains the representation and the source: leaves are held in native form, so a supplied `NumericArray`'s array is stored as that array, and a supplied term's identity is held as a reference or a descriptor per the provenance mode (II.4). Access returns views: `record[key]` returns a view (II.4) of the field's kind, and `record.at_path(path)` at an interior path returns a sub-`Record` view (II.6). `record.raw(path)` returns the stored representation, and `record.raw()` the whole record's nested mapping of raw leaves — the record kind's raw host.
+**Storage and access are separate contracts.** Storage retains the representation and the source: leaves are held in native form, so a supplied `NumericArray`'s array is stored as that array, and a supplied term's identity is held as a reference or a descriptor per the provenance mode (II.4). Access returns views. `record[key]`, `values()`, and `items()` give each field as a view (II.4) of the field's kind, named by its key:
+1. an array field as a `NumericArray`;
+2. an opaque field as an `Opaque`;
+3. a callable field as a `Function`;
+4. a stored term of another kind, such as a law, as a copy of that term.
+
+`record.at_path(path)` gives the field's view at a key and a sub-`Record` view at an interior path (II.6). `record.raw(path)` returns the stored representation, and `record.raw()` the whole record's nested mapping of raw leaves — the record kind's raw host.
 
 When every leaf is numeric, a `Record` is a `NumericRecord`. Leaves are stored in native form, for example a bare array or an `xarray` container, and convert to `jax.Array` only at the compute boundary, which is the pytree flatten that `grad`, `vmap`, and `jit` traverse and `to_vector`; each leaf converts at most once. A `Record` is promoted exactly as its schema is (above): when every leaf is numeric and no explicit non-numeric schema vetoes it, re-derived by every transform. Flat vectorization reads its layout from the schema: `leaf_shapes`, `vector_size`, and the canonical order. Flattening is numeric-only, which is why `NamedTree` itself has no `flatten`.
 
