@@ -378,8 +378,8 @@ class TestElements:
         class _Named(TrackedTerm):
             __slots__ = ("_label", "_provenance")
 
-            def __init__(self, name):
-                self._init_tracked(name)
+            def __init__(self, label):
+                self._init_tracked(label)
 
             def raw(self):
                 return self

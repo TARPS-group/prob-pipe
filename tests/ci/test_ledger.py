@@ -59,7 +59,7 @@ class TestStaleDocs:
             "@pp.function(n_broadcast_samples=8, scale=2.0)\ndef scaled(x, scale):\n    return x",
         )
         (root / "example_scripts" / "demo.py").write_text(
-            "wrapped = function(lambda x: x, name='identity', seed=0)\n"
+            "wrapped = function(lambda x: x, label='identity', seed=0)\n"
         )
         detail = "which is neither a construction parameter nor a control"
         assert [
@@ -74,8 +74,8 @@ class TestStaleDocs:
     def test_construction_parameters_controls_and_bindings_are_not_listed(self, root):
         _notebook(
             root / "docs" / "guide.ipynb",
-            "add = Function(name='add', fn=lambda x, y: x + y, bind={'y': 2.0}, raw=True)",
-            "@function(name='f', output_label='value', dispatch='jax', workflow_kind=None)\n"
+            "add = Function(label='add', fn=lambda x, y: x + y, bind={'y': 2.0}, raw=True)",
+            "@function(label='f', output_label='value', dispatch='jax', workflow_kind=None)\n"
             "def f(x):\n    return x",
             "g = Function('g', lambda **kw: 0, **controls)",
         )

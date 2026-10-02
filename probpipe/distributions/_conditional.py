@@ -420,7 +420,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
 
     Parameters
     ----------
-    name : str
+    label : str
         Non-empty name for this kernel.
     given_spec : InputSpec or Mapping[str, TermSpec]
         The named slots the kernel conditions on, at least one; the keys are
@@ -441,18 +441,18 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
 
     def __init__(
         self,
-        name: str,
+        label: str,
         given_spec: InputSpec | Mapping[str, TermSpec],
         event_spec: OutputSpec | TermSpec,
         *,
         _provenance: Provenance | None = None,
         _annotations: Mapping[str, Any] | None = None,
     ) -> None:
-        if not isinstance(name, str) or not name:
+        if not isinstance(label, str) or not label:
             raise TypeError(
                 f"{type(self).__name__} requires a non-empty label as its first argument"
             )
-        self._init_tracked(name, provenance=_provenance)
+        self._init_tracked(label, provenance=_provenance)
         self._init_annotations(_annotations)
         self._init_declaration(given_spec, event_spec)
 
@@ -877,7 +877,7 @@ class _FunctionKernel(ConditionalDistribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         The kernel's label.
     fn : callable
         The function, called with every given slot's value by name.
@@ -894,7 +894,7 @@ class _FunctionKernel(ConditionalDistribution):
 
     def __new__(
         cls,
-        name: str,
+        label: str,
         fn: Callable[..., Distribution],
         given_spec: InputSpec,
         event_spec: OutputSpec,
@@ -905,13 +905,13 @@ class _FunctionKernel(ConditionalDistribution):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         fn: Callable[..., Distribution],
         given_spec: InputSpec,
         event_spec: OutputSpec,
         guards: Mapping[str, Feasibility],
     ) -> None:
-        super().__init__(name, given_spec, event_spec)
+        super().__init__(label, given_spec, event_spec)
         object.__setattr__(self, "_fn", fn)
         object.__setattr__(self, "_slots", given_spec)
         object.__setattr__(self, "_bound", {})
@@ -1191,7 +1191,7 @@ def _function_kernel(
 
 
 def conditional_distribution(
-    name: str | Callable[..., Distribution] | None = None,
+    label: str | Callable[..., Distribution] | None = None,
     fn: Callable[..., Distribution] | None = None,
     /,
     *,
@@ -1225,7 +1225,7 @@ def conditional_distribution(
 
     Parameters
     ----------
-    name : str or callable, optional
+    label : str or callable, optional
         The kernel's label; a function passed alone is the function, labeled
         after its ``__name__``.
     fn : callable, optional
@@ -1252,14 +1252,14 @@ def conditional_distribution(
     ValueError
         If *event_spec* departs from the declaration of the returned law.
     """
-    if callable(name) and fn is None:
-        return _function_kernel(None, name, given_spec, event_spec)
-    if name is not None and not isinstance(name, str):
-        raise TypeError(f"conditional_distribution takes a name first, got {type(name).__name__}")
+    if callable(label) and fn is None:
+        return _function_kernel(None, label, given_spec, event_spec)
+    if label is not None and not isinstance(label, str):
+        raise TypeError(f"conditional_distribution takes a label first, got {type(label).__name__}")
     if fn is not None:
-        return _function_kernel(name, fn, given_spec, event_spec)
+        return _function_kernel(label, fn, given_spec, event_spec)
 
     def decorate(function: Callable[..., Distribution]) -> ConditionalDistribution:
-        return _function_kernel(name, function, given_spec, event_spec)
+        return _function_kernel(label, function, given_spec, event_spec)
 
     return decorate

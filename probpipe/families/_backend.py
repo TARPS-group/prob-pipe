@@ -211,7 +211,7 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
 
     Parameters
     ----------
-    name : str
+    label : str
         The law's label, and the component of its event unless *event_spec*
         names another.
     backend_dist : tfd.Distribution
@@ -263,7 +263,7 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
     @_recording_arguments
     def __init__(
         self,
-        name: str,
+        label: str,
         backend_dist: tfd.Distribution,
         *,
         event_spec: OutputSpec | None = None,
@@ -283,7 +283,7 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
             declaration = event_spec.with_spec(produced)
         else:
             raise TypeError(f"event_spec must be an OutputSpec, got {type(event_spec).__name__}")
-        super().__init__(name, declaration)
+        super().__init__(label, declaration)
 
     def _reinterpreted(self, backend: tfd.Distribution) -> tfd.Distribution:
         """*backend* with its batch axes leading the event's, over independent coordinates or rows."""
@@ -346,7 +346,7 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
         parameters = bound.signature.parameters
         fields: list[tuple[str, str]] = []
         for parameter, value in list(bound.arguments.items())[1:]:
-            if parameter in ("name", "event_spec"):
+            if parameter in ("label", "event_spec"):
                 continue
             if parameters[parameter].kind is inspect.Parameter.VAR_KEYWORD:
                 fields.extend((key, format_value(entry)) for key, entry in value.items())
@@ -405,7 +405,7 @@ def _construct_batched_dist(
     with _allow_batched_tfp_init():
         return dist_cls(
             **batched_params,
-            name=f"{name}{_ARRAY_BACKEND_NAME_SUFFIX}",
+            label=f"{name}{_ARRAY_BACKEND_NAME_SUFFIX}",
         )
 
 
@@ -553,7 +553,7 @@ class _TFPArrayBackend:
         }
         cell = self._dist_cls(
             **scalar_params,
-            name=f"{self._name}_{flat}",
+            label=f"{self._name}_{flat}",
         )
         # The per-cell suffix is derived by the backend, not user-typed.
         return cell

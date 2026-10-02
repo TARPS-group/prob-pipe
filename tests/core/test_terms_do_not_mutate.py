@@ -96,7 +96,7 @@ class TestTheCheckItself:
         # The one store a read is meant to fill.
         from probpipe.inference._approximate_distribution import ApproximateDistribution
 
-        posterior = ApproximateDistribution([np.zeros((4, 1)), np.ones((4, 1))], name="p")
+        posterior = ApproximateDistribution([np.zeros((4, 1)), np.ones((4, 1))], label="p")
         before = assigned_state(posterior)
         assert posterior._concat_chains() is not None  # fills the memo
         assert assigned_state(posterior) == before
@@ -108,7 +108,7 @@ class TestAQueryLeavesTheTermUnchanged:
         # a caller holds the object and no later read assigns anything.
         from probpipe.inference._approximate_distribution import ApproximateDistribution
 
-        posterior = ApproximateDistribution([np.zeros((4, 1)), np.ones((4, 1))], name="p")
+        posterior = ApproximateDistribution([np.zeros((4, 1)), np.ones((4, 1))], label="p")
         before = assigned_state(posterior)
         first = posterior._concat_chains()
         assert assigned_state(posterior) == before
@@ -125,7 +125,7 @@ class TestAQueryLeavesTheTermUnchanged:
 
 class TestAnOperationDoesNotMutateItsResultAfterBuildingIt:
     def test_conditioning_a_dependent_joint(self):
-        joint = _ShiftKernel() * Normal(loc=0.0, scale=1.0, name="z")
+        joint = _ShiftKernel() * Normal(loc=0.0, scale=1.0, label="z")
         conditioned = condition_on(joint, {"z": jnp.asarray(2.0)})
         # The result is complete when it is returned, and conditioning again
         # builds another result rather than editing this one.
@@ -153,7 +153,7 @@ class TestEveryMemoHolderDropsItsMemoOnACopy:
     def _approximate():
         from probpipe.inference._approximate_distribution import ApproximateDistribution
 
-        term = ApproximateDistribution([np.zeros((4, 1)), np.ones((4, 1))], name="p")
+        term = ApproximateDistribution([np.zeros((4, 1)), np.ones((4, 1))], label="p")
         return term, lambda d: d._concat_chains()
 
     @pytest.fixture(

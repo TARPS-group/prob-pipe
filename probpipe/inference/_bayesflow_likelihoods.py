@@ -122,7 +122,7 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
     data_dim : int
         Flattened per-row observation width the network was trained on (fixed
         by the simulator's per-draw output at training time).
-    name : str
+    label : str
         The kernel's label.
     """
 
@@ -133,10 +133,10 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
         simulator: ConditionalDistribution,
         *,
         data_dim: int,
-        name: str,
+        label: str,
     ):
         super().__init__(
-            name,
+            label,
             dict(prior.event_spec.components),
             OutputSpec(**{_observation_slot(prior): NumericArraySpec(("observations", data_dim))}),
         )
@@ -291,7 +291,7 @@ class BayesFlowLikelihood(_BayesFlowLikelihoodBase, SupportsConditionalLogProb):
         data_dim: int,
         dequantized: bool = False,
     ):
-        super().__init__(approximator, prior, simulator, data_dim=data_dim, name="likelihood")
+        super().__init__(approximator, prior, simulator, data_dim=data_dim, label="likelihood")
         object.__setattr__(self, "_dequantized", dequantized)
 
     def _law(self, values: Mapping[str, Any]) -> _LearnedDensity:
@@ -356,7 +356,7 @@ class BayesFlowRatio(_BayesFlowLikelihoodBase, SupportsConditionalUnnormalizedLo
         *,
         data_dim: int,
     ):
-        super().__init__(approximator, prior, simulator, data_dim=data_dim, name="ratio")
+        super().__init__(approximator, prior, simulator, data_dim=data_dim, label="ratio")
 
     def _law(self, values: Mapping[str, Any]) -> _LearnedRatioLaw:
         return _LearnedRatioLaw(self, values)

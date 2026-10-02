@@ -22,7 +22,7 @@ from probpipe.functions import _context
 class _RecordingNormal(Normal):
     def __init__(self, calls):
         self.calls = calls
-        super().__init__(loc=0.0, scale=1.0, name="x")
+        super().__init__(loc=0.0, scale=1.0, label="x")
 
     def _sample(self, key, sample_shape=()):
         self.calls.append((key, tuple(sample_shape)))
@@ -39,7 +39,7 @@ class _FailOnceNormal(_RecordingNormal):
 
 class TestAutomaticSample:
     def test_seeded_runs_reproduce_distinct_sample_occurrences(self):
-        dist = Normal(loc=0.0, scale=1.0, name="x")
+        dist = Normal(loc=0.0, scale=1.0, label="x")
 
         def run():
             with workflow_run(seed=7):
@@ -68,7 +68,7 @@ class TestAutomaticSample:
             patch.object(_context._WorkflowInvocation, "key_for", new=record),
             workflow_run(seed=7),
         ):
-            result = sample(Normal(loc=0.0, scale=1.0, name="x"), sample_shape=(4, 5))
+            result = sample(Normal(loc=0.0, scale=1.0, label="x"), sample_shape=(4, 5))
 
         assert result.shape == (4, 5)
         assert claims == [(("source-group", 0), ("singleton",))]
@@ -83,7 +83,7 @@ class TestAutomaticSample:
         ],
     )
     def test_integer_protocol_sample_shapes_match_python_ints(self, sample_shape):
-        dist = Normal(loc=0.0, scale=1.0, name="x")
+        dist = Normal(loc=0.0, scale=1.0, label="x")
 
         def run(shape):
             with workflow_run(seed=7):
@@ -101,12 +101,12 @@ class TestAutomaticSample:
             workflow_run(seed=7),
             pytest.raises((TypeError, ValueError)),
         ):
-            sample(Normal(loc=0.0, scale=1.0, name="x"), sample_shape=sample_shape)
+            sample(Normal(loc=0.0, scale=1.0, label="x"), sample_shape=sample_shape)
 
         commit.assert_not_called()
 
     def test_bare_samples_receive_independent_ephemeral_roots(self):
-        dist = Normal(loc=0.0, scale=1.0, name="x")
+        dist = Normal(loc=0.0, scale=1.0, label="x")
         with patch(
             "probpipe.functions._context._os_urandom",
             side_effect=[bytes(8), bytes.fromhex("0000000000000001")],
@@ -162,7 +162,7 @@ class TestAutomaticExpectation:
             pytest.raises((TypeError, ValueError)),
         ):
             expectation.with_options(n_broadcast_samples=num_evaluations)(
-                Normal(loc=0.0, scale=1.0, name="x"), lambda value: value
+                Normal(loc=0.0, scale=1.0, label="x"), lambda value: value
             )
 
         commit.assert_not_called()

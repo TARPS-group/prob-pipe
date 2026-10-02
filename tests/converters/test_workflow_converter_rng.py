@@ -41,7 +41,7 @@ from probpipe.linalg.linear_operator import DenseLinOp
 class _RecordingNormal(Normal):
     def __init__(self, calls):
         self.calls = calls
-        super().__init__(loc=0.0, scale=1.0, name="x")
+        super().__init__(loc=0.0, scale=1.0, label="x")
 
     def _sample(self, key, sample_shape=()):
         self.calls.append((key, tuple(sample_shape)))
@@ -51,7 +51,7 @@ class _RecordingNormal(Normal):
 class _RecordingMultivariateNormal(MultivariateNormal):
     def __init__(self, calls, loc):
         self.calls = calls
-        super().__init__(loc=jnp.asarray(loc), cov=jnp.eye(len(loc)), name="x")
+        super().__init__(loc=jnp.asarray(loc), cov=jnp.eye(len(loc)), label="x")
 
     def _sample(self, key, sample_shape=()):
         self.calls.append((key, tuple(sample_shape)))
@@ -86,8 +86,8 @@ def _flat_samples(dist):
 
 class TestBuiltInConversionRandomness:
     def test_exact_and_analytic_paths_claim_no_event(self):
-        source = Normal(loc=0.0, scale=1.0, name="x")
-        analytic_source = Gamma(concentration=9.0, rate=1.0, name="g")
+        source = Normal(loc=0.0, scale=1.0, label="x")
+        analytic_source = Gamma(concentration=9.0, rate=1.0, label="g")
 
         with (
             patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
@@ -100,7 +100,7 @@ class TestBuiltInConversionRandomness:
         commit.assert_not_called()
 
     def test_sampled_conversion_is_seeded_and_claims_one_batched_event(self):
-        source = Normal(loc=0.0, scale=1.0, name="x")
+        source = Normal(loc=0.0, scale=1.0, label="x")
 
         def run(num_samples):
             with (
@@ -137,7 +137,7 @@ class TestBuiltInConversionRandomness:
             pytest.raises((TypeError, ValueError)),
         ):
             converter_registry.convert(
-                Normal(loc=0.0, scale=1.0, name="x"),
+                Normal(loc=0.0, scale=1.0, label="x"),
                 EmpiricalDistribution,
                 num_samples=num_samples,
             )
@@ -193,7 +193,7 @@ class TestBuiltInConversionRandomness:
             workflow_run(seed=7),
         ):
             result = convert.with_options(method_options={"num_samples": 8})(
-                Normal(loc=0.0, scale=1.0, name="x"), EmpiricalDistribution
+                Normal(loc=0.0, scale=1.0, label="x"), EmpiricalDistribution
             )
 
         assert result.num_atoms == 8
@@ -305,12 +305,12 @@ class TestCustomConverterRandomness:
                     feasible=True,
                     method_name=self.name,
                     exact=False,
-                    target_spec=Normal(loc=0.0, scale=1.0, name="x").spec,
+                    target_spec=Normal(loc=0.0, scale=1.0, label="x").spec,
                 )
 
             def execute(self, source, target_type, **options):
                 seen.append(options)
-                return Normal(loc=0.0, scale=1.0, name="x")
+                return Normal(loc=0.0, scale=1.0, label="x")
 
         registry = ConverterRegistry()
         registry.register(DeclaredConverter())

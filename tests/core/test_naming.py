@@ -53,7 +53,7 @@ def _named(kind):
             jnp.arange(3.0),
         ),
         "Opaque": lambda: Opaque("given", object()),
-        "Function": lambda: Function(fn=lambda: 1, name="given"),
+        "Function": lambda: Function(fn=lambda: 1, label="given"),
         "Normal": lambda: Normal("given", 0.0, 1.0),
         "RecordBatch": lambda: RecordBatch(
             "given",
@@ -155,7 +155,7 @@ class TestWhichKindsRequireAName:
     def test_a_numeric_array_requires_a_name(self):
         """It carries no fields to describe it, so a class-name default would
         name every array in a pipeline alike."""
-        with pytest.raises(TypeError, match="name"):
+        with pytest.raises(TypeError, match="label"):
             NumericArray()
 
     def test_a_lone_value_is_not_enough_for_a_numeric_array(self):
@@ -168,7 +168,7 @@ class TestWhichKindsRequireAName:
         def predict():
             return 1.0
 
-        assert Function(name="predict", fn=predict).label == "predict"
+        assert Function(label="predict", fn=predict).label == "predict"
 
 
 class TestADerivedNameSaysSo:
@@ -244,7 +244,7 @@ class TestTheOutputBoundaryNamesEveryKindAlike:
         ],
     )
     def test_the_result_takes_the_functions_name(self, label, body):
-        result = Function(fn=body, name="myfunc")()
+        result = Function(fn=body, label="myfunc")()
 
         assert result.label == "myfunc"
 
@@ -413,7 +413,7 @@ class TestEveryAggregateIsNamedForItsFunction:
         )
 
     def _swept(self, body, **controls):
-        return Function(fn=body, name="double", dispatch="sequential", **controls)(v=self._rows())
+        return Function(fn=body, label="double", dispatch="sequential", **controls)(v=self._rows())
 
     @pytest.mark.parametrize(
         ("label", "body"),
@@ -450,7 +450,7 @@ class TestEveryAggregateIsNamedForItsFunction:
         )
 
         result = Function(
-            fn=lambda v: {"y": jnp.asarray(v["x"])}, name="double", dispatch="sequential"
+            fn=lambda v: {"y": jnp.asarray(v["x"])}, label="double", dispatch="sequential"
         )(v=grid)
 
         assert result.label == "double"
@@ -484,7 +484,7 @@ class TestNoKindInventsAName:
     def test_stack_takes_a_better_name_when_offered(self):
         rows = [NumericRecord("draw", a=float(i)) for i in range(3)]
 
-        batch = NumericRecordBatch.stack(rows, level_name="row", name="posterior")
+        batch = NumericRecordBatch.stack(rows, level_name="row", label="posterior")
 
         assert batch.label == "posterior"
 

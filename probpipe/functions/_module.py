@@ -26,7 +26,7 @@ def workflow_method(func: Callable):
     converted to :class:`Function` instances when the
     ``Module`` is instantiated.
     """
-    func._is_workflow = True
+    func._is_function_method = True
     return func
 
 
@@ -79,17 +79,17 @@ class Module(Node):
         self._workflow_kind = workflow_kind
         super().__init__(**kwargs)
         # validate abstract workflow implementations before wrapping
-        self._validate_abstract_workflow_implementations()
+        self._validate_abstract_function_implementations()
 
-        self._build_workflows()
+        self._build_functions()
 
-    def _build_workflows(self):
+    def _build_functions(self):
         """
         Replace @workflow_method methods with Function instances.
         """
         for attr_name in dir(self):
             attr = getattr(self, attr_name)
-            if not callable(attr) or not getattr(attr, "_is_workflow", False):
+            if not callable(attr) or not getattr(attr, "_is_function_method", False):
                 continue
 
             func = attr
@@ -102,7 +102,7 @@ class Module(Node):
                 fn=func,
                 output_label=func.__name__,
                 workflow_kind=self._workflow_kind,
-                name=f"{self.__class__.__name__}.{func.__name__}",
+                label=f"{self.__class__.__name__}.{func.__name__}",
                 module=self,
             )
 
@@ -192,7 +192,7 @@ class Module(Node):
 
         return dot
 
-    def _validate_abstract_workflow_implementations(self) -> None:
+    def _validate_abstract_function_implementations(self) -> None:
         """
         Ensure that any abstract workflow interfaces in the MRO are implemented
         by a concrete workflow with a compatible signature.
@@ -209,7 +209,7 @@ class Module(Node):
             for name, obj in base.__dict__.items():
                 if not callable(obj):
                     continue
-                if not getattr(obj, "_is_workflow", False):
+                if not getattr(obj, "_is_function_method", False):
                     continue
                 if not getattr(obj, "__isabstractmethod__", False):
                     continue
@@ -228,7 +228,7 @@ class Module(Node):
                     )
 
                 # Must be marked as workflow (@workflow_method)
-                if not getattr(impl_attr, "_is_workflow", False):
+                if not getattr(impl_attr, "_is_function_method", False):
                     raise TypeError(
                         f"{cls.__name__}.{name} implements an abstract workflow interface "
                         f"but is not marked with @workflow_method."
@@ -237,14 +237,14 @@ class Module(Node):
                 # Compare signatures (use unbound function signatures to include 'self')
                 impl_func = impl_attr.__func__ if hasattr(impl_attr, "__func__") else impl_attr
 
-                self._assert_workflow_signature_compatible(
+                self._assert_function_signature_compatible(
                     abstract_func=abstract_func,
                     impl_func=impl_func,
                     name=name,
                 )
 
     @staticmethod
-    def _assert_workflow_signature_compatible(
+    def _assert_function_signature_compatible(
         *,
         abstract_func: Callable,
         impl_func: Callable,

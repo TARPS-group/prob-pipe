@@ -33,7 +33,7 @@ def error_of(call: Callable[[], Any]) -> BaseException | None:
 
 def standard_normal(name: str = "z") -> Normal:
     """A scalar law that samples."""
-    return Normal(loc=0.0, scale=1.0, name=name)
+    return Normal(loc=0.0, scale=1.0, label=name)
 
 
 def record_law(name: str = "joint", *, n: int = 12) -> EmpiricalDistribution:

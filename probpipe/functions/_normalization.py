@@ -89,7 +89,7 @@ def is_distribution_hint(expected: Any) -> bool:
 def normalize_distribution_values(
     *,
     values: dict[str, Any],
-    signature_info: _binding.WorkflowSignatureInfo,
+    signature_info: _binding.FunctionSignatureInfo,
     conversions: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Convert each distribution argument to the class or capability its parameter names.
@@ -103,7 +103,7 @@ def normalize_distribution_values(
     ----------
     values : dict
         The bound arguments, keyed by parameter.
-    signature_info : WorkflowSignatureInfo
+    signature_info : FunctionSignatureInfo
         The signature and the annotations of the function.
     conversions : Mapping, optional
         Each parameter's entry of the ``conversions`` control.
@@ -140,7 +140,7 @@ def normalize_distribution_values(
 def plan_distribution_values(
     *,
     values: dict[str, Any],
-    signature_info: _binding.WorkflowSignatureInfo,
+    signature_info: _binding.FunctionSignatureInfo,
     conversions: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], dict[str, ConversionInfo], tuple[str, ...]]:
     """Plan the conversions :func:`normalize_distribution_values` executes, executing none.

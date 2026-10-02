@@ -198,12 +198,12 @@ class TestTheParametricFamilies:
             "VonMisesFisher",
         ],
     )
-    def test_a_family_takes_its_name_first_and_a_keyword_event_spec(self, name):
+    def test_a_family_takes_its_label_first_and_a_keyword_event_spec(self, name):
         assert name in _listed_families()
         family = getattr(probpipe.families, name)
         assert issubclass(family, probpipe.families.TFPDistribution)
         parameters = list(inspect.signature(family.__init__).parameters.values())[1:]
-        assert parameters[0].name == "name"
+        assert parameters[0].name == "label"
         assert parameters[0].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
         event_spec = inspect.signature(family.__init__).parameters["event_spec"]
         assert event_spec.kind is inspect.Parameter.KEYWORD_ONLY

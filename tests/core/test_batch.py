@@ -47,9 +47,9 @@ class _Leaf(TrackedTerm):
 
     __slots__ = ("_label", "_provenance", "value")
 
-    def __init__(self, value, name="leaf"):
+    def __init__(self, value, label="leaf"):
         object.__setattr__(self, "value", value)
-        self._init_tracked(name)
+        self._init_tracked(label)
 
     def raw(self):
         return self.value
@@ -60,9 +60,9 @@ class _ListBatch(Batch[_Leaf]):
 
     __slots__ = ("_store",)
 
-    def __init__(self, store, spec, *, name="b"):
+    def __init__(self, store, spec, *, label="b"):
         object.__setattr__(self, "_store", list(store))
-        self._init_batch(spec, name=name)
+        self._init_batch(spec, name=label)
 
     def raw(self):
         return self._store
@@ -76,7 +76,7 @@ class _ListBatch(Batch[_Leaf]):
         return offset
 
     def _element_at(self, index, *, name):
-        built = _Leaf(self._store[self._flat(index)], name=name)
+        built = _Leaf(self._store[self._flat(index)], label=name)
         return self._inherit_provenance(built)
 
     def _sub_batch_at(self, index, *, spec, name):
@@ -86,7 +86,7 @@ class _ListBatch(Batch[_Leaf]):
             self._store[self._flat(position)]
             for position in itertools.product(*_selected(index, self.batch_shape))
         ]
-        return type(self)(kept, spec, name=name)
+        return type(self)(kept, spec, label=name)
 
 
 class _NestedBatch(_ListBatch):
@@ -136,7 +136,7 @@ class _ViewBatch(Batch[_Leaf]):
 
     __slots__ = ("_root_shape", "_root_store", "_store_selection")
 
-    def __init__(self, store, spec, *, name="b", root_shape=None, store_selection=None):
+    def __init__(self, store, spec, *, label="b", root_shape=None, store_selection=None):
         object.__setattr__(self, "_root_store", store)
         object.__setattr__(self, "_root_shape", root_shape or spec.batch_shape)
         object.__setattr__(
@@ -146,7 +146,7 @@ class _ViewBatch(Batch[_Leaf]):
             if store_selection is not None
             else tuple(range(size) for size in spec.batch_shape),
         )
-        self._init_batch(spec, name=name)
+        self._init_batch(spec, name=label)
 
     def raw(self):
         return self._root_store
@@ -169,7 +169,7 @@ class _ViewBatch(Batch[_Leaf]):
     # -- the storage seam --
 
     def _element_at(self, index, *, name):
-        built = _Leaf(self._root_store[self._offset(index)], name=name)
+        built = _Leaf(self._root_store[self._offset(index)], label=name)
         return self._inherit_provenance(built)
 
     def _sub_batch_at(self, index, *, spec, name):
@@ -187,7 +187,7 @@ class _ViewBatch(Batch[_Leaf]):
         return type(self)(
             self._root_store,
             spec,
-            name=name,
+            label=name,
             root_shape=self._root_shape,
             store_selection=tuple(composed),
         )
@@ -205,9 +205,9 @@ class _StoringBatch(Batch[_Leaf]):
 
     __slots__ = ("_store",)
 
-    def __init__(self, elements, spec, *, name="b"):
+    def __init__(self, elements, spec, *, label="b"):
         object.__setattr__(self, "_store", list(elements))
-        self._init_batch(spec, name=name)
+        self._init_batch(spec, name=label)
 
     def raw(self):
         return self._store
@@ -216,7 +216,7 @@ class _StoringBatch(Batch[_Leaf]):
         return self._store[index[0]]
 
     def _sub_batch_at(self, index, *, spec, name):
-        return type(self)(self._store[index[0]], spec, name=name)
+        return type(self)(self._store[index[0]], spec, label=name)
 
 
 class _StringSlotsBatch(Batch[int]):
@@ -230,9 +230,9 @@ class _StringSlotsBatch(Batch[int]):
 
     __slots__ = "_store"  # a bare string, deliberately: the point of the double
 
-    def __init__(self, store, spec, *, name="b"):
+    def __init__(self, store, spec, *, label="b"):
         object.__setattr__(self, "_store", list(store))
-        self._init_batch(spec, name=name)
+        self._init_batch(spec, name=label)
 
     def raw(self):
         return self._store
@@ -241,7 +241,7 @@ class _StringSlotsBatch(Batch[int]):
         return self._store[index[0]]
 
     def _sub_batch_at(self, index, *, spec, name):
-        return type(self)(self._store[index[0]], spec, name=name)
+        return type(self)(self._store[index[0]], spec, label=name)
 
 
 class _DictBatch(_ListBatch):
@@ -764,9 +764,9 @@ class TestViewProvenance:
         provenance naming the original as parent — so the chain back to the
         element's origin stands, and the batch does not replace it.
         """
-        inner = _ListBatch(range(2), _spec([(2,)], ["draw"]), name="inner")
+        inner = _ListBatch(range(2), _spec([(2,)], ["draw"]), label="inner")
         inner.with_provenance(Provenance.create("fit", parents=[]))
-        outer = _NestedBatch([inner, inner], _spec([(2,)], ["chain"]), name="outer")
+        outer = _NestedBatch([inner, inner], _spec([(2,)], ["chain"]), label="outer")
         self._from_an_operation(outer)
 
         element = outer[0]
@@ -1240,8 +1240,8 @@ class TestABatchOfBatches:
     @pytest.fixture
     def outer(self):
         inner_spec = _spec([(3,)], ["draw"])
-        laws = [_ListBatch(range(i * 3, i * 3 + 3), inner_spec, name=f"law{i}") for i in range(2)]
-        return _NestedBatch(laws, BatchSpec(inner_spec, [(2,)], ["law"]), name="outer")
+        laws = [_ListBatch(range(i * 3, i * 3 + 3), inner_spec, label=f"law{i}") for i in range(2)]
+        return _NestedBatch(laws, BatchSpec(inner_spec, [(2,)], ["law"]), label="outer")
 
     def test_the_element_spec_is_itself_a_batch_spec(self, outer):
         assert isinstance(outer.element_spec, BatchSpec)
@@ -1555,12 +1555,12 @@ class TestAStoredElementKeepsItsOwnIdentity:
     @pytest.fixture
     def stored(self):
         self.leaves = [
-            _Leaf(value, name=f"given{value}").with_provenance(
+            _Leaf(value, label=f"given{value}").with_provenance(
                 Provenance.create("author", parents=[])
             )
             for value in range(3)
         ]
-        return _StoringBatch(self.leaves, _spec([(3,)], ["draw"]), name="b")
+        return _StoringBatch(self.leaves, _spec([(3,)], ["draw"]), label="b")
 
     def test_the_element_is_the_object_that_was_stored(self, stored):
         assert stored[1] is self.leaves[1]
@@ -1799,12 +1799,12 @@ class TestTheConstructorSignatureContract:
     def _own_params(cls):
         return list(inspect.signature(cls.__init__).parameters.values())[1:]
 
-    def test_the_name_is_first_positional_only_and_has_no_default(self, cls):
+    def test_the_label_is_first_positional_only_and_has_no_default(self, cls):
         """A default is what the whole change removes, so its absence is asserted
         rather than inferred from a refusal."""
         first = self._own_params(cls)[0]
 
-        assert first.name == "name"
+        assert first.name == "label"
         assert first.kind is inspect.Parameter.POSITIONAL_ONLY
         assert first.default is inspect.Parameter.empty
 
@@ -1818,7 +1818,7 @@ class TestTheConstructorSignatureContract:
         args, kwargs = _args_for(kind, shape=(2,), levels="draw")
 
         with pytest.raises(TypeError, match="positional-only"):
-            cls(*args, name="b", **kwargs)
+            cls(*args, label="b", **kwargs)
 
     def test_the_removed_axis_groups_keyword_is_refused(self, cls, kind):
         if kind == "NumericArray":

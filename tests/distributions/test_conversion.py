@@ -54,8 +54,8 @@ _SCALAR = NumericArraySpec(())
 class Source(Distribution):
     """A law the converters below read, over a scalar unless given a declaration."""
 
-    def __init__(self, name: str = "x", event_spec: OutputSpec | None = None):
-        super().__init__(name, _SCALAR if event_spec is None else event_spec)
+    def __init__(self, label: str = "x", event_spec: OutputSpec | None = None):
+        super().__init__(label, _SCALAR if event_spec is None else event_spec)
 
 
 class SourceSub(Source):
@@ -65,8 +65,8 @@ class SourceSub(Source):
 class Stranger(Distribution):
     """A law that no converter below reads."""
 
-    def __init__(self, name: str = "stranger"):
-        super().__init__(name, _SCALAR)
+    def __init__(self, label: str = "stranger"):
+        super().__init__(label, _SCALAR)
 
 
 class Target(Distribution):
@@ -102,8 +102,8 @@ class ScoredSource(_Scores, Source):
 class GuardedSource(_Scores, Source):
     """A source whose density carries a guard that returns what the test sets."""
 
-    def __init__(self, guard: bool | None, name: str = "x"):
-        super().__init__(name)
+    def __init__(self, guard: bool | None, label: str = "x"):
+        super().__init__(label)
         object.__setattr__(self, "_guard", guard)
 
     def _log_prob_guard(self) -> bool | None:

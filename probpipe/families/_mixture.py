@@ -376,7 +376,7 @@ class MixtureDistribution(Distribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         The mixture's label.
     components : Sequence[Distribution]
         The component laws, at least one, sharing one event declaration.
@@ -398,17 +398,17 @@ class MixtureDistribution(Distribution):
     _weights: Array
 
     def __new__(
-        cls, name: str, components: Sequence[Distribution], weights: ArrayLike
+        cls, label: str, components: Sequence[Distribution], weights: ArrayLike
     ) -> MixtureDistribution:
         base = vars(cls).get("_capability_base", cls)
         laws = _components(components)
         return object.__new__(_capability_subclass(base, _claims(laws)))
 
-    def __init__(self, name: str, components: Sequence[Distribution], weights: ArrayLike) -> None:
+    def __init__(self, label: str, components: Sequence[Distribution], weights: ArrayLike) -> None:
         laws = _components(components)
         object.__setattr__(self, "_components", laws)
         object.__setattr__(self, "_weights", _weights(weights, len(laws)))
-        super().__init__(name, _declaration(laws))
+        super().__init__(label, _declaration(laws))
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The components, by their count when there are more than four, and the weights."""

@@ -61,7 +61,7 @@ def _sim(prior):
 
 
 def _prior():
-    return Normal(loc=0.0, scale=1.0, name="a") * Normal(loc=0.0, scale=1.0, name="b")
+    return Normal(loc=0.0, scale=1.0, label="a") * Normal(loc=0.0, scale=1.0, label="b")
 
 
 _SIM = _sim(_prior())
@@ -72,9 +72,9 @@ def _nested_prior():
     top-level ``m`` -- leaves ``outer/a``, ``outer/b``, ``m``, all ``N(0, 1)`` so
     ``_analytic_posterior`` applies per leaf (``flatten`` order ``[a, b, m]``)."""
     outer = (
-        Normal(loc=0.0, scale=1.0, name="a") * Normal(loc=0.0, scale=1.0, name="b")
+        Normal(loc=0.0, scale=1.0, label="a") * Normal(loc=0.0, scale=1.0, label="b")
     ).with_path_names({"a": "outer/a", "b": "outer/b"})
-    return (outer * Normal(loc=0.0, scale=1.0, name="m")).with_label("joint")
+    return (outer * Normal(loc=0.0, scale=1.0, label="m")).with_label("joint")
 
 
 def _analytic_posterior(y_rows: np.ndarray) -> tuple[np.ndarray, float]:
@@ -376,7 +376,7 @@ class TestConditioning:
         theta."""
 
         def _gamma_prior():
-            return pp.Gamma("lam", 5.0, 1.0) * Normal(loc=0.0, scale=1.0, name="m")
+            return pp.Gamma("lam", 5.0, 1.0) * Normal(loc=0.0, scale=1.0, label="m")
 
         y = np.asarray(_rows(jnp.array([5.0, 0.5]), 4, jax.random.PRNGKey(5)))
 

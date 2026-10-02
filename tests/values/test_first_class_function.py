@@ -57,7 +57,7 @@ class TestFunctionValueContract:
         def increment(x):
             return x + 1
 
-        wrapped = Function(name="increment", fn=increment)
+        wrapped = Function(label="increment", fn=increment)
 
         assert isinstance(wrapped, TrackedTerm)
         assert isinstance(wrapped, Annotated)
@@ -74,7 +74,7 @@ class TestFunctionValueContract:
         def automatic(x):
             return x
 
-        named = Function(fn=lambda x: x, name="chosen")
+        named = Function(fn=lambda x: x, label="chosen")
 
         assert automatic.label == "automatic"
         assert named.label == "chosen"
@@ -82,7 +82,7 @@ class TestFunctionValueContract:
     def test_rename_synchronizes_callable_metadata_and_records_provenance(
         self, full_provenance_mode
     ):
-        wrapped = Function(name="function", fn=lambda x: x)
+        wrapped = Function(label="function", fn=lambda x: x)
 
         renamed = wrapped.with_label("identity")
 
@@ -92,7 +92,7 @@ class TestFunctionValueContract:
         assert renamed.provenance.parents[0].parent is wrapped
 
     def test_provenance_is_write_once(self):
-        wrapped = Function(name="function", fn=lambda x: x)
+        wrapped = Function(label="function", fn=lambda x: x)
         wrapped.with_provenance(Provenance("trained"))
 
         with pytest.raises(RuntimeError, match="write-once"):
@@ -102,7 +102,7 @@ class TestFunctionValueContract:
         def affine(x, /, scale=2, *, offset=1):
             return x * scale + offset
 
-        wrapped = Function(name="affine", fn=affine)
+        wrapped = Function(label="affine", fn=affine)
         captured = wrapped.signature
         affine.__signature__ = inspect.Signature()  # type: ignore[attr-defined]
 
@@ -116,7 +116,7 @@ class TestApplyContract:
             return x * scale + offset
 
         wrapped = Function(
-            name="affine", fn=affine, output_spec=OutputSpec(**RecordSpec(answer=()).children)
+            label="affine", fn=affine, output_spec=OutputSpec(**RecordSpec(answer=()).children)
         )
 
         assert wrapped.apply(3, offset=4) == 10
@@ -128,7 +128,7 @@ class TestApplyContract:
         def combine(x, /, y=2.0, *, scale=3.0):
             return (x + y) * scale
 
-        wrapped = Function(name="combine", fn=combine)
+        wrapped = Function(label="combine", fn=combine)
 
         result = wrapped(1.0)
 
@@ -142,14 +142,14 @@ class TestApplyContract:
         def collect(first, *rest, **extras):
             return first + sum(rest) + sum(extras.values())
 
-        wrapped = Function(name="collect", fn=collect)
+        wrapped = Function(label="collect", fn=collect)
 
         assert wrapped.apply(1, 2, 3, bonus=4) == 10
         assert float(wrapped(1, 2, 3, bonus=4)) == 10
 
     def test_parameter_named_self_is_not_treated_as_a_method_receiver(self):
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda self: self + 1,
             input_spec=InputSpec(RecordSpec(self=()).children),
             output_spec=OutputSpec(**RecordSpec(result=()).children),
@@ -162,14 +162,14 @@ class TestApplyContract:
         def collect(x, /, **extras):
             return x + sum(extras.values())
 
-        wrapped = Function(name="collect", fn=collect, bind={"x": 2, "bonus": 3})
+        wrapped = Function(label="collect", fn=collect, bind={"x": 2, "bonus": 3})
 
         assert wrapped.apply() == 5
         assert wrapped.apply(bonus=4) == 6
 
     def test_apply_validates_output_without_wrapping(self):
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda x: np.ones((x,)),
             input_spec=InputSpec(RecordSpec(x=()).children),
             output_spec=OutputSpec(**RecordSpec(y=(3,)).children),
@@ -183,9 +183,9 @@ class TestApplyContract:
         value = jnp.asarray(3.0, dtype=jnp.float32)
         returned = Record("returned", y=value)
         bare = Function(
-            name="function", fn=lambda: value, output_spec=OutputSpec(**template.children)
+            label="function", fn=lambda: value, output_spec=OutputSpec(**template.children)
         )
-        structured = Function(name="function", fn=lambda: returned, output_spec=template)
+        structured = Function(label="function", fn=lambda: returned, output_spec=template)
 
         assert bare.apply() is value
         assert structured.apply() is returned
@@ -209,7 +209,7 @@ class TestApplyContract:
             element_spec=intrinsic,
         )
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda: returned,
             output_spec=BatchSpec(declared, returned.axis_groups, returned.level_names),
         )
@@ -239,7 +239,7 @@ class TestApplyContract:
             element_spec=template,
         )
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda: returned,
             output_spec=BatchSpec(template, returned.axis_groups, returned.level_names),
         )
@@ -260,7 +260,7 @@ class TestApplyContract:
             element_spec=RecordSpec(y=(3,)),
         )
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda: returned,
             output_spec=BatchSpec(RecordSpec(y=()), returned.axis_groups, returned.level_names),
         )
@@ -280,7 +280,7 @@ class TestApplyContract:
 
         with pytest.raises(ValueError, match=r"output/function/y dtype float32 does not conform"):
             Function(
-                name="function",
+                label="function",
                 fn=lambda: float_array,
                 output_spec=BatchSpec(
                     dtype_template, float_array.axis_groups, float_array.level_names
@@ -298,7 +298,7 @@ class TestApplyContract:
 
         with pytest.raises(ValueError, match=r"output/function/y.*support positive"):
             Function(
-                name="function",
+                label="function",
                 fn=lambda: invalid_array,
                 output_spec=BatchSpec(
                     support_template, invalid_array.axis_groups, invalid_array.level_names
@@ -323,10 +323,10 @@ class TestApplyContract:
         template = RecordSpec(y=NumericArraySpec((), dtype=declared_dtype))
 
         Function(
-            name="function", fn=lambda: value, output_spec=OutputSpec(**template.children)
+            label="function", fn=lambda: value, output_spec=OutputSpec(**template.children)
         ).apply()
         Function(
-            name="function", fn=lambda: Record("returned", y=value), output_spec=template
+            label="function", fn=lambda: Record("returned", y=value), output_spec=template
         ).apply()
 
     @pytest.mark.parametrize("structured", [False, True])
@@ -334,7 +334,7 @@ class TestApplyContract:
         value = np.asarray(3.0, dtype="float32")
         returned = Record("returned", y=value) if structured else value
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda: returned,
             output_spec=(
                 RecordSpec(y=NumericArraySpec((), dtype="int32"))
@@ -351,7 +351,7 @@ class TestApplyContract:
 
         assert (
             Function(
-                name="function",
+                label="function",
                 fn=lambda: jnp.asarray(3.0),
                 output_spec=OutputSpec(**template.children),
             ).apply()
@@ -359,7 +359,7 @@ class TestApplyContract:
         )
         with pytest.raises(ValueError, match=r"output/y.*support positive"):
             Function(
-                name="function",
+                label="function",
                 fn=lambda: jnp.asarray(-3.0),
                 output_spec=OutputSpec(**template.children),
             ).apply()
@@ -369,7 +369,7 @@ class TestApplyContract:
             stats=RecordSpec(y=NumericArraySpec((2,), support=positive)),
         )
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda value: {"stats": {"y": value}},
             output_spec=template,
         )
@@ -385,9 +385,9 @@ class TestApplyContract:
         valid = Record("returned", stats=Record("stats", y=jnp.asarray([1.0, 2.0])))
         invalid = Record("returned", stats=Record("stats", y=jnp.asarray([1.0, -2.0])))
 
-        Function(name="function", fn=lambda: valid, output_spec=template).apply()
+        Function(label="function", fn=lambda: valid, output_spec=template).apply()
         with pytest.raises(ValueError, match=r"output/stats/y.*support positive"):
-            Function(name="function", fn=lambda: invalid, output_spec=template).apply()
+            Function(label="function", fn=lambda: invalid, output_spec=template).apply()
 
     def test_explicit_record_support_must_conform_to_declaration(self):
         returned = Record(
@@ -396,7 +396,7 @@ class TestApplyContract:
             event_template=RecordSpec(y=NumericArraySpec((), support=real)),
         )
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda: returned,
             output_spec=RecordSpec(y=NumericArraySpec((), support=positive)),
         )
@@ -408,7 +408,7 @@ class TestApplyContract:
         returned = Normal("y", 0, 1)
         declared = OutputSpec(y=NumericArraySpec(()))
         wrapped = Function(
-            name="function", fn=lambda: returned, output_spec=DistributionSpec(declared)
+            label="function", fn=lambda: returned, output_spec=DistributionSpec(declared)
         )
 
         assert wrapped.apply() is returned
@@ -435,7 +435,7 @@ class TestApplyContract:
         declared = RecordSpec(y=NumericArraySpec((), dtype="float32", support=positive))
         returned = SchemaCompleteDistribution(intrinsic)
         wrapped = Function(
-            name="function", fn=lambda: returned, output_spec=DistributionSpec(declared)
+            label="function", fn=lambda: returned, output_spec=DistributionSpec(declared)
         )
 
         assert intrinsic == declared
@@ -470,7 +470,7 @@ class TestApplyContract:
 
         for returned, declared in cases:
             wrapped = Function(
-                name="function",
+                label="function",
                 fn=partial(lambda value: value, returned),
                 output_spec=DistributionSpec(declared),
             )
@@ -512,16 +512,16 @@ class TestApplyContract:
         template = RecordSpec(y=NumericArraySpec(valid.shape, support=support))
 
         Function(
-            name="function", fn=lambda: valid, output_spec=OutputSpec(**template.children)
+            label="function", fn=lambda: valid, output_spec=OutputSpec(**template.children)
         ).apply()
         with pytest.raises(ValueError, match=r"output/y.*declared support"):
             Function(
-                name="function", fn=lambda: invalid, output_spec=OutputSpec(**template.children)
+                label="function", fn=lambda: invalid, output_spec=OutputSpec(**template.children)
             ).apply()
 
     def test_support_validation_rejects_direct_jax_jit(self):
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda x: x + 1,
             output_spec=OutputSpec(**RecordSpec(y=NumericArraySpec((), support=positive)).children),
         )
@@ -533,7 +533,7 @@ class TestApplyContract:
         # A Normal declares its support as real, which the declared positive
         # support describes rather than constrains.
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda x: x,
             input_spec=InputSpec(RecordSpec(x=NumericArraySpec((), support=positive)).children),
             dispatch="sequential",
@@ -561,7 +561,7 @@ class TestApplyContract:
 
         law = StructuredNormal("x", 0, 1)
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda v: v,
             input_spec=InputSpec(RecordSpec(v=(3,)).children),
             dispatch="sequential",
@@ -637,7 +637,7 @@ class TestApplyContract:
         for operand, input_template in cases:
             wrapped = Function(
                 fn=lambda v: 1.0,
-                name="f",
+                label="f",
                 input_spec=InputSpec(input_template.children),
                 dispatch="sequential",
             )
@@ -657,7 +657,7 @@ class TestApplyContract:
         )
         wrapped = Function(
             fn=lambda v: 1.0,
-            name="f",
+            label="f",
             input_spec=InputSpec(RecordSpec(v=()).children),
             dispatch="sequential",
         )
@@ -673,7 +673,7 @@ class TestApplyContract:
             fields.reverse()
         wrapped = Function(
             fn=lambda x, offset: x["value"] + offset,
-            name="shift",
+            label="shift",
             input_spec=InputSpec(RecordSpec(dict(fields)).children),
             output_spec=OutputSpec(**RecordSpec(result=("n",)).children),
             dispatch=dispatch,
@@ -704,7 +704,7 @@ class TestApplyContract:
 
         wrapped = Function(
             fn=evaluate,
-            name="unbound",
+            label="unbound",
             input_spec=InputSpec(
                 RecordSpec(
                     x=("n",),
@@ -726,7 +726,7 @@ class TestApplyContract:
 
         wrapped = Function(
             fn=lambda v: 1.0,
-            name="f",
+            label="f",
             input_spec=InputSpec(RecordSpec(v=()).children),
             dispatch="sequential",
         )
@@ -745,7 +745,7 @@ class TestApplyContract:
             stats=RecordSpec(copy=("obs",), total=()),
         )
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda x: {"stats": {"copy": x, "total": x.sum()}},
             input_spec=InputSpec(RecordSpec(x=("obs",)).children),
             output_spec=template,
@@ -756,7 +756,7 @@ class TestApplyContract:
         assert result.event_template == RecordSpec(stats=RecordSpec(copy=(3,), total=()))
         with pytest.raises(ValueError, match="do not match template fields"):
             Function(
-                name="function",
+                label="function",
                 fn=lambda x: {"stats": {"copy": x}},
                 input_spec=InputSpec(RecordSpec(x=("obs",)).children),
                 output_spec=template,
@@ -764,7 +764,7 @@ class TestApplyContract:
 
     def test_raw_result_cannot_satisfy_multi_leaf_output_template(self):
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda x: x,
             output_spec=RecordSpec(left=(), right=()),
         )
@@ -774,7 +774,7 @@ class TestApplyContract:
 
     def test_existing_record_requires_matching_authoritative_template(self):
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda x: Record("result", wrong=x),
             output_spec=RecordSpec(expected=()),
         )
@@ -785,7 +785,7 @@ class TestApplyContract:
     def test_existing_distribution_requires_matching_authoritative_template(self):
         matching = Normal("draw", 0, 1)
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda x: matching,
             output_spec=matching.spec,
         )
@@ -795,7 +795,7 @@ class TestApplyContract:
         mismatching = Normal("other", 0, 1)
         with pytest.raises(ValueError, match=r"declares the component 'draw'.*'other'"):
             Function(
-                name="function",
+                label="function",
                 fn=lambda x: mismatching,
                 output_spec=matching.spec,
             ).apply(1)
@@ -807,8 +807,8 @@ class TestApplyContract:
         derives a result term from it — the same kind under the call's own
         provenance.
         """
-        learned = Function(fn=lambda x: x + 1, name="learned")
-        wrapped = Function(fn=lambda: learned, name="fit_like")
+        learned = Function(fn=lambda x: x + 1, label="learned")
+        wrapped = Function(fn=lambda: learned, label="fit_like")
 
         assert wrapped.apply() is learned
 
@@ -822,7 +822,7 @@ class TestApplyContract:
     def test_function_spec_return_remains_authoritative_event_payload(self, full_provenance_mode):
         learned = Function(
             fn=lambda x: x + 1,
-            name="learned",
+            label="learned",
             input_spec=InputSpec(RecordSpec(x=()).children),
             output_spec=OutputSpec(y=NumericArraySpec(())),
         )
@@ -834,7 +834,7 @@ class TestApplyContract:
         )
         wrapped = Function(
             fn=lambda: learned,
-            name="fit_like",
+            label="fit_like",
             output_spec=OutputSpec(**output_template.children),
         )
 
@@ -855,7 +855,7 @@ class TestTemplateDeclarationContract:
             return x - y
 
         wrapped = Function(
-            name="subtract",
+            label="subtract",
             fn=subtract,
             input_spec=InputSpec(RecordSpec(y=(), x=()).children),
             output_spec=OutputSpec(**RecordSpec(result=()).children),
@@ -871,7 +871,7 @@ class TestTemplateDeclarationContract:
     def test_signature_template_requires_total_bijection(self, template):
         with pytest.raises(ValueError, match="exactly match signature parameters"):
             Function(
-                name="function", fn=lambda x, y: x + y, input_spec=InputSpec(template.children)
+                label="function", fn=lambda x, y: x + y, input_spec=InputSpec(template.children)
             )
 
     @pytest.mark.parametrize(
@@ -881,7 +881,7 @@ class TestTemplateDeclarationContract:
     def test_authoritative_input_template_rejects_variadics(self, callable_):
         with pytest.raises(ValueError, match="variadic parameters"):
             Function(
-                name="callable_", fn=callable_, input_spec=InputSpec(RecordSpec(x=()).children)
+                label="callable_", fn=callable_, input_spec=InputSpec(RecordSpec(x=()).children)
             )
 
     def test_invalid_default_and_construction_binding_fail_at_construction(self):
@@ -892,11 +892,11 @@ class TestTemplateDeclarationContract:
 
         with pytest.raises(ValueError, match="default/x"):
             Function(
-                name="defaulted", fn=defaulted, input_spec=InputSpec(RecordSpec(x=(3,)).children)
+                label="defaulted", fn=defaulted, input_spec=InputSpec(RecordSpec(x=(3,)).children)
             )
         with pytest.raises(ValueError, match="construction binding/x"):
             Function(
-                name="function",
+                label="function",
                 fn=lambda x: x,
                 input_spec=InputSpec(RecordSpec(x=(3,)).children),
                 bind={"x": np.ones((2,))},
@@ -911,14 +911,14 @@ class TestTemplateDeclarationContract:
 
         with pytest.raises(ValueError, match=r"default/y.*already bound to 2"):
             Function(
-                name="inconsistent_defaults",
+                label="inconsistent_defaults",
                 fn=inconsistent_defaults,
                 input_spec=InputSpec(RecordSpec(x=("n",), y=("n",)).children),
             )
 
         with pytest.raises(ValueError, match=r"construction binding/y.*already bound to 2"):
             Function(
-                name="function",
+                label="function",
                 fn=lambda x, y: (x, y),
                 input_spec=InputSpec(RecordSpec(x=("n",), y=("n",)).children),
                 bind={"x": np.ones((2,)), "y": np.ones((3,))},
@@ -926,7 +926,7 @@ class TestTemplateDeclarationContract:
 
     def test_unknown_construction_binding_is_rejected(self):
         with pytest.raises(ValueError, match="invalid construction bindings"):
-            Function(name="function", fn=lambda x: x, bind={"missing": 1})
+            Function(label="function", fn=lambda x: x, bind={"missing": 1})
 
     def test_output_symbols_can_bind_independently_of_inputs(self):
         wrapped = Function(
@@ -941,14 +941,14 @@ class TestTemplateDeclarationContract:
 
     def test_type_errors_for_non_templates(self):
         with pytest.raises(TypeError, match="input_spec"):
-            Function(name="function", fn=lambda x: x, input_spec=("obs",))  # type: ignore[arg-type]
+            Function(label="function", fn=lambda x: x, input_spec=("obs",))  # type: ignore[arg-type]
 
 
 class TestSymbolicCalls:
     @pytest.fixture
     def regression_function(self):
         return Function(
-            name="function",
+            label="function",
             fn=lambda X, p: X @ p,
             input_spec=InputSpec(RecordSpec(X=("obs", "p"), p=("p",)).children),
             output_spec=OutputSpec(**RecordSpec(y=("obs",)).children),
@@ -971,7 +971,7 @@ class TestSymbolicCalls:
             return x
 
         wrapped = Function(
-            name="identity",
+            label="identity",
             fn=identity,
             input_spec=InputSpec(RecordSpec(x=()).children),
             dispatch="sequential",
@@ -993,7 +993,7 @@ class TestSymbolicCalls:
 
     def test_output_symbol_conflict_fails_before_publication(self):
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda x: x[:-1],
             input_spec=InputSpec(RecordSpec(x=("obs",)).children),
             output_spec=OutputSpec(**RecordSpec(y=("obs",)).children),
@@ -1008,7 +1008,7 @@ class TestSymbolicCalls:
             [NumericRecord("row", value=jnp.ones((2,)) * i) for i in range(3)], level_name="draw"
         )
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda row: row["value"] + 1,
             input_spec=InputSpec(RecordSpec(row=RecordSpec(value=("p",))).children),
             output_spec=OutputSpec(**RecordSpec(prediction=("p",)).children),
@@ -1028,7 +1028,7 @@ class TestSymbolicCalls:
     @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
     def test_distribution_broadcast_declares_the_output_template(self, dispatch):
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda x: jnp.stack((x, x + 1)),
             input_spec=InputSpec(RecordSpec(x=()).children),
             output_spec=OutputSpec(**RecordSpec(pair=(2,)).children),
@@ -1051,7 +1051,7 @@ class TestSymbolicCalls:
             [NumericRecord("row", size=2), NumericRecord("row", size=3)], level_name="draw"
         )
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda row: jnp.ones((int(row["size"]),)),
             input_spec=InputSpec(RecordSpec(row=RecordSpec(size=())).children),
             output_spec=OutputSpec(**RecordSpec(value=(2,)).children),
@@ -1070,7 +1070,7 @@ class TestSymbolicCalls:
             level_name="draw",
         )
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda row: row["value"],
             input_spec=InputSpec(RecordSpec(row=RecordSpec(value=())).children),
             output_spec=OutputSpec(
@@ -1084,7 +1084,7 @@ class TestSymbolicCalls:
 
     def test_support_pinned_broadcast_auto_falls_back_to_sequential(self):
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda x: x**2 + 1,
             input_spec=InputSpec(RecordSpec(x=()).children),
             output_spec=OutputSpec(**RecordSpec(y=NumericArraySpec((), support=positive)).children),
@@ -1102,7 +1102,7 @@ class TestSymbolicCalls:
 
     def test_support_pinned_broadcast_explicit_jax_reports_traceability_error(self):
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda x: x**2 + 1,
             input_spec=InputSpec(RecordSpec(x=()).children),
             output_spec=OutputSpec(**RecordSpec(y=NumericArraySpec((), support=positive)).children),
@@ -1122,7 +1122,7 @@ class TestSymbolicCalls:
         )
         template = RecordSpec(y=NumericArraySpec((), support=positive))
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda row: row["value"] + 1,
             input_spec=InputSpec(RecordSpec(row=RecordSpec(value=())).children),
             output_spec=OutputSpec(**template.children),
@@ -1139,7 +1139,7 @@ class TestSymbolicCalls:
             [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)], level_name="draw"
         )
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda row: row["value"] + 1,
             input_spec=InputSpec(RecordSpec(row=RecordSpec(value=())).children),
             output_spec=OutputSpec(**RecordSpec(y=NumericArraySpec((), support=positive)).children),
@@ -1158,7 +1158,7 @@ class TestSymbolicCalls:
             [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)], level_name="draw"
         )
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda row: {
                 "prediction": row["value"] + 1,
                 "stats": {"doubled": row["value"] * 2},
@@ -1184,7 +1184,7 @@ class TestSymbolicCalls:
     @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
     def test_nested_mapping_distribution_broadcast_declares_the_nested_record(self, dispatch):
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda x: {"stats": {"value": x, "doubled": x * 2}},
             input_spec=InputSpec(RecordSpec(x=()).children),
             output_spec=RecordSpec(
@@ -1214,7 +1214,7 @@ class TestSymbolicCalls:
 
     def test_distribution_outputs_keep_their_declaration_through_broadcast(self):
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda x: Normal("y", x, 1),
             input_spec=InputSpec(RecordSpec(x=()).children),
             output_spec=DistributionSpec(OutputSpec(y=NumericArraySpec(()))),
@@ -1235,7 +1235,7 @@ class TestSymbolicCalls:
 
     def test_distribution_broadcast_rejects_cross_kind_declared_dtype(self):
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda x: Normal("y", x, 1),
             input_spec=InputSpec(RecordSpec(x=()).children),
             output_spec=DistributionSpec(OutputSpec(y=NumericArraySpec((), dtype="int32"))),
@@ -1254,7 +1254,7 @@ class TestSymbolicCalls:
             [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)], level_name="draw"
         )
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda row: Normal("y", row["value"], 1),
             input_spec=InputSpec(RecordSpec(row=RecordSpec(value=())).children),
             output_spec=DistributionSpec(OutputSpec(y=NumericArraySpec(()))),
@@ -1275,7 +1275,7 @@ class TestSymbolicCalls:
             level_name="draw",
         )
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda row, noise: {"prediction": row["offset"] + noise},
             input_spec=InputSpec(
                 RecordSpec(
@@ -1468,7 +1468,7 @@ class TestReentrancyAndProvenance:
     def test_seeded_runs_are_repeatable_across_sequential_and_concurrent_calls(self):
         probpipe.provenance_config.mode = ProvenanceMode.OFF
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda x: x + 1,
             n_broadcast_samples=12,
             dispatch="sequential",
@@ -1491,7 +1491,7 @@ class TestReentrancyAndProvenance:
     def test_plain_result_provenance_starts_with_function_then_tracked_inputs(
         self, full_provenance_mode
     ):
-        wrapped = Function(name="function", fn=lambda record: record["x"] + 1)
+        wrapped = Function(label="function", fn=lambda record: record["x"] + 1)
         tracked_input = NumericRecord("input", x=1.0)
 
         result = wrapped(tracked_input)
@@ -1520,7 +1520,7 @@ class TestReentrancyAndProvenance:
         if carries_annotations:
             object.__setattr__(stored, "_annotations", {"owner": "callable"})
         stored.with_provenance(Provenance("inner"))
-        wrapped = Function(name="function", fn=lambda x: stored)
+        wrapped = Function(label="function", fn=lambda x: stored)
 
         assert wrapped.apply(1) is stored
         first = wrapped(1)
@@ -1540,7 +1540,7 @@ class TestReentrancyAndProvenance:
     def test_off_mode_still_copies_a_tracked_return(self):
         probpipe.provenance_config.mode = ProvenanceMode.OFF
         stored = NumericRecord("stored", value=1.0)
-        wrapped = Function(name="function", fn=lambda: stored)
+        wrapped = Function(label="function", fn=lambda: stored)
 
         result = wrapped()
 
@@ -1568,7 +1568,7 @@ class TestReentrancyAndProvenance:
     def test_off_mode_attaches_no_call_provenance(self):
         probpipe.provenance_config.mode = ProvenanceMode.OFF
 
-        result = Function(name="function", fn=lambda x: x + 1)(2)
+        result = Function(label="function", fn=lambda x: x + 1)(2)
 
         assert result.provenance is None
 
@@ -1576,7 +1576,7 @@ class TestReentrancyAndProvenance:
 class TestVariadicPlanning:
     def test_distribution_in_varargs_is_lifted(self):
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda *items: items[0] + items[1],
             dispatch="sequential",
             n_broadcast_samples=8,
@@ -1594,7 +1594,7 @@ class TestVariadicPlanning:
         rows = NumericRecordBatch.stack(
             [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)], level_name="draw"
         )
-        wrapped = Function(name="function", fn=lambda *items: items[0]["value"] + items[1])
+        wrapped = Function(label="function", fn=lambda *items: items[0]["value"] + items[1])
 
         result = wrapped(rows, 2.0)
 
@@ -1609,7 +1609,7 @@ class TestVariadicPlanning:
         def double(*items: Any):
             return items[0]["value"] * 2
 
-        result = Function(name="double", fn=double)(rows)
+        result = Function(label="double", fn=double)(rows)
 
         assert result.batch_shape == (3,)
         np.testing.assert_allclose(result.values, np.arange(3.0) * 2)
@@ -1622,7 +1622,7 @@ class TestVariadicPlanning:
         def double(**extras: Any):
             return extras["rows"]["value"] * 2
 
-        result = Function(name="double", fn=double)(rows=rows)
+        result = Function(label="double", fn=double)(rows=rows)
 
         assert result.batch_shape == (3,)
         np.testing.assert_allclose(result.values, np.arange(3.0) * 2)
@@ -1630,7 +1630,9 @@ class TestVariadicPlanning:
     def test_tracked_varargs_are_provenance_parents(self, full_provenance_mode):
         first = NumericRecord("first", value=1.0)
         second = NumericRecord("second", value=2.0)
-        wrapped = Function(name="function", fn=lambda *items: items[0]["value"] + items[1]["value"])
+        wrapped = Function(
+            label="function", fn=lambda *items: items[0]["value"] + items[1]["value"]
+        )
 
         result = wrapped(first, second)
 
@@ -1654,7 +1656,7 @@ class TestVariadicPlanning:
                 + extras["second"]["value"]
             )
 
-        wrapped = Function(name="total", fn=total)
+        wrapped = Function(label="total", fn=total)
 
         result = wrapped(
             fixed,
@@ -1678,7 +1680,7 @@ class TestVariadicPlanning:
         def total(head, *items, offset, bias=3.0, **extras):
             return head["value"] + items[0] + items[1] + offset + bias + extras["tail"]
 
-        wrapped = Function(name="total", fn=total, bind={"offset": 4.0})
+        wrapped = Function(label="total", fn=total, bind={"offset": 4.0})
 
         result = wrapped(tracked, shared, shared, tail=shared)
 
@@ -1699,7 +1701,7 @@ class TestVariadicPlanning:
         def collect(*items, **extras):
             return items[0] + extras["items"]
 
-        wrapped = Function(name="collect", fn=collect)
+        wrapped = Function(label="collect", fn=collect)
 
         assert wrapped.apply(1, items=2) == 3
         assert float(wrapped(1, items=2)) == 3
@@ -1708,7 +1710,7 @@ class TestVariadicPlanning:
         def count(*items: Distribution):
             return len(items)
 
-        wrapped = Function(name="count", fn=count)
+        wrapped = Function(label="count", fn=count)
 
         assert float(wrapped(Normal("x", 0, 1))) == 1
 
@@ -1716,13 +1718,13 @@ class TestVariadicPlanning:
         def count(**extras: Distribution):
             return len(extras)
 
-        wrapped = Function(name="count", fn=count)
+        wrapped = Function(label="count", fn=count)
 
         assert float(wrapped(x=Normal("x", 0, 1))) == 1
 
     def test_construction_bound_varargs_participate_in_lifting(self):
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda *items: items[0] + items[1],
             bind={"items": (Normal("x", 0, 1), 2.0)},
             dispatch="sequential",
@@ -1737,7 +1739,7 @@ class TestVariadicPlanning:
 
     def test_varkw_distribution_uses_stable_planner_label(self):
         wrapped = Function(
-            name="function",
+            label="function",
             fn=lambda **extras: extras["x"] + extras["offset"],
             dispatch="sequential",
             n_broadcast_samples=8,
@@ -1767,7 +1769,7 @@ class TestDeclaredSupportOnABatchedOutput:
         )
 
         result = Function(
-            name="function",
+            label="function",
             fn=lambda: valid,
             output_spec=BatchSpec(template, valid.axis_groups, valid.level_names),
         ).apply()
@@ -1789,7 +1791,7 @@ class TestDeclaredSupportOnABatchedOutput:
 
         with pytest.raises(ValueError, match=r"output/function/b.*support positive"):
             Function(
-                name="function",
+                label="function",
                 fn=lambda: invalid,
                 output_spec=BatchSpec(template, invalid.axis_groups, invalid.level_names),
             ).apply()

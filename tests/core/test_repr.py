@@ -36,7 +36,7 @@ def _schools() -> RecordBatch:
             for y, label in zip(range(8), "ABCDEFGH", strict=True)
         ],
         level_name="school",
-        name="schools",
+        label="schools",
     )
 
 

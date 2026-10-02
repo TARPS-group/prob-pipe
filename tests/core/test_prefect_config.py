@@ -221,7 +221,7 @@ class TestEffectiveWorkflowKind:
         def noop(x):
             return x
 
-        wf = Function(name="noop", fn=noop, dispatch="sequential")
+        wf = Function(label="noop", fn=noop, dispatch="sequential")
         assert node_mod.effective_workflow_kind(wf) is WorkflowKind.OFF
 
     def test_explicit_task_overrides_global(self):
@@ -234,7 +234,7 @@ class TestEffectiveWorkflowKind:
             return x
 
         wf = Function(
-            name="noop",
+            label="noop",
             fn=noop,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
@@ -253,7 +253,7 @@ class TestEffectiveWorkflowKind:
             return x
 
         wf = Function(
-            name="noop",
+            label="noop",
             fn=noop,
             workflow_kind=WorkflowKind.OFF,
             dispatch="sequential",
@@ -272,7 +272,7 @@ class TestEffectiveWorkflowKind:
             return x
 
         wf = Function(
-            name="noop",
+            label="noop",
             fn=noop,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
@@ -294,7 +294,7 @@ class TestEffectiveWorkflowKind:
         def noop(x):
             return x
 
-        wf = Function(name="noop", fn=noop, dispatch="sequential")
+        wf = Function(label="noop", fn=noop, dispatch="sequential")
         assert node_mod.effective_workflow_kind(wf) is WorkflowKind.OFF
 
     def test_global_flow_applies_to_default_instance(self):
@@ -306,7 +306,7 @@ class TestEffectiveWorkflowKind:
         def noop(x):
             return x
 
-        wf = Function(name="noop", fn=noop, dispatch="sequential")
+        wf = Function(label="noop", fn=noop, dispatch="sequential")
 
         if node_mod.task is not None:
             assert node_mod.effective_workflow_kind(wf) is WorkflowKind.FLOW
@@ -318,7 +318,7 @@ class TestEffectiveWorkflowKind:
         def noop(x):
             return x
 
-        wf = Function(name="noop", fn=noop, dispatch="sequential")
+        wf = Function(label="noop", fn=noop, dispatch="sequential")
         prefect_config.workflow_kind = WorkflowKind.OFF
         assert node_mod.effective_workflow_kind(wf) is WorkflowKind.OFF
 
@@ -344,7 +344,7 @@ class TestWorkflowKindConstructorValidation:
 
         with pytest.raises(TypeError, match="WorkflowKind enum member"):
             Function(
-                name="noop",
+                label="noop",
                 fn=noop,
                 workflow_kind="task",
                 dispatch="sequential",
@@ -358,7 +358,7 @@ class TestWorkflowKindConstructorValidation:
 
         with pytest.raises(TypeError, match="WorkflowKind enum member"):
             Function(
-                name="noop",
+                label="noop",
                 fn=noop,
                 workflow_kind=None,
                 dispatch="sequential",

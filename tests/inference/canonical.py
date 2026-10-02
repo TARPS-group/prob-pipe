@@ -89,14 +89,14 @@ class _Observations(TFPDistribution):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         backend: tfd.Distribution,
         support: Constraint,
         *,
         event_spec: OutputSpec | None = None,
     ) -> None:
         self._support = support
-        super().__init__(name, backend, event_spec=event_spec)
+        super().__init__(label, backend, event_spec=event_spec)
 
     def _event_support(self) -> Constraint:
         return self._support
@@ -120,7 +120,7 @@ class ObservationKernel(
 
     Parameters
     ----------
-    name : str
+    label : str
         The kernel's label and the component of the response.
     given : Mapping[str, NumericArraySpec]
         The given slots, each the event spec of the prior factor that produces it.
@@ -132,12 +132,12 @@ class ObservationKernel(
 
     def __init__(
         self,
-        name: str,
+        label: str,
         given: Mapping[str, NumericArraySpec],
         response: NumericArraySpec,
         build: Callable[..., tfd.Distribution],
     ) -> None:
-        super().__init__(name, dict(given), OutputSpec(**{name: response}))
+        super().__init__(label, dict(given), OutputSpec(**{label: response}))
         object.__setattr__(self, "_build", build)
         object.__setattr__(self, "_support", response.support)
 

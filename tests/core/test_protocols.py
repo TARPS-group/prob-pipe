@@ -50,7 +50,7 @@ class _ShiftKernel(ConditionalDistribution):
 
 @pytest.fixture
 def normal():
-    return Normal(loc=0.0, scale=1.0, name="x")
+    return Normal(loc=0.0, scale=1.0, label="x")
 
 
 @pytest.fixture
@@ -81,11 +81,11 @@ class TestSupportsSampling:
     @pytest.mark.parametrize(
         "dist_cls,kwargs",
         [
-            (Normal, {"loc": 0.0, "scale": 1.0, "name": "x"}),
-            (Beta, {"alpha": 2.0, "beta": 5.0, "name": "b"}),
-            (Gamma, {"concentration": 3.0, "rate": 1.0, "name": "g"}),
-            (Bernoulli, {"probs": 0.5, "name": "d"}),
-            (MultivariateNormal, {"loc": jnp.zeros(2), "cov": jnp.eye(2), "name": "z"}),
+            (Normal, {"loc": 0.0, "scale": 1.0, "label": "x"}),
+            (Beta, {"alpha": 2.0, "beta": 5.0, "label": "b"}),
+            (Gamma, {"concentration": 3.0, "rate": 1.0, "label": "g"}),
+            (Bernoulli, {"probs": 0.5, "label": "d"}),
+            (MultivariateNormal, {"loc": jnp.zeros(2), "cov": jnp.eye(2), "label": "z"}),
         ],
     )
     def test_tfp_distributions(self, dist_cls, kwargs):
@@ -127,9 +127,9 @@ class TestSupportsLogProb:
     @pytest.mark.parametrize(
         "dist_cls,kwargs",
         [
-            (Normal, {"loc": 0.0, "scale": 1.0, "name": "x"}),
-            (Beta, {"alpha": 2.0, "beta": 5.0, "name": "b"}),
-            (MultivariateNormal, {"loc": jnp.zeros(2), "cov": jnp.eye(2), "name": "z"}),
+            (Normal, {"loc": 0.0, "scale": 1.0, "label": "x"}),
+            (Beta, {"alpha": 2.0, "beta": 5.0, "label": "b"}),
+            (MultivariateNormal, {"loc": jnp.zeros(2), "cov": jnp.eye(2), "label": "z"}),
         ],
     )
     def test_tfp_distributions(self, dist_cls, kwargs):
@@ -312,8 +312,8 @@ class TestFieldViewDynamicProtocols:
     def test_view_over_full_parent_gets_all_protocols(self):
         """A joint of normals supports sampling and (through its TFP
         factors) mean / variance — its views should match."""
-        dist = Normal(loc=0.0, scale=1.0, name="intercept") * Normal(
-            loc=0.0, scale=1.0, name="slope"
+        dist = Normal(loc=0.0, scale=1.0, label="intercept") * Normal(
+            loc=0.0, scale=1.0, label="slope"
         )
         view = dist["intercept"]
         assert isinstance(view, SupportsSampling)
@@ -340,7 +340,7 @@ class TestSampleReturnTypeConvention:
     def test_numeric_distribution_returns_array(self):
         import jax.numpy as jnp
 
-        dist = Normal(loc=0.0, scale=1.0, name="x")
+        dist = Normal(loc=0.0, scale=1.0, label="x")
         k = jax.random.PRNGKey(0)
         assert isinstance(dist._sample(k, ()), jnp.ndarray)
         assert dist._sample(k, (5,)).shape == (5,)
@@ -350,7 +350,7 @@ class TestSampleReturnTypeConvention:
         from probpipe import Record, sample
         from probpipe.core._numeric_record_batch import NumericRecordBatch
 
-        dist = Normal(loc=0.0, scale=1.0, name="x") * Normal(loc=0.0, scale=1.0, name="y")
+        dist = Normal(loc=0.0, scale=1.0, label="x") * Normal(loc=0.0, scale=1.0, label="y")
         k = jax.random.PRNGKey(0)
         # unbatched
         s0 = dist._sample(k, ())
@@ -367,8 +367,8 @@ class TestSampleReturnTypeConvention:
         """``_sample_one`` was removed from the distribution surface —
         ``_sample(key, ())`` is the sole entry point for a single draw."""
         distributions = [
-            Normal(loc=0.0, scale=1.0, name="x"),
-            Normal(loc=0.0, scale=1.0, name="a") * Normal(loc=0.0, scale=1.0, name="b"),
+            Normal(loc=0.0, scale=1.0, label="x"),
+            Normal(loc=0.0, scale=1.0, label="a") * Normal(loc=0.0, scale=1.0, label="b"),
             EmpiricalDistribution("x", jnp.arange(5.0)),
             BootstrapDistribution("bootstrap", EmpiricalDistribution("y", jnp.arange(5.0))),
         ]
@@ -419,7 +419,7 @@ class TestTransformedDistributionDynamicProtocols:
 
         from probpipe import Normal
 
-        td = BijectorTransformedDistribution("td", Normal(loc=0.0, scale=1.0, name="x"), tfb.Exp())
+        td = BijectorTransformedDistribution("td", Normal(loc=0.0, scale=1.0, label="x"), tfb.Exp())
         assert isinstance(td, SupportsSampling)
         assert isinstance(td, SupportsLogProb)
         assert not isinstance(td, SupportsMean)
@@ -451,7 +451,7 @@ class TestJointDynamicProtocols:
     """A joint's protocol claims match its factors'."""
 
     def test_all_tfp_components_all_protocols(self):
-        joint = Normal(loc=0.0, scale=1.0, name="z") * Normal(loc=0.0, scale=1.0, name="x")
+        joint = Normal(loc=0.0, scale=1.0, label="z") * Normal(loc=0.0, scale=1.0, label="x")
         assert isinstance(joint, SupportsSampling)
         assert isinstance(joint, SupportsLogProb)
         assert isinstance(joint, SupportsMean)
@@ -462,7 +462,7 @@ class TestJointDynamicProtocols:
         """``EmpiricalDistribution`` lacks ``SupportsLogProb``; a
         joint containing one should not claim it."""
         boot = EmpiricalDistribution("b", jnp.array([1.0, 2.0, 3.0]))
-        joint = boot * Normal(loc=0.0, scale=1.0, name="z")
+        joint = boot * Normal(loc=0.0, scale=1.0, label="z")
         # Sampling is always available; a joint that is not Gaussian claims no
         # conditioning capability, so the inference registry conditions it.
         assert isinstance(joint, SupportsSampling)

@@ -98,7 +98,7 @@ class Bernoulli(TFPDistribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         Distribution name.
     probs : array-like, optional
         Probability of a 1 outcome.  Exactly one of *probs* or *logits*
@@ -125,7 +125,7 @@ class Bernoulli(TFPDistribution):
 
     def __new__(
         cls,
-        name: str,
+        label: str,
         *,
         probs: ArrayLike | None = None,
         logits: ArrayLike | None = None,
@@ -135,7 +135,7 @@ class Bernoulli(TFPDistribution):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         *,
         probs: ArrayLike | None = None,
         logits: ArrayLike | None = None,
@@ -151,7 +151,7 @@ class Bernoulli(TFPDistribution):
             self._logits = _as_float_array(logits)
             self._probs = None
             backend = tfd.Bernoulli(logits=self._logits)
-        super().__init__(name, backend, event_spec=event_spec)
+        super().__init__(label, backend, event_spec=event_spec)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -175,7 +175,7 @@ class Binomial(TFPDistribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         Distribution name.
     total_count : array-like
         Number of trials.
@@ -204,7 +204,7 @@ class Binomial(TFPDistribution):
 
     def __new__(
         cls,
-        name: str,
+        label: str,
         total_count: ArrayLike,
         *,
         probs: ArrayLike | None = None,
@@ -215,7 +215,7 @@ class Binomial(TFPDistribution):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         total_count: ArrayLike,
         *,
         probs: ArrayLike | None = None,
@@ -232,7 +232,7 @@ class Binomial(TFPDistribution):
             _, (self._total_count, self._logits) = _promote_floats(total_count, logits)
             self._probs = None
             backend = tfd.Binomial(total_count=self._total_count, logits=self._logits)
-        super().__init__(name, backend, event_spec=event_spec)
+        super().__init__(label, backend, event_spec=event_spec)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -260,7 +260,7 @@ class Poisson(TFPDistribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         Distribution name.
     rate : array-like
         Rate parameter (must be positive).
@@ -280,10 +280,10 @@ class Poisson(TFPDistribution):
 
     _backend_capabilities = _MOMENTS
 
-    def __init__(self, name: str, rate: ArrayLike, *, event_spec: OutputSpec | None = None):
+    def __init__(self, label: str, rate: ArrayLike, *, event_spec: OutputSpec | None = None):
         self._rate = _as_float_array(rate)
         backend = tfd.Poisson(rate=self._rate)
-        super().__init__(name, backend, event_spec=event_spec)
+        super().__init__(label, backend, event_spec=event_spec)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -303,7 +303,7 @@ class Categorical(TFPDistribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         Distribution name.
     probs : array-like, optional
         Probabilities for each category.  Exactly one of *probs* or
@@ -330,7 +330,7 @@ class Categorical(TFPDistribution):
 
     def __new__(
         cls,
-        name: str,
+        label: str,
         *,
         probs: ArrayLike | None = None,
         logits: ArrayLike | None = None,
@@ -341,7 +341,7 @@ class Categorical(TFPDistribution):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         *,
         probs: ArrayLike | None = None,
         logits: ArrayLike | None = None,
@@ -357,7 +357,7 @@ class Categorical(TFPDistribution):
             self._logits = _as_float_array(logits)
             self._probs = None
             backend = tfd.Categorical(logits=self._logits)
-        super().__init__(name, backend, event_spec=event_spec)
+        super().__init__(label, backend, event_spec=event_spec)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -386,7 +386,7 @@ class NegativeBinomial(TFPDistribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         Distribution name.
     total_count : array-like
         Number of successes before stopping.
@@ -414,7 +414,7 @@ class NegativeBinomial(TFPDistribution):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         total_count: ArrayLike,
         *,
         probs: ArrayLike | None = None,
@@ -431,7 +431,7 @@ class NegativeBinomial(TFPDistribution):
             _, (self._total_count, self._logits) = _promote_floats(total_count, logits)
             self._probs = None
             backend = tfd.NegativeBinomial(total_count=self._total_count, logits=self._logits)
-        super().__init__(name, backend, event_spec=event_spec)
+        super().__init__(label, backend, event_spec=event_spec)
 
     # -- convenient accessors -----------------------------------------------
 

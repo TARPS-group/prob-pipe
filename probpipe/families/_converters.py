@@ -225,7 +225,7 @@ def _tfp_law(source: tfd.Distribution, declared: OutputSpec | None) -> TFPDistri
     if entry is None:
         return TFPDistribution(name, source, event_spec=declared)
     family, arguments = entry
-    return family(name=name, **arguments(source), event_spec=declared)
+    return family(label=name, **arguments(source), event_spec=declared)
 
 
 def _scipy_arguments(source: Any) -> tuple[tuple[Any, ...], float, float]:
@@ -285,7 +285,7 @@ def _scipy_law(source: Any, declared: OutputSpec | None) -> TFPDistribution | No
     if entry is None:
         return None
     family, arguments = entry
-    return family(name=source.dist.name, **arguments(source), event_spec=declared)
+    return family(label=source.dist.name, **arguments(source), event_spec=declared)
 
 
 def _entering_law(source: Any, declared: OutputSpec | None) -> Distribution | None:
@@ -892,7 +892,7 @@ class _MomentMatching(Converter):
         draws = _draws(source, law, _sample_count(options)) if planned.samples else None
         (component,) = planned.declaration.components
         result = target_type(
-            name=planned.label,
+            label=planned.label,
             **planned.parameters(_Statistics(law, draws), options),
             event_spec=OutputSpec(**{component: None}),
         )

@@ -83,8 +83,8 @@ class FullyNumericKernel(_GivesDeclaredLaw, FullyNumericConditionalDistribution)
 class LocationKernel(ConditionalDistribution):
     """``y | mu ~ Normal(mu, 1)``: a normal law over the kernel's event at each ``mu``."""
 
-    def __init__(self, name: str = "lik") -> None:
-        super().__init__(name, {"mu": SCALAR}, OutputSpec(y=SCALAR))
+    def __init__(self, label: str = "lik") -> None:
+        super().__init__(label, {"mu": SCALAR}, OutputSpec(y=SCALAR))
 
     def _condition_on(self, given, /, **kwargs):
         return Normal(self.label, given["mu"], 1.0, event_spec=self.event_spec)
@@ -198,8 +198,8 @@ class TestConstructionErrors:
         with pytest.raises(ValueError, match="both as a given slot and as a produced"):
             _kernel(given=given, event=event, name=name)
 
-    def test_a_missing_name_raises(self):
-        with pytest.raises(TypeError, match="name"):
+    def test_a_missing_label_raises(self):
+        with pytest.raises(TypeError, match="label"):
             Kernel(given_spec={"mu": SCALAR}, event_spec=SCALAR)
 
     @pytest.mark.parametrize("name", ["", None, 3])
@@ -237,8 +237,8 @@ class TestConstructionErrors:
 
     def test_a_kernel_that_leaves_its_declaration_unset_raises(self):
         class Undeclared(ConditionalDistribution):
-            def __init__(self, name):
-                self._init_tracked(name)
+            def __init__(self, label):
+                self._init_tracked(label)
 
             def _condition_on(self, given, /, **kwargs):
                 return _Law(self.name, SCALAR)

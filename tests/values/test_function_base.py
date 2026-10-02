@@ -53,7 +53,7 @@ def _unnamed_callables():
 class TestFunctionDeclarations:
     @pytest.mark.parametrize("kind", ["partial", "instance"])
     def test_an_unnamed_callable_wraps_under_an_explicit_name(self, kind):
-        wrapped = function(name="add1")(_unnamed_callables()[kind])
+        wrapped = function(label="add1")(_unnamed_callables()[kind])
         assert (wrapped.label, wrapped.output_label) == ("add1", "add1")
         assert float(wrapped(2.0)) == 3.0
 
@@ -61,7 +61,7 @@ class TestFunctionDeclarations:
     @pytest.mark.parametrize("kind", ["partial", "instance"])
     def test_an_unnamed_callable_needs_an_explicit_name(self, kind, with_parentheses):
         decorate = function() if with_parentheses else function
-        with pytest.raises(TypeError, match="explicit name"):
+        with pytest.raises(TypeError, match="explicit label"):
             decorate(_unnamed_callables()[kind])
 
     def test_required_name_and_raw_representation(self):
@@ -69,7 +69,7 @@ class TestFunctionDeclarations:
             return x + y
 
         wrapped = Function("add", add)
-        assert list(inspect.signature(Function.__init__).parameters)[1:3] == ["name", "fn"]
+        assert list(inspect.signature(Function.__init__).parameters)[1:3] == ["label", "fn"]
         assert wrapped.raw() is add
         assert wrapped.apply(3) == 5
         assert inspect.signature(wrapped) == inspect.signature(add)
@@ -77,7 +77,7 @@ class TestFunctionDeclarations:
             Function(fn=add)
 
     def test_names_are_independent(self, full_provenance_mode):
-        @function(name="predict", output_label="prediction", output_spec=OutputSpec(mean=None))
+        @function(label="predict", output_label="prediction", output_spec=OutputSpec(mean=None))
         def predict_impl(x):
             return x + 1
 
@@ -101,7 +101,7 @@ class TestFunctionDeclarations:
         assert renamed(4).label == "score"
 
     def test_decorator_can_be_reused_with_its_name_override(self):
-        decorate = function(name="shared", output_label="value")
+        decorate = function(label="shared", output_label="value")
         first = decorate(lambda: 1)
         second = decorate(lambda: 2)
         assert first.label == second.label == "shared"

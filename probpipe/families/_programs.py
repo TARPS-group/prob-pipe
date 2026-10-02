@@ -101,7 +101,7 @@ class UnnormalizedDistribution(Distribution, SupportsUnnormalizedLogProb):
 
     Parameters
     ----------
-    name : str
+    label : str
         The law's label.
     log_density : callable
         ``log_density(value)``, the log-density of a draw of the event up to an
@@ -116,14 +116,14 @@ class UnnormalizedDistribution(Distribution, SupportsUnnormalizedLogProb):
     """
 
     def __init__(
-        self, name: str, log_density: Callable[[Any], Array], event_spec: OutputSpec
+        self, label: str, log_density: Callable[[Any], Array], event_spec: OutputSpec
     ) -> None:
         if not callable(log_density):
             raise TypeError(
                 f"UnnormalizedDistribution needs a callable log_density; got "
                 f"{type(log_density).__name__}"
             )
-        super().__init__(name, event_spec)
+        super().__init__(label, event_spec)
         self._log_density = log_density
 
     def _unnormalized_log_prob(self, value: Any) -> Array:
@@ -634,7 +634,7 @@ class _StanPosterior(Distribution, SupportsUnnormalizedLogProb):
 
     Parameters
     ----------
-    name : str
+    label : str
         The law's label.
     program : _StanProgram
         The program.
@@ -649,8 +649,8 @@ class _StanPosterior(Distribution, SupportsUnnormalizedLogProb):
     #: The BridgeStan model, built on first use, is not state.
     _transient_state = ("_memo",)
 
-    def __init__(self, name: str, program: _StanProgram, data: Mapping[str, Any]) -> None:
-        super().__init__(name, OutputSpec(program.parameter_record(data)))
+    def __init__(self, label: str, program: _StanProgram, data: Mapping[str, Any]) -> None:
+        super().__init__(label, OutputSpec(program.parameter_record(data)))
         self._program = program
         self._data = dict(data)
 
@@ -791,7 +791,7 @@ class StanModel(
 
     Parameters
     ----------
-    name : str
+    label : str
         The kernel's label.
     stan_file : str
         Path to a ``.stan`` file.
@@ -815,11 +815,13 @@ class StanModel(
     #: receives, so ``condition_on`` leaves their givens to the program.
     _shapes_from_data: ClassVar[bool] = True
 
-    def __init__(self, name: str, stan_file: str, *, data: Mapping[str, Any] | None = None) -> None:
+    def __init__(
+        self, label: str, stan_file: str, *, data: Mapping[str, Any] | None = None
+    ) -> None:
         program = _StanProgram.read(stan_file)
         bound = dict(data or {})
         super().__init__(
-            name, program.given_spec(bound), OutputSpec(program.parameter_record(bound))
+            label, program.given_spec(bound), OutputSpec(program.parameter_record(bound))
         )
         object.__setattr__(self, "_program", program)
         object.__setattr__(self, "_data", bound)
@@ -1084,7 +1086,7 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
 
     Parameters
     ----------
-    name : str
+    label : str
         The law's label.
     model_fn : callable
         A function returning a ``pymc.Model``, whose observed variables take
@@ -1110,7 +1112,7 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
     #: The compiled density, built on first use, is not state.
     _transient_state = ("_memo",)
 
-    def __new__(cls, name: str, model_fn: Callable[..., Any]) -> Any:
+    def __new__(cls, label: str, model_fn: Callable[..., Any]) -> Any:
         program = model_fn if isinstance(model_fn, _PyMCProgram) else _PyMCProgram(model_fn)
         claimed = (
             (SupportsLogProb, SupportsSampling)
@@ -1119,7 +1121,7 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
         )
         return object.__new__(_capability_subclass(PyMCModel, claimed))
 
-    def __init__(self, name: str, model_fn: Callable[..., Any]) -> None:
+    def __init__(self, label: str, model_fn: Callable[..., Any]) -> None:
         try:
             import pymc  # noqa: F401
         except ImportError as e:
@@ -1127,7 +1129,7 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
                 "pymc is required for PyMCModel. Install it with: pip install pymc"
             ) from e
         program = model_fn if isinstance(model_fn, _PyMCProgram) else _PyMCProgram(model_fn)
-        super().__init__(name, OutputSpec(program.event_record(symbolic=False)))
+        super().__init__(label, OutputSpec(program.event_record(symbolic=False)))
         self._program = program
 
     # -- the program ------------------------------------------------------------
@@ -1286,7 +1288,7 @@ class _PyMCKernel(ConditionalDistribution):
         SupportsConditionalSampling: {"_conditional_sample": _pymc_kernel_sample},
     }
 
-    def __new__(cls, name: str, program: _PyMCProgram) -> Any:
+    def __new__(cls, label: str, program: _PyMCProgram) -> Any:
         claimed = (
             (SupportsConditionalLogProb, SupportsConditionalSampling)
             if program.normalized
@@ -1294,9 +1296,9 @@ class _PyMCKernel(ConditionalDistribution):
         )
         return object.__new__(_capability_subclass(_PyMCKernel, claimed))
 
-    def __init__(self, name: str, program: _PyMCProgram) -> None:
+    def __init__(self, label: str, program: _PyMCProgram) -> None:
         super().__init__(
-            name,
+            label,
             {slot: OpaqueSpec() for slot in program.given},
             OutputSpec(program.event_record(symbolic=True)),
         )

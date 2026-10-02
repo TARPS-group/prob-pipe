@@ -41,8 +41,8 @@ def _numeric_record_batch(
     )
 
 
-def _ref(name: str) -> _binding.WorkflowInputRef:
-    return _binding.WorkflowInputRef(name)
+def _ref(name: str) -> _binding.FunctionInputRef:
+    return _binding.FunctionInputRef(name)
 
 
 def _plan(values):
@@ -174,7 +174,7 @@ class TestExecuteSweep:
             resolve_dispatch=resolve_dispatch,
             require_jax_traceable=_require_not_called,
             distribution_broadcast=_unexpected_distribution_broadcast,
-            workflow_name="double",
+            function_name="double",
         )
 
         request = seen["request"]
@@ -206,14 +206,14 @@ class TestExecuteSweep:
                 resolve_dispatch=lambda *args, **kwargs: "sequential",
                 require_jax_traceable=_require_not_called,
                 distribution_broadcast=_unexpected_distribution_broadcast,
-                workflow_name="identity",
+                function_name="identity",
                 include_inputs=True,
             )
 
     def test_nested_sweep_stacks_the_law_each_row_lifts(self):
         values = {
             "p": _numeric_record_batch("x", range(2)),
-            "noise": Normal(loc=0.0, scale=1.0, name="noise"),
+            "noise": Normal(loc=0.0, scale=1.0, label="noise"),
         }
         plan = _plan(values)
         stochastic_plan = _stochastic_plan(values, 7)
@@ -237,7 +237,7 @@ class TestExecuteSweep:
                     "include_inputs": include_inputs,
                 }
             )
-            return Normal(loc=float(row_values["p"]["x"]), scale=1.0, name="row")
+            return Normal(loc=float(row_values["p"]["x"]), scale=1.0, label="row")
 
         result = _sweep.execute_sweep(
             func=lambda p, noise: p["x"] + noise,
@@ -249,7 +249,7 @@ class TestExecuteSweep:
             resolve_dispatch=lambda *args, **kwargs: "sequential",
             require_jax_traceable=_require_not_called,
             distribution_broadcast=distribution_broadcast,
-            workflow_name="nested",
+            function_name="nested",
         )
 
         assert isinstance(result, DistributionBatch)
@@ -315,27 +315,27 @@ class TestASweptBodyThatReturnsABatch:
             return real(**kwargs)
 
         monkeypatch.setattr(_sweep, "execute_sweep_rows_jax", spy)
-        Function(fn=self._body, name="swept")(self._rows(4))
+        Function(fn=self._body, label="swept")(self._rows(4))
 
         assert reached == [1]
 
     def test_the_levels_are_the_sweeps_then_the_bodys(self):
-        out = Function(fn=self._body, name="swept")(self._rows(4))
+        out = Function(fn=self._body, label="swept")(self._rows(4))
 
         assert out.level_names == ("row", "k")
         assert out.axis_groups == ((4,), (3,))
 
     def test_the_shape_agrees_with_the_columns_it_holds(self):
         """A batch whose spec its own columns contradict is the failure to avoid."""
-        out = Function(fn=self._body, name="swept")(self._rows(4))
+        out = Function(fn=self._body, label="swept")(self._rows(4))
 
         assert out.batch_shape == (4, 3)
         assert out.batch_size == 12
         assert np.shape(out._raw_column("y")) == (4, 3)
 
     def test_it_matches_sequential_dispatch(self):
-        mapped = Function(fn=self._body, name="swept")(self._rows(4))
-        sequential = Function(fn=self._body, name="swept", dispatch="sequential")(self._rows(4))
+        mapped = Function(fn=self._body, label="swept")(self._rows(4))
+        sequential = Function(fn=self._body, label="swept", dispatch="sequential")(self._rows(4))
 
         assert mapped.element_spec == sequential.element_spec
         assert mapped.level_names == sequential.level_names
@@ -369,8 +369,8 @@ class TestASweptBodyThatReturnsABatch:
             axes_per_level=(2,),
         )
 
-        mapped = Function(fn=self._body, name="swept")(grid)
-        sequential = Function(fn=self._body, name="swept", dispatch="sequential")(grid)
+        mapped = Function(fn=self._body, label="swept")(grid)
+        sequential = Function(fn=self._body, label="swept", dispatch="sequential")(grid)
 
         assert reached == [1]
         assert mapped.level_names == ("cell", "k")
@@ -400,8 +400,8 @@ class TestASweptBodyThatReturnsABatch:
             level_name="b",
         )
 
-        mapped = Function(fn=body, name="swept")(first, second)
-        sequential = Function(fn=body, name="swept", dispatch="sequential")(first, second)
+        mapped = Function(fn=body, label="swept")(first, second)
+        sequential = Function(fn=body, label="swept", dispatch="sequential")(first, second)
 
         assert mapped.level_names == ("a", "b", "k")
         assert mapped.axis_groups == ((2,), (3,), (2,))
@@ -417,8 +417,8 @@ class TestASweptBodyThatReturnsABatch:
                 level_name="k",
             )
 
-        mapped = Function(fn=body, name="swept")(self._rows(3))
-        sequential = Function(fn=body, name="swept", dispatch="sequential")(self._rows(3))
+        mapped = Function(fn=body, label="swept")(self._rows(3))
+        sequential = Function(fn=body, label="swept", dispatch="sequential")(self._rows(3))
 
         assert mapped.level_names == ("row", "k")
         assert mapped.element_spec == sequential.element_spec
@@ -429,7 +429,7 @@ class TestASweptBodyThatReturnsABatch:
 
     def test_the_carrier_does_not_reach_the_caller(self):
         """It is wrapped and unwrapped inside one call, by construction."""
-        out = Function(fn=self._body, name="swept")(self._rows(4))
+        out = Function(fn=self._body, label="swept")(self._rows(4))
 
         assert not isinstance(out, _MappedBatchColumns)
         assert isinstance(out, RecordBatch)
@@ -485,7 +485,7 @@ class TestNumericArraySweep:
         declared = NumericArraySpec(declared_shape, dtype=np.float64, support=positive)
         value = NumericArray("original", native, spec=declared)
 
-        result = Function(fn=lambda row: value, name="repeated", dispatch=dispatch)(source)
+        result = Function(fn=lambda row: value, label="repeated", dispatch=dispatch)(source)
 
         assert isinstance(result, NumericArrayBatch)
         assert result.element_spec == NumericArraySpec(
@@ -519,7 +519,7 @@ class TestNumericArraySweep:
         source = _numeric_record_batch("x", range(3))
 
         result = Function(
-            fn=lambda row: outputs[int(row["x"])], name="mixed", dispatch="sequential"
+            fn=lambda row: outputs[int(row["x"])], label="mixed", dispatch="sequential"
         )(source)
 
         assert result.element_spec == NumericArraySpec((2,), dtype=np.float32, support=positive)
@@ -552,7 +552,7 @@ class TestNumericArraySweep:
                 "row-result", value, spec=declared if representation == "declared" else None
             )
 
-        result = Function(fn=body, name="shift", dispatch=dispatch)(source)
+        result = Function(fn=body, label="shift", dispatch=dispatch)(source)
 
         expected = np.asarray(source["x"]) * 2 + 1
         if event_shape:
@@ -575,7 +575,7 @@ class TestNumericArraySweep:
     def test_nested_density_results_compose_after_the_sweep(self, numeric_sweep_source, dispatch):
         source = numeric_sweep_source
         law = Normal("x", 0.0, 1.0)
-        result = Function(fn=lambda row: log_prob(law, row["x"]), name="score", dispatch=dispatch)(
+        result = Function(fn=lambda row: log_prob(law, row["x"]), label="score", dispatch=dispatch)(
             source
         )
 
@@ -586,7 +586,7 @@ class TestNumericArraySweep:
         assert result.element_spec == NumericArraySpec(())
         np.testing.assert_allclose(np.asarray(result), expected, rtol=2e-7, atol=1e-7)
 
-        shifted = Function(name="function", fn=lambda value: value + 1, dispatch="sequential")(
+        shifted = Function(label="function", fn=lambda value: value + 1, dispatch="sequential")(
             result
         )
         assert shifted.axis_groups == source.axis_groups
@@ -600,7 +600,7 @@ class TestNumericArraySweep:
         declared = NumericArraySpec((2,), dtype=np.float64, support=positive)
         value = NumericArray("original", native, spec=declared)
 
-        result = Function(fn=lambda row: value, name="repeated", dispatch=dispatch)(
+        result = Function(fn=lambda row: value, label="repeated", dispatch=dispatch)(
             numeric_sweep_source
         )
 
@@ -626,7 +626,7 @@ class TestNumericArraySweep:
         with pytest.raises(ValueError, match=r"different: numeric.*declarations"):
             Function(
                 fn=lambda row: first if float(row["x"]) == 0 else second,
-                name="different",
+                label="different",
                 dispatch="sequential",
             )(source)
 
@@ -646,7 +646,7 @@ class TestNumericArraySweep:
             source = _numeric_record_batch("x", range(2))
 
             result = Function(
-                fn=lambda row: outputs[int(row["x"])], name="mixed", dispatch="sequential"
+                fn=lambda row: outputs[int(row["x"])], label="mixed", dispatch="sequential"
             )(source)
 
         expected = np.stack([np.full(event_shape, 1.25), np.full(event_shape, 2.5)])
@@ -683,7 +683,7 @@ class TestNumericArraySweep:
         outputs = [second, first] if reverse else [first, second]
 
         result = Function(
-            fn=lambda row: outputs[int(row["x"])], name="mixed", dispatch="sequential"
+            fn=lambda row: outputs[int(row["x"])], label="mixed", dispatch="sequential"
         )(_numeric_record_batch("x", range(2)))
 
         assert result.element_spec == NumericArraySpec((), dtype=expected_dtype, support=support)
@@ -709,7 +709,7 @@ class TestNumericArraySweep:
         source = _numeric_record_batch("x", range(2))
 
         result = Function(
-            fn=lambda row: outputs[int(row["x"])], name="mixed", dispatch="sequential"
+            fn=lambda row: outputs[int(row["x"])], label="mixed", dispatch="sequential"
         )(source)
 
         assert result.element_spec == NumericArraySpec((), dtype=expected_dtype, support=positive)
@@ -738,7 +738,7 @@ class TestNumericArraySweep:
             ]
             batch = Function(
                 fn=lambda row, outputs=outputs: outputs[int(row["x"])],
-                name="mixed",
+                label="mixed",
                 dispatch="sequential",
             )(source)
             batches.append(batch)
@@ -749,7 +749,7 @@ class TestNumericArraySweep:
             np.testing.assert_array_equal(np.asarray(batch), [1, 1, 1])
 
         result = Function(
-            fn=lambda row: batches[int(row["x"])], name="combined", dispatch="sequential"
+            fn=lambda row: batches[int(row["x"])], label="combined", dispatch="sequential"
         )(_numeric_record_batch("x", range(2), level_name="outer"))
 
         assert result.element_spec == NumericArraySpec((), dtype=np.float16, support=positive)
@@ -775,7 +775,7 @@ class TestNumericArraySweep:
             outputs.reverse()
 
         result = Function(
-            fn=lambda row: outputs[int(row["x"])], name="mixed", dispatch="sequential"
+            fn=lambda row: outputs[int(row["x"])], label="mixed", dispatch="sequential"
         )(_numeric_record_batch("x", range(2)))
 
         assert result.element_spec == NumericArraySpec(
@@ -795,7 +795,7 @@ class TestNumericArraySweep:
         source = _numeric_record_batch("x", range(2))
         result = Function(
             fn=lambda row: value if (float(row["x"]) == 0) == tracked_first else raw,
-            name="mixed",
+            label="mixed",
             dispatch="sequential",
         )(source)
 
@@ -822,7 +822,7 @@ class TestNumericArraySweep:
         source = _numeric_record_batch("x", range(3))
 
         result = Function(
-            fn=lambda row: outputs[int(row["x"])], name="mixed", dispatch="sequential"
+            fn=lambda row: outputs[int(row["x"])], label="mixed", dispatch="sequential"
         )(source)
 
         expected = [2.0, 3.0]

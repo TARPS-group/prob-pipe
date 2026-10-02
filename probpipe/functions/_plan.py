@@ -43,7 +43,7 @@ class ArrayBroadcastGroup:
     batches align.
     """
 
-    arg_refs: tuple[_binding.WorkflowInputRef, ...]
+    arg_refs: tuple[_binding.FunctionInputRef, ...]
     batch_shape: tuple[int, ...]
     size: int
     # What the group's axes range over, for the aggregate to mint its levels
@@ -58,8 +58,8 @@ class BroadcastPlan:
     """Pure broadcast classification for one resolved workflow call."""
 
     regime: BroadcastRegime
-    dist_args: tuple[_binding.WorkflowInputRef, ...]
-    array_args: tuple[_binding.WorkflowInputRef, ...]
+    dist_args: tuple[_binding.FunctionInputRef, ...]
+    array_args: tuple[_binding.FunctionInputRef, ...]
     array_groups: tuple[ArrayBroadcastGroup, ...]
     sweep_batch_shape: tuple[int, ...]
     sweep_level_names: tuple[str, ...]
@@ -71,7 +71,7 @@ class BroadcastPlan:
 class StochasticConsumerPlan:
     """Canonical projection of one argument from a co-sampled root."""
 
-    arg_ref: _binding.WorkflowInputRef
+    arg_ref: _binding.FunctionInputRef
     record_path: tuple[str, ...]
     descendant_descriptor: tuple[Any, ...] | None
     _descriptor_abi_summary: _descendants._DescriptorAbiSummary = field(
@@ -100,7 +100,7 @@ class StochasticSourceGroup:
     exact_size: int | None
 
     @property
-    def arg_refs(self) -> tuple[_binding.WorkflowInputRef, ...]:
+    def arg_refs(self) -> tuple[_binding.FunctionInputRef, ...]:
         """Return consumer references in canonical argument order."""
         return tuple(consumer.arg_ref for consumer in self.consumers)
 
@@ -156,7 +156,7 @@ class StochasticPlan:
     """Immutable stochastic lifting decisions for one normalized call."""
 
     evaluation_mode: StochasticEvaluationMode
-    arg_refs: tuple[_binding.WorkflowInputRef, ...]
+    arg_refs: tuple[_binding.FunctionInputRef, ...]
     source_groups: tuple[StochasticSourceGroup, ...]
     logical_units: tuple[LogicalUnit, ...]
     n_broadcast_samples: int
@@ -252,7 +252,7 @@ def lift_at(function: Any, parameter: str | None, value: Any) -> Lift:
 def build_broadcast_plan(
     *,
     values: Mapping[str, Any],
-    signature_info: _binding.WorkflowSignatureInfo,
+    signature_info: _binding.FunctionSignatureInfo,
     roles: Mapping[str, tuple[type[TermSpec], ...]] | None = None,
 ) -> BroadcastPlan:
     """Classify normalized values into a broadcast execution plan.
@@ -260,8 +260,8 @@ def build_broadcast_plan(
     Each argument lifts as :func:`lift_of` states, by its parameter's role in
     *roles* where it has one.
     """
-    dist_args: list[_binding.WorkflowInputRef] = []
-    array_args: list[_binding.WorkflowInputRef] = []
+    dist_args: list[_binding.FunctionInputRef] = []
+    array_args: list[_binding.FunctionInputRef] = []
 
     for ref in _binding.iter_input_refs(signature_info, values):
         value = _binding.input_ref_value(values, ref)
@@ -396,7 +396,7 @@ def build_stochastic_plan(
 def _group_stochastic_sources(
     *,
     values: Mapping[str, Any],
-    refs: Sequence[_binding.WorkflowInputRef],
+    refs: Sequence[_binding.FunctionInputRef],
 ) -> tuple[
     list[list[StochasticConsumerPlan]],
     list[Distribution],
@@ -474,8 +474,8 @@ def _validate_stochastic_sample_count(n_broadcast_samples: int) -> None:
 def group_by_alignment(
     *,
     values: Mapping[str, Any],
-    refs: Sequence[_binding.WorkflowInputRef],
-) -> list[tuple[Any, tuple[_binding.WorkflowInputRef, ...]]]:
+    refs: Sequence[_binding.FunctionInputRef],
+) -> list[tuple[Any, tuple[_binding.FunctionInputRef, ...]]]:
     """Group the swept batches by their level names, with each group's first batch.
 
     Batches align by level name, so two batches carrying the same levels are
@@ -485,7 +485,7 @@ def group_by_alignment(
     their members keep argument order, so the grouping is a deterministic
     function of the call.
     """
-    groups: dict[tuple[str, ...], tuple[Any, list[_binding.WorkflowInputRef]]] = {}
+    groups: dict[tuple[str, ...], tuple[Any, list[_binding.FunctionInputRef]]] = {}
     for ref in refs:
         value = _binding.input_ref_value(values, ref)
         groups.setdefault(tuple(value.level_names), (value, []))[1].append(ref)
@@ -495,7 +495,7 @@ def group_by_alignment(
 def build_array_zip_groups(
     *,
     values: Mapping[str, Any],
-    refs: Sequence[_binding.WorkflowInputRef],
+    refs: Sequence[_binding.FunctionInputRef],
 ) -> tuple[ArrayBroadcastGroup, ...]:
     """Build the zip groups of the swept batches.
 
@@ -559,8 +559,8 @@ def build_array_zip_groups(
 
 def _broadcast_regime(
     *,
-    dist_args: Sequence[_binding.WorkflowInputRef],
-    array_args: Sequence[_binding.WorkflowInputRef],
+    dist_args: Sequence[_binding.FunctionInputRef],
+    array_args: Sequence[_binding.FunctionInputRef],
 ) -> BroadcastRegime:
     if dist_args and array_args:
         return "nested"

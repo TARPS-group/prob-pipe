@@ -46,7 +46,7 @@ from ..distributions._capabilities import (
 from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
 from ..distributions._distribution import Distribution, DistributionSpec
 from ..values import FunctionSpec, _binding
-from ..values._binding import WorkflowSignatureInfo, resolve_workflow_values
+from ..values._binding import FunctionSignatureInfo, resolve_function_values
 from . import _normalization
 
 #: The conditional capabilities, each of which declares that a parameter consumes a kernel.
@@ -269,7 +269,7 @@ def _html_row(cells: tuple[str, ...], *, selected: bool) -> str:
 
 
 @dataclass(frozen=True)
-class WorkflowCallOptions:
+class FunctionCallOptions:
     """Optional call-time workflow controls outside user kwargs."""
 
     n_broadcast_samples: int | None = None
@@ -277,7 +277,7 @@ class WorkflowCallOptions:
 
 
 @dataclass(frozen=True)
-class WorkflowCallOverrides:
+class FunctionCallOverrides:
     """Resolved call-time workflow settings consumed by ``Function``."""
 
     n_broadcast_samples: int
@@ -285,28 +285,28 @@ class WorkflowCallOverrides:
 
 
 @dataclass(frozen=True)
-class ResolvedWorkflowCall:
+class ResolvedFunctionCall:
     """Fully resolved signature-shaped values plus workflow overrides."""
 
     values: dict[str, Any]
-    overrides: WorkflowCallOverrides
+    overrides: FunctionCallOverrides
 
 
 def bind_call_inputs(
-    info: WorkflowSignatureInfo,
+    info: FunctionSignatureInfo,
     args: tuple[Any, ...],
     call_inputs: dict[str, Any],
     *,
     default_n_broadcast_samples: int,
     default_include_inputs: bool,
-    options: WorkflowCallOptions | None = None,
-) -> tuple[dict[str, Any], WorkflowCallOverrides]:
+    options: FunctionCallOptions | None = None,
+) -> tuple[dict[str, Any], FunctionCallOverrides]:
     """Bind user inputs and resolve workflow controls.
 
     Call inputs bind exactly like the wrapped Python function. Workflow
     controls come only from explicit ``options`` or construction defaults.
     """
-    explicit_options = options if options is not None else WorkflowCallOptions()
+    explicit_options = options if options is not None else FunctionCallOptions()
 
     def resolve_option(name: str, default: Any = None) -> Any:
         explicit_value = getattr(explicit_options, name)
@@ -315,7 +315,7 @@ def bind_call_inputs(
 
         return default
 
-    overrides = WorkflowCallOverrides(
+    overrides = FunctionCallOverrides(
         n_broadcast_samples=resolve_option(
             "n_broadcast_samples",
             default_n_broadcast_samples,
@@ -330,19 +330,19 @@ def bind_call_inputs(
     return dict(bound.arguments), overrides
 
 
-def resolve_workflow_call(
-    info: WorkflowSignatureInfo,
+def resolve_function_call(
+    info: FunctionSignatureInfo,
     args: tuple[Any, ...],
     call_inputs: dict[str, Any],
     *,
     bind: Mapping[str, Any],
     module: Any | None,
     dependency_type: type,
-    workflow_name: str,
+    function_name: str,
     default_n_broadcast_samples: int,
     default_include_inputs: bool,
-    options: WorkflowCallOptions | None = None,
-) -> ResolvedWorkflowCall:
+    options: FunctionCallOptions | None = None,
+) -> ResolvedFunctionCall:
     """Resolve one ``Function`` call into values plus overrides."""
     bound_inputs, overrides = bind_call_inputs(
         info,
@@ -352,15 +352,15 @@ def resolve_workflow_call(
         default_include_inputs=default_include_inputs,
         options=options,
     )
-    values = resolve_workflow_values(
+    values = resolve_function_values(
         info,
         bound_inputs,
         bind=bind,
         module=module,
         dependency_type=dependency_type,
-        workflow_name=workflow_name,
+        function_name=function_name,
     )
-    return ResolvedWorkflowCall(values=values, overrides=overrides)
+    return ResolvedFunctionCall(values=values, overrides=overrides)
 
 
 def _consumes_kernel(expected: Any) -> bool:
@@ -477,8 +477,8 @@ def _role_refusal(
 
 
 def _admit_by_role(
-    info: WorkflowSignatureInfo,
-    ref: _binding.WorkflowInputRef,
+    info: FunctionSignatureInfo,
+    ref: _binding.FunctionInputRef,
     value: Any,
     role: tuple[type[TermSpec], ...],
     *,
@@ -511,7 +511,7 @@ def _admit_by_role(
 
 
 def admit_arguments(
-    info: WorkflowSignatureInfo,
+    info: FunctionSignatureInfo,
     values: Mapping[str, Any],
     *,
     input_spec: InputSpec | None = None,
@@ -533,7 +533,7 @@ def admit_arguments(
 
     Parameters
     ----------
-    info : WorkflowSignatureInfo
+    info : FunctionSignatureInfo
         The wrapped function's signature and resolved annotations.
     values : Mapping of str to Any
         The bound arguments, shaped by the signature.

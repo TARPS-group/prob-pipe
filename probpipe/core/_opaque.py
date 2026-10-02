@@ -29,7 +29,7 @@ class Opaque(TrackedTerm, Annotated):
 
     Parameters
     ----------
-    name : str
+    label : str
         The value's name, required and first as a :class:`~probpipe.Record`
         takes it: the name is what says which opaque value this is.
     value : Any
@@ -64,7 +64,7 @@ class Opaque(TrackedTerm, Annotated):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         value: Any,
         /,
         *,
@@ -84,7 +84,7 @@ class Opaque(TrackedTerm, Annotated):
             raise TypeError(f"{spec!r} does not admit a {type(value).__name__}")
         object.__setattr__(self, "_value", value)
         object.__setattr__(self, "_spec", spec)
-        self._init_tracked(name, provenance=provenance)
+        self._init_tracked(label, provenance=provenance)
 
     @classmethod
     def _view(

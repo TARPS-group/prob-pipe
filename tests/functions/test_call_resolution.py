@@ -48,7 +48,7 @@ def kwargs_recorder():
 
 @pytest.fixture
 def normal_dist():
-    return Normal(loc=0.0, scale=1.0, name="x")
+    return Normal(loc=0.0, scale=1.0, label="x")
 
 
 @pytest.fixture
@@ -79,14 +79,14 @@ def _resolve_call(
     **call_inputs,
 ):
     info = _binding.make_signature_info(func)
-    return _call.resolve_workflow_call(
+    return _call.resolve_function_call(
         info,
         args,
         call_inputs,
         bind=bind or {},
         module=module,
         dependency_type=Node,
-        workflow_name=getattr(func, "__name__", "workflow"),
+        function_name=getattr(func, "__name__", "workflow"),
         default_n_broadcast_samples=default_n_broadcast_samples,
         default_include_inputs=default_include_inputs,
     )
@@ -107,10 +107,10 @@ class TestWorkflowCallHelpers:
         refs = _binding.iter_input_refs(info, values)
 
         assert refs == (
-            _binding.WorkflowInputRef("head"),
-            _binding.WorkflowInputRef("items", subscript=0),
-            _binding.WorkflowInputRef("items", subscript=1),
-            _binding.WorkflowInputRef("extras", subscript="tail"),
+            _binding.FunctionInputRef("head"),
+            _binding.FunctionInputRef("items", subscript=0),
+            _binding.FunctionInputRef("items", subscript=1),
+            _binding.FunctionInputRef("extras", subscript="tail"),
         )
         assert tuple(ref.label for ref in refs) == (
             "head",
@@ -131,18 +131,18 @@ class TestWorkflowCallHelpers:
 
         info = _binding.make_signature_info(collect)
 
-        assert _binding.input_ref_hint(info, _binding.WorkflowInputRef("head")) is Any
+        assert _binding.input_ref_hint(info, _binding.FunctionInputRef("head")) is Any
         assert (
             _binding.input_ref_hint(
                 info,
-                _binding.WorkflowInputRef("items", subscript=0),
+                _binding.FunctionInputRef("items", subscript=0),
             )
             is None
         )
         assert (
             _binding.input_ref_hint(
                 info,
-                _binding.WorkflowInputRef("extras", subscript="tail"),
+                _binding.FunctionInputRef("extras", subscript="tail"),
             )
             is None
         )
@@ -153,9 +153,9 @@ class TestWorkflowCallHelpers:
             "items": (2, 3),
             "extras": {"tail": 4},
         }
-        head = _binding.WorkflowInputRef("head")
-        first_item = _binding.WorkflowInputRef("items", subscript=0)
-        tail = _binding.WorkflowInputRef("extras", subscript="tail")
+        head = _binding.FunctionInputRef("head")
+        first_item = _binding.FunctionInputRef("items", subscript=0)
+        tail = _binding.FunctionInputRef("extras", subscript="tail")
 
         singly_replaced = _binding.replace_input_ref(values, first_item, 20)
         jointly_replaced = _binding.replace_input_refs(
@@ -257,35 +257,35 @@ class TestWorkflowCallHelpers:
 
 class TestArgumentBinding:
     def test_positional_and_mixed_arguments_bind_like_python_calls(self, add_func):
-        wf = Function(name="add_func", fn=add_func, dispatch="sequential")
+        wf = Function(label="add_func", fn=add_func, dispatch="sequential")
 
         assert float(wf(jnp.asarray(1.0), jnp.asarray(2.0))) == 3.0
         assert float(wf(jnp.asarray(1.0), y=jnp.asarray(2.0))) == 3.0
 
     def test_duplicate_positional_and_keyword_argument_raises(self, add_func):
-        wf = Function(name="add_func", fn=add_func, dispatch="sequential")
+        wf = Function(label="add_func", fn=add_func, dispatch="sequential")
 
         with pytest.raises(TypeError, match="multiple values"):
             wf(jnp.asarray(1.0), x=jnp.asarray(2.0))
 
     def test_var_keyword_expands_extra_keywords(self, kwargs_recorder):
         identity, seen = kwargs_recorder
-        wf = Function(name="identity", fn=identity, dispatch="sequential")
+        wf = Function(label="identity", fn=identity, dispatch="sequential")
 
         assert float(wf(x=1.0, scale=2.0)) == 1.0
         assert seen == [{"scale": 2.0}]
 
     def test_literal_kwargs_argument_is_not_unpacked(self, kwargs_recorder):
         identity, seen = kwargs_recorder
-        wf = Function(name="identity", fn=identity, dispatch="sequential")
+        wf = Function(label="identity", fn=identity, dispatch="sequential")
 
         assert float(wf(x=1.0, kwargs={"scale": 2.0})) == 1.0
         assert seen == [{"kwargs": {"scale": 2.0}}]
 
     def test_bind_values_and_function_defaults_are_resolved_before_call(self, affine_func):
-        default_wf = Function(name="affine_func", fn=affine_func, dispatch="sequential")
+        default_wf = Function(label="affine_func", fn=affine_func, dispatch="sequential")
         bound_wf = Function(
-            name="affine_func",
+            label="affine_func",
             fn=affine_func,
             dispatch="sequential",
             bind={"offset": 3.0, "scale": 2.0},
@@ -296,7 +296,7 @@ class TestArgumentBinding:
         assert float(bound_wf(x=1.0, offset=4.0)) == 10.0
 
     def test_missing_required_input_raises_after_all_resolution_sources_fail(self, add_func):
-        wf = Function(name="add_func", fn=add_func, dispatch="sequential")
+        wf = Function(label="add_func", fn=add_func, dispatch="sequential")
 
         with pytest.raises(TypeError, match="Missing required input 'y'"):
             wf(x=1.0)
@@ -334,7 +334,7 @@ class TestModuleResolution:
         def use_dep(dep: DataNode):
             return 1.0
 
-        wf = Function(name="use_dep", fn=use_dep, dispatch="sequential")
+        wf = Function(label="use_dep", fn=use_dep, dispatch="sequential")
 
         with pytest.raises(TypeError, match="expects dependency 'dep:"):
             wf(dep=object())
@@ -347,7 +347,7 @@ class TestCallOptions:
         normal_dist,
     ):
         wf = Function(
-            name="identity_func",
+            label="identity_func",
             fn=identity_func,
             n_broadcast_samples=20,
             dispatch="sequential",
@@ -369,7 +369,7 @@ class TestCallOptions:
         normal_dist,
     ):
         wf = Function(
-            name="identity_func",
+            label="identity_func",
             fn=identity_func,
             n_broadcast_samples=8,
             dispatch="sequential",

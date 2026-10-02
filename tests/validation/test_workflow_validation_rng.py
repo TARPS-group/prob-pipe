@@ -35,7 +35,7 @@ class _OpaqueLikelihood:
 class _RecordingNormal(Normal):
     def __init__(self, calls):
         self.calls = calls
-        super().__init__(loc=0.0, scale=1.0, name="x")
+        super().__init__(loc=0.0, scale=1.0, label="x")
 
     def _sample(self, key, sample_shape=()):
         self.calls.append((key, tuple(sample_shape)))
@@ -44,7 +44,7 @@ class _RecordingNormal(Normal):
 
 def _glm_validation_setup():
     x = jnp.linspace(-1.0, 1.0, 6)[:, None]
-    prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="beta")
+    prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="beta")
     likelihood = CertifiedRegression("normal", x)
     return prior, likelihood
 
@@ -212,7 +212,7 @@ class TestPredictiveCheckBroker:
         commit.assert_not_called()
 
     def test_a_provider_without_its_design_fails_before_event_commit(self):
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="beta")
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="beta")
         likelihood = CertifiedRegression("normal")
 
         with (
@@ -252,7 +252,7 @@ class TestSimulationBasedCalibrationBroker:
     @staticmethod
     def _model():
         x = jnp.ones((3, 1))
-        prior = MultivariateNormal(loc=jnp.zeros(1), cov=jnp.eye(1), name="beta")
+        prior = MultivariateNormal(loc=jnp.zeros(1), cov=jnp.eye(1), label="beta")
         return glm_likelihood("y", GaussianFamily(), X=x, dispersion=1.0) * prior
 
     def test_seeded_sbc_claims_one_event_and_derives_inference_seeds(self, monkeypatch):

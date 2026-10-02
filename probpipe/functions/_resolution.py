@@ -39,7 +39,7 @@ from ..core._batch import BatchSpec
 from ..core._dispatch import Feasibility, MethodInfo, ResolutionError
 from ..core._spec_base import TermSpec
 from ..core._specs import OutputSpec
-from ..values._binding import WorkflowInputRef, input_ref_value, replace_input_refs
+from ..values._binding import FunctionInputRef, input_ref_value, replace_input_refs
 from ._call import CallReport
 from ._plan import BroadcastPlan
 from ._sweep import slice_sweep_values
@@ -217,13 +217,13 @@ def _label(candidate: Any, report: Feasibility) -> str:
     return candidate.label if method is None else f"{candidate.route_name}/{method}"
 
 
-def _element_spec(values: Mapping[str, Any], ref: WorkflowInputRef) -> TermSpec:
+def _element_spec(values: Mapping[str, Any], ref: FunctionInputRef) -> TermSpec:
     """The declaration of one element of the swept argument *ref*."""
     spec = input_ref_value(values, ref).spec
     return spec.element_spec if isinstance(spec, BatchSpec) else spec
 
 
-def _draws(values: Mapping[str, Any], plan: BroadcastPlan) -> dict[WorkflowInputRef, StandIn]:
+def _draws(values: Mapping[str, Any], plan: BroadcastPlan) -> dict[FunctionInputRef, StandIn]:
     """A stand-in for a draw of each law the call broadcasts over, by its reference."""
     return {ref: StandIn(input_ref_value(values, ref).event_spec.spec) for ref in plan.dist_args}
 

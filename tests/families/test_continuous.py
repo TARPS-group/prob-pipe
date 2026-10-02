@@ -49,22 +49,22 @@ def key():
 
 # Map of (class, kwargs) for every continuous distribution under test.
 _CONTINUOUS_DISTS = {
-    "Normal": (Normal, dict(loc=0.0, scale=1.0, name="x")),
-    "Beta": (Beta, dict(alpha=2.0, beta=5.0, name="x")),
-    "Gamma": (Gamma, dict(concentration=3.0, rate=1.0, name="x")),
-    "InverseGamma": (InverseGamma, dict(concentration=3.0, scale=1.0, name="x")),
-    "Exponential": (Exponential, dict(rate=2.0, name="x")),
-    "LogNormal": (LogNormal, dict(loc=0.0, scale=1.0, name="x")),
-    "StudentT": (StudentT, dict(df=5.0, loc=0.0, scale=1.0, name="x")),
-    "Uniform": (Uniform, dict(low=0.0, high=1.0, name="x")),
-    "Cauchy": (Cauchy, dict(loc=0.0, scale=1.0, name="x")),
-    "Laplace": (Laplace, dict(loc=0.0, scale=1.0, name="x")),
-    "HalfNormal": (HalfNormal, dict(scale=1.0, name="x")),
-    "HalfCauchy": (HalfCauchy, dict(loc=0.0, scale=1.0, name="x")),
-    "Pareto": (Pareto, dict(concentration=3.0, scale=1.0, name="x")),
+    "Normal": (Normal, dict(loc=0.0, scale=1.0, label="x")),
+    "Beta": (Beta, dict(alpha=2.0, beta=5.0, label="x")),
+    "Gamma": (Gamma, dict(concentration=3.0, rate=1.0, label="x")),
+    "InverseGamma": (InverseGamma, dict(concentration=3.0, scale=1.0, label="x")),
+    "Exponential": (Exponential, dict(rate=2.0, label="x")),
+    "LogNormal": (LogNormal, dict(loc=0.0, scale=1.0, label="x")),
+    "StudentT": (StudentT, dict(df=5.0, loc=0.0, scale=1.0, label="x")),
+    "Uniform": (Uniform, dict(low=0.0, high=1.0, label="x")),
+    "Cauchy": (Cauchy, dict(loc=0.0, scale=1.0, label="x")),
+    "Laplace": (Laplace, dict(loc=0.0, scale=1.0, label="x")),
+    "HalfNormal": (HalfNormal, dict(scale=1.0, label="x")),
+    "HalfCauchy": (HalfCauchy, dict(loc=0.0, scale=1.0, label="x")),
+    "Pareto": (Pareto, dict(concentration=3.0, scale=1.0, label="x")),
     "TruncatedNormal": (
         TruncatedNormal,
-        dict(loc=0.0, scale=1.0, low=-2.0, high=2.0, name="x"),
+        dict(loc=0.0, scale=1.0, low=-2.0, high=2.0, label="x"),
     ),
 }
 
@@ -282,7 +282,7 @@ class TestMomentsThatDivergeOrAreUndefined:
 
 class TestBeta:
     def test_samples_in_unit_interval(self, key):
-        d = Beta(alpha=2.0, beta=5.0, name="x")
+        d = Beta(alpha=2.0, beta=5.0, label="x")
         s = jnp.asarray(sample(d, sample_shape=(1000,)))
         assert jnp.all(s >= 0.0)
         assert jnp.all(s <= 1.0)
@@ -290,49 +290,49 @@ class TestBeta:
 
 class TestGammaDist:
     def test_samples_nonnegative(self, key):
-        d = Gamma(concentration=3.0, rate=1.0, name="x")
+        d = Gamma(concentration=3.0, rate=1.0, label="x")
         s = jnp.asarray(sample(d, sample_shape=(1000,)))
         assert jnp.all(s >= 0.0)
 
 
 class TestInverseGammaDist:
     def test_samples_nonnegative(self, key):
-        d = InverseGamma(concentration=3.0, scale=1.0, name="x")
+        d = InverseGamma(concentration=3.0, scale=1.0, label="x")
         s = jnp.asarray(sample(d, sample_shape=(1000,)))
         assert jnp.all(s >= 0.0)
 
 
 class TestExponentialDist:
     def test_samples_nonnegative(self, key):
-        d = Exponential(rate=2.0, name="x")
+        d = Exponential(rate=2.0, label="x")
         s = jnp.asarray(sample(d, sample_shape=(1000,)))
         assert jnp.all(s >= 0.0)
 
 
 class TestHalfNormalDist:
     def test_samples_nonnegative(self, key):
-        d = HalfNormal(scale=1.0, name="x")
+        d = HalfNormal(scale=1.0, label="x")
         s = jnp.asarray(sample(d, sample_shape=(1000,)))
         assert jnp.all(s >= 0.0)
 
 
 class TestHalfCauchyDist:
     def test_samples_nonnegative(self, key):
-        d = HalfCauchy(loc=0.0, scale=1.0, name="x")
+        d = HalfCauchy(loc=0.0, scale=1.0, label="x")
         s = jnp.asarray(sample(d, sample_shape=(1000,)))
         assert jnp.all(s >= 0.0)
 
 
 class TestParetoDist:
     def test_samples_nonnegative(self, key):
-        d = Pareto(concentration=3.0, scale=1.0, name="x")
+        d = Pareto(concentration=3.0, scale=1.0, label="x")
         s = jnp.asarray(sample(d, sample_shape=(1000,)))
         assert jnp.all(s >= 0.0)
 
 
 class TestUniformDist:
     def test_samples_in_bounds(self, key):
-        d = Uniform(low=0.0, high=1.0, name="x")
+        d = Uniform(low=0.0, high=1.0, label="x")
         s = jnp.asarray(sample(d, sample_shape=(1000,)))
         assert jnp.all(s >= 0.0)
         assert jnp.all(s <= 1.0)
@@ -340,7 +340,7 @@ class TestUniformDist:
 
 class TestTruncatedNormalDist:
     def test_samples_in_bounds(self, key):
-        d = TruncatedNormal(loc=0.0, scale=1.0, low=-2.0, high=2.0, name="x")
+        d = TruncatedNormal(loc=0.0, scale=1.0, low=-2.0, high=2.0, label="x")
         s = jnp.asarray(sample(d, sample_shape=(1000,)))
         assert jnp.all(s >= -2.0)
         assert jnp.all(s <= 2.0)
@@ -348,7 +348,7 @@ class TestTruncatedNormalDist:
 
 class TestNormalDist:
     def test_has_loc_and_scale(self):
-        d = Normal(loc=0.0, scale=1.0, name="x")
+        d = Normal(loc=0.0, scale=1.0, label="x")
         assert hasattr(d, "loc")
         assert hasattr(d, "scale")
         assert float(d.loc) == 0.0
@@ -447,7 +447,7 @@ class TestProb:
         """prob(dist, x) must equal exp(log_prob(dist, x))."""
         from probpipe import log_prob as log_prob_op
 
-        d = Normal(loc=0.0, scale=1.0, name="x")
+        d = Normal(loc=0.0, scale=1.0, label="x")
         xs = NumericArrayBatch("x", jnp.array([-1.0, 0.5, 1.2]), "point")
         np.testing.assert_allclose(
             np.asarray(prob(d, xs)),

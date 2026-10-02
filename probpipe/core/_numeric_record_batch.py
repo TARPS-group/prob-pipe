@@ -70,7 +70,7 @@ class NumericRecordBatch(RecordBatch):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         fields: Mapping[str, Any],
         /,
         level_names: str | Iterable[str],
@@ -92,7 +92,7 @@ class NumericRecordBatch(RecordBatch):
                 f"fields {list(template.keys())}"
             )
         super().__init__(
-            name,
+            label,
             fields,
             level_names,
             element_spec=element_spec,
@@ -193,7 +193,7 @@ class NumericRecordBatch(RecordBatch):
     @classmethod
     def from_vector(
         cls,
-        name: str,
+        label: str,
         spec: NumericRecordSpec,
         vec: Array,
         *,
@@ -204,7 +204,7 @@ class NumericRecordBatch(RecordBatch):
 
         Parameters
         ----------
-        name : str
+        label : str
             The reconstructed batch's name (user-given).
         spec : NumericRecordSpec
             The flat layout: field names, event shapes, and canonical order.
@@ -287,7 +287,7 @@ class NumericRecordBatch(RecordBatch):
         if axes_per_level is None and len(names) == 1:
             axes_per_level = (len(batch_shape),)
         return cls(
-            name,
+            label,
             columns,
             names,
             element_spec=spec,

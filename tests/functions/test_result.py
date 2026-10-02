@@ -108,7 +108,7 @@ class TestMakeStack:
         from probpipe import DistributionBatch, Normal
         from probpipe.functions._result import _make_stack
 
-        comps = [Normal(loc=float(i), scale=1.0, name="d") for i in range(3)]
+        comps = [Normal(loc=float(i), scale=1.0, label="d") for i in range(3)]
         out = _make_stack(comps, n=3, field_name="demo", level_names=("sweep",))
         assert isinstance(out, DistributionBatch)
         assert (out.batch_shape, out.level_names) == ((3,), ("sweep",))
@@ -119,7 +119,7 @@ class TestMakeStack:
         from probpipe import Normal
         from probpipe.functions._result import _make_stack
 
-        comps = [Normal(loc=0.0, scale=1.0, name="a"), Normal(loc=0.0, scale=1.0, name="b")]
+        comps = [Normal(loc=0.0, scale=1.0, label="a"), Normal(loc=0.0, scale=1.0, label="b")]
         with pytest.raises(TypeError, match="at 1"):
             _make_stack(comps, n=2, field_name="demo", level_names=("sweep",))
 
@@ -292,7 +292,7 @@ class TestCoerceOutput:
         from probpipe.functions._result import _coerce_output, _make_stack
 
         da = _make_stack(
-            [Normal(loc=0.0, scale=1.0, name="d") for _ in range(3)],
+            [Normal(loc=0.0, scale=1.0, label="d") for _ in range(3)],
             n=3,
             field_name="demo",
             level_names=("sweep",),

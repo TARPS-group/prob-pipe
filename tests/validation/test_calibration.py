@@ -77,7 +77,7 @@ def _gaussian_glm(p: int = 2, n: int = 12, seed: int = 7):
     """A well-specified Gaussian linear model with an intercept: the joint of y and beta."""
     X = jax.random.normal(jax.random.PRNGKey(seed), (n, p - 1))
     design = jnp.concatenate([jnp.ones((n, 1)), X], axis=1)
-    prior = MultivariateNormal(loc=jnp.zeros(p), cov=jnp.eye(p), name="beta")
+    prior = MultivariateNormal(loc=jnp.zeros(p), cov=jnp.eye(p), label="beta")
     return glm_likelihood("y", GaussianFamily(), X=design, dispersion=1.0) * prior
 
 
@@ -264,7 +264,7 @@ class TestSBC:
         # SBC rejects because the shift is *systematic* across simulations and
         # accumulates. Measured ks_pvalue.max ≤ 0.001 and mean rank ≤ 0.34 over
         # seeds 0–2 at S=48.
-        model = _BiasedMeanKernel(0.25) * Normal(loc=0.0, scale=2.0, name="mu")
+        model = _BiasedMeanKernel(0.25) * Normal(loc=0.0, scale=2.0, label="mu")
         res = simulation_based_calibration(
             model,
             observed="y",

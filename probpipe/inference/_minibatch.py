@@ -151,7 +151,7 @@ class MinibatchedDistribution(
 
     Parameters
     ----------
-    name : str
+    label : str
         Distribution name.
     prior : SupportsLogProb
         Prior distribution over parameters; provides the log-prior
@@ -184,7 +184,7 @@ class MinibatchedDistribution(
 
     def __init__(
         self,
-        name: str,
+        label: str,
         prior: SupportsLogProb,
         likelihood: ConditionalDistribution,
         data: ArrayLike,
@@ -219,7 +219,7 @@ class MinibatchedDistribution(
         # declares them.
         self._draw_event_spec = _parameter_declaration(prior, "parameters")
 
-        super().__init__(name, DistributionSpec(self._draw_event_spec))
+        super().__init__(label, DistributionSpec(self._draw_event_spec))
 
     # -- read-only metadata --------------------------------------------------
 
@@ -277,7 +277,7 @@ class MinibatchedDistribution(
             data=self._data,
             rows=rows,
             rescale_factor=self._rescale_factor,
-            name=f"{self.label}/draw",
+            label=f"{self.label}/draw",
             event_spec=self._draw_event_spec,
         )
 
@@ -334,14 +334,14 @@ class _FixedMinibatchDistribution(
         rows: Array,
         rescale_factor: float,
         *,
-        name: str | None = None,
+        label: str | None = None,
         event_spec: OutputSpec | None = None,
     ):
-        if not name:
-            name = "fixed_minibatch_distribution"
+        if not label:
+            label = "fixed_minibatch_distribution"
         if event_spec is None:
             event_spec = _parameter_declaration(prior, "parameters")
-        super().__init__(name, event_spec)
+        super().__init__(label, event_spec)
         self._prior = prior
         self._likelihood = likelihood
         self._data = data

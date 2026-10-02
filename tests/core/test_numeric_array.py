@@ -240,7 +240,7 @@ class TestNumericArrayCarriesIdentity:
     def test_a_name_is_required(self):
         """A value carries no fields to describe it, so the name is what says
         which one it is; a class-name default would name every array alike."""
-        with pytest.raises(TypeError, match="name"):
+        with pytest.raises(TypeError, match="label"):
             NumericArray()
 
     def test_a_derived_name_is_kept(self):

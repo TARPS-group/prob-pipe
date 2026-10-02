@@ -122,7 +122,7 @@ class NormalKernel(ConditionalDistribution):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         given_spec: Mapping[str, Any],
         event_spec: OutputSpec,
         *,
@@ -130,7 +130,7 @@ class NormalKernel(ConditionalDistribution):
         scale: float = 1.0,
         bound: Mapping[str, Any] | None = None,
     ) -> None:
-        super().__init__(name, given_spec, event_spec)
+        super().__init__(label, given_spec, event_spec)
         self._loc = loc
         self._scale = scale
         self._bound = dict(bound or {})
@@ -259,8 +259,8 @@ class MarginalLaw(Law, SupportsMarginals):
     node under a component named by the path's final segment.
     """
 
-    def __init__(self, name: str, event_spec: OutputSpec, *, exact: tuple[str, ...] = ()) -> None:
-        super().__init__(name, event_spec)
+    def __init__(self, label: str, event_spec: OutputSpec, *, exact: tuple[str, ...] = ()) -> None:
+        super().__init__(label, event_spec)
         self.exact = frozenset(exact)
         self.marginalized: list[Any] = []
 
@@ -284,8 +284,8 @@ class TotalMarginalLaw(Law, SupportsMarginals):
 class RecordingLaw(Law, SupportsLogProb):
     """A law whose log-density records each value it scores and returns zero."""
 
-    def __init__(self, name: str, event_spec: OutputSpec) -> None:
-        super().__init__(name, event_spec)
+    def __init__(self, label: str, event_spec: OutputSpec) -> None:
+        super().__init__(label, event_spec)
         self.scored: list[Any] = []
 
     def _log_prob(self, value):
@@ -296,8 +296,8 @@ class RecordingLaw(Law, SupportsLogProb):
 class PointLaw(Law, SupportsSampling):
     """A point mass at a fixed raw draw, which every sample returns."""
 
-    def __init__(self, name: str, event_spec: OutputSpec, draw: Any) -> None:
-        super().__init__(name, event_spec)
+    def __init__(self, label: str, event_spec: OutputSpec, draw: Any) -> None:
+        super().__init__(label, event_spec)
         self.draw = draw
 
     def _sample(self, key, sample_shape=()):
@@ -325,8 +325,8 @@ class PairMomentLaw(Law, SupportsMean, SupportsVariance):
 class ShiftedQuantileLaw(Law, SupportsQuantile):
     """A law whose quantile at each level ``q`` is ``q`` plus its shift."""
 
-    def __init__(self, name: str, event_spec: OutputSpec, shift: float) -> None:
-        super().__init__(name, event_spec)
+    def __init__(self, label: str, event_spec: OutputSpec, shift: float) -> None:
+        super().__init__(label, event_spec)
         self.shift = shift
 
     def _quantile(self, q):

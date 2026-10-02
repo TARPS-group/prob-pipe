@@ -62,7 +62,7 @@ def replayable_difference(left, right):
 def replayable_optional_nested(value):
     """Use a mutable global only to exercise unexpected-event validation."""
     if ENABLE_EXTRA_AUTOMATIC:
-        sample(Normal(loc=value, scale=1.0, name="extra"))
+        sample(Normal(loc=value, scale=1.0, label="extra"))
     return value
 
 

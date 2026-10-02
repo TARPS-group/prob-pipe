@@ -68,8 +68,8 @@ _NESTED = OutputSpec(RecordSpec(model=RecordSpec(theta=RecordSpec(mu=_REAL, tau=
 class _Law(Distribution):
     """A law over a declared event that claims no capability."""
 
-    def __init__(self, name: str, event_spec: OutputSpec) -> None:
-        super().__init__(name, event_spec)
+    def __init__(self, label: str, event_spec: OutputSpec) -> None:
+        super().__init__(label, event_spec)
 
 
 class _NestedLaw(
@@ -83,8 +83,8 @@ class _NestedLaw(
     of ``model/theta/mu`` and ``y``.
     """
 
-    def __init__(self, name: str = "parent") -> None:
-        super().__init__(name, _NESTED)
+    def __init__(self, label: str = "parent") -> None:
+        super().__init__(label, _NESTED)
         self.marginal_calls: list[Any] = []
         self.given_calls: list[dict[str, Any]] = []
 
@@ -132,8 +132,8 @@ class _NestedLaw(
 class _FiniteLaw(_Law, SupportsExpectation):
     """A law over ``a`` and ``b`` with the atoms (0, 1) of weight 1/4 and (1, 3) of weight 3/4."""
 
-    def __init__(self, name: str = "parent") -> None:
-        super().__init__(name, OutputSpec(RecordSpec(a=_REAL, b=_REAL)))
+    def __init__(self, label: str = "parent") -> None:
+        super().__init__(label, OutputSpec(RecordSpec(a=_REAL, b=_REAL)))
 
     def _expectation(self, f: Any) -> Any:
         atoms = ((0.0, 1.0, 0.25), (1.0, 3.0, 0.75))
@@ -147,8 +147,8 @@ class _GuardedMeanLaw(_Law, SupportsMean):
 
     REJECTED = Feasibility(False, "the mean does not exist")
 
-    def __init__(self, name: str = "parent") -> None:
-        super().__init__(name, _NESTED)
+    def __init__(self, label: str = "parent") -> None:
+        super().__init__(label, _NESTED)
 
     def _mean(self) -> Any:
         raise AssertionError("the guard rejects the mean")
@@ -218,14 +218,14 @@ class _RecordingKernel(ConditionalDistribution):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         given_spec: Any,
         event_spec: OutputSpec,
         *,
         calls: list[dict[str, Any]] | None = None,
         bound: dict[str, Any] | None = None,
     ) -> None:
-        super().__init__(name, given_spec, event_spec)
+        super().__init__(label, given_spec, event_spec)
         self.calls = [] if calls is None else calls
         self.bound = dict(bound or {})
 
@@ -244,8 +244,8 @@ class _RecordingKernel(ConditionalDistribution):
 class _MeanKernel(ConditionalDistribution, SupportsConditionalSampling, SupportsConditionalMean):
     """``y | mu``: a record ``(y, z)`` whose mean is ``(mu, 0)``, and a draw ``(mu + e, e)``."""
 
-    def __init__(self, name: str = "k") -> None:
-        super().__init__(name, {"mu": _SCALAR}, OutputSpec(RecordSpec(y=_SCALAR, z=_SCALAR)))
+    def __init__(self, label: str = "k") -> None:
+        super().__init__(label, {"mu": _SCALAR}, OutputSpec(RecordSpec(y=_SCALAR, z=_SCALAR)))
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
         return _Law(self.name, self.event_spec)
@@ -264,8 +264,8 @@ class _MeanKernel(ConditionalDistribution, SupportsConditionalSampling, Supports
 class _ScoreKernel(ConditionalDistribution, SupportsConditionalLogProb):
     """``(y, z) | mu`` whose density reads the given and each field by name."""
 
-    def __init__(self, name: str = "k") -> None:
-        super().__init__(name, {"mu": _SCALAR}, OutputSpec(RecordSpec(y=_SCALAR, z=_SCALAR)))
+    def __init__(self, label: str = "k") -> None:
+        super().__init__(label, {"mu": _SCALAR}, OutputSpec(RecordSpec(y=_SCALAR, z=_SCALAR)))
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
         return _Law(self.name, self.event_spec)

@@ -47,7 +47,7 @@ def _record_batch():
 
 
 def _add_automatic_noise(row):
-    noise = sample(Normal(loc=0.0, scale=1.0, name="noise"))
+    noise = sample(Normal(loc=0.0, scale=1.0, label="noise"))
     return row["x"] + noise
 
 
@@ -60,7 +60,7 @@ class TestExecutionContract:
             _execution_contract.transport_for_workflow_kind(WorkflowKind.DEFAULT)
 
     def test_contract_is_frozen_and_uses_the_fixed_abi(self):
-        plan = _plan({"x": Normal(loc=0.0, scale=1.0, name="x")})
+        plan = _plan({"x": Normal(loc=0.0, scale=1.0, label="x")})
         contract = _execution_contract.make_execution_contract(
             evaluator="jax_vmap",
             transport="local_inline",
@@ -101,7 +101,7 @@ class TestExecutionContract:
         )
 
     def test_unknown_provider_or_key_abi_fails_the_single_predicate(self):
-        plan = _plan({"x": Normal(loc=0.0, scale=1.0, name="x")})
+        plan = _plan({"x": Normal(loc=0.0, scale=1.0, label="x")})
         contract = _execution_contract.make_execution_contract(
             evaluator="rowwise",
             transport="prefect_task",
@@ -131,7 +131,7 @@ class TestExecutionContract:
         ],
     )
     def test_evaluator_transport_support_matrix(self, evaluator, transport, expected):
-        plan = _plan({"x": Normal(loc=0.0, scale=1.0, name="x")})
+        plan = _plan({"x": Normal(loc=0.0, scale=1.0, label="x")})
         contract = _execution_contract.make_execution_contract(
             evaluator=evaluator,
             transport=transport,
@@ -141,7 +141,7 @@ class TestExecutionContract:
         assert _execution_contract.supports_execution_contract(contract, plan) is expected
 
     def test_execution_request_rejects_plan_drift_before_broker_or_user_code(self):
-        sampled_plan = _plan({"x": Normal(loc=0.0, scale=1.0, name="x")})
+        sampled_plan = _plan({"x": Normal(loc=0.0, scale=1.0, label="x")})
         exact_plan = _plan(
             {"x": EmpiricalDistribution("x", jnp.asarray([1.0, 2.0]))},
             n_broadcast_samples=8,
@@ -175,9 +175,9 @@ class TestExecutionContract:
 
 class TestJaxWorkflowGuards:
     def test_auto_falls_back_for_omitted_key_effect_without_shifting_results(self):
-        auto = Function(name="_add_automatic_noise", fn=_add_automatic_noise, dispatch="auto")
+        auto = Function(label="_add_automatic_noise", fn=_add_automatic_noise, dispatch="auto")
         rowwise = Function(
-            name="_add_automatic_noise", fn=_add_automatic_noise, dispatch="sequential"
+            label="_add_automatic_noise", fn=_add_automatic_noise, dispatch="sequential"
         )
 
         with workflow_run(seed=19):
@@ -188,7 +188,7 @@ class TestJaxWorkflowGuards:
         np.testing.assert_array_equal(auto_result, rowwise_result)
 
     def test_explicit_jax_rejects_omitted_key_before_entropy(self):
-        workflow = Function(name="_add_automatic_noise", fn=_add_automatic_noise, dispatch="jax")
+        workflow = Function(label="_add_automatic_noise", fn=_add_automatic_noise, dispatch="jax")
 
         with (
             patch("probpipe.functions._context._os_urandom") as urandom,

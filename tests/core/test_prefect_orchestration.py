@@ -50,7 +50,7 @@ def _prefect_harness():
 
 @pytest.fixture
 def normal_dist():
-    return Normal(loc=1.0, scale=0.5, name="x")
+    return Normal(loc=1.0, scale=0.5, label="x")
 
 
 # ---------------------------------------------------------------------------
@@ -71,14 +71,14 @@ def sum_xy(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
 
 
 def _draw_standard_normal():
-    return sample(Normal(loc=0.0, scale=1.0, name="x"))
+    return sample(Normal(loc=0.0, scale=1.0, label="x"))
 
 
 _THREADED_DRAW = Function(
     fn=_draw_standard_normal,
     dispatch="thread",
     max_workers=1,
-    name="threaded_draw",
+    label="threaded_draw",
 )
 
 
@@ -120,7 +120,7 @@ class TestPrefectRngConformance:
         workflows = (
             (
                 Function(
-                    name="add_one",
+                    label="add_one",
                     fn=add_one,
                     workflow_kind=WorkflowKind.OFF,
                     dispatch="sequential",
@@ -130,7 +130,7 @@ class TestPrefectRngConformance:
             ),
             (
                 Function(
-                    name="add_one",
+                    label="add_one",
                     fn=add_one,
                     workflow_kind=WorkflowKind.OFF,
                     dispatch="jax",
@@ -140,7 +140,7 @@ class TestPrefectRngConformance:
             ),
             (
                 Function(
-                    name="add_one",
+                    label="add_one",
                     fn=add_one,
                     workflow_kind=WorkflowKind.OFF,
                     dispatch="thread",
@@ -151,7 +151,7 @@ class TestPrefectRngConformance:
             ),
             (
                 Function(
-                    name="add_one",
+                    label="add_one",
                     fn=add_one,
                     workflow_kind=WorkflowKind.TASK,
                     dispatch="sequential",
@@ -161,7 +161,7 @@ class TestPrefectRngConformance:
             ),
             (
                 Function(
-                    name="add_one",
+                    label="add_one",
                     fn=add_one,
                     workflow_kind=WorkflowKind.TASK,
                     dispatch="jax",
@@ -171,7 +171,7 @@ class TestPrefectRngConformance:
             ),
             (
                 Function(
-                    name="add_one",
+                    label="add_one",
                     fn=add_one,
                     workflow_kind=WorkflowKind.TASK,
                     dispatch="thread",
@@ -182,7 +182,7 @@ class TestPrefectRngConformance:
             ),
             (
                 Function(
-                    name="add_one",
+                    label="add_one",
                     fn=add_one,
                     workflow_kind=WorkflowKind.FLOW,
                     dispatch="sequential",
@@ -192,7 +192,7 @@ class TestPrefectRngConformance:
             ),
             (
                 Function(
-                    name="add_one",
+                    label="add_one",
                     fn=add_one,
                     workflow_kind=WorkflowKind.FLOW,
                     dispatch="jax",
@@ -218,13 +218,13 @@ class TestPrefectRngConformance:
 
     def test_nested_seed_matches_local_and_real_prefect_for_any_outer_seed(self):
         local = Function(
-            name="_draw_under_nested_seed",
+            label="_draw_under_nested_seed",
             fn=_draw_under_nested_seed,
             workflow_kind=WorkflowKind.OFF,
             dispatch="sequential",
         )
         remote = Function(
-            name="_draw_under_nested_seed",
+            label="_draw_under_nested_seed",
             fn=_draw_under_nested_seed,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
@@ -248,13 +248,13 @@ class TestPrefectRngConformance:
             fn=_call_threaded_draw,
             workflow_kind=WorkflowKind.OFF,
             dispatch="sequential",
-            name="nested_thread_owner",
+            label="nested_thread_owner",
         )
         remote = Function(
             fn=_call_threaded_draw,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
-            name="nested_thread_owner",
+            label="nested_thread_owner",
         )
 
         with workflow_run(seed=17):
@@ -284,7 +284,7 @@ class TestPrefectRngConformance:
     def test_real_prefect_retry_reuses_key_and_commits_one_effect(self):
         _PREFECT_RETRY_KEY_WORDS.clear()
         workflow = Function(
-            name="_claim_key_and_fail_once",
+            label="_claim_key_and_fail_once",
             fn=_claim_key_and_fail_once,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
@@ -318,7 +318,7 @@ class TestPrefectTaskRowWise:
 
     def test_returns_empirical_distribution(self, normal_dist):
         wf = Function(
-            name="add_one",
+            label="add_one",
             fn=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
@@ -331,7 +331,7 @@ class TestPrefectTaskRowWise:
 
     def test_output_values_correct(self, normal_dist):
         wf = Function(
-            name="add_one",
+            label="add_one",
             fn=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
@@ -348,13 +348,13 @@ class TestPrefectTaskRowWise:
 
     def test_multiple_broadcast_args(self, normal_dist):
         wf = Function(
-            name="sum_xy",
+            label="sum_xy",
             fn=sum_xy,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
             n_broadcast_samples=30,
         )
-        d2 = Normal(loc=2.0, scale=0.3, name="y")
+        d2 = Normal(loc=2.0, scale=0.3, label="y")
         with workflow_run(seed=2):
             result = wf(x=normal_dist, y=d2)
         assert isinstance(result, EmpiricalDistribution)
@@ -371,7 +371,7 @@ class TestPrefectFlowRowWise:
 
     def test_returns_empirical_distribution(self, normal_dist):
         wf = Function(
-            name="double_it",
+            label="double_it",
             fn=double_it,
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
@@ -384,7 +384,7 @@ class TestPrefectFlowRowWise:
 
     def test_output_values_correct(self, normal_dist):
         wf = Function(
-            name="double_it",
+            label="double_it",
             fn=double_it,
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
@@ -410,7 +410,7 @@ class TestPrefectProvenance:
 
     def test_task_provenance(self, normal_dist):
         wf = Function(
-            name="add_one",
+            label="add_one",
             fn=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
@@ -425,7 +425,7 @@ class TestPrefectProvenance:
 
     def test_flow_provenance(self, normal_dist):
         wf = Function(
-            name="add_one",
+            label="add_one",
             fn=add_one,
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
@@ -438,7 +438,7 @@ class TestPrefectProvenance:
 
     def test_no_orchestration_provenance(self, normal_dist):
         wf = Function(
-            name="add_one",
+            label="add_one",
             fn=add_one,
             workflow_kind=WorkflowKind.OFF,
             dispatch="sequential",
@@ -460,7 +460,7 @@ class TestPrefectNonBroadcast:
 
     def test_task_no_broadcast(self):
         wf = Function(
-            name="add_one",
+            label="add_one",
             fn=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
@@ -471,7 +471,7 @@ class TestPrefectNonBroadcast:
 
     def test_flow_no_broadcast(self):
         wf = Function(
-            name="double_it",
+            label="double_it",
             fn=double_it,
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
@@ -495,7 +495,7 @@ class TestPrefectImportGuard:
         monkeypatch.setattr(node_mod, "flow", None)
 
         wf = Function(
-            name="add_one",
+            label="add_one",
             fn=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
@@ -512,7 +512,7 @@ class TestPrefectImportGuard:
         monkeypatch.setattr(node_mod, "flow", None)
 
         wf = Function(
-            name="add_one",
+            label="add_one",
             fn=add_one,
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
@@ -529,7 +529,7 @@ class TestPrefectImportGuard:
         monkeypatch.setattr(node_mod, "flow", None)
 
         wf = Function(
-            name="add_one",
+            label="add_one",
             fn=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="jax",

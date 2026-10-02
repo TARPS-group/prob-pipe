@@ -92,8 +92,8 @@ class TestTheKindsAreOrderedNotDisjoint:
 
     def test_every_tracked_term_keeps_its_kind(self):
         """Whatever the kind, a term keeps it."""
-        inner = Function(fn=lambda x: x + 1, name="inner")
-        outer = Function(fn=lambda: inner, name="outer")
+        inner = Function(fn=lambda x: x + 1, label="inner")
+        outer = Function(fn=lambda: inner, label="outer")
 
         assert isinstance(outer(), Function)
 
@@ -110,28 +110,28 @@ class TestTheKindsAreOrderedNotDisjoint:
     )
     def test_the_rule_is_the_same_for_every_kind(self, make):
         kind = type(make())
-        returning = Function(fn=make, name="returning")
+        returning = Function(fn=make, label="returning")
 
         assert isinstance(returning(), kind)
 
 
 class TestTheOperationsReturnTheirDeclaredKind:
     def test_log_prob_is_a_numeric_array(self):
-        law = Normal(loc=0.0, scale=1.0, name="x")
+        law = Normal(loc=0.0, scale=1.0, label="x")
 
         assert isinstance(log_prob(law, 0.0), NumericArray)
 
     def test_mean_of_a_scalar_law_is_a_numeric_array(self):
-        assert isinstance(mean(Normal(loc=2.0, scale=1.0, name="x")), NumericArray)
+        assert isinstance(mean(Normal(loc=2.0, scale=1.0, label="x")), NumericArray)
 
     def test_a_scalar_draw_is_a_numeric_array(self):
-        drawn = sample(Normal(loc=0.0, scale=1.0, name="x"))
+        drawn = sample(Normal(loc=0.0, scale=1.0, label="x"))
 
         assert isinstance(drawn, NumericArray)
 
     def test_a_numeric_array_result_still_computes(self):
         """A result computes directly, which is what the array surface is for."""
-        law = Normal(loc=0.0, scale=1.0, name="x")
+        law = Normal(loc=0.0, scale=1.0, label="x")
 
         assert float(log_prob(law, 0.0) * 2) == pytest.approx(
             float(np.asarray(log_prob(law, 0.0))) * 2
@@ -142,7 +142,7 @@ class TestASampleShapeGetsADrawLevel:
     """Design V.2: the leading dimensions go on a level named `draw`."""
 
     def test_no_sample_shape_is_one_value(self):
-        drawn = sample(Normal(loc=0.0, scale=1.0, name="x"))
+        drawn = sample(Normal(loc=0.0, scale=1.0, label="x"))
 
         assert isinstance(drawn, NumericArray)
 
@@ -150,7 +150,7 @@ class TestASampleShapeGetsADrawLevel:
     def test_draws_land_on_one_draw_level(self, sample_shape):
         from probpipe import NumericArrayBatch
 
-        drawn = sample(Normal(loc=0.0, scale=1.0, name="x"), sample_shape=sample_shape)
+        drawn = sample(Normal(loc=0.0, scale=1.0, label="x"), sample_shape=sample_shape)
 
         assert isinstance(drawn, NumericArrayBatch)
         assert drawn.batch_shape == sample_shape
@@ -160,7 +160,7 @@ class TestASampleShapeGetsADrawLevel:
         """A vector law draws vectors, so its event axes stay with the element."""
         from probpipe import MultivariateNormal, NumericArrayBatch
 
-        law = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="v")
+        law = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), label="v")
 
         drawn = sample(law, sample_shape=(5,))
 
@@ -170,7 +170,7 @@ class TestASampleShapeGetsADrawLevel:
         assert drawn.shape == (5, 3)
 
     def test_an_element_is_one_draw(self):
-        drawn = sample(Normal(loc=0.0, scale=1.0, name="x"), sample_shape=(5,))
+        drawn = sample(Normal(loc=0.0, scale=1.0, label="x"), sample_shape=(5,))
 
         assert isinstance(drawn[2], NumericArray)
         assert drawn[2].shape == ()
@@ -179,7 +179,7 @@ class TestASampleShapeGetsADrawLevel:
         """A law whose draws are a mapping of columns draws the batch its declaration names."""
         from probpipe import NumericRecordBatch
 
-        law = Normal(loc=0.0, scale=1.0, name="a") * Normal(loc=0.0, scale=1.0, name="b")
+        law = Normal(loc=0.0, scale=1.0, label="a") * Normal(loc=0.0, scale=1.0, label="b")
 
         drawn = sample(law, sample_shape=(4,))
 
@@ -188,7 +188,7 @@ class TestASampleShapeGetsADrawLevel:
         assert drawn.element_spec == law.event_spec.spec
 
     def test_one_draw_of_a_joint_is_a_record_under_its_declaration(self):
-        law = Normal(loc=0.0, scale=1.0, name="a") * Normal(loc=0.0, scale=1.0, name="b")
+        law = Normal(loc=0.0, scale=1.0, label="a") * Normal(loc=0.0, scale=1.0, label="b")
 
         drawn = sample(law)
 
@@ -206,7 +206,7 @@ class TestAnEmptyReturnKeepsItsHostsKind:
 
     @staticmethod
     def _returned(value):
-        return Function(fn=lambda: value, name="f")()
+        return Function(fn=lambda: value, label="f")()
 
     def test_an_empty_mapping_is_an_empty_record(self):
         result = self._returned({})
@@ -235,7 +235,7 @@ class TestAReturnedSequenceIsOpaque:
 
     @staticmethod
     def _returned(value, **declaration):
-        return Function(fn=lambda: value, name="f", **declaration)()
+        return Function(fn=lambda: value, label="f", **declaration)()
 
     @pytest.mark.parametrize(
         "value",
@@ -326,7 +326,7 @@ class TestEachSweptRowTakesItsOwnKind:
         )
 
     def _swept(self, body, dispatch):
-        return Function(fn=body, name="f", dispatch=dispatch)(v=self._rows())
+        return Function(fn=body, label="f", dispatch=dispatch)(v=self._rows())
 
     def test_a_mapping_row_gives_a_batch_of_records(self, dispatch):
         out = self._swept(lambda v: {"y": jnp.asarray(v["x"]) * 2}, dispatch)
@@ -413,4 +413,4 @@ class TestASweptEmptyMappingHitsTheSameWall:
         )
 
         with pytest.raises(ValueError, match="at least one field"):
-            Function(fn=lambda v: {}, name="f", dispatch=dispatch)(v=rows)
+            Function(fn=lambda v: {}, label="f", dispatch=dispatch)(v=rows)

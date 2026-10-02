@@ -106,8 +106,8 @@ def _resolve_to(dispatch: str):
     return resolve_dispatch
 
 
-def _ref(name: str) -> _binding.WorkflowInputRef:
-    return _binding.WorkflowInputRef(name)
+def _ref(name: str) -> _binding.FunctionInputRef:
+    return _binding.FunctionInputRef(name)
 
 
 def _stochastic_plan(values, n_broadcast_samples):
@@ -120,9 +120,9 @@ def _stochastic_plan(values, n_broadcast_samples):
 
 
 class _RecordingNormal(Normal):
-    def __init__(self, sample_calls, *, name):
+    def __init__(self, sample_calls, *, label):
         self.sample_calls = sample_calls
-        super().__init__(loc=0.0, scale=1.0, name=name)
+        super().__init__(loc=0.0, scale=1.0, label=label)
 
     def _sample(self, key, sample_shape=()):
         self.sample_calls.append((key, tuple(sample_shape)))
@@ -137,7 +137,7 @@ class TestExecuteDistributionBroadcast:
     def test_direct_aliases_sample_one_root_and_stay_diagonal(self):
         sample_calls = []
         events = []
-        shared = _RecordingNormal(sample_calls, name="shared")
+        shared = _RecordingNormal(sample_calls, label="shared")
         values = {"first": shared, "second": shared}
 
         plan = _stochastic_plan(values, 12)
@@ -152,7 +152,7 @@ class TestExecuteDistributionBroadcast:
             requested_dispatch="sequential",
             resolve_dispatch=_resolve_to("sequential"),
             require_jax_traceable=_require_not_called,
-            workflow_name="difference",
+            function_name="difference",
             workflow_kind=WorkflowKind.OFF,
         )
 
@@ -166,8 +166,8 @@ class TestExecuteDistributionBroadcast:
         second_calls = []
         events = []
         values = {
-            "first": _RecordingNormal(first_calls, name="same"),
-            "second": _RecordingNormal(second_calls, name="same"),
+            "first": _RecordingNormal(first_calls, label="same"),
+            "second": _RecordingNormal(second_calls, label="same"),
         }
 
         plan = _stochastic_plan(values, 12)
@@ -182,7 +182,7 @@ class TestExecuteDistributionBroadcast:
             requested_dispatch="sequential",
             resolve_dispatch=_resolve_to("sequential"),
             require_jax_traceable=_require_not_called,
-            workflow_name="difference",
+            function_name="difference",
             workflow_kind=WorkflowKind.OFF,
         )
 
@@ -194,11 +194,11 @@ class TestExecuteDistributionBroadcast:
     def test_unregistered_descendant_lookalikes_remain_independent(self, lookalike_attribute):
         first_calls = []
         second_calls = []
-        first = _RecordingNormal(first_calls, name="first")
-        second = _RecordingNormal(second_calls, name="second")
+        first = _RecordingNormal(first_calls, label="first")
+        second = _RecordingNormal(second_calls, label="second")
         setattr(second, lookalike_attribute, first)
         workflow = Function(
-            name="function",
+            label="function",
             fn=lambda left, right: left - right,
             dispatch="sequential",
             n_broadcast_samples=12,
@@ -214,7 +214,7 @@ class TestExecuteDistributionBroadcast:
 
     def test_root_and_nested_view_use_the_same_sampled_realization(self):
         joint = (
-            Normal(loc=0.0, scale=1.0, name="leaf") * Normal(loc=3.0, scale=1.0, name="other")
+            Normal(loc=0.0, scale=1.0, label="leaf") * Normal(loc=3.0, scale=1.0, label="other")
         ).with_path_names({"leaf": "nested/leaf"})
         values = {"root": joint, "leaf": joint["nested/leaf"]}
 
@@ -230,7 +230,7 @@ class TestExecuteDistributionBroadcast:
             requested_dispatch="sequential",
             resolve_dispatch=_resolve_to("sequential"),
             require_jax_traceable=_require_not_called,
-            workflow_name="difference",
+            function_name="difference",
             workflow_kind=WorkflowKind.OFF,
         )
 
@@ -256,7 +256,7 @@ class TestExecuteDistributionBroadcast:
             requested_dispatch="sequential",
             resolve_dispatch=_resolve_to("sequential"),
             require_jax_traceable=_require_not_called,
-            workflow_name="difference",
+            function_name="difference",
             workflow_kind=WorkflowKind.OFF,
         )
 
@@ -290,7 +290,7 @@ class TestExecuteDistributionBroadcast:
             requested_dispatch="sequential",
             resolve_dispatch=_resolve_to("sequential"),
             require_jax_traceable=_require_not_called,
-            workflow_name="difference",
+            function_name="difference",
             workflow_kind=WorkflowKind.OFF,
         )
 
@@ -300,7 +300,7 @@ class TestExecuteDistributionBroadcast:
 
     def test_sample_path_uses_execution_request(self, monkeypatch):
         values = {
-            "x": Normal(loc=0.0, scale=1.0, name="x"),
+            "x": Normal(loc=0.0, scale=1.0, label="x"),
             "offset": 2.0,
         }
         execution = _execution_config(mode="thread", max_workers=2, name="shift")
@@ -331,7 +331,7 @@ class TestExecuteDistributionBroadcast:
             requested_dispatch="thread",
             resolve_dispatch=_resolve_to("thread"),
             require_jax_traceable=_require_not_called,
-            workflow_name="shift",
+            function_name="shift",
             workflow_kind=WorkflowKind.OFF,
         )
 
@@ -379,7 +379,7 @@ class TestExecuteDistributionBroadcast:
             requested_dispatch="sequential",
             resolve_dispatch=_resolve_to("sequential"),
             require_jax_traceable=_require_not_called,
-            workflow_name="add",
+            function_name="add",
             workflow_kind=WorkflowKind.OFF,
         )
 
@@ -423,12 +423,12 @@ class TestExecuteDistributionBroadcast:
                 requested_dispatch="sequential",
                 resolve_dispatch=_resolve_to("sequential"),
                 require_jax_traceable=_require_not_called,
-                workflow_name="identity",
+                function_name="identity",
                 workflow_kind=WorkflowKind.OFF,
             )
 
     def test_jax_path_vectorizes_samples_and_outputs(self):
-        values = {"x": Normal(loc=1.0, scale=0.5, name="x")}
+        values = {"x": Normal(loc=1.0, scale=0.5, label="x")}
         seen = {"required": False}
 
         def double(x):
@@ -449,7 +449,7 @@ class TestExecuteDistributionBroadcast:
             requested_dispatch="jax",
             resolve_dispatch=_resolve_to("jax"),
             require_jax_traceable=require_jax_traceable,
-            workflow_name="double",
+            function_name="double",
             workflow_kind=WorkflowKind.OFF,
         )
 
@@ -458,7 +458,7 @@ class TestExecuteDistributionBroadcast:
         np.testing.assert_allclose(_drawn(result, "double"), _drawn(result, "x") * 2.0)
 
     def test_jax_prefect_path_requires_prefect(self, monkeypatch):
-        values = {"x": Normal(loc=1.0, scale=0.5, name="x")}
+        values = {"x": Normal(loc=1.0, scale=0.5, label="x")}
         monkeypatch.setattr(_broadcast, "task", None)
         monkeypatch.setattr(_broadcast, "flow", None)
         plan = _stochastic_plan(values, 6)
@@ -478,7 +478,7 @@ class TestExecuteDistributionBroadcast:
                 requested_dispatch="jax",
                 resolve_dispatch=_resolve_to("jax"),
                 require_jax_traceable=lambda values, broadcast_args: None,
-                workflow_name="identity",
+                function_name="identity",
                 workflow_kind=WorkflowKind.TASK,
             )
 
@@ -498,10 +498,10 @@ class TestExecuteDistributionBroadcast:
     ):
         sample_calls = []
         commits = []
-        source = _RecordingNormal(sample_calls, name="x")
+        source = _RecordingNormal(sample_calls, label="x")
         workflow = Function(
             fn=_identity,
-            name="identity",
+            label="identity",
             dispatch=dispatch,
             workflow_kind=workflow_kind,
             n_broadcast_samples=5,
@@ -525,7 +525,7 @@ class TestExecuteDistributionBroadcast:
         assert commits == []
 
     def test_same_parent_views_share_parent_sample(self):
-        joint = Normal(loc=0.0, scale=1.0, name="x") * Normal(loc=10.0, scale=1.0, name="y")
+        joint = Normal(loc=0.0, scale=1.0, label="x") * Normal(loc=10.0, scale=1.0, label="y")
         view_x = joint["x"]
         values = {"a": view_x, "b": view_x}
 
@@ -544,8 +544,8 @@ class TestExecuteDistributionBroadcast:
         first_calls = []
         second_calls = []
         values = {
-            "first": _RecordingNormal(first_calls, name="first"),
-            "second": _RecordingNormal(second_calls, name="second"),
+            "first": _RecordingNormal(first_calls, label="first"),
+            "second": _RecordingNormal(second_calls, label="second"),
         }
         plan = _stochastic_plan(values, 11)
         assert plan.sample_shape is not None
@@ -571,7 +571,7 @@ class TestExecuteDistributionBroadcast:
                 "exact",
                 jnp.asarray([1.0, 2.0]),
             ),
-            "sampled": _RecordingNormal(sampled_calls, name="sampled"),
+            "sampled": _RecordingNormal(sampled_calls, label="sampled"),
         }
         plan = _stochastic_plan(values, 5)
         events = []
@@ -587,7 +587,7 @@ class TestExecuteDistributionBroadcast:
             requested_dispatch="sequential",
             resolve_dispatch=_resolve_to("sequential"),
             require_jax_traceable=_require_not_called,
-            workflow_name="add",
+            function_name="add",
             workflow_kind=WorkflowKind.OFF,
         )
 
@@ -612,7 +612,7 @@ class TestExecuteDistributionBroadcast:
         error_type,
         message,
     ):
-        values = {"x": Normal(loc=0.0, scale=1.0, name="x")}
+        values = {"x": Normal(loc=0.0, scale=1.0, label="x")}
         invalid_plan = replace(
             _stochastic_plan(values, 5),
             n_broadcast_samples=n_broadcast_samples,
@@ -630,12 +630,12 @@ class TestExecuteDistributionBroadcast:
                 requested_dispatch="sequential",
                 resolve_dispatch=_resolve_to("sequential"),
                 require_jax_traceable=_require_not_called,
-                workflow_name="identity",
+                function_name="identity",
                 workflow_kind=WorkflowKind.OFF,
             )
 
     def test_low_n_broadcast_samples_warns(self):
-        values = {"x": Normal(loc=0.0, scale=1.0, name="x")}
+        values = {"x": Normal(loc=0.0, scale=1.0, label="x")}
         plan = _stochastic_plan(values, 3)
         with pytest.warns(UserWarning, match="n_broadcast_samples=3 is too low"):
             result = _broadcast.execute_distribution_broadcast(
@@ -649,7 +649,7 @@ class TestExecuteDistributionBroadcast:
                 requested_dispatch="sequential",
                 resolve_dispatch=_resolve_to("sequential"),
                 require_jax_traceable=_require_not_called,
-                workflow_name="identity",
+                function_name="identity",
                 workflow_kind=WorkflowKind.OFF,
             )
 
@@ -671,7 +671,7 @@ class TestCoSamplingGroups:
 
     @staticmethod
     def _joint():
-        return Normal(loc=0.0, scale=1.0, name="x") * Normal(loc=10.0, scale=1.0, name="y")
+        return Normal(loc=0.0, scale=1.0, label="x") * Normal(loc=10.0, scale=1.0, label="y")
 
     @staticmethod
     def _sample(values, names, *, n=8, seed=3):
@@ -689,7 +689,7 @@ class TestCoSamplingGroups:
 
     def test_the_same_distribution_passed_twice_is_drawn_once(self):
         """The alias case: two references to one law denote one random variable."""
-        dist = Normal(loc=0.0, scale=1.0, name="x")
+        dist = Normal(loc=0.0, scale=1.0, label="x")
         sampled = self._sample({"a": dist, "b": dist}, ("a", "b"))
 
         np.testing.assert_array_equal(sampled[_ref("a")], sampled[_ref("b")])
@@ -722,8 +722,8 @@ class TestCoSamplingGroups:
 
     def test_arguments_with_no_common_root_are_drawn_independently(self):
         """Separate groups sample the product law through distinct planned events."""
-        first = Normal(loc=0.0, scale=1.0, name="x")
-        second = Normal(loc=0.0, scale=1.0, name="y")
+        first = Normal(loc=0.0, scale=1.0, label="x")
+        second = Normal(loc=0.0, scale=1.0, label="y")
         values = {"a": first, "b": second}
         plan = _stochastic_plan(values, 8)
         assert plan is not None
@@ -750,7 +750,7 @@ class TestCoSamplingThroughACall:
     @staticmethod
     def _difference(**controls):
         return Function(
-            name="function",
+            label="function",
             fn=lambda a, b: a - b,
             dispatch=controls.pop("dispatch", "sequential"),
             n_broadcast_samples=controls.pop("n_broadcast_samples", 8),
@@ -770,14 +770,14 @@ class TestCoSamplingThroughACall:
         execution paths share: a divergence here would mean one backend silently
         answering a different question from another.
         """
-        dist = Normal(loc=0.0, scale=1.0, name="x")
+        dist = Normal(loc=0.0, scale=1.0, label="x")
         result = self._run(self._difference(dispatch=dispatch), dist, dist)
 
         np.testing.assert_array_equal(np.asarray(result.atoms), np.zeros(8))
 
     @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
     def test_include_inputs_reports_one_realization_under_both_names(self, dispatch):
-        dist = Normal(loc=0.0, scale=1.0, name="x")
+        dist = Normal(loc=0.0, scale=1.0, label="x")
         result = self._run(
             self._difference(dispatch=dispatch, include_inputs=True),
             dist,
@@ -795,8 +795,8 @@ class TestCoSamplingThroughACall:
         their parameters and names, so they sample the product; only a shared
         object is one variable.
         """
-        first = Normal(loc=0.0, scale=1.0, name="x")
-        second = Normal(loc=0.0, scale=1.0, name="x")
+        first = Normal(loc=0.0, scale=1.0, label="x")
+        second = Normal(loc=0.0, scale=1.0, label="x")
 
         assert not np.allclose(
             np.asarray(self._run(self._difference(), first, second).atoms),
@@ -811,8 +811,8 @@ class TestCoSamplingThroughACall:
         """The complementary case: independence must survive the fix."""
         result = self._run(
             self._difference(),
-            Normal(loc=0.0, scale=1.0, name="x"),
-            Normal(loc=0.0, scale=1.0, name="y"),
+            Normal(loc=0.0, scale=1.0, label="x"),
+            Normal(loc=0.0, scale=1.0, label="y"),
         )
 
         assert not np.allclose(np.asarray(result.atoms), 0.0)
@@ -842,18 +842,18 @@ class TestCoSamplingThroughACall:
         Its ``len`` is the field count and its ``shape`` raises, so the row count
         had to come from somewhere that means one thing for every batched value.
         """
-        joint = Normal(loc=0.0, scale=1.0, name="x") * Normal(loc=10.0, scale=1.0, name="y")
+        joint = Normal(loc=0.0, scale=1.0, label="x") * Normal(loc=10.0, scale=1.0, label="y")
         lifted = Function(
-            name="function", fn=lambda a: a["x"], dispatch="sequential", n_broadcast_samples=8
+            label="function", fn=lambda a: a["x"], dispatch="sequential", n_broadcast_samples=8
         )
 
         assert np.asarray(self._run(lifted, joint).atoms).shape[0] == 8
 
     def test_a_parent_and_its_own_view_lift_together(self):
         """The remaining IV.2 case, end to end: ``f(d, d["x"])`` is one draw."""
-        joint = Normal(loc=0.0, scale=1.0, name="x") * Normal(loc=10.0, scale=1.0, name="y")
+        joint = Normal(loc=0.0, scale=1.0, label="x") * Normal(loc=10.0, scale=1.0, label="y")
         lifted = Function(
-            name="function",
+            label="function",
             fn=lambda a, b: a["x"] - b,
             dispatch="sequential",
             n_broadcast_samples=8,
@@ -875,7 +875,7 @@ class TestCoSamplingThroughACall:
             Record("r", x=jnp.array([1.0, 2.0, 3.0]), y=jnp.array([10.0, 20.0, 30.0])),
         )
         lifted = Function(
-            name="function", fn=lambda a: a["y"], dispatch="sequential", n_broadcast_samples=8
+            label="function", fn=lambda a: a["y"], dispatch="sequential", n_broadcast_samples=8
         )
 
         np.testing.assert_array_equal(
@@ -891,7 +891,7 @@ class TestCoSamplingThroughACall:
         )
         renamed = empirical.with_path_names({"x": "group/x", "y": "group/y"})
         lifted = Function(
-            name="function",
+            label="function",
             fn=lambda a: a.at_path("group")["y"],
             dispatch="sequential",
             n_broadcast_samples=8,
@@ -911,7 +911,7 @@ class TestCoSamplingThroughACall:
         )
         renamed = empirical.with_path_names({"x": "group/x", "y": "group/y"})
         lifted = Function(
-            name="function",
+            label="function",
             fn=lambda a, b: a["y"] - b.at_path("group")["y"],
             dispatch="sequential",
             n_broadcast_samples=8,
@@ -933,7 +933,7 @@ class TestCoSamplingThroughACall:
             Record("r", x=jnp.array([1.0, 2.0, 3.0]), y=jnp.array([10.0, 20.0, 30.0])),
         )
         lifted = Function(
-            name="function",
+            label="function",
             fn=lambda a: a["y"],
             dispatch="sequential",
             n_broadcast_samples=8,
@@ -968,7 +968,7 @@ class TestCoSamplingThroughACall:
             "e", Record("r", x=jnp.arange(10.0), y=jnp.arange(10.0) * 10)
         )
         lifted = Function(
-            name="function", fn=lambda a: a["y"], dispatch="sequential", n_broadcast_samples=5
+            label="function", fn=lambda a: a["y"], dispatch="sequential", n_broadcast_samples=5
         )
 
         result = self._run(lifted, empirical)
@@ -996,7 +996,7 @@ class TestCoSamplingThroughACall:
             ),
         )
         lifted = Function(
-            name="function",
+            label="function",
             fn=lambda a: a["group/y"],
             dispatch="sequential",
             n_broadcast_samples=6,
@@ -1014,12 +1014,12 @@ class TestCoSamplingThroughACall:
     def test_a_sampled_nested_record_valued_law_lifts_rowwise(self, dispatch):
         """Nested records are supported up to the row-wise dispatch boundary."""
         nested = (
-            (Normal(loc=0.0, scale=1.0, name="x") * Normal(loc=10.0, scale=1.0, name="y"))
+            (Normal(loc=0.0, scale=1.0, label="x") * Normal(loc=10.0, scale=1.0, label="y"))
             .with_path_names({"x": "group/x", "y": "group/y"})
             .with_label("nested")
         )
         lifted = Function(
-            name="function",
+            label="function",
             fn=lambda a: a["group/y"],
             dispatch=dispatch,
             n_broadcast_samples=8,
@@ -1030,18 +1030,18 @@ class TestCoSamplingThroughACall:
     def test_a_sampled_nested_record_valued_law_matches_sequential_under_jax(self):
         """The draw supplies nested record structure before either body is mapped."""
         nested = (
-            (Normal(loc=0.0, scale=1.0, name="x") * Normal(loc=10.0, scale=1.0, name="y"))
+            (Normal(loc=0.0, scale=1.0, label="x") * Normal(loc=10.0, scale=1.0, label="y"))
             .with_path_names({"x": "group/x", "y": "group/y"})
             .with_label("nested")
         )
         mapped = Function(
-            name="function",
+            label="function",
             fn=lambda a: a["group/y"],
             dispatch="jax",
             n_broadcast_samples=8,
         )
         sequential = Function(
-            name="function",
+            label="function",
             fn=lambda a: a["group/y"],
             dispatch="sequential",
             n_broadcast_samples=8,
@@ -1058,7 +1058,7 @@ class TestCoSamplingThroughACall:
             Record("r", x=jnp.array([1.0, 2.0, 3.0]), y=jnp.array([10.0, 20.0, 30.0])),
         )
         lifted = Function(
-            name="function",
+            label="function",
             fn=lambda a, b: a["y"] - b["y"],
             dispatch="sequential",
             n_broadcast_samples=8,
@@ -1157,7 +1157,7 @@ class TestTheProbeModelsItsExecutorsTransform:
             )
 
         return Function(
-            name="body",
+            label="body",
             fn=body,
             dispatch=controls.pop("dispatch", "auto"),
             n_broadcast_samples=controls.pop("n_broadcast_samples", 8),
@@ -1170,7 +1170,7 @@ class TestTheProbeModelsItsExecutorsTransform:
     )
     def test_a_batch_returning_body_falls_back_rather_than_failing_in_the_executor(self):
         """The regression: this raised the pytree rank error out of ``vmap``."""
-        dist = Normal(loc=0.0, scale=1.0, name="x")
+        dist = Normal(loc=0.0, scale=1.0, label="x")
 
         result = self._run(self._returns_a_batch(), dist)
 
@@ -1181,7 +1181,7 @@ class TestTheProbeModelsItsExecutorsTransform:
         raises=NotImplementedError,
     )
     def test_the_fallback_is_what_ran(self, caplog):
-        dist = Normal(loc=0.0, scale=1.0, name="x")
+        dist = Normal(loc=0.0, scale=1.0, label="x")
 
         with caplog.at_level(logging.INFO, logger="probpipe.functions._function"):
             self._run(self._returns_a_batch(), dist)
@@ -1194,7 +1194,7 @@ class TestTheProbeModelsItsExecutorsTransform:
     )
     def test_the_fallback_agrees_with_explicit_sequential(self):
         """Falling back costs speed, never the answer."""
-        dist = Normal(loc=0.0, scale=1.0, name="x")
+        dist = Normal(loc=0.0, scale=1.0, label="x")
 
         fell_back = self._run(self._returns_a_batch(dispatch="auto"), dist)
         sequential = self._run(self._returns_a_batch(dispatch="sequential"), dist)
@@ -1203,15 +1203,15 @@ class TestTheProbeModelsItsExecutorsTransform:
 
     def test_requesting_jax_reports_the_dispatch_rather_than_the_pytree(self):
         """The refusal names the choice the caller made and can change."""
-        dist = Normal(loc=0.0, scale=1.0, name="x")
+        dist = Normal(loc=0.0, scale=1.0, label="x")
 
         with pytest.raises(ValueError, match="dispatch='jax' failed while tracing"):
             self._run(self._returns_a_batch(dispatch="jax"), dist)
 
     def test_a_body_that_survives_the_transform_still_takes_jax(self, caplog):
         """The probe gained a transform, not a blanket refusal."""
-        dist = Normal(loc=0.0, scale=1.0, name="x")
-        doubles = Function(name="function", fn=lambda x: x * 2.0, n_broadcast_samples=8)
+        dist = Normal(loc=0.0, scale=1.0, label="x")
+        doubles = Function(label="function", fn=lambda x: x * 2.0, n_broadcast_samples=8)
 
         with caplog.at_level(logging.INFO, logger="probpipe.functions._function"):
             self._run(doubles, dist)
@@ -1236,10 +1236,10 @@ class TestTheProbeModelsItsExecutorsTransform:
                 level_name="k",
             )
 
-        broadcast = Function(name="body", fn=body, n_broadcast_samples=8)
-        sequential = Function(name="body", fn=body, dispatch="sequential", n_broadcast_samples=8)
-        first = Normal(loc=0.0, scale=1.0, name="x")
-        second = Normal(loc=3.0, scale=1.0, name="y")
+        broadcast = Function(label="body", fn=body, n_broadcast_samples=8)
+        sequential = Function(label="body", fn=body, dispatch="sequential", n_broadcast_samples=8)
+        first = Normal(loc=0.0, scale=1.0, label="x")
+        second = Normal(loc=3.0, scale=1.0, label="y")
 
         np.testing.assert_array_equal(
             np.asarray(self._run(broadcast, first, second).atoms),
@@ -1253,10 +1253,10 @@ class TestTheProbeModelsItsExecutorsTransform:
         of the wrong shape silently leaves the JAX path — so staying on it is
         the assertion.
         """
-        vector = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="v")
-        third = Function(name="function", fn=lambda v: v[2], n_broadcast_samples=8)
+        vector = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), label="v")
+        third = Function(label="function", fn=lambda v: v[2], n_broadcast_samples=8)
         sequential = Function(
-            name="function", fn=lambda v: v[2], dispatch="sequential", n_broadcast_samples=8
+            label="function", fn=lambda v: v[2], dispatch="sequential", n_broadcast_samples=8
         )
 
         with caplog.at_level(logging.INFO, logger="probpipe.functions._function"):
@@ -1275,8 +1275,8 @@ class TestTheProbeModelsItsExecutorsTransform:
         The probe's independent dummy per reference must not be mistaken for
         the executor's grouping.
         """
-        dist = Normal(loc=0.0, scale=1.0, name="x")
-        difference = Function(name="function", fn=lambda a, b: a - b, n_broadcast_samples=8)
+        dist = Normal(loc=0.0, scale=1.0, label="x")
+        difference = Function(label="function", fn=lambda a, b: a - b, n_broadcast_samples=8)
 
         np.testing.assert_array_equal(
             np.asarray(self._run(difference, dist, dist).atoms),
@@ -1285,10 +1285,10 @@ class TestTheProbeModelsItsExecutorsTransform:
 
     def test_the_views_of_a_dependent_joint_are_probed(self, caplog):
         """The root's resolved component metadata supplies the probe dtypes."""
-        joint = _ShiftKernel() * Normal(loc=0.0, scale=1.0, name="z")
-        difference = Function(name="function", fn=lambda a, b: a - b, n_broadcast_samples=8)
+        joint = _ShiftKernel() * Normal(loc=0.0, scale=1.0, label="z")
+        difference = Function(label="function", fn=lambda a, b: a - b, n_broadcast_samples=8)
         sequential = Function(
-            name="function", fn=lambda a, b: a - b, dispatch="sequential", n_broadcast_samples=8
+            label="function", fn=lambda a, b: a - b, dispatch="sequential", n_broadcast_samples=8
         )
 
         with caplog.at_level(logging.INFO, logger="probpipe.functions._function"):
@@ -1305,10 +1305,10 @@ class TestTheProbeModelsItsExecutorsTransform:
 
         Kept because the draw-based probe must not narrow what it accepts.
         """
-        law = Normal(loc=0.0, scale=1.0, name="a") * Normal(loc=1.0, scale=1.0, name="b")
-        totals = Function(name="function", fn=lambda r: r["a"] + r["b"], n_broadcast_samples=8)
+        law = Normal(loc=0.0, scale=1.0, label="a") * Normal(loc=1.0, scale=1.0, label="b")
+        totals = Function(label="function", fn=lambda r: r["a"] + r["b"], n_broadcast_samples=8)
         sequential = Function(
-            name="function",
+            label="function",
             fn=lambda r: r["a"] + r["b"],
             dispatch="sequential",
             n_broadcast_samples=8,
@@ -1332,9 +1332,9 @@ class TestTheProbeModelsItsExecutorsTransform:
         law = _empirical_of_rows(
             "law", Record("r", {"a": jnp.arange(6.0), "b": jnp.arange(6.0) + 10.0})
         )
-        totals = Function(name="function", fn=lambda r: r["a"] + r["b"], n_broadcast_samples=6)
+        totals = Function(label="function", fn=lambda r: r["a"] + r["b"], n_broadcast_samples=6)
         sequential = Function(
-            name="function",
+            label="function",
             fn=lambda r: r["a"] + r["b"],
             dispatch="sequential",
             n_broadcast_samples=6,
@@ -1366,10 +1366,10 @@ class TestTheProbeModelsItsExecutorsTransform:
             [Record("p", {"a": jnp.asarray(float(i))}) for i in range(3)],
             level_name="row",
         )
-        nested = Function(name="body", fn=body, n_broadcast_samples=8)
+        nested = Function(label="body", fn=body, n_broadcast_samples=8)
 
         with caplog.at_level(logging.INFO, logger="probpipe.functions._function"):
-            result = self._run(nested, rows, Normal(loc=0.0, scale=1.0, name="x"))
+            result = self._run(nested, rows, Normal(loc=0.0, scale=1.0, label="x"))
 
         assert result is not None
         assert any("not JAX-traceable" in record.message for record in caplog.records)
@@ -1381,16 +1381,16 @@ class TestTheProbeModelsItsExecutorsTransform:
         and the row-wise paths index the same record. A body that reads the field
         therefore runs under both, and the mapped executor still vectorizes it.
         """
-        law = FactoredDistribution("law", [Normal(loc=0.0, scale=1.0, name="x")])
+        law = FactoredDistribution("law", [Normal(loc=0.0, scale=1.0, label="x")])
         kinds = []
 
         def double(x):
             kinds.append(type(x))
             return x["x"] * 2
 
-        doubles = Function(name="function", fn=double, n_broadcast_samples=8)
+        doubles = Function(label="function", fn=double, n_broadcast_samples=8)
         sequential = Function(
-            name="function", fn=double, dispatch="sequential", n_broadcast_samples=8
+            label="function", fn=double, dispatch="sequential", n_broadcast_samples=8
         )
 
         with caplog.at_level(logging.INFO, logger="probpipe.functions._function"):
@@ -1418,8 +1418,8 @@ class TestARecordReturnLiftsToARecordLaw:
     @staticmethod
     def _laws():
         return {
-            "x": Normal(loc=1.0, scale=0.1, name="x"),
-            "y": Normal(loc=2.0, scale=0.1, name="y"),
+            "x": Normal(loc=1.0, scale=0.1, label="x"),
+            "y": Normal(loc=2.0, scale=0.1, label="y"),
         }
 
     def test_the_result_is_an_empirical_law_over_the_record(self, transform):

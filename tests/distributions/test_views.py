@@ -106,8 +106,8 @@ _COV = jnp.array([[2.0, 0.3, 0.1], [0.3, 1.5, 0.2], [0.1, 0.2, 1.0]])
 class _Law(Distribution):
     """A law over a declared event that claims no capability."""
 
-    def __init__(self, name: str, event_spec: OutputSpec) -> None:
-        super().__init__(name, event_spec)
+    def __init__(self, label: str, event_spec: OutputSpec) -> None:
+        super().__init__(label, event_spec)
 
 
 def _unreachable(self: Any, *args: Any, **kwargs: Any) -> Any:
@@ -154,13 +154,13 @@ class _UnguardedMarginalLaw(_Law, SupportsMarginals):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         event_spec: OutputSpec,
         *,
         scores: bool = True,
         reports: bool | None = None,
     ) -> None:
-        super().__init__(name, event_spec)
+        super().__init__(label, event_spec)
         self.scores = scores
         self.reports = scores if reports is None else reports
         self.marginal_calls: list[Any] = []
@@ -189,11 +189,11 @@ class _MarginalLaw(_UnguardedMarginalLaw):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         event_spec: OutputSpec,
         reports: dict[Any, Feasibility] | None = None,
     ) -> None:
-        super().__init__(name, event_spec)
+        super().__init__(label, event_spec)
         self.reports = dict(reports or {})
 
     def _marginal_guard(self, path: str | tuple[str, ...]) -> Feasibility:
@@ -230,8 +230,8 @@ class _ConditioningLaw(_Law, SupportsExactConditioning):
     any other set of given paths.
     """
 
-    def __init__(self, name: str, event_spec: OutputSpec) -> None:
-        super().__init__(name, event_spec)
+    def __init__(self, label: str, event_spec: OutputSpec) -> None:
+        super().__init__(label, event_spec)
         self.given_calls: list[dict[str, Any]] = []
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Distribution:
@@ -248,8 +248,8 @@ class _ConditioningLaw(_Law, SupportsExactConditioning):
 class _CovarianceLaw(_Law, SupportsCovariance):
     """A numeric law over ``x`` of shape (1,) and ``y`` of shape (2,) with a dense covariance."""
 
-    def __init__(self, name: str) -> None:
-        super().__init__(name, OutputSpec(RecordSpec(x=(1,), y=(2,))))
+    def __init__(self, label: str) -> None:
+        super().__init__(label, OutputSpec(RecordSpec(x=(1,), y=(2,))))
 
     def _cov(self) -> LinOp:
         return DenseLinOp(_COV)
@@ -263,8 +263,8 @@ class _QuantileLaw(_Law, SupportsQuantile):
     leading.
     """
 
-    def __init__(self, name: str) -> None:
-        super().__init__(name, OutputSpec(RecordSpec(x=(1,), y=(2,))))
+    def __init__(self, label: str) -> None:
+        super().__init__(label, OutputSpec(RecordSpec(x=(1,), y=(2,))))
 
     def _quantile(self, q: Any) -> Any:
         flat = jnp.asarray(q)[..., None] + jnp.arange(3.0)
@@ -276,8 +276,8 @@ class _FiniteLaw(_Law, SupportsExpectation):
 
     ATOMS = ((0.0, 1.0, 0.25), (1.0, 3.0, 0.75))
 
-    def __init__(self, name: str) -> None:
-        super().__init__(name, OutputSpec(RecordSpec(a=_REAL, b=_REAL)))
+    def __init__(self, label: str) -> None:
+        super().__init__(label, OutputSpec(RecordSpec(a=_REAL, b=_REAL)))
 
     def _expectation(self, f: Any) -> Any:
         return sum(
@@ -301,8 +301,8 @@ class _NumericLaw(
     the nested mapping of each leaf's quantiles with the level axes leading.
     """
 
-    def __init__(self, name: str) -> None:
-        super().__init__(name, _EVENT)
+    def __init__(self, label: str) -> None:
+        super().__init__(label, _EVENT)
 
     @staticmethod
     def _fields(flat: Any) -> dict[str, Any]:
@@ -342,8 +342,8 @@ class _NumericLaw(
 class _WholeLaw(_Law, SupportsSampling, SupportsCovariance):
     """A law over the whole record ``parameters``, whose flat vector is ``(beta, sigma)``."""
 
-    def __init__(self, name: str) -> None:
-        super().__init__(name, _WHOLE)
+    def __init__(self, label: str) -> None:
+        super().__init__(label, _WHOLE)
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
         flat = jax.random.normal(key, (*sample_shape, 3))

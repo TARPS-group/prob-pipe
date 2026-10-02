@@ -1532,7 +1532,7 @@ class FactoredDistribution(Distribution, SupportsFactors):
 
     Parameters
     ----------
-    name : str
+    label : str
         The joint's label.
     factors : Sequence[Distribution | ConditionalDistribution]
         The factors, in conditional-first order.
@@ -1552,7 +1552,7 @@ class FactoredDistribution(Distribution, SupportsFactors):
 
     def __new__(
         cls,
-        name: str,
+        label: str,
         factors: Sequence[Factor],
         *,
         _scope: Mapping[str, int] | None = None,
@@ -1568,7 +1568,7 @@ class FactoredDistribution(Distribution, SupportsFactors):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         factors: Sequence[Factor],
         *,
         _scope: Mapping[str, int] | None = None,
@@ -1577,10 +1577,10 @@ class FactoredDistribution(Distribution, SupportsFactors):
         graph = _factor_graph(factors, _scope)
         if graph.unmet is not None:
             raise ValueError(
-                f"the factors of {name!r} leave the givens {sorted(graph.unmet)} unmet, so "
+                f"the factors of {label!r} leave the givens {sorted(graph.unmet)} unmet, so "
                 f"the joint is a FactoredConditionalDistribution"
             )
-        super().__init__(name, _joint_declaration(graph, _component))
+        super().__init__(label, _joint_declaration(graph, _component))
         object.__setattr__(self, "_graph", graph)
 
     @property
@@ -1644,7 +1644,7 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
 
     Parameters
     ----------
-    name : str
+    label : str
         The joint's label.
     factors : Sequence[Distribution | ConditionalDistribution]
         The factors, in conditional-first order.
@@ -1663,7 +1663,7 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
 
     def __new__(
         cls,
-        name: str,
+        label: str,
         factors: Sequence[Factor],
         *,
         _scope: Mapping[str, int] | None = None,
@@ -1675,7 +1675,7 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         factors: Sequence[Factor],
         *,
         _scope: Mapping[str, int] | None = None,
@@ -1684,9 +1684,9 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
         graph = _factor_graph(factors, _scope)
         if graph.unmet is None:
             raise ValueError(
-                f"the factors of {name!r} meet every given, so the joint is a FactoredDistribution"
+                f"the factors of {label!r} meet every given, so the joint is a FactoredDistribution"
             )
-        super().__init__(name, graph.unmet, _joint_declaration(graph, _component))
+        super().__init__(label, graph.unmet, _joint_declaration(graph, _component))
         object.__setattr__(self, "_graph", graph)
 
     @property

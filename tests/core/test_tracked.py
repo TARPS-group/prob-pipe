@@ -44,7 +44,7 @@ def _normals(name: str, count: int) -> DistributionBatch:
 
 class TestMixinMembership:
     def test_distribution_is_tracked_and_annotated(self):
-        n = Normal(loc=0.0, scale=1.0, name="x")
+        n = Normal(loc=0.0, scale=1.0, label="x")
         assert isinstance(n, TrackedTerm)
         assert isinstance(n, Annotated)
 
@@ -112,7 +112,7 @@ class TestAutoNameHelper:
 
 class TestNameLifecycle:
     def test_distribution_keeps_explicit_name(self):
-        n = Normal(loc=0.0, scale=1.0, name="x")
+        n = Normal(loc=0.0, scale=1.0, label="x")
         assert n.label == "x"
 
     def test_record_keeps_explicit_name(self):
@@ -151,11 +151,11 @@ class TestNameLifecycle:
         assert named.label == "mine"
 
     def test_composite_distribution_derives_default_name(self):
-        joint = Normal(loc=0.0, scale=1.0, name="mu") * Normal(loc=0.0, scale=1.0, name="sigma")
+        joint = Normal(loc=0.0, scale=1.0, label="mu") * Normal(loc=0.0, scale=1.0, label="sigma")
         assert joint.label == "mu·sigma"
 
     def test_composite_distribution_keeps_explicit_name(self):
-        joint = FactoredDistribution("my_joint", [Normal(loc=0.0, scale=1.0, name="mu")])
+        joint = FactoredDistribution("my_joint", [Normal(loc=0.0, scale=1.0, label="mu")])
         assert joint.label == "my_joint"
 
     @pytest.mark.parametrize("name", [None, "mine"], ids=["derived", "supplied"])
@@ -176,7 +176,7 @@ class TestNameLifecycle:
     def test_structural_transforms_preserve_names_and_apply_the_edit(
         self, name, transform, expected
     ):
-        record = Record.ensure({"a": jnp.array(1.0), "b": jnp.array(2.0)}, name=name)
+        record = Record.ensure({"a": jnp.array(1.0), "b": jnp.array(2.0)}, label=name)
 
         result = transform(record)
 
@@ -209,7 +209,7 @@ class TestNameLifecycle:
 
 class TestWithName:
     def test_with_name_returns_copy_original_unchanged(self):
-        n = Normal(loc=0.0, scale=1.0, name="x")
+        n = Normal(loc=0.0, scale=1.0, label="x")
         m = n.with_label("y")
         assert m is not n
         assert m.label == "y"
@@ -221,7 +221,7 @@ class TestWithName:
         assert r2.label == "mine"
 
     def test_with_name_records_provenance(self):
-        n = Normal(loc=0.0, scale=1.0, name="x")
+        n = Normal(loc=0.0, scale=1.0, label="x")
         m = n.with_label("y")
         assert m.provenance is not None
         assert m.provenance.operation == "with_label"
@@ -238,7 +238,7 @@ class TestWithName:
         assert r == r2 or r2["b"] is r["b"]
 
     def test_with_name_rejects_empty_or_non_string(self):
-        n = Normal(loc=0.0, scale=1.0, name="x")
+        n = Normal(loc=0.0, scale=1.0, label="x")
         with pytest.raises(TypeError, match="non-empty string"):
             n.with_label("")
         with pytest.raises(TypeError, match="non-empty string"):
@@ -246,7 +246,7 @@ class TestWithName:
 
     def test_with_name_off_mode_attaches_no_provenance(self):
         probpipe.provenance_config.mode = ProvenanceMode.OFF
-        n = Normal(loc=0.0, scale=1.0, name="x")
+        n = Normal(loc=0.0, scale=1.0, label="x")
         m = n.with_label("y")
         assert m.label == "y"
         assert m.provenance is None
@@ -254,7 +254,7 @@ class TestWithName:
     def test_with_name_decouples_annotations_container(self):
         # Post-rename annotation writes must not show through on the
         # original (the container is copied; entry values are shared).
-        n = Normal(loc=0.0, scale=1.0, name="x")
+        n = Normal(loc=0.0, scale=1.0, label="x")
         n._annotations = {"fit": "exact"}
         m = n.with_label("y")
         m.annotations["check"] = "added-on-copy"
@@ -263,7 +263,7 @@ class TestWithName:
 
     def test_with_name_decouples_datatree_annotations(self):
         xr = pytest.importorskip("xarray")
-        n = Normal(loc=0.0, scale=1.0, name="x")
+        n = Normal(loc=0.0, scale=1.0, label="x")
         n._annotations = xr.DataTree.from_dict({"arviz": xr.Dataset()})
         m = n.with_label("y")
         m.annotations["diagnostics"] = xr.DataTree()
@@ -271,7 +271,7 @@ class TestWithName:
         assert "arviz" in m.annotations.children
 
     def test_with_name_after_provenance_starts_fresh_chain(self):
-        n = Normal(loc=0.0, scale=1.0, name="x")
+        n = Normal(loc=0.0, scale=1.0, label="x")
         n.with_provenance(Provenance("first"))
         m = n.with_label("y")
         # the clone's provenance is the rename, not the original's chain
@@ -334,14 +334,14 @@ class TestWithNameOnCustomNewHosts:
 
         from probpipe import BijectorTransformedDistribution
 
-        t = BijectorTransformedDistribution("t", Normal(loc=0.0, scale=1.0, name="x"), tfb.Exp())
+        t = BijectorTransformedDistribution("t", Normal(loc=0.0, scale=1.0, label="x"), tfb.Exp())
         t2 = t.with_label("y")
         assert t2.label == "y"
         key = jax.random.PRNGKey(0)
         assert jnp.allclose(jnp.asarray(t._sample(key, (5,))), jnp.asarray(t2._sample(key, (5,))))
 
     def test_field_view(self):
-        joint = Normal(loc=0.0, scale=1.0, name="mu") * Normal(loc=1.0, scale=0.5, name="sigma")
+        joint = Normal(loc=0.0, scale=1.0, label="mu") * Normal(loc=1.0, scale=0.5, label="sigma")
         view = joint["mu"]
         renamed = view.with_label("mu_view")
         assert renamed.label == "mu_view"
@@ -367,14 +367,14 @@ class TestNamePreservation:
 
         X = jnp.eye(4)
         y = jnp.array([1.0, 0.0, 1.0, 0.0])
-        prior = MultivariateNormal(loc=jnp.zeros(4), cov=jnp.eye(4), name="beta")
+        prior = MultivariateNormal(loc=jnp.zeros(4), cov=jnp.eye(4), label="beta")
         lik = glm_likelihood("y", BernoulliFamily(), X=X)
         named = MinibatchedDistribution("mine", prior, lik, y, batch_size=2)
         assert named.label == "mine"
 
     def test_joint_conditioning_preserves_names(self):
-        auto_joint = Normal(loc=0.0, scale=1.0, name="mu") * Normal(
-            loc=1.0, scale=0.5, name="sigma"
+        auto_joint = Normal(loc=0.0, scale=1.0, label="mu") * Normal(
+            loc=1.0, scale=0.5, label="sigma"
         )
         cond = auto_joint._condition_on({"mu": 0.5})
         assert cond.label == auto_joint.label
@@ -415,7 +415,7 @@ class TestWithProvenance:
         assert r.provenance is None
 
     def test_write_once_raises(self):
-        for obj in (Record("r", a=1.0), Normal(loc=0.0, scale=1.0, name="x")):
+        for obj in (Record("r", a=1.0), Normal(loc=0.0, scale=1.0, label="x")):
             obj.with_provenance(Provenance("first"))
             with pytest.raises(RuntimeError, match="write-once"):
                 obj.with_provenance(Provenance("second"))
@@ -429,16 +429,16 @@ class TestWithProvenance:
 class TestAnnotated:
     def test_annotations_default_none(self):
         assert Record("r", a=1.0).annotations is None
-        assert Normal(loc=0.0, scale=1.0, name="x").annotations is None
+        assert Normal(loc=0.0, scale=1.0, label="x").annotations is None
 
     def test_annotations_accepts_plain_mapping(self):
-        n = Normal(loc=0.0, scale=1.0, name="x")
+        n = Normal(loc=0.0, scale=1.0, label="x")
         n._annotations = {"note": "fitted by hand"}
         assert n.annotations == {"note": "fitted by hand"}
 
     def test_annotations_accepts_datatree(self):
         xr = pytest.importorskip("xarray")
-        n = Normal(loc=0.0, scale=1.0, name="x")
+        n = Normal(loc=0.0, scale=1.0, label="x")
         n._annotations = xr.DataTree.from_dict({"diagnostics": xr.Dataset()})
         assert "diagnostics" in n.annotations.children
 
@@ -457,12 +457,12 @@ class TestAnnotated:
 
 class TestJointPickleRoundTrip:
     def test_joint_keeps_derived_name_through_pickle(self):
-        joint = Normal(loc=0.0, scale=1.0, name="mu") * Normal(loc=1.0, scale=0.5, name="sigma")
+        joint = Normal(loc=0.0, scale=1.0, label="mu") * Normal(loc=1.0, scale=0.5, label="sigma")
         back = pickle.loads(pickle.dumps(joint))
         assert back.label == joint.label
 
     def test_user_named_joint_keeps_identity_and_provenance(self):
-        joint = FactoredDistribution("my_joint", [Normal(loc=0.0, scale=1.0, name="mu")])
+        joint = FactoredDistribution("my_joint", [Normal(loc=0.0, scale=1.0, label="mu")])
         joint.with_provenance(Provenance("op"))
         back = pickle.loads(pickle.dumps(joint))
         assert back.label == "my_joint"

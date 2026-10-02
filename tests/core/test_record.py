@@ -1051,14 +1051,14 @@ class TestProvenance:
     # ancestor via provenance_ancestors.
 
     def test_provenance_ancestors_walks_through_distribution(self):
-        prior = Normal(loc=0.0, scale=1.0, name="prior")
+        prior = Normal(loc=0.0, scale=1.0, label="prior")
         r = Record("r", theta=1.0).with_provenance(Provenance("draw", parents=(prior,)))
         ancestors = provenance_ancestors(r)
         assert len(ancestors) == 1
         assert ancestors[0] is prior
 
     def test_provenance_ancestors_walks_nested_records(self):
-        prior = Normal(loc=0.0, scale=1.0, name="prior")
+        prior = Normal(loc=0.0, scale=1.0, label="prior")
         middle = Record("r", theta=1.0).with_provenance(Provenance("draw", parents=(prior,)))
         outer = Record("r", result=2.0).with_provenance(Provenance("transform", parents=(middle,)))
         ancestors = provenance_ancestors(outer)

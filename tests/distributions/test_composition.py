@@ -59,14 +59,14 @@ class NormalKernel(ConditionalDistribution):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         given_spec: Mapping[str, Any],
         event_spec: OutputSpec,
         *,
         loc: Callable[[Mapping[str, Any]], Any] = _total,
         bound: Mapping[str, Any] | None = None,
     ) -> None:
-        super().__init__(name, given_spec, event_spec)
+        super().__init__(label, given_spec, event_spec)
         self._loc = loc
         self._bound = dict(bound or {})
 

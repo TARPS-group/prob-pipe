@@ -296,7 +296,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
     Parameters
     ----------
-    name : str
+    label : str
         The record's name — the required first positional argument on
         explicit construction (a user-given name). An operation that
         produces a record supplies a deterministic name derived from its
@@ -413,7 +413,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         _fields: Mapping[str, _FieldValue] | None = None,
         /,
         *,
@@ -432,7 +432,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
         if event_template is not None and event_template.free_dims and _validate_leaves:
             event_template, _ = _unify_record_spec_with_value(
-                event_template, field_inputs, context=f"Record {name!r}"
+                event_template, field_inputs, context=f"Record {label!r}"
             )
 
         field_map: dict[str, _FieldValue] = {}
@@ -482,7 +482,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                 raise ValueError(f"at {field_name!r}: {error}") from None
 
         object.__setattr__(self, "_tree", field_map)
-        self._init_tracked(name)
+        self._init_tracked(label)
         if event_template is None:
             event_template = RecordSpec.infer_from(field_map)
         else:
@@ -1001,7 +1001,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     # -- Coercion -----------------------------------------------------------
 
     @classmethod
-    def ensure(cls, x: Any, *, name: str | None = None) -> Record:
+    def ensure(cls, x: Any, *, label: str | None = None) -> Record:
         """Coerce *x* to Record if it isn't already.
 
         - ``Record`` → pass through (any *name* is ignored)
@@ -1018,19 +1018,19 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
             fields = x
         else:
             fields = {"data": x}
-        if name is None:
+        if label is None:
             return cls(_derived_record_name(fields), fields)
-        return cls(name, fields)
+        return cls(label, fields)
 
     # -- Constructors -------------------------------------------------------
 
     @classmethod
-    def from_dict(cls, name: str, d: dict[str, ArrayLike | Record]) -> Record:
+    def from_dict(cls, label: str, d: dict[str, ArrayLike | Record]) -> Record:
         """Construct a Record named *name* from a dict of arrays."""
-        return cls(name, d)
+        return cls(label, d)
 
     @classmethod
-    def from_field_values(cls, name: str, template: RecordSpec, values: Iterable[Any]) -> Record:
+    def from_field_values(cls, label: str, template: RecordSpec, values: Iterable[Any]) -> Record:
         """Reconstruct a value from an ordered sequence of field values.
 
         *values* supplies one object per field, in canonical order (the order
@@ -1045,7 +1045,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
         Parameters
         ----------
-        name : str
+        label : str
             Name for the reconstructed record (user-given).
         template : RecordSpec
             The authoritative schema supplying names, nesting, and order.
@@ -1085,7 +1085,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
             # ``Record.__new__`` selects the class from the template.
             return Record(node_name, fields, event_template=tpl)
 
-        return _build(template, name)
+        return _build(template, label)
 
     # -- Leaf-wise operations -----------------------------------------------
     #

@@ -24,7 +24,7 @@ class OpaqueBatch(_ObjectBatch[Any]):
 
     Parameters
     ----------
-    name : str
+    label : str
         The batch's name. Required, as it is for every batch: a batch is a value a
         caller holds, and a name derived from its class says nothing about what it
         holds.
@@ -93,7 +93,7 @@ class OpaqueBatch(_ObjectBatch[Any]):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         elements: np.ndarray | Iterable[Any],
         /,
         level_names: str | Iterable[str],
@@ -110,7 +110,7 @@ class OpaqueBatch(_ObjectBatch[Any]):
                 f"OpaqueBatch.element_spec must be an OpaqueSpec, got {type(element_spec).__name__}"
             )
         super().__init__(
-            name,
+            label,
             elements,
             level_names,
             element_spec=element_spec,

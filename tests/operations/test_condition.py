@@ -56,8 +56,8 @@ from ._laws import (
 class _Conjugate(Distribution, SupportsLogProb):
     """A joint over ``theta`` and ``y`` for which the suite's exact inference method applies."""
 
-    def __init__(self, name: str) -> None:
-        super().__init__(name, RecordSpec(theta=REAL, y=REAL))
+    def __init__(self, label: str) -> None:
+        super().__init__(label, RecordSpec(theta=REAL, y=REAL))
 
     def _log_prob(self, value: Any) -> Any:
         theta, y = jnp.asarray(value["theta"]), jnp.asarray(value["y"])
@@ -190,8 +190,8 @@ class _RecordingAmortized(Amortized):
 class _StructuredKernel(ConditionalDistribution, SupportsConditionalSampling):
     """A kernel conditioning on one record-valued slot ``theta``."""
 
-    def __init__(self, name: str = "y") -> None:
-        super().__init__(name, {"theta": RecordSpec(a=REAL, b=REAL)}, REAL)
+    def __init__(self, label: str = "y") -> None:
+        super().__init__(label, {"theta": RecordSpec(a=REAL, b=REAL)}, REAL)
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
         return Gaussian(self.name)
@@ -219,8 +219,8 @@ class _NormalKernel(Kernel, SupportsConditionalSampling, SupportsConditionalLogP
 class _UnnormalizedKernel(ConditionalDistribution, SupportsConditionalUnnormalizedLogProb):
     """A kernel whose laws are known only up to a constant, as a program's posterior targets are."""
 
-    def __init__(self, name: str = "theta", slots: tuple[str, ...] = ("data",)) -> None:
-        super().__init__(name, {slot: REAL for slot in slots}, REAL)
+    def __init__(self, label: str = "theta", slots: tuple[str, ...] = ("data",)) -> None:
+        super().__init__(label, {slot: REAL for slot in slots}, REAL)
         self.slots = tuple(slots)
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
@@ -234,8 +234,8 @@ class _UnnormalizedKernel(ConditionalDistribution, SupportsConditionalUnnormaliz
 class _UndeclaredKernel(ConditionalDistribution):
     """A kernel whose laws are unnormalized, which it implements without declaring a capability."""
 
-    def __init__(self, name: str = "theta") -> None:
-        super().__init__(name, {"data": REAL}, REAL)
+    def __init__(self, label: str = "theta") -> None:
+        super().__init__(label, {"data": REAL}, REAL)
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
         return Unnormalized(self.label)
@@ -246,8 +246,8 @@ class _AmortizedKernel(
 ):
     """A learned kernel from ``y`` to ``theta``, whose evaluation stands in for a posterior."""
 
-    def __init__(self, name: str = "theta") -> None:
-        super().__init__(name, {"y": REAL}, REAL)
+    def __init__(self, label: str = "theta") -> None:
+        super().__init__(label, {"y": REAL}, REAL)
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
         object.__setattr__(self, "options", kwargs)

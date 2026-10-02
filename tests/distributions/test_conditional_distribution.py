@@ -63,8 +63,8 @@ def _annotated(mu: REAL, tau: POSITIVE) -> Distribution:
 class _GuardedSampler(Distribution, SupportsSampling):
     """A scalar law that samples, whose sampling guard rejects every call."""
 
-    def __init__(self, name: str, loc: Any) -> None:
-        super().__init__(name, REAL)
+    def __init__(self, label: str, loc: Any) -> None:
+        super().__init__(label, REAL)
         self.loc = loc
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:

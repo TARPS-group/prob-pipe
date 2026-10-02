@@ -71,7 +71,7 @@ class TestFunctionBoundary:
     def test_a_returned_batch_is_not_rewrapped(self):
         batch = _draws()
 
-        f = Function(name="function", fn=lambda: batch)
+        f = Function(label="function", fn=lambda: batch)
 
         result = f()
 
@@ -83,7 +83,7 @@ class TestFunctionBoundary:
     def test_a_returned_batch_becomes_an_independent_result(self):
         batch = _draws()
 
-        f = Function(name="function", fn=lambda: batch)
+        f = Function(label="function", fn=lambda: batch)
 
         result = f()
 
@@ -97,7 +97,7 @@ class TestFunctionBoundary:
         batch = _draws()
 
         f = Function(
-            name="function",
+            label="function",
             fn=lambda: batch,
             output_spec=BatchSpec(RecordSpec(a=(), b=(2,)), batch.axis_groups, batch.level_names),
         )
@@ -114,7 +114,7 @@ class TestFunctionBoundary:
         declared = RecordSpec(a=NumericArraySpec((), dtype=jnp.int32), b=(2,))
 
         f = Function(
-            name="function",
+            label="function",
             fn=lambda: batch,
             output_spec=BatchSpec(declared, batch.axis_groups, batch.level_names),
         )
@@ -127,7 +127,7 @@ class TestBroadcastPlanning:
     """A batch passed as a workflow input broadcasts over its rows."""
 
     def test_a_batch_argument_sweeps(self):
-        double = Function(name="function", fn=lambda v: 2.0 * v["x"])
+        double = Function(label="function", fn=lambda v: 2.0 * v["x"])
 
         result = double(_one_field(3))
 
@@ -140,7 +140,7 @@ class TestBroadcastPlanning:
             seen.append(v)
             return 0.0
 
-        Function(name="note_row", fn=note_row)(_one_field(3))
+        Function(label="note_row", fn=note_row)(_one_field(3))
 
         # The sweep traces the body rather than running it per row, so what
         # matters is the *kind* it is handed: an element, never the batch.
@@ -154,7 +154,7 @@ class TestFieldExtraction:
 
     def test_a_field_view_extracts_its_column_from_a_batch(self):
         joint = (
-            Normal(loc=0.0, scale=1.0, name="a") * Normal(loc=0.0, scale=1.0, name="b")
+            Normal(loc=0.0, scale=1.0, label="a") * Normal(loc=0.0, scale=1.0, label="b")
         ).with_label("joint")
         batch = NumericRecordBatch(
             "batch",
@@ -489,14 +489,14 @@ class TestAutoDispatchFallsBackForABatchReturningBody:
                 axes_per_level=(1,),
             )
 
-        out = Function(name="body", fn=body)(v=source)
+        out = Function(label="body", fn=body)(v=source)
 
         assert out.level_names == ("draw", "inner")
         assert out.batch_shape == (3, 2)
         # The fallback and an explicit sequential dispatch agree on values —
         # the dispatch-equivalence contract — and both match the independently
         # computed result, so agreement is not two wrongs agreeing.
-        explicit = Function(name="body", fn=body, dispatch="sequential")(v=source)
+        explicit = Function(label="body", fn=body, dispatch="sequential")(v=source)
         np.testing.assert_allclose(np.asarray(out["s"]), np.asarray(explicit["s"]))
         np.testing.assert_allclose(np.asarray(out["s"]), [[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]])
 
@@ -671,7 +671,7 @@ class TestZeroWidthEventsUnderExplicitJax:
         )
 
         out = Function(
-            name="function",
+            label="function",
             fn=lambda v: jnp.sum(jnp.asarray(v["x"])) + jnp.asarray(v["row"]),
             dispatch="jax",
         )(v=source)
@@ -756,7 +756,7 @@ class TestZeroRowsAgreeAcrossDispatch:
             return jnp.sum(jnp.asarray(v["x"]))
 
         results = {
-            name: Function(name="body", fn=body, dispatch=name)(v=source)
+            name: Function(label="body", fn=body, dispatch=name)(v=source)
             for name in ("auto", "sequential", "jax")
         }
 
@@ -877,7 +877,7 @@ class TestBatchValuedRowAggregation:
             with pytest.raises(
                 TypeError, match="some rows returned a batch and some did not"
             ) as exc:
-                Function(name="body", fn=body, dispatch="sequential")(x=self._rows(2))
+                Function(label="body", fn=body, dispatch="sequential")(x=self._rows(2))
             messages.append(str(exc.value))
         assert messages[0] == messages[1]
 
@@ -886,7 +886,7 @@ class TestBatchValuedRowAggregation:
     def test_object_batch_rows_keep_their_declaration(self, kind, dispatch):
         inner = self._inner_objects(kind)
 
-        result = Function(fn=lambda x: inner, name="collect", dispatch=dispatch)(x=self._rows())
+        result = Function(fn=lambda x: inner, label="collect", dispatch=dispatch)(x=self._rows())
 
         assert type(result) is type(inner)
         assert result.element_spec == inner.element_spec
@@ -909,7 +909,7 @@ class TestBatchValuedRowAggregation:
                 return f(3)
 
             expected = [4, 6]
-        downstream = Function(name="evaluate", fn=evaluate, dispatch="sequential")(result)
+        downstream = Function(label="evaluate", fn=evaluate, dispatch="sequential")(result)
         assert downstream.level_names == result.level_names
         assert downstream.axis_groups == result.axis_groups
         np.testing.assert_array_equal(np.asarray(downstream), np.tile(expected, (3, 1)))
@@ -924,7 +924,7 @@ class TestBatchValuedRowAggregation:
             return first if float(x["x"]) == 0 else second
 
         with pytest.raises(ValueError, match="returned batches that disagree"):
-            Function(name="body", fn=body, dispatch="sequential")(x=self._rows(2))
+            Function(label="body", fn=body, dispatch="sequential")(x=self._rows(2))
 
     @pytest.mark.parametrize(
         "second",
@@ -938,7 +938,7 @@ class TestBatchValuedRowAggregation:
             return self._inner(2) if float(x["x"]) < 0.5 else second(self)
 
         with pytest.raises(ValueError, match="returned batches that disagree"):
-            Function(name="body", fn=body, dispatch="sequential")(x=self._rows())
+            Function(label="body", fn=body, dispatch="sequential")(x=self._rows())
 
     def test_rows_disagreeing_on_their_element_spec_are_refused(self):
         def body(x):
@@ -952,10 +952,10 @@ class TestBatchValuedRowAggregation:
             )
 
         with pytest.raises(ValueError, match="returned batches that disagree"):
-            Function(name="body", fn=body, dispatch="sequential")(x=self._rows())
+            Function(label="body", fn=body, dispatch="sequential")(x=self._rows())
 
     def test_compatible_batch_rows_stack_with_the_sweep_in_front(self):
-        out = Function(name="function", fn=lambda x: self._inner(2), dispatch="sequential")(
+        out = Function(label="function", fn=lambda x: self._inner(2), dispatch="sequential")(
             x=self._rows()
         )
         assert out.batch_shape == (3, 2)
@@ -976,7 +976,7 @@ class TestBatchValuedRowAggregation:
         Read as event shape instead, the rows' axis would say each cell holds
         one 2-vector where it holds two elements on a level.
         """
-        out = Function(name="function", fn=lambda x: self._inner_array(2), dispatch="sequential")(
+        out = Function(label="function", fn=lambda x: self._inner_array(2), dispatch="sequential")(
             x=self._rows()
         )
 
@@ -1016,7 +1016,7 @@ class TestBatchValuedRowAggregation:
             "held", native, "inner", element_spec=NumericArraySpec((), dtype=np.float64)
         )
         source = self._rows()
-        collect = Function(fn=lambda row: inner, name="collect", dispatch="sequential")
+        collect = Function(fn=lambda row: inner, label="collect", dispatch="sequential")
         expected = np.tile([1.0, 2.0], (3, 1))
 
         np.testing.assert_array_equal(jax.jit(lambda: collect(source).as_jax())(), expected)
@@ -1033,7 +1033,7 @@ class TestBatchValuedRowAggregation:
             return self._inner_array(2) if float(x["x"]) < 0.5 else self._inner_array(3)
 
         with pytest.raises(ValueError, match="returned batches that disagree"):
-            Function(name="body", fn=body, dispatch="sequential")(x=self._rows())
+            Function(label="body", fn=body, dispatch="sequential")(x=self._rows())
 
     def test_mixing_array_batch_and_record_batch_rows_is_refused(self):
         """The two kinds hold different things, so there is no one aggregate."""
@@ -1042,7 +1042,7 @@ class TestBatchValuedRowAggregation:
             return self._inner_array(2) if float(x["x"]) < 0.5 else self._inner(2)
 
         with pytest.raises(TypeError, match="one kind for every row"):
-            Function(name="body", fn=body, dispatch="sequential")(x=self._rows())
+            Function(label="body", fn=body, dispatch="sequential")(x=self._rows())
 
     def test_a_returned_design_aggregates_as_a_plain_batch(self):
         """The aggregate is not itself a design: a subclass with its own
@@ -1050,7 +1050,7 @@ class TestBatchValuedRowAggregation:
         from probpipe.record.design import FullFactorialDesign
 
         out = Function(
-            name="function", fn=lambda x: FullFactorialDesign(a=[1.0, 2.0]), dispatch="sequential"
+            label="function", fn=lambda x: FullFactorialDesign(a=[1.0, 2.0]), dispatch="sequential"
         )(x=self._rows())
         assert type(out) is NumericRecordBatch
         assert out.batch_shape == (3, 2)
@@ -1109,7 +1109,7 @@ class TestEveryBatchIsAnOperand:
     def test_a_numeric_array_batch_reaches_the_body_as_an_element(self):
         seen: list = []
 
-        Function(fn=lambda v: (seen.append(v), 0.0)[1], name="f", dispatch="sequential")(
+        Function(fn=lambda v: (seen.append(v), 0.0)[1], label="f", dispatch="sequential")(
             v=self._numeric()
         )
 
@@ -1118,7 +1118,7 @@ class TestEveryBatchIsAnOperand:
         assert not any(isinstance(row, NumericArrayBatch) for row in seen)
 
     def test_sweeping_a_numeric_array_batch_keeps_its_level(self):
-        out = Function(fn=lambda v: jnp.asarray(v) * 2.0, name="double", dispatch="sequential")(
+        out = Function(fn=lambda v: jnp.asarray(v) * 2.0, label="double", dispatch="sequential")(
             v=self._numeric()
         )
 
@@ -1129,7 +1129,7 @@ class TestEveryBatchIsAnOperand:
         `Opaque` holding the caller's own object."""
         seen: list = []
 
-        Function(fn=lambda v: (seen.append(v), 0.0)[1], name="f", dispatch="sequential")(
+        Function(fn=lambda v: (seen.append(v), 0.0)[1], label="f", dispatch="sequential")(
             v=OpaqueBatch(
                 "rows",
                 ["a", "b"],
@@ -1141,7 +1141,7 @@ class TestEveryBatchIsAnOperand:
         assert [element.label for element in seen] == ["rows[row=0]", "rows[row=1]"]
 
     def test_a_function_batch_is_swept_too(self):
-        out = Function(fn=lambda f: float(f()), name="call", dispatch="sequential")(
+        out = Function(fn=lambda f: float(f()), label="call", dispatch="sequential")(
             f=FunctionBatch(
                 "rows",
                 [lambda: 1.0, lambda: 2.0],
@@ -1176,7 +1176,7 @@ class TestSweepingASingleStoreBatchAgreesAcrossDispatch:
 
     @pytest.mark.parametrize("dispatch", ["auto", "sequential"])
     def test_the_rows_own_level_survives(self, dispatch):
-        out = Function(fn=self._inner, name="f", dispatch=dispatch)(v=self._rows())
+        out = Function(fn=self._inner, label="f", dispatch=dispatch)(v=self._rows())
 
         assert (out.batch_shape, out.level_names) == ((3, 2), ("row", "inner"))
 
@@ -1187,4 +1187,4 @@ class TestSweepingASingleStoreBatchAgreesAcrossDispatch:
         an explicit `jax` should not silently differ from that.
         """
         with pytest.raises(TypeError, match="cannot vectorize over NumericArrayBatch"):
-            Function(fn=self._inner, name="f", dispatch="jax")(v=self._rows())
+            Function(fn=self._inner, label="f", dispatch="jax")(v=self._rows())

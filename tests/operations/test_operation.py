@@ -756,8 +756,8 @@ class TestControls:
         class Tolerant(Gaussian):
             """A normal law whose closed-form mean records the options it receives."""
 
-            def __init__(self, name: str) -> None:
-                super().__init__(name, 1.5)
+            def __init__(self, label: str) -> None:
+                super().__init__(label, 1.5)
                 self.options: list[dict[str, Any]] = []
 
             def _mean(self, **options: Any) -> Any:

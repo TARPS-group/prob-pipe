@@ -115,7 +115,7 @@ def function(
     _func: Callable[..., Any] | None = None,
     /,
     *,
-    name: str | None = None,
+    label: str | None = None,
     input_spec: InputSpec | Mapping[str, TermSpec] | None = None,
     output_spec: OutputSpec | TermSpec | None = None,
     output_label: str | None = None,
@@ -147,7 +147,7 @@ def function(
     _func : Callable or None
         Function being decorated for bare ``@function`` usage.
         Users should not pass this argument by keyword.
-    name : str or None
+    label : str or None
         The function label, defaulting to the decorated callable's ``__name__``.
         A callable with none, such as a ``functools.partial``, needs it.
     input_spec, output_spec, output_label, differentiable, bind, module
@@ -165,20 +165,20 @@ def function(
     ------
     TypeError
         If a keyword is no control, before any callable is wrapped; or if
-        *name* is omitted for a callable that has no ``__name__``, such as a
+        *label* is omitted for a callable that has no ``__name__``, such as a
         ``functools.partial`` or a callable instance.
     """
     _refuse_unknown_controls(controls)
 
     def decorator(func: Callable[..., Any]) -> Function:
-        label = getattr(func, "__name__", None) if name is None else name
-        if label is None:
+        resolved = getattr(func, "__name__", None) if label is None else label
+        if resolved is None:
             raise TypeError(
-                f"function() needs an explicit name for a {type(func).__name__}, which has no "
-                f"__name__ to take it from; pass name=..."
+                f"function() needs an explicit label for a {type(func).__name__}, which has no "
+                f"__name__ to take it from; pass label=..."
             )
         return Function(
-            label,
+            resolved,
             func,
             input_spec=input_spec,
             output_spec=output_spec,
@@ -265,7 +265,7 @@ def _call_with_options(
     function: Function,
     args: tuple[Any, ...],
     call_inputs: dict[str, Any],
-    options: _call.WorkflowCallOptions,
+    options: _call.FunctionCallOptions,
 ) -> Any:
     _context._assert_workflow_admission()
     with _replay._function_replay_scope() as replay_call:
@@ -289,7 +289,7 @@ def _call_with_options_in_context(
     function: Function,
     args: tuple[Any, ...],
     call_inputs: dict[str, Any],
-    options: _call.WorkflowCallOptions,
+    options: _call.FunctionCallOptions,
 ) -> Any:
     # A call made while a check probes, as a probe that runs an operation makes
     # one, selects and runs its routes as any call does.
@@ -360,16 +360,16 @@ def _run_call(
     function: Function,
     args: tuple[Any, ...],
     call_inputs: dict[str, Any],
-    options: _call.WorkflowCallOptions,
+    options: _call.FunctionCallOptions,
 ) -> Any:
-    call = _call.resolve_workflow_call(
+    call = _call.resolve_function_call(
         function._signature_info,
         args,
         call_inputs,
         bind=function._bind,
         module=function._module,
         dependency_type=Node,
-        workflow_name=function._label,
+        function_name=function._label,
         default_n_broadcast_samples=function.options["n_broadcast_samples"],
         default_include_inputs=function.options["include_inputs"],
         options=options,
@@ -520,7 +520,7 @@ def _run_call(
 
     def resolve_dispatch(
         dispatch_values: dict[str, Any],
-        broadcast_args: list[_binding.WorkflowInputRef],
+        broadcast_args: list[_binding.FunctionInputRef],
         *,
         jax_supported: bool = True,
     ) -> str:
@@ -547,7 +547,7 @@ def _run_call(
 
     def require_jax_traceable(
         dispatch_values: dict[str, Any],
-        broadcast_args: list[_binding.WorkflowInputRef],
+        broadcast_args: list[_binding.FunctionInputRef],
     ) -> None:
         _require_jax_traceable(
             function,
@@ -577,7 +577,7 @@ def _run_call(
             requested_dispatch=function.options["dispatch"],
             resolve_dispatch=resolve_dispatch,
             require_jax_traceable=require_jax_traceable,
-            workflow_name=function._label,
+            function_name=function._label,
             output_label=label,
             output_spec=concrete_output_spec,
             workflow_kind=workflow_kind,
@@ -630,7 +630,7 @@ def _run_call(
             resolve_dispatch=resolve_dispatch,
             require_jax_traceable=require_jax_traceable,
             distribution_broadcast=distribution_broadcast,
-            workflow_name=function._label,
+            function_name=function._label,
             output_label=label,
             output_spec=concrete_output_spec,
             include_inputs=call.overrides.include_inputs,
@@ -683,7 +683,7 @@ def _run_call(
 def _jax_traceability_error(
     function: Function,
     values: dict[str, Any],
-    broadcast_args: list[_binding.WorkflowInputRef],
+    broadcast_args: list[_binding.FunctionInputRef],
     *,
     func: Callable[..., Any],
     stochastic_plan: _plan.StochasticPlan | None,
@@ -703,9 +703,9 @@ def _jax_traceability_error(
     try:
         dummy_kw = dict(values)
         broadcast_refs = set(broadcast_args)
-        batched_sources: dict[_binding.WorkflowInputRef, Any] = {}
+        batched_sources: dict[_binding.FunctionInputRef, Any] = {}
         unvectorized_batches: dict[Any, Any] = {}
-        drawn_refs: list[_binding.WorkflowInputRef] = []
+        drawn_refs: list[_binding.FunctionInputRef] = []
         for ref in _binding.iter_input_refs(function._signature_info, values):
             v = _binding.input_ref_value(values, ref)
             if ref in broadcast_refs:
@@ -865,7 +865,7 @@ def _has_output_support(spec: Any) -> bool:
 def _require_jax_traceable(
     function: Function,
     values: dict[str, Any],
-    broadcast_args: list[_binding.WorkflowInputRef],
+    broadcast_args: list[_binding.FunctionInputRef],
     *,
     func: Callable[..., Any],
     stochastic_plan: _plan.StochasticPlan | None,
@@ -911,7 +911,7 @@ def _require_jax_traceable(
 def _resolve_dispatch(
     function: Function,
     values: dict[str, Any],
-    broadcast_args: list[_binding.WorkflowInputRef],
+    broadcast_args: list[_binding.FunctionInputRef],
     *,
     jax_supported: bool = True,
     func: Callable[..., Any],
@@ -999,7 +999,7 @@ def _resolve_route(
     function: Function,
     values: Mapping[str, Any],
     broadcast_plan: _plan.BroadcastPlan,
-    overrides: _call.WorkflowCallOverrides,
+    overrides: _call.FunctionCallOverrides,
     rule_method: str | None,
 ) -> _Route:
     """Select the route that realizes the call (step 6).
@@ -1037,7 +1037,7 @@ def _route_report(
     function: Function,
     values: Mapping[str, Any],
     broadcast_plan: _plan.BroadcastPlan,
-    overrides: _call.WorkflowCallOverrides,
+    overrides: _call.FunctionCallOverrides,
     rule_method: str | None,
 ) -> tuple[MethodInfo, _Route | None]:
     """The report of the route that realizes the call, and the route when it is selected.
@@ -1108,17 +1108,17 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
         If a conversion has no converter, or the ``method`` control names no
         route of a Function realized by routes.
     """
-    call = _call.resolve_workflow_call(
+    call = _call.resolve_function_call(
         function._signature_info,
         args,
         kwargs,
         bind=function._bind,
         module=function._module,
         dependency_type=Node,
-        workflow_name=function._label,
+        function_name=function._label,
         default_n_broadcast_samples=function.options["n_broadcast_samples"],
         default_include_inputs=function.options["include_inputs"],
-        options=_call.WorkflowCallOptions(),
+        options=_call.FunctionCallOptions(),
     )
     values, conversions, waiting = _normalization.plan_distribution_values(
         values=call.values,
@@ -1184,7 +1184,7 @@ def _check_routes(
     function: Function,
     values: Mapping[str, Any],
     broadcast_plan: _plan.BroadcastPlan,
-    call: _call.ResolvedWorkflowCall,
+    call: _call.ResolvedFunctionCall,
     candidates: tuple[Any, ...],
     conversions: Mapping[str, Any],
     waiting: tuple[str, ...],
@@ -1279,7 +1279,7 @@ class _CallEngine:
     """The call stack of design Part V, installed as the call path of every Function."""
 
     def __call__(self, function: Function, *args: Any, **kwargs: Any) -> Any:
-        result = _call_with_options(function, args, kwargs, _call.WorkflowCallOptions())
+        result = _call_with_options(function, args, kwargs, _call.FunctionCallOptions())
         if not function.options["raw"]:
             return result
         if function._route_candidates(function.options) is not None:

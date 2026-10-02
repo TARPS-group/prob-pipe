@@ -2239,7 +2239,7 @@ class TestBindingAFunctionSpec:
         declared = RecordSpec(f=FunctionSpec(InputSpec(self._sym().children), None))
         typed = Function(
             fn=lambda x: x,
-            name="g",
+            label="g",
             input_spec=InputSpec(RecordSpec(x=NumericArraySpec(shape=(7,))).children),
         )
 
@@ -2253,7 +2253,7 @@ class TestBindingAFunctionSpec:
         )
         typed = Function(
             fn=lambda x: x,
-            name="g",
+            label="g",
             output_spec=RecordSpec(y=NumericArraySpec(shape=(5,))),
         )
 
@@ -2402,7 +2402,7 @@ class TestAFunctionOutputBindsWhateverItDeclares:
     def _function(input_size=3, output_size=5, *, record=False):
         return Function(
             fn=lambda x: jnp.zeros(output_size),
-            name="f",
+            label="f",
             input_spec=InputSpec(RecordSpec(x=NumericArraySpec(shape=(input_size,))).children),
             output_spec=(
                 RecordSpec(out=NumericArraySpec(shape=(output_size,)))
@@ -2454,7 +2454,7 @@ class TestAFunctionOutputBindsWhateverItDeclares:
         """A single value declaration meets a single field, so two is a mismatch."""
         function = Function(
             fn=lambda x: x,
-            name="f",
+            label="f",
             input_spec=InputSpec(RecordSpec(x=NumericArraySpec(shape=(3,))).children),
             output_spec=RecordSpec(a=NumericArraySpec(shape=(3,)), b=NumericArraySpec(shape=(4,))),
         )
@@ -2469,7 +2469,7 @@ class TestAFunctionOutputBindsWhateverItDeclares:
         ids=["nested_leaf", "empty_sibling"],
     )
     def test_one_array_output_does_not_flatten_record_structure(self, template):
-        function = Function(name="function", fn=lambda: None, output_spec=template)
+        function = Function(label="function", fn=lambda: None, output_spec=template)
         for size in (3, "n"):
             spec = FunctionSpec(output_spec=OutputSpec(result=NumericArraySpec((size,))))
             with pytest.raises(ValueError):

@@ -105,8 +105,8 @@ class TestRandomFunction:
 class _Mixture(Distribution, SupportsMean):
     """The finite mixture ``Σᵢ wᵢ pᵢ`` of laws that share one declaration, by its mean."""
 
-    def __init__(self, components, weights, *, name="mixture"):
-        super().__init__(name, components[0].event_spec)
+    def __init__(self, components, weights, *, label="mixture"):
+        super().__init__(label, components[0].event_spec)
         self._components = list(components)
         self._w = weights
 
@@ -117,14 +117,14 @@ class _Mixture(Distribution, SupportsMean):
 class _DiracLogProbFunction(RandomFunction):
     """The random log-density of a finite mixture: ``log p_i(x)`` with weight ``w_i``."""
 
-    def __init__(self, components, weights, *, name="dirac_log_prob"):
-        super().__init__(name=name)
+    def __init__(self, components, weights, *, label="dirac_log_prob"):
+        super().__init__(label=label)
         self._components = components
         self._w = weights
 
     def __call__(self, x):
         scalar_dists = [
-            Normal(loc=c._log_prob(x), scale=jnp.array(1e-8), name="lp") for c in self._components
+            Normal(loc=c._log_prob(x), scale=jnp.array(1e-8), label="lp") for c in self._components
         ]
         return _Mixture(scalar_dists, self._w)
 
@@ -142,7 +142,7 @@ class _DiracRandomMeasure(
     measure's ``DistributionSpec`` declares.
     """
 
-    def __init__(self, components, weights=None, *, name=None):
+    def __init__(self, components, weights=None, *, label=None):
         components = list(components)
         if not components:
             raise ValueError("_DiracRandomMeasure requires at least one component")
@@ -157,7 +157,7 @@ class _DiracRandomMeasure(
                 raise ValueError("All components must share support")
         self._components = components
         self._w = Weights(n=len(components), weights=weights)
-        super().__init__(name or "dirac_random_measure", DistributionSpec(first.event_spec))
+        super().__init__(label or "dirac_random_measure", DistributionSpec(first.event_spec))
 
     @property
     def components(self):
@@ -170,7 +170,7 @@ class _DiracRandomMeasure(
         return _object_array([self._components[int(i)] for i in indices], sample_shape)
 
     def _mean(self):
-        return _Mixture(self._components, self._w, name=f"{self.label}_expected")
+        return _Mixture(self._components, self._w, label=f"{self.label}_expected")
 
     def _random_log_prob(self):
         return _DiracLogProbFunction(self._components, self._w)
@@ -182,8 +182,8 @@ class _DiracRandomMeasure(
 class _SamplingOnlyRandomMeasure(RandomMeasure, SupportsSampling):
     """A random measure that only draws laws."""
 
-    def __init__(self, component, name="sampling_only_rm"):
-        super().__init__(name, DistributionSpec(component.event_spec))
+    def __init__(self, component, label="sampling_only_rm"):
+        super().__init__(label, DistributionSpec(component.event_spec))
         self._component = component
 
     def _sample(self, key, sample_shape=()):
@@ -201,7 +201,7 @@ def _object_array(laws, sample_shape):
 
 
 def _normals(n):
-    return [Normal(loc=float(i), scale=1.0, name="n") for i in range(n)]
+    return [Normal(loc=float(i), scale=1.0, label="n") for i in range(n)]
 
 
 class TestInheritance:
@@ -267,7 +267,7 @@ class TestMean:
 
     def test_outer_mean_matches_weighted_inner_mean(self):
         locs = [0.0, 2.0, 5.0]
-        comps = [Normal(loc=loc, scale=1.0, name=f"n{i}") for i, loc in enumerate(locs)]
+        comps = [Normal(loc=loc, scale=1.0, label=f"n{i}") for i, loc in enumerate(locs)]
         weights = jnp.array([0.2, 0.3, 0.5])
         m = mean(mean(_DiracRandomMeasure(comps, weights=weights)))
         assert jnp.allclose(m, float((weights * jnp.array(locs)).sum()), atol=1e-6)
@@ -296,7 +296,7 @@ class TestRandomLogProb:
 
 class TestProtocolOptIn:
     def test_the_base_claims_no_random_log_density(self):
-        rm = _SamplingOnlyRandomMeasure(Normal(loc=0.0, scale=1.0, name="n0"))
+        rm = _SamplingOnlyRandomMeasure(Normal(loc=0.0, scale=1.0, label="n0"))
         assert isinstance(rm, SupportsSampling)
         assert not isinstance(rm, SupportsMean)
         assert not isinstance(rm, SupportsRandomLogProb)
@@ -304,7 +304,7 @@ class TestProtocolOptIn:
 
     def test_a_sampling_measure_has_a_monte_carlo_mean_and_no_random_density(self):
         """The mean of a measure that only samples is the mixture of its draws."""
-        rm = _SamplingOnlyRandomMeasure(Normal(loc=0.0, scale=1.0, name="n0"))
+        rm = _SamplingOnlyRandomMeasure(Normal(loc=0.0, scale=1.0, label="n0"))
         assert isinstance(mean(rm), Distribution)
         with pytest.raises(ResolutionError, match="SupportsRandomLogProb"):
             random_log_prob(rm)
@@ -328,15 +328,15 @@ class TestTheDrawnLawsDeclaration:
 
     def test_a_vector_event_shape(self):
         comps = [
-            MultivariateNormal(loc=jnp.zeros(3) + i, cov=jnp.eye(3), name=f"mvn{i}")
+            MultivariateNormal(loc=jnp.zeros(3) + i, cov=jnp.eye(3), label=f"mvn{i}")
             for i in range(2)
         ]
         assert self._drawn(_DiracRandomMeasure(comps)).shape == (3,)
 
     def test_mismatched_event_shapes_raise(self):
         comps = [
-            Normal(loc=0.0, scale=1.0, name="scalar"),
-            MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="vector"),
+            Normal(loc=0.0, scale=1.0, label="scalar"),
+            MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), label="vector"),
         ]
         with pytest.raises(ValueError, match="event_shape"):
             _DiracRandomMeasure(comps)
@@ -344,8 +344,8 @@ class TestTheDrawnLawsDeclaration:
 
 class TestBatchOfRandomMeasures:
     def test_a_distribution_batch_of_random_measures(self):
-        rm1 = _DiracRandomMeasure([Normal(loc=0.0, scale=1.0, name="x")], name="rm")
-        rm2 = _DiracRandomMeasure([Normal(loc=5.0, scale=1.0, name="x")], name="rm")
+        rm1 = _DiracRandomMeasure([Normal(loc=0.0, scale=1.0, label="x")], label="rm")
+        rm2 = _DiracRandomMeasure([Normal(loc=5.0, scale=1.0, label="x")], label="rm")
         batch = DistributionBatch("measures", [rm1, rm2], "measure")
         assert len(batch) == 2
         assert batch[0].components is rm1.components

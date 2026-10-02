@@ -132,7 +132,7 @@ class MultivariateNormal(TFPDistribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         Distribution name.
     loc : array-like, shape ``(..., d)``
         Mean vector, or one per row.
@@ -164,7 +164,7 @@ class MultivariateNormal(TFPDistribution):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         loc: ArrayLike,
         scale_tril: ArrayLike | None = None,
         *,
@@ -204,7 +204,7 @@ class MultivariateNormal(TFPDistribution):
         self._given_cov = operator if operator is not None else cov
         self._positive_definite = positive_definite
         backend = tfd.MultivariateNormalTriL(loc=loc, scale_tril=scale_tril)
-        super().__init__(name, backend, event_spec=event_spec)
+        super().__init__(label, backend, event_spec=event_spec)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -299,7 +299,7 @@ class Dirichlet(TFPDistribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         Distribution name.
     concentration : array-like, shape ``(..., k)``
         Positive concentration (alpha) parameters, or one vector per row.
@@ -321,7 +321,7 @@ class Dirichlet(TFPDistribution):
     _backend_capabilities = frozenset({SupportsMean, SupportsVariance, SupportsCovariance})
 
     def __init__(
-        self, name: str, concentration: ArrayLike, *, event_spec: OutputSpec | None = None
+        self, label: str, concentration: ArrayLike, *, event_spec: OutputSpec | None = None
     ):
         concentration = _as_float_array(concentration)
         if concentration.ndim == 0:
@@ -329,7 +329,7 @@ class Dirichlet(TFPDistribution):
 
         self._concentration = concentration
         backend = tfd.Dirichlet(concentration=concentration)
-        super().__init__(name, backend, event_spec=event_spec)
+        super().__init__(label, backend, event_spec=event_spec)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -360,7 +360,7 @@ class Multinomial(TFPDistribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         Distribution name.
     total_count : int or array-like
         Number of trials, or one per row.
@@ -387,7 +387,7 @@ class Multinomial(TFPDistribution):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         total_count: int | ArrayLike,
         probs: ArrayLike | None = None,
         logits: ArrayLike | None = None,
@@ -409,7 +409,7 @@ class Multinomial(TFPDistribution):
             backend = tfd.Multinomial(total_count=total_count, logits=logits)
 
         self._total_count = total_count
-        super().__init__(name, backend, event_spec=event_spec)
+        super().__init__(label, backend, event_spec=event_spec)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -444,7 +444,7 @@ class Wishart(TFPDistribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         Distribution name.
     df : float or array-like
         Degrees of freedom (must be >= dimension), or one per row.
@@ -471,7 +471,7 @@ class Wishart(TFPDistribution):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         df: float | ArrayLike,
         scale_tril: ArrayLike | None = None,
         *,
@@ -492,7 +492,7 @@ class Wishart(TFPDistribution):
         self._df = df
         self._scale_tril = scale_tril
         backend = tfd.WishartTriL(df=df, scale_tril=scale_tril)
-        super().__init__(name, backend, event_spec=event_spec)
+        super().__init__(label, backend, event_spec=event_spec)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -532,7 +532,7 @@ class VonMisesFisher(TFPDistribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         Distribution name.
     mean_direction : array-like, shape ``(..., d)``
         Unit vector giving the mean direction, or one per row.
@@ -556,7 +556,7 @@ class VonMisesFisher(TFPDistribution):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         mean_direction: ArrayLike,
         concentration: float | ArrayLike,
         *,
@@ -567,7 +567,7 @@ class VonMisesFisher(TFPDistribution):
         self._mean_direction = mean_direction
         self._concentration = concentration
         backend = tfd.VonMisesFisher(mean_direction=mean_direction, concentration=concentration)
-        super().__init__(name, backend, event_spec=event_spec)
+        super().__init__(label, backend, event_spec=event_spec)
 
     # -- convenient accessors -----------------------------------------------
 

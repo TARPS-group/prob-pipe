@@ -474,7 +474,7 @@ class TestAutomaticKeyOwnership:
 
 class TestFunctionBrokerScope:
     def test_deterministic_apply_does_not_materialize_entropy(self):
-        deterministic = Function(name="function", fn=lambda value: value + 1)
+        deterministic = Function(label="function", fn=lambda value: value + 1)
 
         with patch("probpipe.functions._context._os_urandom") as urandom:
             assert deterministic.apply(2) == 3
@@ -483,7 +483,7 @@ class TestFunctionBrokerScope:
 
     def test_lifting_uses_the_active_function_broker(self):
         identity = Function(
-            name="function",
+            label="function",
             fn=lambda value: value,
             n_broadcast_samples=8,
             dispatch="sequential",
@@ -500,7 +500,7 @@ class TestFunctionBrokerScope:
             ) as key_for,
             workflow_run(seed=7),
         ):
-            result = identity(Normal(loc=0.0, scale=1.0, name="x"))
+            result = identity(Normal(loc=0.0, scale=1.0, label="x"))
 
         assert result.num_atoms == 8
         key_for.assert_called_once()

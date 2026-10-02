@@ -44,8 +44,8 @@ def theta_vec(params: Any) -> Array:
 class _SimulatedLaw(Distribution, SupportsSampling):
     """The law of one observation that a simulator draws, which only samples."""
 
-    def __init__(self, name: str, event_spec: OutputSpec, draw: Callable[[PRNGKey], Array]):
-        super().__init__(name, event_spec)
+    def __init__(self, label: str, event_spec: OutputSpec, draw: Callable[[PRNGKey], Array]):
+        super().__init__(label, event_spec)
         object.__setattr__(self, "_draw", draw)
 
     def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
@@ -71,12 +71,12 @@ class SimulatorKernel(ConditionalDistribution, SupportsConditionalSampling):
         shape: tuple[int, ...],
         simulate: Callable[[Any, PRNGKey], Array],
         *,
-        name: str = "observation",
+        label: str = "observation",
     ) -> None:
         super().__init__(
-            name,
+            label,
             dict(prior.event_spec.components),
-            OutputSpec(**{name: NumericArraySpec(shape)}),
+            OutputSpec(**{label: NumericArraySpec(shape)}),
         )
         object.__setattr__(self, "_simulate", simulate)
 

@@ -63,7 +63,7 @@ class DistributionBatch(_ObjectBatch[Distribution]):
 
     Parameters
     ----------
-    name : str
+    label : str
         The batch's name.
     elements : numpy.ndarray or iterable of Distribution
         The laws, as an object array of any shape or a flat iterable.
@@ -94,7 +94,7 @@ class DistributionBatch(_ObjectBatch[Distribution]):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         elements: np.ndarray | Iterable[Distribution],
         /,
         level_names: str | Iterable[str],
@@ -116,7 +116,7 @@ class DistributionBatch(_ObjectBatch[Distribution]):
             )
         _check_declarations(elements, element_spec, self._element_rule)
         super().__init__(
-            name,
+            label,
             elements,
             level_names,
             element_spec=element_spec,
@@ -189,7 +189,7 @@ class ConditionalDistributionBatch(_ObjectBatch[ConditionalDistribution]):
 
     Parameters
     ----------
-    name : str
+    label : str
         The batch's name.
     elements : numpy.ndarray or iterable of ConditionalDistribution
         The kernels, as an object array of any shape or a flat iterable.
@@ -218,7 +218,7 @@ class ConditionalDistributionBatch(_ObjectBatch[ConditionalDistribution]):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         elements: np.ndarray | Iterable[ConditionalDistribution],
         /,
         level_names: str | Iterable[str],
@@ -241,7 +241,7 @@ class ConditionalDistributionBatch(_ObjectBatch[ConditionalDistribution]):
                 f"ConditionalDistributionSpec, got {type(element_spec).__name__}"
             )
         super().__init__(
-            name,
+            label,
             elements,
             level_names,
             element_spec=element_spec,

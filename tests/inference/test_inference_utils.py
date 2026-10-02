@@ -59,7 +59,7 @@ def _gaussian_mean(prior, n, scale=1.0):
 @pytest.fixture
 def small_model():
     """The unnormalized conditional of a joint with a 2-field factored prior."""
-    prior = Normal(loc=0.0, scale=1.0, name="a") * Normal(loc=2.0, scale=0.5, name="b")
+    prior = Normal(loc=0.0, scale=1.0, label="a") * Normal(loc=2.0, scale=0.5, label="b")
     likelihood = ObservationKernel(
         "y",
         dict(prior.event_spec.components),
@@ -273,7 +273,7 @@ class TestModelFactors:
 
     @pytest.fixture
     def gaussian_target(self):
-        prior = FactoredDistribution("prior", [Normal(loc=0.0, scale=1.0, name="mu")])
+        prior = FactoredDistribution("prior", [Normal(loc=0.0, scale=1.0, label="mu")])
         return observed_target(
             _gaussian_mean(prior, 3, scale=2.0), {"y": jnp.array([1.0, -1.0, 0.5])}
         )
@@ -285,7 +285,7 @@ class TestModelFactors:
         np.testing.assert_allclose(factors.observed, [1.0, -1.0, 0.5])
 
     def test_a_target_that_is_no_conditioned_joint_has_no_factors(self):
-        assert model_factors(Normal(loc=0.0, scale=1.0, name="x")) is None
+        assert model_factors(Normal(loc=0.0, scale=1.0, label="x")) is None
 
     def test_returns_scalar_log_likelihood(self, gaussian_target):
         llf = likelihood_flat(model_factors(gaussian_target))
@@ -348,7 +348,7 @@ class TestGetInitState:
 
     def test_explicit_init_passthrough(self):
         # Branch 1: explicit init returned verbatim (cast to prior dtype).
-        prior = Normal(loc=0.0, scale=1.0, name="x")
+        prior = Normal(loc=0.0, scale=1.0, label="x")
         out = get_init_state(prior, init=jnp.array([3.0, 4.0]))
         np.testing.assert_array_equal(np.asarray(out), np.array([3.0, 4.0]))
         # Cast to the prior dtype: a default-float Normal yields a float
@@ -357,14 +357,14 @@ class TestGetInitState:
 
     def test_explicit_init_casts_dtype(self):
         # An integer-valued init is cast to the prior's float dtype.
-        prior = Normal(loc=0.0, scale=1.0, name="x")
+        prior = Normal(loc=0.0, scale=1.0, label="x")
         out = get_init_state(prior, init=np.array([1, 2], dtype=np.int32))
         assert jnp.issubdtype(out.dtype, jnp.floating)
         np.testing.assert_allclose(np.asarray(out), np.array([1.0, 2.0]))
 
     def test_prior_sample_path(self):
         # Branch 2: prior implements SupportsSampling -> draw a sample.
-        prior = Normal(loc=0.0, scale=1.0, name="x")
+        prior = Normal(loc=0.0, scale=1.0, label="x")
         assert isinstance(prior, SupportsSampling)
         out = get_init_state(prior, init=None, random_seed=0)
         assert out.shape == (1,)  # scalar Normal -> length-1 vector

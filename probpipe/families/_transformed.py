@@ -54,7 +54,7 @@ class LinearPushforwardDistribution(Distribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         The pushforward's label, and the component of its event.
     base : Distribution
         The law of ``X``, whose numeric event is ``op``'s input.
@@ -67,7 +67,7 @@ class LinearPushforwardDistribution(Distribution):
         Always, until the linear evaluation rule is implemented.
     """
 
-    def __init__(self, name: str, base: Distribution, op: LinOp) -> None:
+    def __init__(self, label: str, base: Distribution, op: LinOp) -> None:
         raise NotImplementedError("LinearPushforwardDistribution.__init__")
 
 
@@ -200,7 +200,7 @@ class BijectorTransformedDistribution(Distribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         The transformed law's label.
     base : Distribution
         The law of ``X``, whose draws are arrays.
@@ -228,12 +228,12 @@ class BijectorTransformedDistribution(Distribution):
     }
 
     def __new__(
-        cls, name: str, base: Distribution, bijector: Function | Any
+        cls, label: str, base: Distribution, bijector: Function | Any
     ) -> BijectorTransformedDistribution:
         claimed = _claimed(base, _as_bijector(bijector)) if isinstance(base, Distribution) else ()
         return object.__new__(_capability_subclass(cls, claimed))
 
-    def __init__(self, name: str, base: Distribution, bijector: Function | Any) -> None:
+    def __init__(self, label: str, base: Distribution, bijector: Function | Any) -> None:
         if not isinstance(base, Distribution) or not isinstance(
             base.event_spec.spec, NumericArraySpec
         ):
@@ -252,7 +252,7 @@ class BijectorTransformedDistribution(Distribution):
         ]
         if missing:
             raise ResolutionError(
-                f"the bijector {bijector.label!r} of {name!r} does not claim "
+                f"the bijector {bijector.label!r} of {label!r} does not claim "
                 f"{' and '.join(missing)}, which a change of variables needs"
             )
         base_spec = base.event_spec.spec
@@ -260,7 +260,7 @@ class BijectorTransformedDistribution(Distribution):
         image = jax.eval_shape(_forward(bijector), point)
         object.__setattr__(self, "_base", base)
         object.__setattr__(self, "_bijector", bijector)
-        super().__init__(name, NumericArraySpec(tuple(image.shape), image.dtype, _image(bijector)))
+        super().__init__(label, NumericArraySpec(tuple(image.shape), image.dtype, _image(bijector)))
         self.with_provenance(
             Provenance.create("transform", parents=[base], metadata={"bijector": bijector.label})
         )

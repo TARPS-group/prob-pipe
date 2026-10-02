@@ -21,12 +21,12 @@ A single backend adapter, `TFPDistribution`, implements the capability set on ra
 
 ```python
 class TFPDistribution(Distribution):
-    def __init__(self, name: str, backend_dist: Any, *, event_spec: OutputSpec | None = None) -> None: ...   # the wrapped backend object
+    def __init__(self, label: str, backend_dist: Any, *, event_spec: OutputSpec | None = None) -> None: ...   # the wrapped backend object
     # closed-form _sample, _log_prob, _mean, _variance, and _quantile;
     # _cov and _marginal where the family defines them
 
 class Normal(TFPDistribution):
-    def __init__(self, name: str, loc: ArrayLike, scale: ArrayLike, *,
+    def __init__(self, label: str, loc: ArrayLike, scale: ArrayLike, *,
                  event_spec: OutputSpec | None = None) -> None: ...
 # and likewise for each family above: parameters in, event spec and capabilities derived
 ```
@@ -49,7 +49,7 @@ A `KDEDistribution` smooths the atoms of a numeric event with a **smoothing kern
 
 ```python
 class EmpiricalDistribution(Distribution):
-    def __init__(self, name: str, atoms: Batch | Array, weights: Array | None = None, *,
+    def __init__(self, label: str, atoms: Batch | Array, weights: Array | None = None, *,
                  level: str | None = None, event_spec: OutputSpec | None = None) -> None: ...
     # atoms are given in the event's batch form; weights default to uniform;
     # a plain array's atoms lie on level, which defaults to the law's component
@@ -61,12 +61,12 @@ class EmpiricalDistribution(Distribution):
     def num_atoms(self) -> int: ...
 
 class BootstrapReplicateDistribution(Distribution):
-    def __init__(self, name: str, source: SupportsSampling, replicate_size: int | None = None, *,
+    def __init__(self, label: str, source: SupportsSampling, replicate_size: int | None = None, *,
                  level: str | None = None, event_spec: OutputSpec | None = None) -> None: ...
     # a draw is one replicate in the event's batch form: replicate_size iid draws from source
 
 class BootstrapDistribution(Distribution):   # a random measure: a draw is an EmpiricalDistribution
-    def __init__(self, name: str, source: SupportsSampling, replicate_size: int | None = None, *,
+    def __init__(self, label: str, source: SupportsSampling, replicate_size: int | None = None, *,
                  level: str | None = None, event_spec: OutputSpec | None = None) -> None: ...
     # the empirical measure of one replicate
 
@@ -85,7 +85,7 @@ class GaussianKernel(SmoothingKernel): ...
 class EpanechnikovKernel(SmoothingKernel): ...   # the product kernel ∏ⱼ ¾(1 − uⱼ²); variance 1/5
 
 class KDEDistribution(Distribution):
-    def __init__(self, name: str, atoms: Array | NumericRecordBatch, bandwidth: ArrayLike | str | None = None,
+    def __init__(self, label: str, atoms: Array | NumericRecordBatch, bandwidth: ArrayLike | str | None = None,
                  weights: Array | None = None, kernel: type[SmoothingKernel] = GaussianKernel, *,
                  event_spec: OutputSpec | None = None) -> None: ...
 ```
@@ -106,7 +106,7 @@ A `MixtureDistribution` is a convex combination of component distributions over 
 
 ```python
 class MixtureDistribution(Distribution):
-    def __init__(self, name: str, components: Sequence[Distribution], weights: Array) -> None: ...
+    def __init__(self, label: str, components: Sequence[Distribution], weights: Array) -> None: ...
     # components share one event declaration; weights are nonnegative and sum to one
 ```
 
@@ -124,14 +124,14 @@ Each evaluation rule returns a family from this catalog. A closed-form rule retu
 
 ```python
 class LinearPushforwardDistribution(Distribution):
-    def __init__(self, name: str, base: Distribution, op: LinOp) -> None: ...
+    def __init__(self, label: str, base: Distribution, op: LinOp) -> None: ...
     # the law of op @ X for X ~ base; the event type is op's output type, under the pushforward's own component.
     # _sample pushes base draws through op; _mean and _cov delegate exactly,
     # E[A X] = A E[X] and Cov(A X) = A Cov(X) Aᵀ, lazily through the operator algebra;
     # _log_prob only when op is invertible, by change of variables
 
 class BijectorTransformedDistribution(Distribution):
-    def __init__(self, name: str, base: Distribution, bijector: Function) -> None: ...
+    def __init__(self, label: str, base: Distribution, bijector: Function) -> None: ...
     # bijector must satisfy is_invertible and claim SupportsLogDetJacobian, checked at construction;
     # _sample pushes base draws through the bijector;
     # _log_prob(y) is the base log-density at the preimage minus the log-Jacobian determinant
@@ -186,12 +186,12 @@ class GaussianRandomFunction(RandomFunction, ABC):
     def __call__(self, X: Array) -> Normal | MultivariateNormal: ...   # the finite-dimensional law at X
 
 class GaussianProcess(GaussianRandomFunction):
-    def __init__(self, name: str, mean_fn: Callable[[Array], Array],
+    def __init__(self, label: str, mean_fn: Callable[[Array], Array],
                  cov_kernel: Callable[[Array, Array], Array], *,
                  output_spec: OutputSpec | None = None, event_spec: OutputSpec | None = None) -> None: ...
 
 class LinearBasisFunction(GaussianRandomFunction):
-    def __init__(self, name: str, basis: Callable[[Array], Array], weights: MultivariateNormal, *,
+    def __init__(self, label: str, basis: Callable[[Array], Array], weights: MultivariateNormal, *,
                  output_spec: OutputSpec | None = None, event_spec: OutputSpec | None = None) -> None: ...
     # f(x) = basis(x)ᵀ w; the covariance kernel is basis(x)ᵀ Σ_w basis(x′)
 ```
@@ -230,14 +230,14 @@ The conditional members of the catalog are `ConditionalDistribution`s, each fixe
 
 ```python
 class LinearGaussianConditional(ConditionalDistribution):
-    def __init__(self, name: str, A: LinOp, b: Array, cov: LinOp) -> None: ...
+    def __init__(self, label: str, A: LinOp, b: Array, cov: LinOp) -> None: ...
     # s ↦ N(A @ s + b, cov); the given slot is A's input slot; the event type is A's output type, under the kernel's own component
 
 class GLMFamily(ABC):                     # a mean-parameterized response family
     canonical_link: Function              # invertible: is_invertible checked at construction
     has_dispersion: bool                  # whether build takes a dispersion, e.g. a Gaussian scale
     @abstractmethod
-    def build(self, name: str, mean: Array, dispersion: ArrayLike | None = None, *,
+    def build(self, label: str, mean: Array, dispersion: ArrayLike | None = None, *,
               event_spec: OutputSpec | None = None) -> Distribution: ...
     # the law of len(mean) conditionally independent observations with the given means
 
@@ -245,7 +245,7 @@ class GaussianFamily(GLMFamily): ...      # canonical link: identity; dispersion
 class BernoulliFamily(GLMFamily): ...     # canonical link: logit; no dispersion
 class PoissonFamily(GLMFamily): ...       # canonical link: log; no dispersion
 
-def glm_likelihood(name: str, family: GLMFamily, link: Function | None = None,
+def glm_likelihood(label: str, family: GLMFamily, link: Function | None = None,
                    *, event_spec: OutputSpec | None = None, X: Array | None = None,
                    dispersion: ArrayLike | None = None) -> ConditionalDistribution: ...
     # shapes: X ("obs", "features"), beta ("features",), y ("obs",); the dimensions are symbolic until X binds them
@@ -270,15 +270,15 @@ A program's variable names determine its output components: a model named `regre
 
 ```python
 class StanModel(ConditionalDistribution):
-    def __init__(self, name: str, stan_file: str, *, data: Mapping[str, Any] | None = None) -> None: ...
+    def __init__(self, label: str, stan_file: str, *, data: Mapping[str, Any] | None = None) -> None: ...
     # given: the data-block variables that data leaves unbound; event: the parameter record
 
 class PyMCModel(Distribution):
-    def __init__(self, name: str, model_fn: Callable[..., Any]) -> None: ...
+    def __init__(self, label: str, model_fn: Callable[..., Any]) -> None: ...
     # event: the free variables; the conditional form when model_fn takes an argument that no observed variable receives
 
 class UnnormalizedDistribution(Distribution):
-    def __init__(self, name: str, log_density: Callable[[Any], Array], event_spec: OutputSpec) -> None: ...
+    def __init__(self, label: str, log_density: Callable[[Any], Array], event_spec: OutputSpec) -> None: ...
     # claims SupportsUnnormalizedLogProb alone
 ```
 

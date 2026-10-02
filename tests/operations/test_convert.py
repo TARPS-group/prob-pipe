@@ -25,15 +25,15 @@ from ._laws import REAL, Gaussian
 class _Source(Distribution):
     """A law that the suite's converters read."""
 
-    def __init__(self, name: str) -> None:
-        super().__init__(name, REAL)
+    def __init__(self, label: str) -> None:
+        super().__init__(label, REAL)
 
 
 class _Target(Distribution):
     """A representation that an exact and an approximate converter produce."""
 
-    def __init__(self, name: str, component: str | None = None) -> None:
-        super().__init__(name, OutputSpec(**{component or name: REAL}))
+    def __init__(self, label: str, component: str | None = None) -> None:
+        super().__init__(label, OutputSpec(**{component or label: REAL}))
 
 
 class _RoughTarget(_Target):

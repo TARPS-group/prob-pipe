@@ -36,7 +36,7 @@ def test_function_decorator_sets_construction_defaults():
         return x
 
     with workflow_run(seed=0):
-        result = identity(Normal(loc=0.0, scale=1.0, name="x"))
+        result = identity(Normal(loc=0.0, scale=1.0, label="x"))
 
     assert result.num_atoms == 7
 
@@ -49,12 +49,12 @@ def test_function_rng_seed_controls_are_removed():
     def identity(x):
         return x
 
-    wf = Function(name="identity", fn=identity, dispatch="sequential")
+    wf = Function(label="identity", fn=identity, dispatch="sequential")
 
     assert "seed" not in inspect.signature(Function.__init__).parameters
     assert "seed" not in inspect.signature(wf.with_options).parameters
     with pytest.warns(FutureWarning, match="seed.*ignored"):
-        deprecated = Function(name="identity", fn=identity, dispatch="sequential", seed=42)
+        deprecated = Function(label="identity", fn=identity, dispatch="sequential", seed=42)
     assert float(deprecated(3)) == 3
     with pytest.warns(FutureWarning, match="seed.*ignored"):
 
@@ -72,7 +72,7 @@ def test_function_construction_seed_warns_without_binding_user_parameter():
         return x + seed
 
     with pytest.warns(FutureWarning, match="seed.*ignored"):
-        wrapped = Function(name="add_seed", fn=add_seed, dispatch="sequential", seed=42)
+        wrapped = Function(label="add_seed", fn=add_seed, dispatch="sequential", seed=42)
     with pytest.raises(TypeError, match="seed"):
         wrapped(1)
     assert float(wrapped(1, seed=2)) == 3
@@ -117,7 +117,7 @@ def test_function_bind_can_still_supply_user_seed_parameter():
     def add_seed(x, seed):
         return x + seed
 
-    wf = Function(name="add_seed", fn=add_seed, dispatch="sequential", bind={"seed": 42})
+    wf = Function(label="add_seed", fn=add_seed, dispatch="sequential", bind={"seed": 42})
 
     assert float(wf(1.0)) == 43.0
 
@@ -142,7 +142,7 @@ def test_with_options_controls_sample_count_and_include_inputs():
         return x
 
     wf = Function(
-        name="identity",
+        label="identity",
         fn=identity,
         n_broadcast_samples=20,
         dispatch="sequential",
@@ -152,7 +152,7 @@ def test_with_options_controls_sample_count_and_include_inputs():
         result = wf.with_options(
             n_broadcast_samples=6,
             include_inputs=True,
-        )(Normal(loc=0.0, scale=1.0, name="x"))
+        )(Normal(loc=0.0, scale=1.0, label="x"))
 
     assert isinstance(result, EmpiricalDistribution)
     assert result.num_atoms == 6
@@ -164,12 +164,12 @@ def test_workflow_run_reproduces_one_lifted_call():
         return x
 
     wf = Function(
-        name="identity",
+        label="identity",
         fn=identity,
         n_broadcast_samples=8,
         dispatch="sequential",
     )
-    normal = Normal(loc=0.0, scale=1.0, name="x")
+    normal = Normal(loc=0.0, scale=1.0, label="x")
 
     with workflow_run(seed=42):
         first = wf(normal)
@@ -186,15 +186,15 @@ def test_workflow_seed_is_separate_from_user_seed_parameter():
     def add_user_seed(x, seed):
         return x + seed
 
-    normal = Normal(loc=0.0, scale=1.0, name="x")
+    normal = Normal(loc=0.0, scale=1.0, label="x")
     base = Function(
-        name="identity",
+        label="identity",
         fn=identity,
         n_broadcast_samples=8,
         dispatch="sequential",
     )
     wf = Function(
-        name="add_user_seed",
+        label="add_user_seed",
         fn=add_user_seed,
         n_broadcast_samples=8,
         dispatch="sequential",
@@ -235,12 +235,12 @@ def test_var_keyword_receives_workflow_control_names():
         return x
 
     wf = Function(
-        name="identity",
+        label="identity",
         fn=identity,
         n_broadcast_samples=20,
         dispatch="sequential",
     )
-    normal = Normal(loc=0.0, scale=1.0, name="x")
+    normal = Normal(loc=0.0, scale=1.0, label="x")
 
     with workflow_run(seed=0):
         result = wf.with_options(n_broadcast_samples=5)(
@@ -265,14 +265,14 @@ def test_unbindable_call_time_control_name_is_rejected():
         return x
 
     wf = Function(
-        name="identity",
+        label="identity",
         fn=identity,
         n_broadcast_samples=20,
         dispatch="sequential",
     )
 
     with pytest.raises(TypeError, match="unexpected keyword argument"):
-        wf(Normal(loc=0.0, scale=1.0, name="x"), n_broadcast_samples=6)
+        wf(Normal(loc=0.0, scale=1.0, label="x"), n_broadcast_samples=6)
 
 
 def test_bindable_workflow_control_name_does_not_override():
@@ -280,12 +280,12 @@ def test_bindable_workflow_control_name_does_not_override():
         return x + n_broadcast_samples
 
     wf = Function(
-        name="identity",
+        label="identity",
         fn=identity,
         n_broadcast_samples=5,
         dispatch="sequential",
     )
-    normal = Normal(loc=0.0, scale=1.0, name="x")
+    normal = Normal(loc=0.0, scale=1.0, label="x")
 
     with workflow_run(seed=0):
         result = wf(x=normal, n_broadcast_samples=4)

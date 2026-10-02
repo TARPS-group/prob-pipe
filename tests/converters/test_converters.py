@@ -112,7 +112,7 @@ class TestConverterRegistry:
 
 class TestMomentMatching:
     def test_same_class_needs_no_converter(self):
-        n = Normal(loc=2.0, scale=0.5, name="x")
+        n = Normal(loc=2.0, scale=0.5, label="x")
         info = converter_registry.check(n, Normal)
         assert (info.method_name, info.exact, info.samples) == (None, True, False)
 
@@ -122,7 +122,7 @@ class TestMomentMatching:
         np.testing.assert_allclose(float(result._scale), 0.5)
 
     def test_cross_family_moment_match(self):
-        g = Gamma(concentration=9.0, rate=1.0, name="g")
+        g = Gamma(concentration=9.0, rate=1.0, label="g")
         info = converter_registry.check(g, Normal)
         assert (info.method_name, info.exact, info.samples) == ("moment_match", False, False)
 
@@ -131,23 +131,23 @@ class TestMomentMatching:
         np.testing.assert_allclose(float(result._loc), 9.0, atol=0.5)
 
     def test_the_fit_keeps_the_source_label_and_component(self):
-        g = Gamma(concentration=9.0, rate=1.0, name="g", event_spec=OutputSpec(theta=None))
+        g = Gamma(concentration=9.0, rate=1.0, label="g", event_spec=OutputSpec(theta=None))
         result = converter_registry.convert(g, Normal)
         assert result.label == "g"
         assert list(result.event_spec.components) == ["theta"]
 
     def test_support_mismatch_raises_by_default(self):
-        n = Normal(loc=0.5, scale=0.1, name="x")
+        n = Normal(loc=0.5, scale=0.1, label="x")
         with pytest.raises(ValueError, match="support"):
             converter_registry.convert(n, Beta)
 
     def test_support_mismatch_override(self):
-        n = Normal(loc=0.5, scale=0.1, name="x")
+        n = Normal(loc=0.5, scale=0.1, label="x")
         result = converter_registry.convert(n, Beta, check_support=False)
         assert isinstance(result, Beta)
 
     def test_to_empirical(self):
-        n = Normal(loc=0.0, scale=1.0, name="x")
+        n = Normal(loc=0.0, scale=1.0, label="x")
         info = converter_registry.check(n, EmpiricalDistribution)
         assert (info.method_name, info.exact, info.samples) == ("empirical", False, True)
         emp = converter_registry.convert(n, EmpiricalDistribution, num_samples=100)
@@ -157,7 +157,7 @@ class TestMomentMatching:
         assert emp.atoms.level_names == ("sample",)
 
     def test_provenance_attached(self):
-        g = Gamma(concentration=3.0, rate=1.0, name="prior")
+        g = Gamma(concentration=3.0, rate=1.0, label="prior")
         result = converter_registry.convert(g, Normal)
         assert result.provenance is not None
         assert result.provenance.operation == "convert"
@@ -167,7 +167,7 @@ class TestMomentMatching:
 
     def test_same_class_returns_source(self):
         """Same-class conversion returns the source object itself."""
-        n = Normal(loc=1.0, scale=2.0, name="x")
+        n = Normal(loc=1.0, scale=2.0, label="x")
         result = converter_registry.convert(n, Normal)
         assert result is n
 
@@ -269,35 +269,35 @@ class TestAllCrossFamilyConversions:
     )
     def test_continuous_from_gamma(self, target_cls):
         """Convert Gamma(9,1) to each continuous type (skip support issues)."""
-        g = Gamma(concentration=9.0, rate=1.0, name="g")
+        g = Gamma(concentration=9.0, rate=1.0, label="g")
         result = converter_registry.convert(g, target_cls, check_support=False, num_samples=500)
         assert isinstance(result, target_cls)
         assert result.provenance is not None  # cross-family: provenance attached
 
     def test_bernoulli_from_poisson(self):
-        p = Poisson(rate=0.5, name="p")
+        p = Poisson(rate=0.5, label="p")
         result = converter_registry.convert(p, Bernoulli, check_support=False)
         assert isinstance(result, Bernoulli)
 
     def test_binomial_from_poisson(self):
-        p = Poisson(rate=3.0, name="p")
+        p = Poisson(rate=3.0, label="p")
         result = converter_registry.convert(p, Binomial, check_support=False, total_count=10)
         assert isinstance(result, Binomial)
 
     def test_binomial_requires_total_count(self):
-        p = Poisson(rate=3.0, name="p")
+        p = Poisson(rate=3.0, label="p")
         with pytest.raises(ValueError, match="total_count"):
             converter_registry.convert(p, Binomial, check_support=False)
 
     def test_poisson_from_bernoulli_is_infeasible(self):
         """A Poisson draws floats, which do not cast to the Bernoulli's integers."""
-        b = Bernoulli(probs=0.3, name="b")
+        b = Bernoulli(probs=0.3, label="b")
         with pytest.raises(ResolutionError, match="does not cast"):
             converter_registry.convert(b, Poisson, check_support=False)
 
     def test_a_fit_whose_draws_do_not_cast_is_reported_infeasible_at_check(self):
         """A Normal draws floats, which do not cast to the Bernoulli's integers."""
-        b = Bernoulli(probs=0.3, name="b")
+        b = Bernoulli(probs=0.3, label="b")
         info = converter_registry.check(b, Normal)
         assert info.feasible is False
         assert "moment_match" in info.description
@@ -340,15 +340,15 @@ class TestAllCrossFamilyConversions:
         registry = ConverterRegistry()
         registry.register(_MomentMatching())
         registry.register(FollowingConverter())
-        info = registry.check(Bernoulli(probs=0.3, name="b"), Normal)
+        info = registry.check(Bernoulli(probs=0.3, label="b"), Normal)
         assert info.feasible is True
         assert info.method_name == "following"
 
     @pytest.mark.parametrize(
         ("source", "target"),
         [
-            pytest.param(lambda: Gamma(concentration=2.0, rate=1.0, name="g"), Normal, id="float"),
-            pytest.param(lambda: Normal(loc=0.5, scale=0.1, name="n"), Bernoulli, id="integer"),
+            pytest.param(lambda: Gamma(concentration=2.0, rate=1.0, label="g"), Normal, id="float"),
+            pytest.param(lambda: Normal(loc=0.5, scale=0.1, label="n"), Bernoulli, id="integer"),
         ],
     )
     def test_the_promise_declares_the_dtype_of_the_fit(self, source, target):
@@ -358,51 +358,51 @@ class TestAllCrossFamilyConversions:
         assert info.target_spec.event_spec.spec.dtype == result.event_spec.spec.dtype
 
     def test_categorical_from_bernoulli(self):
-        b = Bernoulli(probs=0.7, name="b")
+        b = Bernoulli(probs=0.7, label="b")
         result = converter_registry.convert(b, Categorical, check_support=False, num_samples=500)
         assert isinstance(result, Categorical)
 
     def test_negativebinomial_from_poisson(self):
-        p = Poisson(rate=3.0, name="p")
+        p = Poisson(rate=3.0, label="p")
         result = converter_registry.convert(p, NegativeBinomial, check_support=False, total_count=5)
         assert isinstance(result, NegativeBinomial)
 
     def test_negativebinomial_requires_total_count(self):
-        p = Poisson(rate=3.0, name="p")
+        p = Poisson(rate=3.0, label="p")
         with pytest.raises(ValueError, match="total_count"):
             converter_registry.convert(p, NegativeBinomial, check_support=False)
 
     def test_dirichlet_from_mvn(self):
-        mvn = MultivariateNormal(loc=jnp.array([0.3, 0.5, 0.2]), cov=0.01 * jnp.eye(3), name="z")
+        mvn = MultivariateNormal(loc=jnp.array([0.3, 0.5, 0.2]), cov=0.01 * jnp.eye(3), label="z")
         result = converter_registry.convert(mvn, Dirichlet, check_support=False, num_samples=500)
         assert isinstance(result, Dirichlet)
 
     def test_multinomial_from_mvn(self):
-        mvn = MultivariateNormal(loc=jnp.array([3.0, 5.0, 2.0]), cov=jnp.eye(3), name="z")
+        mvn = MultivariateNormal(loc=jnp.array([3.0, 5.0, 2.0]), cov=jnp.eye(3), label="z")
         result = converter_registry.convert(
             mvn, Multinomial, check_support=False, total_count=10, num_samples=500
         )
         assert isinstance(result, Multinomial)
 
     def test_multinomial_requires_total_count(self):
-        mvn = MultivariateNormal(loc=jnp.array([3.0, 5.0]), cov=jnp.eye(2), name="z")
+        mvn = MultivariateNormal(loc=jnp.array([3.0, 5.0]), cov=jnp.eye(2), label="z")
         with pytest.raises(ValueError, match="total_count"):
             converter_registry.convert(mvn, Multinomial, check_support=False)
 
     def test_wishart_from_wishart(self):
-        w = Wishart(df=5.0, scale_tril=jnp.eye(2), name="w")
+        w = Wishart(df=5.0, scale_tril=jnp.eye(2), label="w")
         result = converter_registry.convert(w, Wishart)
         assert result is w  # same-class
 
     def test_wishart_to_empirical(self):
-        w = Wishart(df=5.0, scale_tril=jnp.eye(2), name="w")
+        w = Wishart(df=5.0, scale_tril=jnp.eye(2), label="w")
         result = converter_registry.convert(w, EmpiricalDistribution, num_samples=50)
         assert isinstance(result, EmpiricalDistribution)
         assert result.num_atoms == 50
 
     def test_vonmisesfisher_same_class(self):
         vmf = VonMisesFisher(
-            mean_direction=jnp.array([1.0, 0.0, 0.0]), concentration=5.0, name="vmf"
+            mean_direction=jnp.array([1.0, 0.0, 0.0]), concentration=5.0, label="vmf"
         )
         result = converter_registry.convert(vmf, VonMisesFisher)
         assert result is vmf
@@ -417,12 +417,12 @@ class TestAllCrossFamilyConversions:
         assert result.loc.shape == (3,)
 
     def test_mvn_from_mvn(self):
-        mvn = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
+        mvn = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="z")
         result = converter_registry.convert(mvn, MultivariateNormal)
         assert result is mvn
 
     def test_a_vector_family_refuses_a_matrix_event(self):
-        w = Wishart(df=5.0, scale_tril=jnp.eye(2), name="w")
+        w = Wishart(df=5.0, scale_tril=jnp.eye(2), label="w")
         with pytest.raises(ResolutionError, match="rank 1"):
             converter_registry.convert(w, MultivariateNormal)
 
@@ -489,7 +489,7 @@ class TestTFPConverter:
 
     def test_a_family_exports_its_backend_distribution_through_raw(self):
         """Converting to a backend class is no conversion, since the result carries no declaration."""
-        n = Normal(loc=3.0, scale=1.0, name="x")
+        n = Normal(loc=3.0, scale=1.0, label="x")
         assert isinstance(n.raw(), tfd.Normal)
         np.testing.assert_allclose(float(n.raw().loc), 3.0)
         with pytest.raises(ResolutionError):
@@ -498,13 +498,13 @@ class TestTFPConverter:
     @pytest.mark.parametrize(
         ("law", "backend"),
         [
-            (Beta(alpha=2.0, beta=5.0, name="b"), tfd.Beta),
-            (Gamma(concentration=3.0, rate=1.0, name="g"), tfd.Gamma),
-            (Exponential(rate=2.0, name="e"), tfd.Exponential),
-            (Bernoulli(probs=0.3, name="b"), tfd.Bernoulli),
-            (Dirichlet(concentration=jnp.array([2.0, 3.0, 1.0]), name="d"), tfd.Dirichlet),
+            (Beta(alpha=2.0, beta=5.0, label="b"), tfd.Beta),
+            (Gamma(concentration=3.0, rate=1.0, label="g"), tfd.Gamma),
+            (Exponential(rate=2.0, label="e"), tfd.Exponential),
+            (Bernoulli(probs=0.3, label="b"), tfd.Bernoulli),
+            (Dirichlet(concentration=jnp.array([2.0, 3.0, 1.0]), label="d"), tfd.Dirichlet),
             (
-                MultivariateNormal(loc=jnp.array([1.0, 2.0]), cov=jnp.eye(2), name="z"),
+                MultivariateNormal(loc=jnp.array([1.0, 2.0]), cov=jnp.eye(2), label="z"),
                 tfd.MultivariateNormalTriL,
             ),
         ],
@@ -514,7 +514,7 @@ class TestTFPConverter:
         assert isinstance(law.raw(), backend)
 
     def test_probpipe_to_tfp_round_trip(self):
-        n = Normal(loc=5.0, scale=2.0, name="x")
+        n = Normal(loc=5.0, scale=2.0, label="x")
         n2 = converter_registry.convert(n.raw(), Normal)
         np.testing.assert_allclose(float(n2._loc), 5.0)
         np.testing.assert_allclose(float(n2._scale), 2.0)
@@ -596,7 +596,7 @@ class TestScipyConverter:
         from scipy.stats._distn_infrastructure import rv_frozen
 
         with pytest.raises(ResolutionError):
-            converter_registry.convert(Normal(loc=3.0, scale=1.0, name="x"), rv_frozen)
+            converter_registry.convert(Normal(loc=3.0, scale=1.0, label="x"), rv_frozen)
 
     def test_scipy_provenance(self):
         import scipy.stats as ss
@@ -704,12 +704,12 @@ class TestCustomConverter:
                     feasible=True,
                     method_name=self.name,
                     exact=True,
-                    target_spec=Normal(loc=0.0, scale=1.0, name="x").spec,
+                    target_spec=Normal(loc=0.0, scale=1.0, label="x").spec,
                     target_class=Normal,
                 )
 
             def execute(self, source, target_type, **options):
-                return Normal(loc=source.val, scale=1.0, name="x")
+                return Normal(loc=source.val, scale=1.0, label="x")
 
         registry = ConverterRegistry()
         registry.register(DummyConverter())
@@ -730,29 +730,29 @@ class TestConvertDelegation:
     """Verify convert() delegates to the registry."""
 
     def test_convert_same_class(self):
-        n = Normal(loc=2.0, scale=0.5, name="x")
+        n = Normal(loc=2.0, scale=0.5, label="x")
         result = convert(n, Normal)
         assert isinstance(result, Normal)
         np.testing.assert_allclose(float(result._loc), 2.0)
 
     def test_convert_cross_family(self):
-        t = StudentT(df=30.0, loc=9.0, scale=1.0, name="t")
+        t = StudentT(df=30.0, loc=9.0, scale=1.0, label="t")
         result = convert.with_options(method_options={"num_samples": 5000})(t, Normal)
         assert isinstance(result, Normal)
         np.testing.assert_allclose(float(result._loc), 9.0, atol=0.5)
 
     def test_convert_support_check(self):
-        n = Normal(loc=0.5, scale=0.1, name="x")
+        n = Normal(loc=0.5, scale=0.1, label="x")
         with pytest.raises(ValueError, match="support"):
             convert(n, Beta)
 
     def test_convert_check_support_false(self):
-        n = Normal(loc=0.5, scale=0.1, name="x")
+        n = Normal(loc=0.5, scale=0.1, label="x")
         result = converter_registry.convert(n, Beta, check_support=False)
         assert isinstance(result, Beta)
 
     def test_convert_to_empirical(self):
-        n = Normal(loc=0.0, scale=1.0, name="x")
+        n = Normal(loc=0.0, scale=1.0, label="x")
         emp = convert.with_options(method_options={"num_samples": 50})(n, EmpiricalDistribution)
         assert isinstance(emp, EmpiricalDistribution)
         assert emp.num_atoms == 50
@@ -784,13 +784,13 @@ class TestConversionProvenance:
 
     def test_same_class_records_nothing(self):
         """Same-class conversion returns source directly, no provenance."""
-        n = Normal(loc=2.0, scale=0.5, name="x")
+        n = Normal(loc=2.0, scale=0.5, label="x")
         result = converter_registry.convert(n, Normal)
         assert result is n  # same object, no conversion
 
     def test_cross_family_provenance_attached(self):
         """Cross-family conversion attaches provenance with source as parent."""
-        g = Gamma(concentration=9.0, rate=1.0, name="g")
+        g = Gamma(concentration=9.0, rate=1.0, label="g")
         result = converter_registry.convert(g, Normal)
         assert result.provenance is not None
         assert result.provenance.operation == "convert"
@@ -822,7 +822,7 @@ class TestProtocolConversion:
 
     def test_already_satisfies_returns_same(self):
         """Distribution that already satisfies the protocol is returned unchanged."""
-        n = Normal(loc=0.0, scale=1.0, name="x")
+        n = Normal(loc=0.0, scale=1.0, label="x")
         result = converter_registry.convert(n, SupportsLogProb)
         assert result is n
 
@@ -902,7 +902,7 @@ class TestProtocolConversion:
 
     def test_check_protocol_already_satisfied(self):
         """check() reports an exact report selecting no converter when the protocol holds."""
-        n = Normal(loc=0.0, scale=1.0, name="x")
+        n = Normal(loc=0.0, scale=1.0, label="x")
         info = converter_registry.check(n, SupportsLogProb)
         assert info.feasible
         assert (info.method_name, info.exact) == (None, True)
@@ -992,7 +992,7 @@ class TestProtocolConversion:
         chains = [jnp.stack([chain_intercept, chain_slope], axis=-1)]
         approx = ApproximateDistribution(
             chains,
-            name="posterior",
+            label="posterior",
             event_spec=NumericRecordSpec(intercept=(), slope=()),
         )
         result = converter_registry.convert(approx, SupportsLogProb)
@@ -1102,7 +1102,7 @@ class TestKDEDistribution:
 
     def test_convert_normal_to_kde(self):
         """Converting a parametric distribution to KDE works via sampling."""
-        n = Normal(loc=0.0, scale=1.0, name="x")
+        n = Normal(loc=0.0, scale=1.0, label="x")
         kde = converter_registry.convert(n, KDEDistribution, num_samples=500)
         assert isinstance(kde, KDEDistribution)
         assert kde.num_atoms == 500

@@ -50,7 +50,7 @@ def _make_transformed():
 
     return BijectorTransformedDistribution(
         "td",
-        Normal(loc=0.0, scale=1.0, name="base"),
+        Normal(loc=0.0, scale=1.0, label="base"),
         tfb.Exp(),
     )
 
@@ -59,19 +59,19 @@ def _make_transformed():
 # the non-iterable rule. A lifted call's result is an EmpiricalDistribution,
 # which is parametrised with the others.
 DISTRIBUTIONS = [
-    pytest.param(lambda: Normal(loc=0.0, scale=1.0, name="x"), id="Normal"),
-    pytest.param(lambda: Beta(alpha=1.0, beta=1.0, name="x"), id="Beta"),
-    pytest.param(lambda: Gamma(concentration=2.0, rate=1.0, name="x"), id="Gamma"),
+    pytest.param(lambda: Normal(loc=0.0, scale=1.0, label="x"), id="Normal"),
+    pytest.param(lambda: Beta(alpha=1.0, beta=1.0, label="x"), id="Beta"),
+    pytest.param(lambda: Gamma(concentration=2.0, rate=1.0, label="x"), id="Gamma"),
     pytest.param(
         lambda: MultivariateNormal(
             loc=jnp.zeros(3),
             cov=jnp.eye(3),
-            name="x",
+            label="x",
         ),
         id="MultivariateNormal",
     ),
     pytest.param(
-        lambda: Normal(loc=0.0, scale=1.0, name="x") * Normal(loc=0.0, scale=1.0, name="y"),
+        lambda: Normal(loc=0.0, scale=1.0, label="x") * Normal(loc=0.0, scale=1.0, label="y"),
         id="FactoredDistribution",
     ),
     pytest.param(
@@ -99,7 +99,7 @@ DISTRIBUTIONS = [
     pytest.param(
         lambda: BootstrapReplicateDistribution(
             "boot",
-            Normal(loc=0.0, scale=1.0, name="x"),
+            Normal(loc=0.0, scale=1.0, label="x"),
             replicate_size=5,
         ),
         id="BootstrapReplicateDistribution_sampleable",
@@ -107,7 +107,7 @@ DISTRIBUTIONS = [
     pytest.param(
         lambda: BootstrapDistribution(
             "measure",
-            Normal(loc=0.0, scale=1.0, name="x"),
+            Normal(loc=0.0, scale=1.0, label="x"),
             5,
         ),
         id="BootstrapDistribution",
@@ -125,7 +125,7 @@ def _make_minibatched_distribution():
 
     X = jnp.eye(4)
     y = jnp.array([1.0, 0.0, 1.0, 0.0])
-    prior = MultivariateNormal(loc=jnp.zeros(4), cov=jnp.eye(4), name="beta")
+    prior = MultivariateNormal(loc=jnp.zeros(4), cov=jnp.eye(4), label="beta")
     lik = glm_likelihood("y", BernoulliFamily(), X=X)
     return MinibatchedDistribution("measure", prior, lik, y, batch_size=2)
 

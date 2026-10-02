@@ -17,8 +17,8 @@ from ._laws import REAL, Gaussian, Kernel, Marginalizing, Pair
 class _Nested(Distribution):
     """A law with two groups that each hold a field named ``a``."""
 
-    def __init__(self, name: str) -> None:
-        super().__init__(name, RecordSpec(x=RecordSpec(a=REAL), y=RecordSpec(a=REAL)))
+    def __init__(self, label: str) -> None:
+        super().__init__(label, RecordSpec(x=RecordSpec(a=REAL), y=RecordSpec(a=REAL)))
 
 
 class TestMarginal:

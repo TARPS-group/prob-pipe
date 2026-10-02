@@ -40,7 +40,7 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
 
     Parameters
     ----------
-    name : str
+    label : str
         The value's name, **required**, as a :class:`~probpipe.Record`'s and an
         :class:`~probpipe.Opaque`'s are. A value carries no fields to describe it,
         so the name is what says which one it is; a class-name default would name
@@ -111,7 +111,7 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         value: Any,
         /,
         *,
@@ -142,7 +142,7 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
             )
         object.__setattr__(self, "_value", stored)
         object.__setattr__(self, "_spec", spec)
-        self._init_tracked(name, provenance=provenance)
+        self._init_tracked(label, provenance=provenance)
 
     @classmethod
     def _view(
@@ -236,7 +236,7 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
         return jnp.reshape(self.as_jax(), -1)
 
     @classmethod
-    def from_vector(cls, name: str, spec: NumericArraySpec, vec: Any) -> NumericArray:
+    def from_vector(cls, label: str, spec: NumericArraySpec, vec: Any) -> NumericArray:
         """Reconstruct a single array from its dense 1-D vector.
 
         The value-level inverse of :meth:`to_vector`: reshapes *vec* to the shape
@@ -247,7 +247,7 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
 
         Parameters
         ----------
-        name : str
+        label : str
             Name for the reconstructed array.
         spec : NumericArraySpec
             The declaration supplying the shape and dtype, with every dimension
@@ -283,7 +283,7 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
         value = jnp.reshape(vec, spec.shape)
         if spec.dtype is not None:
             value = value.astype(spec.dtype)
-        return cls(name, value, spec=spec)
+        return cls(label, value, spec=spec)
 
     def __len__(self) -> int:
         return len(self._value)

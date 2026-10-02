@@ -37,7 +37,7 @@ class NumericArrayBatch(Batch[NumericArray]):
 
     Parameters
     ----------
-    name : str
+    label : str
         The batch's name, **required**, as a :class:`~probpipe.Record`'s and an
         :class:`~probpipe.Opaque`'s are. A batch is what an operation hands back,
         and the name is what says which one it is; a class-name default would name
@@ -97,7 +97,7 @@ class NumericArrayBatch(Batch[NumericArray]):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         values: Any,
         /,
         level_names: str | Iterable[str],
@@ -162,7 +162,7 @@ class NumericArrayBatch(Batch[NumericArray]):
         object.__setattr__(self, "_values", values)
         self._init_batch(
             BatchSpec(element_spec, groups, names),
-            name=name,
+            name=label,
             provenance=provenance,
         )
 

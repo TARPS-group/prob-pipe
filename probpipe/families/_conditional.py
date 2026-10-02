@@ -77,7 +77,7 @@ class LinearGaussianConditional(ConditionalDistribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         The kernel's label, and the component of its event.
     A : LinOp
         The linear map of the mean, whose input slot is the given slot.
@@ -92,7 +92,7 @@ class LinearGaussianConditional(ConditionalDistribution):
         Always, until ``LinOp`` declares its input slot and output type.
     """
 
-    def __init__(self, name: str, A: LinOp, b: Array, cov: LinOp) -> None:
+    def __init__(self, label: str, A: LinOp, b: Array, cov: LinOp) -> None:
         raise NotImplementedError("LinearGaussianConditional.__init__")
 
     def _condition_on(
@@ -115,9 +115,9 @@ class _Link(Function, SupportsInverse):
     """
 
     def __init__(
-        self, name: str, forward: Callable[[Array], Array], inverse: Callable[[Array], Array]
+        self, label: str, forward: Callable[[Array], Array], inverse: Callable[[Array], Array]
     ) -> None:
-        super().__init__(name, forward)
+        super().__init__(label, forward)
         object.__setattr__(self, "_inverse_map", inverse)
 
     def _inverse(self, y: Array) -> Array:
@@ -189,9 +189,11 @@ class _LogRatePoisson(Poisson):
     the rate the log-rate gives.
     """
 
-    def __init__(self, name: str, log_rate: Array, *, event_spec: OutputSpec | None = None) -> None:
+    def __init__(
+        self, label: str, log_rate: Array, *, event_spec: OutputSpec | None = None
+    ) -> None:
         self._rate = jnp.exp(log_rate)
-        TFPDistribution.__init__(self, name, tfd.Poisson(log_rate=log_rate), event_spec=event_spec)
+        TFPDistribution.__init__(self, label, tfd.Poisson(log_rate=log_rate), event_spec=event_spec)
 
 
 def _observation_vector(values: ArrayLike, owner: str, quantity: str) -> Array:
@@ -240,7 +242,7 @@ class GLMFamily(ABC):
     @abstractmethod
     def build(
         self,
-        name: str,
+        label: str,
         mean: Array,
         dispersion: ArrayLike | None = None,
         *,
@@ -250,7 +252,7 @@ class GLMFamily(ABC):
 
         Parameters
         ----------
-        name : str
+        label : str
             The law's label, and the component of its event unless
             *event_spec* names another.
         mean : Array
@@ -330,7 +332,7 @@ class GaussianFamily(GLMFamily):
 
     def build(
         self,
-        name: str,
+        label: str,
         mean: Array,
         dispersion: ArrayLike | None = None,
         *,
@@ -342,7 +344,7 @@ class GaussianFamily(GLMFamily):
         """
         mean = _observation_vector(mean, f"{type(self).__name__}.build", "mean")
         scale = self._dispersion(dispersion, mean)
-        return Normal(name, mean, scale, event_spec=event_spec)
+        return Normal(label, mean, scale, event_spec=event_spec)
 
 
 class BernoulliFamily(GLMFamily):
@@ -359,7 +361,7 @@ class BernoulliFamily(GLMFamily):
 
     def build(
         self,
-        name: str,
+        label: str,
         mean: Array,
         dispersion: ArrayLike | None = None,
         *,
@@ -371,7 +373,7 @@ class BernoulliFamily(GLMFamily):
         """
         mean = _observation_vector(mean, f"{type(self).__name__}.build", "mean")
         self._dispersion(dispersion, mean)
-        return Bernoulli(name, probs=mean, event_spec=event_spec)
+        return Bernoulli(label, probs=mean, event_spec=event_spec)
 
     def _build_canonical(
         self,
@@ -403,7 +405,7 @@ class PoissonFamily(GLMFamily):
 
     def build(
         self,
-        name: str,
+        label: str,
         mean: Array,
         dispersion: ArrayLike | None = None,
         *,
@@ -415,7 +417,7 @@ class PoissonFamily(GLMFamily):
         """
         mean = _observation_vector(mean, f"{type(self).__name__}.build", "mean")
         self._dispersion(dispersion, mean)
-        return Poisson(name, mean, event_spec=event_spec)
+        return Poisson(label, mean, event_spec=event_spec)
 
     def _build_canonical(
         self,
@@ -479,7 +481,7 @@ class _GLMLikelihood(
 
     def __init__(
         self,
-        name: str,
+        label: str,
         family: GLMFamily,
         link: Function,
         *,
@@ -504,7 +506,7 @@ class _GLMLikelihood(
             slots["dispersion"] = NumericArraySpec((), support=positive)
         response = NumericArraySpec(("obs",), support=family._support)
         if event_spec is None:
-            declaration = OutputSpec.default(response, component=name)
+            declaration = OutputSpec.default(response, component=label)
         else:
             # The declared type's sizes bind on both sides before X is fixed against them.
             sizes = _declared_sizes(event_spec, response)
@@ -514,7 +516,7 @@ class _GLMLikelihood(
         object.__setattr__(self, "_link", link)
         object.__setattr__(self, "_canonical", link is family.canonical_link)
         object.__setattr__(self, "_fixed", {})
-        super().__init__(name, InputSpec(slots), declaration)
+        super().__init__(label, InputSpec(slots), declaration)
         fixed: dict[str, Array] = {}
         if X is not None:
             fixed["X"] = jnp.asarray(X)
@@ -703,7 +705,7 @@ class _GLMLikelihood(
 
 
 def glm_likelihood(
-    name: str,
+    label: str,
     family: GLMFamily,
     link: Function | None = None,
     *,
@@ -726,7 +728,7 @@ def glm_likelihood(
 
     Parameters
     ----------
-    name : str
+    label : str
         The kernel's label, and the component of the response unless
         *event_spec* names another.
     family : GLMFamily
@@ -761,7 +763,7 @@ def glm_likelihood(
         the event's component is also a given slot's name.
     """
     return _GLMLikelihood(
-        name,
+        label,
         family,
         family.canonical_link if link is None and isinstance(family, GLMFamily) else link,
         event_spec=event_spec,

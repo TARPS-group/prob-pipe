@@ -27,9 +27,9 @@ from probpipe.functions import _context, _plan
 
 
 class _RecordingNormal(Normal):
-    def __init__(self, sample_calls, *, name):
+    def __init__(self, sample_calls, *, label):
         self.sample_calls = sample_calls
-        super().__init__(loc=0.0, scale=1.0, name=name)
+        super().__init__(loc=0.0, scale=1.0, label=label)
 
     def _sample(self, key, sample_shape=()):
         words = tuple(int(word) for word in jax.random.key_data(key))
@@ -82,14 +82,14 @@ class TestSequentialLiftingWorkflowRun:
             ) as build_plan,
             workflow_run(seed=7),
         ):
-            result = identity(Normal(loc=0.0, scale=1.0, name="x"))
+            result = identity(Normal(loc=0.0, scale=1.0, label="x"))
 
         assert result.num_atoms == 8
         build_plan.assert_called_once()
 
     def test_invalid_sample_count_fails_before_probe_or_event_commit(self):
         workflow = Function(
-            name="function",
+            label="function",
             fn=lambda x: x,
             n_broadcast_samples=8,
             dispatch="auto",
@@ -101,7 +101,7 @@ class TestSequentialLiftingWorkflowRun:
             workflow_run(seed=7),
             pytest.raises(ValueError, match="n_broadcast_samples must be a positive integer"),
         ):
-            workflow.with_options(n_broadcast_samples=0)(Normal(loc=0.0, scale=1.0, name="x"))
+            workflow.with_options(n_broadcast_samples=0)(Normal(loc=0.0, scale=1.0, label="x"))
 
         resolve_dispatch.assert_not_called()
         commit_invocation.assert_not_called()
@@ -118,8 +118,8 @@ class TestSequentialLiftingWorkflowRun:
 
         first_calls = []
         second_calls = []
-        first = _RecordingNormal(first_calls, name="first")
-        second = _RecordingNormal(second_calls, name="second")
+        first = _RecordingNormal(first_calls, label="first")
+        second = _RecordingNormal(second_calls, label="second")
         claims = []
         original_key_for = _context._WorkflowInvocation.key_for
 
@@ -176,7 +176,7 @@ class TestSequentialLiftingWorkflowRun:
         def identity(x):
             return x
 
-        dist = Normal(loc=0.0, scale=1.0, name="x")
+        dist = Normal(loc=0.0, scale=1.0, label="x")
 
         def run():
             with workflow_run(seed=7):
@@ -194,7 +194,7 @@ class TestSequentialLiftingWorkflowRun:
         def identity(x):
             return x
 
-        dist = Normal(loc=0.0, scale=1.0, name="x")
+        dist = Normal(loc=0.0, scale=1.0, label="x")
         with patch(
             "probpipe.functions._context._os_urandom",
             side_effect=[bytes(8), bytes.fromhex("0000000000000001")],
@@ -214,7 +214,7 @@ class TestSequentialLiftingWorkflowRun:
         def deterministic(x):
             return x + 1
 
-        normal = Normal(loc=0.0, scale=1.0, name="x")
+        normal = Normal(loc=0.0, scale=1.0, label="x")
         empirical = EmpiricalDistribution("x", jnp.asarray([1.0, 2.0, 3.0]))
 
         def baseline():
@@ -243,7 +243,7 @@ def test_auto_probe_detects_nested_randomness_caught_by_user_code():
     def inner_identity(value):
         return value
 
-    nested_dist = Normal(loc=0.0, scale=1.0, name="nested")
+    nested_dist = Normal(loc=0.0, scale=1.0, label="nested")
 
     def call_nested_and_catch(value):
         with suppress(Exception):
@@ -251,13 +251,13 @@ def test_auto_probe_detects_nested_randomness_caught_by_user_code():
         return value
 
     auto = Function(
-        name="call_nested_and_catch",
+        label="call_nested_and_catch",
         fn=call_nested_and_catch,
         n_broadcast_samples=5,
         dispatch="auto",
     )
     sequential = Function(
-        name="call_nested_and_catch",
+        label="call_nested_and_catch",
         fn=call_nested_and_catch,
         n_broadcast_samples=5,
         dispatch="sequential",
@@ -267,7 +267,7 @@ def test_auto_probe_detects_nested_randomness_caught_by_user_code():
     def following_identity(value):
         return value
 
-    outer_dist = Normal(loc=0.0, scale=1.0, name="outer")
+    outer_dist = Normal(loc=0.0, scale=1.0, label="outer")
 
     def following_samples(workflow):
         with workflow_run(seed=7):

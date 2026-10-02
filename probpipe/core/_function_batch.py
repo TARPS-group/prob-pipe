@@ -23,7 +23,7 @@ class FunctionBatch(_ObjectBatch[Callable]):
 
     Parameters
     ----------
-    name : str
+    label : str
         The batch's name. Required, as it is for every batch: a batch is a value a
         caller holds, and a name derived from its class says nothing about what it
         holds.
@@ -88,7 +88,7 @@ class FunctionBatch(_ObjectBatch[Callable]):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         elements: np.ndarray | Iterable[Callable],
         /,
         level_names: str | Iterable[str],
@@ -105,7 +105,7 @@ class FunctionBatch(_ObjectBatch[Callable]):
                 f"got {type(element_spec).__name__}"
             )
         super().__init__(
-            name,
+            label,
             elements,
             level_names,
             element_spec=element_spec,

@@ -49,8 +49,8 @@ class Gaussian(
 ):
     """A scalar normal law with every closed form the moment tests read."""
 
-    def __init__(self, name: str, loc: float = 0.0, scale: float = 1.0) -> None:
-        super().__init__(name, REAL)
+    def __init__(self, label: str, loc: float = 0.0, scale: float = 1.0) -> None:
+        super().__init__(label, REAL)
         self.loc, self.scale = float(loc), float(scale)
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
@@ -75,8 +75,8 @@ class Gaussian(
 class GuardedMean(Gaussian):
     """A normal law whose closed-form mean holds only when its answer allows it."""
 
-    def __init__(self, name: str, answer: Any) -> None:
-        super().__init__(name, 3.0, 1.0)
+    def __init__(self, label: str, answer: Any) -> None:
+        super().__init__(label, 3.0, 1.0)
         self.answer = answer
 
     def _mean_guard(self) -> Any:
@@ -87,8 +87,8 @@ class GuardedMean(Gaussian):
 class Sampler(Distribution, SupportsSampling):
     """A scalar normal law that only samples, recording each sample shape it is asked for."""
 
-    def __init__(self, name: str, loc: float = 0.0, scale: float = 1.0) -> None:
-        super().__init__(name, REAL)
+    def __init__(self, label: str, loc: float = 0.0, scale: float = 1.0) -> None:
+        super().__init__(label, REAL)
         self.loc, self.scale = float(loc), float(scale)
         self.shapes: list[tuple[int, ...]] = []
 
@@ -100,8 +100,8 @@ class Sampler(Distribution, SupportsSampling):
 class Vector(Distribution, SupportsSampling):
     """A law on R² with independent coordinates of scales 1 and 2, which only samples."""
 
-    def __init__(self, name: str) -> None:
-        super().__init__(name, NumericArraySpec((2,), jnp.float32, real))
+    def __init__(self, label: str) -> None:
+        super().__init__(label, NumericArraySpec((2,), jnp.float32, real))
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
         draws = jax.random.normal(key, (*sample_shape, 2))
@@ -111,8 +111,8 @@ class Vector(Distribution, SupportsSampling):
 class Pair(Distribution, SupportsSampling, SupportsMean):
     """A law drawing an exposed record of a scalar ``a`` and a vector ``b``."""
 
-    def __init__(self, name: str) -> None:
-        super().__init__(name, RecordSpec(a=REAL, b=NumericArraySpec((2,), jnp.float32, real)))
+    def __init__(self, label: str) -> None:
+        super().__init__(label, RecordSpec(a=REAL, b=NumericArraySpec((2,), jnp.float32, real)))
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
         ka, kb = jax.random.split(key)
@@ -132,8 +132,8 @@ class Pair(Distribution, SupportsSampling, SupportsMean):
 class OneField(Distribution, SupportsSampling, SupportsLogProb):
     """A law drawing a record with the one field ``x``, which is not an array-valued law."""
 
-    def __init__(self, name: str) -> None:
-        super().__init__(name, RecordSpec(x=REAL))
+    def __init__(self, label: str) -> None:
+        super().__init__(label, RecordSpec(x=REAL))
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
         return Record(self.label, {"x": normal_draws(key, 0.0, 1.0, tuple(sample_shape))})
@@ -145,8 +145,8 @@ class OneField(Distribution, SupportsSampling, SupportsLogProb):
 class Coin(Distribution, SupportsSampling, SupportsMean, SupportsLogProb, SupportsExpectation):
     """A Bernoulli law on {0, 1}, drawn as int32, with an exact expectation over its atoms."""
 
-    def __init__(self, name: str, p: float = 0.25) -> None:
-        super().__init__(name, NumericArraySpec((), jnp.int32, boolean))
+    def __init__(self, label: str, p: float = 0.25) -> None:
+        super().__init__(label, NumericArraySpec((), jnp.int32, boolean))
         self.p = float(p)
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
@@ -167,8 +167,8 @@ class Coin(Distribution, SupportsSampling, SupportsMean, SupportsLogProb, Suppor
 class Unnormalized(Distribution, SupportsUnnormalizedLogProb):
     """A law that knows its log-density only up to the constant ``log 2``."""
 
-    def __init__(self, name: str) -> None:
-        super().__init__(name, REAL)
+    def __init__(self, label: str) -> None:
+        super().__init__(label, REAL)
 
     def _unnormalized_log_prob(self, value: Any) -> Any:
         return jax.scipy.stats.norm.logpdf(jnp.asarray(value)) + jnp.log(2.0)
@@ -177,8 +177,8 @@ class Unnormalized(Distribution, SupportsUnnormalizedLogProb):
 class Polymorphic(Distribution, SupportsLogProb):
     """A standard normal law on Rⁿ whose length ``n`` is free."""
 
-    def __init__(self, name: str) -> None:
-        super().__init__(name, NumericArraySpec(("n",), jnp.float32, real))
+    def __init__(self, label: str) -> None:
+        super().__init__(label, NumericArraySpec(("n",), jnp.float32, real))
 
     def _log_prob(self, value: Any) -> Any:
         return jnp.sum(jax.scipy.stats.norm.logpdf(jnp.asarray(value)), axis=-1)
@@ -187,8 +187,8 @@ class Polymorphic(Distribution, SupportsLogProb):
 class Measure(Distribution, SupportsSampling):
     """A random measure whose draws are normal laws with standard-normal locations."""
 
-    def __init__(self, name: str) -> None:
-        super().__init__(name, DistributionSpec(OutputSpec(x=REAL)))
+    def __init__(self, label: str) -> None:
+        super().__init__(label, DistributionSpec(OutputSpec(x=REAL)))
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
         shape = tuple(sample_shape)
@@ -204,8 +204,8 @@ class Measure(Distribution, SupportsSampling):
 class RandomDensity(Distribution, SupportsRandomLogProb, SupportsRandomUnnormalizedLogProb):
     """A random measure whose random log-densities are stand-in laws."""
 
-    def __init__(self, name: str) -> None:
-        super().__init__(name, DistributionSpec(OutputSpec(x=REAL)))
+    def __init__(self, label: str) -> None:
+        super().__init__(label, DistributionSpec(OutputSpec(x=REAL)))
 
     def _random_log_prob(self) -> Distribution:
         return Gaussian("log_density", -1.0)
@@ -217,8 +217,8 @@ class RandomDensity(Distribution, SupportsRandomLogProb, SupportsRandomUnnormali
 class Marginalizing(Distribution, SupportsMarginals):
     """A record law over ``a`` and ``b`` whose marginal is exact only at ``a``."""
 
-    def __init__(self, name: str) -> None:
-        super().__init__(name, RecordSpec(a=REAL, b=REAL))
+    def __init__(self, label: str) -> None:
+        super().__init__(label, RecordSpec(a=REAL, b=REAL))
         self.paths: list[Any] = []
 
     def _marginal(self, path: Any) -> Distribution:
@@ -247,13 +247,15 @@ class Kernel(ConditionalDistribution):
 
     def __init__(
         self,
-        name: str = "y",
+        label: str = "y",
         slots: tuple[str, ...] = ("mu",),
         offset: float = 0.0,
         component: str | None = None,
     ) -> None:
-        self.component = name if component is None else component
-        super().__init__(name, {slot: REAL for slot in slots}, OutputSpec(**{self.component: REAL}))
+        self.component = label if component is None else component
+        super().__init__(
+            label, {slot: REAL for slot in slots}, OutputSpec(**{self.component: REAL})
+        )
         self.slots, self.offset = tuple(slots), float(offset)
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
@@ -268,8 +270,8 @@ class Kernel(ConditionalDistribution):
 class ExactPosterior(Distribution, SupportsSampling, SupportsExactConditioning):
     """A law whose ``_condition_on`` returns the conditional law, recording each given."""
 
-    def __init__(self, name: str) -> None:
-        super().__init__(name, RecordSpec(theta=REAL, y=REAL))
+    def __init__(self, label: str) -> None:
+        super().__init__(label, RecordSpec(theta=REAL, y=REAL))
         self.givens: list[Any] = []
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
@@ -288,8 +290,8 @@ class ExactPosterior(Distribution, SupportsSampling, SupportsExactConditioning):
 class Amortized(Distribution, SupportsApproximateConditioning):
     """A law whose ``_condition_on`` returns a stand-in for the conditional law."""
 
-    def __init__(self, name: str) -> None:
-        super().__init__(name, RecordSpec(theta=REAL, y=REAL))
+    def __init__(self, label: str) -> None:
+        super().__init__(label, RecordSpec(theta=REAL, y=REAL))
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
         return Gaussian("theta", 2.0, 1.0)
@@ -298,5 +300,5 @@ class Amortized(Distribution, SupportsApproximateConditioning):
 class Bare(Distribution):
     """A law that claims no capability."""
 
-    def __init__(self, name: str) -> None:
-        super().__init__(name, REAL)
+    def __init__(self, label: str) -> None:
+        super().__init__(label, REAL)

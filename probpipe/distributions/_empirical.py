@@ -359,7 +359,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
 
     Parameters
     ----------
-    name : str
+    label : str
         The law's label, which is also the default component of a whole-term
         event.
     atoms : Batch or Array
@@ -408,7 +408,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
 
     def __new__(
         cls,
-        name: str,
+        label: str,
         atoms: Batch | Array,
         weights: Array | Weights | None = None,
         *,
@@ -421,7 +421,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
 
     def __init__(
         self,
-        name: str,
+        label: str,
         atoms: Batch | Array,
         weights: Array | Weights | None = None,
         *,
@@ -442,13 +442,13 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
             declared = event_spec.with_spec(atom_spec)
         else:
             raise TypeError(f"event_spec must be an OutputSpec, got {type(event_spec).__name__}")
-        super().__init__(name, declared)
+        super().__init__(label, declared)
         if isinstance(atoms, Batch):
             stored = atoms
         else:
             # An array's atoms form a whole-term event, whose component names their level.
             on_level = _whole_term_component(self.event_spec) if level is None else level
-            stored = NumericArrayBatch(name, atoms, on_level, element_spec=atom_spec)
+            stored = NumericArrayBatch(label, atoms, on_level, element_spec=atom_spec)
         atom_weights = _atom_weights(weights, stored)
         object.__setattr__(self, "_atoms", stored)
         object.__setattr__(self, "_w", atom_weights)

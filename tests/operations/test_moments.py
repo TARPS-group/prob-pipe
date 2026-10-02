@@ -82,9 +82,9 @@ class _Ramp(Distribution, SupportsSampling):
     scalar fields ``x`` and ``y``, returned as its mapping.
     """
 
-    def __init__(self, name: str, *, record: bool = False) -> None:
+    def __init__(self, label: str, *, record: bool = False) -> None:
         pair = RecordSpec(x=REAL, y=REAL)
-        super().__init__(name, pair if record else NumericArraySpec((2,), jnp.float32, real))
+        super().__init__(label, pair if record else NumericArraySpec((2,), jnp.float32, real))
         self.record = record
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
@@ -325,8 +325,8 @@ class TestQuantile:
 class _RandomLine(Distribution, SupportsSampling):
     """A law over the maps ``x ↦ s x``, which only samples."""
 
-    def __init__(self, name: str) -> None:
-        super().__init__(name, FunctionSpec(InputSpec(x=REAL), OutputSpec(y=REAL)))
+    def __init__(self, label: str) -> None:
+        super().__init__(label, FunctionSpec(InputSpec(x=REAL), OutputSpec(y=REAL)))
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
         slopes = np.asarray(jax.random.normal(key, tuple(sample_shape)))

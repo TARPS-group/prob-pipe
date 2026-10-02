@@ -60,7 +60,7 @@ class RecordBatch(Batch[Record]):
 
     Parameters
     ----------
-    name : str
+    label : str
         The batch's name. Required, as it is for every batch: a batch is a value a
         caller holds, and a name derived from its class says nothing about what it
         holds.
@@ -157,7 +157,7 @@ class RecordBatch(Batch[Record]):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         fields: Mapping[str, Any],
         /,
         level_names: str | Iterable[str],
@@ -185,7 +185,7 @@ class RecordBatch(Batch[Record]):
         object.__setattr__(self, "_columns", store)
         self._init_batch(
             BatchSpec(spec, groups, names),
-            name=name,
+            name=label,
             provenance=provenance,
         )
 
@@ -693,7 +693,7 @@ class RecordBatch(Batch[Record]):
         *,
         level_name: str,
         element_spec: RecordSpec | None = None,
-        name: str | None = None,
+        label: str | None = None,
     ) -> Self:
         """Stack records into a batch with one level of ``(len(records),)``.
 
@@ -709,7 +709,7 @@ class RecordBatch(Batch[Record]):
             omitted, which is exact whenever the records were built against a
             shared declaration, with each opaque field typed by what its values
             share, as an ``OpaqueBatch`` types its elements.
-        name : str, optional
+        label : str, optional
             The batch's name. Taken from the first record when omitted — a batch of ``draw`` records is about ``draw``, so the name is
             derived from what is being stacked rather than invented. A caller with
             a better name passes one.
@@ -763,7 +763,7 @@ class RecordBatch(Batch[Record]):
             for key in fields
         }
         return cls(
-            name if name is not None else records[0].label,
+            label if label is not None else records[0].label,
             columns,
             (level_name,),
             element_spec=spec,

@@ -81,7 +81,7 @@ def _make_transformed():
 
     return BijectorTransformedDistribution(
         "transformed",
-        Normal(loc=0.0, scale=1.0, name="x"),
+        Normal(loc=0.0, scale=1.0, label="x"),
         tfb.Exp(),
     )
 
@@ -92,10 +92,10 @@ def _make_transformed():
 # distinct subclasses (BijectorTransformedDistribution / KDEDistribution /
 # EmpiricalDistribution).
 _NO_BATCH_SHAPE_DISTS = [
-    pytest.param(lambda: Normal(loc=0.0, scale=1.0, name="x"), id="Normal"),
-    pytest.param(lambda: Gamma(concentration=3.0, rate=1.0, name="g"), id="Gamma"),
+    pytest.param(lambda: Normal(loc=0.0, scale=1.0, label="x"), id="Normal"),
+    pytest.param(lambda: Gamma(concentration=3.0, rate=1.0, label="g"), id="Gamma"),
     pytest.param(
-        lambda: MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z"),
+        lambda: MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), label="z"),
         id="MultivariateNormal",
     ),
     pytest.param(_make_transformed, id="BijectorTransformedDistribution"),
@@ -114,19 +114,19 @@ class TestWithNameBasics:
     """Distribution.with_label() returns a new object with a new name."""
 
     def test_returns_new_object(self):
-        n = Normal(loc=0.0, scale=1.0, name="x")
+        n = Normal(loc=0.0, scale=1.0, label="x")
         n2 = n.with_label("y")
         assert n is not n2
         assert n.label == "x"  # original unchanged
         assert n2.label == "y"
 
     def test_is_same_type(self):
-        n = Normal(loc=0.0, scale=1.0, name="x")
+        n = Normal(loc=0.0, scale=1.0, label="x")
         assert type(n.with_label("y")) is type(n)
 
     def test_is_shallow_copy(self):
         """Underlying parameters are shared (not deep-copied)."""
-        n = Normal(loc=0.0, scale=1.0, name="x")
+        n = Normal(loc=0.0, scale=1.0, label="x")
         n2 = n.with_label("y")
         assert n2._loc is n._loc  # shared array
         assert n2._scale is n._scale
@@ -136,26 +136,26 @@ class TestWithNameProvenance:
     """with_label() attaches a 'with_label' Provenance pointing to the original."""
 
     def test_provenance_operation(self):
-        n = Normal(loc=0.0, scale=1.0, name="x")
+        n = Normal(loc=0.0, scale=1.0, label="x")
         n2 = n.with_label("y")
         assert n2.provenance is not None
         assert n2.provenance.operation == "with_label"
 
     def test_provenance_parents(self):
-        n = Normal(loc=0.0, scale=1.0, name="x")
+        n = Normal(loc=0.0, scale=1.0, label="x")
         n2 = n.with_label("y")
         assert len(n2.provenance.parents) == 1
         assert n2.provenance.parents[0].name == "x"
 
     def test_provenance_metadata(self):
-        n = Normal(loc=0.0, scale=1.0, name="x")
+        n = Normal(loc=0.0, scale=1.0, label="x")
         n2 = n.with_label("y")
         assert n2.provenance.metadata["old_label"] == "x"
         assert n2.provenance.metadata["new_label"] == "y"
 
     def test_rename_chain_preserves_ancestry(self, full_provenance_mode):
         """a.with_label("b").with_label("c") keeps a in the ancestor DAG."""
-        a = Normal(loc=0.0, scale=1.0, name="a")
+        a = Normal(loc=0.0, scale=1.0, label="a")
         b = a.with_label("b")
         c = b.with_label("c")
         ancestors = provenance_ancestors(c)
@@ -164,7 +164,7 @@ class TestWithNameProvenance:
 
     def test_original_provenance_not_mutated(self):
         """Renaming does not alter the original's source."""
-        n = Normal(loc=0.0, scale=1.0, name="x")
+        n = Normal(loc=0.0, scale=1.0, label="x")
         n.with_provenance(Provenance("construction", parents=()))
         n.with_label("y")
         assert n.provenance.operation == "construction"
@@ -174,7 +174,7 @@ class TestWithNameSampling:
     """Renamed copies behave identically under sampling/log_prob."""
 
     def test_sample_statistics_match(self):
-        n = Normal(loc=2.0, scale=0.5, name="x")
+        n = Normal(loc=2.0, scale=0.5, label="x")
         n2 = n.with_label("mu")
         key = jax.random.PRNGKey(0)
         s1 = n._sample(key, (2000,))
@@ -183,7 +183,7 @@ class TestWithNameSampling:
         np.testing.assert_allclose(np.asarray(s1), np.asarray(s2), atol=1e-6)
 
     def test_log_prob_matches(self):
-        n = Normal(loc=0.0, scale=1.0, name="x")
+        n = Normal(loc=0.0, scale=1.0, label="x")
         n2 = n.with_label("z")
         x = jnp.asarray(1.23)
         np.testing.assert_allclose(
@@ -193,7 +193,7 @@ class TestWithNameSampling:
         )
 
     def test_event_shape_matches(self):
-        mvn = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="a")
+        mvn = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), label="a")
         renamed = mvn.with_label("b")
         assert renamed.event_shape == mvn.event_shape
 
@@ -202,14 +202,14 @@ class TestWithNameRecordSpec:
     """with_label() changes the name and keeps the event component (III.7)."""
 
     def test_template_field_stays_the_component(self):
-        n = Normal(loc=0.0, scale=1.0, name="x")
+        n = Normal(loc=0.0, scale=1.0, label="x")
         n2 = n.with_label("growth_rate")
         assert n2.label == "growth_rate"
         assert n2.event_spec is n.event_spec
         assert tuple(n2.event_spec.components) == ("x",)
 
     def test_template_shape_preserved(self):
-        mvn = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="a")
+        mvn = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), label="a")
         b = mvn.with_label("b")
         assert tuple(b.event_spec.components) == ("a",)
         assert b.event_spec.spec.shape == mvn.event_spec.spec.shape == (3,)
@@ -241,20 +241,20 @@ class TestNoBatchShape:
 
 class TestAnnotationsDiagnosticsAccessor:
     def test_annotations_defaults_to_none(self):
-        dist = Normal(loc=0.0, scale=1.0, name="x")
+        dist = Normal(loc=0.0, scale=1.0, label="x")
         assert dist.annotations is None
         assert dist.diagnostics is None
 
     def test_diagnostics_none_when_annotations_has_no_diagnostics_group(self):
         import xarray as xr
 
-        dist = Normal(loc=0.0, scale=1.0, name="x")
+        dist = Normal(loc=0.0, scale=1.0, label="x")
         dist._annotations = xr.DataTree.from_dict({"arviz": xr.Dataset()})
         assert dist.annotations is dist._annotations
         assert dist.diagnostics is None
 
     def test_diagnostics_none_when_annotations_has_no_children_attr(self):
-        dist = Normal(loc=0.0, scale=1.0, name="x")
+        dist = Normal(loc=0.0, scale=1.0, label="x")
         dist._annotations = object()
 
         assert dist.diagnostics is None
@@ -264,7 +264,7 @@ class TestAnnotationsDiagnosticsAccessor:
 
         from probpipe.diagnostics.views import DiagnosticsView
 
-        dist = Normal(loc=0.0, scale=1.0, name="x")
+        dist = Normal(loc=0.0, scale=1.0, label="x")
         dist._annotations = xr.DataTree.from_dict(
             {"diagnostics": xr.Dataset(attrs={"warnings": "[]"})}
         )
@@ -305,8 +305,8 @@ class TestConstructorNameCheck:
         from probpipe import Distribution
 
         class _Dist(Distribution):
-            def __init__(self, name):
-                super().__init__(name, OpaqueSpec())
+            def __init__(self, label):
+                super().__init__(label, OpaqueSpec())
 
         with pytest.raises(TypeError, match="requires a non-empty label"):
             _Dist(name)
@@ -396,7 +396,7 @@ class TestWithNameTemplateRoundtrip:
         untouched."""
         from probpipe import Normal
 
-        original = Normal(loc=0.0, scale=1.0, name="x")
+        original = Normal(loc=0.0, scale=1.0, label="x")
         clone = original.with_label("y")
         assert clone.label == "y"
         assert tuple(clone.event_spec.components) == ("x",)
@@ -435,16 +435,16 @@ class TestWithNameTemplateRoundtrip:
 
 class TestDistributionSpecIsValid:
     def test_matching_distribution_valid(self):
-        dist = Normal(name="x", loc=0.0, scale=1.0)
+        dist = Normal(label="x", loc=0.0, scale=1.0)
         assert DistributionSpec(dist.event_spec).is_valid(dist)
 
     def test_packaging_mismatch_invalid(self):
         # A whole term x and a one-field record exposing x are different draws.
-        dist = Normal(name="x", loc=0.0, scale=1.0)
+        dist = Normal(label="x", loc=0.0, scale=1.0)
         assert not DistributionSpec(RecordSpec(x=())).is_valid(dist)
 
     def test_template_mismatch_invalid(self):
-        dist = Normal(name="x", loc=0.0, scale=1.0)
+        dist = Normal(label="x", loc=0.0, scale=1.0)
         assert not DistributionSpec(event_spec=RecordSpec(y=())).is_valid(dist)
 
     def test_non_distribution_invalid(self):
@@ -525,11 +525,11 @@ class TestNameFirstSignature:
         ],
         ids=lambda cls: cls.__name__,
     )
-    def test_name_is_the_required_first_parameter(self, cls):
+    def test_label_is_the_required_first_parameter(self, cls):
         first = next(iter(inspect.signature(cls.__init__).parameters.values()))
         if first.name == "self":
             first = list(inspect.signature(cls.__init__).parameters.values())[1]
-        assert first.name == "name"
+        assert first.name == "label"
         assert first.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
         assert first.default is inspect.Parameter.empty
 
@@ -542,18 +542,18 @@ class TestNameBinding:
         assert Normal("x", 0.0, 1.0).label == "x"
 
     def test_keyword_name_binds(self):
-        assert Normal(loc=0.0, scale=1.0, name="x").label == "x"
+        assert Normal(loc=0.0, scale=1.0, label="x").label == "x"
 
     def test_name_given_both_ways_raises(self):
-        with pytest.raises(TypeError, match="multiple values for argument 'name'"):
-            Normal("x", 0.0, 1.0, name="y")
+        with pytest.raises(TypeError, match="multiple values for argument 'label'"):
+            Normal("x", 0.0, 1.0, label="y")
 
     # The empirical law chooses its capabilities from its atoms, which it reads by
     # keyword as well as by position.
     @pytest.mark.parametrize(
         "make",
         [
-            pytest.param(lambda s: EmpiricalDistribution(name="x", atoms=s), id="all-keywords"),
+            pytest.param(lambda s: EmpiricalDistribution(label="x", atoms=s), id="all-keywords"),
             pytest.param(lambda s: EmpiricalDistribution("x", atoms=s), id="atoms-keyword"),
         ],
     )
@@ -627,8 +627,8 @@ class TestPublicImportPaths:
 class _DeclaredLaw(Distribution):
     """A test-only law that declares whatever event it is given."""
 
-    def __init__(self, name, event_spec):
-        super().__init__(name, event_spec)
+    def __init__(self, label, event_spec):
+        super().__init__(label, event_spec)
 
 
 class TestEventDeclaration:
@@ -719,8 +719,8 @@ class TestNumericMembership:
 
     def test_a_class_claiming_the_marker_must_declare_a_numeric_event(self):
         class _Claims(NumericDistribution):
-            def __init__(self, name, event_spec):
-                super().__init__(name, event_spec)
+            def __init__(self, label, event_spec):
+                super().__init__(label, event_spec)
 
         assert issubclass(_Claims, NumericDistribution)
         assert isinstance(_Claims("x", NumericArraySpec(())), NumericDistribution)
@@ -733,8 +733,8 @@ class TestNumericMembership:
             def __new__(cls, *args, **kwargs):
                 return object.__new__(_Claiming if cls is _Factory else cls)
 
-            def __init__(self, name, event_spec):
-                super().__init__(name, event_spec)
+            def __init__(self, label, event_spec):
+                super().__init__(label, event_spec)
 
         class _Claiming(_Factory, NumericDistribution):
             pass
@@ -1080,7 +1080,7 @@ class TestEmpiricalDeclarations:
 
         posterior = ApproximateDistribution(
             [jnp.ones((10, 4))],
-            name="post",
+            label="post",
             event_spec=RecordSpec(a=RecordSpec(b=(2,), c=()), d=()),
         )
         replicate = BootstrapReplicateDistribution("rep", posterior, level="draw")

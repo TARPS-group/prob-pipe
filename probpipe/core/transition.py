@@ -183,7 +183,7 @@ def with_conversion(
 
     return Function(
         fn=_with_conversion_impl,
-        name=f"with_conversion({inner_name}, {target_type.__name__})",
+        label=f"with_conversion({inner_name}, {target_type.__name__})",
     )
 
 
@@ -274,5 +274,5 @@ def with_resampling(
 
     return Function(
         fn=_with_resampling_impl,
-        name=f"with_resampling({inner_name})",
+        label=f"with_resampling({inner_name})",
     )

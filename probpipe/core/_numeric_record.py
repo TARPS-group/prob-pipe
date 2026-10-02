@@ -135,7 +135,7 @@ class NumericRecord(Record, Numeric):
 
     Parameters
     ----------
-    name : str
+    label : str
         The record's name — the required first positional argument, exactly
         as on :class:`Record`.
     _fields : Mapping, optional
@@ -188,7 +188,7 @@ class NumericRecord(Record, Numeric):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         _fields: Mapping[str, ArrayLike | NumericRecord] | None = None,
         /,
         *,
@@ -225,7 +225,7 @@ class NumericRecord(Record, Numeric):
                 raw_fields[field_name] = value
         validated = self._validate(raw_fields)
         super().__init__(
-            name,
+            label,
             validated,
             event_template=event_template,
             _validate_leaves=_validate_leaves,
@@ -365,7 +365,7 @@ class NumericRecord(Record, Numeric):
         return jnp.concatenate([jnp.reshape(leaf, -1) for leaf in leaves])
 
     @classmethod
-    def from_vector(cls, name: str, spec: NumericRecordSpec, vec: Array) -> NumericRecord:
+    def from_vector(cls, label: str, spec: NumericRecordSpec, vec: Array) -> NumericRecord:
         """Reconstruct a single record from its dense 1-D vector.
 
         The value-level inverse of :meth:`to_vector`: splits *vec* into the
@@ -377,7 +377,7 @@ class NumericRecord(Record, Numeric):
 
         Parameters
         ----------
-        name : str
+        label : str
             Name for the reconstructed record (user-given).
         spec : NumericRecordSpec
             The flat layout supplying field names, shapes, and order. Every
@@ -409,7 +409,7 @@ class NumericRecord(Record, Numeric):
                 f"got shape {tuple(vec.shape)}. Reconstruct a batch with "
                 f"NumericRecordBatch.from_vector."
             )
-        return _reconstruct_from_vector(name, spec, vec)
+        return _reconstruct_from_vector(label, spec, vec)
 
     def to_numeric(self) -> NumericRecord:
         """Return ``self`` — a ``NumericRecord`` is already numeric (identity)."""

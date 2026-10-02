@@ -49,7 +49,7 @@ pytestmark = pytest.mark.filterwarnings(
 @pytest.fixture(scope="module")
 def iso_gaussian():
     """A 2-D isotropic standard normal ``N(0, I)`` — analytic stds [1, 1]."""
-    return MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
+    return MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="z")
 
 
 @pytest.fixture(scope="module")
@@ -58,7 +58,7 @@ def aniso_gaussian():
     return MultivariateNormal(
         loc=jnp.zeros(2),
         cov=jnp.diag(jnp.array([1.0, 4.0])),
-        name="z",
+        label="z",
     )
 
 
@@ -267,7 +267,7 @@ class TestAdaptiveWarmup:
         dist = MultivariateNormal(
             loc=jnp.zeros(5),
             cov=jnp.eye(5),
-            name="z",
+            label="z",
         )
         result = rwmh(
             dist=dist,
@@ -491,7 +491,7 @@ class TestWindowedWarmup:
         dist = MultivariateNormal(
             loc=jnp.zeros(5),
             cov=jnp.diag(true_stds**2),
-            name="z",
+            label="z",
         )
         result = rwmh(
             dist=dist,
@@ -594,7 +594,7 @@ class TestProposalNeverCollapses:
         """At ``d = 20`` the first 33-step window accepts far fewer than 20
         proposals, so its covariance estimate is singular; the default warmup
         still moves every chain."""
-        dist = MultivariateNormal(loc=jnp.zeros(20), cov=jnp.eye(20), name="z")
+        dist = MultivariateNormal(loc=jnp.zeros(20), cov=jnp.eye(20), label="z")
         # Observed across seeds 0-7: per-chain accept 0.42-0.48, per-chain
         # min std 0.42.
         result = rwmh(
@@ -626,8 +626,8 @@ class _NumpyLogProbDist(NumericDistribution, SupportsLogProb):
     # 1 / variance per coordinate. Standard normal by default.
     precision = (1.0, 1.0)
 
-    def __init__(self, name):
-        super().__init__(name, NumericArraySpec((len(self.precision),), "float32"))
+    def __init__(self, label):
+        super().__init__(label, NumericArraySpec((len(self.precision),), "float32"))
 
     def _log_prob(self, value):
         v = np.asarray(value)
@@ -670,14 +670,14 @@ class TestEagerFallback:
     def test_short_warmup_moves_chain_in_ten_dimensions(self):
         """The eager warmup uses the same refit, so a 100-step warmup in ten
         dimensions leaves a proposal that moves the chain."""
-        dist = _NumpyStdNormal10(name="np10")
+        dist = _NumpyStdNormal10(label="np10")
         # Observed across seeds 0-3: accept 0.33-0.43, min std 0.58.
         result = rwmh(dist=dist, num_results=300, num_warmup=100, random_seed=0)
         assert result.event_shape == (10,)
         _assert_every_chain_moves(result, min_std=0.25)
 
     def test_runs_end_to_end(self):
-        dist = _NumpyLogProbDist(name="np_dist")
+        dist = _NumpyLogProbDist(label="np_dist")
         result = rwmh(
             dist=dist,
             num_results=400,
@@ -698,7 +698,7 @@ class TestEagerFallback:
         )
 
     def test_accept_rate_positive(self):
-        dist = _NumpyLogProbDist(name="np_dist")
+        dist = _NumpyLogProbDist(label="np_dist")
         result = rwmh(
             dist=dist,
             num_results=400,
@@ -756,7 +756,7 @@ class TestFastEagerEquivalence:
         # Confirm we are exercising the eager path: the non-traceable target.
         from probpipe.inference._inference_utils import is_jax_traceable
 
-        dist = _NumpyAnisoLogProbDist(name="np_aniso")
+        dist = _NumpyAnisoLogProbDist(label="np_aniso")
         assert not is_jax_traceable(dist._unnormalized_log_prob, jnp.zeros(2))
         # Lighter counts than the fast path: the Python loop is ~100x
         # slower per step. Empirically (seed sweep 1/2/7) the worst-case
@@ -787,7 +787,7 @@ class TestFastEagerEquivalence:
 
     def test_eager_path_deterministic(self):
         """Eager path: identical seed → bit-identical draws on a rerun."""
-        dist = _NumpyAnisoLogProbDist(name="np_aniso")
+        dist = _NumpyAnisoLogProbDist(label="np_aniso")
         kw = dict(num_results=150, num_warmup=80, num_chains=1, random_seed=5)
         a = rwmh(dist=dist, **kw)
         b = rwmh(dist=dist, **kw)

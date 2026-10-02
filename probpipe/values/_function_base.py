@@ -33,10 +33,10 @@ from ..core.config import WorkflowKind
 from ..core.node import Node
 from ..core.tracked import Annotated, TrackedTerm
 from ._binding import (
-    WorkflowSignatureInfo,
+    FunctionSignatureInfo,
     make_signature_info,
     make_signature_info_from_signature,
-    resolve_workflow_values,
+    resolve_function_values,
     values_to_bound_arguments,
 )
 
@@ -451,7 +451,7 @@ class Function(Node, TrackedTerm, Annotated):
 
     Parameters
     ----------
-    name : str
+    label : str
         Required non-empty function label, independent of its output interface.
     fn : Callable
         The wrapped Python callable. Its signature is captured at construction.
@@ -545,7 +545,7 @@ class Function(Node, TrackedTerm, Annotated):
     #: lifted as its annotation states, as every parameter of a Function is.
     _roles: Mapping[str, tuple[type[TermSpec], ...]] = MappingProxyType({})
 
-    _signature_info: WorkflowSignatureInfo
+    _signature_info: FunctionSignatureInfo
     _bind: Mapping[str, Any]
     _module: Any | None
     _implementation: _FunctionImplementation
@@ -557,7 +557,7 @@ class Function(Node, TrackedTerm, Annotated):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         fn: Callable[..., Any],
         *,
         input_spec: InputSpec | Mapping[str, TermSpec] | None = None,
@@ -587,7 +587,7 @@ class Function(Node, TrackedTerm, Annotated):
         self._initialize(
             _CallableFunctionImplementation(fn),
             make_signature_info(fn),
-            name,
+            label,
             input_spec=input_spec,
             output_spec=output_spec,
             output_label=output_label,
@@ -799,13 +799,13 @@ class Function(Node, TrackedTerm, Annotated):
         """
         with _apply_scope():
             bound = self.signature.bind_partial(*args, **kwargs)
-            values = resolve_workflow_values(
+            values = resolve_function_values(
                 self._signature_info,
                 dict(bound.arguments),
                 bind=self._bind,
                 module=self._module,
                 dependency_type=Node,
-                workflow_name=self.label,
+                function_name=self.label,
             )
             _, bindings = _bind_function_inputs(
                 function_name=self.label, input_spec=self.input_spec, values=values

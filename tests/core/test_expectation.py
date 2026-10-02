@@ -37,20 +37,20 @@ class TestExpectationReturnsArray:
     """An expectation returns its estimate, exact or sample-based, as an array."""
 
     def test_return_dist_false_returns_array(self):
-        d = Normal(loc=3.0, scale=1.0, name="x")
+        d = Normal(loc=3.0, scale=1.0, label="x")
         result = expectation.with_options(n_broadcast_samples=1000)(d, lambda x: x)
         assert isinstance(result, NumericArray)
         assert isinstance(jnp.asarray(result), jnp.ndarray)
 
     def test_bernoulli_exact_returns_array(self):
         """Finite-support exact expectations always return Array."""
-        d = Bernoulli(probs=0.7, name="x")
+        d = Bernoulli(probs=0.7, label="x")
         result = expectation(d, lambda x: x)
         assert isinstance(result, NumericArray)
         np.testing.assert_allclose(float(result), 0.7, atol=1e-6)
 
     def test_categorical_exact_returns_array(self):
-        d = Categorical(probs=[0.1, 0.2, 0.3, 0.4], name="x")
+        d = Categorical(probs=[0.1, 0.2, 0.3, 0.4], label="x")
         result = expectation(d, lambda x: x)
         assert isinstance(result, NumericArray)
 
@@ -70,13 +70,13 @@ class TestExpectationSampleBased:
     """Test sample-based expectations on infinite-support distributions."""
 
     def test_normal_mean(self):
-        d = Normal(loc=3.0, scale=1.0, name="x")
+        d = Normal(loc=3.0, scale=1.0, label="x")
         result = expectation.with_options(n_broadcast_samples=10_000)(d, lambda x: x)
         np.testing.assert_allclose(float(result), 3.0, atol=0.05)
 
     def test_normal_second_moment(self):
         loc, scale = 2.0, 1.5
-        d = Normal(loc=loc, scale=scale, name="x")
+        d = Normal(loc=loc, scale=scale, label="x")
         result = expectation.with_options(n_broadcast_samples=10_000)(d, lambda x: x**2)
         expected = loc**2 + scale**2
         # Second moment has higher variance than first moment (kurtosis effect)
@@ -84,7 +84,7 @@ class TestExpectationSampleBased:
 
     def test_normal_variance_from_moments(self):
         loc, scale = 1.0, 2.0
-        d = Normal(loc=loc, scale=scale, name="x")
+        d = Normal(loc=loc, scale=scale, label="x")
         ex = expectation.with_options(n_broadcast_samples=10_000)(d, lambda x: x)
         ex2 = expectation.with_options(n_broadcast_samples=10_000)(d, lambda x: x**2)
         var_est = float(ex2) - float(ex) ** 2
@@ -92,33 +92,33 @@ class TestExpectationSampleBased:
 
     def test_gamma_mean(self):
         conc, rate = 3.0, 2.0
-        d = Gamma(concentration=conc, rate=rate, name="x")
+        d = Gamma(concentration=conc, rate=rate, label="x")
         result = expectation.with_options(n_broadcast_samples=10_000)(d, lambda x: x)
         np.testing.assert_allclose(float(result), conc / rate, atol=0.05)
 
     def test_gamma_log_sufficient_statistic(self):
         conc, rate = 3.0, 2.0
-        d = Gamma(concentration=conc, rate=rate, name="x")
+        d = Gamma(concentration=conc, rate=rate, label="x")
         result = expectation.with_options(n_broadcast_samples=20_000)(d, lambda x: jnp.log(x))
         expected = float(jsp.digamma(conc)) - float(jnp.log(rate))
         np.testing.assert_allclose(float(result), expected, atol=0.05)
 
     def test_beta_mean(self):
         a, b = 2.0, 5.0
-        d = Beta(alpha=a, beta=b, name="x")
+        d = Beta(alpha=a, beta=b, label="x")
         result = expectation.with_options(n_broadcast_samples=10_000)(d, lambda x: x)
         np.testing.assert_allclose(float(result), a / (a + b), atol=0.03)
 
     def test_beta_log_sufficient_statistic(self):
         a, b = 2.0, 5.0
-        d = Beta(alpha=a, beta=b, name="x")
+        d = Beta(alpha=a, beta=b, label="x")
         result = expectation.with_options(n_broadcast_samples=20_000)(d, lambda x: jnp.log(x))
         expected = float(jsp.digamma(a)) - float(jsp.digamma(a + b))
         np.testing.assert_allclose(float(result), expected, atol=0.05)
 
     def test_exponential_second_moment(self):
         rate = 3.0
-        d = Exponential(rate=rate, name="x")
+        d = Exponential(rate=rate, label="x")
         result = expectation.with_options(n_broadcast_samples=10_000)(d, lambda x: x**2)
         np.testing.assert_allclose(float(result), 2.0 / rate**2, atol=0.03)
 
@@ -131,39 +131,39 @@ class TestExpectationSampleBased:
 class TestExpectationExact:
     def test_bernoulli_identity(self):
         p = 0.7
-        d = Bernoulli(probs=p, name="x")
+        d = Bernoulli(probs=p, label="x")
         result = expectation(d, lambda x: x)
         np.testing.assert_allclose(float(result), p, atol=1e-6)
 
     def test_bernoulli_custom_function(self):
         p = 0.4
-        d = Bernoulli(probs=p, name="x")
+        d = Bernoulli(probs=p, label="x")
         result = expectation(d, lambda x: 2 * x + 1)
         np.testing.assert_allclose(float(result), 1 + 2 * p, atol=1e-6)
 
     def test_categorical_identity(self):
         probs = [0.1, 0.2, 0.3, 0.4]
-        d = Categorical(probs=probs, name="x")
+        d = Categorical(probs=probs, label="x")
         result = expectation(d, lambda x: x)
         expected = sum(i * p for i, p in enumerate(probs))
         np.testing.assert_allclose(float(result), expected, atol=1e-5)
 
     def test_categorical_custom_function(self):
         probs = [0.25, 0.5, 0.25]
-        d = Categorical(probs=probs, name="x")
+        d = Categorical(probs=probs, label="x")
         result = expectation(d, lambda x: x**2)
         expected = 0 * 0.25 + 1 * 0.5 + 4 * 0.25
         np.testing.assert_allclose(float(result), expected, atol=1e-5)
 
     def test_binomial_mean(self):
         n, p = 10, 0.3
-        d = Binomial(total_count=n, probs=p, name="x")
+        d = Binomial(total_count=n, probs=p, label="x")
         result = expectation(d, lambda x: x)
         np.testing.assert_allclose(float(result), n * p, atol=1e-4)
 
     def test_binomial_second_moment(self):
         n, p = 10, 0.3
-        d = Binomial(total_count=n, probs=p, name="x")
+        d = Binomial(total_count=n, probs=p, label="x")
         result = expectation(d, lambda x: x**2)
         expected = n * p * (1 - p) + (n * p) ** 2
         np.testing.assert_allclose(float(result), expected, atol=1e-3)
@@ -213,13 +213,13 @@ class TestMCFallbackMethods:
 
     def test_tfp_mean_still_exact(self):
         """mean(TFPDistribution) returns the exact array."""
-        d = Normal(loc=3.0, scale=1.0, name="x")
+        d = Normal(loc=3.0, scale=1.0, label="x")
         result = mean(d)
         assert isinstance(result, NumericArray)
         np.testing.assert_allclose(float(result), 3.0, atol=1e-6)
 
     def test_tfp_variance_still_exact(self):
-        d = Normal(loc=0.0, scale=2.0, name="x")
+        d = Normal(loc=0.0, scale=2.0, label="x")
         result = variance(d)
         assert isinstance(result, NumericArray)
         np.testing.assert_allclose(float(result), 4.0, atol=1e-6)
@@ -239,7 +239,7 @@ class TestMCFallbackMethods:
 # Estimators that fall back to the default sample count when a call omits
 # ``num_evaluations``.
 _DEFAULT_SIZE_ESTIMATORS = [
-    pytest.param(lambda: Normal(loc=0.0, scale=1.0, name="x"), lambda x: x, id="tfp"),
+    pytest.param(lambda: Normal(loc=0.0, scale=1.0, label="x"), lambda x: x, id="tfp"),
     pytest.param(
         lambda: BootstrapReplicateDistribution(
             "boot", EmpiricalDistribution("data", jnp.arange(5.0))

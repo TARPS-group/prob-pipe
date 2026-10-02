@@ -97,7 +97,7 @@ class CategoricalLikelihood:
 
 @pytest.fixture
 def prior():
-    return MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="beta")
+    return MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="beta")
 
 
 @pytest.fixture
@@ -476,7 +476,7 @@ class TestPredictiveCheckNonJax:
 
     def test_numpy_data(self):
         """Likelihood that generates numpy arrays (not JAX arrays)."""
-        prior = Normal(loc=0.0, scale=2.0, name="mu")
+        prior = Normal(loc=0.0, scale=2.0, label="mu")
         lik = NumpyGaussianLikelihood(rng_seed=42)
         observed = np.array([1.2, 0.8, 1.5, 0.3, 1.1])
 
@@ -495,7 +495,7 @@ class TestPredictiveCheckNonJax:
 
     def test_numpy_prior_check(self):
         """Prior check with numpy-based likelihood."""
-        prior = Normal(loc=0.0, scale=1.0, name="mu")
+        prior = Normal(loc=0.0, scale=1.0, label="mu")
         lik = NumpyGaussianLikelihood(rng_seed=7)
 
         result = predictive_check(
@@ -514,7 +514,7 @@ class TestPredictiveCheckNonJax:
         prior = MultivariateNormal(
             loc=jnp.array([1.0, 1.0, 1.0]),
             cov=0.1 * jnp.eye(3),
-            name="logits",
+            label="logits",
         )
         lik = CategoricalLikelihood(rng_seed=99)
         observed = ["cat", "dog", "cat", "fish", "cat", "dog", "cat", "cat", "fish", "cat"]
@@ -577,7 +577,7 @@ class TestPredictiveCheckBatched:
     def glm_setup(self):
         x = jnp.linspace(-1, 1, 20)
         X = jnp.asarray(x)[:, None]
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="beta")
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="beta")
         lik = CertifiedRegression("poisson", X)
         return prior, lik
 

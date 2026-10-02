@@ -205,7 +205,7 @@ class Normal(TFPDistribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         Distribution name.
     loc : array-like
         Mean of the distribution.
@@ -228,10 +228,10 @@ class Normal(TFPDistribution):
     _backend_capabilities = _CLOSED_FORM
 
     def __init__(
-        self, name: str, loc: ArrayLike, scale: ArrayLike, *, event_spec: OutputSpec | None = None
+        self, label: str, loc: ArrayLike, scale: ArrayLike, *, event_spec: OutputSpec | None = None
     ):
         _, (self._loc, self._scale) = _promote_floats(loc, scale)
-        super().__init__(name, tfd.Normal(loc=self._loc, scale=self._scale), event_spec=event_spec)
+        super().__init__(label, tfd.Normal(loc=self._loc, scale=self._scale), event_spec=event_spec)
 
     @property
     def loc(self) -> Array:
@@ -255,7 +255,7 @@ class Beta(TFPDistribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         Distribution name.
     alpha : array-like
         First concentration parameter (> 0).
@@ -278,11 +278,11 @@ class Beta(TFPDistribution):
     _backend_capabilities = _CLOSED_FORM
 
     def __init__(
-        self, name: str, alpha: ArrayLike, beta: ArrayLike, *, event_spec: OutputSpec | None = None
+        self, label: str, alpha: ArrayLike, beta: ArrayLike, *, event_spec: OutputSpec | None = None
     ):
         _, (self._alpha, self._beta) = _promote_floats(alpha, beta)
         super().__init__(
-            name,
+            label,
             tfd.Beta(concentration1=self._alpha, concentration0=self._beta),
             event_spec=event_spec,
         )
@@ -309,7 +309,7 @@ class Gamma(TFPDistribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         Distribution name.
     concentration : array-like
         Shape parameter (> 0).
@@ -333,7 +333,7 @@ class Gamma(TFPDistribution):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         concentration: ArrayLike,
         rate: ArrayLike,
         *,
@@ -341,7 +341,7 @@ class Gamma(TFPDistribution):
     ):
         _, (self._concentration, self._rate) = _promote_floats(concentration, rate)
         super().__init__(
-            name,
+            label,
             tfd.Gamma(concentration=self._concentration, rate=self._rate),
             event_spec=event_spec,
         )
@@ -372,7 +372,7 @@ class InverseGamma(_TailBoundedMoments, TFPDistribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         Distribution name.
     concentration : array-like
         Shape parameter (> 0).
@@ -399,7 +399,7 @@ class InverseGamma(_TailBoundedMoments, TFPDistribution):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         concentration: ArrayLike,
         scale: ArrayLike,
         *,
@@ -407,7 +407,7 @@ class InverseGamma(_TailBoundedMoments, TFPDistribution):
     ):
         _, (self._concentration, self._scale) = _promote_floats(concentration, scale)
         super().__init__(
-            name,
+            label,
             tfd.InverseGamma(concentration=self._concentration, scale=self._scale),
             event_spec=event_spec,
         )
@@ -434,7 +434,7 @@ class Exponential(TFPDistribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         Distribution name.
     rate : array-like
         Rate parameter (> 0).
@@ -454,9 +454,9 @@ class Exponential(TFPDistribution):
 
     _backend_capabilities = _CLOSED_FORM
 
-    def __init__(self, name: str, rate: ArrayLike, *, event_spec: OutputSpec | None = None):
+    def __init__(self, label: str, rate: ArrayLike, *, event_spec: OutputSpec | None = None):
         self._rate = _as_float_array(rate)
-        super().__init__(name, tfd.Exponential(rate=self._rate), event_spec=event_spec)
+        super().__init__(label, tfd.Exponential(rate=self._rate), event_spec=event_spec)
 
     @property
     def rate(self) -> Array:
@@ -476,7 +476,7 @@ class LogNormal(TFPDistribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         Distribution name.
     loc : array-like
         Mean of the underlying normal distribution.
@@ -499,11 +499,11 @@ class LogNormal(TFPDistribution):
     _backend_capabilities = _CLOSED_FORM
 
     def __init__(
-        self, name: str, loc: ArrayLike, scale: ArrayLike, *, event_spec: OutputSpec | None = None
+        self, label: str, loc: ArrayLike, scale: ArrayLike, *, event_spec: OutputSpec | None = None
     ):
         _, (self._loc, self._scale) = _promote_floats(loc, scale)
         super().__init__(
-            name,
+            label,
             tfd.LogNormal(loc=self._loc, scale=self._scale),
             event_spec=event_spec,
         )
@@ -534,7 +534,7 @@ class StudentT(_TailBoundedMoments, TFPDistribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         Distribution name.
     df : array-like
         Degrees of freedom (> 0).
@@ -563,7 +563,7 @@ class StudentT(_TailBoundedMoments, TFPDistribution):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         df: ArrayLike,
         loc: ArrayLike,
         scale: ArrayLike,
@@ -572,7 +572,7 @@ class StudentT(_TailBoundedMoments, TFPDistribution):
     ):
         _, (self._df, self._loc, self._scale) = _promote_floats(df, loc, scale)
         super().__init__(
-            name,
+            label,
             tfd.StudentT(df=self._df, loc=self._loc, scale=self._scale),
             event_spec=event_spec,
         )
@@ -603,7 +603,7 @@ class Uniform(TFPDistribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         Distribution name.
     low : array-like
         Lower bound.
@@ -626,10 +626,10 @@ class Uniform(TFPDistribution):
     _backend_capabilities = _CLOSED_FORM
 
     def __init__(
-        self, name: str, low: ArrayLike, high: ArrayLike, *, event_spec: OutputSpec | None = None
+        self, label: str, low: ArrayLike, high: ArrayLike, *, event_spec: OutputSpec | None = None
     ):
         _, (self._low, self._high) = _promote_floats(low, high)
-        super().__init__(name, tfd.Uniform(low=self._low, high=self._high), event_spec=event_spec)
+        super().__init__(label, tfd.Uniform(low=self._low, high=self._high), event_spec=event_spec)
 
     @property
     def low(self) -> Array:
@@ -656,7 +656,7 @@ class Cauchy(TFPDistribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         Distribution name.
     loc : array-like
         Location parameter.
@@ -679,10 +679,10 @@ class Cauchy(TFPDistribution):
     _backend_capabilities = _CLOSED_FORM
 
     def __init__(
-        self, name: str, loc: ArrayLike, scale: ArrayLike, *, event_spec: OutputSpec | None = None
+        self, label: str, loc: ArrayLike, scale: ArrayLike, *, event_spec: OutputSpec | None = None
     ):
         _, (self._loc, self._scale) = _promote_floats(loc, scale)
-        super().__init__(name, tfd.Cauchy(loc=self._loc, scale=self._scale), event_spec=event_spec)
+        super().__init__(label, tfd.Cauchy(loc=self._loc, scale=self._scale), event_spec=event_spec)
 
     @property
     def loc(self) -> Array:
@@ -736,7 +736,7 @@ class Laplace(TFPDistribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         Distribution name.
     loc : array-like
         Location parameter.
@@ -759,10 +759,12 @@ class Laplace(TFPDistribution):
     _backend_capabilities = _CLOSED_FORM
 
     def __init__(
-        self, name: str, loc: ArrayLike, scale: ArrayLike, *, event_spec: OutputSpec | None = None
+        self, label: str, loc: ArrayLike, scale: ArrayLike, *, event_spec: OutputSpec | None = None
     ):
         _, (self._loc, self._scale) = _promote_floats(loc, scale)
-        super().__init__(name, tfd.Laplace(loc=self._loc, scale=self._scale), event_spec=event_spec)
+        super().__init__(
+            label, tfd.Laplace(loc=self._loc, scale=self._scale), event_spec=event_spec
+        )
 
     @property
     def loc(self) -> Array:
@@ -786,7 +788,7 @@ class HalfNormal(TFPDistribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         Distribution name.
     scale : array-like
         Scale parameter (> 0).
@@ -806,9 +808,9 @@ class HalfNormal(TFPDistribution):
 
     _backend_capabilities = _CLOSED_FORM
 
-    def __init__(self, name: str, scale: ArrayLike, *, event_spec: OutputSpec | None = None):
+    def __init__(self, label: str, scale: ArrayLike, *, event_spec: OutputSpec | None = None):
         self._scale = _as_float_array(scale)
-        super().__init__(name, tfd.HalfNormal(scale=self._scale), event_spec=event_spec)
+        super().__init__(label, tfd.HalfNormal(scale=self._scale), event_spec=event_spec)
 
     @property
     def scale(self) -> Array:
@@ -831,7 +833,7 @@ class HalfCauchy(TFPDistribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         Distribution name.
     loc : array-like
         Location parameter.
@@ -854,11 +856,11 @@ class HalfCauchy(TFPDistribution):
     _backend_capabilities = _CLOSED_FORM
 
     def __init__(
-        self, name: str, loc: ArrayLike, scale: ArrayLike, *, event_spec: OutputSpec | None = None
+        self, label: str, loc: ArrayLike, scale: ArrayLike, *, event_spec: OutputSpec | None = None
     ):
         _, (self._loc, self._scale) = _promote_floats(loc, scale)
         super().__init__(
-            name,
+            label,
             tfd.HalfCauchy(loc=self._loc, scale=self._scale),
             event_spec=event_spec,
         )
@@ -913,7 +915,7 @@ class Pareto(_TailBoundedMoments, TFPDistribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         Distribution name.
     concentration : array-like
         Tail index (shape parameter, > 0).
@@ -940,7 +942,7 @@ class Pareto(_TailBoundedMoments, TFPDistribution):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         concentration: ArrayLike,
         scale: ArrayLike,
         *,
@@ -948,7 +950,7 @@ class Pareto(_TailBoundedMoments, TFPDistribution):
     ):
         _, (self._concentration, self._scale) = _promote_floats(concentration, scale)
         super().__init__(
-            name,
+            label,
             tfd.Pareto(concentration=self._concentration, scale=self._scale),
             event_spec=event_spec,
         )
@@ -975,7 +977,7 @@ class TruncatedNormal(TFPDistribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         Distribution name.
     loc : array-like
         Mean of the underlying normal distribution.
@@ -1003,7 +1005,7 @@ class TruncatedNormal(TFPDistribution):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         loc: ArrayLike,
         scale: ArrayLike,
         low: ArrayLike,
@@ -1013,7 +1015,7 @@ class TruncatedNormal(TFPDistribution):
     ):
         _, (self._loc, self._scale, self._low, self._high) = _promote_floats(loc, scale, low, high)
         super().__init__(
-            name,
+            label,
             tfd.TruncatedNormal(loc=self._loc, scale=self._scale, low=self._low, high=self._high),
             event_spec=event_spec,
         )

@@ -94,7 +94,7 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactCon
 
     Parameters
     ----------
-    name : str
+    label : str
         The joint's label.
     factors : Sequence[Distribution | ConditionalDistribution]
         The jointly Gaussian factors, in conditional-first order.
@@ -110,18 +110,18 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactCon
 
     def __init__(
         self,
-        name: str,
+        label: str,
         factors: Sequence[Distribution | ConditionalDistribution],
         *,
         _scope: Mapping[str, int] | None = None,
     ) -> None:
-        super().__init__(name, factors, _scope=_scope)
+        super().__init__(label, factors, _scope=_scope)
         if not _jointly_gaussian(self.factors):
             kinds = sorted(
                 {type(factor).__name__ for factor in self.factors if not _is_gaussian(factor)}
             )
             raise TypeError(
-                f"the factors of {name!r} are jointly Gaussian only when each is a Normal or a "
+                f"the factors of {label!r} are jointly Gaussian only when each is a Normal or a "
                 f"MultivariateNormal, got {kinds}"
             )
 
@@ -276,7 +276,7 @@ class GaussianRandomFunction(RandomFunction, SupportsMean, SupportsVariance, ABC
 
     Parameters
     ----------
-    name : str
+    label : str
         The random function's label.
     output_spec : OutputSpec, optional
         The declaration of the drawn function's output, naming its component.
@@ -296,14 +296,14 @@ class GaussianRandomFunction(RandomFunction, SupportsMean, SupportsVariance, ABC
 
     def __init__(
         self,
-        name: str,
+        label: str,
         *,
         output_spec: OutputSpec | None = None,
         event_spec: OutputSpec | None = None,
     ) -> None:
-        output, event = _declarations(name, output_spec, event_spec)
+        output, event = _declarations(label, output_spec, event_spec)
         self._output_spec = output
-        super().__init__(name, event)
+        super().__init__(label, event)
 
     @abstractmethod
     def predict_mean(self, X: Array) -> Array:
@@ -405,7 +405,7 @@ class GaussianProcess(GaussianRandomFunction):
 
     Parameters
     ----------
-    name : str
+    label : str
         The process's label.
     mean_fn : Callable[[Array], Array]
         The mean function, evaluated at stacked input points.
@@ -427,7 +427,7 @@ class GaussianProcess(GaussianRandomFunction):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         mean_fn: Callable[[Array], Array],
         cov_kernel: Callable[[Array, Array], Array],
         *,
@@ -435,10 +435,10 @@ class GaussianProcess(GaussianRandomFunction):
         event_spec: OutputSpec | None = None,
     ) -> None:
         if not callable(mean_fn) or not callable(cov_kernel):
-            raise TypeError(f"the mean function and covariance kernel of {name!r} are callables")
+            raise TypeError(f"the mean function and covariance kernel of {label!r} are callables")
         self._mean_fn = mean_fn
         self._cov_kernel = cov_kernel
-        super().__init__(name, output_spec=output_spec, event_spec=event_spec)
+        super().__init__(label, output_spec=output_spec, event_spec=event_spec)
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The parameters ``mean_fn`` and ``cov_kernel``."""
@@ -483,7 +483,7 @@ class LinearBasisFunction(GaussianRandomFunction, SupportsSampling):
 
     Parameters
     ----------
-    name : str
+    label : str
         The random function's label.
     basis : Callable[[Array], Array]
         The feature map, evaluated at stacked input points.
@@ -506,7 +506,7 @@ class LinearBasisFunction(GaussianRandomFunction, SupportsSampling):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         basis: Callable[[Array], Array],
         weights: MultivariateNormal,
         *,
@@ -516,12 +516,12 @@ class LinearBasisFunction(GaussianRandomFunction, SupportsSampling):
         if not isinstance(weights, MultivariateNormal):
             raise TypeError(f"weights must be a MultivariateNormal, got {type(weights).__name__}")
         if not callable(basis):
-            raise TypeError(f"the basis of {name!r} is a callable")
+            raise TypeError(f"the basis of {label!r} is a callable")
         self._basis = basis
         self._weights = weights
         self._w_mean = weights.loc
         self._w_cov = weights.cov
-        super().__init__(name, output_spec=output_spec, event_spec=event_spec)
+        super().__init__(label, output_spec=output_spec, event_spec=event_spec)
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The parameters ``basis`` and ``weights``."""

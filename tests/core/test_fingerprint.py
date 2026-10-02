@@ -39,13 +39,13 @@ from probpipe.values._function_base import Function
 
 class TestReturnFormat:
     def test_returns_string(self):
-        assert isinstance(fingerprint(Normal(loc=0.0, scale=1.0, name="n")), str)
+        assert isinstance(fingerprint(Normal(loc=0.0, scale=1.0, label="n")), str)
 
     def test_returns_16_chars(self):
-        assert len(fingerprint(Normal(loc=0.0, scale=1.0, name="n"))) == 16
+        assert len(fingerprint(Normal(loc=0.0, scale=1.0, label="n"))) == 16
 
     def test_hex_characters_only(self):
-        fp = fingerprint(Normal(loc=0.0, scale=1.0, name="n"))
+        fp = fingerprint(Normal(loc=0.0, scale=1.0, label="n"))
         assert all(c in "0123456789abcdef" for c in fp)
 
 
@@ -117,7 +117,7 @@ class TestFingerprintStrength:
             def implementation(value):
                 return value if captured is None else captured
 
-            return Function(name="implementation", fn=implementation)
+            return Function(label="implementation", fn=implementation)
 
         assert _fingerprint_with_strength(build(1))[1] is False
         assert _fingerprint_with_strength(build(object()))[1] is True
@@ -334,30 +334,30 @@ class TestRecordHashing:
 
 class TestDistributionHashing:
     def test_same_normal_stable(self):
-        n1 = Normal(loc=0.0, scale=1.0, name="x")
-        n2 = Normal(loc=0.0, scale=1.0, name="x")
+        n1 = Normal(loc=0.0, scale=1.0, label="x")
+        n2 = Normal(loc=0.0, scale=1.0, label="x")
         assert fingerprint(n1) == fingerprint(n2)
 
     def test_different_loc_differs(self):
-        n1 = Normal(loc=0.0, scale=1.0, name="x")
-        n2 = Normal(loc=1.0, scale=1.0, name="x")
+        n1 = Normal(loc=0.0, scale=1.0, label="x")
+        n2 = Normal(loc=1.0, scale=1.0, label="x")
         assert fingerprint(n1) != fingerprint(n2)
 
     def test_different_scale_differs(self):
-        n1 = Normal(loc=0.0, scale=1.0, name="x")
-        n2 = Normal(loc=0.0, scale=2.0, name="x")
+        n1 = Normal(loc=0.0, scale=1.0, label="x")
+        n2 = Normal(loc=0.0, scale=2.0, label="x")
         assert fingerprint(n1) != fingerprint(n2)
 
     def test_different_name_differs(self):
-        n1 = Normal(loc=0.0, scale=1.0, name="x")
-        n2 = Normal(loc=0.0, scale=1.0, name="y")
+        n1 = Normal(loc=0.0, scale=1.0, label="x")
+        n2 = Normal(loc=0.0, scale=1.0, label="y")
         assert fingerprint(n1) != fingerprint(n2)
 
     def test_different_distribution_types_differ(self):
         from probpipe import Beta
 
-        n = Normal(loc=0.0, scale=1.0, name="x")
-        b = Beta(alpha=1.0, beta=1.0, name="x")
+        n = Normal(loc=0.0, scale=1.0, label="x")
+        b = Beta(alpha=1.0, beta=1.0, label="x")
         assert fingerprint(n) != fingerprint(b)
 
     def test_empirical_distribution_stable(self):
@@ -410,10 +410,10 @@ class TestBootstrapSourceFingerprint:
         from probpipe import BootstrapReplicateDistribution
 
         b1 = BootstrapReplicateDistribution(
-            "boot", Normal(loc=0.0, scale=1.0, name="x"), replicate_size=10
+            "boot", Normal(loc=0.0, scale=1.0, label="x"), replicate_size=10
         )
         b2 = BootstrapReplicateDistribution(
-            "boot", Normal(loc=5.0, scale=1.0, name="x"), replicate_size=10
+            "boot", Normal(loc=5.0, scale=1.0, label="x"), replicate_size=10
         )
         assert fingerprint(b1) != fingerprint(b2)
 
@@ -421,10 +421,10 @@ class TestBootstrapSourceFingerprint:
         from probpipe import BootstrapReplicateDistribution
 
         b1 = BootstrapReplicateDistribution(
-            "boot", Normal(loc=0.0, scale=1.0, name="x"), replicate_size=10
+            "boot", Normal(loc=0.0, scale=1.0, label="x"), replicate_size=10
         )
         b2 = BootstrapReplicateDistribution(
-            "boot", Normal(loc=0.0, scale=1.0, name="x"), replicate_size=10
+            "boot", Normal(loc=0.0, scale=1.0, label="x"), replicate_size=10
         )
         assert fingerprint(b1) == fingerprint(b2)
 
@@ -436,7 +436,7 @@ class TestBootstrapSourceFingerprint:
 
 class TestFunctionHashing:
     def _make_wf(self, func):
-        return Function(name="func", fn=func, dispatch="sequential", n_broadcast_samples=10)
+        return Function(label="func", fn=func, dispatch="sequential", n_broadcast_samples=10)
 
     def test_legacy_content_marker_is_preserved(self):
         """A pure API rename must not invalidate existing cache identities."""
@@ -467,7 +467,7 @@ class TestFunctionHashing:
 
         def build(*, input_shape=(), output_shape=()):
             return Function(
-                name="identity",
+                label="identity",
                 fn=identity,
                 input_spec=InputSpec(RecordSpec(x=input_shape).children),
                 output_spec=RecordSpec(y=output_shape),
@@ -586,7 +586,7 @@ class TestFunctionHashing:
 
 class TestFingerprintInProvenance:
     def test_parentinfo_fingerprint_set(self):
-        n = Normal(loc=0.0, scale=1.0, name="prior")
+        n = Normal(loc=0.0, scale=1.0, label="prior")
         prov = Provenance.create("op", parents=[n])
         assert prov is not None
         parent = prov.parents[0]
@@ -596,21 +596,21 @@ class TestFingerprintInProvenance:
         assert parent.fingerprint_is_weak is False
 
     def test_parentinfo_fingerprint_stable_across_create_calls(self):
-        n = Normal(loc=0.0, scale=1.0, name="prior")
+        n = Normal(loc=0.0, scale=1.0, label="prior")
         p1 = Provenance.create("op", parents=[n])
         p2 = Provenance.create("op", parents=[n])
         assert p1.parents[0].fingerprint == p2.parents[0].fingerprint
 
     def test_different_parents_different_fingerprints(self):
-        n1 = Normal(loc=0.0, scale=1.0, name="a")
-        n2 = Normal(loc=5.0, scale=1.0, name="b")
+        n1 = Normal(loc=0.0, scale=1.0, label="a")
+        n2 = Normal(loc=5.0, scale=1.0, label="b")
         prov = Provenance.create("op", parents=[n1, n2])
         fp1 = prov.parents[0].fingerprint
         fp2 = prov.parents[1].fingerprint
         assert fp1 != fp2
 
     def test_fingerprint_in_to_dict(self):
-        n = Normal(loc=0.0, scale=1.0, name="prior")
+        n = Normal(loc=0.0, scale=1.0, label="prior")
         prov = Provenance.create("op", parents=[n])
         d = prov.to_dict()
         assert "fingerprint" in d["parents"][0]
@@ -622,7 +622,7 @@ class TestFingerprintInProvenance:
 
         probpipe.provenance_config.mode = ProvenanceMode.OFF
         try:
-            n = Normal(loc=0.0, scale=1.0, name="prior")
+            n = Normal(loc=0.0, scale=1.0, label="prior")
             prov = Provenance.create("op", parents=[n])
             assert prov is None
         finally:
@@ -644,7 +644,7 @@ class TestFingerprintInProvenance:
 
         monkeypatch.setattr(fp_mod, "_fingerprint_with_strength", _bad_fp)
 
-        n = Normal(loc=0.0, scale=1.0, name="prior")
+        n = Normal(loc=0.0, scale=1.0, label="prior")
         with caplog.at_level(logging.WARNING, logger="probpipe.core.provenance"):
             prov = Provenance.create("op", parents=[n])
 
@@ -665,7 +665,7 @@ class TestFunctionCapture:
     """Bytecode alone is not enough: referenced names, closures, and defaults."""
 
     def _wf(self, func):
-        return Function(name="func", fn=func, dispatch="sequential", n_broadcast_samples=10)
+        return Function(label="func", fn=func, dispatch="sequential", n_broadcast_samples=10)
 
     def test_called_name_differs(self):
         # ``jnp.sin`` vs ``jnp.cos``: identical co_code + co_consts, differing

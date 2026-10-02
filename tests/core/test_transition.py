@@ -202,7 +202,7 @@ class TestWithConversion:
             samples = jnp.asarray(pp_sample(dist, sample_shape=(50,))) + shift
             return EmpiricalDistribution("x", samples)
 
-        initial = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="x")
+        initial = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="x")
         step = with_conversion(parametric_step, MultivariateNormal)
         dists = iterate(step_fn=step, initial=initial, inputs=[1.0, 2.0, 3.0])
         for d in dists[1:]:
@@ -265,10 +265,10 @@ class TestWithResampling:
 
     def test_non_empirical_passthrough(self):
         """Non-EmpiricalDistribution passes through unchanged."""
-        initial = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
+        initial = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="z")
 
         def mvn_step(dist, inp):
-            return MultivariateNormal(loc=jnp.ones(2) * inp, cov=jnp.eye(2), name="z")
+            return MultivariateNormal(loc=jnp.ones(2) * inp, cov=jnp.eye(2), label="z")
 
         step = with_resampling(mvn_step, ess_threshold=0.5)
         dists = iterate(step_fn=step, initial=initial, inputs=[1.0])

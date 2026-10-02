@@ -100,7 +100,7 @@ The keyword form takes exactly one entry, and the positional form exactly one `R
 
 **Completion.** A producer knows the type of the term it returns and completes its declaration with `with_spec`, which stores the unification of the declared type and the produced one under the declared names and packaging. The declared dtype and support are kept, dimensions are bound from the produced term, and the produced value is checked against the stored type. A declared type that does not unify with the produced one raises. A producer given no declaration uses `OutputSpec.default` with the default component its kind defines (II.5, III.3, III.7).
 
-**Names.** Component names are the only names a declaration carries, and matching reads only them: a distribution named `regression_model` may declare `OutputSpec(beta=beta_spec)` or `OutputSpec(RecordSpec(beta=beta_spec))`, and either exports `beta`. `OutputSpec(posterior=DistributionSpec(...))` exports the single component `posterior`, whose value is a law with its own event components. The object's label is renamed separately, by `with_name` (II.4).
+**Names.** Component names are the only names a declaration carries, and matching reads only them: a distribution labeled `regression_model` may declare `OutputSpec(beta=beta_spec)` or `OutputSpec(RecordSpec(beta=beta_spec))`, and either exports `beta`. `OutputSpec(posterior=DistributionSpec(...))` exports the single component `posterior`, whose value is a law with its own event components. The object's label is renamed separately, by `with_name` (II.4).
 
 **Paths.** A declaration's paths start with a component. An exposed record's paths are the paths of its record, and a whole term's are its component followed by the paths within its term. `OutputSpec(parameters=RecordSpec(beta=beta_spec))` and `OutputSpec(RecordSpec(parameters=RecordSpec(beta=beta_spec)))` therefore both have the paths `parameters` and `parameters/beta`, and they differ only in the term they return. `with_path_names` renames and moves nodes by these paths under the rules of II.6. Its result keeps the packaging, so a whole term's component is renamed in place and the term's fields stay under it.
 
@@ -125,7 +125,7 @@ class Numeric(ABC):                         # the flat-vector interface of the n
     def to_vector(self) -> Array: ...       # the coordinates: one flat vector, canonical order
     @classmethod
     @abstractmethod
-    def from_vector(cls, name: str, spec: NumericSpec, vec: Array) -> Self: ...  # the inverse of to_vector
+    def from_vector(cls, label: str, spec: NumericSpec, vec: Array) -> Self: ...  # the inverse of to_vector
 
     # the coordinate protocols: NumPy and JAX read the value as to_vector(),
     # so their functions return bare arrays
@@ -167,13 +167,13 @@ Every tracked term carries four things through the one mixin `TrackedTerm`:
 3. a **provenance**: how it was produced;
 4. **annotations**: free-form auxiliary information supplied by the user or an algorithm.
 
-A tracked term's name is supplied by the user at explicit construction, as the required first argument, and derived deterministically from the inputs when an operation produces the object. The result of a user-defined function is named by that function's `output_name` (III.3), and an operation's result takes the name of its primary operand, which is the first in its signature. That operand is the law for the functionals, `condition_on`, `convert`, and `marginal`, so `condition_on(schools, data)` is named `schools`. The primary operand of `evaluate` is the map, and its result takes the map's `output_name`, as the map's own result does (V.10). Composition (IV.2) and `factor` (VI.8) name their results by rules of their own. A name is set once, at construction, and every transform preserves it: a record with renamed fields, a realigned factor, or a converted law keeps the name it had, and only `with_name` replaces it. No operation reads a name to decide anything, so the origin of a name is never recorded in object state, constructor parameters, temporary carriers, pytree auxiliary data, or serialized state. A name is a label alone: no lookup resolves an object by its name, two objects may share a name, and derived names need no escaping scheme.
+A tracked term's label is supplied by the user at explicit construction, as the required first argument `label`, and derived deterministically from the inputs when an operation produces the object. The result of a user-defined function is labeled by that function's `output_label` (III.3), and an operation's result takes the label of its primary operand, which is the first in its signature. That operand is the law for the functionals, `condition_on`, `convert`, and `marginal`, so `condition_on(schools, data)` is labeled `schools`. The primary operand of `evaluate` is the map, and its result takes the map's `output_label`, as the map's own result does (V.10). Composition (IV.2) and `factor` (VI.8) label their results by rules of their own. A label is set once, at construction, and every transform preserves it: a record with renamed fields, a realigned factor, or a converted law keeps the label it had, and only `with_label` replaces it. No operation reads a label to decide anything, so the origin of a label is never recorded in object state, constructor parameters, temporary carriers, pytree auxiliary data, or serialized state. No lookup resolves an object by its label, two objects may share a label, and derived labels need no escaping scheme.
 
 The `spec` slot is the term's type, stored once. Each kind narrows it to its own spec class and exposes convenience accessors for its properties.
 
-Every tracked term exposes `raw()` as the single access point to the representation layer. It returns the term **detached** from the workflow. Detachment removes provenance, annotations, and any reference to a container or parent, and it keeps the spec and the name. A kind represented by an object from outside ProbPipe has a **raw host**, which `raw()` returns, for example a backing array object or a wrapped callable. A kind whose representation is a ProbPipe object, such as a distribution, returns that object detached.
+Every tracked term exposes `raw()` as the single access point to the representation layer. It returns the term **detached** from the workflow. Detachment removes provenance, annotations, and any reference to a container or parent, and it keeps the spec and the label. A kind represented by an object from outside ProbPipe has a **raw host**, which `raw()` returns, for example a backing array object or a wrapped callable. A kind whose representation is a ProbPipe object, such as a distribution, returns that object detached.
 
-Accessing a container returns a **view**, for example a record field or a batch element. A container's view is a tracked term named from the accessor, which is the field key for a record and the selected levels for a batch; its provenance records the container and the source term where one was supplied.
+Accessing a container returns a **view**, for example a record field or a batch element. A container's view is a tracked term labeled from the accessor, which is the field key for a record and the selected levels for a batch; its provenance records the container and the source term where one was supplied.
 
 **The repr.** A term's repr reads as a call of its public class's constructor:
 1. the label: first and positionally, as in `RecordBatch('schools', ...)`;
@@ -188,15 +188,15 @@ A spec reads as its own constructor call, with the attributes it sets, and so do
 
 **A tracked term is immutable.** `TrackedTerm` carries an immutability guard automatically, so assignment and deletion raise an error. Immutability requires that every transformation, including each `with_*` method, returns a new term that shares the representation.
 
-Identity is **boundary-attached** under compiled execution. Inside a `jit` or `vmap` trace a term presents as its raw representation with only its spec as static data, so name, provenance, and annotations never enter a trace and a name can never affect compilation-cache identity; the tracked result is minted at the enclosing call boundary.
+Identity is **boundary-attached** under compiled execution. Inside a `jit` or `vmap` trace a term presents as its raw representation with only its spec as static data, so label, provenance, and annotations never enter a trace and a label can never affect compilation-cache identity; the tracked result is minted at the enclosing call boundary.
 
 ```python
 class TrackedTerm(ABC):
-    name:         str
+    label:        str
     spec:         TermSpec                       # the single stored source of the term's type (II.1)
     provenance:   Provenance | None              # write-once via with_provenance(...)
     annotations:  Mapping[str, Any] | None       # free-form; the one store written after construction
-    def with_name(self, name: str) -> Self: ...  # the one way a name changes
+    def with_label(self, label: str) -> Self: ...  # the one way a label changes
     def with_provenance(self, p: Provenance) -> Self: ...
     @abstractmethod
     def raw(self) -> Any: ...
@@ -292,9 +292,9 @@ class Batch[E](TrackedTerm):
 **View identity.** A view of a batch, whether an element or a sub-batch, derives its name from the batch it was taken from and the positions it selects, naming the level each selection addresses. Take a batch named `posterior`, with a `chain` level of `(4,)` over a `draw` level of `(1000,)`:
 
 ```python
-posterior.at_levels(chain=0).name           # "posterior[chain=0]"          — a sub-batch of draws
-posterior.at_levels(chain=0, draw=7).name   # "posterior[chain=0, draw=7]"  — an element
-posterior.at_levels(draw=slice(1, 3)).name  # "posterior[draw=1:3]"         — both levels kept
+posterior.at_levels(chain=0).label          # "posterior[chain=0]"          — a sub-batch of draws
+posterior.at_levels(chain=0, draw=7).label  # "posterior[chain=0, draw=7]"  — an element
+posterior.at_levels(draw=slice(1, 3)).label # "posterior[draw=1:3]"         — both levels kept
 ```
 
 The derived name states what was selected. Levels selected whole are left out, so selecting all of a batch derives the batch's own name, and the levels that appear are listed in the batch's own order; hence two ways of indexing one selection read alike, and two different selections read differently. Whether a batch *stores* an element outright or *materializes* it on demand, as columnar storage builds a row, indexing returns a view (II.4); storage is invisible to access. A *sub-batch* is a view in the same way, being the batch's own selection.
@@ -362,7 +362,7 @@ class NamedTree[L]:
 
 The parameter `L` declares the leaf type, which is what `values()`, `[]`, and `map` accept and return; interior nodes are always the family's own class. Implementations should check leaves against the declared leaf type at construction.
 
-`with_path_names` renames the nodes *within* a tree, whereas `with_name` renames the object itself (II.4). `at_path` has a level analogue in `Batch.at_levels` (II.5), and the two are alike: a path addresses a position and returns a leaf or a subtree, and named level indexers address positions and return an element or a sub-batch.
+`with_path_names` renames the nodes *within* a tree, whereas `with_label` relabels the object itself (II.4). `at_path` has a level analogue in `Batch.at_levels` (II.5), and the two are alike: a path addresses a position and returns a leaf or a subtree, and named level indexers address positions and return an element or a sub-batch.
 
 `with_path_names` renames nodes by `old="new"` pairs. A **rename** gives the node at path `old` the path `new`, and the node keeps its subtree. In each pair, `old` is the exact path of a node, so keyword pairs address top-level nodes and the positional mapping form addresses any node.
 

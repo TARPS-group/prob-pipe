@@ -95,8 +95,8 @@ def _rbf_kernel(X1, X2, lengthscale=1.0, variance=1.0):
 class _ScalarGP(GaussianRandomFunction):
     """A scalar-output process with a squared-exponential kernel and a nugget."""
 
-    def __init__(self, lengthscale=1.0, variance=1.0, noise=0.01, name="gp"):
-        super().__init__(name)
+    def __init__(self, lengthscale=1.0, variance=1.0, noise=0.01, label="gp"):
+        super().__init__(label)
         self._ls = lengthscale
         self._var = variance
         self._noise = noise
@@ -132,8 +132,8 @@ class _MultiOutputGRF(GaussianRandomFunction):
 class _MarginalOnlyGRF(GaussianRandomFunction):
     """A member that gives only the marginal variance at each point."""
 
-    def __init__(self, name="marginal_only"):
-        super().__init__(name)
+    def __init__(self, label="marginal_only"):
+        super().__init__(label)
 
     def predict_mean(self, X):
         return jnp.zeros(X.shape[0])
@@ -182,7 +182,7 @@ class TestGaussianRandomFunction:
             _ScalarGP()(jnp.asarray(1.0))
 
     def test_the_law_carries_the_label_and_the_output_component(self):
-        grf = _ScalarGP(name="gp")
+        grf = _ScalarGP(label="gp")
         dist = grf(jnp.ones((3, 2)))
         assert dist.label == "gp"
         assert list(dist.event_spec.components) == ["gp"]
@@ -641,7 +641,7 @@ class TestScale:
 
 class TestIndependentSum:
     def test_mean_is_sum(self):
-        gp1, gp2 = _ScalarGP(1.0, 1.0, name="a"), _ScalarGP(0.5, 0.5, name="b")
+        gp1, gp2 = _ScalarGP(1.0, 1.0, label="a"), _ScalarGP(0.5, 0.5, label="b")
         h = gp1 + gp2
         X = jnp.ones((5, 2))
         np.testing.assert_allclose(
@@ -649,7 +649,7 @@ class TestIndependentSum:
         )
 
     def test_variance_is_sum(self):
-        gp1, gp2 = _ScalarGP(1.0, 1.0, name="a"), _ScalarGP(0.5, 0.5, name="b")
+        gp1, gp2 = _ScalarGP(1.0, 1.0, label="a"), _ScalarGP(0.5, 0.5, label="b")
         h = gp1 + gp2
         X = jnp.ones((5, 2))
         np.testing.assert_allclose(
@@ -657,7 +657,7 @@ class TestIndependentSum:
         )
 
     def test_covariance_is_sum(self):
-        gp1, gp2 = _ScalarGP(1.0, 1.0, name="a"), _ScalarGP(0.5, 0.5, name="b")
+        gp1, gp2 = _ScalarGP(1.0, 1.0, label="a"), _ScalarGP(0.5, 0.5, label="b")
         h = gp1 + gp2
         X = jnp.stack([jnp.linspace(-1, 1, 5), jnp.zeros(5)], axis=-1)
         np.testing.assert_allclose(
@@ -690,7 +690,7 @@ class TestIndependentSum:
             h.predict_variance(X)
 
     def test_sub_grfs(self):
-        gp1, gp2 = _ScalarGP(1.0, 1.0, name="a"), _ScalarGP(0.5, 0.5, name="b")
+        gp1, gp2 = _ScalarGP(1.0, 1.0, label="a"), _ScalarGP(0.5, 0.5, label="b")
         h = gp1 - gp2
         X = jnp.ones((5, 2))
         np.testing.assert_allclose(
@@ -715,7 +715,7 @@ class TestAlgebraComposition:
         )
 
     def test_scale_sum(self):
-        gp1, gp2 = _ScalarGP(1.0, 1.0, name="a"), _ScalarGP(0.5, 0.5, name="b")
+        gp1, gp2 = _ScalarGP(1.0, 1.0, label="a"), _ScalarGP(0.5, 0.5, label="b")
         h = 3.0 * (gp1 + gp2)
         X = jnp.ones((5, 2))
         np.testing.assert_allclose(

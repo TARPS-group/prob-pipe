@@ -79,7 +79,7 @@ class TestNormalizeDistributionValues:
         class UnsupportedDistribution(Distribution):
             pass
 
-        source = Normal(loc=0.0, scale=1.0, name="source")
+        source = Normal(loc=0.0, scale=1.0, label="source")
 
         with pytest.raises(
             ResolutionError,
@@ -184,7 +184,7 @@ class TestHintedDistributionConversion:
         normal_external,
     ):
         mean_of_normal, seen = mean_recorder
-        wf = Function(name="mean_of_normal", fn=mean_of_normal, dispatch="sequential")
+        wf = Function(label="mean_of_normal", fn=mean_of_normal, dispatch="sequential")
 
         result = wf(dist=normal_external)
 
@@ -198,7 +198,7 @@ class TestHintedDistributionConversion:
             seen.append(dist)
             return log_prob(dist, jnp.asarray([0.0]))
 
-        wf = Function(name="log_prob_at_zero", fn=log_prob_at_zero, dispatch="sequential")
+        wf = Function(label="log_prob_at_zero", fn=log_prob_at_zero, dispatch="sequential")
 
         result = wf(dist=empirical_dist)
 
@@ -212,7 +212,7 @@ class TestDistributionBatchHandling:
     def test_a_batch_of_one_law_is_swept(self, mean_recorder):
         mean_of_normal, seen = mean_recorder
         batch = DistributionBatch("one_cell", [Normal("x", 3.0, 1.0)], "cell")
-        wf = Function(name="mean_of_normal", fn=mean_of_normal, dispatch="sequential")
+        wf = Function(label="mean_of_normal", fn=mean_of_normal, dispatch="sequential")
 
         result = wf(dist=batch)
 
@@ -233,7 +233,7 @@ class TestUnhintedExternalDistribution:
             return value * 2.0
 
         wf = Function(
-            name="double",
+            label="double",
             fn=double,
             n_broadcast_samples=8,
             dispatch="sequential",
@@ -271,7 +271,7 @@ def test_non_distribution_capability_protocol_does_not_disable_lifting():
         return x
 
     wrapped = Function(
-        name="consume",
+        label="consume",
         fn=consume,
         n_broadcast_samples=8,
         dispatch="sequential",
@@ -311,7 +311,7 @@ def test_capability_annotation_passes_the_law_through(capability):
 
     consume.__annotations__ = {"law": capability}
     law = _law_claiming(capability)
-    wrapped = Function(name="consume", fn=consume, n_broadcast_samples=8, dispatch="sequential")
+    wrapped = Function(label="consume", fn=consume, n_broadcast_samples=8, dispatch="sequential")
 
     wrapped(law)
 

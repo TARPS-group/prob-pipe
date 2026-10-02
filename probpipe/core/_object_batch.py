@@ -38,7 +38,7 @@ class _ObjectBatch[E](Batch[E]):
 
     Parameters
     ----------
-    name : str
+    label : str
         The batch's name. Required, as it is for every batch: a batch is a value a
         caller holds, and a name derived from its class says nothing about what it
         holds.
@@ -98,7 +98,7 @@ class _ObjectBatch[E](Batch[E]):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         elements: np.ndarray | Iterable[E],
         /,
         level_names: str | Iterable[str],
@@ -117,7 +117,7 @@ class _ObjectBatch[E](Batch[E]):
         )
         self._init_batch(
             BatchSpec(element_spec, groups, names),
-            name=name,
+            name=label,
             provenance=provenance,
         )
 

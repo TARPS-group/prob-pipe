@@ -57,7 +57,7 @@ def test_x32_default_normal_is_float32():
     import probpipe as ops
     from probpipe.families._continuous import Normal
 
-    n = Normal(loc=0.0, scale=1.0, name="n")
+    n = Normal(loc=0.0, scale=1.0, label="n")
     assert n.dtype == jnp.float32
     assert ops.log_prob(n, 0.5).dtype == jnp.float32
     assert ops.sample(n).dtype == jnp.float32
@@ -68,7 +68,7 @@ def test_x32_explicit_float32_array_preserved():
 
     loc = jnp.array(0.0, dtype=jnp.float32)
     scale = jnp.array(1.0, dtype=jnp.float32)
-    assert Normal(loc=loc, scale=scale, name="n").dtype == jnp.float32
+    assert Normal(loc=loc, scale=scale, label="n").dtype == jnp.float32
 
 
 def test_x32_int_inputs_promote_to_float32():
@@ -76,7 +76,7 @@ def test_x32_int_inputs_promote_to_float32():
 
     # Integer inputs should not silently produce an int distribution;
     # they are promoted to JAX's default float dtype.
-    n = Normal(loc=0, scale=1, name="n")
+    n = Normal(loc=0, scale=1, label="n")
     assert n.dtype == jnp.float32
 
 
@@ -90,7 +90,7 @@ def test_x64_normal_full_pipeline():
         """
         from probpipe.families._continuous import Normal
         import probpipe as ops
-        n = Normal(loc=0.0, scale=1.0, name='n')
+        n = Normal(loc=0.0, scale=1.0, label='n')
         assert n.dtype == jnp.float64, n.dtype
         assert ops.log_prob(n, 0.5).dtype == jnp.float64
         assert ops.sample(n).dtype == jnp.float64
@@ -113,7 +113,7 @@ def test_x64_uniform_beta_gamma():
             (Beta, dict(alpha=2.0, beta=3.0)),
             (Gamma, dict(concentration=2.0, rate=1.0)),
         ]:
-            d = cls(**kwargs, name='d')
+            d = cls(**kwargs, label='d')
             assert d.dtype == jnp.float64, (cls.__name__, d.dtype)
             assert ops.sample(d).dtype == jnp.float64
         print('OK')
@@ -130,7 +130,7 @@ def test_x64_multivariate_normal_does_not_raise():
         import probpipe as ops
         import jax
 
-        mvn = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name='m')
+        mvn = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label='m')
         assert mvn.dtype == jnp.float64, mvn.dtype
         assert ops.log_prob(mvn, jnp.asarray([0.5, -0.5])).dtype == jnp.float64
         assert ops.sample(mvn).dtype == jnp.float64
@@ -148,7 +148,7 @@ def test_x64_explicit_float32_input_preserved_under_x64():
         from probpipe.families._continuous import Normal
         loc = jnp.array(0.0, dtype=jnp.float32)
         scale = jnp.array(1.0, dtype=jnp.float32)
-        n = Normal(loc=loc, scale=scale, name='n')
+        n = Normal(loc=loc, scale=scale, label='n')
         assert n.dtype == jnp.float32, n.dtype
         print('OK')
         """
@@ -163,7 +163,7 @@ def test_x64_promotion_mixed_dtype():
         from probpipe.families._continuous import Normal
         loc32 = jnp.array(0.0, dtype=jnp.float32)
         scale64 = jnp.array(1.0, dtype=jnp.float64)
-        n = Normal(loc=loc32, scale=scale64, name='n')
+        n = Normal(loc=loc32, scale=scale64, label='n')
         assert n.dtype == jnp.float64, n.dtype
         print('OK')
         """
@@ -194,7 +194,7 @@ def test_x64_transformed_distribution_preserves_dtype():
         import probpipe as ops
         import jax
 
-        base = Normal(loc=0.0, scale=1.0, name='base')
+        base = Normal(loc=0.0, scale=1.0, label='base')
         td = BijectorTransformedDistribution('td', base, tfb.Exp())
         assert td.dtype == jnp.float64, td.dtype
         assert ops.log_prob(td, 1.0).dtype == jnp.float64
@@ -213,8 +213,8 @@ def test_x64_gaussian_joint_preserves_dtype():
         import jax
 
         joint = MultivariateNormal(
-            loc=jnp.zeros(1), cov=jnp.eye(1), name='x',
-        ) * MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name='y')
+            loc=jnp.zeros(1), cov=jnp.eye(1), label='x',
+        ) * MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label='y')
         sample = ops.sample(joint)
         assert sample['x'].dtype == jnp.float64, sample['x'].dtype
         assert sample['y'].dtype == jnp.float64
@@ -268,18 +268,18 @@ def test_x64_discrete_distributions():
         import jax
 
         cases = [
-            Bernoulli(probs=0.5, name='b'),
-            Binomial(total_count=10, probs=0.3, name='bn'),
-            Poisson(rate=2.0, name='p'),
-            Categorical(probs=jnp.array([0.2, 0.3, 0.5]), name='c'),
-            NegativeBinomial(total_count=5.0, probs=0.4, name='nb'),
+            Bernoulli(probs=0.5, label='b'),
+            Binomial(total_count=10, probs=0.3, label='bn'),
+            Poisson(rate=2.0, label='p'),
+            Categorical(probs=jnp.array([0.2, 0.3, 0.5]), label='c'),
+            NegativeBinomial(total_count=5.0, probs=0.4, label='nb'),
         ]
         for d in cases:
             # log_prob on int-valued support should not raise
             sample = ops.sample(d)
             ops.log_prob(d, sample)
         # The float-valued probs/rate/logits should produce float64 internals
-        b = Bernoulli(probs=0.5, name='b2')
+        b = Bernoulli(probs=0.5, label='b2')
         assert b._probs.dtype == jnp.float64
         print('OK')
         """
@@ -312,7 +312,7 @@ def test_x64_gaussian_random_function():
         import jax
 
         weights = MultivariateNormal(
-            loc=jnp.zeros(3), cov=jnp.eye(3), name='w',
+            loc=jnp.zeros(3), cov=jnp.eye(3), label='w',
         )
         basis = lambda X: jnp.stack([jnp.ones_like(X[..., 0]),
                                       X[..., 0],
@@ -335,7 +335,7 @@ def test_x64_joint_promotes():
         import probpipe as ops
         import jax
 
-        joint = Normal(loc=0.0, scale=1.0, name='a') * Normal(loc=0.0, scale=1.0, name='b')
+        joint = Normal(loc=0.0, scale=1.0, label='a') * Normal(loc=0.0, scale=1.0, label='b')
         sample = ops.sample(joint)
         assert sample['a'].dtype == jnp.float64
         assert sample['b'].dtype == jnp.float64
@@ -355,8 +355,8 @@ def test_x64_gaussian_joint_conditioning():
         import jax
 
         joint = MultivariateNormal(
-            loc=jnp.zeros(1), cov=jnp.eye(1), name='x',
-        ) * MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name='y')
+            loc=jnp.zeros(1), cov=jnp.eye(1), label='x',
+        ) * MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label='y')
         # Conditioning on a float32 observed value must not corrupt the
         # parent's float64 dtype.
         cond = condition_on(joint, {"x": jnp.array([1.0], dtype=jnp.float32)})

@@ -300,7 +300,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
 
     Parameters
     ----------
-    name : str
+    label : str
         Non-empty name for this distribution.
     event_spec : OutputSpec or TermSpec
         The declaration of one draw, completed as above.
@@ -341,13 +341,13 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         event_spec: OutputSpec | TermSpec,
         *,
         _provenance: Provenance | None = None,
         _annotations: Mapping[str, Any] | None = None,
     ):
-        if not isinstance(name, str) or not name:
+        if not isinstance(label, str) or not label:
             raise TypeError(
                 f"{type(self).__name__} requires a non-empty label as its first argument"
             )
@@ -356,7 +356,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         # is write-once, and annotations are written after construction, so a
         # rebuilt distribution would come back without either. Private, and the
         # reconstruction paths are the only callers.
-        self._init_tracked(name, provenance=_provenance)
+        self._init_tracked(label, provenance=_provenance)
         self._init_annotations(_annotations)
         self._init_declaration(event_spec)
 
@@ -777,7 +777,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     def from_batched_params(
         cls,
         *,
-        name: str,
+        label: str,
         batch_shape: tuple[int, ...] | None = None,
         **batched_params: Any,
     ) -> DistributionBatch:
@@ -789,7 +789,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
 
         Parameters
         ----------
-        name : str
+        label : str
             The batch's name.
         batch_shape : tuple of int, optional
             The batch axes, inferred from the parameters when omitted.

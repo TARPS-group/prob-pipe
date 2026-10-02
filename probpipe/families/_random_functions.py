@@ -59,7 +59,7 @@ class RandomFunction(Distribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         The random function's label.
     event_spec : OutputSpec or TermSpec, optional
         The declaration of one draw, whose type is a ``FunctionSpec``; a bare
@@ -73,8 +73,8 @@ class RandomFunction(Distribution):
         If *event_spec* declares a type that is not a ``FunctionSpec``.
     """
 
-    def __init__(self, name: str, event_spec: OutputSpec | TermSpec | None = None) -> None:
-        super().__init__(name, _event_of_kind(name, event_spec, FunctionSpec, FunctionSpec()))
+    def __init__(self, label: str, event_spec: OutputSpec | TermSpec | None = None) -> None:
+        super().__init__(label, _event_of_kind(label, event_spec, FunctionSpec, FunctionSpec()))
 
     @abstractmethod
     def __call__(self, x: Any) -> Distribution:
@@ -95,7 +95,7 @@ class RandomMeasure(Distribution):
 
     Parameters
     ----------
-    name : str
+    label : str
         The random measure's label.
     event_spec : OutputSpec or TermSpec, optional
         The declaration of one draw, whose type is a ``DistributionSpec``. The
@@ -108,6 +108,6 @@ class RandomMeasure(Distribution):
         If *event_spec* declares a type that is not a ``DistributionSpec``.
     """
 
-    def __init__(self, name: str, event_spec: OutputSpec | TermSpec | None = None) -> None:
-        opaque_law = DistributionSpec(OutputSpec(**{name: OpaqueSpec()}))
-        super().__init__(name, _event_of_kind(name, event_spec, DistributionSpec, opaque_law))
+    def __init__(self, label: str, event_spec: OutputSpec | TermSpec | None = None) -> None:
+        opaque_law = DistributionSpec(OutputSpec(**{label: OpaqueSpec()}))
+        super().__init__(label, _event_of_kind(label, event_spec, DistributionSpec, opaque_law))

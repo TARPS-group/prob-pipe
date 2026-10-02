@@ -188,7 +188,7 @@ class BootstrapReplicateDistribution(Distribution, SupportsSampling):
 
     Parameters
     ----------
-    name : str
+    label : str
         The law's label, which is also the default component of its event.
     source : Distribution
         The law the replicate draws from, which implements ``SupportsSampling``.
@@ -228,7 +228,7 @@ class BootstrapReplicateDistribution(Distribution, SupportsSampling):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         source: SupportsSampling,
         replicate_size: int | None = None,
         *,
@@ -239,7 +239,7 @@ class BootstrapReplicateDistribution(Distribution, SupportsSampling):
         size = _replicate_size(law, replicate_size)
         on_level = _replicate_level(law, level)
         term = _replicate_spec(law, size, on_level)
-        super().__init__(name, _completed(term, event_spec))
+        super().__init__(label, _completed(term, event_spec))
         self._source = law
         self._replicate_size = size
         self._level = on_level
@@ -316,7 +316,7 @@ class BootstrapDistribution(RandomMeasure, SupportsSampling, SupportsMean):
 
     Parameters
     ----------
-    name : str
+    label : str
         The law's label, which also labels each drawn empirical measure.
     source : Distribution
         The law a replicate draws from, which implements ``SupportsSampling``.
@@ -347,7 +347,7 @@ class BootstrapDistribution(RandomMeasure, SupportsSampling, SupportsMean):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         source: SupportsSampling,
         replicate_size: int | None = None,
         *,
@@ -357,7 +357,7 @@ class BootstrapDistribution(RandomMeasure, SupportsSampling, SupportsMean):
         law = _sampling_source(source)
         size = _replicate_size(law, replicate_size)
         on_level = _replicate_level(law, level)
-        super().__init__(name, _completed(DistributionSpec(law.event_spec), event_spec))
+        super().__init__(label, _completed(DistributionSpec(law.event_spec), event_spec))
         self._source = law
         self._replicate_size = size
         self._level = on_level
@@ -843,7 +843,7 @@ class KDEDistribution(
 
     Parameters
     ----------
-    name : str
+    label : str
         The law's label, which is also the default component of a whole-term
         event.
     atoms : Array or NumericRecordBatch
@@ -883,7 +883,7 @@ class KDEDistribution(
 
     def __init__(
         self,
-        name: str,
+        label: str,
         atoms: Array | NumericRecordBatch,
         bandwidth: ArrayLike | NumericRecord | str | None = None,
         weights: Array | Weights | None = None,
@@ -900,7 +900,7 @@ class KDEDistribution(
             declared = event_spec.with_spec(atom_spec)
         else:
             raise TypeError(f"event_spec must be an OutputSpec, got {type(event_spec).__name__}")
-        super().__init__(name, declared)
+        super().__init__(label, declared)
         centers = _flat_centers(stored)
         atom_weights = _kde_weights(weights, centers.shape[0])
         if bandwidth is None or isinstance(bandwidth, str):

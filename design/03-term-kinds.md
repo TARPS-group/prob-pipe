@@ -38,7 +38,7 @@ class NumericArray(TrackedTerm, Numeric):
     def vector_size(self) -> int: ...     # the number of entries
     def to_vector(self) -> Array: ...     # the array raveled in row-major order
     @classmethod
-    def from_vector(cls, name: str, spec: NumericArraySpec, vec: Array) -> NumericArray: ...
+    def from_vector(cls, label: str, spec: NumericArraySpec, vec: Array) -> NumericArray: ...
 ```
 
 `NumericArrayBatch` is the kind's batch form: a `Batch` whose `element_spec` is the `NumericArraySpec` and whose storage is one array with the batch axes leading — the same split `RecordBatch` uses, with one column instead of many. An array with leading axes is just an array; the batch form is what carries the level names, the shared spec, and provenance.
@@ -73,16 +73,16 @@ The kind exists so that closure under operations holds for every return value (`
 
 The function kind's base type is `Function`. A `Function` is a tracked term that wraps exactly one Python callable as its representation and carries a `FunctionSpec`, whose sides it exposes as the `input_spec` and `output_spec` views; either side is optional, as in the spec. A `Function` also carries a frozen `inspect.Signature`, which is authoritative for Python argument binding, since parameter kinds, defaults, and variadic parameters are not expressible in a value schema; the `input_spec` is authoritative for the value schema. Construction validates their one-for-one correspondence, so binding an argument binds a slot by name. Its `raw()` is the wrapped callable.
 
-A `Function` also carries an `output_name`, which is the label its results receive and is separate from its own `name` and from its `output_spec`. Under `@function`, `name` defaults to the callable's `__name__` and `output_name` to the initial `name`, captured once at construction, so `with_name` changes only the function's label, and renaming a result changes only that result's label. Spec equality ignores both labels, but a whole-term result's component defaults to `output_name`, captured once at construction; `OutputSpec(mean=None)` names it otherwise. A function an operation derives, such as `inverse(f)`, fixes its result label at construction, and its output declaration follows the operation's result rule (VI.0).
+A `Function` also carries an `output_label`, which is the label its results receive and is separate from its own `label` and from its `output_spec`. Under `@function`, `label` defaults to the callable's `__name__` and `output_label` to the initial `label`, captured once at construction, so `with_label` changes only the function's label, and relabeling a result changes only that result's label. Spec equality ignores both labels, but a whole-term result's component defaults to `output_label`, captured once at construction; `OutputSpec(mean=None)` names it otherwise. A function an operation derives, such as `inverse(f)`, fixes its result label at construction, and its output declaration follows the operation's result rule (VI.0).
 
 ```python
-@function(name="predict", output_name="prediction",
+@function(label="predict", output_label="prediction",
           output_spec=OutputSpec(mean=None))
 def predict_impl(theta, x):
     return x @ theta
 
 prediction = predict_impl(theta, x)
-# predict_impl.name == "predict"; prediction.name == "prediction"
+# predict_impl.label == "predict"; prediction.label == "prediction"
 # output component: mean; the inferred return is an array, not a record
 ```
 
@@ -98,10 +98,10 @@ class FunctionSpec(TermSpec):      # the function kind's spec; is_valid accepts 
 
 ```python
 class Function(TrackedTerm):
-    def __init__(self, name: str, fn: Callable, *,
+    def __init__(self, label: str, fn: Callable, *,
                  input_spec: InputSpec | Mapping[str, TermSpec] | None = None,
                  output_spec: OutputSpec | TermSpec | None = None,
-                 output_name: str | None = None,
+                 output_label: str | None = None,
                  differentiable: NumericSpec = ...) -> None: ...
                  # optional differentiability claim (V.11)
     @property
@@ -111,7 +111,7 @@ class Function(TrackedTerm):
     @property
     def output_spec(self) -> OutputSpec | None: ...                 # view on spec
     @property
-    def output_name(self) -> str: ...                              # result label, outside spec
+    def output_label(self) -> str: ...                             # result label, outside spec
     @property
     def options(self) -> Mapping[str, Any]: ...          # the controls; opaque to the base
     def with_options(self, **controls) -> Self: ...      # functional update
@@ -265,7 +265,7 @@ Two records are equal when they share a class, a `RecordSpec`, and field-by-fiel
 
 ```python
 class Record(NamedTree[Any], TrackedTerm):
-    def __init__(self, name: str, fields: Mapping[str, Any] | None = None, /, *,
+    def __init__(self, label: str, fields: Mapping[str, Any] | None = None, /, *,
                  spec: RecordSpec | Mapping | None = None,
                  **kw_fields: Any) -> None: ...
         # name is the required first argument (II.4)
@@ -282,7 +282,7 @@ class Record(NamedTree[Any], TrackedTerm):
     # a field's raw value, or a subtree's nested mapping
 
     @classmethod
-    def from_field_values(cls, name: str, spec: RecordSpec, values: Sequence[Any]) -> Record: ...
+    def from_field_values(cls, label: str, spec: RecordSpec, values: Sequence[Any]) -> Record: ...
     # reconstruct from values in the schema's canonical order; ValueError on count/shape mismatch
 
     def select(self, *fields: str, **mapping: str) -> dict[str, Any]: ...
@@ -309,7 +309,7 @@ class NumericRecord(Record, Numeric):
     def vector_size(self) -> int: ...
     def to_vector(self) -> Array: ...
     @classmethod
-    def from_vector(cls, name: str, spec: NumericRecordSpec, vec: Array) -> NumericRecord: ...
+    def from_vector(cls, label: str, spec: NumericRecordSpec, vec: Array) -> NumericRecord: ...
 ```
 
 **Vector-space arithmetic.** `NumericRecord` implements the `Numeric` interface of II.3, so functions act on it in the two ways stated there. ProbPipe's own operators preserve structure and return tracked terms. They are the vector-space set, which is `+` and `-` between records sharing a schema and scalar `*` and `/`, and `map(f)` for entrywise maps, so `record.map(jnp.cos)` is the tracked form of `jnp.cos(record)`. Array-shaped behavior such as broadcasting and positional indexing stays with arrays, and `__array_ufunc__` is left undefined, so NumPy and JAX functions behave alike on the same object.
@@ -352,7 +352,7 @@ When every element is a `NumericRecord`, the batch is a `NumericRecordBatch`: a 
 class NumericRecordBatch(RecordBatch):
     def to_vector(self) -> Array: ...
     @classmethod
-    def from_vector(cls, name: str, spec: NumericRecordSpec, vec: Array, *,
+    def from_vector(cls, label: str, spec: NumericRecordSpec, vec: Array, *,
                     level_names: str | Iterable[str],
                     axes_per_level: Iterable[int] | None = None) -> NumericRecordBatch: ...
     # vec has shape (*batch_shape, vector_size): the last axis is the flat dimension
@@ -367,7 +367,7 @@ class RecordBatch(Batch[Record]):
     @classmethod
     def stack(cls, records: list[Record], *, level_name: str,
               element_spec: RecordSpec | None = None,
-              name: str | None = None) -> RecordBatch: ...
+              label: str | None = None) -> RecordBatch: ...
     # one level of (len(records),); the element spec is taken from the first record
     # when omitted, and every record's fields must be exactly its fields.
     # `name` is the one place a batch's name may be omitted: it is then derived
@@ -393,7 +393,7 @@ It declares the operations it supports as **capabilities** (III.8), so operation
 
 ```python
 class Distribution(TrackedTerm):
-    def __init__(self, name: str, event_spec: OutputSpec | TermSpec) -> None: ...
+    def __init__(self, label: str, event_spec: OutputSpec | TermSpec) -> None: ...
         # a bare term spec completes to OutputSpec.default(event_spec, component=name) (II.2)
 
     @property
@@ -567,7 +567,7 @@ A `ConditionalDistribution` carries a `given_spec`, which is the `InputSpec` of 
 
 ```python
 class ConditionalDistribution(TrackedTerm):
-    def __init__(self, name: str, given_spec: InputSpec | Mapping[str, TermSpec], event_spec: OutputSpec | TermSpec) -> None: ...
+    def __init__(self, label: str, given_spec: InputSpec | Mapping[str, TermSpec], event_spec: OutputSpec | TermSpec) -> None: ...
         # given before event, as in FunctionSpec
     @property
     def spec(self) -> ConditionalDistributionSpec: ...
@@ -608,15 +608,15 @@ Binding every given slot calls the function with each given value as the argumen
 
 ```python
 def conditional_distribution(
-    name: str | Callable[..., Distribution] | None = None,
+    label: str | Callable[..., Distribution] | None = None,
     fn: Callable[..., Distribution] | None = None,
     /,
     *,
     given_spec: InputSpec | Mapping[str, TermSpec] | None = None,
     event_spec: OutputSpec | TermSpec | None = None,
 ) -> ConditionalDistribution | Callable[[Callable[..., Distribution]], ConditionalDistribution]: ...
-    # conditional_distribution(name, fn) is the kernel of fn; without fn it is a decorator, and
-    # @conditional_distribution on a def names the kernel after the function
+    # conditional_distribution(label, fn) is the kernel of fn; without fn it is a decorator, and
+    # @conditional_distribution on a def labels the kernel after the function
 ```
 
 **The numeric special cases.** A `ConditionalDistribution` has *two* sides, and either can be numeric, so the single `Numeric` prefix becomes positional: `Numeric` before `Conditional` marks the **given** side numeric, `Numeric` before `Distribution` marks the **event** side numeric, and `FullyNumeric*` marks both. Each is a marker only, as `NumericDistribution` is.

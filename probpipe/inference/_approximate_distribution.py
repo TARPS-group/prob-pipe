@@ -252,7 +252,7 @@ class ApproximateDistribution(EmpiricalDistribution):
         flat layout; the chains have equal lengths.
     weights : array-like, :class:`~probpipe.Weights`, or None
         Optional per-draw importance weights, across all chains in chain order.
-    name : str or None
+    label : str or None
         The result's label. Keyword-only; defaults to ``"posterior"``.
     event_spec : OutputSpec, TermSpec, or None
         The target's declaration, usually the prior's ``event_spec``, which the
@@ -292,7 +292,7 @@ class ApproximateDistribution(EmpiricalDistribution):
         chains: list[Array],
         *,
         weights: ArrayLike | Weights | None = None,
-        name: str | None = None,
+        label: str | None = None,
         event_spec: OutputSpec | TermSpec | None = None,
         field_order: list[str] | None = None,
         method: str | None = None,
@@ -305,14 +305,14 @@ class ApproximateDistribution(EmpiricalDistribution):
         chains: list[Array],
         *,
         weights: ArrayLike | Weights | None = None,
-        name: str | None = None,
+        label: str | None = None,
         event_spec: OutputSpec | TermSpec | None = None,
         field_order: list[str] | None = None,
         method: str | None = None,
     ):
         if not chains:
             raise ValueError("Must provide at least one chain")
-        label = name or "posterior"
+        label = label or "posterior"
         declaration = None if event_spec is None else _complete_event_spec(event_spec, label)
         # The record the target's components form, which names the fields of draws().
         record = None if declaration is None else _components_record(declaration)
@@ -551,7 +551,7 @@ def make_posterior(
 
     result = ApproximateDistribution(
         chains,
-        name="posterior",
+        label="posterior",
         event_spec=event_spec,
         field_order=field_order,
         weights=weights,

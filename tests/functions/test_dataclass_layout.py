@@ -42,7 +42,7 @@ _WORKFLOW_MODULES = (
 
 @pytest.fixture(
     params=[
-        _binding.WorkflowInputRef("x"),
+        _binding.FunctionInputRef("x"),
         _callable.CallableAnchor(False, "local_function", None, None),
         _execution_contract.make_execution_contract(
             evaluator="rowwise", transport="local_inline", stochastic_plan=None

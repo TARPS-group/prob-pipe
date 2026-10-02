@@ -25,7 +25,7 @@ from probpipe.families._converters import _check_support
 
 @pytest.fixture
 def scalar_normal():
-    return Normal(loc=0.0, scale=1.0, name="x")
+    return Normal(loc=0.0, scale=1.0, label="x")
 
 
 # ---------------------------------------------------------------------------
@@ -67,13 +67,13 @@ class TestDistributionBase:
 
     def test_repr_with_name(self):
         """Distribution.__repr__ includes the name when set."""
-        n = Normal(loc=0.0, scale=1.0, name="my_normal")
+        n = Normal(loc=0.0, scale=1.0, label="my_normal")
         r = repr(n)
         assert "my_normal" in r
 
     def test_repr_includes_class_and_name(self):
         """Distribution.__repr__ includes both the class name and the name."""
-        n = Normal(loc=0.0, scale=1.0, name="x")
+        n = Normal(loc=0.0, scale=1.0, label="x")
         r = repr(n)
         assert "Normal" in r
         assert "x" in r
@@ -118,8 +118,8 @@ class TestSupports:
 class _Declared(NumericDistribution):
     """A numeric law that only declares its event, for the declaration's views."""
 
-    def __init__(self, name, spec):
-        super().__init__(name, spec)
+    def __init__(self, label, spec):
+        super().__init__(label, spec)
 
 
 def _leaf(shape=(), dtype="float32", support=real):
@@ -160,7 +160,7 @@ class TestCanonicalConvenience:
         """A moment-matched fit's support must contain the source's."""
         from probpipe import Gamma
 
-        target = Gamma(concentration=1.0, rate=1.0, name="gamma_target")
+        target = Gamma(concentration=1.0, rate=1.0, label="gamma_target")
         with pytest.raises(ValueError, match=r"Normal 'x' \(support=real\)"):
             _check_support(target, scalar_normal)
 
@@ -189,19 +189,19 @@ class TestIntegerDtypeReporting:
     def test_bernoulli_dtype_is_int32(self):
         from probpipe import Bernoulli
 
-        assert Bernoulli(probs=0.5, name="x").dtype == jnp.int32
+        assert Bernoulli(probs=0.5, label="x").dtype == jnp.int32
 
     def test_categorical_dtype_is_int32(self):
         from probpipe import Categorical
 
-        assert Categorical(probs=jnp.array([0.5, 0.5]), name="x").dtype == jnp.int32
+        assert Categorical(probs=jnp.array([0.5, 0.5]), label="x").dtype == jnp.int32
 
     def test_normal_dtype_is_float(self):
         """Normal continues to report float (no regression on the
         always-float family)."""
         from probpipe import Normal
 
-        assert jnp.issubdtype(Normal(loc=0.0, scale=1.0, name="x").dtype, jnp.floating)
+        assert jnp.issubdtype(Normal(loc=0.0, scale=1.0, label="x").dtype, jnp.floating)
 
     def test_poisson_dtype_is_float(self):
         """``Poisson`` uses ``float32`` because TFP's ``tfd.Poisson``
@@ -211,4 +211,4 @@ class TestIntegerDtypeReporting:
         """
         from probpipe import Poisson
 
-        assert Poisson(rate=2.0, name="x").dtype == jnp.float32
+        assert Poisson(rate=2.0, label="x").dtype == jnp.float32

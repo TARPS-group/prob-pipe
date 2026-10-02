@@ -35,7 +35,7 @@ def simple_model():
 
     x = np.asarray(np.linspace(-1, 1, 20)).astype(np.float32)
     X = jnp.asarray(np.stack([np.ones_like(x), x], axis=1))
-    prior = MultivariateNormal(loc=jnp.zeros(2), cov=5.0 * jnp.eye(2), name="beta")
+    prior = MultivariateNormal(loc=jnp.zeros(2), cov=5.0 * jnp.eye(2), label="beta")
     return glm_likelihood("y", PoissonFamily(), X=X) * prior
 
 
@@ -104,7 +104,7 @@ class TestInferenceMethodRegistry:
 
     def test_a_named_method_runs_on_a_bare_law(self):
         """The registry runs a method on a plain law, whose posterior is the law itself."""
-        prior = Normal(loc=0.0, scale=1.0, name="x")
+        prior = Normal(loc=0.0, scale=1.0, label="x")
         posterior = inference_method_registry.execute(
             prior, method="tfp_nuts", num_results=50, num_warmup=20, random_seed=0
         )
@@ -363,7 +363,7 @@ def gaussian_model():
     likelihood + data) pass ``check()`` on this target — so it is the
     canonical case for testing the 85-vs-75 tier ordering.
     """
-    prior = Normal(loc=0.0, scale=1.0, name="mu")
+    prior = Normal(loc=0.0, scale=1.0, label="mu")
     likelihood = ObservationKernel(
         "y",
         {"mu": prior.event_spec.spec},

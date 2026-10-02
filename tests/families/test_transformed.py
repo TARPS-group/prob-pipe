@@ -266,7 +266,7 @@ class TestReplay:
 
     def test_a_lift_replays_identically(self):
         difference = Function(
-            name="replayable_difference",
+            label="replayable_difference",
             fn=replayable_difference,
             n_broadcast_samples=8,
             dispatch="sequential",

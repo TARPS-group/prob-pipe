@@ -54,7 +54,7 @@ def cov_matrix(dim):
 
 @pytest.fixture
 def gaussian(loc, cov_matrix):
-    return MultivariateNormal(loc=loc, cov=cov_matrix, name="test_gaussian")
+    return MultivariateNormal(loc=loc, cov=cov_matrix, label="test_gaussian")
 
 
 @pytest.fixture
@@ -74,33 +74,33 @@ def simple_weights():
 
 class TestMultivariateNormal:
     def test_construction_with_cov(self, loc, cov_matrix):
-        g = MultivariateNormal(loc=loc, cov=cov_matrix, name="z")
+        g = MultivariateNormal(loc=loc, cov=cov_matrix, label="z")
         assert g.event_shape == (3,)
         assert g.dim == 3
         np.testing.assert_allclose(g.loc, loc, atol=1e-6)
 
     def test_construction_with_scale_tril(self, loc, cov_matrix):
         L = jnp.linalg.cholesky(cov_matrix)
-        g = MultivariateNormal(loc=loc, scale_tril=L, name="z")
+        g = MultivariateNormal(loc=loc, scale_tril=L, label="z")
         np.testing.assert_allclose(g.cov, cov_matrix, atol=1e-5)
 
     def test_scalar_loc_promoted(self):
-        g = MultivariateNormal(loc=1.0, scale_tril=jnp.eye(1), name="z")
+        g = MultivariateNormal(loc=1.0, scale_tril=jnp.eye(1), label="z")
         assert g.event_shape == (1,)
         assert g.dim == 1
 
     def test_rejects_both_cov_and_scale_tril(self, loc, cov_matrix):
         L = jnp.linalg.cholesky(cov_matrix)
         with pytest.raises(ValueError, match="exactly one"):
-            MultivariateNormal(loc=loc, scale_tril=L, cov=cov_matrix, name="z")
+            MultivariateNormal(loc=loc, scale_tril=L, cov=cov_matrix, label="z")
 
     def test_rejects_neither_cov_nor_scale_tril(self, loc):
         with pytest.raises(ValueError, match="One of"):
-            MultivariateNormal(loc=loc, name="z")
+            MultivariateNormal(loc=loc, label="z")
 
     def test_rejects_dim_mismatch(self):
         with pytest.raises(ValueError, match="does not match"):
-            MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(3), name="z")
+            MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(3), label="z")
 
     def test_sample_shape(self, gaussian, key):
         s = sample(gaussian, sample_shape=(5,))
@@ -164,7 +164,7 @@ class TestMultivariateNormal:
         assert gaussian.label == "test_gaussian"
 
     def test_name_set(self, loc, cov_matrix):
-        g = MultivariateNormal(loc=loc, cov=cov_matrix, name="z")
+        g = MultivariateNormal(loc=loc, cov=cov_matrix, label="z")
         assert g.label == "z"
 
     def test_repr(self, gaussian):
@@ -427,7 +427,7 @@ class TestProvenance:
         assert "test_gaussian" in r
 
     def test_repr_unnamed_parent(self, loc, cov_matrix):
-        g = MultivariateNormal(loc=loc, cov=cov_matrix, name="z")
+        g = MultivariateNormal(loc=loc, cov=cov_matrix, label="z")
         p = Provenance("op", parents=(g,))
         r = repr(p)
         assert "z" in r
@@ -468,7 +468,7 @@ class TestDistributionABC:
             convert(None, NumericDistribution)
 
     def test_provenance_default_none(self, gaussian):
-        g = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
+        g = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="z")
         assert g.provenance is None
 
     def test_with_provenance(self, gaussian):
@@ -484,7 +484,7 @@ class TestDistributionABC:
             gaussian.with_provenance(p2)
 
     def test_name(self, loc, cov_matrix):
-        g = MultivariateNormal(loc=loc, cov=cov_matrix, name="z")
+        g = MultivariateNormal(loc=loc, cov=cov_matrix, label="z")
         assert g.label == "z"
 
 
@@ -550,8 +550,8 @@ class TestDistributionCoverageGaps:
         from probpipe import NumericArraySpec
 
         class Scalar(NumericDistribution):
-            def __init__(self, name):
-                super().__init__(name, NumericArraySpec((), "float32"))
+            def __init__(self, label):
+                super().__init__(label, NumericArraySpec((), "float32"))
 
         s = Scalar("s")
         assert tuple(s.event_spec.components) == ("s",)
@@ -562,7 +562,7 @@ class TestDistributionCoverageGaps:
         """NumericDistribution.dtype is the common dtype when all fields match."""
         from probpipe import Normal
 
-        n = Normal(loc=0.0, scale=1.0, name="x")
+        n = Normal(loc=0.0, scale=1.0, label="x")
         assert n.dtype == n._tfp_dist.dtype
 
     def test_array_empirical_dtype(self):

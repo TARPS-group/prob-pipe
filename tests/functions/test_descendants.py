@@ -46,9 +46,9 @@ def _stochastic_plan(values, n_broadcast_samples=16):
 
 
 class _RecordingNormal(Normal):
-    def __init__(self, calls, *, name="base"):
+    def __init__(self, calls, *, label="base"):
         self.calls = calls
-        super().__init__(name, 0.0, 1.0)
+        super().__init__(label, 0.0, 1.0)
 
     def _sample(self, key, sample_shape=()):
         self.calls.append((key, tuple(sample_shape)))
@@ -615,7 +615,7 @@ class TestEmpiricalRootWeights:
         )
         exponentiated = BijectorTransformedDistribution("exponentiated", root, tfb.Exp())
         workflow = Function(
-            name="function",
+            label="function",
             fn=lambda base, exp_base: exp_base - jnp.exp(base),
             dispatch="sequential",
             n_broadcast_samples=16,
@@ -648,7 +648,7 @@ class TestEmpiricalRootWeights:
         x = root["x"]
         exponentiated_x = BijectorTransformedDistribution("exponentiated_x", x, tfb.Exp())
         workflow = Function(
-            name="function",
+            label="function",
             fn=lambda joint, x_value, exp_x: jnp.stack(
                 (joint["x"] - x_value, exp_x - jnp.exp(x_value))
             ),
@@ -671,9 +671,9 @@ class TestEmpiricalRootWeights:
         )
         exponentiated = BijectorTransformedDistribution("exponentiated", exact_root, tfb.Exp())
         sampled_calls = []
-        sampled = _RecordingNormal(sampled_calls, name="sampled")
+        sampled = _RecordingNormal(sampled_calls, label="sampled")
         workflow = Function(
-            name="function",
+            label="function",
             fn=lambda exact, exp_exact, noise: jnp.stack((exp_exact - jnp.exp(exact), noise)),
             dispatch="sequential",
             n_broadcast_samples=12,

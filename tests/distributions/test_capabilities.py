@@ -181,11 +181,11 @@ class _Host(Distribution):
         SupportsMarginals: {"_marginal": _host_marginal, "_marginal_guard": _host_marginal_guard},
     }
 
-    def __new__(cls, name: str, protocols: typing.Iterable[type] = ()) -> _Host:
+    def __new__(cls, label: str, protocols: typing.Iterable[type] = ()) -> _Host:
         return object.__new__(_capability_subclass(_Host, protocols))
 
-    def __init__(self, name: str, protocols: typing.Iterable[type] = ()) -> None:
-        super().__init__(name, NumericArraySpec(()))
+    def __init__(self, label: str, protocols: typing.Iterable[type] = ()) -> None:
+        super().__init__(label, NumericArraySpec(()))
 
 
 class _OtherHost(_Host):
@@ -195,8 +195,8 @@ class _OtherHost(_Host):
 class _TruncatedLaw(Distribution, SupportsMarginals):
     """A law whose marginal guard returns the answer it holds, at every path."""
 
-    def __init__(self, name: str, answer: Any = True) -> None:
-        super().__init__(name, NumericArraySpec(()))
+    def __init__(self, label: str, answer: Any = True) -> None:
+        super().__init__(label, NumericArraySpec(()))
         self.answer = answer
 
     def _marginal(self, path: str) -> Any:
@@ -213,8 +213,8 @@ class _TruncatedLaw(Distribution, SupportsMarginals):
 class _BareGuardLaw(Distribution, SupportsMarginals):
     """A law whose marginal guard rejects and has no docstring."""
 
-    def __init__(self, name: str) -> None:
-        super().__init__(name, NumericArraySpec(()))
+    def __init__(self, label: str) -> None:
+        super().__init__(label, NumericArraySpec(()))
 
     def _marginal(self, path: str) -> Any:
         return self
@@ -226,8 +226,8 @@ class _BareGuardLaw(Distribution, SupportsMarginals):
 class _GuardedDensityLaw(Distribution, SupportsLogProb):
     """A law whose density guard rejects."""
 
-    def __init__(self, name: str) -> None:
-        super().__init__(name, NumericArraySpec(()))
+    def __init__(self, label: str) -> None:
+        super().__init__(label, NumericArraySpec(()))
 
     def _log_prob(self, value: Any) -> float:
         return 0.0
@@ -247,8 +247,8 @@ class _OwnUnnormalizedLaw(_GuardedDensityLaw):
 class _GuardedDensityKernel(ConditionalDistribution, SupportsConditionalLogProb):
     """A kernel whose conditional density guard rejects."""
 
-    def __init__(self, name: str) -> None:
-        super().__init__(name, {"s": NumericArraySpec(())}, OutputSpec(y=NumericArraySpec(())))
+    def __init__(self, label: str) -> None:
+        super().__init__(label, {"s": NumericArraySpec(())}, OutputSpec(y=NumericArraySpec(())))
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
         raise NotImplementedError

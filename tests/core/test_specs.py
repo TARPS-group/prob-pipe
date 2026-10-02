@@ -511,7 +511,7 @@ class TestSpecKinds:
 
         law = Normal("x", 0.0, 1.0)
         function = Function(
-            name="function",
+            label="function",
             fn=lambda x: x,
             input_spec=InputSpec(RecordSpec(x=()).children),
             output_spec=RecordSpec(y=()),
@@ -720,10 +720,10 @@ class TestNestedValueBinding:
                 return FunctionSpec(InputSpec(spec.children))
 
             reference = Function(
-                name="function", fn=lambda x: x, input_spec=InputSpec(RecordSpec(x=(3,)).children)
+                label="function", fn=lambda x: x, input_spec=InputSpec(RecordSpec(x=(3,)).children)
             )
             actual = Function(
-                name="function",
+                label="function",
                 fn=lambda x: x,
                 input_spec=InputSpec(RecordSpec(x=(size,)).children),
             )

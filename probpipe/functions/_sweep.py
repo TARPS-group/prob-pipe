@@ -49,7 +49,7 @@ def execute_sweep(
     ],
     requested_dispatch: str,
     resolve_dispatch: Callable[..., str],
-    require_jax_traceable: Callable[[dict[str, Any], list[_binding.WorkflowInputRef]], None],
+    require_jax_traceable: Callable[[dict[str, Any], list[_binding.FunctionInputRef]], None],
     distribution_broadcast: Callable[
         [
             dict[str, Any],
@@ -59,7 +59,7 @@ def execute_sweep(
         ],
         Distribution,
     ],
-    workflow_name: str,
+    function_name: str,
     output_label: str | None = None,
     output_spec: OutputSpec | None = None,
     include_inputs: bool = False,
@@ -77,7 +77,7 @@ def execute_sweep(
     if plan.regime not in ("sweep", "nested"):
         raise ValueError(f"execute_sweep requires a sweep plan; got {plan.regime!r}")
 
-    output_label = workflow_name if output_label is None else output_label
+    output_label = function_name if output_label is None else output_label
     array_args = list(plan.array_args)
     dist_args = list(plan.dist_args)
 
@@ -99,7 +99,7 @@ def execute_sweep(
             resolve_dispatch=resolve_dispatch,
             require_jax_traceable=require_jax_traceable,
             workflow_kind=workflow_kind,
-            workflow_name=workflow_name,
+            function_name=function_name,
             output_is_declared=output_spec is not None and output_spec.spec is not None,
             output_label=output_label,
         )
@@ -122,7 +122,7 @@ def execute_sweep(
             values=values,
             array_args=array_args,
             dist_args=dist_args,
-            workflow_name=workflow_name,
+            function_name=function_name,
             batch_shape=plan.sweep_batch_shape,
             k=0,
             parents=provenance_parents,
@@ -163,7 +163,7 @@ def execute_sweep(
         values=values,
         array_args=array_args,
         dist_args=dist_args,
-        workflow_name=workflow_name,
+        function_name=function_name,
         batch_shape=plan.sweep_batch_shape,
         k=stochastic_plan.n_broadcast_samples,
         parents=provenance_parents,
@@ -199,7 +199,7 @@ def slice_sweep_values(
         position: Any = idx
         if len(group.batch_shape) > 1:
             position = tuple(int(i) for i in np.unravel_index(idx, group.batch_shape))
-        replacements: dict[_binding.WorkflowInputRef, Any] = {}
+        replacements: dict[_binding.FunctionInputRef, Any] = {}
         for ref in group.arg_refs:
             replacements[ref] = _binding.input_ref_value(values, ref)[position]
         out = _binding.replace_input_refs(out, replacements)
@@ -210,7 +210,7 @@ def execute_sweep_rows(
     *,
     func: Callable[..., Any],
     values: dict[str, Any],
-    array_args: list[_binding.WorkflowInputRef],
+    array_args: list[_binding.FunctionInputRef],
     plan: _plan.BroadcastPlan,
     make_execution_config: Callable[
         [],
@@ -218,9 +218,9 @@ def execute_sweep_rows(
     ],
     requested_dispatch: str,
     resolve_dispatch: Callable[..., str],
-    require_jax_traceable: Callable[[dict[str, Any], list[_binding.WorkflowInputRef]], None],
+    require_jax_traceable: Callable[[dict[str, Any], list[_binding.FunctionInputRef]], None],
     workflow_kind: WorkflowKind = WorkflowKind.OFF,
-    workflow_name: str,
+    function_name: str,
     output_is_declared: bool = False,
     output_label: str,
 ) -> Any:
@@ -271,7 +271,7 @@ def execute_sweep_rows(
             array_args=array_args,
             n_total=plan.n_sweep,
             workflow_kind=workflow_kind,
-            workflow_name=workflow_name,
+            function_name=function_name,
             output_is_declared=output_is_declared,
             output_label=output_label,
         )
@@ -310,7 +310,7 @@ def mapped_row_body(
     *,
     func: Callable[..., Any],
     values: dict[str, Any],
-    array_args: Sequence[_binding.WorkflowInputRef],
+    array_args: Sequence[_binding.FunctionInputRef],
     field_name: str,
     output_is_declared: bool = False,
 ) -> Callable[[Any], Any]:
@@ -362,10 +362,10 @@ def execute_sweep_rows_jax(
     *,
     func: Callable[..., Any],
     values: dict[str, Any],
-    array_args: list[_binding.WorkflowInputRef],
+    array_args: list[_binding.FunctionInputRef],
     n_total: int,
     workflow_kind: WorkflowKind = WorkflowKind.OFF,
-    workflow_name: str,
+    function_name: str,
     output_is_declared: bool = False,
     output_label: str,
 ) -> Any:
@@ -402,11 +402,11 @@ def execute_sweep_rows_jax(
                 "installed. Install with: pip install probpipe[prefect]"
             )
         if workflow_kind is WorkflowKind.TASK:
-            run_vmap = task(name=f"{workflow_name}_vmap")(run_vmap)
+            run_vmap = task(name=f"{function_name}_vmap")(run_vmap)
         else:
             runner = prefect_config.resolve_task_runner()
             run_vmap = flow(
-                name=f"{workflow_name}_vmap",
+                name=f"{function_name}_vmap",
                 **({"task_runner": runner} if runner is not None else {}),
             )(run_vmap)
     return run_vmap()
@@ -415,9 +415,9 @@ def execute_sweep_rows_jax(
 def make_sweep_provenance(
     *,
     values: Mapping[str, Any],
-    array_args: list[_binding.WorkflowInputRef],
-    dist_args: list[_binding.WorkflowInputRef],
-    workflow_name: str,
+    array_args: list[_binding.FunctionInputRef],
+    dist_args: list[_binding.FunctionInputRef],
+    function_name: str,
     batch_shape: tuple[int, ...],
     k: int,
     parents: list[TrackedTerm] | None = None,
@@ -445,7 +445,7 @@ def make_sweep_provenance(
         f"workflow.{regime}",
         parents=parents,
         metadata={
-            "func": workflow_name,
+            "func": function_name,
             "batch_shape": tuple(batch_shape),
             "k": k,
             "ra_args": [ref.label for ref in array_args],
