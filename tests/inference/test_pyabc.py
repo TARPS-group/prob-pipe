@@ -20,11 +20,15 @@ pytest.importorskip("pyabc")  # requires the [pyabc] extra; skipped otherwise
 
 import probpipe.families._continuous as C
 from probpipe import (
+    Beta,
+    Dirichlet,
+    Gamma,
     MultivariateNormal,
     Normal,
     NumericArraySpec,
     OutputSpec,
     Record,
+    bijector_for,
     condition_on,
     mean,
 )
@@ -396,6 +400,25 @@ class TestPyABCDistributionBacking:
         np.testing.assert_allclose(draws.mean(axis=0), [0.0, 0.0], atol=0.2)
         np.testing.assert_allclose(draws.std(axis=0), [3.0, 3.0], atol=0.3)
 
+    def test_a_simplex_prior_has_one_coordinate_fewer_than_its_event(self):
+        pd = PyABCDistribution(Dirichlet("w", jnp.ones(3)), jax.random.PRNGKey(0))
+        assert pd.get_parameter_names() == ["p0", "p1"]
+
+    def test_pdf_is_the_density_in_unconstrained_coordinates(self):
+        """A positive prior's coordinate is a log, so its density gains the Jacobian ``exp(z)``."""
+        prior = Gamma("g", 2.0, 1.0)
+        pd = PyABCDistribution(prior, jax.random.PRNGKey(0))
+        expected = float(np.exp(np.asarray(prior._log_prob(jnp.exp(0.3))))) * np.exp(0.3)
+        assert pd.pdf({"p0": 0.3}) == pytest.approx(expected, rel=1e-5)
+
+    def test_rvs_gives_the_coordinates_of_a_prior_draw(self):
+        prior = Beta("p", 2.0, 3.0)  # mean 0.4
+        pd = PyABCDistribution(prior, jax.random.PRNGKey(0))
+        onto_support = bijector_for(prior.event_spec.spec.support).raw()
+        coordinates = jnp.array([pd.rvs()["p0"] for _ in range(2000)])
+        draws = np.asarray(jax.vmap(onto_support)(coordinates))
+        assert draws.mean() == pytest.approx(0.4, abs=0.03)
+
     def test_supports_non_converter_family(self):
         """Any sampleable marginal with a density works (no fixed family list):
         StudentT, which has no scipy-converter mapping, is feasible."""
@@ -403,6 +426,32 @@ class TestPyABCDistributionBacking:
             FactoredDistribution("prior", [C.StudentT(df=5.0, loc=0.0, scale=3.0, label="t")])
         )
         assert PyABCSMCMethod().check(observed_target(model, _observed(2.0))).feasible
+
+
+#: The SMC-ABC budget of the support tests.
+_SUPPORT_OPTIONS = {"n_particles": 100, "max_populations": 3, "random_seed": 0}
+
+
+class TestPyABCSupport:
+    """pyabc perturbs the prior's unconstrained coordinates, so every particle lies in the support."""
+
+    def test_a_posterior_near_a_bound_stays_in_the_unit_interval(self):
+        """A uniform prior's backend density is finite past the bounds, so only the
+        coordinates keep a perturbed particle inside them."""
+        post = condition_on.with_options(method="pyabc_smcabc", method_options=_SUPPORT_OPTIONS)(
+            _model(Beta("p", 1.0, 1.0)), _observed(0.95)
+        )
+        draws = np.asarray(flat_draws(post)["p"]).ravel()
+        assert np.all((draws > 0) & (draws < 1))
+
+    def test_a_simplex_posterior_stays_on_the_simplex(self):
+        post = condition_on.with_options(method="pyabc_smcabc", method_options=_SUPPORT_OPTIONS)(
+            _model(Dirichlet("w", jnp.ones(3))), _observed(0.7, 0.2, 0.1)
+        )
+        draws = np.asarray(flat_draws(post)["w"])
+        assert draws.shape == (post.num_atoms, 3)
+        assert np.all(draws > 0)
+        np.testing.assert_allclose(draws.sum(axis=-1), 1.0, rtol=1e-5)
 
 
 # ---------------------------------------------------------------------------

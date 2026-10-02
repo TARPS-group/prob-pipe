@@ -82,6 +82,7 @@ __all__ = [
     "run_chain_scan",
     "run_seed",
     "unconstrained_chain",
+    "unconstrained_coordinates",
 ]
 
 
@@ -791,7 +792,7 @@ def _flat_leaves(law: Any) -> list[tuple[tuple[int, ...], Any]] | None:
 
 
 class _LeafMap(NamedTuple):
-    """One leaf's segment of a flat chain state: its sizes, shapes, and bijector, if any."""
+    """One leaf's segment of a flat state: its sizes, shapes, and bijector, if any."""
 
     size: int
     shape: tuple[int, ...]
@@ -800,13 +801,26 @@ class _LeafMap(NamedTuple):
     bijector: Any
 
 
-def _leaf_maps(law: Any) -> list[_LeafMap] | None:
-    """The segment maps of a flat chain over *law*, or ``None`` when every leaf keeps its coordinates.
+class UnconstrainedCoordinates(NamedTuple):
+    """The maps between flat states of a law and its unconstrained coordinates, each at one point.
 
-    A leaf whose declared support is other than the reals takes the bijector
-    :func:`~probpipe.bijector_for` gives it. A leaf of the reals, of no declared
-    support, or of a support with no smooth bijector, such as a discrete one,
-    keeps its coordinates.
+    ``forward`` maps unconstrained coordinates to a flat state in the support,
+    ``inverse`` maps a flat state to its preimage, which is not finite outside
+    the support, and ``log_jacobian`` is the log-determinant of the forward
+    map's Jacobian. ``size`` is the number of unconstrained coordinates.
+    """
+
+    size: int
+    forward: Callable[[Array], Array]
+    inverse: Callable[[Array], Array]
+    log_jacobian: Callable[[Array], Array]
+
+
+def _leaf_maps(law: Any) -> list[_LeafMap] | None:
+    """The segment map of each leaf of a flat state of *law*, by the rule of :func:`unconstrained_coordinates`.
+
+    ``None`` when *law* declares no array or numeric record that a flat vector
+    lays out.
     """
     from ..core._dispatch import MathematicalDomainError, ResolutionError
     from ..core.constraints import real
@@ -832,8 +846,6 @@ def _leaf_maps(law: Any) -> list[_LeafMap] | None:
         maps.append(
             _LeafMap(size, shape, int(np.prod(unconstrained, dtype=int)), unconstrained, bijector)
         )
-    if all(leaf.bijector is None for leaf in maps):
-        return None
     return maps
 
 
@@ -843,16 +855,72 @@ def _segments(vector: Array, sizes: Iterable[int]) -> list[Array]:
     return [vector[..., start:stop] for start, stop in itertools.pairwise(bounds)]
 
 
+def _coordinates(maps: list[_LeafMap]) -> UnconstrainedCoordinates:
+    """The maps that move each leaf of *maps* by its bijector and keep the others' coordinates."""
+    sizes = [leaf.size for leaf in maps]
+    unconstrained_sizes = [leaf.unconstrained_size for leaf in maps]
+
+    def forward(z: Array) -> Array:
+        parts = []
+        for leaf, segment in zip(maps, _segments(z, unconstrained_sizes)):
+            if leaf.bijector is None:
+                parts.append(segment)
+                continue
+            value = leaf.bijector.raw()(jnp.reshape(segment, leaf.unconstrained_shape))
+            parts.append(jnp.reshape(value, (leaf.size,)))
+        return jnp.concatenate(parts)
+
+    def inverse(x: Array) -> Array:
+        parts = []
+        for leaf, segment in zip(maps, _segments(x, sizes)):
+            if leaf.bijector is None:
+                parts.append(segment)
+                continue
+            preimage = leaf.bijector._inverse(jnp.reshape(segment, leaf.shape))
+            parts.append(jnp.reshape(preimage, (leaf.unconstrained_size,)))
+        return jnp.concatenate(parts)
+
+    def log_jacobian(z: Array) -> Array:
+        total = jnp.zeros(())
+        for leaf, segment in zip(maps, _segments(z, unconstrained_sizes)):
+            if leaf.bijector is not None:
+                point = jnp.reshape(segment, leaf.unconstrained_shape)
+                total = total + leaf.bijector._log_det_jacobian(point)
+        return total
+
+    return UnconstrainedCoordinates(sum(unconstrained_sizes), forward, inverse, log_jacobian)
+
+
+def unconstrained_coordinates(law: Any) -> UnconstrainedCoordinates:
+    """The unconstrained coordinates of a flat state of *law*.
+
+    A leaf whose declared support is other than the reals takes the bijector
+    :func:`~probpipe.bijector_for` gives it, which maps the leaf's unconstrained
+    coordinates onto the support. A leaf of the reals, of no declared support,
+    or of a support with no smooth bijector, such as a discrete one, keeps its
+    coordinates.
+
+    Raises
+    ------
+    TypeError
+        If *law* declares no array or numeric record that a flat vector lays out.
+    """
+    maps = _leaf_maps(law)
+    if maps is None:
+        raise TypeError(f"{type(law).__name__} {law.label!r} draws no value a flat vector lays out")
+    return _coordinates(maps)
+
+
 def unconstrained_chain(
     density: Callable[[Array], Array], init: Array, law: Any
 ) -> tuple[Callable[[Array], Array], Array, Callable[[Array], Array]]:
     """The density, initial state, and draw map of a flat chain run in unconstrained coordinates.
 
-    Each leaf of *law* on a constrained support is moved by the bijector onto
-    that support, so the chain's state ranges over all of ``R^n`` and every
-    draw lies in the support. The density in the new coordinates adds each
-    bijector's log-Jacobian. An initial coordinate outside a leaf's support has
-    no preimage, and that leaf starts at the preimage of the bijector's center,
+    The chain runs in the coordinates :func:`unconstrained_coordinates` gives
+    *law*, so its state ranges over all of ``R^n`` and every draw lies in the
+    support. The density in these coordinates adds the forward map's
+    log-Jacobian. An initial coordinate outside a leaf's support has no
+    preimage, and that leaf starts at the preimage of the bijector's center,
     the origin.
 
     Parameters
@@ -873,29 +941,12 @@ def unconstrained_chain(
         keeping its coordinates gives *density*, *init*, and the identity.
     """
     maps = _leaf_maps(law)
-    if maps is None:
+    if maps is None or all(leaf.bijector is None for leaf in maps):
         return density, init, lambda states: states
-
-    def forward(z: Array) -> Array:
-        parts = []
-        for leaf, segment in zip(maps, _segments(z, [m.unconstrained_size for m in maps])):
-            if leaf.bijector is None:
-                parts.append(segment)
-                continue
-            value = leaf.bijector.raw()(jnp.reshape(segment, leaf.unconstrained_shape))
-            parts.append(jnp.reshape(value, (leaf.size,)))
-        return jnp.concatenate(parts)
-
-    def log_jacobian(z: Array) -> Array:
-        total = jnp.zeros(())
-        for leaf, segment in zip(maps, _segments(z, [m.unconstrained_size for m in maps])):
-            if leaf.bijector is not None:
-                point = jnp.reshape(segment, leaf.unconstrained_shape)
-                total = total + leaf.bijector._log_det_jacobian(point)
-        return total
+    coordinates = _coordinates(maps)
 
     def unconstrained_density(z: Array) -> Array:
-        return density(forward(z)) + log_jacobian(z)
+        return density(coordinates.forward(z)) + coordinates.log_jacobian(z)
 
     parts = []
     for leaf, segment in zip(maps, _segments(jnp.asarray(init), [m.size for m in maps])):
@@ -910,7 +961,7 @@ def unconstrained_chain(
     def constrain(states: Array) -> Array:
         states = jnp.asarray(states)
         flat = jnp.reshape(states, (-1, states.shape[-1]))
-        return jnp.reshape(jax.vmap(forward)(flat), (*states.shape[:-1], -1))
+        return jnp.reshape(jax.vmap(coordinates.forward)(flat), (*states.shape[:-1], -1))
 
     return unconstrained_density, unconstrained_init, constrain
 

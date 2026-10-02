@@ -19,12 +19,14 @@ from ..distributions._empirical import EmpiricalDistribution
 from ..operations._condition import InferenceMethod, _UnnormalizedConditional
 from ._approximate_distribution import make_posterior
 from ._inference_utils import (
+    _declared_vector,
     flat_unflatten,
     flat_vector,
     integer_seed,
     model_factors,
     parameter_given,
     run_seed,
+    unconstrained_coordinates,
 )
 
 if TYPE_CHECKING:
@@ -48,56 +50,66 @@ def _flat_key(i: int) -> str:
 
 
 class PyABCDistribution(pyabc.Distribution):
-    """A pyabc prior that samples and scores a ProbPipe prior jointly over its
-    *flattened* parameter vector.
+    """A pyabc prior over the unconstrained coordinates of a ProbPipe prior's flat parameter vector.
 
-    Sampling (:meth:`rvs`) and density (:meth:`pdf`) read the prior's draws
-    and density through its flat vector, the layout III.7 fixes for a numeric
-    law, so correlated and multivariate priors are supported. The object is a dict-like, picklable ``pyabc.Distribution`` keyed
-    by flat ``pN`` names, which give pyabc the parameter names and the flat
-    columns its perturbation kernel operates on.
+    The flat vector is the layout III.7 fixes for a numeric law, so correlated
+    and multivariate priors are supported. A leaf on a constrained support is
+    moved onto it by the bijector :func:`~probpipe.bijector_for` gives, so
+    pyabc's perturbation kernel keeps every particle in the support. Sampling
+    (:meth:`rvs`) maps a prior draw to its coordinates, and the density
+    (:meth:`pdf`) is the prior's in those coordinates. The object is a
+    dict-like, picklable ``pyabc.Distribution`` keyed by ``pN`` names, which
+    give pyabc the parameter names and the coordinates its perturbation kernel
+    moves.
     """
 
     def __init__(self, prior: Distribution, key: PRNGKey):
-        """Wrap *prior* as a joint pyabc prior over its flat parameter vector.
+        """Wrap *prior* as a joint pyabc prior over its unconstrained coordinates.
 
-        ``key`` is the JAX key threaded through :meth:`rvs` (split per draw). The
-        per-position ``pN`` keys give pyabc the parameter names
-        (``get_parameter_names``) and the flat columns its perturbation kernel
-        operates on; sampling and scoring go through the prior's flat vector.
+        ``key`` is the JAX key threaded through :meth:`rvs`, split per draw.
         """
         self._prior = prior
-        self._unflatten = flat_unflatten(prior)
         self._key = key
-        self._d = prior.event_spec.spec.vector_size
+        self._d = unconstrained_coordinates(prior).size
         super().__init__(**{_flat_key(i): pyabc.RV("uniform", 0, 1) for i in range(self._d)})
 
-    #: The unflattening map and the compiled draw and density, which derive from
-    #: the prior and do not pickle, so a copy rebuilds them on first use.
-    _DERIVED = ("_unflatten", "_draw", "_log_density")
+    #: The compiled draw and density, which derive from the prior and do not
+    #: pickle, so a copy rebuilds them on first use.
+    _DERIVED = ("_draw", "_log_density")
 
     def __getstate__(self) -> dict[str, Any]:
         return {k: v for k, v in self.__dict__.items() if k not in self._DERIVED}
 
     def _compiled_prior(self) -> tuple[Callable[..., Any], Callable[..., Any]]:
-        """The prior's flat draw at a key and its log-density at a flat vector, compiled."""
+        """The coordinates of a prior draw at a key and the log-density at coordinates, compiled."""
         if "_draw" not in self.__dict__:
             prior = self._prior
-            unflatten = self.__dict__.get("_unflatten") or flat_unflatten(prior)
-            self._draw = _compiled(lambda key: flat_vector(prior._sample(key)))
-            self._log_density = _compiled(lambda vec: prior._log_prob(unflatten(vec)))
+            unflatten = flat_unflatten(prior)
+            coordinates = unconstrained_coordinates(prior)
+
+            def log_density(z: Any) -> Any:
+                value = unflatten(coordinates.forward(z))
+                return prior._log_prob(value) + coordinates.log_jacobian(z)
+
+            self._draw = _compiled(
+                lambda key: coordinates.inverse(_declared_vector(prior, prior._sample(key)))
+            )
+            self._log_density = _compiled(log_density)
         return self._draw, self._log_density
 
     def rvs(self, *args: Any, **kwargs: Any) -> pyabc.Parameter:
-        """One joint draw from the prior, as a flat-keyed pyabc ``Parameter``."""
+        """One joint draw from the prior, at its coordinates, as a ``pN``-keyed pyabc ``Parameter``."""
         draw, _ = self._compiled_prior()
         self._key, sub = jax.random.split(self._key)
         vec = np.asarray(draw(sub))
         return pyabc.Parameter(**{_flat_key(i): float(vec[i]) for i in range(self._d)})
 
     def pdf(self, x: Mapping[str, float]) -> float:
-        """Joint prior density at *x*, the flat parameter vector reassembled
-        from its ``pN`` keys and scored as the prior's draw it lays out."""
+        """The prior's joint density at the coordinates *x*, reassembled from their ``pN`` keys.
+
+        It is the prior's density at the point the coordinates map to, times the
+        Jacobian determinant of that map.
+        """
         _, log_density = self._compiled_prior()
         vec = jnp.asarray([x[_flat_key(i)] for i in range(self._d)])
         return float(np.exp(np.asarray(log_density(vec))))
@@ -274,8 +286,9 @@ class PyABCSMCMethod(InferenceMethod):
             ``MedianEpsilon``, ``ListEpsilon``, ``AcceptanceRateScheduler``) to
             override.
         transitions : pyabc transition, optional
-            Perturbation kernel. Defaults to pyabc's own (a multivariate-normal
-            transition); pass a custom one to override.
+            Perturbation kernel over the prior's unconstrained coordinates.
+            Defaults to pyabc's own, a multivariate-normal transition; pass a
+            custom one to override.
         minimum_epsilon, min_acceptance_rate, max_total_nr_simulations, max_walltime : optional
             Additional stopping criteria forwarded to ``ABCSMC.run`` alongside
             ``max_populations`` (whichever is hit first stops the run); pyabc's
@@ -301,11 +314,12 @@ class PyABCSMCMethod(InferenceMethod):
         Returns
         -------
         EmpiricalDistribution
-            The final population's particles, keyed by parameter name, carrying
-            their (non-resampled) SMC importance weights. The per-generation
-            convergence trajectory (epsilon schedule, sample / particle counts,
-            acceptance rate) is attached as a ``smc_diagnostics`` group on
-            ``arviz_data``.
+            The final population's particles, mapped onto the prior's support
+            and keyed by parameter name, carrying their SMC importance weights,
+            which are not resampled. The per-generation convergence trajectory,
+            which holds the epsilon schedule, the sample and particle counts,
+            and the acceptance rate, is the ``arviz/smc_diagnostics`` group of
+            the result's annotations.
 
         Raises
         ------
@@ -335,24 +349,23 @@ class PyABCSMCMethod(InferenceMethod):
 
         x0 = {_DATA_KEY: _summarize(flat_vector(factors.observed)[None, :], summary_fn)}
         unflatten = flat_unflatten(prior)
+        coordinates = unconstrained_coordinates(prior)
 
         sim_key = [sim_key0]  # threaded per simulator call (no numpy reseed)
         simulate = _compiled(
-            lambda vec, key: flat_vector(
-                simulator._conditional_sample(parameter_given(factors, unflatten(vec)), key)
+            lambda z, key: flat_vector(
+                simulator._conditional_sample(
+                    parameter_given(factors, unflatten(coordinates.forward(z))), key
+                )
             )
         )
 
         def model_fn(parameters: Mapping[str, float]) -> _SumStat:
-            vec = jnp.asarray([float(parameters[_flat_key(i)]) for i in range(d)])
+            z = jnp.asarray([float(parameters[_flat_key(i)]) for i in range(d)])
             sim_key[0], sub = jax.random.split(sim_key[0])
-            raw = simulate(vec, sub)[None, :]
+            raw = simulate(z, sub)[None, :]
             return {_DATA_KEY: _summarize(raw, summary_fn)}
 
-        # Known limitation: pyabc perturbs in the prior's *constrained* space, so
-        # for bounded parameters it can propose out-of-support points (density 0
-        # — correct but wasteful). Perturbing in unconstrained space through the
-        # prior's constraint bijectors would avoid these proposals.
         abc = pyabc.ABCSMC(
             model_fn,
             pyabc_prior,
@@ -384,14 +397,16 @@ class PyABCSMCMethod(InferenceMethod):
         finally:
             np.random.set_state(np_state)
 
-        # Final population: flat columns p0..p{d-1}, with SMC importance weights.
+        # Final population: coordinates p0..p{d-1}, with SMC importance weights,
+        # mapped onto the support. The map keeps each particle's weight.
         df, weights = history.get_distribution(m=0, t=history.max_t)
-        flat = df.reindex(columns=[_flat_key(i) for i in range(d)]).to_numpy(dtype=float)
+        particles = df.reindex(columns=[_flat_key(i) for i in range(d)]).to_numpy(dtype=float)
+        flat = jax.vmap(coordinates.forward)(jnp.asarray(particles))
         weights = np.asarray(weights, dtype=float)
 
         # Lift the flat columns back to name-keyed Records via the target's declaration.
         return make_posterior(
-            [jnp.asarray(flat)],
+            [flat],
             parents=(target,),
             method="pyabc_smcabc",
             weights=jnp.asarray(weights / weights.sum()),

@@ -131,33 +131,27 @@ PROFILES: dict[str, MethodProfile] = {
 }
 
 
-#: The (method, representation, case) runs that fail because of a library bug,
-#: with the bug and the exception the failure raises. Each is collected as a
-#: pending test, so the suite stays green and the ledger lists it.
+#: The (method, representation, case) runs that fail for a known reason, a
+#: library bug or a limit of the harness's run, with the reason and the exception
+#: the failure raises. Each is collected as a pending test, so the suite stays
+#: green and the ledger lists it.
 KNOWN_FAILURES: dict[tuple[str, str, str], tuple[str, type[BaseException]]] = {}
 
 _ABC_BUDGET = (
     "the harness's SMC-ABC budget, 200 particles over four populations, leaves a "
     "coordinate's mean further from the reference than a quarter of its posterior sd"
 )
-_ABC_OUTSIDE_THE_SUPPORT = (
-    "bug: pyABC perturbs a bounded parameter in its constrained coordinate, and "
-    "particles outside the unit interval reach the posterior"
-)
-_ABC_OFF_THE_SIMPLEX = (
-    "bug: pyABC perturbs a simplex parameter in its constrained coordinates, so a "
-    "perturbed particle leaves the simplex, where the prior's density is NaN"
+_ABC_RAW_OUTCOMES = (
+    "the harness's SMC-ABC run measures distance on the raw outcomes, and at its final "
+    "tolerance of two mismatched outcomes the ABC posterior favors a theta near 0, where "
+    "the eleven observed failures are matched most often"
 )
 KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "gaussian_linear")] = (_ABC_BUDGET, AssertionError)
 KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "eight_schools")] = (_ABC_BUDGET, AssertionError)
 KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "gamma_poisson")] = (_ABC_BUDGET, AssertionError)
 KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "poisson_regression")] = (_ABC_BUDGET, AssertionError)
 KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "beta_bernoulli")] = (
-    _ABC_OUTSIDE_THE_SUPPORT,
-    ValueError,
-)
-KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "dirichlet_multinomial")] = (
-    _ABC_OFF_THE_SIMPLEX,
+    _ABC_RAW_OUTCOMES,
     AssertionError,
 )
 
