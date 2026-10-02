@@ -709,6 +709,23 @@ def _array_event(declaration: OutputSpec, label: str, family: type, rank: int | 
     return None
 
 
+def _cast_event(declaration: OutputSpec, label: str, family: type) -> str | None:
+    """Why a draw of *family* does not cast to the dtype *declaration* sets, or ``None``.
+
+    A conversion's result carries the source's declaration, so the family's
+    dtype must cast to the source's by the same-kind rule, as a law's must to
+    the ``DistributionSpec`` it matches.
+    """
+    declared = declaration.spec.dtype
+    drawn = _fit_dtype(family)
+    if declared is None or np.can_cast(drawn, declared, casting="same_kind"):
+        return None
+    return (
+        f"{family.__name__} draws {drawn}, which does not cast to the dtype {declared} "
+        f"that {label!r} declares"
+    )
+
+
 def _check_support(result: Distribution, law: Distribution) -> None:
     """Refuse a fit whose support does not contain the law's.
 
@@ -765,9 +782,10 @@ class _MomentMatching(Converter):
     The family is the requested target, and the fit reads the statistics the
     family's parameters need: a moment the law claims in closed form, and any
     other statistic from one shared batch of ``num_samples`` draws. The fit
-    keeps the law's label and component. Unless ``check_support=False``, its
-    support must contain the law's. The counted families need the option
-    ``total_count``.
+    keeps the law's label and component, and a family whose draws do not cast
+    to the law's dtype is infeasible, as a ``Normal`` fit to a ``Bernoulli``
+    law is. Unless ``check_support=False``, its support must contain the
+    law's. The counted families need the option ``total_count``.
     """
 
     _reads = ("num_samples", "total_count", "check_support", "event_spec")
@@ -811,7 +829,9 @@ class _MomentMatching(Converter):
         else:
             declaration, label = law.event_spec, law.name
         needs, parameters, rank = fit
-        reason = _array_event(declaration, label, target_type, rank)
+        reason = _array_event(declaration, label, target_type, rank) or _cast_event(
+            declaration, label, target_type
+        )
         if reason is not None:
             return reason
         if target_type in _COUNTED:
@@ -826,10 +846,10 @@ class _MomentMatching(Converter):
     def check(self, source: Any, target_type: type, **options: Any) -> ConversionInfo:
         """Promise the family *target_type* over the source's declaration, without fitting it.
 
-        The promised declaration is the source's shape with the family's dtype,
-        which the registry holds to the source's by the same-kind rule, so a fit
-        whose draws do not cast to the source's dtype is refused here as the
-        call refuses it. The support is left to the fit.
+        The promised declaration is the source's shape with the family's dtype.
+        A fit whose draws do not cast to the source's dtype by the same-kind
+        rule is infeasible, so the registry tries the next converter. The
+        support is left to the fit.
 
         Raises
         ------
