@@ -637,6 +637,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   arrays now maps as a batch of records does, the 1,000 points take under 2 s,
   and the scores keep the batch's levels. A batch that stores objects, such as a
   `DistributionBatch`, still runs row by row.
+- **`dispatch="jax"` raises a call's `ApplicabilityError`.** A swept batch whose
+  elements do not conform to the call's declarations, such as values of the
+  wrong shape for `log_prob`, raised `ApplicabilityError` under
+  `dispatch="auto"` and `"sequential"`, and a `ValueError` saying the function
+  failed while tracing under `dispatch="jax"`. Every dispatch now raises the
+  `ApplicabilityError`, as each raises a result's `ResultSchemaError`.
 - **A record view of a law with a joint support leaves each leaf's support
   unset.** A record view of a `Dirichlet` gave every leaf `simplex`, which holds
   for the joint vector only. A leaf keeps the source's support only when the

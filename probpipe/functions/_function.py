@@ -835,9 +835,11 @@ def _require_jax_traceable(
 ) -> None:
     """Raise a clear error if explicit JAX dispatch cannot trace.
 
-    A result that violates its declaration while the probe traces raises its
-    :class:`~._result.ResultSchemaError` or :class:`~._result.ResultKindError`
-    unchanged, as the other dispatch modes raise it at return.
+    The probe's errors that the other dispatch modes raise too are raised
+    unchanged: the :class:`~._call.ApplicabilityError` of a point whose
+    declarations violate the call contract, which planning raises, and the
+    :class:`~._result.ResultSchemaError` or :class:`~._result.ResultKindError` of
+    a result that violates its declaration, which the return raises.
     """
     output = function.output_spec.spec if function.output_spec is not None else None
     if _has_output_support(output):
@@ -850,7 +852,10 @@ def _require_jax_traceable(
     )
     if trace_error is None:
         return
-    if isinstance(trace_error, (_result.ResultSchemaError, _result.ResultKindError)):
+    if isinstance(
+        trace_error,
+        (_call.ApplicabilityError, _result.ResultSchemaError, _result.ResultKindError),
+    ):
         raise trace_error
     if isinstance(trace_error, _context._StochasticProbeSignal):
         raise TypeError(

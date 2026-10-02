@@ -9,7 +9,14 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import ApplicabilityError, NumericArray, NumericArrayBatch, NumericArraySpec, Record
+from probpipe import (
+    ApplicabilityError,
+    NumericArray,
+    NumericArrayBatch,
+    NumericArraySpec,
+    NumericRecordBatch,
+    Record,
+)
 from probpipe.core._dispatch import ResolutionError
 from probpipe.core._specs import OutputSpec
 from probpipe.core.constraints import non_negative
@@ -109,6 +116,21 @@ class TestTheScoredValue:
             rtol=1e-6,
         )
 
+    @pytest.mark.parametrize("dispatch", ["auto", "sequential", "jax"])
+    @pytest.mark.parametrize(
+        ("law", "values"),
+        [
+            (CountedVector("v"), NumericArrayBatch("points", jnp.zeros((4, 2)), "point")),
+            (OneField("o"), NumericRecordBatch("points", {"y": jnp.zeros(4)}, "point")),
+        ],
+        ids=["arrays", "records"],
+    )
+    def test_a_batch_of_values_that_do_not_conform_raises_applicability_error(
+        self, law, values, dispatch
+    ):
+        with pytest.raises(ApplicabilityError, match="does not conform"):
+            log_prob.with_options(dispatch=dispatch)(law, values)
+
 
 class TestABatchOfArraysIsScoredInOneMappedCall:
     @staticmethod
@@ -152,10 +174,6 @@ class TestABatchOfArraysIsScoredInOneMappedCall:
         np.testing.assert_allclose(
             np.asarray(mapped.values), np.asarray(sequential.values), rtol=1e-6
         )
-
-    def test_a_batch_of_values_of_another_shape_raises_applicability_error(self):
-        with pytest.raises(ApplicabilityError, match="does not conform"):
-            log_prob(CountedVector("v"), NumericArrayBatch("points", jnp.zeros((4, 2)), "point"))
 
 
 class TestLiftedScores:
