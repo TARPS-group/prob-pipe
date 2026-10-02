@@ -38,6 +38,59 @@ from probpipe import (
 from probpipe.core.constraints import positive, real
 
 
+class TestFunctionSpecMatching:
+    @pytest.mark.parametrize("from_value", [False, True])
+    @pytest.mark.parametrize(
+        ("expected", "actual", "message"),
+        [
+            (
+                FunctionSpec(InputSpec(x=NumericArraySpec(()))),
+                Function("actual", lambda y: y, input_spec={"y": NumericArraySpec(())}),
+                "incompatible input slots",
+            ),
+            (
+                FunctionSpec(output_spec=OutputSpec(left=None)),
+                Function("actual", lambda: 1, output_spec=OutputSpec(right=None)),
+                "incompatible output components",
+            ),
+            (
+                FunctionSpec(output_spec=OutputSpec(component=None)),
+                Function("actual", lambda: {"component": 1}, output_spec=RecordSpec(component=())),
+                "incompatible output components",
+            ),
+            (
+                FunctionSpec(output_spec=OutputSpec(RecordSpec(left=()))),
+                Function("actual", lambda: {"right": 1}, output_spec=RecordSpec(right=())),
+                "incompatible output components",
+            ),
+        ],
+        ids=["slots", "component-names", "whole-vs-exposed", "exposed-fields"],
+    )
+    def test_incompatible_declarations_raise(self, expected, actual, message, from_value):
+        with pytest.raises(ValueError, match=message):
+            if from_value:
+                expected.bind_dims_from_value(actual)
+            else:
+                expected.bind_dims_from_spec(actual.spec)
+
+    def test_matching_declarations_bind_dimensions_without_changing_labels(self):
+        expected = FunctionSpec(
+            InputSpec(x=NumericArraySpec(("n",))),
+            OutputSpec(component=NumericArraySpec(("n",))),
+        )
+        actual = Function(
+            "display",
+            lambda x: x,
+            input_spec={"x": NumericArraySpec((3,))},
+            output_spec=OutputSpec(component=NumericArraySpec((3,))),
+        )
+        for value in (actual, actual.with_name("another")):
+            assert expected.bind_dims_from_value(value) == actual.spec
+            assert expected.bind_dims_from_spec(value.spec) == actual.spec
+        assert expected.free_dims == {"n"}
+        assert actual.name == "display"
+
+
 class TestFunctionDeclarations:
     def test_required_name_and_raw_representation(self):
         def add(x, /, *, y=2):
