@@ -13,10 +13,10 @@ import pytest
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
-    Function,
     Distribution,
     DistributionArray,
     EmpiricalDistribution,
+    Function,
     KDEDistribution,
     Normal,
     NumericArrayBatch,

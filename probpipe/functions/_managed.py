@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..core.config import ProvenanceMode
-from ._rng import _RandomEventPath, _encode_value
+from ._rng import _encode_value, _RandomEventPath
 
 _MANAGED_WORK_ITEM_ABI = "probpipe.managed_work_item/v1"
 

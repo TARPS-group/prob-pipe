@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from ..custom_types import PRNGKey
 from . import _context
-from ._rng import _RandomEventPath, _encode_value
+from ._rng import _encode_value, _RandomEventPath
 
 if TYPE_CHECKING:
     from ._callable import CallableAnchor
