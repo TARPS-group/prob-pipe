@@ -408,11 +408,20 @@ a leading underscore (`_simple.py`, `_blackjax_rwmh.py`).  The package
 underscore modules directly.  See `probpipe/__init__.py` for the
 full public API surface.
 
-The diagnostics accessor is the one documented package-graph edge from
+The diagnostics accessor is a documented package-graph edge from
 `distributions/` back to a feature subpackage: `Distribution.diagnostics` lazily
 imports `probpipe.diagnostics.views.DiagnosticsView` only when the accessor is
 read. Keep this edge lazy so importing `probpipe` does not import the diagnostics
 subpackage or its optional ArviZ-facing dependencies.
+
+`values/` provides Function values and pure binding; `functions/` installs their
+call engine. Inference, validation, diagnostics, conversion, and modeling code
+may consume those layers. The base never imports the engine. Current reverse
+edges include core's imports of migrated implementations and the conversion
+registry's exchange with engine services; the actual graph still contains
+cycles. See [STYLE_GUIDE §6](STYLE_GUIDE.md#6-subpackage-dependencies) for import
+permissions and the explicit initialization exceptions. The target layout is
+recorded separately in `design/package-structure.md`.
 
 ### Distributions: `probpipe-core` and `probpipe`
 
@@ -446,7 +455,7 @@ uv build packaging/probpipe   # probpipe (metapackage)
 
 1. **Distributions are immutable** — parameters fixed at construction;
    operations return new distributions. Records, batches, functions, and
-   templates enforce this (assignment and deletion raise); `Distribution`
+   specs enforce this (assignment and deletion raise); `Distribution`
    permits both for now, because the documented emulator pattern trains a
    subclassed random function in place and fitting has no contract yet that
    returns a new fitted term. Treat the rule as binding when writing new code
@@ -611,7 +620,7 @@ uv build packaging/probpipe   # probpipe (metapackage)
 | `JointEmpirical` / `NumericJointEmpirical` | Weighted joint samples distribution. Generic base supports only sampling; the numeric subclass adds exact `SupportsMean` / `SupportsVariance`. Conditioning is not offered, since dropping stored fields is marginalization; build the marginal directly. `JointEmpirical(...)` dispatches to `NumericJointEmpirical` when every field is numeric. (Empirical distributions do not claim `SupportsLogProb`; use `from_distribution(emp, KDEDistribution, …)` for a density.) |
 | `EmpiricalDistribution` / `RecordEmpiricalDistribution` | Weighted empirical distribution. The generic base holds samples of any type; the Record-based specialisation adds `event_shapes`, exact moments (`SupportsMean` / `SupportsVariance` / `SupportsCovariance`), and TFP-style shape semantics. Numeric-array sources auto-wrap as a single-field Record keyed by the name. Two views on the stored draws: `samples` (structured `NumericRecord`, per-field access via `samples[name]`) and `flat_samples` (flat `(n, dim)` matrix across all fields, in insertion order). Use `flat_samples` for stacked-matrix idioms like `post.flat_samples.mean(axis=0)` for per-parameter posterior summaries. |
 | `BootstrapReplicateDistribution` / `RecordBootstrapReplicateDistribution` | N-fold product over a source: each draw is a bootstrapped dataset of `replicate_size` i.i.d. observations. Accepts a `Record`, `RecordEmpiricalDistribution`, numeric array, or any `SupportsSampling` source, in which case `replicate_size` is mandatory. |
-| `Function` | Immutable first-class `TrackedTerm` / `Annotated`, schema-aware computation term. It owns a frozen Python `signature`, optional authoritative input/output `RecordSpec`s, and an implementation object. `apply` performs one raw evaluation; `__call__` adds lifting, variadic slot planning, sweeps, orchestration, wrapping, and Function-first provenance. Prefect is off by default; views are grouped by parent for correlated broadcasting. |
+| `Function` | Immutable first-class `TrackedTerm` / `Annotated`, schema-aware computation term. It owns a frozen Python `signature`, optional authoritative `InputSpec` / `OutputSpec` declarations, and an implementation object. `apply` performs one raw evaluation; `__call__` adds lifting, variadic slot planning, sweeps, orchestration, wrapping, and Function-first provenance. Prefect is off by default; views are grouped by parent for correlated broadcasting. |
 | `Module` | Stateful workflow-aware base class (see `@workflow_method`) |
 | Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, the two conditioning capabilities, etc.; dynamic inclusion on `ProductDistribution` and `TransformedDistribution` |
 | `BaseDispatchRegistry` | Abstract base for the dispatch registries: holds registration and the validation of a method's declarations, ordering by exactness, then rank, then type specificity, then registration order, opt-in filtering (`priority=None`) with override warnings, and the `check`/`execute` loop, `_find_methods` included. Arity-specific subclasses implement `_cache_key`, `_validate_supported_types`, `_distance`, and `_format_key`. |

@@ -123,7 +123,7 @@ while a normal call labels its independent result.
 
 If an implementation returns an existing `Record`, `RecordBatch`, or
 `Distribution`, `apply` preserves its identity. `__call__` instead creates a
-shallow result copy that shares value data and templates, owns a separate
+shallow result copy that shares value data and declarations, owns a separate
 annotations container, and receives only the current call's provenance. Do not
 restore identity-through behavior at the workflow boundary. Variadic Functions
 without an input declaration are supported: the planner treats every `*args`
@@ -180,7 +180,7 @@ Method classes are CamelCase: ``TFPNutsMethod``, ``CmdStanNutsMethod``,
 `Function` keeps ProbPipe controls separate from wrapped-function
 kwargs. Use `@function(...)` for definition-time controls
 such as `dispatch` and `n_broadcast_samples`, and use
-`workflow.with_options(...)(...)` for one-call overrides such as
+`workflow.with_options(...)` for a reusable copy with revised controls such as
 `n_broadcast_samples` and `include_inputs`.
 
 Ordinary workflow calls should treat keyword arguments as user-function
@@ -592,86 +592,67 @@ under the project's `basic` pyright mode where practical.
 
 ## 6. Subpackage Dependencies
 
-The dependency graph must remain **acyclic**. Allowed import directions:
+The target dependency graph is **acyclic**. The current package migration
+still has the specific reverse edges listed below; do not extend those exceptions
+or describe the current import graph as already acyclic.
 
-```
-custom_types  (no internal deps — leaf)
-     ↑
-   core/      (imports custom_types only)
-     ↑
-distributions/ (imports core/, custom_types)
-record/        (imports core/, custom_types)
-     ↑
-linalg/       (imports core/, custom_types; no distribution imports)
-     ↑
-converters/   (imports core/, distributions/, custom_types)
-     ↑
-modeling/     (imports core/, inference/, converters/, custom_types)
-inference/    (imports core/, custom_types)
-validation/   (imports core/, inference/, custom_types)
-diagnostics/  (imports core/, inference/, validation/, custom_types)
-```
+These are the normal import permissions (root-level type and array utilities
+are also shared dependencies):
 
-`distributions/_distribution.py` is the distribution base: it defines
-`Distribution` and `DistributionSpec` and imports only from `core/` at module
-level. Every package that works with distributions may import it, and `core/`
-does so under the first exception below.
+| Package | May import |
+| --- | --- |
+| `core/` | `custom_types` and root-level utilities |
+| `values/` | `core/`, the distribution base for returned-law validation |
+| `distributions/` | `core/` |
+| `record/`, `linalg/` | `core/` |
+| `functions/` | `values/`, `core/`, `distributions/` |
+| `converters/` | `core/`, `values/`, `distributions/`, `functions/` |
+| `inference/` | `core/`, `values/`, `distributions/`, `functions/` |
+| `modeling/` | `core/`, `values/`, `distributions/`, `functions/`, `inference/`, `converters/` |
+| `validation/` | `core/`, `values/`, `distributions/`, `functions/`, `inference/` |
+| `diagnostics/` | `core/`, `values/`, `distributions/`, `functions/`, `inference/`, `validation/` |
 
 `values/_function_base.py` owns `Function` and `FunctionSpec`; `functions/`
-owns binding-to-engine integration, planning, broadcasting, sweeping, RNG,
-execution, replay, and result wrapping. The base never imports the engine:
-`install_call_engine` installs it at package initialization. Pure Python binding
-helpers live in `values/_binding.py` so raw evaluation works without the engine.
+owns planning, broadcasting, sweeping, RNG, execution, replay, and result
+wrapping. The base **never imports the engine**: `install_call_engine` installs
+execution and mode-resolution callbacks at package initialization. Pure Python
+binding helpers live in `values/_binding.py` so raw evaluation works without
+the engine. `distributions/_distribution.py` owns `Distribution` and
+`DistributionSpec`; consumers may import that base without importing a
+particular distribution family.
 
-### Rules
+Higher-level packages use `Function` from `values/`, and decorators, workflow
+scopes, and execution services from `functions/`. `converters/` must not import
+`inference/` or `modeling/`; `inference/` must not import `converters/`, and may
+import `modeling/` only for the existing lazy model dispatch below. `record/`
+and `linalg/` do not import distribution families or higher-level packages.
 
-1. **`core/`** must never import from `record/`, `linalg/`,
-   `converters/`, `inference/`, or `modeling/`, and it imports only the
-   distribution base from `distributions/`.
-2. **`distributions/`** must never import from `record/`, `linalg/`,
-   `converters/`, `inference/`, or `modeling/`.
-3. **`record/`** must never import from `distributions/`, `linalg/`,
-   `converters/`, `inference/`, or `modeling/`.
-4. **`linalg/`** is self-contained; it may import from `core/` and
-   `custom_types` only.
-5. **`converters/`** may import from `distributions/` and `core/` but
-   must never import from `inference/` or `modeling/`.
-6. **`inference/`** must never import from `modeling/` or `converters/`.
-7. **`modeling/`** may import from `inference/` (for MCMC result types)
-   and from `converters/` (for auto-conversion in conditioning).
-8. **`validation/`** may import from `core/`, `inference/`, and
-   `custom_types`.
-9. **`diagnostics/`** may import from `core/`, `inference/`, `validation/`,
-   and `custom_types`; it must not become a dependency of those packages except
-   for the documented lazy accessor edge below.
+### Existing reverse edges and initialization constraints
 
-> **Exceptions** (intentional reverse edges):
->
-> - `core/` → `distributions/_distribution.py` (module-level imports of the
->   distribution base). The base is defined at its target location, while the
->   `core/` modules that build on it have not yet moved out of `core/`.
->   Importing the base initializes `probpipe.distributions`, whose families
->   import those modules back, so the two packages form a cycle. The cycle stays
->   benign because `probpipe/__init__.py` imports `probpipe.distributions` before
->   any other first-party module. A `core/` module therefore imports the base
->   from `..distributions._distribution`, never through the names
->   `probpipe.distributions` re-exports, since that package's `__init__` is still
->   running when the module loads.
-> - During #448 B1, unmigrated `core/` modules may import the moved
->   `values/` and `functions/` implementations. The old workflow paths have no
->   shims. `functions/__init__.py` resolves exports lazily to allow core and
->   distribution bootstrap before installing the engine. This is a transition
->   exception, not permission to add reverse dependencies to the Function base.
-> - `inference/` → `modeling/` (lazy imports for model-type dispatch in
->   `_tfp_mcmc`, `_nutpie`, `_cmdstan_method`, `_pymc_method`)
-> - `inference/` → `distributions/` (lazy imports: prior-type dispatch on
->   distribution classes in `_blackjax_ess`, `bijector_for` constraint
->   reparameterization in `_bayesflow_posteriors`)
-> - `distributions/` → `diagnostics.views` (lazy import inside
->   `Distribution.diagnostics` to construct the read-only diagnostics accessor)
->
-> Except for the documented migration edges, these use lazy (in-function) imports to avoid circular
-> imports at module load time. Do not add new reverse edges without discussion.
+- `core/` imports the distribution base while distribution implementations
+  still depend on `core/`. Package initialization imports distributions first;
+  core consumers therefore import `..distributions._distribution`, rather
+  than re-exports from the partially initialized distribution package.
+- Unmigrated `core/` implementations import `values/` and `functions/` for
+  Function terms and engine services. `core/ops.py` also lazily imports the
+  inference and conversion registries. These are migration dependencies,
+  not permission to introduce new upward dependencies.
+- `functions/_normalization.py` imports the conversion registry, while
+  `converters/_registry.py` imports broker and descendant-capture services
+  from `functions/`. The current packages therefore have a cycle.
+  `functions/__init__.py` resolves exports lazily so helper imports do not
+  eagerly initialize the call engine. Conversion's target placement is
+  described in `design/package-structure.md`.
+- `distributions/transformed.py` imports Function broker services for
+  stochastic effects. Keep this limited to the existing integration.
+- `inference/` lazily imports `modeling/` for model dispatch in `_tfp_mcmc`,
+  `_nutpie`, `_cmdstan_method`, and `_pymc_method`.
+- `Distribution.diagnostics` lazily imports `diagnostics.views` to build its
+  accessor; distributions must not eagerly import diagnostics or its optional
+  dependencies.
+
+Preserve these initialization boundaries while the remaining modules move.
+New reverse edges require an explicit architectural decision.
 
 ---
 
@@ -827,10 +808,10 @@ modules (`_*.py`) whose symbols are re-exported through the package
 ### 9.2 Immutability
 
 Distribution and `Function` objects are immutable. Parameters, Function
-signatures, templates, controls, and implementations are fixed at construction;
+signatures, declarations, controls, and implementations are fixed at construction;
 operations return new terms rather than mutating state.
 
-Records, batches, functions, and templates **enforce** this: assignment and
+Records, batches, functions, and specs **enforce** this: assignment and
 deletion raise `AttributeError`, naming the class touched.
 
 **Distributions do not enforce it yet.** `Distribution` overrides both
