@@ -661,8 +661,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the tie is documentary).
 
   `tfp_rwmh` (gradient-free RWMH) is unchanged at priority 55 — the
-  gradient-free-MCMC migration to BlackJAX is queued separately
-  (`~/.claude/plans/bie-rwmh-blackjax-migration.md`).
+  gradient-free-MCMC migration to BlackJAX is queued separately.
 
   Migration: an existing `condition_on(model, data)` call that
   previously ran TFP NUTS now runs BlackJAX NUTS. The numerical
