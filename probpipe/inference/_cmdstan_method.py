@@ -11,9 +11,8 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..core._dispatch import Feasibility
-from ..core._record_spec import NumericRecordSpec
 from ..core._specs import OutputSpec
-from ..families._programs import _StanPosterior
+from ..families._programs import _parameter_record_at, _StanPosterior
 from ..operations._condition import InferenceMethod
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._inference_utils import integer_seed, run_seed
@@ -107,9 +106,8 @@ class CmdStanNutsMethod(InferenceMethod):
             )
             for c in range(num_chains)
         ]
-        event_spec = OutputSpec(
-            NumericRecordSpec(**{name: draws[name].shape[1:] for name in names})
-        )
+        shapes = {name: draws[name].shape[1:] for name in names}
+        event_spec = OutputSpec(_parameter_record_at(target.event_spec.spec, shapes))
 
         return make_posterior(
             chains,

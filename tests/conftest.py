@@ -93,6 +93,14 @@ def cov_matrix(dim):
     return A
 
 
+@pytest.fixture(scope="session")
+def _stanc():
+    """Skip unless BridgeStan's stanc compiler is here, which a StanModel reads its program with."""
+    from tests._stanc import require_stanc
+
+    require_stanc()
+
+
 @pytest.fixture(scope="module")
 def _stan_toolchain(tmp_path_factory):
     """Skip Stan integration tests unless BridgeStan can compile here.

@@ -8,9 +8,9 @@ from typing import Any
 import numpy as np
 
 from ..core._dispatch import Feasibility
-from ..core._record_spec import NumericRecordSpec
 from ..core._specs import OutputSpec
 from ..custom_types import ArrayLike
+from ..families._programs import _parameter_record_at
 from ..functions import function
 from ..operations._condition import InferenceMethod, _UnnormalizedConditional
 from ._approximate_distribution import ApproximateDistribution, make_posterior
@@ -91,8 +91,8 @@ def _nutpie_posterior(
 
     # Build the parameter record in canonical field order from the
     # conditioned build before sampling (fail fast on a dynamic-RV /
-    # non-concrete model). A Stan model declares its parameter blocks, whose
-    # shapes the trace gives.
+    # non-concrete model). A Stan model declares its parameter blocks, with
+    # their dtypes and supports, and the trace gives their shapes.
     if pymc_build is not None:
         param_names = list(model._conditioned_param_names(pymc_build))
         event_spec = OutputSpec(model._parameter_record_for(pymc_build, param_names))
@@ -109,11 +109,8 @@ def _nutpie_posterior(
         **kwargs,
     )
     if event_spec is None:
-        event_spec = OutputSpec(
-            NumericRecordSpec(
-                **{name: np.shape(trace.posterior[name].values)[2:] for name in param_names}
-            )
-        )
+        shapes = {name: np.shape(trace.posterior[name].values)[2:] for name in param_names}
+        event_spec = OutputSpec(_parameter_record_at(model.event_spec.spec, shapes))
 
     # Extract the parameters alone, in nutpie's natural ``data_vars`` order
     # (it sorts alphabetically); ``field_order`` lets make_posterior realign

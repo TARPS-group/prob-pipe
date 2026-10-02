@@ -339,11 +339,11 @@ class TestPyMCModel:
         )
 
     def test_a_count_drawn_as_a_float_is_scored(self):
-        """The Bernoulli count of ``beta_bernoulli`` conforms to the declaration as float32 and scores."""
+        """The Bernoulli count of ``beta_bernoulli`` is declared an integer, and scores as float32."""
         case = canonical.case("beta_bernoulli")
         pymc = case.pymc_model()
         value = {"theta": np.float32(0.3), "y": np.asarray(case.data["y"], np.float32)}
-        assert pymc.event_spec.spec["y"].is_valid(value["y"])
+        assert pymc.event_spec.spec["y"].dtype == np.dtype(jnp.result_type(int))
         expected = (
             scipy.stats.beta.logpdf(0.3, 1, 1)
             + scipy.stats.bernoulli.logpmf(np.asarray(value["y"]), 0.3).sum()

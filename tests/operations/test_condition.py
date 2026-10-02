@@ -622,6 +622,7 @@ class TestTheNormalizationStage:
         draws = kernel._conditional_sample({"b": 2.0}, jax.random.PRNGKey(0), (3,))
         assert draws.shape == (3,)
 
+    @pytest.mark.usefixtures("_stanc")
     def test_a_per_value_kernel_passes_the_budgets_to_its_method_only(
         self, approximate_method, tmp_path
     ):
@@ -1054,6 +1055,7 @@ class TestEndToEnd:
         assert _is_normalized(posterior)
         assert set(posterior.event_spec.components) == {"sigma"}
 
+    @pytest.mark.usefixtures("_stanc")
     def test_a_stan_model_bound_to_its_data_is_normalized_by_a_stan_method(self, tmp_path):
         from probpipe.families import StanModel
 

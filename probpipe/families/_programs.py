@@ -20,8 +20,11 @@ inference-method registry.
 
 from __future__ import annotations
 
+import functools
 import inspect
+import json
 import re
+import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,6 +39,17 @@ from ..core._immutable import transient_memo
 from ..core._record_spec import NumericRecordSpec, RecordSpec
 from ..core._spec_base import NumericArraySpec
 from ..core._specs import OpaqueSpec, OutputSpec
+from ..core.constraints import (
+    Constraint,
+    greater_than,
+    interval,
+    positive,
+    positive_definite,
+    real,
+    simplex,
+    sphere,
+    unit_interval,
+)
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike
 from ..distributions._capabilities import (
@@ -268,20 +282,129 @@ def _without_bounds(statement: str) -> str:
     return "".join(kept)
 
 
+def _bounds_of(statement: str) -> str:
+    """The text of *statement*'s first ``<...>`` group, which declares its bounds, or ``""``."""
+    opening = statement.find("<")
+    if opening < 0:
+        return ""
+    depth = 0
+    for index in range(opening, len(statement)):
+        depth += {"<": 1, ">": -1}.get(statement[index], 0)
+        if not depth:
+            return statement[opening + 1 : index]
+    return statement[opening + 1 :]
+
+
+def _top_level_parts(text: str) -> list[str]:
+    """*text* split at the commas outside parentheses and brackets."""
+    parts, depth, current = [], 0, []
+    for char in text:
+        depth += {"(": 1, "[": 1, ")": -1, "]": -1}.get(char, 0)
+        if char == "," and not depth:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+    parts.append("".join(current))
+    return [part.strip() for part in parts if part.strip()]
+
+
+#: A bound that is an expression rather than a number, which no support states.
+_EXPRESSION = object()
+
+
+def _bounds(text: str) -> dict[str, Any]:
+    """Each bound *text* declares, by keyword: a number, or :data:`_EXPRESSION`."""
+    declared: dict[str, Any] = {}
+    for part in _top_level_parts(text):
+        keyword, _, value = part.partition("=")
+        try:
+            declared[keyword.strip()] = float(value)
+        except ValueError:
+            declared[keyword.strip()] = _EXPRESSION
+    return declared
+
+
 def _sizes(expression: str | None) -> list[str]:
     return [part.strip() for part in expression.split(",")] if expression else []
 
 
-def _declared_variables(block: str) -> list[tuple[str, tuple[str, ...]]]:
-    """Each variable a data or parameters block declares, with its size expressions, in order.
+#: The constrained Stan types with a support of their own.
+_TYPE_SUPPORTS: dict[str, Constraint] = {
+    "simplex": simplex,
+    "unit_vector": sphere,
+    "positive_ordered": positive,
+    "cov_matrix": positive_definite,
+}
+
+#: The real Stan types whose support only their bounds constrain.
+_BOUNDED_TYPES = frozenset({"real", "vector", "row_vector", "matrix"})
+
+
+def _bounded_support(lower: Any, upper: Any) -> Constraint | None:
+    """The support of a real value with the bounds *lower* and *upper*.
+
+    Each bound is a number, ``None`` when absent, or :data:`_EXPRESSION`. Both
+    bounds give an interval, a lower bound alone the values above it, and no
+    bound the reals. An upper bound alone, or a bound that is an expression,
+    leaves the support undeclared.
+    """
+    if lower is _EXPRESSION or upper is _EXPRESSION:
+        return None
+    if lower is not None and upper is not None:
+        return interval(lower, upper)
+    if lower is not None:
+        return positive if isinstance(lower, float) and lower == 0 else greater_than(lower)
+    return real if upper is None else None
+
+
+def _stan_support(kind: str, bounds: Mapping[str, Any]) -> Constraint | None:
+    """The support of a parameter of the Stan type *kind* with the declared *bounds*.
+
+    A constrained type has its own support, and a real type the support of its
+    bounds. Any other type leaves the support undeclared, as an ordered vector
+    or a correlation matrix does.
+    """
+    if kind in _TYPE_SUPPORTS:
+        return _TYPE_SUPPORTS[kind]
+    if kind not in _BOUNDED_TYPES:
+        return None
+    return _bounded_support(bounds.get("lower"), bounds.get("upper"))
+
+
+@dataclass(frozen=True)
+class _StanVariable:
+    """A variable a Stan program's data or parameters block declares.
+
+    Attributes
+    ----------
+    name : str
+        The variable's name.
+    sizes : tuple of str
+        The size expression of each axis, outermost first.
+    kind : str
+        The declared type, such as ``"vector"`` or ``"simplex"``.
+    bounds : Mapping[str, Any]
+        The declared bounds by keyword, each a number or :data:`_EXPRESSION`.
+    """
+
+    name: str
+    sizes: tuple[str, ...]
+    kind: str
+    bounds: Mapping[str, Any]
+
+
+def _declared_variables(block: str) -> list[_StanVariable]:
+    """Each variable a data or parameters block declares, in order.
 
     Raises
     ------
     ValueError
         If a statement is not a declaration of a known Stan type.
     """
-    variables: list[tuple[str, tuple[str, ...]]] = []
+    variables: list[_StanVariable] = []
     for statement in block.split(";"):
+        bounds = _bounds(_bounds_of(statement))
         statement = " ".join(_without_bounds(statement).split())
         if not statement:
             continue
@@ -297,7 +420,8 @@ def _declared_variables(block: str) -> list[tuple[str, tuple[str, ...]]]:
             shape = sizes * 2 if len(sizes) == 1 else sizes
         else:
             raise ValueError(f"the Stan type {kind!r} of {match['name']!r} is not read")
-        variables.append((match["name"], (*_sizes(match["array"]), *_sizes(match["old"]), *shape)))
+        axes = (*_sizes(match["array"]), *_sizes(match["old"]), *shape)
+        variables.append(_StanVariable(match["name"], axes, kind, bounds))
     return variables
 
 
@@ -315,13 +439,103 @@ def _dimension(expression: str, name: str, axis: int, data: Mapping[str, Any]) -
     return f"{name}_{axis}"
 
 
+def _stanc() -> Path:
+    """The path of BridgeStan's stanc compiler.
+
+    Raises
+    ------
+    ImportError
+        If ``bridgestan`` is not installed, or its stanc compiler is absent.
+    """
+    try:
+        from bridgestan.compile import get_bridgestan_path
+    except ImportError as e:
+        raise ImportError(
+            "StanModel reads its program's declarations with stanc, which bridgestan provides. "
+            "Install it with: pip install bridgestan"
+        ) from e
+    root = get_bridgestan_path(download=False)
+    stanc = Path(root) / "bin" / "stanc" if root else None
+    if stanc is None or not stanc.exists():
+        raise ImportError(
+            "BridgeStan's stanc compiler is not installed; BridgeStan downloads it when it "
+            "first compiles a model, as bridgestan.compile_model does"
+        )
+    return stanc
+
+
+@functools.lru_cache(maxsize=128)
+def _stanc_info_of(stan_file: str, modified: int, size: int) -> Mapping[str, Any]:
+    """``stanc --info`` of *stan_file*, cached while the file is unchanged.
+
+    Raises
+    ------
+    ValueError
+        If stanc rejects the program, quoting its message.
+    """
+    completed = subprocess.run(
+        [str(_stanc()), "--info", stan_file], capture_output=True, text=True, check=False
+    )
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout).strip()
+        raise ValueError(f"stanc rejected the Stan program {stan_file}: {message}")
+    return json.loads(completed.stdout)
+
+
+def _stanc_info(stan_file: str) -> Mapping[str, Any]:
+    """``stanc --info`` of *stan_file*: each data entry and parameter, with its type and rank."""
+    status = Path(stan_file).stat()
+    return _stanc_info_of(str(stan_file), status.st_mtime_ns, status.st_size)
+
+
+#: The dtype the array backend gives each element type stanc reports.
+_STAN_DTYPES: dict[str, Callable[[], Any]] = {
+    "int": lambda: np.dtype(jnp.result_type(int)),
+    "real": lambda: np.dtype(jnp.result_type(float)),
+    "complex": lambda: np.dtype(jnp.result_type(complex)),
+}
+
+
+def _checked_against_stanc(
+    variables: Sequence[_StanVariable], reported: Mapping[str, Any], block: str, stan_file: str
+) -> tuple[tuple[_StanVariable, Any], ...]:
+    """Each variable of *block* with the dtype of the type stanc reports for it.
+
+    Raises
+    ------
+    ValueError
+        If the declarations read from the program name other variables than
+        stanc reports, or a variable's rank differs from stanc's.
+    """
+    names = [variable.name for variable in variables]
+    if names != list(reported):
+        raise ValueError(
+            f"the {block} block of {stan_file} reads as {names}, and stanc reports {list(reported)}"
+        )
+    checked = []
+    for variable in variables:
+        entry = reported[variable.name]
+        if len(variable.sizes) != entry["dimensions"]:
+            raise ValueError(
+                f"{variable.name!r} in {stan_file} reads as {len(variable.sizes)} axes, and "
+                f"stanc reports {entry['dimensions']}"
+            )
+        checked.append((variable, _STAN_DTYPES[entry["type"]]()))
+    return tuple(checked)
+
+
 @dataclass(frozen=True)
 class _StanProgram:
-    """A Stan program's file, its data-block entries, and its parameters' size expressions."""
+    """A Stan program's file, its data-block entries, and its parameters.
+
+    Each entry and parameter carries the dtype of the element type ``stanc
+    --info`` reports, and its size expressions and bounds as the program
+    declares them.
+    """
 
     stan_file: str
-    data_entries: tuple[str, ...]
-    parameters: tuple[tuple[str, tuple[str, ...]], ...]
+    data: tuple[tuple[_StanVariable, Any], ...]
+    parameters: tuple[tuple[_StanVariable, Any], ...]
 
     @classmethod
     def read(cls, stan_file: str) -> _StanProgram:
@@ -329,27 +543,80 @@ class _StanProgram:
 
         Raises
         ------
+        ImportError
+            If BridgeStan's stanc compiler is not installed.
         ValueError
-            If the program declares no parameters, or a declaration cannot be
-            read.
+            If stanc rejects the program, the program declares no parameters,
+            or a declaration cannot be read.
         """
+        info = _stanc_info(stan_file)
         blocks = _stan_blocks(Path(stan_file).read_text())
-        parameters = tuple(_declared_variables(blocks.get("parameters", "")))
+        parameters = _checked_against_stanc(
+            _declared_variables(blocks.get("parameters", "")),
+            info["parameters"],
+            "parameters",
+            stan_file,
+        )
         if not parameters:
             raise ValueError(f"the Stan program {stan_file} declares no parameters")
-        entries = tuple(name for name, _ in _declared_variables(blocks.get("data", "")))
-        return cls(str(stan_file), entries, parameters)
+        data = _checked_against_stanc(
+            _declared_variables(blocks.get("data", "")), info["inputs"], "data", stan_file
+        )
+        return cls(str(stan_file), data, parameters)
+
+    @property
+    def data_entries(self) -> tuple[str, ...]:
+        """The names of the data-block entries, in declaration order."""
+        return tuple(variable.name for variable, _ in self.data)
+
+    def given_spec(self, bound: Mapping[str, Any]) -> dict[str, NumericArraySpec]:
+        """The given slot of each entry *bound* leaves unbound, typed as the entry is declared.
+
+        A size that names a scalar entry of *bound* is that entry's value, and
+        one that names another entry is the dimension of its name.
+        """
+        return {
+            variable.name: NumericArraySpec(_shape(variable, bound), dtype)
+            for variable, dtype in self.data
+            if variable.name not in bound
+        }
 
     def parameter_record(self, data: Mapping[str, Any]) -> RecordSpec:
-        """The parameter record, each size a scalar entry of *data* names bound to its value."""
+        """The parameter record, each size a scalar entry of *data* names bound to its value.
+
+        Each parameter carries its dtype and the support its declaration states.
+        """
         return RecordSpec(
             {
-                name: NumericArraySpec(
-                    tuple(_dimension(size, name, axis, data) for axis, size in enumerate(sizes))
+                variable.name: NumericArraySpec(
+                    _shape(variable, data), dtype, _stan_support(variable.kind, variable.bounds)
                 )
-                for name, sizes in self.parameters
+                for variable, dtype in self.parameters
             }
         )
+
+
+def _shape(variable: _StanVariable, data: Mapping[str, Any]) -> tuple[int | str, ...]:
+    """The shape of *variable*, each size a scalar entry of *data* names bound to its value."""
+    return tuple(
+        _dimension(size, variable.name, axis, data) for axis, size in enumerate(variable.sizes)
+    )
+
+
+def _parameter_record_at(
+    record: RecordSpec, shapes: Mapping[str, tuple[int, ...]]
+) -> NumericRecordSpec:
+    """*record*, a program's parameter record, with each field at the shape *shapes* gives it.
+
+    A run's draws fix each shape, and the record keeps each field's dtype and
+    support.
+    """
+    return NumericRecordSpec(
+        {
+            name: NumericArraySpec(tuple(shapes[name]), spec.dtype, spec.support)
+            for name, spec in record.children.items()
+        }
+    )
 
 
 class _StanPosterior(Distribution, SupportsUnnormalizedLogProb):
@@ -496,13 +763,16 @@ class StanModel(
 
     The given slots are the data-block entries *data* leaves unbound, which the
     program does not divide into sizes, covariates, and observations, and the
-    event is the parameter record, whose sizes that name an unbound entry stay
-    symbolic. It claims ``SupportsConditionalUnnormalizedLogProb`` alone:
-    binding every entry yields the unnormalized posterior, whose density is
-    BridgeStan's in the constrained parameterization without the Jacobian, and
-    ``condition_on`` normalizes it with a method such as Stan's NUTS. The
-    program is read at construction and compiled by BridgeStan when a density
-    is first evaluated.
+    event is the parameter record. Each slot is typed as its entry is declared,
+    and each parameter carries its dtype and the support its declared
+    constraint states; a size that names an unbound entry is the dimension of
+    that name on both sides. It claims ``SupportsConditionalUnnormalizedLogProb``
+    alone: binding every entry yields the unnormalized posterior, whose density
+    is BridgeStan's in the constrained parameterization without the Jacobian,
+    and ``condition_on`` normalizes it with a method such as Stan's NUTS. The
+    declarations are read at construction from ``stanc --info`` and the
+    program's text, and BridgeStan compiles the program when a density is
+    first evaluated.
 
     Parameters
     ----------
@@ -517,19 +787,20 @@ class StanModel(
 
     Raises
     ------
+    ImportError
+        If BridgeStan's stanc compiler is not installed.
     KeyError
         If *data* names an entry the data block does not declare.
     ValueError
-        If the program declares no parameters, or a declaration cannot be read.
+        If stanc rejects the program, the program declares no parameters, or a
+        declaration cannot be read.
     """
 
     def __init__(self, name: str, stan_file: str, *, data: Mapping[str, Any] | None = None) -> None:
         program = _StanProgram.read(stan_file)
         bound = dict(data or {})
         super().__init__(
-            name,
-            {entry: OpaqueSpec() for entry in program.data_entries if entry not in bound},
-            OutputSpec(program.parameter_record(bound)),
+            name, program.given_spec(bound), OutputSpec(program.parameter_record(bound))
         )
         object.__setattr__(self, "_program", program)
         object.__setattr__(self, "_data", bound)
@@ -590,6 +861,55 @@ def _to_numpy(value: Any) -> Any:
 _IMPROPER_OPS = frozenset({"FlatRV", "HalfFlatRV"})
 
 
+def _backend_dtype(dtype: Any) -> np.dtype:
+    """*dtype*, a PyMC variable's, as the array backend holds its values."""
+    return np.dtype(jax.dtypes.canonicalize_dtype(np.dtype(dtype)))
+
+
+def _constant(bound: Any) -> Any:
+    """The value of the bound *bound* when it is a constant of the graph, else :data:`_EXPRESSION`."""
+    from pytensor.graph.basic import Constant
+
+    if bound is None:
+        return None
+    if isinstance(bound, Constant):
+        value = np.asarray(bound.data)
+        return float(value) if value.ndim == 0 else jnp.asarray(value)
+    return _EXPRESSION
+
+
+def _pymc_support(model: Any, rv: Any) -> Constraint | None:
+    """The support of the free variable *rv* of *model*, read from its transform and dtype.
+
+    A continuous variable without a transform is real, and a transform states
+    the support it maps onto: a log transform the positive reals, a log-odds
+    transform the unit interval, a simplex transform the simplex, and an
+    interval transform the interval of its bounds. A transform that states no
+    support ProbPipe declares, a bound that is not a constant, and a discrete
+    variable leave the support undeclared.
+    """
+    from pymc.distributions import transforms
+    from pymc.logprob import transforms as logprob
+
+    transform = model.rvs_to_transforms.get(rv)
+    if transform is None:
+        return real if np.issubdtype(np.dtype(rv.dtype), np.floating) else None
+    if isinstance(transform, (logprob.LogTransform, transforms.LogExpM1)):
+        return positive
+    if isinstance(transform, logprob.LogOddsTransform):
+        return unit_interval
+    if isinstance(transform, (logprob.SimplexTransform, transforms.SumTo1)):
+        return simplex
+    if isinstance(transform, logprob.CircularTransform):
+        return interval(-np.pi, np.pi)
+    if isinstance(transform, transforms.Ordered):
+        return positive if transform.positive else None
+    if isinstance(transform, logprob.IntervalTransform):
+        lower, upper = (_constant(bound) for bound in transform.args_fn(*rv.owner.inputs))
+        return _bounded_support(lower, upper)
+    return None
+
+
 class _PyMCProgram:
     """A PyMC model-building function with some arguments bound, and the variables its build has.
 
@@ -626,6 +946,7 @@ class _PyMCProgram:
         self.parameters = tuple(name for name in free if name not in self.observed)
         self.shapes = {name: tuple(rv.type.shape) for name, rv in free.items()}
         self.dtypes = {name: np.dtype(rv.dtype) for name, rv in free.items()}
+        self.supports = {name: _pymc_support(model, rv) for name, rv in free.items()}
         self.normalized = not model.potentials and not any(
             type(rv.owner.op).__name__ in _IMPROPER_OPS for rv in model.free_RVs
         )
@@ -642,6 +963,7 @@ class _PyMCProgram:
     def event_record(self, *, symbolic: bool) -> RecordSpec:
         """The record of the free variables, a dimension the build leaves unknown symbolic.
 
+        Each variable carries its dtype and the support its transform states.
         Under *symbolic* every dimension is symbolic, for a kernel whose shapes
         its given values may set.
         """
@@ -651,7 +973,9 @@ class _PyMCProgram:
                     tuple(
                         f"{name}_{axis}" if symbolic or size is None else int(size)
                         for axis, size in enumerate(shape)
-                    )
+                    ),
+                    _backend_dtype(self.dtypes[name]),
+                    self.supports[name],
                 )
                 for name, shape in self.shapes.items()
             }
@@ -864,22 +1188,27 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
     def _parameter_record_for(self, model: Any, names: Sequence[str]) -> NumericRecordSpec:
         """The record of *names*, shaped as a build *model* shapes them.
 
+        Each variable carries its dtype and the support its transform states.
+
         Raises
         ------
         ValueError
             If a named free variable has a dimension the build leaves unknown.
         """
         free_rvs = {rv.name: rv for rv in model.free_RVs}
-        fields: dict[str, tuple[int, ...]] = {}
+        fields: dict[str, NumericArraySpec] = {}
         for name in names:
-            shape = tuple(free_rvs[name].type.shape)
+            rv = free_rvs[name]
+            shape = tuple(rv.type.shape)
             if any(s is None for s in shape):
                 raise ValueError(
                     f"PyMC RV {name!r} has a non-concrete shape {shape}; declare its shape "
                     f"explicitly, as in pm.Normal({name!r}, 0, 1, shape=k)."
                 )
-            fields[name] = tuple(int(s) for s in shape)
-        return NumericRecordSpec(**fields)
+            fields[name] = NumericArraySpec(
+                tuple(int(s) for s in shape), _backend_dtype(rv.dtype), _pymc_support(model, rv)
+            )
+        return NumericRecordSpec(fields)
 
     def __repr__(self) -> str:
         return f"PyMCModel(variables=[{', '.join(self._program.shapes)}])"

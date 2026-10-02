@@ -111,6 +111,7 @@ from probpipe.inference._minibatch import (
 )
 from probpipe.linalg import DenseLinOp
 from probpipe.operations._condition import _unnormalized_conditional, _UnnormalizedConditional
+from tests._stanc import require_stanc
 
 # -- Constructions ------------------------------------------------------------
 
@@ -157,6 +158,7 @@ def _pymc_model() -> PyMCModel:
 
 
 def _stan_model() -> _StanPosterior:
+    require_stanc()
     stan_file = pathlib.Path(tempfile.mkdtemp()) / "declared.stan"
     stan_file.write_text("parameters { real mu; } model { mu ~ normal(0, 1); }")
     return StanModel("model", str(stan_file))
