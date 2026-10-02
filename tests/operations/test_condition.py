@@ -9,9 +9,10 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import ApplicabilityError, MultivariateNormal, Record, RecordSpec
+from probpipe import ApplicabilityError, MultivariateNormal, NumericRecordBatch, Record, RecordSpec
 from probpipe.core._dispatch import Feasibility, ResolutionError, UnaryDispatchRegistry
 from probpipe.core._specs import InputSpec, OutputSpec
+from probpipe.distributions._batches import DistributionBatch
 from probpipe.distributions._capabilities import (
     SupportsApproximateConditioning,
     SupportsConditionalLogProb,
@@ -802,6 +803,41 @@ class TestTheOperation:
         joint = Kernel("y", ("beta",)) * Gaussian("beta")
         conditional = condition_on(joint, {"beta": 0.5})
         assert conditional.event_spec.components.keys() == {"y"}
+
+
+def _givens(field: str, values: list[float]) -> NumericRecordBatch:
+    """A batch of givens of one scalar field, on the level ``dataset``."""
+    return NumericRecordBatch(
+        "data",
+        {field: jnp.asarray(values, jnp.float32)},
+        "dataset",
+        element_spec=RecordSpec(**{field: REAL}),
+    )
+
+
+class TestABatchOfGivens:
+    def test_a_batch_of_givens_yields_the_batch_of_conditioned_laws(self):
+        laws = condition_on(_NormalKernel(), _givens("mu", [1.0, 2.0, 3.0]))
+        assert isinstance(laws, DistributionBatch)
+        assert laws.batch_shape == (3,)
+        assert laws.level_names == ("dataset",)
+        assert [law.loc for law in laws] == [1.0, 2.0, 3.0]
+
+    def test_each_given_is_conditioned_as_one_given_alone_is(self, approximate_method):
+        # Sequential dispatch, so the method records each target at concrete values.
+        joint = Kernel("y", ("mu",)) * Gaussian("mu")
+        posteriors = condition_on.with_options(dispatch="sequential")(
+            joint, _givens("y", [0.0, 1.0])
+        )
+        assert isinstance(posteriors, DistributionBatch)
+        assert posteriors.batch_shape == (2,)
+        assert [float(target.given["y"]) for target in approximate_method.targets] == [0.0, 1.0]
+        assert all(tuple(law.event_spec.components) == ("mu",) for law in posteriors)
+
+    def test_check_selects_the_elementwise_sweep(self):
+        report = condition_on.check(_NormalKernel(), _givens("mu", [1.0, 2.0]))
+        assert report.lifted == ("given",)
+        assert report.selected is not None
 
 
 # ---------------------------------------------------------------------------

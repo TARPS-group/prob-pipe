@@ -72,7 +72,7 @@ from ..core._dispatch import (
     UnaryDispatchRegistry,
 )
 from ..core._record_spec import RecordSpec
-from ..core._spec_base import TermSpec
+from ..core._spec_base import NumericSpec, OpaqueSpec, TermSpec
 from ..core._specs import InputSpec, OutputSpec, _components_record
 from ..core.provenance import Provenance
 from ..core.record import Record
@@ -98,6 +98,7 @@ from ..distributions._factored import (
 from ..distributions._views import _RenamedDistribution
 from ..functions._call import checking
 from ..functions._resolution import PointReport
+from ..values import FunctionSpec
 from ._convert import convert
 from ._operation import (
     BoundCall,
@@ -1266,11 +1267,23 @@ def _condition_on_result(d: TermSpec, given: TermSpec) -> OutputSpec:
     return OutputSpec(condition_on=None)
 
 
+#: The kinds a given is admitted at whole: every kind but a batch, so a batch of
+#: givens is swept, one conditioned law per element (VI.11).
+_GIVEN_KINDS: tuple[type[TermSpec], ...] = (
+    NumericSpec,
+    RecordSpec,
+    OpaqueSpec,
+    FunctionSpec,
+    DistributionSpec,
+    ConditionalDistributionSpec,
+)
+
+
 @operation(
     result=_condition_on_result,
-    roles={"d": (DistributionSpec, ConditionalDistributionSpec), "given": (TermSpec,)},
+    roles={"d": (DistributionSpec, ConditionalDistributionSpec), "given": _GIVEN_KINDS},
 )
-def condition_on(d: Distribution, given: Any):
+def condition_on(d: Distribution, given: Record | Mapping[str, Any]):
     """Fix fields of *d* at the values *given* holds, and return the resulting law, normalized.
 
     The exact stage curries given slots, calls a conditioning capability, or
@@ -1278,22 +1291,24 @@ def condition_on(d: Distribution, given: Any):
     normalization stage passes an unnormalized result to the inference-method
     registry. ``with_options(method="unnormalized")`` returns the exact stage's
     result as it is, and ``with_options(exact_only=True)`` raises rather than
-    normalize by an approximate method.
+    normalize by an approximate method. A batch of givens is swept: each
+    element is conditioned on as one given is, and the results form a batch on
+    the givens' levels.
 
     Parameters
     ----------
     d : Distribution or ConditionalDistribution
         The law or kernel to condition.
-    given : Record or Mapping
+    given : Record, Mapping, or RecordBatch
         The values, keyed by field path: given slots of a kernel, or fields the
-        law produces.
+        law produces; or a batch of such values.
 
     Returns
     -------
-    Distribution or ConditionalDistribution
+    Distribution, ConditionalDistribution, or DistributionBatch
         The conditional, normalized: an ordinary law once every given slot is
         bound, and otherwise a kernel over the slots left whose laws are
-        normalized.
+        normalized; for a batch of givens, the batch of the conditionals.
 
     Raises
     ------
