@@ -300,6 +300,24 @@ class TestFunctionDeclarations:
         assert result.spec == declared
         assert stored.element_spec.support is None
 
+    @pytest.mark.parametrize("invalid_value", [0.0, -1.0])
+    @pytest.mark.parametrize("raw", [False, True])
+    def test_returned_array_batch_checks_every_value_against_support(self, invalid_value, raw):
+        from probpipe import BatchSpec
+
+        values = jnp.array([1.0, invalid_value])
+        stored = NumericArrayBatch("stored", values, "draw", element_spec=NumericArraySpec(()))
+        declaration = BatchSpec(
+            NumericArraySpec((), support=positive), stored.axis_groups, stored.level_names
+        )
+        wrapped = Function("load", lambda: stored, output_spec=declaration)
+        with pytest.raises(ValueError, match="output/load does not conform to declared support"):
+            (wrapped.apply if raw else wrapped)()
+        assert stored.element_spec.support is None
+        assert stored.name == "stored"
+        np.testing.assert_array_equal(stored.values, values)
+        assert wrapped.output_spec.spec == declaration
+
     def test_labels_are_outside_spec_equality(self):
         declaration = OutputSpec(mean=NumericArraySpec(()))
         left = Function("left", lambda x: x, output_spec=declaration, output_name="a")
