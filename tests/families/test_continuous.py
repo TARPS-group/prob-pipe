@@ -98,11 +98,14 @@ class TestContinuousGeneric:
         assert lp.shape == (5,)
 
     def test_mean_finite(self, continuous_dist):
-        if isinstance(continuous_dist, (Cauchy, HalfCauchy)):
+        if isinstance(continuous_dist, Cauchy):
             with pytest.raises(MathematicalDomainError, match="mean"):
                 mean(continuous_dist)
             return
         m = mean(continuous_dist)
+        if isinstance(continuous_dist, HalfCauchy):
+            assert jnp.all(jnp.isposinf(jnp.asarray(m)))
+            return
         assert jnp.all(jnp.isfinite(m))
 
     def test_variance_finite(self, continuous_dist):
@@ -123,27 +126,62 @@ class TestContinuousGeneric:
 
 
 # ---------------------------------------------------------------------------
-# Moments that do not exist
+# Moments that diverge or are undefined
 # ---------------------------------------------------------------------------
 
-#: A law with a moment known not to exist, and that moment.
-_NONEXISTENT = {
+#: A law with a moment known to be undefined, and that moment. A variance is
+#: undefined where the mean is infinite or undefined.
+_UNDEFINED = {
     "cauchy-mean": (lambda: Cauchy("x", 0.0, 1.0), "mean"),
     "cauchy-variance": (lambda: Cauchy("x", 0.0, 1.0), "variance"),
-    "half-cauchy-mean": (lambda: HalfCauchy("x", 0.0, 1.0), "mean"),
     "half-cauchy-variance": (lambda: HalfCauchy("x", 0.0, 1.0), "variance"),
     "student-t-mean-at-df-1": (lambda: StudentT("x", 1.0, 0.0, 1.0), "mean"),
     "student-t-variance-at-df-0.5": (lambda: StudentT("x", 0.5, 0.0, 1.0), "variance"),
-    "student-t-variance-at-df-1.5": (lambda: StudentT("x", 1.5, 0.0, 1.0), "variance"),
-    "student-t-variance-at-df-2": (lambda: StudentT("x", 2.0, 0.0, 1.0), "variance"),
+    "student-t-variance-at-df-1": (lambda: StudentT("x", 1.0, 0.0, 1.0), "variance"),
     "student-t-mean-of-one-coordinate": (
         lambda: StudentT("x", jnp.array([0.5, 3.0]), 0.0, 1.0),
         "mean",
     ),
-    "inverse-gamma-mean-at-1": (lambda: InverseGamma("x", 1.0, 1.0), "mean"),
-    "inverse-gamma-variance-at-2": (lambda: InverseGamma("x", 2.0, 1.0), "variance"),
-    "pareto-mean-at-1": (lambda: Pareto("x", 1.0, 1.0), "mean"),
-    "pareto-variance-at-2": (lambda: Pareto("x", 2.0, 1.0), "variance"),
+    "student-t-variance-of-one-coordinate": (
+        lambda: StudentT("x", jnp.array([0.5, 3.0]), 0.0, 1.0),
+        "variance",
+    ),
+    "inverse-gamma-variance-at-1": (lambda: InverseGamma("x", 1.0, 1.0), "variance"),
+    "inverse-gamma-variance-at-0.5": (lambda: InverseGamma("x", 0.5, 1.0), "variance"),
+    "pareto-variance-at-1": (lambda: Pareto("x", 1.0, 1.0), "variance"),
+}
+
+#: A law with a moment that diverges, that moment, and its value, ``inf`` at each
+#: coordinate where the moment diverges.
+_DIVERGENT = {
+    "half-cauchy-mean": (lambda: HalfCauchy("x", 0.0, 1.0), "mean", jnp.inf),
+    "half-cauchy-mean-of-coordinates": (
+        lambda: HalfCauchy("x", jnp.zeros(2), 1.0),
+        "mean",
+        jnp.array([jnp.inf, jnp.inf]),
+    ),
+    "student-t-variance-at-df-1.5": (lambda: StudentT("x", 1.5, 0.0, 1.0), "variance", jnp.inf),
+    "student-t-variance-at-df-2": (lambda: StudentT("x", 2.0, 0.0, 1.0), "variance", jnp.inf),
+    "student-t-variance-of-coordinates": (
+        lambda: StudentT("x", jnp.array([1.5, 3.0]), 0.0, 1.0),
+        "variance",
+        jnp.array([jnp.inf, 3.0]),
+    ),
+    "inverse-gamma-mean-at-1": (lambda: InverseGamma("x", 1.0, 1.0), "mean", jnp.inf),
+    "inverse-gamma-mean-at-0.5": (lambda: InverseGamma("x", 0.5, 1.0), "mean", jnp.inf),
+    "inverse-gamma-mean-of-coordinates": (
+        lambda: InverseGamma("x", jnp.array([0.5, 3.0]), 2.0),
+        "mean",
+        jnp.array([jnp.inf, 1.0]),
+    ),
+    "inverse-gamma-variance-at-1.5": (
+        lambda: InverseGamma("x", 1.5, 1.0),
+        "variance",
+        jnp.inf,
+    ),
+    "inverse-gamma-variance-at-2": (lambda: InverseGamma("x", 2.0, 1.0), "variance", jnp.inf),
+    "pareto-mean-at-1": (lambda: Pareto("x", 1.0, 1.0), "mean", jnp.inf),
+    "pareto-variance-at-2": (lambda: Pareto("x", 2.0, 1.0), "variance", jnp.inf),
 }
 
 #: The exported operation, the operation model's, and the capability of each moment.
@@ -153,26 +191,51 @@ _MOMENTS = {
 }
 
 
-class TestMomentsThatDoNotExist:
-    """A moment known not to exist raises ``MathematicalDomainError`` (II.7)."""
+class TestMomentsThatDivergeOrAreUndefined:
+    """A diverging moment is ``inf``, and an undefined one raises ``MathematicalDomainError``."""
 
-    @pytest.mark.parametrize("case", list(_NONEXISTENT))
-    def test_the_moment_raises(self, case):
-        make, moment = _NONEXISTENT[case]
+    @pytest.mark.parametrize("case", list(_UNDEFINED))
+    def test_an_undefined_moment_raises(self, case):
+        make, moment = _UNDEFINED[case]
         exported, modeled, capability = _MOMENTS[moment]
         for compute in (exported, modeled, lambda law: getattr(law, capability)()):
             with pytest.raises(MathematicalDomainError, match=moment):
                 compute(make())
 
+    @pytest.mark.parametrize("case", list(_DIVERGENT))
+    def test_a_diverging_moment_is_infinite(self, case):
+        make, moment, expected = _DIVERGENT[case]
+        exported, modeled, capability = _MOMENTS[moment]
+        for compute in (exported, modeled, lambda law: getattr(law, capability)()):
+            np.testing.assert_allclose(jnp.asarray(compute(make())), expected, rtol=1e-5)
+
+    @pytest.mark.parametrize("case", list(_DIVERGENT))
+    def test_the_declared_support_of_a_diverging_moment_admits_its_value(self, case):
+        make, moment, expected = _DIVERGENT[case]
+        _, modeled, _ = _MOMENTS[moment]
+        result = modeled(make())
+        assert bool(jnp.all(result.spec.support.check(jnp.asarray(expected))))
+
     @pytest.mark.parametrize(
-        "case", [case for case, (_, moment) in _NONEXISTENT.items() if moment == "variance"]
+        "case", [case for case, (_, moment) in _UNDEFINED.items() if moment == "variance"]
     )
     def test_the_covariance_raises_where_the_variance_does(self, case):
-        make, _ = _NONEXISTENT[case]
+        make, _ = _UNDEFINED[case]
         with pytest.raises(MathematicalDomainError, match="variance"):
             make()._cov()
         with pytest.raises(MathematicalDomainError, match="variance"):
             cov(make())
+
+    @pytest.mark.parametrize(
+        "case", [case for case, (_, moment, _) in _DIVERGENT.items() if moment == "variance"]
+    )
+    def test_the_covariance_diagonal_diverges_where_the_variance_does(self, case):
+        make, _, expected = _DIVERGENT[case]
+        diagonal = jnp.diag(make()._cov().to_dense())
+        np.testing.assert_allclose(diagonal, jnp.ravel(jnp.asarray(expected)), rtol=1e-5)
+        dense = cov(make())
+        dense = dense.to_dense() if hasattr(dense, "to_dense") else jnp.asarray(dense)
+        np.testing.assert_allclose(jnp.diag(dense), diagonal, rtol=1e-5)
 
     def test_the_operation_does_not_estimate_the_moment_by_sampling(self):
         law = Cauchy("x", 0.0, 1.0)
@@ -193,11 +256,10 @@ class TestMomentsThatDoNotExist:
         assert float(mean(make())) == pytest.approx(expected_mean, rel=1e-5)
         assert float(variance(make())) == pytest.approx(expected_variance, rel=1e-5)
 
-    def test_a_student_t_has_a_mean_where_its_variance_does_not_exist(self):
+    def test_a_student_t_between_one_and_two_has_its_location_and_an_infinite_variance(self):
         law = StudentT("x", 1.5, 2.0, 1.0)
         assert float(mean(law)) == pytest.approx(2.0)
-        with pytest.raises(MathematicalDomainError, match="variance"):
-            variance(law)
+        assert float(variance(law)) == jnp.inf
 
     def test_a_traced_parameter_leaves_existence_to_the_computation(self):
         reports = []

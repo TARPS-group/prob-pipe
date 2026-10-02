@@ -73,7 +73,7 @@ from probpipe.distributions._capabilities import (
     _marginal_claims,
 )
 from probpipe.distributions._empirical import EmpiricalDistribution
-from probpipe.families import Cauchy, StudentT
+from probpipe.families import Cauchy, HalfCauchy, StudentT
 from probpipe.inference import ApproximateDistribution
 from probpipe.linalg import DenseLinOp, LinOp
 from probpipe.operations._marginal import marginal
@@ -1059,6 +1059,13 @@ class TestDerivedBehavior:
         report = mean.check(joint["beta"])
         assert (report.route, report.exact) == ("closed_form", True)
         assert jnp.allclose(jnp.asarray(mean(joint["beta"])), 1.5)
+
+    def test_a_view_of_a_half_cauchy_root_factor_has_an_infinite_mean(self):
+        joint = _Kernel("likelihood", {"beta": _REAL}, OutputSpec(y=_REAL)) * HalfCauchy(
+            "beta", 0.0, 1.0
+        )
+        assert float(jnp.asarray(mean(joint["beta"]))) == jnp.inf
+        assert float(jnp.asarray(mean(marginal(joint, "beta")))) == jnp.inf
 
     def test_a_view_raises_as_its_marginal_does_for_a_moment_that_does_not_exist(self):
         joint = _Kernel("likelihood", {"beta": _REAL}, OutputSpec(y=_REAL)) * Cauchy(

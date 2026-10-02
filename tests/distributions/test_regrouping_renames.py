@@ -33,7 +33,7 @@ from probpipe.distributions._capabilities import (
     _capability_guard,
 )
 from probpipe.inference import ApproximateDistribution
-from tests._ops import condition_on, factor, log_prob, marginal, sample
+from tests._ops import condition_on, factor, log_prob, marginal, mean, sample
 
 J = 8
 
@@ -232,6 +232,13 @@ class TestTheFactoredRoutes:
         assert not isinstance(prior, SupportsMean)
         assert isinstance(prior["population/mu"], SupportsMean)
         np.testing.assert_allclose(jnp.asarray(prior["population/mu"]._mean()), 0.0)
+
+    def test_the_scale_of_the_centered_prior_has_an_infinite_mean(self):
+        """The half-Cauchy root factor's mean diverges, so the view's mean is ``inf``."""
+        prior = _centered()
+        assert float(jnp.asarray(mean(prior["tau"]))) == jnp.inf
+        renamed = prior.with_path_names(CENTERED)
+        assert float(jnp.asarray(mean(renamed["population/tau"]))) == jnp.inf
 
     def test_sampling_the_renamed_prior_draws_records_of_each_group(self):
         prior = _centered().with_path_names(CENTERED)
