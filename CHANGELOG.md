@@ -1035,8 +1035,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`AGENTS.md` and `CLAUDE.md` guide coding agents.** `AGENTS.md` maps each
   task to the document that owns its rules, and it holds the everyday commands
   and the verification steps, which move there from `CONTRIBUTING.md`.
-  `CLAUDE.md` imports it for Claude Code, and `.claude/settings.json` formats
-  each Python file that a Claude Code edit writes.
+  `CLAUDE.md` imports it for Claude Code.
 - **Completing an `OutputSpec`.** A producer completes a declaration with the
   spec of the term it returns.
   - `with_spec(spec)` returns the declaration with its type set to `spec`. It
