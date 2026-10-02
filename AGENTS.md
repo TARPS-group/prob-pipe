@@ -68,6 +68,7 @@ An agent that does not load skills can read a skill's `SKILL.md` and follow its 
 
 These checks run without being asked:
 
-- the pre-commit hooks: ruff lint and format, and file hygiene;
-- CI: the blocking ruff gate, the tests a change selects, the notebooks, the docs build, and the advisory type check;
-- `tests/docs/`: each path, name, and section pointer that the rule documents and the agent files cite exists, and this file stays within 120 lines.
+- the pre-commit hooks: ruff lint and format, file hygiene, and `no-issue-numbers`, which rejects an issue or PR number in `probpipe/`;
+- CI: the blocking ruff gate, the tests a change selects, the notebooks, the docs build, the advisory type check, the design ledger report, and the advisory PR hygiene job;
+- `tests/docs/`: each path, name, and section pointer that the rule documents and the agent files cite exists, this file stays within 120 lines, and each CHANGELOG release has one heading per change type;
+- `tests/test_version.py`: the two `pyproject.toml` files share one version.

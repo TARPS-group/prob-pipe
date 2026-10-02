@@ -25,7 +25,7 @@ dependencies = [
   # the fast NUTS backend, and pyabc powers the SMC-ABC tutorial section.
   #
   # Exact `==` pin: one repo builds two coordinated dists (the jax/jaxlib model);
-  # a CI version-sync guard (follow-up) keeps it equal to probpipe-core's version.
+  # tests/test_version.py checks that it equals probpipe-core's version.
   "probpipe-core[pymc,nutpie,pyabc]==0.1.0",
   # BayesFlow caps Python <3.14 while core spans 3.12-3.14, so it is marker-guarded:
   # `pip install probpipe` still resolves on 3.14, just without neural SBI there.

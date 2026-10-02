@@ -33,3 +33,13 @@ repos:
       - id: check-merge-conflict
       - id: check-added-large-files
         args: ["--maxkb=2000"]   # allow uv.lock (~760 KB); still catch stray data/binaries
+
+  # CONTRACTS.md directive 2 bans PR and issue references in code: a word form
+  # such as "issue 12" or "PR #12", a bare "#12", or a GitHub issue or pull URL.
+  - repo: local
+    hooks:
+      - id: no-issue-numbers
+        name: no issue or PR numbers in probpipe/
+        language: pygrep
+        entry: '(?i)(?<![\w/-])(?:issues?|prs?|pull requests?)\s+#?\d+\b|(?<![&\w/])#\d+\b|github\.com/[\w.-]+/[\w.-]+/(?:issues|pull)/\d+'
+        files: ^probpipe/.*\.py$

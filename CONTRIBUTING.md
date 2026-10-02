@@ -213,8 +213,9 @@ The hook script calls the Python interpreter that ran `pre-commit install`. With
 unless another `pre-commit` is on your `PATH`. A `pre-commit` already installed by
 Homebrew or pipx works too.
 
-Once the hooks are installed, `ruff` (lint + format) plus a few file-hygiene hooks
-run on your staged files at commit time. The hooks see only the files you're
+Once the hooks are installed, `ruff` (lint + format), a few file-hygiene hooks,
+and the `no-issue-numbers` hook of CONTRACTS.md directive 2 run on your staged
+files at commit time. The hooks see only the files you're
 changing, so a commit is checked without re-linting the whole tree.
 `AGENTS.md` § Commands runs the linter and the hooks over the whole tree.
 
@@ -329,6 +330,17 @@ GitHub Actions (`.github/workflows/ci.yml`):
   in `tests/ci/`) — so a change to a source file also exercises the tests and
   notebooks that transitively import it. Edit that committed helper, not inline
   workflow scripts.
+- The `test` job also selects the tests that read files rather than import the
+  changed modules. A change to `design/` runs the four `test_design_conformance.py`
+  files and `tests/docs/`, and a change to `probpipe/`, a rule document, an agent
+  file, or the CHANGELOG runs `tests/docs/`.
+- The `design ledger (report)` job runs `scripts/design/ledger.py` and shows its
+  counts of stubs, pending tests, and stale docs in the job summary. It fails
+  only when the script errors.
+- The `PR hygiene (advisory)` job of `.github/workflows/pr-hygiene.yml` checks the
+  PR title, branch, and body against this guide and the PR template through
+  `scripts/ci/pr_hygiene.py`. It reports each finding as a warning and does not
+  gate merges.
 
 Docs build (`.github/workflows/docs.yml`) with `uv run mkdocs build --strict`.
 
@@ -386,7 +398,7 @@ same `probpipe` import package above:
 
 The two versions move in lockstep: when bumping `version`, update **both**
 `pyproject.toml` files and keep the metapackage's `probpipe-core==` pin equal to
-the core version. Build each with:
+the core version, which `tests/test_version.py` checks. Build each with:
 
 ```bash
 uv build                      # probpipe-core (repository root)

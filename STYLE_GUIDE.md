@@ -455,14 +455,17 @@ or module:
 
 ### 4.1 Future annotations
 
-Every module starts with:
+Every module of `probpipe/` other than a package's `__init__.py` starts with:
 
 ```python
 from __future__ import annotations
 ```
 
-This enables PEP 604 union syntax (`X | Y`) and forward references in
-all Python versions ProbPipe supports.
+The import postpones the evaluation of annotations, so an annotation can name a
+class defined later in the module or imported only under `TYPE_CHECKING`.
+Ruff enforces the rule through the `required-imports` setting in
+`pyproject.toml`. `probpipe/linalg/operations.py` lacks the import, so its
+per-file ignore stays until a change to its source adds it.
 
 ### 4.2 Import order
 

@@ -45,6 +45,7 @@ Write every docstring as reference text for a user.
    PRs, issues, tracking numbers, or other out-of-band discussion in docstrings or code comments.
    The contract is whatever the docstring states; a reader should never need to open a PR or issue to
    understand it. (Such references belong in commit messages and PR descriptions, not the code.)
+   The `no-issue-numbers` pre-commit hook rejects an issue or PR number in `probpipe/`.
 
 3. **Analyze clarity; make the code obey the contract.** As part of every PR:
    - explicitly assess whether the contracts you touched are unambiguous, and call out any that
