@@ -40,7 +40,7 @@ import numpy as np
 
 from ..values._function_base import FunctionSpec
 from ._array_backend import _is_numeric_dtype, _to_jax_array
-from ._batch import Batch, BatchSpec, _axis_groups_for, _ranks_of
+from ._batch import Batch, BatchSpec, _axis_groups_for, _batch_axis_count, _ranks_of
 from ._function_batch import FunctionBatch
 from ._kinds import batch_class_for_spec
 from ._object_batch import _from_iterable, _frozen_object_column, _is_object_array
@@ -76,10 +76,12 @@ class RecordBatch(Batch[Record]):
         level. There is no default, for the reason
         :class:`~probpipe.core._batch.Batch` gives: a level is named so that
         operations can align operands by meaning.
-    element_spec : RecordSpec
-        The schema and kind spec every element satisfies. Required: a batch cannot recover
-        an element's event shape from a column without it, since the column
-        carries the batch axes and the event axes together.
+    element_spec : RecordSpec, optional
+        The schema and kind spec every element satisfies. Defaults to the spec
+        the columns imply, as a :class:`~probpipe.Record` infers its spec from
+        its values: an array column's axes past those the levels hold are its
+        field's event shape, and an object column's entries decide its field's
+        spec.
     axes_per_level : iterable of int, optional
         How many axes each level holds, outermost first; they must account for
         every batch axis. Defaults to one axis per level, which requires as many
@@ -160,17 +162,20 @@ class RecordBatch(Batch[Record]):
         /,
         level_names: str | Iterable[str],
         *,
-        element_spec: RecordSpec,
+        element_spec: RecordSpec | None = None,
         axes_per_level: Iterable[int] | None = None,
         provenance: Provenance | None = None,
     ) -> None:
         kind = type(self).__name__
+        names = (level_names,) if isinstance(level_names, str) else tuple(level_names)
+        axes = None if axes_per_level is None else tuple(axes_per_level)
+        if element_spec is None:
+            element_spec = _inferred_element_spec(fields, _batch_axis_count(names, axes), kind=kind)
         spec = _record_element_spec(element_spec, kind=kind)
         store = _leaf_keyed_columns(fields, spec, kind=kind)
-        names = (level_names,) if isinstance(level_names, str) else tuple(level_names)
 
         batch_shape = _batch_shape_of(store, spec, kind=kind)
-        groups = _axis_groups_for(batch_shape, names, axes_per_level, kind=kind)
+        groups = _axis_groups_for(batch_shape, names, axes, kind=kind)
         type(self)._check_columns(store, spec, kind=kind)
         store = {
             path: _frozen_object_column(column) if _is_object_array(column) else column
@@ -817,25 +822,7 @@ def _leaf_keyed_columns(
     element spec of every element, which a missing or unknown column would make
     a false statement.
     """
-    if not isinstance(fields, Mapping):
-        raise TypeError(
-            f"{kind} stores one array per field, keyed by leaf path, so fields must be a "
-            f"mapping; got {type(fields).__name__}"
-        )
-    if not fields:
-        raise ValueError(f"{kind} requires at least one field")
-    nested = _unflatten_paths(dict(fields))
-    flat: dict[str, Any] = {}
-
-    def _walk(node: Mapping[str, Any], prefix: str) -> None:
-        for key, value in node.items():
-            path = f"{prefix}{key}"
-            if isinstance(value, Mapping):
-                _walk(value, f"{path}{_PATH_SEP}")
-            else:
-                flat[path] = value
-
-    _walk(nested, "")
+    flat = _flat_columns(fields, kind=kind)
     names = template.keys()
     missing = [key for key in names if key not in flat]
     unknown = [key for key in flat if key not in names]
@@ -850,6 +837,70 @@ def _leaf_keyed_columns(
             f"{list(names)} — {'; '.join(parts)}"
         )
     return {key: flat[key] for key in names}
+
+
+def _flat_columns(fields: Mapping[str, Any], *, kind: str) -> dict[str, Any]:
+    """*fields* as a flat dict keyed by leaf path, a nested mapping flattened.
+
+    Raises
+    ------
+    TypeError
+        If *fields* is not a mapping.
+    ValueError
+        If *fields* is empty.
+    """
+    if not isinstance(fields, Mapping):
+        raise TypeError(
+            f"{kind} stores one array per field, keyed by leaf path, so fields must be a "
+            f"mapping; got {type(fields).__name__}"
+        )
+    if not fields:
+        raise ValueError(f"{kind} requires at least one field")
+    flat: dict[str, Any] = {}
+
+    def _flatten(node: Mapping[str, Any], prefix: str) -> None:
+        for key, value in node.items():
+            path = f"{prefix}{key}"
+            if isinstance(value, Mapping):
+                _flatten(value, f"{path}{_PATH_SEP}")
+            else:
+                flat[path] = value
+
+    _flatten(_unflatten_paths(dict(fields)), "")
+    return flat
+
+
+def _inferred_element_spec(fields: Mapping[str, Any], n_batch: int, *, kind: str) -> RecordSpec:
+    """The ``RecordSpec`` the columns imply when their first *n_batch* axes are batch axes.
+
+    An array column's remaining axes are its field's event shape, and an object
+    column's entries decide its field's spec, as :func:`_inferred_field_spec`
+    reads them.
+
+    Raises
+    ------
+    TypeError
+        If *fields* is not a mapping, or a column reports no shape.
+    ValueError
+        If *fields* is empty, or a column has fewer than *n_batch* axes.
+    """
+    specs: dict[str, Any] = {}
+    for path, column in _flat_columns(fields, kind=kind).items():
+        shape = _column_shape(column)
+        if shape is None:
+            raise TypeError(
+                f"{kind}: the column at {path!r} is a {type(column).__name__}, which reports no "
+                f"shape, so its batch axes cannot be read; a column is an array, or an object "
+                f"array for a field that is not an array"
+            )
+        if len(shape) < n_batch:
+            axes = "axis" if n_batch == 1 else "axes"
+            raise ValueError(
+                f"{kind}: the column at {path!r} has shape {shape}, which has fewer axes than "
+                f"the {n_batch} batch {axes} its levels hold"
+            )
+        specs[path] = _inferred_field_spec(column, shape[n_batch:])
+    return RecordSpec(specs)
 
 
 def _element_template_for(

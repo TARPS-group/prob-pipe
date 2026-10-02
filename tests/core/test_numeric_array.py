@@ -537,6 +537,32 @@ class TestNumericArrayBatchHoldsTheMultiplicity:
         assert batch.axis_groups == ((2, 4),)
 
 
+class TestNumericArrayBatchInfersItsElementSpec:
+    """With no element spec, the axes past those the levels hold are the event shape."""
+
+    def test_four_scalars_need_no_element_spec(self):
+        batch = NumericArrayBatch("draws", jnp.arange(4.0), "draw")
+
+        assert batch.batch_shape == (4,)
+        assert batch.element_spec == NumericArraySpec(shape=(), dtype=jnp.float32)
+
+    def test_the_levels_fix_where_the_event_axes_start(self):
+        batch = NumericArrayBatch("draws", jnp.zeros((2, 4, 3), dtype=jnp.int32), ("chain", "draw"))
+
+        assert batch.batch_shape == (2, 4)
+        assert batch.element_spec == NumericArraySpec(shape=(3,), dtype=jnp.int32)
+
+    def test_a_level_of_several_axes_counts_them_all(self):
+        batch = NumericArrayBatch("cells", jnp.zeros((2, 4, 3)), "cell", axes_per_level=iter([2]))
+
+        assert batch.axis_groups == ((2, 4),)
+        assert batch.element_spec.shape == (3,)
+
+    def test_an_array_with_fewer_axes_than_the_levels_is_refused(self):
+        with pytest.raises(ValueError, match="fewer axes than the 2 batch axes"):
+            NumericArrayBatch("draws", jnp.arange(4.0), ("chain", "draw"))
+
+
 class TestNumericArrayBatchSelection:
     """Selection yields the element kind, as for every batch."""
 

@@ -1116,6 +1116,24 @@ def _axis_groups_for(
     return tuple(groups)
 
 
+def _batch_axis_count(names: tuple[str, ...], axes_per_level: tuple[Any, ...] | None) -> int:
+    """How many batch axes the levels hold: the sum of *axes_per_level*, or one per name.
+
+    A constructor that infers its element spec reads the event axes as the axes
+    past these, so this count fixes where the batch axes end.
+
+    Raises
+    ------
+    TypeError
+        If a count is not an integer.
+    ValueError
+        If a count is not positive.
+    """
+    if axes_per_level is None:
+        return len(names)
+    return sum(_axis_count(count) for count in axes_per_level)
+
+
 def _axis_count(count: Any) -> int:
     """One entry of *axes_per_level*: how many axes a level holds.
 

@@ -586,6 +586,39 @@ class TestConstructionRefusals:
             )
 
 
+class TestTheElementSpecIsInferredWhenOmitted:
+    """The columns imply the element spec, as a record's values imply its spec."""
+
+    def test_each_column_gives_its_fields_spec(self):
+        batch = RecordBatch(
+            "draws",
+            {
+                "x": jnp.zeros((3, 2)),
+                "tag": np.array(["a", "b", "c"], dtype=object),
+                "g": {"y": jnp.arange(3.0)},
+            },
+            "draw",
+        )
+
+        assert batch.element_spec == RecordSpec(
+            x=(2,), tag=OpaqueSpec(type=str), g=RecordSpec(y=())
+        )
+
+    def test_the_levels_fix_where_each_event_shape_starts(self):
+        batch = NumericRecordBatch("draws", {"x": jnp.zeros((2, 4, 3))}, ("chain", "draw"))
+
+        assert batch.batch_shape == (2, 4)
+        assert batch.element_spec == RecordSpec(x=(3,))
+
+    def test_a_numeric_batch_refuses_an_inferred_opaque_field(self):
+        with pytest.raises(TypeError, match="all-numeric element"):
+            NumericRecordBatch("draws", {"t": np.array(["a", "b"], dtype=object)}, "draw")
+
+    def test_a_column_with_fewer_axes_than_the_levels_is_refused(self):
+        with pytest.raises(ValueError, match="fewer axes than the 2 batch axes"):
+            RecordBatch("draws", {"x": jnp.arange(3.0)}, ("chain", "draw"))
+
+
 class TestProvenance:
     def test_every_derived_view_inherits_the_batchs_provenance(self):
         from probpipe import Provenance

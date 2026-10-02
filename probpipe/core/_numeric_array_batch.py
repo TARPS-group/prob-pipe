@@ -19,7 +19,7 @@ from ._array_backend import (
     _to_jax_array,
     _to_numpy_array,
 )
-from ._batch import Batch, BatchSpec, _axis_groups_for
+from ._batch import Batch, BatchSpec, _axis_groups_for, _batch_axis_count
 from ._kinds import register_kind
 from ._numeric_array import NumericArray
 from ._specs import NumericArraySpec
@@ -48,9 +48,12 @@ class NumericArrayBatch(Batch[NumericArray]):
         is, so a lazy or disk-backed column is not materialised to be batched.
     level_names : str or iterable of str
         One name per level, outermost first; a single string names one level.
-    element_spec : NumericArraySpec
+    element_spec : NumericArraySpec, optional
         What every element satisfies. Its ``shape`` is the event shape, so it is
-        what splits the stored array's axes into batch and event.
+        what splits the stored array's axes into batch and event. Defaults to
+        the spec the array implies, as a :class:`NumericArray` infers its spec
+        from its value: the axes past those the levels hold are the event shape,
+        and the array's dtype is the elements' dtype.
     axes_per_level : iterable of int, optional
         How many axes each level holds, outermost first; they must account for
         every batch axis. Defaults to one axis per level, which requires as many
@@ -74,8 +77,9 @@ class NumericArrayBatch(Batch[NumericArray]):
         If *values* has fewer axes than the event shape it must end with, which
         would leave no batch axis; if its trailing axes are not that event
         shape; if a declared dimension is symbolic, which gives the event shape
-        no size to split by; or if *axes_per_level* does not account for every
-        batch axis, or gives a count that is not one per level.
+        no size to split by; if *values* has fewer axes than the levels hold,
+        when the element spec is inferred; or if *axes_per_level* does not
+        account for every batch axis, or gives a count that is not one per level.
 
     Notes
     -----
@@ -98,10 +102,14 @@ class NumericArrayBatch(Batch[NumericArray]):
         /,
         level_names: str | Iterable[str],
         *,
-        element_spec: NumericArraySpec,
+        element_spec: NumericArraySpec | None = None,
         axes_per_level: Iterable[int] | None = None,
         provenance: Provenance | None = None,
     ) -> None:
+        names = (level_names,) if isinstance(level_names, str) else tuple(level_names)
+        axes = None if axes_per_level is None else tuple(axes_per_level)
+        if element_spec is None:
+            element_spec = _inferred_element_spec(values, _batch_axis_count(names, axes))
         if not isinstance(element_spec, NumericArraySpec):
             raise TypeError(
                 f"NumericArrayBatch element_spec must be a NumericArraySpec, "
@@ -150,8 +158,7 @@ class NumericArrayBatch(Batch[NumericArray]):
                 f"NumericArray"
             )
 
-        names = (level_names,) if isinstance(level_names, str) else tuple(level_names)
-        groups = _axis_groups_for(batch_shape, names, axes_per_level, kind="NumericArrayBatch")
+        groups = _axis_groups_for(batch_shape, names, axes, kind="NumericArrayBatch")
         object.__setattr__(self, "_values", values)
         self._init_batch(
             BatchSpec(element_spec, groups, names),
@@ -335,6 +342,34 @@ def _numeric_array_batch_unflatten(aux, children):
 jax.tree_util.register_pytree_node(
     NumericArrayBatch, _numeric_array_batch_flatten, _numeric_array_batch_unflatten
 )
+
+
+def _inferred_element_spec(values: Any, n_batch: int) -> NumericArraySpec:
+    """The spec *values* implies for its elements when its first *n_batch* axes are batch axes.
+
+    The remaining axes are the event shape, and the array's dtype is the
+    elements' dtype.
+
+    Raises
+    ------
+    TypeError
+        If *values* is not a numeric leaf.
+    ValueError
+        If *values* has fewer than *n_batch* axes.
+    """
+    if not _is_numeric_leaf(values):
+        raise TypeError(
+            f"NumericArrayBatch stores one array; {type(values).__name__} is not a numeric leaf"
+        )
+    shape = tuple(_event_shape_of(values))
+    if len(shape) < n_batch:
+        axes = "axis" if n_batch == 1 else "axes"
+        raise ValueError(
+            f"the stored array has shape {shape}, which has fewer axes than the {n_batch} "
+            f"batch {axes} its levels hold"
+        )
+    return NumericArraySpec(shape[n_batch:], _numpy_dtype_of(values))
+
 
 # The numeric-array kind: its spec, its tracked class, and this batch form.
 register_kind(NumericArraySpec, term_class=NumericArray, batch_class=NumericArrayBatch)
