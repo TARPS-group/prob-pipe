@@ -61,6 +61,8 @@ CI pins the pyright version in `.github/workflows/ci.yml`.
 The skills in `.claude/skills/` run the multi-step procedures, and `.claude/skills/README.md` describes each one.
 An agent that does not load skills can read a skill's `SKILL.md` and follow its steps.
 
+- `check-pr`: the pre-PR checks of a branch, and a PR body drafted from the template;
+- `design-check`: the design sections a change touches, checked against the code and the design's conventions;
 - `review-pr`: a review of a PR against the rule documents;
 - `review-all`: four independent reviews of a PR, merged into one report;
 - `audit-tests`: an audit of the test suite;

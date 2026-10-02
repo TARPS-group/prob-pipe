@@ -21,7 +21,7 @@ are made.
 
 ### 1a. Read project conventions (do this first)
 
-Read the following files in full, **from the PR's base ref** — e.g.
+Read the following files **from the PR's base ref** — e.g.
 `git show origin/main:STYLE_GUIDE.md` after `git fetch origin main` — not from
 the local checkout: a worktree copy may be stale relative to the branch the PR
 merges into. These are the **authoritative source of truth** for all naming,
@@ -29,9 +29,13 @@ style, architecture, and API conventions. Every check you perform in Step 2
 must be grounded in what these documents say — do not rely on your own prior
 knowledge of ProbPipe conventions, as they may have changed.
 
+- `AGENTS.md` — the map from each task to the document that owns its rules
+- `CONTRACTS.md` — the contract directives every PR follows
 - `STYLE_GUIDE.md` — naming, imports, types, protocols, testing, module layout
-- `CONTRIBUTING.md` — architecture overview, design principles, package
-  structure, dependency graph, registry patterns, PR workflow
+- `CONTRIBUTING.md` — the PR workflow, test quality, documentation, and CI
+- `design/README.md`, `design/glossary.md`, and the design section of each
+  abstraction the PR touches, which `design/package-structure.md` § The tree
+  lists beside each module
 
 ### 1b. Fetch the PR
 
@@ -50,60 +54,50 @@ Before checking for redundant code, familiarize yourself with the abstractions
 already available in the codebase. Scan these areas for classes, utilities, and
 patterns that the PR's code should be using rather than reimplementing:
 
-- `probpipe/__init__.py` — the public API surface
-- `probpipe/core/` — base classes, protocols, ops, registries
-- Any utility modules (`_weights.py`, `_utils.py`, `_array_utils.py`, etc.)
+- `probpipe/__init__.py` — the public API
+- the packages of `design/package-structure.md` § The tree that the PR touches
+- Any utility modules (`_weights.py`, `_array_utils.py`, `_dtype.py`, etc.)
 
 ## Step 2: Run the review checklist
 
 Work through **every** category below. For each, note specific findings with
-file paths and line numbers. If a category has no issues, say so briefly.
+file paths and line numbers. If a category has no issues, say so briefly. Each
+category names the document section that owns its rules; check the PR against
+that section as it stands at the base ref.
 
 ### 2.1 ProbPipe philosophy and conventions
 
-Check that the PR adheres to every convention documented in `STYLE_GUIDE.md` and
-`CONTRIBUTING.md`. These include (but are not limited to) — always defer to what
-the docs actually say over this summary:
-
-- **Design principles** — immutability, ops-not-methods, protocol-based dispatch,
-  private method convention, etc. (see CONTRIBUTING.md "Design principles")
-- **Naming** — protocols, ops, implementation functions, classes, modules,
-  reserved parameter names, the `num_atoms` / `replicate_size` property
-  convention, and **naming accuracy** (STYLE_GUIDE.md §1.12): names describe
-  what the object *is* (semantic accuracy), align with numpy/JAX vocabulary,
-  pair symmetrically, and renames sweep all analogous symbols + test files
-- **Imports** — `from __future__ import annotations`, relative internals, import
-  order, optional dependency patterns, `TYPE_CHECKING` guards
-- **Type annotations** — modern Python 3.12+ syntax, project type aliases.
-  Also check for *missing* type hints: all new or modified public function
-  signatures (parameters and return types) and class attributes should be
-  annotated
-- **Subpackage dependency graph** — no illegal cross-imports (see STYLE_GUIDE.md
-  section 6 and CONTRIBUTING.md)
-- **Registry patterns** — if the PR adds or modifies registry-dispatched
-  behavior, check it follows the documented registry conventions (converter
-  registry, inference method registry, etc.)
-- **Docstrings** — NumPy-style, module docstrings, section separators
-- **`__all__` exports** — updated in `__init__.py` when new public symbols are
-  added
+- **Design** — each touched abstraction follows its design section, and the
+  principles of `design/01-design-principles.md`. Classify a disagreement as
+  `CONTRACTS.md` directive 5 does: the design decides.
+- **Contracts** — the directives of `CONTRACTS.md`.
+- **Naming** — `STYLE_GUIDE.md` §1, naming accuracy included, and
+  `design/glossary.md` § Canonical names.
+- **Imports** — `STYLE_GUIDE.md` §4.
+- **Type annotations** — `STYLE_GUIDE.md` §5. Also check for *missing* type
+  hints: all new or modified public function signatures (parameters and return
+  types) and class attributes should be annotated.
+- **Subpackage dependency graph** — `STYLE_GUIDE.md` §6.
+- **Registry patterns** — design II.7 and `docs/api/extending.md`.
+- **Docstrings** — `CONTRACTS.md` directive 2 and `STYLE_GUIDE.md` §3.
+- **`__all__` exports** — `STYLE_GUIDE.md` §9.1.
 
 ### 2.2 Documentation
 
-- Are new or modified public classes, functions, and modules documented with
-  NumPy-style docstrings (`Parameters`, `Returns`, `Raises`)?
+- Are new or modified public classes, functions, and modules documented as
+  `CONTRACTS.md` directive 2 requires?
 - Are existing docstrings still accurate after the changes, or have they become
   stale (e.g., parameter added but not documented, behavior changed but docstring
   not updated)?
 - Do new modules have a module-level docstring explaining their purpose?
 - If the PR adds user-facing features, are the relevant docs pages in `docs/`
-  updated?
-- **Convention docs consistency** — Does the PR introduce changes that affect
-  project-wide conventions (e.g., new abstractions, new patterns, changes to the
-  class hierarchy, new registry types, renamed or removed APIs, new reserved
-  parameter names, new module layout)? If so, are `STYLE_GUIDE.md` and/or
-  `CONTRIBUTING.md` updated to reflect those changes? Flag any case where a PR
-  changes how things are done but leaves the convention docs describing the old
-  way.
+  updated, as `CONTRIBUTING.md` § Documentation requires?
+- **Convention docs consistency** — Does the PR change how things are done (new
+  abstractions, new patterns, renamed or removed APIs, new module layout)? If
+  so, are the documents that state the convention updated: `STYLE_GUIDE.md`,
+  `CONTRIBUTING.md`, `CONTRACTS.md`, `AGENTS.md`, or `design/`? Flag any case
+  where a PR changes how things are done but leaves a document describing the
+  old way.
 
 ### 2.3 Test coverage
 
@@ -112,14 +106,11 @@ the docs actually say over this summary:
   error paths)?
 - Have any existing tests become stale — testing behavior that no longer matches
   the implementation?
-- Do tests follow project conventions (see STYLE_GUIDE.md section 8)?
-- Are correctness tolerances as tight as they can reliably be? Loose tolerances
-  — or shape-only assertions on inference output where a statistical sanity
-  check is feasible — are findings.
-- Do tests cover structured cases (multi-field Records, mixed scalar/vector
-  parameters), not just scalar happy paths?
-- If the change touches dispatch (jax vs sequential paths), is there an
-  equivalence test guarding against silent path divergence?
+- Do the tests assert each contract, as `CONTRACTS.md` directive 3 requires?
+- Do the tests follow `STYLE_GUIDE.md` §8 and `CONTRIBUTING.md` § Test quality?
+  A loose tolerance, a shape-only assertion on inference output where a
+  statistical check is feasible, and a dispatch change without an equivalence
+  test are findings.
 
 ### 2.4 Duplicate and redundant code
 
@@ -129,7 +120,7 @@ reimplements logic that already exists. Common patterns to watch for:
 - Custom weight handling instead of using existing weight abstractions
 - Manual sampling loops instead of using `Function` broadcasting
 - Bespoke protocol checks instead of `isinstance` with existing protocols
-- Re-implementing ops logic instead of calling the ops
+- Re-implementing operation logic instead of calling the operations
 - Duplicating registry dispatch logic instead of using existing registries
 
 Also flag:
@@ -145,14 +136,8 @@ documentation:
 - Overly verbose explainer comments that restate what the code obviously does
 - `# TODO` or `# FIXME` comments that were not in the original code and seem
   like AI planning artifacts rather than genuine action items
-- Comments that narrate the development process or provenance rather than
-  explain the code — which PR/plan phase introduced a line, which review
-  comment prompted it ("addressed in review", "previously this was...")
-- Negative documentation — comments or docstrings describing what something
-  *isn't* ("this is not a mixture"); usually a naming or design smell
-  (CONTRIBUTING.md "Code comments & docstrings")
-- Public docstrings that explain implementation internals rather than
-  behavior and usage
+- Comments and docstrings that break `CONTRIBUTING.md` § Code comments &
+  docstrings, such as process narration or negative documentation
 
 ### 2.6 General concerns
 
@@ -173,13 +158,15 @@ documentation:
 
 ### 2.8 PR body and branch hygiene
 
-- Does the PR title/description match the **final** diff? Flag drift in either
+- Do the title, the branch, and the body follow `CONTRIBUTING.md` § Opening the
+  PR and § Branch naming, and does the body keep every section and checklist
+  item of `.github/PULL_REQUEST_TEMPLATE.md`? `scripts/ci/pr_hygiene.py` checks
+  their form, as the advisory CI job does.
+- Does the title/description match the **final** diff? Flag drift in either
   direction: features described but not present, changes present but
   undescribed.
-- Is the body free of internal process jargon ("Phase 1b", plan-file
-  references, review-round narration) that an outside reader cannot follow?
-- Is there a CHANGELOG entry for user-visible changes, and a
-  `kind:breaking-change` label where the public API changes?
+- Does the contract assessment cover each abstraction the PR changes, as
+  `CONTRACTS.md` directive 3 requires?
 - Did scratch artifacts leak into the diff — `*_plan.md` files, references to
   local plan directories, leftover debug scripts?
 - When the PR pins a version (CI action, tool), is the pin consistent with the

@@ -1000,6 +1000,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The `check-pr` and `design-check` skills.** `check-pr` runs the pre-PR
+  checks of a branch and drafts its PR body from the template. `design-check`
+  compares the design sections a change touches with the code, through
+  `scripts/design/design_blocks.py`, the conformance tests, and the ledger. The
+  `review-pr` and `audit-tests` skills read `CONTRACTS.md` and `design/`, and
+  they cite the section that owns each rule.
 - **Checks of the contributor conventions.** The `no-issue-numbers` pre-commit
   hook rejects an issue or PR number in `probpipe/`, and ruff's
   `required-imports` setting requires the future import in each module of

@@ -14,10 +14,11 @@ Performs a structured review of a ProbPipe pull request.
 issues and consistency with ProbPipe conventions.
 
 **What it checks:**
-- ProbPipe philosophy and convention adherence (read from `STYLE_GUIDE.md` and
-  `CONTRIBUTING.md` at review time, so it stays current as conventions evolve)
+- ProbPipe philosophy and convention adherence (read from `AGENTS.md`,
+  `CONTRACTS.md`, `STYLE_GUIDE.md`, `CONTRIBUTING.md`, and `design/` at review
+  time, so it stays current as conventions evolve)
 - Documentation completeness and staleness — including whether the PR should
-  have updated `STYLE_GUIDE.md` or `CONTRIBUTING.md`
+  have updated a rule document or `design/`
 - Test coverage gaps
 - Duplicate or redundant code (checks against existing abstractions in the
   codebase)
@@ -61,8 +62,8 @@ refactor, or to audit specific test files before a release.
 - **Mathematical correctness** — validates that tests use independent baselines
   (analytical formulas, scipy, numerical approximations) rather than
   self-referential checks; flags inappropriate tolerances
-- **Style and conventions** — checks against `STYLE_GUIDE.md` testing
-  conventions and existing suite patterns
+- **Style and conventions** — checks against `STYLE_GUIDE.md` §8, the
+  contract tests of `CONTRACTS.md` directive 3, and existing suite patterns
 
 **Usage:**
 ```
@@ -110,6 +111,55 @@ enough to want an adversarial second, third, and fourth opinion. For a quick loo
 to decide what to act on. Four agents is real token cost, so this skill must be
 explicitly invoked — it will not auto-trigger (general "review this PR" requests
 route to `/review-pr`).
+
+---
+
+### `/check-pr [base-branch]`
+
+Runs the pre-PR procedure on the current branch and drafts the PR body.
+
+**When to use:** Before opening a PR, or before updating a PR's description.
+
+**What it does:**
+- Checks the branch, the title, and the commits against `CONTRIBUTING.md`, with
+  `scripts/ci/pr_hygiene.py`
+- Runs the verification steps of `AGENTS.md` § Verify
+- Audits the touched contracts and docstrings against `CONTRACTS.md`
+- Drafts the body from `.github/PULL_REQUEST_TEMPLATE.md`, with the contract
+  assessment and the test plan filled in, and writes it to a file
+
+**Usage:**
+```
+/check-pr          # compares the branch with main
+/check-pr dev/x    # compares the branch with dev/x
+```
+
+**Behavior:** Changes no code and opens no PR unless asked.
+
+---
+
+### `/design-check [base-branch or section ids]`
+
+Checks the design sections a change touches against the code and the design's
+conventions.
+
+**When to use:** When a change edits `design/` or a module that realizes a
+design section.
+
+**What it does:**
+- Finds the touched sections from the diff, or takes them as arguments
+- Runs `scripts/design/design_blocks.py` `list` and `check` on them, and the
+  four conformance tests
+- Runs `scripts/design/ledger.py` and `tests/docs/`
+- Checks the touched sections against `design/README.md` § Conventions
+
+**Usage:**
+```
+/design-check            # the sections the branch changes, against main
+/design-check III.7 VI.3 # the named sections
+```
+
+**Behavior:** Read-only; reports each finding with the command that found it.
 
 ## Adding New Skills
 
