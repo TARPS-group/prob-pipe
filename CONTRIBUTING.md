@@ -524,7 +524,7 @@ uv build packaging/probpipe   # probpipe (metapackage)
    does; the classes the design retires, such as `ProductDistribution`, still
    take it as a keyword. Structural transforms preserve names, and `with_name`
    explicitly relabels a copy. A Function call creates an independent result
-   under `output_name`, including every Function-based operation in B1:
+   under `output_name`, including every Function-based operation:
    `sample`, `condition_on`, `from_distribution`, and `mean` use those labels.
    Component names, record fields, and existing batch levels are separate from
    the result label and remain unchanged. `ProductDistribution` validates that each

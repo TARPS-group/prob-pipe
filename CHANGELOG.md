@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
-- **Function declarations and engine migration (#448 B1).** Construct with
+- **Function declarations and engine migration.** Construct with
   `Function(name, fn, *, input_spec=None, output_spec=None, output_name=None, ...)`.
   The name is required; decorators default it to the Python callable's name.
   `FunctionSpec` now stores `InputSpec` and `OutputSpec`. The old Function
@@ -27,8 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `from_distribution`, and `mean` label their results with those operation names,
   replacing implementation labels such as `params` or the source law's name.
   Component names, record fields, and existing batch levels are retained;
-  `apply` preserves implementation labels. This is B1's naming behavior pending
-  operation-specific result rules.
+  `apply` preserves implementation labels. Operation results follow the same
+  naming contract as other Function results.
   `Function`/`FunctionSpec` live in `values/`, and workflow helpers move from
   `core/_workflow_*` into `functions/`; old imports have no shims. Declaration
   fingerprints and replay anchors change, so regenerate persisted artifacts.

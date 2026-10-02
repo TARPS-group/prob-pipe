@@ -109,7 +109,8 @@ if it were user-guide reference text.
 | `NumericArrayBatch` (the batch form of the numeric-array kind; one native store, not columns) | docstrings in `probpipe/core/_numeric_array_batch.py`; #235 Chapter 2 |
 | `RecordBatch` / `NumericRecordBatch` (columnar, leaf-path-keyed storage; a collection, not a named tree) | docstrings in `probpipe/core/_record_batch.py`, `_numeric_record_batch.py`; #235 Chapter 2 |
 | `FunctionBatch` / `OpaqueBatch` (the batch forms that *store* their elements, over shared object-array storage) | docstrings in `probpipe/core/_function_batch.py`, `_opaque_batch.py` (storage in `_object_batch.py`); #235 Chapter 2 |
-| `Function` (`input_spec`, `output_spec`, `output_name`, legacy constructor keyword warnings) & ops (`sample`, `log_prob`, …) | docstrings in `values/_function_base.py`, `functions/_function.py`, `functions/_result.py`, and `core/ops.py`; design III.3 and V.1; #448 B1 |
+| `Function` (`input_spec`, `output_spec`, `output_name`, `effective_workflow_kind`, legacy constructor keyword warnings) & ops (`sample`, `log_prob`, …) | docstrings in `probpipe/values/_function_base.py`, `probpipe/functions/_function.py`, `probpipe/functions/_result.py`, and `probpipe/core/ops.py`; design III.3 and V.1 |
+| Function call-engine installation (single engine, idempotent reinstallation, retained callbacks) | `install_call_engine` docstring in `probpipe/values/_function_base.py` |
 | Naming / provenance / annotations (`TrackedTerm` / `Annotated` mixins) | docstrings in `probpipe/core/tracked.py` (and `provenance.py` for `Provenance` / `ParentInfo`); the naming contract in #235 Chapter 5 |
 | Immutability (`Immutable` mixin: the assignment guard, and the `copy` / `pickle` state round-trip it forces) | docstrings in `probpipe/core/_immutable.py`; `design/02-shared-abstractions.md` §II.4 |
 
