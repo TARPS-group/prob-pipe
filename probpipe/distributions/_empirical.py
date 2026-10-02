@@ -31,6 +31,7 @@ from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._object_batch import _is_object_array, _ObjectBatch
 from ..core._record_batch import RecordBatch, _batch_class_for
 from ..core._record_spec import NumericRecordSpec, RecordSpec
+from ..core._repr import format_value
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec
 from ..core._specs import OutputSpec
 from ..core.named_tree import _unflatten_paths
@@ -673,5 +674,9 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
             axes_per_level=_ranks(atoms),
         )
 
-    def __repr__(self) -> str:
-        return f"{type(self).__name__}(name={self.name!r}, num_atoms={self.num_atoms})"
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The atoms as stored, and the weights when nonuniform."""
+        fields = [("atoms", repr(self._atoms))]
+        if self._p is not None:
+            fields.append(("weights", format_value(self._p)))
+        return fields

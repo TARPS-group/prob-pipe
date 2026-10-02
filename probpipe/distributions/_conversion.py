@@ -37,6 +37,7 @@ from ..core._dispatch import (
     _Registration,
 )
 from ..core._record_spec import RecordSpec
+from ..core._repr import sequence_repr
 from ..core._spec_base import NumericArraySpec, TermSpec, _unify_array_shape
 from ..core._specs import OutputSpec
 from ..core.provenance import Provenance
@@ -76,7 +77,7 @@ _GUARDED_METHODS: dict[type, str] = {
 }
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class ConversionInfo(MethodInfo):
     """The report of one conversion, before it executes.
 
@@ -138,6 +139,20 @@ class ConversionInfo(MethodInfo):
             )
         if self.feasible is True and self.target_spec is None:
             raise ValueError("a feasible ConversionInfo promises its target_spec")
+
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The method's arguments, then the promise where one is made."""
+        fields = super()._repr_arguments()
+        if self.target_spec is not None:
+            fields.append(("target_spec", repr(self.target_spec)))
+        if self.target_class is not None:
+            fields.append(("target_class", self.target_class.__name__))
+        if self.capabilities:
+            names = (capability.__name__ for capability in self.capabilities)
+            fields.append(("capabilities", sequence_repr(names)))
+        if self.samples:
+            fields.append(("samples", "True"))
+        return fields
 
 
 class Converter(BinaryDispatchMethod):

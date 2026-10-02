@@ -45,6 +45,7 @@ from ._function_batch import FunctionBatch
 from ._kinds import batch_class_for_spec
 from ._object_batch import _from_iterable, _frozen_object_column, _is_object_array
 from ._opaque_batch import OpaqueBatch
+from ._repr import format_names
 from ._spec_base import OpaqueSpec, _opaque_spec_of
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec, TermSpec
 from .named_tree import _PATH_SEP, _unflatten_paths
@@ -194,6 +195,10 @@ class RecordBatch(Batch[Record]):
     def event_template(self) -> RecordSpec:
         """The structure of one element — a view on :attr:`element_spec`."""
         return self.element_spec
+
+    def _element_repr_arguments(self) -> list[tuple[str, str]]:
+        """The elements' field paths, in canonical order."""
+        return [("fields", format_names(self.element_spec.keys()))]
 
     # -- validation ---------------------------------------------------------
 

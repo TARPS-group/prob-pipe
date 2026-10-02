@@ -217,12 +217,6 @@ class NumericArrayBatch(Batch[NumericArray]):
     def __jax_array__(self) -> Any:
         return self.as_jax()
 
-    def __repr__(self) -> str:
-        return (
-            f"NumericArrayBatch(batch_shape={self.batch_shape}, "
-            f"levels={self.level_names}, event_shape={tuple(self.element_spec.shape)})"
-        )
-
     # -- the concrete-storage seam ------------------------------------------
 
     def _element_at(self, index: tuple[int, ...], *, name: str) -> NumericArray:

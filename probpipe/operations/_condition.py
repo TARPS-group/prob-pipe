@@ -72,6 +72,7 @@ from ..core._dispatch import (
     UnaryDispatchRegistry,
 )
 from ..core._record_spec import RecordSpec
+from ..core._repr import format_names
 from ..core._spec_base import TermSpec
 from ..core._specs import InputSpec, OutputSpec, _components_record
 from ..core.provenance import Provenance
@@ -386,6 +387,13 @@ class _UnnormalizedConditional(Distribution):
         """Whether the given values are keyed by the joint's fields."""
         return self._keyed
 
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The law conditioned, and the fields its given values fix where they are keyed."""
+        fields = [("joint", repr(self._joint))]
+        if self._keyed:
+            fields.append(("conditioned", format_names(self._given.keys())))
+        return fields
+
 
 def _conditional_kernel_density(
     self: _UnnormalizedConditionalKernel, given: Record | Mapping[str, Any], value: Any
@@ -442,6 +450,10 @@ class _UnnormalizedConditionalKernel(ConditionalDistribution):
     def given(self) -> Record:
         """The values of the conditioned fields."""
         return self._given
+
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The kernel conditioned, and the fields the given values fix."""
+        return [("kernel", repr(self._kernel)), ("conditioned", format_names(self._given.keys()))]
 
     def _condition_on(
         self, given: Record | Mapping[str, Any], /, **kwargs: Any
@@ -642,6 +654,10 @@ class _PerValueNormalization(ConditionalDistribution):
     def kernel(self) -> ConditionalDistribution:
         """The kernel whose laws are normalized."""
         return self._kernel
+
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The kernel whose laws are normalized."""
+        return [("kernel", repr(self._kernel))]
 
     def _condition_on(
         self, given: Record | Mapping[str, Any], /, **kwargs: Any

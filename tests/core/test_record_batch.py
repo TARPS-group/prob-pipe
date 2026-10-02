@@ -1476,7 +1476,9 @@ class TestEqualityAndCopying:
             ("chain", "draw"),
             element_spec=RecordSpec(x=()),
         )
-        assert repr(batch) == "NumericRecordBatch(name='post', chain=4, draw=100)"
+        assert repr(batch) == (
+            "NumericRecordBatch('post', levels={'chain': 4, 'draw': 100}, fields=('x',))"
+        )
 
     def test_pickle_round_trip(self):
         batch = nested_batch(name="post")

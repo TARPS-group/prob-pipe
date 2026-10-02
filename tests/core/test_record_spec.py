@@ -799,13 +799,24 @@ class TestRepr:
         assert "label=OpaqueSpec(type=str)" in repr(RecordSpec(label=OpaqueSpec(type=str)))
 
     def test_populated_numeric_array_spec_shows_full_repr(self):
-        # A spec carrying dtype/support is not bare, so repr falls back to the
-        # full dataclass repr rather than the bare-shape shorthand. The dtype
-        # renders in its normalised ``numpy.dtype`` form.
+        # A spec carrying a dtype or a support is not bare, so it prints in full
+        # rather than as the bare-shape shorthand, its dtype by name.
         tpl = RecordSpec(x=NumericArraySpec((3,), dtype="float32"))
-        r = repr(tpl)
-        assert "NumericArraySpec(" in r
-        assert "dtype=dtype('float32')" in r
+        assert repr(tpl) == "NumericRecordSpec(x=NumericArraySpec(shape=(3,), dtype=float32))"
+
+    def test_a_long_schema_shows_one_field_per_line(self):
+        tpl = RecordSpec(
+            effect=NumericArraySpec((), dtype="float32"),
+            se=NumericArraySpec((), dtype="float32"),
+            label=OpaqueSpec(type=str, meta="the school's two-letter code"),
+        )
+        assert repr(tpl) == (
+            "RecordSpec(\n"
+            "    effect=NumericArraySpec(shape=(), dtype=float32),\n"
+            "    se=NumericArraySpec(shape=(), dtype=float32),\n"
+            '    label=OpaqueSpec(type=str, meta="the school\'s two-letter code"),\n'
+            ")"
+        )
 
     def test_populated_opaque_spec_shows_full_repr(self):
         tpl = RecordSpec(label=OpaqueSpec(meta="tag"), x=())

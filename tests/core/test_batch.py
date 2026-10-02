@@ -1421,30 +1421,57 @@ def _values(batch_or_element):
 
 
 class TestRepr:
-    def test_the_repr_names_the_class_the_batch_and_its_levels(self, nested):
-        assert repr(nested) == "_ListBatch(name='b', chain=2, draw=3)"
+    """Design II.4: the label first, the levels as a mapping, and the element spec."""
+
+    def test_the_repr_names_the_label_the_levels_and_the_element_spec(self, nested):
+        assert repr(nested) == (
+            "Batch('b', levels={'chain': 2, 'draw': 3}, element_spec=OpaqueSpec())"
+        )
 
     def test_a_multi_axis_level_shows_its_axes(self, two_axis):
-        assert repr(two_axis) == "_ListBatch(name='b', draw=(2, 3))"
+        assert repr(two_axis) == "Batch('b', levels={'draw': (2, 3)}, element_spec=OpaqueSpec())"
 
     def test_a_view_reprs_under_the_name_it_derived(self, nested):
-        assert repr(nested[1]) == "_ListBatch(name='b[chain=1]', draw=3)"
         assert (
-            repr(nested.at_levels(draw=slice(0, 2)))
-            == "_ListBatch(name='b[draw=0:2]', chain=2, draw=2)"
+            repr(nested[1]) == "Batch('b[chain=1]', levels={'draw': 3}, element_spec=OpaqueSpec())"
+        )
+        assert repr(nested.at_levels(draw=slice(0, 2))) == (
+            "Batch('b[draw=0:2]', levels={'chain': 2, 'draw': 2}, element_spec=OpaqueSpec())"
         )
 
     def test_the_repr_reads_no_element(self):
         # A store too short for the shape: reading one would raise, and the repr
         # must not, since with_provenance interpolates the batch into an error.
         unreadable = _ListBatch([], _spec([(2,), (3,)], ["chain", "draw"]))
-        assert repr(unreadable) == "_ListBatch(name='b', chain=2, draw=3)"
+        assert repr(unreadable) == (
+            "Batch('b', levels={'chain': 2, 'draw': 3}, element_spec=OpaqueSpec())"
+        )
         with pytest.raises(IndexError):
             unreadable[0, 0]
 
     def test_renaming_a_level_shows_in_both_the_levels_and_the_name(self, nested):
         renamed = nested[1].with_level_names(draw="step")
-        assert repr(renamed) == "_ListBatch(name='b[chain=1]', step=3)"
+        assert repr(renamed) == (
+            "Batch('b[chain=1]', levels={'step': 3}, element_spec=OpaqueSpec())"
+        )
+
+    def test_a_long_repr_shows_one_field_per_line(self):
+        spec = RecordSpec({f"field_{index}": () for index in range(6)})
+        batch = _ListBatch([None] * 4, _spec([(4,)], ["draw"], element_spec=spec))
+        assert repr(batch) == (
+            "Batch(\n"
+            "    'b',\n"
+            "    levels={'draw': 4},\n"
+            "    element_spec=NumericRecordSpec(\n"
+            "        field_0=(),\n"
+            "        field_1=(),\n"
+            "        field_2=(),\n"
+            "        field_3=(),\n"
+            "        field_4=(),\n"
+            "        field_5=(),\n"
+            "    ),\n"
+            ")"
+        )
 
 
 class TestTheTwoWaysOfIndexingCompose:
@@ -1509,8 +1536,10 @@ class TestAViewOverSharedStorageBehavesLikeAnyBatch:
         assert [leaf.value for leaf in renamed] == [3, 4, 5]
         assert renamed._root_store is viewed._root_store
 
-    def test_the_repr_names_the_concrete_class(self, viewed):
-        assert repr(viewed) == "_ViewBatch(name='b', chain=2, draw=3)"
+    def test_a_private_class_shows_its_public_class(self, viewed):
+        assert repr(viewed) == (
+            "Batch('b', levels={'chain': 2, 'draw': 3}, element_spec=OpaqueSpec())"
+        )
 
 
 class TestAStoredElementKeepsItsOwnIdentity:

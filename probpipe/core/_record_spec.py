@@ -6,6 +6,7 @@ from collections.abc import Callable, Iterable, Mapping
 from typing import Any, Self, cast
 
 from ._immutable import Immutable
+from ._repr import term_repr
 from ._spec_base import (
     NumericArraySpec,
     NumericSpec,
@@ -543,16 +544,18 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
     # -- Repr ---------------------------------------------------------------
 
     def __repr__(self) -> str:
-        parts = []
+        """Each child by name, as the constructor takes it.
+
+        A bare array spec, which declares only a shape, renders as its
+        shape-tuple shorthand, which the constructor accepts.
+        """
+        fields = []
         for name, spec in self._tree.items():
-            if isinstance(spec, RecordSpec):
-                parts.append(f"{name}={spec!r}")
-            elif isinstance(spec, NumericArraySpec) and spec.dtype is None and spec.support is None:
-                # A bare array spec renders as its shape-tuple shorthand.
-                parts.append(f"{name}={spec.shape}")
-            else:
-                parts.append(f"{name}={spec!r}")
-        return f"{type(self).__name__}({', '.join(parts)})"
+            bare = (
+                isinstance(spec, NumericArraySpec) and spec.dtype is None and spec.support is None
+            )
+            fields.append((name, repr(spec.shape) if bare else repr(spec)))
+        return term_repr(type(self).__name__, None, fields)
 
 
 # ---------------------------------------------------------------------------

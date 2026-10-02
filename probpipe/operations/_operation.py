@@ -44,6 +44,7 @@ from ..core._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtyp
 from ..core._dispatch import BaseDispatchRegistry, Feasibility, MethodInfo, ResolutionError
 from ..core._kinds import _KINDS
 from ..core._record_spec import RecordSpec
+from ..core._repr import format_names
 from ..core._spec_base import NumericArraySpec, OpaqueSpec, TermSpec
 from ..core._specs import OutputSpec
 from ..core.record import Record
@@ -1093,6 +1094,11 @@ class Operation(Function):
         It is :meth:`apply`, which returns the result's raw form.
         """
         return self.apply
+
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The function's arguments, then the routes in registration order."""
+        routes = format_names(route.name for route in self._route_table.routes)
+        return [*super()._repr_arguments(), ("routes", routes)]
 
     # -- the declarations the engine reads ------------------------------------
 

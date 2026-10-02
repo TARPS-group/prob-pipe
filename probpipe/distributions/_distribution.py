@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from ._factored import FactoredConditionalDistribution, FactoredDistribution
 
 from ..core._record_spec import RecordSpec
+from ..core._repr import public_class_name, term_repr
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import OutputSpec
 from ..core.constraints import _known_equal
@@ -97,6 +98,15 @@ def _whole_term_component(declaration: OutputSpec) -> str | None:
         return None
     (component,) = declaration.components
     return component
+
+
+def _is_default_declaration(declaration: OutputSpec, name: str) -> bool:
+    """Whether *declaration* is the one a bare spec completes to under the label *name* (III.7)."""
+    try:
+        return declaration == OutputSpec.default(declaration.spec, component=name)
+    except ValueError:
+        # Only a label that is a valid component has a default whole-term declaration.
+        return False
 
 
 def _declares_numeric_event(value: Any) -> bool:
@@ -794,10 +804,28 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     # -- repr ---------------------------------------------------------------
 
     def __repr__(self) -> str:
-        parts = [type(self).__name__]
-        if self.name:
-            parts.append(f"name={self.name!r}")
-        return f"{parts[0]}({', '.join(parts[1:])})"
+        """The public class, the label, the family parameters, and a declaration that is not the default.
+
+        The event declaration is shown when it differs from the one a bare spec
+        completes to under the law's label (III.7), as after ``with_name`` or
+        for a declared component.
+        """
+        fields = [*self._repr_arguments(), *self._event_repr_arguments()]
+        return term_repr(self._repr_class_name(), self.name, fields)
+
+    def _repr_class_name(self) -> str:
+        """The first public class in this law's method-resolution order, which the repr names."""
+        return public_class_name(type(self))
+
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The family parameters the repr shows, each by name and formatted value; none here."""
+        return []
+
+    def _event_repr_arguments(self) -> list[tuple[str, str]]:
+        """The event declaration, unless it is the default for this law's label."""
+        if _is_default_declaration(self.event_spec, self.name):
+            return []
+        return [("event_spec", repr(self.event_spec))]
 
 
 class NumericDistribution(Distribution):
@@ -969,6 +997,10 @@ class DistributionSpec(TermSpec):
             return False
         _unify_declarations(self.event_spec, actual.event_spec, bindings, path)
         return True
+
+    def __repr__(self) -> str:
+        """The event declaration, as the constructor takes it."""
+        return term_repr("DistributionSpec", None, [("event_spec", repr(self.event_spec))])
 
     def is_valid(self, value: Any) -> bool:
         """Whether *value* is a ``Distribution`` whose declaration matches this one."""

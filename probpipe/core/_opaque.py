@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from ._repr import term_repr
 from ._spec_base import OpaqueSpec
 from .provenance import Provenance
 from .tracked import Annotated, TrackedTerm
@@ -100,4 +101,5 @@ class Opaque(TrackedTerm, Annotated):
         return self._spec
 
     def __repr__(self) -> str:
-        return f"Opaque({self.name!r}, {self._value!r})"
+        """The label, then the declared type and the metadata where the spec sets them."""
+        return term_repr("Opaque", self.name, self._spec._repr_arguments())

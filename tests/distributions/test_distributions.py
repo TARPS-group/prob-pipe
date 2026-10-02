@@ -168,10 +168,10 @@ class TestMultivariateNormal:
         assert g.name == "z"
 
     def test_repr(self, gaussian):
-        r = repr(gaussian)
-        assert "MultivariateNormal" in r
-        assert "test_gaussian" in r
-        assert "event_shape=(3,)" in r
+        assert repr(gaussian) == (
+            "MultivariateNormal('test_gaussian', loc=[0.0, 1.0, 2.0], "
+            "cov=array(shape=(3, 3), dtype=float32))"
+        )
 
     def test_dtype(self, gaussian, loc):
         assert gaussian.dtype == loc.dtype

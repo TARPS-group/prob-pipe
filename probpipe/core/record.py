@@ -46,6 +46,7 @@ import numpy as np
 from ..custom_types import ArrayLike
 from ._array_backend import _metadata_of, _numpy_dtype_of, _to_numpy_array, array_backend_for
 from ._record_spec import _unify_record_spec_with_value
+from ._repr import format_names, public_class_name, term_repr
 from ._spec_base import _full_array_shape_or_none
 from ._specs import NumericRecordSpec, RecordSpec
 from .named_tree import _PATH_SEP, NamedTree, _check_no_path_sep, _unflatten_paths
@@ -1048,15 +1049,10 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     # -- Repr ---------------------------------------------------------------
 
     def __repr__(self) -> str:
-        parts = []
-        for name, val in self._tree.items():
-            if isinstance(val, Record):
-                parts.append(f"{name}={val!r}")
-            elif hasattr(val, "shape") and val.shape != ():
-                parts.append(f"{name}=array(shape={val.shape})")
-            else:
-                parts.append(f"{name}={val!r}")
-        return f"{type(self).__name__}({', '.join(parts)})"
+        """The label, then the field paths in canonical order, read from the schema."""
+        return term_repr(
+            public_class_name(type(self)), self.name, [("fields", format_names(self.keys()))]
+        )
 
     # -- Call-forwarding shim for single-field Records ----------------------
     #

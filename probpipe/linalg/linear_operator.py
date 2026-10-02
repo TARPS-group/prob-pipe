@@ -23,6 +23,7 @@ from .._array_utils import (
     _ensure_square_matrix,
     _ensure_vector,
 )
+from ..core._repr import format_dtype, format_value, sequence_repr, term_repr
 from ..custom_types import Array, ArrayLike
 
 
@@ -283,7 +284,13 @@ class LinOp(ABC):
 
     # ---- Default representations ----
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}(shape={self.shape}, dtype={self.dtype})"
+        """The class, the shape and the dtype, and a composite's operands."""
+        fields = [("shape", repr(self.shape)), ("dtype", format_dtype(self.dtype))]
+        return term_repr(type(self).__name__, None, [*fields, *self._operand_repr_arguments()])
+
+    def _operand_repr_arguments(self) -> list[tuple[str, str]]:
+        """The operands a composite's repr shows; a structured operator has none."""
+        return []
 
 
 # -----------------------------------------------------------------------------
@@ -309,6 +316,10 @@ class ProductLinOp(LinOp):
             # product of two diagonal operators is diagonal
             self.add_flag("diagonal")
             self.add_flag("symmetric")
+
+    def _operand_repr_arguments(self) -> list[tuple[str, str]]:
+        """The operands, in the constructor's order."""
+        return [("operands", sequence_repr(format_value(operand) for operand in self.raw()))]
 
     def raw(self) -> tuple[LinOp, LinOp]:
         """The operands ``(A, B)`` of ``A @ B``."""
@@ -365,6 +376,10 @@ class SumLinOp(LinOp):
         if all("positive_definite" in op.flags for op in ops):
             # sum of PD matrices is PD
             self.add_flag("positive_definite")
+
+    def _operand_repr_arguments(self) -> list[tuple[str, str]]:
+        """The operands, in the constructor's order."""
+        return [("operands", sequence_repr(format_value(operand) for operand in self.raw()))]
 
     def raw(self) -> tuple[LinOp, ...]:
         """The summands, in order."""
@@ -465,6 +480,10 @@ class ScaledLinOp(LinOp):
         if "positive_definite" in op.flags and _known_positive(self.scalar):
             self.add_flag("positive_definite")
 
+    def _operand_repr_arguments(self) -> list[tuple[str, str]]:
+        """The operands, in the constructor's order."""
+        return [("operands", sequence_repr(format_value(operand) for operand in self.raw()))]
+
     def raw(self) -> tuple[LinOp, float | Array]:
         """The operands ``(A, c)`` of ``c * A``, in the constructor's order."""
         return (self.op, self.scalar)
@@ -518,6 +537,10 @@ class TransposedLinOp(LinOp):
             self.add_flag("triangular_upper")
         if "triangular_upper" in op.flags:
             self.add_flag("triangular_lower")
+
+    def _operand_repr_arguments(self) -> list[tuple[str, str]]:
+        """The operands, in the constructor's order."""
+        return [("operands", sequence_repr(format_value(operand) for operand in self.raw()))]
 
     def raw(self) -> tuple[LinOp]:
         """The one operand ``A`` of ``A.T``."""

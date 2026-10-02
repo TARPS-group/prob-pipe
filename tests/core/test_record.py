@@ -836,22 +836,15 @@ class TestLeafOps:
 
 
 class TestReprAndEquality:
-    def test_repr_scalars(self):
-        v = Record("r", a=1.0, b=2.0)
-        r = repr(v)
-        assert "Record(" in r
-        assert "a=" in r
-        assert "b=" in r
+    def test_repr_names_the_label_and_the_field_paths(self):
+        assert repr(Record("r", a=1.0, b="tag")) == "Record('r', fields=('a', 'b'))"
 
-    def test_repr_arrays(self):
-        v = Record("r", x=jnp.zeros((3, 4)))
-        r = repr(v)
-        assert "shape=(3, 4)" in r
+    def test_repr_of_a_numeric_record_names_its_class(self):
+        assert repr(Record("r", x=jnp.zeros((3, 4)))) == "NumericRecord('r', fields=('x',))"
 
-    def test_repr_nested(self):
-        v = Record("r", inner=Record("r", x="tag"))
-        r = repr(v)
-        assert "inner=Record(" in r
+    def test_repr_lists_nested_fields_by_path(self):
+        school = Record("school", {"data": {"effect": 28.0, "se": 15.0}, "label": "A"})
+        assert repr(school) == "Record('school', fields=('data/effect', 'data/se', 'label'))"
 
     def test_equality(self):
         v1 = Record("r", a=1.0, b=2.0)

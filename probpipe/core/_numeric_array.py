@@ -21,6 +21,7 @@ from ._array_backend import (
     _to_numpy_array,
 )
 from ._numeric import Numeric
+from ._repr import format_dtype, term_repr
 from ._specs import NumericArraySpec
 from .provenance import Provenance
 from .tracked import Annotated, TrackedTerm
@@ -265,7 +266,17 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
         return len(self._value)
 
     def __repr__(self) -> str:
-        return f"NumericArray({self.name!r}, {self._value!r})"
+        """The label, then the declared shape and dtype, and the support when one is declared.
+
+        A declaration with an open dtype shows the stored value's dtype. The repr
+        reads the spec and the value's metadata alone.
+        """
+        spec = self._spec
+        dtype = spec.dtype if spec.dtype is not None else self.dtype
+        fields = [("shape", repr(tuple(spec.shape))), ("dtype", format_dtype(dtype))]
+        if spec.support is not None:
+            fields.append(("support", repr(spec.support)))
+        return term_repr("NumericArray", self.name, fields)
 
     # -- the array surface --------------------------------------------------
 

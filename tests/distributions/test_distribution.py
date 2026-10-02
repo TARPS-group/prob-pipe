@@ -275,14 +275,26 @@ class TestAnnotationsDiagnosticsAccessor:
 
 
 class TestDistributionRepr:
-    def test_base_repr_includes_class_and_name(self):
+    def test_base_repr_shows_the_public_class_and_the_label(self):
         from probpipe import Distribution
 
         class _NamedDist(Distribution):
             def __init__(self):
                 super().__init__("x", OpaqueSpec())
 
-        assert repr(_NamedDist()) == "_NamedDist(name='x')"
+        assert repr(_NamedDist()) == "Distribution('x')"
+
+    def test_a_declaration_that_is_not_the_default_is_shown(self):
+        from probpipe import Distribution
+
+        class Named(Distribution):
+            def __init__(self):
+                super().__init__("x", OutputSpec(beta=OpaqueSpec()))
+
+        assert repr(Named()) == "Named('x', event_spec=OutputSpec(beta=OpaqueSpec()))"
+        assert repr(Named().with_name("y")) == (
+            "Named('y', event_spec=OutputSpec(beta=OpaqueSpec()))"
+        )
 
 
 class TestConstructorNameCheck:

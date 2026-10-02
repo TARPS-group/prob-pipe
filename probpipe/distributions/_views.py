@@ -844,8 +844,13 @@ class FieldView(Distribution):
         view = FieldView(parent, self._path)
         return view if view.name == self.name else view.with_name(self.name)
 
-    def __repr__(self) -> str:
-        return f"FieldView(parent={self._parent.name!r}, path={self._path!r})"
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The parent's path that the view reads."""
+        return [("path", repr(self._path))]
+
+    def _event_repr_arguments(self) -> list[tuple[str, str]]:
+        """A view's declaration is its parent's schema at its path, which the path states."""
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -1496,8 +1501,17 @@ class _RenamedDistribution(Distribution):
         """
         return _original_nodes(self._event, self.event_spec, paths, self._parent.name)
 
-    def __repr__(self) -> str:
-        return f"_RenamedDistribution(name={self.name!r}, parent={self._parent.name!r})"
+    def _repr_class_name(self) -> str:
+        """The class of the law this one renames, which it presents under new paths."""
+        return self._parent._repr_class_name()
+
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The family parameters of the law this one renames."""
+        return self._parent._repr_arguments()
+
+    def _event_repr_arguments(self) -> list[tuple[str, str]]:
+        """The renamed declaration, by which this law differs from the one it renames."""
+        return [("event_spec", repr(self.event_spec))]
 
 
 def _renamed(law: Distribution, event: _EventRenames, arguments: Mapping[str, str]) -> Distribution:
@@ -1863,6 +1877,18 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
         object.__setattr__(self, "_pending", dict(pending or {}))
         object.__setattr__(self, "_event", event)
         self._init_declaration(given_spec, event_spec)
+
+    def _repr_class_name(self) -> str:
+        """The class of the kernel this one renames, which it presents under new names."""
+        return self._parent._repr_class_name()
+
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The family parameters of the kernel this one renames."""
+        return self._parent._repr_arguments()
+
+    def _event_repr_arguments(self) -> list[tuple[str, str]]:
+        """The renamed declaration, by which this kernel differs from the one it renames."""
+        return [("event_spec", repr(self.event_spec))]
 
     def _translated(self, given: Any) -> tuple[dict[str, Any], dict[str, Any], set[str]]:
         """The parent slots *given* completes, the parent leaves left pending, and the slots bound.

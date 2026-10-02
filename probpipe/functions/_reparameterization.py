@@ -155,9 +155,6 @@ class _BackendBijector(Function, SupportsInverse, SupportsLogDetJacobian):
         """Rebuild from the backend bijector, whose state pickles where a Function's controls do not."""
         return (_rebuilt_backend_bijector, (self._bijector, self._image, self.name))
 
-    def __repr__(self) -> str:
-        return f"bijector({self.name!r})"
-
 
 def _rebuilt_backend_bijector(
     bijector: tfb.Bijector, image: Constraint | None, name: str

@@ -26,6 +26,7 @@ import jax.numpy as jnp
 
 from ..core._dispatch import Feasibility
 from ..core._record_spec import RecordSpec
+from ..core._repr import format_names, public_class_name, term_repr
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import InputSpec, OutputSpec
 from ..core.config import WorkflowKind
@@ -133,6 +134,18 @@ class FunctionSpec(TermSpec):
     def is_valid(self, value: Any) -> bool:
         """Whether value is callable; this does not execute or certify its body."""
         return callable(value)
+
+    def __repr__(self) -> str:
+        """The declared sides, as the constructor takes them; an unspecified side is omitted."""
+        fields = [
+            (side, repr(declaration))
+            for side, declaration in (
+                ("input_spec", self.input_spec),
+                ("output_spec", self.output_spec),
+            )
+            if declaration is not None
+        ]
+        return term_repr("FunctionSpec", None, fields)
 
 
 @dataclass(frozen=True)
@@ -847,6 +860,26 @@ class Function(Node, TrackedTerm, Annotated):
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         return _call_engine(self, *args, **kwargs)
+
+    def __repr__(self) -> str:
+        """The public class, the label, the parameters, and the declarations set on the function.
+
+        The result label is shown where it differs from the function's own.
+        """
+        return term_repr(public_class_name(type(self)), self.name, self._repr_arguments())
+
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The arguments the repr shows after the label, each by name and formatted value."""
+        fields = [("parameters", format_names(self.signature.parameters))]
+        if self.output_name != self.name:
+            fields.append(("output_name", repr(self.output_name)))
+        for side, declaration in (
+            ("input_spec", self.input_spec),
+            ("output_spec", self.output_spec),
+        ):
+            if declaration is not None:
+                fields.append((side, repr(declaration)))
+        return fields
 
 
 def _set_controls(

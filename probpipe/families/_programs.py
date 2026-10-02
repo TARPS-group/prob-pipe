@@ -34,6 +34,7 @@ import numpy as np
 
 from ..core._immutable import transient_memo
 from ..core._record_spec import NumericRecordSpec, RecordSpec
+from ..core._repr import format_names, format_value
 from ..core._spec_base import NumericArraySpec
 from ..core._specs import OpaqueSpec, OutputSpec
 from ..core.record import Record
@@ -114,6 +115,10 @@ class UnnormalizedDistribution(Distribution, SupportsUnnormalizedLogProb):
     def _unnormalized_log_prob(self, value: Any) -> Array:
         """The user's log-density at *value*, known up to an additive constant."""
         return jnp.asarray(self._log_density(value))
+
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The log-density, by its name."""
+        return [("log_density", format_value(self._log_density))]
 
 
 # ---------------------------------------------------------------------------
@@ -440,8 +445,9 @@ class _StanPosterior(Distribution, SupportsUnnormalizedLogProb):
         """The posterior in the unconstrained parameterization, whose density has the Jacobian."""
         return _UnconstrainedStanView(self)
 
-    def __repr__(self) -> str:
-        return f"StanModel(stan_file={self.stan_file!r}, data={sorted(self._data)})"
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The Stan file and the data-block entries bound."""
+        return [("stan_file", repr(self.stan_file)), ("data", format_names(sorted(self._data)))]
 
 
 class _UnconstrainedStanView(Distribution, SupportsUnnormalizedLogProb):
@@ -471,8 +477,9 @@ class _UnconstrainedStanView(Distribution, SupportsUnnormalizedLogProb):
             value = _pack_block_params(type(self).__name__, self._blocks, dict(fields))
         return jnp.asarray(self._posterior._bridgestan_model().log_density(_to_f64(value)))
 
-    def __repr__(self) -> str:
-        return f"UnconstrainedStanView({self._posterior!r})"
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The posterior this law reparameterizes."""
+        return [("posterior", repr(self._posterior))]
 
 
 class _StanModelMeta(type(ConditionalDistribution)):
@@ -572,8 +579,9 @@ class StanModel(
             raise KeyError(f"{self.name!r} needs a value for every data-block entry")
         return law._unnormalized_log_prob(value)
 
-    def __repr__(self) -> str:
-        return f"StanModel(stan_file={self.stan_file!r}, given={sorted(self.given_spec)})"
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The Stan file; the given slots are the data-block entries left unbound."""
+        return [("stan_file", repr(self.stan_file))]
 
 
 # ---------------------------------------------------------------------------
@@ -881,8 +889,17 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
             fields[name] = tuple(int(s) for s in shape)
         return NumericRecordSpec(**fields)
 
-    def __repr__(self) -> str:
-        return f"PyMCModel(variables=[{', '.join(self._program.shapes)}])"
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The model function, by its name, and its free variables."""
+        return _pymc_repr_arguments(self._program)
+
+
+def _pymc_repr_arguments(program: _PyMCProgram) -> list[tuple[str, str]]:
+    """The model function, by its name, and its free variables, for a repr."""
+    return [
+        ("model_fn", format_value(program.model_fn)),
+        ("variables", format_names(program.shapes)),
+    ]
 
 
 def _pymc_kernel_density(self: _PyMCKernel, given: Any, value: Any) -> Array:
@@ -949,7 +966,6 @@ class _PyMCKernel(ConditionalDistribution):
         values = _given_values(self.name, given, kwargs, self.given_spec)
         return PyMCModel(self.name, self._program.bind(values))
 
-    def __repr__(self) -> str:
-        return (
-            f"PyMCModel(variables=[{', '.join(self._program.shapes)}], given={self._program.given})"
-        )
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The model function, by its name, and its free variables."""
+        return _pymc_repr_arguments(self._program)

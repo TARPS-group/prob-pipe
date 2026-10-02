@@ -35,6 +35,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from ._repr import call_repr
+
 __all__ = [
     "BaseDispatchMethod",
     "BaseDispatchRegistry",
@@ -116,8 +118,21 @@ class Feasibility:
         """``True`` when ``feasible`` is ``None``."""
         return self.feasible is None
 
+    def __repr__(self) -> str:
+        """The feasibility, positionally, then each other attribute that differs from its default."""
+        return call_repr(type(self).__name__, [repr(self.feasible)], self._repr_arguments())
 
-@dataclass(frozen=True)
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The description and the pending declarations, where there are any."""
+        fields = []
+        if self.description:
+            fields.append(("description", repr(self.description)))
+        if self.pending:
+            fields.append(("pending", repr(self.pending)))
+        return fields
+
+
+@dataclass(frozen=True, repr=False)
 class MethodInfo(Feasibility):
     """Used by a registry to describe a method's feasibility plus its registration information.
 
@@ -149,6 +164,15 @@ class MethodInfo(Feasibility):
             raise ValueError("method_name and exact are set together or not at all")
         if self.method_name is None and self.feasible is not False:
             raise ValueError("a feasible or unresolved MethodInfo names its method")
+
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The method and its exactness where one is selected, then the feasibility's arguments."""
+        fields = []
+        if self.method_name is not None:
+            fields.append(("method_name", repr(self.method_name)))
+        if self.exact is not None:
+            fields.append(("exact", repr(self.exact)))
+        return [*fields, *super()._repr_arguments()]
 
 
 # ---------------------------------------------------------------------------

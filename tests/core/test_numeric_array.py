@@ -523,9 +523,10 @@ class TestNumericArrayBatchHoldsTheMultiplicity:
         assert batch.values.shape == (4, 3)
         assert batch.dtype == jnp.float32
 
-    def test_the_repr_states_the_split(self):
-        assert repr(_batch()) == (
-            "NumericArrayBatch(batch_shape=(4,), levels=('draw',), event_shape=(3,))"
+    def test_the_repr_states_the_levels_and_the_element_spec(self):
+        assert repr(_batch(name="x")) == (
+            "NumericArrayBatch('x', levels={'draw': 4}, "
+            "element_spec=NumericArraySpec(shape=(3,), dtype=float32))"
         )
 
     def test_one_level_may_span_several_axes(self):

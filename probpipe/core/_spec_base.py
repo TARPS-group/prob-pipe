@@ -13,6 +13,7 @@ import numpy as np
 import numpy.typing as npt
 
 from ._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
+from ._repr import format_dtype, public_class_name, term_repr
 from .constraints import Constraint
 from .named_tree import NamedTree
 
@@ -386,6 +387,15 @@ class NumericArraySpec(NumericSpec):
     def __hash__(self) -> int:
         return hash((self.shape, self.dtype, self.support))
 
+    def __repr__(self) -> str:
+        """The shape, then the dtype and the support where they are set."""
+        fields = [("shape", repr(self.shape))]
+        if self.dtype is not None:
+            fields.append(("dtype", format_dtype(self.dtype)))
+        if self.support is not None:
+            fields.append(("support", repr(self.support)))
+        return term_repr(public_class_name(type(self)), None, fields)
+
     def is_valid(self, value: Any) -> bool:
         """Whether *value* is a numeric array (or scalar) matching this spec.
 
@@ -582,12 +592,17 @@ class OpaqueSpec(TermSpec):
         return True
 
     def __repr__(self) -> str:
-        parts = []
+        """The type and the metadata where they are set, so an open spec reads ``OpaqueSpec()``."""
+        return term_repr(public_class_name(type(self)), None, self._repr_arguments())
+
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The type and the metadata where they are set, formatted for a repr."""
+        fields = []
         if self.type is not None:
-            parts.append(f"type={self.type.__qualname__}")
+            fields.append(("type", self.type.__qualname__))
         if self.meta is not None:
-            parts.append(f"meta={self.meta!r}")
-        return f"OpaqueSpec({', '.join(parts)})"
+            fields.append(("meta", repr(self.meta)))
+        return fields
 
 
 def _known_type(first: OpaqueSpec, second: OpaqueSpec) -> OpaqueSpec:

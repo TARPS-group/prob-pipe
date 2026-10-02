@@ -666,4 +666,6 @@ class TestTheseAreBatches:
             "site",
         )
 
-        assert repr(batch) == "OpaqueBatch(name='s', site=2)"
+        text = repr(batch)
+        assert text.startswith("OpaqueBatch(") and "levels={'site': 2}" in text
+        assert "element_spec=OpaqueSpec(" in text and "<locals>._Unreadable" in text
