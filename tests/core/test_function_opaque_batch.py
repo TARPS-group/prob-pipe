@@ -525,7 +525,7 @@ class TestTheStorageContractIsSatisfiable:
         assert empty._store.size == 0
 
     def test_a_view_carries_the_spec_the_abc_computed(self, grid):
-        assert grid.at_levels(chain=0).spec == BatchSpec(OpaqueSpec(), ((3,),), ("draw",))
+        assert grid.at_levels(chain=0).spec == BatchSpec(OpaqueSpec(type=str), ((3,),), ("draw",))
 
 
 class TestNaming:

@@ -81,8 +81,11 @@ class TestOutputSpec:
         assert exposed.components["law"] is law
         assert list(OutputSpec(posterior=law).components) == ["posterior"]
 
-    def test_record_none_is_opaque_not_an_output_hole(self):
-        output = OutputSpec(RecordSpec(payload=None))
+    def test_a_record_field_given_none_is_refused_naming_the_opaque_spec(self):
+        """None is a pending type, so a record field takes OpaqueSpec() instead."""
+        with pytest.raises(TypeError, match=r"OpaqueSpec\(\)"):
+            RecordSpec(payload=None)
+        output = OutputSpec(RecordSpec(payload=OpaqueSpec()))
         assert isinstance(output.components["payload"], OpaqueSpec)
         assert output.is_concrete
 
@@ -528,7 +531,7 @@ class TestSpecKinds:
         law = EmpiricalDistribution("law", OpaqueBatch("labels", ["a", "b"], "law"))
         schema = RecordSpec.infer_from({"law": law})
         assert schema["law"] == law.spec
-        assert law.event_spec == OutputSpec(law=OpaqueSpec())
+        assert law.event_spec == OutputSpec(law=OpaqueSpec(type=str))
 
         record = Record("r", law=law)
         assert record["law"] is law
@@ -563,7 +566,7 @@ class TestSpecKinds:
             def is_valid(self, value):
                 return np.shape(value) == (self.size,)
 
-        schema = RecordSpec(x=Coordinates(4), nested=RecordSpec(y=(2, 3)), label=None)
+        schema = RecordSpec(x=Coordinates(4), nested=RecordSpec(y=(2, 3)), label=OpaqueSpec())
         numeric = schema.numeric_subset()
         assert isinstance(numeric, NumericRecordSpec)
         assert numeric.vector_size == 10

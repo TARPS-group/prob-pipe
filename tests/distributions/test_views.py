@@ -86,7 +86,9 @@ _REAL = Normal("x", 0.0, 1.0).event_spec.spec
 _EVENT = OutputSpec(RecordSpec(model=RecordSpec(theta=RecordSpec(mu=_REAL, tau=(2,))), y=(3,)))
 
 #: A mixed exposed record: an opaque leaf, a numeric leaf, and a mixed group.
-_MIXED = OutputSpec(RecordSpec(label=None, x=(2,), group=RecordSpec(tag=None, w=())))
+_MIXED = OutputSpec(
+    RecordSpec(label=OpaqueSpec(), x=(2,), group=RecordSpec(tag=OpaqueSpec(), w=()))
+)
 
 #: A whole record term, whose paths start with its component.
 _WHOLE = OutputSpec(parameters=RecordSpec(beta=(2,), sigma=()))
@@ -470,7 +472,9 @@ _DECLARATIONS = [
         _WHOLE, "parameters/sigma", OutputSpec(sigma=NumericArraySpec(())), id="whole-term-field"
     ),
     pytest.param(_MIXED, "label", OutputSpec(label=OpaqueSpec()), id="opaque-leaf"),
-    pytest.param(_MIXED, "group", OutputSpec(group=RecordSpec(tag=None, w=())), id="mixed-group"),
+    pytest.param(
+        _MIXED, "group", OutputSpec(group=RecordSpec(tag=OpaqueSpec(), w=())), id="mixed-group"
+    ),
 ]
 
 _PATHS = [pytest.param(*case.values[:2], id=case.id) for case in _DECLARATIONS]

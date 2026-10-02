@@ -413,7 +413,7 @@ class TestWithNameTemplateRoundtrip:
             "rows",
             {"labels": np.array(["a", "b", "c"], dtype=object), "ids": np.array([0, 1, 2])},
             "row",
-            element_spec=RecordSpec(labels=None, ids=()),
+            element_spec=RecordSpec(labels=OpaqueSpec(), ids=()),
         )
         law = EmpiricalDistribution("rows", rows)
         original_fields = tuple(law.event_spec.components)
@@ -1082,7 +1082,7 @@ class TestEmpiricalDeclarations:
 
     def test_opaque_atoms_are_a_whole_term(self):
         law = EmpiricalDistribution("law", OpaqueBatch("labels", ["a", "b"], "atom"))
-        assert law.event_spec == OutputSpec(law=OpaqueSpec())
+        assert law.event_spec == OutputSpec(law=OpaqueSpec(type=str))
 
     def test_array_atoms_are_a_whole_term(self):
         law = EmpiricalDistribution("x", jnp.zeros((5, 2)))

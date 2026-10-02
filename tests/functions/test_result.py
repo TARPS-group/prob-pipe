@@ -102,7 +102,7 @@ class TestMakeStack:
         assert isinstance(out, RecordBatch)
         assert out["x"].dtype == jnp.bfloat16
         assert out.event_template["x"] == NumericArraySpec((2,))  # numeric, not None/opaque
-        assert out.event_template["label"] == OpaqueSpec()
+        assert out.event_template["label"] == OpaqueSpec(type=str)
 
     def test_list_of_distributions_gives_distribution_batch(self):
         from probpipe import DistributionBatch, Normal

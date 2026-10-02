@@ -19,6 +19,7 @@ from probpipe import (
     MultivariateNormal,
     Normal,
     NumericRecordBatch,
+    OpaqueSpec,
     Record,
     RecordSpec,
     mean,
@@ -443,7 +444,7 @@ class TestApproximateDistributionValuesTemplate:
 
     def test_field_order_opaque_template_raises_clear_error(self):
         """field_order cannot compute a permutation for opaque fields."""
-        template = RecordSpec(a=None, b=())
+        template = RecordSpec(a=OpaqueSpec(), b=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         with pytest.raises(ValueError, match="field 'a' has an opaque spec"):
@@ -457,7 +458,7 @@ class TestApproximateDistributionValuesTemplate:
 
     def test_multi_field_opaque_template_raises_clear_error(self):
         """Multi-field splitting rejects opaque fields before sizing."""
-        template = RecordSpec(a=None, b=())
+        template = RecordSpec(a=OpaqueSpec(), b=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         with pytest.raises(ValueError, match="field 'a' has an opaque spec"):

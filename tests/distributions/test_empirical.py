@@ -71,7 +71,7 @@ _RECORD_WEIGHTS = np.array([0.5, 0.25, 0.25])
 _RECORD_SPEC = RecordSpec(b=(2,), a=())
 
 #: A mixed record: an opaque label and a numeric group.
-_MIXED_SPEC = RecordSpec(label=None, g=RecordSpec(u=(), v=(2,)))
+_MIXED_SPEC = RecordSpec(label=OpaqueSpec(), g=RecordSpec(u=(), v=(2,)))
 _LABELS = np.array(["north", "south", "east"], dtype=object)
 _U = jnp.array([1.0, 2.0, 3.0])
 _V = jnp.array([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])
@@ -125,7 +125,7 @@ class TestEventCompletion:
         assert law.event_shape == (2,)
 
     def test_opaque_atoms_form_a_whole_term_under_the_law_name(self):
-        assert _opaque_law().event_spec == OutputSpec(where=OpaqueSpec())
+        assert _opaque_law().event_spec == OutputSpec(where=OpaqueSpec(type=str))
 
     def test_laws_as_atoms_form_a_random_measure(self):
         laws = DistributionBatch("laws", [Normal("x", 0.0, 1.0), Normal("x", 1.0, 2.0)], "law")
@@ -146,7 +146,9 @@ class TestEventCompletion:
         [
             pytest.param(jnp.zeros((3, 2)), NumericArraySpec((2,), jnp.float32), id="array"),
             pytest.param(_record_atoms(), _RECORD_SPEC, id="record"),
-            pytest.param(OpaqueBatch("labels", ["a", "b"], "site"), OpaqueSpec(), id="opaque"),
+            pytest.param(
+                OpaqueBatch("labels", ["a", "b"], "site"), OpaqueSpec(type=str), id="opaque"
+            ),
         ],
     )
     def test_a_type_hole_is_filled_from_the_atoms(self, atoms, spec):
@@ -611,7 +613,7 @@ class TestMarginals:
         law = EmpiricalDistribution("m", _mixed_atoms())
         marginal = law._marginal(("label", "g/v"))
         assert marginal.name == "m"
-        assert marginal.event_spec == OutputSpec(RecordSpec(label=None, v=(2,)))
+        assert marginal.event_spec == OutputSpec(RecordSpec(label=OpaqueSpec(), v=(2,)))
         rows = {(label, *np.asarray(v)) for label, v in zip(_LABELS, _V)}
         for key in jax.random.split(jax.random.PRNGKey(0), 10):
             draw = marginal._sample(key)

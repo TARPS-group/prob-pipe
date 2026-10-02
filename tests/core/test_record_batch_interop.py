@@ -240,7 +240,7 @@ class TestOpaqueColumnsAreRearrangedRaw:
                 "x": jnp.arange(3.0),
             },
             "draw",
-            element_spec=RecordSpec(tag=None, x=()),
+            element_spec=RecordSpec(tag=OpaqueSpec(), x=()),
         )
 
     def test_presented_and_raw_columns_differ_for_an_opaque_field(self):
@@ -569,7 +569,7 @@ class TestOpaqueBatchesStack:
                     "x": jnp.arange(2.0) + i,
                 },
                 "inner",
-                element_spec=RecordSpec(tag=None, x=()),
+                element_spec=RecordSpec(tag=OpaqueSpec(), x=()),
             )
             for i in range(3)
         ]
@@ -1073,14 +1073,14 @@ class TestDeclaredOpaqueOutputAcrossDispatches:
             level_name="row",
         )
 
-        @function(output_spec=RecordSpec(y=None), dispatch=dispatch)
+        @function(output_spec=RecordSpec(y=OpaqueSpec()), dispatch=dispatch)
         def make_vector(row):
             return {"y": jnp.array([row["i"], row["i"] + 1])}
 
         result = make_vector(row=rows)
 
         assert result.batch_shape == (2,)
-        assert result.event_template == RecordSpec(y=None)
+        assert result.event_template == RecordSpec(y=OpaqueSpec())
         column = result._raw_column("y")
         assert column.dtype == object
         assert column.shape == (2,)

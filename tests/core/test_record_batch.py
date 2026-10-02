@@ -225,7 +225,7 @@ class TestConstruction:
                 "batch",
                 {"x": jnp.zeros(3), "label": np.array(["a", "b", "c"], dtype=object)},
                 "draw",
-                element_spec=RecordSpec(x=(), label=None),
+                element_spec=RecordSpec(x=(), label=OpaqueSpec()),
             )
 
     def test_numeric_batch_refuses_a_non_numeric_column(self):
@@ -386,7 +386,7 @@ class TestColumnBatchForms:
             "design",
             {"site": labels, "x": jnp.zeros(2)},
             "row",
-            element_spec=RecordSpec(site=None, x=()),
+            element_spec=RecordSpec(site=OpaqueSpec(), x=()),
         )
         column = batch["site"]
         assert isinstance(column, OpaqueBatch)
@@ -425,7 +425,7 @@ class TestColumnBatchForms:
             "design",
             {"site": labels},
             "row",
-            element_spec=RecordSpec(site=None),
+            element_spec=RecordSpec(site=OpaqueSpec()),
         )
         assert batch["site"].name == "design['site']"
 
@@ -478,7 +478,7 @@ class TestColumnEntryValidation:
                 "batch",
                 {"o": _object_column(["fine", {"k": 1}, "fine"])},
                 "row",
-                element_spec=RecordSpec(o=None),
+                element_spec=RecordSpec(o=OpaqueSpec()),
             )
 
     def test_a_callable_field_refuses_a_non_callable_entry(self):
@@ -538,7 +538,7 @@ class TestColumnSpecConformance:
             element_spec=RecordSpec(x=NumericArraySpec(shape=(), dtype=declared)),
         )
 
-    @pytest.mark.parametrize("spec", [FunctionSpec(), None], ids=["function", "opaque"])
+    @pytest.mark.parametrize("spec", [FunctionSpec(), OpaqueSpec()], ids=["function", "opaque"])
     def test_a_field_with_no_stacked_form_refuses_a_dense_column(self, spec):
         """A dense array under such a field would make its *entries* array
         elements rather than the values themselves, and the column could not be
@@ -569,7 +569,7 @@ class TestConstructionRefusals:
                     "batch",
                     columns,
                     "row",
-                    element_spec=RecordSpec(o=None, x=(2,)),
+                    element_spec=RecordSpec(o=OpaqueSpec(), x=(2,)),
                 )
 
     def test_a_column_too_short_for_its_event_shape_is_refused(self):
@@ -590,7 +590,7 @@ class TestProvenance:
             "design",
             {"outer/a": jnp.zeros(3), "site": _object_column(list("abc"))},
             "row",
-            element_spec=RecordSpec(outer=RecordSpec(a=()), site=None),
+            element_spec=RecordSpec(outer=RecordSpec(a=()), site=OpaqueSpec()),
         )
         batch.with_provenance(Provenance.create("sample", parents=[]))
         assert batch[0].provenance is batch.provenance
@@ -608,7 +608,7 @@ class TestPlainRecordBatch:
             "design",
             {"site": _object_column(["north", "south"])},
             "row",
-            element_spec=RecordSpec(site=None),
+            element_spec=RecordSpec(site=OpaqueSpec()),
         )
         assert type(batch[0]) is Record
         assert [element["site"] for element in batch] == ["north", "south"]
@@ -618,7 +618,7 @@ class TestPlainRecordBatch:
             "batch",
             {"site": _object_column(["north"])},
             "row",
-            element_spec=RecordSpec(site=None),
+            element_spec=RecordSpec(site=OpaqueSpec()),
         )
         assert not hasattr(batch, "to_vector")
 
@@ -627,7 +627,7 @@ class TestPlainRecordBatch:
             "batch",
             {"site": _object_column(["north", "south"])},
             "row",
-            element_spec=RecordSpec(site=None),
+            element_spec=RecordSpec(site=OpaqueSpec()),
         )
         assert pickle.loads(pickle.dumps(batch)) == batch
         leaves, treedef = jax.tree_util.tree_flatten(batch)
@@ -775,7 +775,7 @@ class TestStructuralTransforms:
             "batch",
             {"s": _object_column(list("abc"))},
             "draw",
-            element_spec=RecordSpec(s=None),
+            element_spec=RecordSpec(s=OpaqueSpec()),
         )
         assert type(numeric.replace({"x": _object_column(list("abc"))})) is RecordBatch
         assert type(plain.replace({"s": jnp.ones(3)})) is NumericRecordBatch
@@ -799,7 +799,7 @@ class TestStructuralTransforms:
             "batch",
             {"s": _object_column(list("ab"))},
             "draw",
-            element_spec=RecordSpec(s=None),
+            element_spec=RecordSpec(s=OpaqueSpec()),
         )
         with pytest.raises(TypeError, match="no stacked form"):
             plain.replace({"s": np.array(["x", "y"])})
@@ -969,7 +969,7 @@ class TestLevels:
             "batch",
             {"site": _object_column(["a", "b", "c", "d"])},
             "row",
-            element_spec=RecordSpec(site=None),
+            element_spec=RecordSpec(site=OpaqueSpec()),
         )
         assert np.shares_memory(batch[1:3]._columns["site"], batch._columns["site"])
 
@@ -979,7 +979,7 @@ class TestLevels:
             "batch",
             {"site": column},
             "row",
-            element_spec=RecordSpec(site=None),
+            element_spec=RecordSpec(site=OpaqueSpec()),
         )
         with pytest.raises(ValueError, match="read-only"):
             batch._columns["site"][0] = "MUTATED"
@@ -1212,6 +1212,18 @@ class TestFlatLayout:
 
 
 class TestStack:
+    def test_stack_types_an_opaque_field_by_what_its_values_share(self):
+        shared = RecordBatch.stack(
+            [Record("r", {"label": "a", "x": 1.0}), Record("r", {"label": "b", "x": 2.0})],
+            level_name="row",
+        )
+        assert shared.element_spec["label"] == OpaqueSpec(type=str)
+        mixed = RecordBatch.stack(
+            [Record("r", {"label": "a", "x": 1.0}), Record("r", {"label": 3, "x": 2.0})],
+            level_name="row",
+        )
+        assert mixed.element_spec["label"] == OpaqueSpec()
+
     def test_stack_builds_one_named_level(self):
         records = [NumericRecord("r", x=jnp.asarray(float(i))) for i in range(3)]
         batch = NumericRecordBatch.stack(records, level_name="draw")
@@ -1269,7 +1281,7 @@ class TestStack:
         conclude the field is an array — the column would come back as the wrong
         batch form and an element would come back as an array, not the int put in.
         """
-        spec = RecordSpec(tag=None, x=(2,))
+        spec = RecordSpec(tag=OpaqueSpec(), x=(2,))
         records = [
             Record(f"r{i}", {"tag": i, "x": jnp.zeros(2)}, event_template=spec) for i in range(3)
         ]
@@ -1293,7 +1305,7 @@ class TestStack:
 
     def test_stack_stores_a_non_array_field_as_an_object_column(self):
         records = [
-            Record("r", {"site": s}, event_template=RecordSpec(site=None))
+            Record("r", {"site": s}, event_template=RecordSpec(site=OpaqueSpec()))
             for s in ("north", "south")
         ]
         batch = RecordBatch.stack(records, level_name="row")
@@ -1386,7 +1398,7 @@ class TestEqualityAndCopying:
     def test_an_object_column_compares_by_value(self):
         """The object-column path is the only one a non-numeric batch takes, and
         ``jnp.array_equal`` cannot walk it."""
-        spec = RecordSpec(site=None)
+        spec = RecordSpec(site=OpaqueSpec())
         labels = ["north", "south"]
         left = RecordBatch(
             "batch",
@@ -1412,7 +1424,7 @@ class TestEqualityAndCopying:
     def test_an_object_column_of_arrays_compares_by_value(self):
         """Entries that are themselves arrays have no single truth value, so a
         vectorized comparison cannot answer; they are compared entry by entry."""
-        spec = RecordSpec(cov=None)
+        spec = RecordSpec(cov=OpaqueSpec())
         left = RecordBatch(
             "batch",
             {"cov": _object_column([np.zeros(2), np.zeros(3)])},

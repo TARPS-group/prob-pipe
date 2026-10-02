@@ -1010,6 +1010,14 @@ class TestTermSpecFingerprints:
             _, weak = _fingerprint_with_strength(RecordSpec(field=spec))
             assert not weak, f"{type(spec).__name__} hashed by identity"
 
+    def test_an_opaque_type_is_part_of_the_spec_fingerprint(self):
+        """The type hashes by its module and qualified name, beside the metadata."""
+        untyped = fingerprint(RecordSpec(field=OpaqueSpec()))
+        typed = fingerprint(RecordSpec(field=OpaqueSpec(type=str)))
+        assert typed != untyped
+        assert fingerprint(RecordSpec(field=OpaqueSpec(type=str))) == typed
+        assert fingerprint(RecordSpec(field=OpaqueSpec(type=bytes))) != typed
+
     def test_an_unknown_spec_kind_is_reported_weak(self, tau):
         """The contract boundary: a spec the hasher does not know is not silently
         treated as strong, so a future kind that skips the hasher is visible."""

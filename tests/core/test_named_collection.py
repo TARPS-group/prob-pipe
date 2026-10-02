@@ -336,7 +336,7 @@ class TestRecordSpecOps:
             tpl.map(lambda s: object())
 
     def test_map_to_numeric_promotes(self):
-        tpl = RecordSpec(a=None, b=())  # mixed -> base RecordSpec
+        tpl = RecordSpec(a=OpaqueSpec(), b=())  # mixed -> base RecordSpec
         assert not isinstance(tpl, NumericRecordSpec)
         mapped = tpl.map(lambda s: NumericArraySpec((2,)))  # every spec numeric now
         assert isinstance(mapped, NumericRecordSpec)

@@ -71,8 +71,8 @@ from dataclasses import dataclass, replace
 from math import prod
 from typing import Any, Self, cast
 
-from ._record_spec import _check_kind_of
-from ._spec_base import _unify_array_shape, _unify_specs
+from ._record_spec import RecordSpec, _check_kind_of
+from ._spec_base import OpaqueSpec, _unify_array_shape, _unify_specs
 from ._specs import TermSpec
 from .provenance import Provenance
 from .tracked import TrackedTerm
@@ -328,6 +328,8 @@ class BatchSpec(TermSpec):
     def is_valid(self, value: Any) -> bool:
         """Whether *value* is a :class:`Batch` whose own spec equals this one.
 
+        An opaque type this spec leaves open admits the type a batch inferred
+        from its values, in the elements and in any record field of them.
         Anything that is not a ``Batch``, or a ``Batch`` whose spec cannot be
         read, does not satisfy the spec and returns ``False``. Mirrors
         :meth:`~probpipe.RecordSpec.is_valid`.
@@ -338,7 +340,25 @@ class BatchSpec(TermSpec):
             spec = value.spec
         except (AttributeError, TypeError):
             return False
-        return spec == self
+        return _admits(self, spec)
+
+
+def _admits(declared: TermSpec, actual: TermSpec) -> bool:
+    """Whether *actual* is *declared*, with an opaque type filled in where *declared* leaves it open."""
+    if declared == actual:
+        return True
+    if isinstance(declared, OpaqueSpec) and isinstance(actual, OpaqueSpec):
+        return declared.type is None and declared.meta == actual.meta
+    if isinstance(declared, RecordSpec) and isinstance(actual, RecordSpec):
+        return list(declared.keys()) == list(actual.keys()) and all(
+            _admits(declared[key], actual[key]) for key in declared
+        )
+    if isinstance(declared, BatchSpec) and isinstance(actual, BatchSpec):
+        return (declared.axis_groups, declared.level_names) == (
+            actual.axis_groups,
+            actual.level_names,
+        ) and _admits(declared.element_spec, actual.element_spec)
+    return False
 
 
 class Batch[E](TrackedTerm, ABC):

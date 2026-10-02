@@ -23,7 +23,14 @@ from ..core._dispatch import Feasibility, ResolutionError
 from ..core._object_batch import _is_object_array
 from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
-from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
+from ..core._spec_base import (
+    NumericArraySpec,
+    NumericSpec,
+    OpaqueSpec,
+    TermSpec,
+    _known_type,
+    _unify_specs,
+)
 from ..core._specs import InputSpec, OutputSpec
 from ..core.named_tree import _unflatten_paths
 from ..core.provenance import Provenance
@@ -258,6 +265,8 @@ def _factor_graph(
             if producer is None:
                 if slot in unmet:
                     _unify_either_way(unmet[slot], slot_spec, bindings, f"the given {slot!r}")
+                    if isinstance(unmet[slot], OpaqueSpec) and isinstance(slot_spec, OpaqueSpec):
+                        unmet[slot] = _known_type(unmet[slot], slot_spec)
                 else:
                     unmet[slot] = slot_spec
                 continue

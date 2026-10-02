@@ -439,6 +439,17 @@ def _mentions(*fragments: str) -> str:
 class TestConstruction:
     """A factored joint is built from an ordered list of factors under the composition rules."""
 
+    def test_same_named_opaque_givens_unify_to_the_known_type(self):
+        first = NormalKernel("first", {"s": OpaqueSpec()}, OutputSpec(y=SCALAR))
+        second = NormalKernel("second", {"s": OpaqueSpec(type=str)}, OutputSpec(z=SCALAR))
+        assert (first * second).given_spec["s"] == OpaqueSpec(type=str)
+        with pytest.raises(ValueError, match="does not conform"):
+            _ = (
+                first
+                * NormalKernel("third", {"s": OpaqueSpec(type=int)}, OutputSpec(w=SCALAR))
+                * (second)
+            )
+
     def test_the_joint_holds_its_factors_in_order(self):
         lik, prior = _likelihood(), _prior()
         joint = FactoredDistribution("model", [lik, prior])
