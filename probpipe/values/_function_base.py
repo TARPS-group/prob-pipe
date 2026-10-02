@@ -232,14 +232,33 @@ def _validate_function_output(
 
 
 def _validate_declared_support(expected: TermSpec, actual: TermSpec, path: str) -> None:
+    """Refuse an actual spec whose support a declared support does not contain, leaf by leaf.
+
+    Records and batches are read field by field and element by element, and a
+    law's declaration component by component of its event, so a returned law
+    whose draws leave the declared support is refused, as completion checks the
+    produced value (II.2). A law's declaration has no type hole, so both sides
+    are concrete there. Supports are compared only where both are declared.
+
+    Raises
+    ------
+    ValueError
+        If a declared support does not contain the actual one, naming the path.
+    """
     from ..core._batch import BatchSpec
     from ..core.constraints import _supports_compatible
 
+    expected_event = getattr(expected, "event_spec", None)
+    actual_event = getattr(actual, "event_spec", None)
     if isinstance(expected, RecordSpec) and isinstance(actual, RecordSpec):
         for key, child in expected.items():
             _validate_declared_support(child, actual[key], f"{path}/{key}")
     elif isinstance(expected, BatchSpec) and isinstance(actual, BatchSpec):
         _validate_declared_support(expected.element_spec, actual.element_spec, path)
+    elif isinstance(expected_event, OutputSpec) and isinstance(actual_event, OutputSpec):
+        components = actual_event.components
+        for component, child in expected_event.components.items():
+            _validate_declared_support(child, components[component], f"{path}/{component}")
     elif isinstance(expected, NumericArraySpec) and isinstance(actual, NumericArraySpec):
         if (
             expected.support is not None

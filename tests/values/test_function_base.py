@@ -16,6 +16,7 @@ from probpipe import (
     DistributionSpec,
     Function,
     FunctionSpec,
+    Gamma,
     InputSpec,
     Module,
     Normal,
@@ -33,7 +34,7 @@ from probpipe import (
     workflow_method,
     workflow_run,
 )
-from probpipe.core.constraints import positive
+from probpipe.core.constraints import positive, real
 
 
 def _unnamed_callables():
@@ -339,9 +340,9 @@ class TestCompletedOutputDeclarations:
 
     @pytest.mark.parametrize("mode", ["plain", "sweep", "broadcast"])
     def test_returned_laws_use_declaration_unification_across_paths(self, rows, mode):
-        stored = Normal("y", jnp.asarray(0.0, dtype="float32"), 1.0)
+        stored = Gamma("y", jnp.asarray(1.0, dtype="float32"), 1.0)
         declaration = DistributionSpec(
-            OutputSpec(y=NumericArraySpec((), dtype="float64", support=positive))
+            OutputSpec(y=NumericArraySpec((), dtype="float64", support=real))
         )
         factory = Function(
             "factory",
@@ -362,7 +363,42 @@ class TestCompletedOutputDeclarations:
         for law in laws:
             assert law.spec is stored.spec
             assert law.event_spec.components["y"].dtype == np.dtype("float32")
-            assert law.event_spec.components["y"].support != positive
+            assert law.event_spec.components["y"].support == positive
+
+    @pytest.mark.parametrize("mode", ["apply", "plain", "sweep", "broadcast"])
+    def test_a_returned_law_outside_the_declared_support_is_refused(self, rows, mode):
+        stored = Normal("y", 0.0, 1.0)
+        factory = Function(
+            "factory",
+            lambda x: stored,
+            output_spec=DistributionSpec(OutputSpec(y=NumericArraySpec((), support=positive))),
+            dispatch="sequential",
+            n_broadcast_samples=8,
+        )
+        operand = {
+            "apply": rows[0],
+            "plain": rows[0],
+            "sweep": rows,
+            "broadcast": Normal("x", 0.0, 1.0),
+        }[mode]
+        invoke = factory.apply if mode == "apply" else factory
+        with (
+            workflow_run(seed=0),
+            pytest.raises(ValueError, match=r"factory/y support real does not conform to positive"),
+        ):
+            invoke(operand)
+        assert stored.event_spec.components["y"].support == real
+
+    def test_a_returned_joint_is_checked_field_by_field(self):
+        stored = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
+        declared = RecordSpec(a=NumericArraySpec((), support=positive), b=NumericArraySpec(()))
+        factory = Function(
+            "factory", lambda: stored, output_spec=DistributionSpec(OutputSpec(declared))
+        )
+        with pytest.raises(
+            ValueError, match=r"factory/a support real does not conform to positive"
+        ):
+            factory.apply()
 
     @pytest.mark.parametrize("dispatch", ["sequential", "thread"])
     def test_swept_returned_functions_enforce_the_declared_contract(self, rows, dispatch):
