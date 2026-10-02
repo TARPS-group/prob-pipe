@@ -213,6 +213,10 @@ Unset array dtype and support metadata are retained from the validated result,
 including inside records and batches. A type hole uses the same return-kind
 inference as an undeclared call; an explicit `OpaqueSpec` keeps a sequence atomic.
 An existing distribution retains its own matching event declaration.
+Broadcast marginals preserve named whole-record, Function, opaque, and batch
+components. Numeric arrays still use the existing one-field record marginal,
+and returned distributions still form mixtures; those result families are
+unchanged by the Function migration.
 For a returned Function, an unspecified side of its declared `FunctionSpec`
 retains that Function's own input or output declaration.
 

@@ -21,7 +21,7 @@ import numpy as np
 
 from .._weights import Weights
 from ..custom_types import Array
-from ..distributions._distribution import Distribution
+from ..distributions._distribution import Distribution, DistributionSpec
 from ._array_backend import _event_shape_of, _is_numeric_leaf, _to_jax_array
 from ._batch import _ranks_of
 from ._empirical import (
@@ -84,6 +84,7 @@ class _RecordMarginal(RecordEmpiricalDistribution):
         log_weights: Array | Weights | None = None,
         name: str | None = None,
         output_template: RecordSpec | None = None,
+        output_spec: OutputSpec | None = None,
     ):
         # A batch of records holds its rows axis in the batch, and the merged
         # constructor wants one row per batch index, so peel it: the leaves keep
@@ -109,7 +110,13 @@ class _RecordMarginal(RecordEmpiricalDistribution):
         # is what a draw is declared as.
         record = output_template if output_template is not None else template
         if record is not None:
-            self._init_declaration(_atom_declaration(record, self._record_data))
+            record = _atom_declaration(record, self._record_data)
+            declaration = (
+                output_spec._with_spec(record)
+                if output_spec is not None and isinstance(output_spec.spec, RecordSpec)
+                else record
+            )
+            self._init_declaration(declaration)
 
     def __repr__(self):
         return (
@@ -325,11 +332,12 @@ class _ListMarginal(Distribution):
         *,
         log_weights: Array | Weights | None = None,
         name: str | None = None,
+        output_spec: OutputSpec | None = None,
     ):
         self._items = items
         self._w = Weights(n=len(items), weights=weights, log_weights=log_weights)
         name = auto_name(name, "list_marginal")
-        super().__init__(name, OpaqueSpec())
+        super().__init__(name, OpaqueSpec() if output_spec is None else output_spec)
 
     @property
     def num_atoms(self) -> int:
@@ -485,6 +493,7 @@ def _make_marginal(
     output_distributions: list | None = None,
     name: str | None = None,
     output_template: RecordSpec | None = None,
+    output_spec: OutputSpec | None = None,
 ) -> MarginalizedBroadcastDistribution:
     """Factory to construct the appropriate marginal subtype."""
     if output_distributions is not None:
@@ -493,6 +502,27 @@ def _make_marginal(
             weights,
             name=name,
         )
+
+    if output_spec is not None:
+        spec = output_spec.spec
+        if isinstance(spec, RecordSpec):
+            output_template = spec
+        elif isinstance(spec, NumericArraySpec):
+            # The existing numeric marginal stores an array as a one-field
+            # record. Keep that representation and its declared component name.
+            output_template = RecordSpec(dict(output_spec.components))
+        if not isinstance(spec, (NumericArraySpec, NumericRecordSpec, DistributionSpec)):
+            rows = (
+                output_samples
+                if isinstance(output_samples, list)
+                else [
+                    _record_rows(output_samples, i)
+                    if isinstance(output_samples, Record)
+                    else output_samples[i]
+                    for i in range(_row_count(output_samples))
+                ]
+            )
+            return _ListMarginal(rows, weights, name=name, output_spec=output_spec)
 
     if output_template is not None and isinstance(output_samples, list):
         from ..functions._result import _wrap_declared_function_output
@@ -528,7 +558,7 @@ def _make_marginal(
             output_samples[tuple(int(i) for i in position)]
             for position in np.ndindex(*output_samples.batch_shape)
         ]
-        return _ListMarginal(rows, weights, name=name)
+        return _ListMarginal(rows, weights, name=name, output_spec=output_spec)
 
     if isinstance(output_samples, RecordBatch):
         return _RecordMarginal(
@@ -536,6 +566,7 @@ def _make_marginal(
             weights,
             name=name,
             output_template=output_template,
+            output_spec=output_spec,
         )
 
     # Record with batched leaves (e.g., from jax.vmap over a Record-returning fn).
@@ -552,6 +583,7 @@ def _make_marginal(
                     weights,
                     name=name,
                     output_template=output_template,
+                    output_spec=output_spec,
                 )
 
     if isinstance(output_samples, jnp.ndarray):
@@ -560,6 +592,7 @@ def _make_marginal(
             weights,
             name=name or "marginal",
             output_template=output_template,
+            output_spec=output_spec,
         )
 
     if isinstance(output_samples, list):
@@ -581,6 +614,7 @@ def _make_marginal(
                     weights,
                     name=name,
                     output_template=output_template,
+                    output_spec=output_spec,
                 )
             except (ValueError, TypeError):
                 pass
@@ -591,6 +625,7 @@ def _make_marginal(
                 weights,
                 name=name or "marginal",
                 output_template=output_template,
+                output_spec=output_spec,
             )
         except (ValueError, TypeError):
             pass
@@ -600,7 +635,7 @@ def _make_marginal(
                 weights,
                 name=name,
             )
-        return _ListMarginal(output_samples, weights, name=name)
+        return _ListMarginal(output_samples, weights, name=name, output_spec=output_spec)
 
     # Single array result (e.g., from vmap); ensure at least 1D for the sample axis
     arr = jnp.atleast_1d(jnp.asarray(output_samples))
@@ -609,6 +644,7 @@ def _make_marginal(
         weights,
         name=name or "marginal",
         output_template=output_template,
+        output_spec=output_spec,
     )
 
 
@@ -1507,15 +1543,12 @@ class BroadcastDistribution(Distribution, SupportsSampling):
         """
         marginal = transient_memo(self).get("marginal")
         if marginal is None:
-            template = self._output_template
-            declaration = self._output_spec
-            if declaration is not None and isinstance(declaration.spec, NumericArraySpec):
-                template = RecordSpec(dict(declaration.components))
             marginal = _make_marginal(
                 self._output_samples,
                 self._w,
                 output_distributions=self._output_distributions,
-                output_template=template,
+                output_template=self._output_template,
+                output_spec=self._output_spec,
                 name=self.name,
             )
             if self.provenance is not None and isinstance(marginal, Distribution):

@@ -404,6 +404,66 @@ class TestLiftedInputDeclarations:
 
 class TestCompletedOutputDeclarations:
     @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax", "auto"])
+    @pytest.mark.parametrize("exposed", [False, True])
+    def test_broadcast_preserves_record_component_exposure(self, dispatch, exposed):
+        import jax
+
+        from probpipe import sample
+
+        record = RecordSpec(field=NumericArraySpec((2,), dtype="float32"))
+        declaration = OutputSpec(record) if exposed else OutputSpec(bundle=record)
+        factory = Function(
+            "factory",
+            lambda x: {"field": jnp.stack([x, x + 1])},
+            output_name="results",
+            output_spec=declaration,
+            dispatch=dispatch,
+            n_broadcast_samples=8,
+        )
+        with workflow_run(seed=4):
+            result = factory(Normal("x", 0.0, 1.0))
+        completed = RecordSpec(field=NumericArraySpec((2,), dtype="float32", support=real))
+        expected = OutputSpec(completed) if exposed else OutputSpec(bundle=completed)
+        assert result.event_spec == expected
+        assert result.fields == (("field",) if exposed else ("bundle",))
+        if not exposed:
+            assert result["bundle"] is result
+        draws = sample(result, key=jax.random.PRNGKey(1), sample_shape=(4,))
+        np.testing.assert_allclose(draws["field"][:, 1], draws["field"][:, 0] + 1, rtol=0, atol=0)
+        assert factory.output_spec is declaration
+
+    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "auto"])
+    @pytest.mark.parametrize("kind", ["function", "opaque", "record", "batch"])
+    def test_broadcast_keeps_non_numeric_component_kind(self, dispatch, kind):
+        values = {
+            "function": Function("inner", lambda x: x + 1),
+            "opaque": Opaque("stored", "payload", spec=OpaqueSpec(meta="text")),
+            "record": Record("stored", field=Opaque("leaf", "payload")),
+            "batch": NumericArrayBatch(
+                "stored", jnp.arange(2.0), "row", element_spec=NumericArraySpec(())
+            ),
+        }
+        stored = values[kind]
+        declaration = OutputSpec(component=stored.spec)
+        factory = Function(
+            "factory",
+            lambda x: stored,
+            output_name="results",
+            output_spec=declaration,
+            dispatch=dispatch,
+            n_broadcast_samples=8,
+        )
+        with workflow_run(seed=4):
+            result = factory(Normal("x", 0.0, 1.0))
+        assert result.event_spec == declaration
+        assert result["component"] is result
+        assert len(result.items) == 8
+        assert all(type(item) is type(stored) for item in result.items)
+        if kind == "function":
+            assert result.items[0].apply(2) == 3
+        assert stored.name in ("inner", "stored")
+
+    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax", "auto"])
     def test_joint_broadcast_constructs_completed_output_declaration(self, dispatch):
         factory = Function(
             "factory",
@@ -669,7 +729,9 @@ class TestCompletedOutputDeclarations:
 
         def body(x):
             value = jnp.stack([x, x + 1])
-            return {"component": value} if kind in ("record", "record_hole") else value
+            if kind == "record_hole":
+                return {"field": value}
+            return {"component": value} if kind == "record" else value
 
         wrapped = Function(
             "f",
@@ -684,9 +746,12 @@ class TestCompletedOutputDeclarations:
         result = joint.marginalize()
         assert result.name == "result"
         assert result.fields == ("component",)
-        assert result.event_spec.spec["component"].shape == (2,)
+        field = "field" if kind == "record_hole" else "component"
+        record = RecordSpec({field: NumericArraySpec((2,), dtype="float32", support=real)})
+        expected = OutputSpec(component=record) if kind == "record_hole" else OutputSpec(record)
+        assert result.event_spec == expected
         np.testing.assert_allclose(
-            result.samples["component"][:, 1], result.samples["component"][:, 0] + 1, rtol=0, atol=0
+            result.samples[field][:, 1], result.samples[field][:, 0] + 1, rtol=0, atol=0
         )
         assert wrapped.output_spec is declaration
         if kind in ("hole", "record_hole"):

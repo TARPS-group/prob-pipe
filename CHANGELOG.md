@@ -28,7 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fingerprints and replay anchors change, so regenerate persisted artifacts.
   `Module`, `AbstractModule`, and both method decorators are experimental.
   Resolved output declarations survive sweeps and broadcasts, including type
-  holes, output-only dimensions, and returned Function contracts. Module methods
+  holes, output-only dimensions, and returned Function contracts. Broadcast
+  marginals preserve whole-record component exposure and non-numeric term kinds;
+  numeric arrays retain the existing record marginal and returned laws form
+  mixtures. Module methods
   infer their returns normally and use the method name as their output label.
 
 - `OutputSpec` takes one keyword or one positional `RecordSpec`, so its form
