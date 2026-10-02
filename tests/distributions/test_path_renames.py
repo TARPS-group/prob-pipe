@@ -532,11 +532,13 @@ class TestRenamedLawMoves:
             renamed._marginal("g")
         assert _capability_guard(renamed, "_marginal", "g/x") == Feasibility(True)
 
-    def test_a_view_at_a_regrouping_node_claims_no_density(self, key):
+    def test_a_view_at_a_regrouping_node_claims_the_density_of_its_group(self, key):
+        """The node packages the factor of ``a``, whose marginal there is exact."""
         renamed = (Normal("a", 0.0, 1.0) * Normal("b", 1.0, 1.0)).with_path_names({"a": "g/a"})
         view = renamed["g"]
         assert isinstance(view, SupportsSampling)
-        assert not isinstance(view, SupportsLogProb)
+        assert isinstance(view, SupportsLogProb)
+        assert jnp.allclose(view._log_prob({"a": 0.5}), Normal("a", 0.0, 1.0)._log_prob(0.5))
         assert jnp.array_equal(view._sample(key)["a"], renamed._sample(key)["g"]["a"])
 
     def test_a_given_at_a_moved_field_reaches_the_parent_at_its_origin(self):
@@ -716,15 +718,30 @@ class TestRenamedKernelMoves:
         renamed._condition_on({"u": 1.0, "w": 2.0})
         assert first.calls == [{"x": 1.0}]
 
-    def test_a_rename_the_factors_cannot_carry_renames_at_the_joint_boundary(self):
-        """Moving a whole term's component into a group changes no factor, so the joint holds it."""
+    def test_gathering_a_component_of_a_kernel_joint_packages_its_factor(self):
+        """Moving a whole term's component into a new node packages its factor as the node."""
         joint = _RecordingKernel("k1", {"x": _SCALAR}, OutputSpec(a=_SCALAR)) * _RecordingKernel(
             "k2", {"w": _SCALAR}, OutputSpec(b=_SCALAR)
         )
         renamed = joint.with_path_names({"a": "g/a"})
-        assert not isinstance(renamed, FactoredConditionalDistribution)
-        assert renamed.event_spec == OutputSpec(RecordSpec(b=_SCALAR, g=RecordSpec(a=_SCALAR)))
+        assert isinstance(renamed, FactoredConditionalDistribution)
         assert set(renamed.given_spec) == {"x", "w"}
+        assert list(renamed.event_spec.components) == ["g", "b"]
+        group = renamed.factors[0]
+        assert list(group.given_spec) == ["x"]
+        assert group.event_spec == OutputSpec(g=RecordSpec(a=_SCALAR))
+
+    def test_a_rename_the_factors_cannot_carry_renames_at_the_joint_boundary(self):
+        """Gathering ``a`` and ``c``, when ``b`` conditions on ``a`` and ``c`` on ``b``, is a cycle."""
+        joint = (
+            _RecordingKernel("k3", {"b": _SCALAR}, OutputSpec(c=_SCALAR))
+            * _RecordingKernel("k2", {"a": _SCALAR}, OutputSpec(b=_SCALAR))
+            * _RecordingKernel("k1", {"x": _SCALAR}, OutputSpec(a=_SCALAR))
+        )
+        renamed = joint.with_path_names({"a": "g/a", "c": "g/c"})
+        assert not isinstance(renamed, FactoredConditionalDistribution)
+        assert list(renamed.given_spec) == ["x"]
+        assert set(renamed.event_spec.components) == {"b", "g"}
 
 
 class TestRenamedKernelCapabilities:

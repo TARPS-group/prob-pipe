@@ -10,6 +10,7 @@ law, each claimed only when that law claims it, and with the law's guard.
 
 from __future__ import annotations
 
+import pickle
 from typing import Any
 
 import jax
@@ -235,6 +236,14 @@ class TestEvaluation:
         kernel = conditional_distribution("y", _location, given_spec=SLOTS)
         with pytest.raises(TypeError, match="num_results"):
             kernel._condition_on({"mu": 0.0, "tau": 1.0}, num_results=3)
+
+    def test_a_kernel_and_its_curried_kernel_pickle(self):
+        kernel = conditional_distribution("y", _location, given_spec=SLOTS)
+        restored = pickle.loads(pickle.dumps(kernel))
+        np.testing.assert_allclose(condition_on(restored, {"mu": 1.0, "tau": 2.0})._mean(), 1.0)
+        curried = pickle.loads(pickle.dumps(condition_on(kernel, {"mu": 1.0})))
+        assert list(curried.given_spec) == ["tau"]
+        np.testing.assert_allclose(condition_on(curried, {"tau": 2.0})._mean(), 1.0)
 
 
 class TestTheForms:

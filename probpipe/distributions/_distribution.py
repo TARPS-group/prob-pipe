@@ -472,11 +472,13 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         changes only the declaration, so the result is a copy of the same class.
         A factored law renames through its factors where they can carry the
         rename, and the result is the factored joint of the renamed factors over
-        the same graph. Any other rename that reaches a field of a record draw,
-        including one that gathers components of several factors under one
-        node, returns a law that holds this one and renames values at its
-        boundary: draws, moments, and marginals on the way out, and scored
-        values, givens, and paths on the way in.
+        the same graph. A rename that gathers components under a new node
+        regroups the factors that produce them into a packaged sub-joint, one
+        factor of the result whose event is the node. Any other rename that
+        reaches a field of a record draw, including a gathering whose groups
+        condition on one another in a cycle, returns a law that holds this one
+        and renames values at its boundary: draws, moments, and marginals on the
+        way out, and scored values, givens, and paths on the way in.
 
         Parameters
         ----------

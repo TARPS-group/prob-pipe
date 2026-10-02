@@ -46,6 +46,8 @@ from probpipe import (
     NegativeBinomial,
     Normal,
     NumericDistribution,
+    NumericRecordBatch,
+    NumericRecordSpec,
     NumericSpec,
     OpaqueBatch,
     OutputSpec,
@@ -265,9 +267,15 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     FactoredMultivariateGaussian: lambda: Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0),
     GaussianProcess: lambda: GaussianProcess("f", _zero_mean, _squared_exponential),
     _SoleField: lambda: _SoleField(FactoredDistribution("record", [Normal("beta", 0.0, 1.0)])),
-    _RenamedDistribution: lambda: (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)).with_path_names(
-        {"a": "g/a"}
-    ),
+    _RenamedDistribution: lambda: EmpiricalDistribution(
+        "e",
+        NumericRecordBatch(
+            "rows",
+            {"a": jnp.zeros(2), "b": jnp.ones(2)},
+            "row",
+            element_spec=NumericRecordSpec(a=(), b=()),
+        ),
+    ).with_path_names({"a": "g/a"}),
 }
 
 # The catalog's families whose implementation has not merged construct by raising.

@@ -17,7 +17,6 @@ import inspect
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Self
 
 import jax
@@ -869,8 +868,8 @@ class _FunctionKernel(ConditionalDistribution):
         super().__init__(name, given_spec, event_spec)
         object.__setattr__(self, "_fn", fn)
         object.__setattr__(self, "_slots", given_spec)
-        object.__setattr__(self, "_bound", MappingProxyType({}))
-        object.__setattr__(self, "_guards", MappingProxyType(dict(guards)))
+        object.__setattr__(self, "_bound", {})
+        object.__setattr__(self, "_guards", dict(guards))
 
     def _condition_on(
         self, given: Record | Mapping[str, Any], /, **options: Any
@@ -898,9 +897,7 @@ class _FunctionKernel(ConditionalDistribution):
         self._check_conformance(values)
         curried = self._shallow_copy()
         object.__setattr__(curried, "_provenance", None)
-        object.__setattr__(
-            curried, "_bound", MappingProxyType({**self._bound, **self._arguments(values)})
-        )
+        object.__setattr__(curried, "_bound", {**self._bound, **self._arguments(values)})
         left = InputSpec(
             {slot: spec for slot, spec in self.given_spec.items() if slot not in values}
         )

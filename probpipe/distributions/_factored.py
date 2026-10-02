@@ -66,6 +66,7 @@ from ._distribution import (
     Distribution,
     DistributionSpec,
     _declares_numeric_event,
+    _whole_term_component,
 )
 
 if TYPE_CHECKING:
@@ -168,6 +169,8 @@ def _flattened(
 ) -> tuple[tuple[Factor, ...], dict[str, int]]:
     """*factors* with each factored factor replaced by its own, and the merged scope.
 
+    A packaged joint is one factor, since its packaging is part of its declaration.
+
     Raises
     ------
     ValueError
@@ -177,7 +180,11 @@ def _flattened(
     flat: list[Factor] = []
     for factor in factors:
         graph = getattr(factor, "_graph", None)
-        if isinstance(factor, SupportsFactors) and isinstance(graph, _FactorGraph):
+        if (
+            isinstance(factor, SupportsFactors)
+            and isinstance(graph, _FactorGraph)
+            and _whole_term_component(factor.event_spec) is None
+        ):
             flat.extend(graph.factors)
             for name, size in graph.scope.items():
                 if bindings.setdefault(name, size) != size:
@@ -303,6 +310,25 @@ def _factor_graph(
         event_spec=event_spec,
         scope=bindings,
     )
+
+
+def _joint_declaration(graph: _FactorGraph, component: str | None) -> OutputSpec:
+    """The event declaration of a joint of *graph*, packaged under *component* when one is given.
+
+    An exposed joint declares the factors' exposed record, and a packaged joint
+    declares that record as a whole term under *component*. A packaged joint's
+    draw is the record of its factors' components, in the raw form an exposed
+    joint's draw has.
+    """
+    if component is None:
+        return graph.event_spec
+    return OutputSpec(**{component: graph.event_spec.spec})
+
+
+def _packaging(joint: Any) -> dict[str, str]:
+    """The constructor keyword that keeps *joint*'s packaging: its component, if it is packaged."""
+    component = _whole_term_component(joint.event_spec)
+    return {} if component is None else {"_component": component}
 
 
 # ---------------------------------------------------------------------------
@@ -787,12 +813,16 @@ class _SoleField(Distribution):
 
 
 def _requested_paths(joint: Any, path: str | tuple[str, ...]) -> tuple[str, ...]:
-    """The event paths of *joint* that *path* requests: one path, or a selection of several.
+    """The paths of *joint*'s factor record that *path* requests: one path, or several.
+
+    An exposed joint's event paths are its record's paths. A packaged joint's
+    paths start with its component, below which they are the record's paths.
 
     Raises
     ------
     KeyError
-        If a path is not an event path of the joint.
+        If a path is not an event path of the joint, or a packaged joint's
+        path names no node below its component.
     TypeError
         If a path is not a string.
     ValueError
@@ -802,17 +832,29 @@ def _requested_paths(joint: Any, path: str | tuple[str, ...]) -> tuple[str, ...]
     paths = (path,) if isinstance(path, str) else tuple(path)
     if not paths:
         raise ValueError("a selection of event paths names at least one path")
+    component = _whole_term_component(joint.event_spec)
     record = joint._graph.event_spec.spec
+    inner: list[str] = []
     for requested in paths:
         if not isinstance(requested, str):
             raise TypeError(f"an event path is a string, got {type(requested).__name__}")
+        within = requested
+        if component is not None:
+            head, _, within = requested.partition(_PATH_SEP)
+            if head != component or not within:
+                raise KeyError(
+                    f"{requested!r} is not a path below the component {component!r} of "
+                    f"{joint.name!r}"
+                )
         try:
-            record.at_path(*requested.split(_PATH_SEP))
+            record.at_path(*within.split(_PATH_SEP))
         except KeyError:
             raise KeyError(
                 f"{requested!r} is not an event path of {joint.name!r}, whose components are "
                 f"{list(joint.event_spec.components)}"
             ) from None
+        inner.append(within)
+    paths = tuple(inner)
     finals = [requested.rsplit(_PATH_SEP, 1)[-1] for requested in paths]
     shared = sorted({final for final in finals if finals.count(final) > 1})
     if shared:
@@ -834,7 +876,8 @@ def _marginal_guard(self: Any, path: str | tuple[str, ...]) -> Feasibility:
     """Whether the marginal at *path* is exact, by the factor graph.
 
     A path must be an event path of the joint, and the paths of a selection
-    must end in distinct segments. The target's ancestor closure must add no
+    must end in distinct segments. A packaged joint is exact at its component,
+    whose marginal is the joint itself. The target's ancestor closure must add no
     factor, since integrating out a field that a kept factor conditions on has
     no closed form here. Within the target, a factor requested whole is kept
     whole, and a factor requested in part delegates to its own marginal guard,
@@ -842,6 +885,8 @@ def _marginal_guard(self: Any, path: str | tuple[str, ...]) -> Feasibility:
     integrates out.
     """
     graph: _FactorGraph = self._graph
+    if path == _whole_term_component(self.event_spec):
+        return Feasibility(True)
     try:
         paths = _requested_paths(self, path)
     except (KeyError, TypeError, ValueError) as error:
@@ -1141,6 +1186,8 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
         If the marginal guard does not accept *path*, so no exact marginal is
         available there.
     """
+    if path == _whole_term_component(self.event_spec):
+        return self
     paths = _requested_paths(self, path)
     report = _marginal_guard(self, path)
     if report.feasible is not True:
@@ -1201,7 +1248,8 @@ def _joint_marginal_capabilities(self: Any, path: str | tuple[str, ...]) -> froz
     """The claims of the factors that the marginal at *path* keeps, read from their declarations.
 
     One kept factor reports its own claims, since the marginal is that factor
-    or its reduction. Several report what the joint of them claims: sampling
+    or its reduction, and a packaged joint's marginal at its component is the
+    joint. Several report what the joint of them claims: sampling
     and each density when every kept factor has it, a moment when no kept
     factor conditions on another and every one has the moment, and marginals.
 
@@ -1214,6 +1262,8 @@ def _joint_marginal_capabilities(self: Any, path: str | tuple[str, ...]) -> froz
     ValueError
         If a selection names no path, or two of its paths share a final segment.
     """
+    if path == _whole_term_component(self.event_spec):
+        return _claims(self)
     graph: _FactorGraph = self._graph
     requests = _requests(graph, _requested_paths(self, path))
     reports = [
@@ -1376,7 +1426,9 @@ def _rebuilt(joint: Any, method: str, mapping: Mapping[str, Any], *, free: Any =
     scope = dict(joint._graph.scope)
     if method == "with_dim_sizes":
         scope.update(mapping)
-    rebuilt = base(joint.name, _each_factor(joint.factors, method, mapping), _scope=scope)
+    rebuilt = base(
+        joint.name, _each_factor(joint.factors, method, mapping), _scope=scope, **_packaging(joint)
+    )
     return rebuilt.with_provenance(
         Provenance.create(method, parents=[joint], metadata=dict(mapping))
     )
@@ -1446,7 +1498,10 @@ class FactoredDistribution(Distribution, SupportsFactors):
     to its right produce. The joint's event declaration is an exposed record of
     every factor's components in factor order, each factor's own order kept, and
     extraction and reconstruction keep each factor's packaging. Each component
-    is produced by exactly one factor, while factor labels may repeat.
+    is produced by exactly one factor, while factor labels may repeat. A
+    packaged joint, which a rename that gathers components builds, declares
+    that record as a whole term under one component, and it is one factor of a
+    joint it enters.
 
     Sampling and the log-density capabilities are the intersection of the
     factors'. The moment capabilities are decided at construction: an edge-free
@@ -1483,18 +1538,28 @@ class FactoredDistribution(Distribution, SupportsFactors):
     _capability_table = _joint_table("FactoredDistribution", conditional=False)
 
     def __new__(
-        cls, name: str, factors: Sequence[Factor], *, _scope: Mapping[str, int] | None = None
+        cls,
+        name: str,
+        factors: Sequence[Factor],
+        *,
+        _scope: Mapping[str, int] | None = None,
+        _component: str | None = None,
     ) -> FactoredDistribution:
         graph = _factor_graph(factors, _scope)
         base = vars(cls).get("_capability_base", cls)
-        if base is FactoredDistribution:
+        if base is FactoredDistribution and _component is None:
             base = _refined_class(graph.factors)
         return object.__new__(
             _capability_subclass(base, _joint_protocols(graph, conditional=False))
         )
 
     def __init__(
-        self, name: str, factors: Sequence[Factor], *, _scope: Mapping[str, int] | None = None
+        self,
+        name: str,
+        factors: Sequence[Factor],
+        *,
+        _scope: Mapping[str, int] | None = None,
+        _component: str | None = None,
     ) -> None:
         graph = _factor_graph(factors, _scope)
         if graph.unmet is not None:
@@ -1502,7 +1567,7 @@ class FactoredDistribution(Distribution, SupportsFactors):
                 f"the factors of {name!r} leave the givens {sorted(graph.unmet)} unmet, so "
                 f"the joint is a FactoredConditionalDistribution"
             )
-        super().__init__(name, graph.event_spec)
+        super().__init__(name, _joint_declaration(graph, _component))
         object.__setattr__(self, "_graph", graph)
 
     @property
@@ -1580,21 +1645,31 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
     _capability_table = _joint_table("FactoredConditionalDistribution", conditional=True)
 
     def __new__(
-        cls, name: str, factors: Sequence[Factor], *, _scope: Mapping[str, int] | None = None
+        cls,
+        name: str,
+        factors: Sequence[Factor],
+        *,
+        _scope: Mapping[str, int] | None = None,
+        _component: str | None = None,
     ) -> FactoredConditionalDistribution:
         protocols = _joint_protocols(_factor_graph(factors, _scope), conditional=True)
         base = vars(cls).get("_capability_base", cls)
         return object.__new__(_capability_subclass(base, protocols))
 
     def __init__(
-        self, name: str, factors: Sequence[Factor], *, _scope: Mapping[str, int] | None = None
+        self,
+        name: str,
+        factors: Sequence[Factor],
+        *,
+        _scope: Mapping[str, int] | None = None,
+        _component: str | None = None,
     ) -> None:
         graph = _factor_graph(factors, _scope)
         if graph.unmet is None:
             raise ValueError(
                 f"the factors of {name!r} meet every given, so the joint is a FactoredDistribution"
             )
-        super().__init__(name, graph.unmet, graph.event_spec)
+        super().__init__(name, graph.unmet, _joint_declaration(graph, _component))
         object.__setattr__(self, "_graph", graph)
 
     @property
@@ -1653,7 +1728,8 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
         Returns
         -------
         FactoredDistribution or FactoredConditionalDistribution
-            The joint over the bound factors, conditional while a given remains.
+            The joint over the bound factors, conditional while a given remains,
+            packaged as this joint is.
 
         Raises
         ------
@@ -1676,8 +1752,8 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
                     factor = _bound_factor(factor, bound, options)
             factors.append(factor)
         if set(values) == set(self.given_spec):
-            return FactoredDistribution(self.name, factors)
-        return FactoredConditionalDistribution(self.name, factors)
+            return FactoredDistribution(self.name, factors, **_packaging(self))
+        return FactoredConditionalDistribution(self.name, factors, **_packaging(self))
 
 
 def _bound_factor(

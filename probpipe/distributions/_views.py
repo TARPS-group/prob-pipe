@@ -65,9 +65,11 @@ from ._distribution import (
     _whole_term_component,
 )
 from ._factored import (
+    _LABEL_SEP,
     FactoredConditionalDistribution,
     FactoredDistribution,
     SupportsFactors,
+    _factor_graph,
     _FactorGraph,
     _raw_record,
 )
@@ -1604,11 +1606,14 @@ def _renamed_law(
     """The law ``with_path_names`` returns for *parent* when a rename reaches a record field.
 
     A factored law renames through its factors where they carry the rename, and
-    any other law, or a rename its factors cannot carry, is translated at the
+    regroups them where the rename gathers their components under new nodes.
+    Any other law, or a rename its factors cannot carry, is translated at the
     boundary of the law that holds it.
     """
     if isinstance(parent, SupportsFactors):
         joint = _renamed_through_factors(parent, renames, event_spec)
+        if joint is None:
+            joint = _regrouped(parent, renames, event_spec)
         if joint is not None:
             return joint
     return _renamed(parent, _EventRenames.of(parent.event_spec, event_spec, renames), renames)
@@ -1656,7 +1661,8 @@ def _renamed_through_factors(
     The factors cannot carry a rename that changes a factor's packaging, as
     moving a whole term's component into a group does, that places components of
     two factors under one node, or that changes which factor conditions on
-    which.
+    which. A packaged joint renames the paths below its component through its
+    factors, and keeps its packaging.
 
     Parameters
     ----------
@@ -1670,6 +1676,14 @@ def _renamed_through_factors(
         the result must declare.
     """
     graph: _FactorGraph = joint._graph
+    packaging: dict[str, str] = {}
+    component = _whole_term_component(joint.event_spec)
+    if component is not None:
+        inner = _within_package(joint, pairs, component)
+        target = _whole_term_component(event_spec)
+        if inner is None or target is None:
+            return None
+        pairs, packaging = inner, {"_component": target}
     try:
         factors = [
             factor.with_path_names(renames) if renames else factor
@@ -1680,7 +1694,7 @@ def _renamed_through_factors(
             if isinstance(joint, ConditionalDistribution)
             else FactoredDistribution
         )
-        renamed = kind(joint.name, factors, _scope=graph.scope)
+        renamed = kind(joint.name, factors, _scope=graph.scope, **packaging)
     except (KeyError, ValueError):
         return None
     if _leaf_specs(renamed.event_spec) != _leaf_specs(event_spec):
@@ -1690,6 +1704,247 @@ def _renamed_through_factors(
     return renamed.with_provenance(
         Provenance.create("with_path_names", parents=[joint], metadata=dict(pairs))
     )
+
+
+def _within_package(joint: Any, pairs: Mapping[str, str], component: str) -> dict[str, str] | None:
+    """*pairs* as paths of the factor record of *joint*, packaged under *component*.
+
+    A key of the event side and its target each start with the component, and
+    a key of a given slot is kept. None when an event-side rename leaves the
+    component or renames it.
+    """
+    inner: dict[str, str] = {}
+    prefix = f"{component}{_PATH_SEP}"
+    for old, new in pairs.items():
+        if isinstance(joint, ConditionalDistribution) and old.split(_PATH_SEP, 1)[0] in (
+            joint.given_spec
+        ):
+            inner[old] = new
+        elif old.startswith(prefix) and new.startswith(prefix):
+            inner[old[len(prefix) :]] = new[len(prefix) :]
+        else:
+            return None
+    return inner
+
+
+def _gathered(graph: _FactorGraph, pairs: Mapping[str, str]) -> dict[str, str] | None:
+    """The gathering node each gathered component joins, keyed by the component.
+
+    A rename gathers a component when it moves the whole component into a new
+    top-level node. None when no rename gathers, or when another rename reaches
+    a gathering node or a gathered component.
+    """
+    nodes: dict[str, str] = {}
+    for old, new in pairs.items():
+        head, _, rest = new.partition(_PATH_SEP)
+        if old in graph.producers and rest and head not in graph.producers:
+            nodes[old] = head
+    if not nodes:
+        return None
+    for old, new in pairs.items():
+        if old in nodes:
+            continue
+        if old.split(_PATH_SEP, 1)[0] in nodes or new.split(_PATH_SEP, 1)[0] in nodes.values():
+            return None
+    return nodes
+
+
+def _inner_path(path: str, node: str) -> str:
+    """*path*, which starts with *node*, as the path below it."""
+    return path[len(node) + 1 :]
+
+
+def _regrouped_renames(
+    graph: _FactorGraph,
+    pairs: Mapping[str, str],
+    nodes: Mapping[str, str],
+    groups: Mapping[int, str | None],
+) -> list[dict[str, str]]:
+    """The renames each factor of *graph* applies when the rename *pairs* regroups it.
+
+    A factor in a group renames its components to their paths below the
+    group's node, and a factor left in place renames them as *pairs* does. A
+    consumer of a component renames its given slot to the component's path
+    below the node when both factors are in one group, and to the component's
+    new path otherwise, which moves the slot into a structured slot named by
+    the node.
+    """
+    renames: list[dict[str, str]] = [{} for _ in graph.factors]
+    for old, new in pairs.items():
+        head = old.split(_PATH_SEP, 1)[0]
+        producer = graph.producers.get(head)
+        node = nodes.get(head)
+        if producer is not None:
+            target = new if node is None else _inner_path(new, node)
+            if target != old:
+                renames[producer][old] = target
+        for index, factor in enumerate(graph.factors):
+            if not (isinstance(factor, ConditionalDistribution) and head in factor.given_spec):
+                continue
+            target = new
+            if node is not None and groups[index] == node:
+                target = _inner_path(new, node)
+            if target != old:
+                renames[index][old] = target
+    return renames
+
+
+def _widened(
+    kernel: ConditionalDistribution, slot: str, record: RecordSpec
+) -> ConditionalDistribution | None:
+    """*kernel* with its structured slot *slot* declared as *record*, which holds its fields.
+
+    The result reads the kernel's own fields of a value of *record* and drops
+    the others, so a consumer of part of a gathered node conditions on the
+    node's whole record. None when *record* lacks a field of the slot or
+    declares it otherwise.
+    """
+    declared = kernel.given_spec[slot]
+    if not isinstance(declared, RecordSpec):
+        return None
+    if any(record.children.get(name) != spec for name, spec in declared.children.items()):
+        return None
+    given_spec = InputSpec(
+        {name: (record if name == slot else spec) for name, spec in kernel.given_spec.items()}
+    )
+    own = set(_given_leaf_specs(kernel.given_spec))
+    origins = {leaf: (leaf if leaf in own else None) for leaf in _given_leaf_specs(given_spec)}
+    event = _EventRenames.of(kernel.event_spec, kernel.event_spec, {})
+    widened = _RenamedConditionalDistribution(kernel, given_spec, kernel.event_spec, origins, event)
+    return widened.with_provenance(
+        Provenance.create("with_path_names", parents=[kernel], metadata={"widened": slot})
+    )
+
+
+def _regrouped(
+    joint: Any, pairs: Mapping[str, str], event_spec: OutputSpec
+) -> Distribution | ConditionalDistribution | None:
+    """*joint* renamed by *pairs* with the factors under each gathering node packaged as one.
+
+    The factors whose components the rename moves into a new node form a
+    packaged sub-joint, labeled by joining their labels, whose event is the
+    node as one component holding their components' record; the other factors
+    rename in place. A consumer of a gathered component conditions on the
+    sub-joint through its renamed given slot, widened to the node's whole
+    record. The result orders its factors conditional-first, each one at its
+    first factor's position where the dependencies allow.
+
+    None when no rename gathers whole components, a factor's components land
+    in two places, the groups condition on one another in a cycle, or the
+    result does not declare the leaves of *event_spec*.
+    """
+    if _whole_term_component(joint.event_spec) is not None:
+        return None
+    graph: _FactorGraph = joint._graph
+    nodes = _gathered(graph, pairs)
+    if nodes is None:
+        return None
+    groups: dict[int, str | None] = {}
+    for index, factor in enumerate(graph.factors):
+        joined = {nodes.get(component) for component in factor.event_spec.components}
+        if len(joined) > 1:
+            return None
+        groups[index] = next(iter(joined), None)
+    try:
+        renamed = [
+            factor.with_path_names(renames) if renames else factor
+            for factor, renames in zip(
+                graph.factors, _regrouped_renames(graph, pairs, nodes, groups), strict=True
+            )
+        ]
+    except (KeyError, ValueError):
+        return None
+    members: dict[str, list[int]] = {}
+    for index, node in groups.items():
+        if node is not None:
+            members.setdefault(node, []).append(index)
+    records = {
+        node: RecordSpec(
+            {
+                component: spec
+                for index in indices
+                for component, spec in renamed[index].event_spec.components.items()
+            }
+        )
+        for node, indices in members.items()
+    }
+    for index, factor in enumerate(renamed):
+        if not isinstance(factor, ConditionalDistribution):
+            continue
+        for slot in list(factor.given_spec):
+            if slot in records and factor.given_spec[slot] != records[slot]:
+                factor = _widened(factor, slot, records[slot])
+                if factor is None:
+                    return None
+        renamed[index] = factor
+    units: list[tuple[int, Any]] = []
+    try:
+        for node, indices in members.items():
+            parts = [renamed[index] for index in indices]
+            kind = (
+                FactoredDistribution
+                if _factor_graph(parts, graph.scope).unmet is None
+                else FactoredConditionalDistribution
+            )
+            label = _LABEL_SEP.join(part.name for part in parts)
+            units.append((indices[0], kind(label, parts, _scope=graph.scope, _component=node)))
+    except (KeyError, TypeError, ValueError):
+        return None
+    units.extend((index, renamed[index]) for index, node in groups.items() if node is None)
+    order = _conditional_first(units)
+    if order is None:
+        return None
+    kind = (
+        FactoredConditionalDistribution
+        if isinstance(joint, ConditionalDistribution)
+        else FactoredDistribution
+    )
+    try:
+        result = kind(joint.name, [units[position][1] for position in order], _scope=graph.scope)
+    except (KeyError, TypeError, ValueError):
+        return None
+    if _leaf_specs(result.event_spec) != _leaf_specs(event_spec):
+        return None
+    return result.with_provenance(
+        Provenance.create("with_path_names", parents=[joint], metadata=dict(pairs))
+    )
+
+
+def _conditional_first(units: Sequence[tuple[int, Any]]) -> list[int] | None:
+    """An order of *units* in which each consumer precedes the factors it conditions on.
+
+    Each unit is a factor with the position of its first original factor, which
+    breaks ties, so an order with no regrouping keeps the original. None when
+    the units condition on one another in a cycle.
+    """
+    producers = {
+        component: position
+        for position, (_, unit) in enumerate(units)
+        for component in unit.event_spec.components
+    }
+    consumes = {
+        position: {
+            producers[slot]
+            for slot in (unit.given_spec if isinstance(unit, ConditionalDistribution) else ())
+            if slot in producers
+        }
+        - {position}
+        for position, (_, unit) in enumerate(units)
+    }
+    order: list[int] = []
+    remaining = set(range(len(units)))
+    while remaining:
+        ready = [
+            position
+            for position in remaining
+            if not any(position in consumes[other] for other in remaining if other != position)
+        ]
+        if not ready:
+            return None
+        chosen = min(ready, key=lambda position: units[position][0])
+        order.append(chosen)
+        remaining.remove(chosen)
+    return order
 
 
 # ---------------------------------------------------------------------------
@@ -1902,8 +2157,9 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
         The renamed slots.
     event_spec : OutputSpec
         The renamed event declaration.
-    origins : Mapping[str, str]
-        The parent's leaf for each leaf of the renamed slots, keyed by its path.
+    origins : Mapping[str, str or None]
+        The parent's leaf for each leaf of the renamed slots, keyed by its path;
+        a leaf that a widened slot adds has none, and its value is dropped.
     event : _EventRenames
         The renames from the parent's event declaration to this kernel's.
     pending : Mapping[str, Any], optional
@@ -1966,7 +2222,14 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
         ]
         if missing:
             raise ValueError(f"the given binds part of a slot of {self.name!r}, without {missing}")
-        bound = {**self._pending, **{self._origins[path]: value for path, value in values.items()}}
+        bound = {
+            **self._pending,
+            **{
+                self._origins[path]: value
+                for path, value in values.items()
+                if self._origins[path] is not None
+            },
+        }
         by_slot: dict[str, list[str]] = {}
         for leaf in _given_leaf_specs(self._parent.given_spec):
             by_slot.setdefault(leaf.partition(_PATH_SEP)[0], []).append(leaf)
@@ -2050,15 +2313,17 @@ def _renamed_kernel(
     """The kernel ``with_path_names`` returns for *parent*, with the rename's provenance.
 
     A factored kernel renames through its factors where they carry the rename,
-    and any other kernel, or a rename its factors cannot carry, renames at the
-    boundary of the kernel that holds it.
+    and regroups them where the rename gathers their components under new
+    nodes. Any other kernel, or a rename its factors cannot carry, renames at
+    the boundary of the kernel that holds it.
     """
     if isinstance(parent, SupportsFactors):
-        joint = _renamed_through_factors(parent, pairs, event_spec)
-        if joint is not None and _given_leaf_specs(joint.given_spec) == _given_leaf_specs(
-            given_spec
-        ):
-            return joint
+        for attempt in (_renamed_through_factors, _regrouped):
+            joint = attempt(parent, pairs, event_spec)
+            if joint is not None and _given_leaf_specs(joint.given_spec) == _given_leaf_specs(
+                given_spec
+            ):
+                return joint
     event = _EventRenames.of(parent.event_spec, event_spec, renames)
     kernel = _RenamedConditionalDistribution(parent, given_spec, event_spec, origins, event)
     kernel.with_provenance(
