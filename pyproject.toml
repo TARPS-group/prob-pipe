@@ -132,8 +132,6 @@ exclude = ["*.ipynb"]
 # of the other modules of probpipe/ only (I002).
 "__init__.py" = ["F401", "E402", "I002"]
 "!probpipe/**" = ["I002"]
-# This module lacks the future import, which a change to its source adds.
-"probpipe/linalg/operations.py" = ["I002"]
 # Demo scripts and tests legitimately import after setup (sys.path / env) or a
 # pytest.importorskip(...) guard, so E402 there is expected.
 "example_scripts/*" = ["E402"]
