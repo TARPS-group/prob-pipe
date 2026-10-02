@@ -12,7 +12,6 @@ import pytest
 
 from probpipe.functions import (
     _broker,
-    _call,
     _callable,
     _context,
     _descendants,
@@ -28,7 +27,6 @@ from probpipe.values import _binding
 _WORKFLOW_MODULES = (
     _binding,
     _broker,
-    _call,
     _callable,
     _context,
     _descendants,

@@ -40,7 +40,6 @@ from probpipe.core.ops import (
     unnormalized_prob,
     variance,
 )
-from probpipe.functions._result import _wrap_as_term
 
 KEY = jax.random.PRNGKey(0)
 ELEMENT = NumericRecordSpec(a=())
@@ -494,14 +493,16 @@ class TestRawDrawNaming:
             assert result.level_names == levels
 
     @pytest.mark.parametrize("value", [2.0, {"x": 2.0}], ids=["scalar", "mapping"])
-    def test_a_declared_raw_result_takes_the_requested_name(self, value):
+    def test_a_declared_function_result_takes_the_requested_name(self, value):
         from probpipe import OutputSpec
 
         template = RecordSpec(x=NumericArraySpec(()))
         declaration = (
             OutputSpec(template) if isinstance(value, dict) else OutputSpec(x=template["x"])
         )
-        result = _wrap_as_term(value, "sample", declaration, name="law")
+        wrapped = Function("producer", lambda: value, output_spec=declaration, output_name="law")
+        result = wrapped()
+        assert wrapped.apply() is value
         assert result.name == "law"
         assert result.spec == declaration.spec
         assert float(result["x"] if isinstance(result, Record) else result) == 2.0

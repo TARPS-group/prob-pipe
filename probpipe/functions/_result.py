@@ -90,9 +90,7 @@ def _output_record_spec(output_spec: OutputSpec) -> RecordSpec | None:
     return None
 
 
-def _wrap_as_term(
-    value: Any, field_name: str, output_spec: OutputSpec | None = None, *, name: str | None = None
-) -> Any:
+def _wrap_as_term(value: Any, field_name: str, *, name: str | None = None) -> Any:
     """Wrap a raw host as its tracked kind under the caller's result label.
 
     Mappings become records, numeric values become NumericArray, callables
@@ -100,13 +98,9 @@ def _wrap_as_term(
     are retained here and copied by the public result boundary.
 
     Interim implementation detail: undeclared sequences use the existing batch
-    assembler. An explicitly declared OpaqueSpec keeps a sequence atomic.
+    assembler. Declared returns are handled by _wrap_declared_function_output.
     """
     result_name = field_name if name is None else name
-    if output_spec is not None and output_spec.spec is not None:
-        return _wrap_declared_function_output(
-            value, function_name=result_name, output_spec=output_spec
-        )
     match value:
         case TrackedTerm():
             return value

@@ -203,11 +203,10 @@ def _make_execution_config(
     )
 
 
-def _call_with_options(
+def _invoke(
     function: Function,
     args: tuple[Any, ...],
     call_inputs: dict[str, Any],
-    options: _call.FunctionCallOptions,
 ) -> Any:
     _context._assert_workflow_admission()
     with _replay._function_replay_scope() as replay_call:
@@ -224,16 +223,15 @@ def _call_with_options(
                 broker.set_callable_anchor(anchor)
                 if replay_call is not None:
                     replay_call.validate_callable(anchor)
-            return _call_with_options_in_context(function, args, call_inputs, options)
+            return _invoke_in_context(function, args, call_inputs)
 
 
-def _call_with_options_in_context(
+def _invoke_in_context(
     function: Function,
     args: tuple[Any, ...],
     call_inputs: dict[str, Any],
-    options: _call.FunctionCallOptions,
 ) -> Any:
-    call = _call.resolve_function_call(
+    values = _call.resolve_function_call(
         function._signature_info,
         args,
         call_inputs,
@@ -241,13 +239,10 @@ def _call_with_options_in_context(
         module=function._module,
         dependency_type=Node,
         function_name=function._name,
-        default_n_broadcast_samples=function.options["n_broadcast_samples"],
-        default_include_inputs=function.options["include_inputs"],
-        options=options,
     )
 
     values = _normalization.normalize_distribution_values(
-        values=call.values,
+        values=values,
         signature_info=function._signature_info,
     )
     broadcast_plan = _plan.build_broadcast_plan(
@@ -257,7 +252,7 @@ def _call_with_options_in_context(
     stochastic_plan = _plan.build_stochastic_plan(
         values,
         broadcast_plan,
-        call.overrides.n_broadcast_samples,
+        function.options["n_broadcast_samples"],
     )
     stochastic_sample_shape = None if stochastic_plan is None else stochastic_plan.sample_shape
 
@@ -376,7 +371,7 @@ def _call_with_options_in_context(
         row_values: dict[str, Any],
         plan: _plan.StochasticPlan,
         logical_unit: _plan.LogicalUnit,
-        include_inputs: bool = call.overrides.include_inputs,
+        include_inputs: bool = function.options["include_inputs"],
         record_recipe: bool = True,
     ):
         return _broadcast.execute_distribution_broadcast(
@@ -437,7 +432,7 @@ def _call_with_options_in_context(
             function_name=function._name,
             output_name=function.output_name,
             output_spec=concrete_output_spec,
-            include_inputs=call.overrides.include_inputs,
+            include_inputs=function.options["include_inputs"],
             output_template=concrete_output_template,
             provenance_parents=provenance_parents,
             provenance_inputs=provenance_inputs,
@@ -739,7 +734,7 @@ def _resolve_dispatch(
 
 
 def _call_engine(function: Function, /, *args: Any, **kwargs: Any) -> Any:
-    return _call_with_options(function, args, kwargs, _call.FunctionCallOptions())
+    return _invoke(function, args, kwargs)
 
 
 @contextmanager
