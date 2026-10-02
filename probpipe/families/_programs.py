@@ -4,9 +4,9 @@ A program-defined model exposes the law its program defines, in the kind that
 law has, and its variable names determine its output components.
 
 Provides:
-  - ``StanModel`` – the kernel from a Stan program's data-block entries to its
+  - ``StanModel`` – the kernel from a Stan program's data-block variables to its
     unnormalized posterior over the parameter record, through BridgeStan; a
-    construction that binds every entry returns the posterior itself;
+    construction that binds every data variable returns the posterior itself;
   - ``PyMCModel`` – the joint law a PyMC model-building function defines over
     its free variables, the parameters and the observed variables alike, and a
     kernel over the arguments no observed variable receives;
@@ -426,10 +426,10 @@ def _declared_variables(block: str) -> list[_StanVariable]:
 
 
 def _dimension(expression: str, name: str, axis: int, data: Mapping[str, Any]) -> int | str:
-    """A size of *name*: a literal, a scalar data entry's value, or else a symbolic dimension.
+    """A size of *name*: a literal, a scalar data variable's value, or else a symbolic dimension.
 
-    A size that names a data entry is the dimension of that name until the
-    entry is bound.
+    A size that names a data variable is the dimension of that name until the
+    variable is bound.
     """
     if expression.isdigit():
         return int(expression)
@@ -483,7 +483,7 @@ def _stanc_info_of(stan_file: str, modified: int, size: int) -> Mapping[str, Any
 
 
 def _stanc_info(stan_file: str) -> Mapping[str, Any]:
-    """``stanc --info`` of *stan_file*: each data entry and parameter, with its type and rank."""
+    """``stanc --info`` of *stan_file*: each data variable and parameter, with its type and rank."""
     status = Path(stan_file).stat()
     return _stanc_info_of(str(stan_file), status.st_mtime_ns, status.st_size)
 
@@ -526,9 +526,9 @@ def _checked_against_stanc(
 
 @dataclass(frozen=True)
 class _StanProgram:
-    """A Stan program's file, its data-block entries, and its parameters.
+    """A Stan program's file, its data-block variables, and its parameters.
 
-    Each entry and parameter carries the dtype of the element type ``stanc
+    Each data variable and parameter carries the dtype of the element type ``stanc
     --info`` reports, and its size expressions and bounds as the program
     declares them.
     """
@@ -566,14 +566,14 @@ class _StanProgram:
 
     @property
     def data_entries(self) -> tuple[str, ...]:
-        """The names of the data-block entries, in declaration order."""
+        """The names of the data-block variables, in declaration order."""
         return tuple(variable.name for variable, _ in self.data)
 
     def given_spec(self, bound: Mapping[str, Any]) -> dict[str, NumericArraySpec]:
-        """The given slot of each entry *bound* leaves unbound, typed as the entry is declared.
+        """The given slot of each data variable *bound* leaves unbound, typed as it is declared.
 
-        A size that names a scalar entry of *bound* is that entry's value, and
-        one that names another entry is the dimension of its name.
+        A size that names a scalar variable of *bound* is that variable's value, and
+        one that names another variable is the dimension of its name.
         """
         return {
             variable.name: NumericArraySpec(_shape(variable, bound), dtype)
@@ -582,7 +582,7 @@ class _StanProgram:
         }
 
     def parameter_record(self, data: Mapping[str, Any]) -> RecordSpec:
-        """The parameter record, each size a scalar entry of *data* names bound to its value.
+        """The parameter record, each size that names a scalar variable of *data* bound to its value.
 
         Each parameter carries its dtype and the support its declaration states.
         """
@@ -597,7 +597,7 @@ class _StanProgram:
 
 
 def _shape(variable: _StanVariable, data: Mapping[str, Any]) -> tuple[int | str, ...]:
-    """The shape of *variable*, each size a scalar entry of *data* names bound to its value."""
+    """The shape of *variable*, each size that names a scalar variable of *data* bound to its value."""
     return tuple(
         _dimension(size, variable.name, axis, data) for axis, size in enumerate(variable.sizes)
     )
@@ -620,7 +620,7 @@ def _parameter_record_at(
 
 
 class _StanPosterior(Distribution, SupportsUnnormalizedLogProb):
-    """The unnormalized posterior of a Stan program at a value of every data-block entry.
+    """The unnormalized posterior of a Stan program at a value of every data-block variable.
 
     Its event is the parameter record, and its unnormalized log-density is
     BridgeStan's log density in the constrained parameterization without the
@@ -634,7 +634,7 @@ class _StanPosterior(Distribution, SupportsUnnormalizedLogProb):
     program : _StanProgram
         The program.
     data : Mapping[str, Any]
-        A value of every data-block entry.
+        A value of every data-block variable.
     """
 
     #: The BridgeStan model, built on first use, is not state.
@@ -652,7 +652,7 @@ class _StanPosterior(Distribution, SupportsUnnormalizedLogProb):
 
     @property
     def data(self) -> Mapping[str, Any]:
-        """The value of every data-block entry."""
+        """The value of every data-block variable."""
         return MappingProxyType(self._data)
 
     def _bridgestan_model(self) -> Any:
@@ -743,14 +743,14 @@ class _UnconstrainedStanView(Distribution, SupportsUnnormalizedLogProb):
 
 
 class _StanModelMeta(type(ConditionalDistribution)):
-    """The metaclass of ``StanModel``: binding every data-block entry returns the posterior."""
+    """The metaclass of ``StanModel``: binding every data-block variable returns the posterior."""
 
     def __call__(cls, name: str, stan_file: str, *, data: Mapping[str, Any] | None = None) -> Any:
         program = _StanProgram.read(stan_file)
         bound = dict(data or {})
         unknown = sorted(set(bound) - set(program.data_entries))
         if unknown:
-            raise KeyError(f"{unknown} are not data-block entries of {stan_file}")
+            raise KeyError(f"{unknown} are not data-block variables of {stan_file}")
         if set(program.data_entries) <= set(bound):
             return _StanPosterior(name, program, bound)
         return super().__call__(name, stan_file, data=data)
@@ -759,15 +759,15 @@ class _StanModelMeta(type(ConditionalDistribution)):
 class StanModel(
     ConditionalDistribution, SupportsConditionalUnnormalizedLogProb, metaclass=_StanModelMeta
 ):
-    """The kernel from a Stan program's data-block entries to its unnormalized posterior.
+    """The kernel from a Stan program's data-block variables to its unnormalized posterior.
 
-    The given slots are the data-block entries *data* leaves unbound, which the
+    The given slots are the data-block variables *data* leaves unbound, which the
     program does not divide into sizes, covariates, and observations, and the
-    event is the parameter record. Each slot is typed as its entry is declared,
+    event is the parameter record. Each slot is typed as its variable is declared,
     and each parameter carries its dtype and the support its declared
-    constraint states; a size that names an unbound entry is the dimension of
+    constraint states; a size that names an unbound variable is the dimension of
     that name on both sides. It claims ``SupportsConditionalUnnormalizedLogProb``
-    alone: binding every entry yields the unnormalized posterior, whose density
+    alone: binding every data variable yields the unnormalized posterior, whose density
     is BridgeStan's in the constrained parameterization without the Jacobian,
     and ``condition_on`` normalizes it with a method such as Stan's NUTS. The
     declarations are read at construction from ``stanc --info`` and the
@@ -781,8 +781,8 @@ class StanModel(
     stan_file : str
         Path to a ``.stan`` file.
     data : Mapping[str, Any], optional
-        Values of some data-block entries, bound at construction. A
-        construction that binds every entry returns the posterior, a
+        Values of some data-block variables, bound at construction. A
+        construction that binds every data variable returns the posterior, a
         ``Distribution``.
 
     Raises
@@ -790,7 +790,7 @@ class StanModel(
     ImportError
         If BridgeStan's stanc compiler is not installed.
     KeyError
-        If *data* names an entry the data block does not declare.
+        If *data* names a variable the data block does not declare.
     ValueError
         If stanc rejects the program, the program declares no parameters, or a
         declaration cannot be read.
@@ -812,18 +812,18 @@ class StanModel(
 
     @property
     def data(self) -> Mapping[str, Any]:
-        """The data-block entries bound at construction or by currying."""
+        """The data-block variables bound at construction or by currying."""
         return MappingProxyType(self._data)
 
     def _condition_on(
         self, given: Record | Mapping[str, Any], /, **kwargs: Any
     ) -> Distribution | ConditionalDistribution:
-        """The posterior at a value of every data-block entry, or the kernel over the rest.
+        """The posterior at a value of every data-block variable, or the kernel over the rest.
 
         Raises
         ------
         KeyError
-            If a name is not an unbound data-block entry.
+            If a name is not an unbound data-block variable.
         """
         values = _given_values(self.name, given, kwargs, self.given_spec)
         return StanModel(self.name, self.stan_file, data={**self._data, **values})
@@ -836,11 +836,11 @@ class StanModel(
         Raises
         ------
         KeyError
-            If *given* leaves a data-block entry unbound.
+            If *given* leaves a data-block variable unbound.
         """
         law = self._condition_on(given)
         if isinstance(law, ConditionalDistribution):
-            raise KeyError(f"{self.name!r} needs a value for every data-block entry")
+            raise KeyError(f"{self.name!r} needs a value for every data-block variable")
         return law._unnormalized_log_prob(value)
 
     def __repr__(self) -> str:
