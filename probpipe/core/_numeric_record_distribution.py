@@ -852,7 +852,7 @@ class FlattenedDistributionView(FlatNumericRecordDistribution):
 _LIFTED_VIEW_CLASS_CACHE: dict[type, type] = {}
 
 
-def _nrdvfactory_sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()):
+def _numeric_record_view_sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()):
     from ._numeric_record import _reconstruct_from_vector
 
     base_sample = self._base._sample(key, sample_shape)
@@ -866,7 +866,7 @@ def _nrdvfactory_sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()):
     return _reconstruct_from_vector(self.name, self.event_spec.spec, flat)
 
 
-def _nrdvfactory_log_prob(self, x) -> Array:
+def _numeric_record_view_log_prob(self, x) -> Array:
     from ._numeric_record import NumericRecord
     from ._numeric_record_batch import NumericRecordBatch
 
@@ -875,7 +875,7 @@ def _nrdvfactory_log_prob(self, x) -> Array:
     return self._base._log_prob(value)
 
 
-def _nrdvfactory_mean(self):
+def _numeric_record_view_mean(self):
     from ._numeric_record import _reconstruct_from_vector
 
     value = self._base._mean()
@@ -886,7 +886,7 @@ def _nrdvfactory_mean(self):
     return _reconstruct_from_vector(self.name, self.event_spec.spec, flat)
 
 
-def _nrdvfactory_variance(self):
+def _numeric_record_view_variance(self):
     from ._numeric_record import _reconstruct_from_vector
 
     value = self._base._variance()
@@ -897,14 +897,14 @@ def _nrdvfactory_variance(self):
     return _reconstruct_from_vector(self.name, self.event_spec.spec, flat)
 
 
-def _nrdvfactory_cov(self):
+def _numeric_record_view_cov(self):
     # Covariance stays flat (event_size × event_size matrix).
     # The Record / field-block structure is implicit in the
     # template's flat ordering.
     return self._base._cov()
 
 
-def _nrdvfactory_expectation(
+def _numeric_record_view_expectation(
     self,
     f: Callable,
     *,
@@ -960,13 +960,13 @@ def _nrdvfactory_expectation(
     return jax.tree.map(lambda x: jnp.mean(x, axis=0), evals)
 
 
-_CAPABILITIES = (
-    (SupportsSampling, "_sample", _nrdvfactory_sample),
-    (SupportsLogProb, "_log_prob", _nrdvfactory_log_prob),
-    (SupportsMean, "_mean", _nrdvfactory_mean),
-    (SupportsVariance, "_variance", _nrdvfactory_variance),
-    (SupportsCovariance, "_cov", _nrdvfactory_cov),
-    (SupportsExpectation, "_expectation", _nrdvfactory_expectation),
+_NUMERIC_RECORD_VIEW_CAPABILITIES = (
+    (SupportsSampling, "_sample", _numeric_record_view_sample),
+    (SupportsLogProb, "_log_prob", _numeric_record_view_log_prob),
+    (SupportsMean, "_mean", _numeric_record_view_mean),
+    (SupportsVariance, "_variance", _numeric_record_view_variance),
+    (SupportsCovariance, "_cov", _numeric_record_view_cov),
+    (SupportsExpectation, "_expectation", _numeric_record_view_expectation),
 )
 
 
@@ -993,7 +993,7 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
 
     bases = [NumericRecordDistributionView]
     methods = {}
-    for protocol, method_name, method in _CAPABILITIES:
+    for protocol, method_name, method in _NUMERIC_RECORD_VIEW_CAPABILITIES:
         if isinstance(base, protocol):
             bases.append(protocol)
             methods[method_name] = method
