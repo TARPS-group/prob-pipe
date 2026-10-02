@@ -48,6 +48,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   numeric arrays retain the existing record marginal and returned laws form
   mixtures. Module methods
   infer their returns normally and use the method name as their output label.
+  Import `Function` from `probpipe` or `probpipe.values`; import `function`,
+  `Module`, `AbstractModule`, `workflow_method`, and `abstract_workflow_method`
+  from `probpipe` or `probpipe.functions`. These names are no longer exported
+  by `probpipe.core.node`, which retains `Node` and `InputFrozenError`.
+  `with_options` returns a reusable Function copy accepting every engine control
+  (`workflow_kind`, `n_broadcast_samples`, `dispatch`, `max_workers`, and
+  `include_inputs`); it does not accept construction metadata or domain arguments.
+  Broadcast joint results now use `output_name` instead of `"broadcast"`.
+  Undeclared whole-term output components use `output_name` instead of
+  `"marginal"`; explicit output declarations retain their component names.
+  The invocation logger is now `probpipe.functions._function` instead of
+  `probpipe.core.node`; update logger-specific handlers and filters.
 
 - `OutputSpec` takes one keyword or one positional `RecordSpec`, so its form
   alone decides the packaging. The form with several keywords, which exposed a
@@ -194,7 +206,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its separate wrapper; `NumericRecordSpec` replaces `NumericEventTemplate`.
   Replace `ValueSpec` with `TermSpec` in custom specs. Dimension binding returns
   a refined spec, `with_dim_sizes` permits partial substitution, and `with_dim_names`
-  renames symbols throughout nested declarations. The live distribution template API retains its signature for its later migration.
+  renames symbols throughout nested declarations. Distributions expose their
+  draw declaration through `event_spec`; Record constructors retain `event_template=`.
   Moving and renaming schema classes changes their fingerprints and those of
   containing terms; affected persisted provenance fingerprints no longer match.
   A custom `NumericSpec` implements `_vector_size`; the public `vector_size`

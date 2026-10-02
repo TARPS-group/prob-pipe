@@ -6,7 +6,7 @@
 
 `Function` is an immutable, tracked and annotated ProbPipe object. Its
 `signature` is captured from the wrapped Python callable once at construction;
-optional event templates describe values, but do not replace or derive that
+optional input and output declarations describe values, but do not replace or derive that
 Python calling contract. Function calls record the Function itself as the first
 provenance parent, followed by tracked inputs in parameter order. Every resolved
 non-tracked parameter is recorded separately in `provenance.inputs`, including
@@ -36,11 +36,18 @@ def score(x, seed):
     return x + seed
 ```
 
-Use `workflow.with_options(...)(...)` for one-call overrides:
+Use `workflow.with_options(...)` to create a reusable Function copy with revised
+controls. The original is unchanged; the copy keeps its controls on every call:
 
 ```python
-result = score.with_options(n_broadcast_samples=2_000)(x, seed=7)
+configured = score.with_options(n_broadcast_samples=2_000)
+result = configured(x, seed=7)
 ```
+
+All engine controls are accepted: `workflow_kind`, `n_broadcast_samples`,
+`dispatch`, `max_workers`, and `include_inputs`. A value of `None` keeps the
+existing setting. Construction metadata (`name`, `output_name`, declarations,
+and bindings) and domain arguments are not controls.
 
 Keyword arguments in the final workflow call belong to the wrapped user
 function whenever they can bind to that function. This keeps common names
@@ -57,8 +64,9 @@ with workflow_run(seed=42):
     result = score(dist, seed=7)
 ```
 
-`Function(..., seed=...)` and `with_options(seed=...)` are not supported. A
-wrapped function's own `seed` parameter remains an ordinary input.
+Legacy `Function(..., seed=...)` warns and ignores that argument;
+`with_options(seed=...)` raises `TypeError`. A wrapped function's own `seed`
+parameter remains an ordinary input.
 
 ## Workflow RNG scopes
 
@@ -271,6 +279,12 @@ of those families and additional dispatch capabilities belong to later steps
 of the functions migration.
 
 ## Wrappers and decorators
+
+Import `Function` and the decorators from `probpipe`. `probpipe.values` also
+exports `Function` and `FunctionSpec`; `probpipe.functions` exports the decorator
+and experimental Module interfaces. The former exports from `probpipe.core.node`
+have moved without import aliases; that module retains `Node` and `InputFrozenError`.
+Configure invocation logging under `probpipe.functions._function`.
 
 ::: probpipe.Function
 
