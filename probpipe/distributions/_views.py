@@ -298,6 +298,24 @@ def _named_as(law: Distribution, components: Sequence[str]) -> Distribution:
 # with pi the extraction of the view's node from a parent draw, or of the record
 # of the selected nodes.
 
+#: The method of each moment row. A view projects the moment of a parent that
+#: claims it, and otherwise computes it from the parent's exact marginal at the
+#: view's path, when the parent reports that marginal claims it.
+_MOMENT_METHODS: dict[type, str] = {
+    SupportsMean: "_mean",
+    SupportsVariance: "_variance",
+    SupportsCovariance: "_cov",
+    SupportsQuantile: "_quantile",
+}
+
+#: The moment rows that need a numeric node.
+_NUMERIC_MOMENTS = (SupportsCovariance, SupportsQuantile)
+
+
+def _marginal_moment(self: FieldView, method: str, *arguments: Any) -> Any:
+    """The moment *method* of the parent's exact marginal at the view's path."""
+    return getattr(self._parent._marginal(self._path), method)(*arguments)
+
 
 def _view_sample(self: FieldView, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Any:
     """Co-sample: draw ``X`` from the parent with the same key and return ``pi(X)``.
@@ -309,12 +327,23 @@ def _view_sample(self: FieldView, key: PRNGKey, sample_shape: tuple[int, ...] = 
 
 
 def _view_mean(self: FieldView) -> Any:
-    """Projection: the parent's mean at the view's path, since ``E[pi X] = pi E[X]``."""
+    """Projection: the parent's mean at the view's path, since ``E[pi X] = pi E[X]``.
+
+    A parent without a mean gives the mean of its exact marginal at the path.
+    """
+    if not isinstance(self._parent, SupportsMean):
+        return _marginal_moment(self, "_mean")
     return self._project(self._parent._mean())
 
 
 def _view_variance(self: FieldView) -> Any:
-    """Restriction of the parent's variance to the coordinates of the view's path."""
+    """Restriction of the parent's variance to the coordinates of the view's path.
+
+    A parent without a variance gives the variance of its exact marginal at the
+    path.
+    """
+    if not isinstance(self._parent, SupportsVariance):
+        return _marginal_moment(self, "_variance")
     return self._project(self._parent._variance())
 
 
@@ -322,13 +351,16 @@ def _view_cov(self: FieldView) -> LinOp:
     """The sub-block ``P Σ Pᵀ`` of the parent's covariance, ``P`` selecting the path.
 
     ``P`` selects the view's coordinates of the parent's flat vector, in the
-    parent's order, and the product stays lazy.
+    parent's order, and the product stays lazy. A parent without a covariance
+    gives the covariance of its exact marginal at the path.
 
     Raises
     ------
     TypeError
         If the parent's declaration is not numeric.
     """
+    if not isinstance(self._parent, SupportsCovariance):
+        return _marginal_moment(self, "_cov")
     cov = self._parent._cov()
     rows = jnp.asarray(self._coordinates())
     selection = DenseLinOp(jnp.eye(cov.shape[1], dtype=cov.dtype)[rows])
@@ -341,8 +373,11 @@ def _view_quantile(self: FieldView, q: ArrayLike) -> Any:
     The parent's quantiles are its event's raw form with the level axes
     leading in each leaf, so the view's quantiles are the parent's at the
     view's node, projected as a draw is, with the level axes leading in each
-    leaf.
+    leaf. A parent without quantiles gives those of its exact marginal at the
+    path.
     """
+    if not isinstance(self._parent, SupportsQuantile):
+        return _marginal_moment(self, "_quantile", q)
     return self._project(self._parent._quantile(q))
 
 
@@ -504,15 +539,54 @@ def _parent_guard(method: str, owner: str = "FieldView") -> Callable[..., Feasib
     return guard
 
 
+def _moment_guard(protocol: type) -> Callable[..., Feasibility]:
+    """The guard of the moment row of *protocol*, for the source that computes the moment.
+
+    A projected moment carries the parent's guard of its method. A moment from
+    the marginal needs the parent's marginal guard at the path to accept, and
+    then carries the marginal's guard of its method.
+    """
+    method = _MOMENT_METHODS[protocol]
+
+    def guard(self: FieldView, *arguments: Any) -> Feasibility:
+        if isinstance(self._parent, protocol):
+            return _capability_guard(self._parent, method, *arguments)
+        exact = _capability_guard(self._parent, "_marginal", self._path)
+        if exact.feasible is not True:
+            return exact
+        marginal = self._parent._marginal(self._path)
+        if not isinstance(marginal, protocol):
+            return Feasibility(
+                False,
+                f"the marginal of {self._parent.name!r} at {self._path!r} claims no "
+                f"{protocol.__name__}",
+            )
+        return _capability_guard(marginal, method, *arguments)
+
+    guard.__name__ = f"{method}_guard"
+    guard.__qualname__ = f"FieldView.{method}_guard"
+    guard.__doc__ = (
+        f"The parent's guard of ``{method}``, or the parent's marginal guard at the path "
+        f"followed by that marginal's guard of ``{method}``."
+    )
+    return guard
+
+
 #: Each capability a view may derive, with the methods that realize it and their
 #: guards. The density's protocol default ``_unnormalized_log_prob`` takes the
 #: guard of ``_log_prob``.
 _VIEW_CAPABILITIES: dict[type, Mapping[str, Callable[..., Any]]] = {
     SupportsSampling: {"_sample": _view_sample, "_sample_guard": _parent_guard("_sample")},
-    SupportsMean: {"_mean": _view_mean, "_mean_guard": _parent_guard("_mean")},
-    SupportsVariance: {"_variance": _view_variance, "_variance_guard": _parent_guard("_variance")},
-    SupportsCovariance: {"_cov": _view_cov, "_cov_guard": _parent_guard("_cov")},
-    SupportsQuantile: {"_quantile": _view_quantile, "_quantile_guard": _parent_guard("_quantile")},
+    SupportsMean: {"_mean": _view_mean, "_mean_guard": _moment_guard(SupportsMean)},
+    SupportsVariance: {
+        "_variance": _view_variance,
+        "_variance_guard": _moment_guard(SupportsVariance),
+    },
+    SupportsCovariance: {"_cov": _view_cov, "_cov_guard": _moment_guard(SupportsCovariance)},
+    SupportsQuantile: {
+        "_quantile": _view_quantile,
+        "_quantile_guard": _moment_guard(SupportsQuantile),
+    },
     SupportsExpectation: {
         "_expectation": _view_expectation,
         "_expectation_guard": _parent_guard("_expectation"),
@@ -544,18 +618,22 @@ def _derived_protocols(
     """The capabilities a view of *parent* at *path* derives, over the event declared by *node*.
 
     The projection rows derive from the parent's own capabilities. The density
-    rows derive from the parent's report of its marginal at *path*, read once,
-    here: the view claims the normalized density when the report includes it,
-    and otherwise the unnormalized one when the report includes that.
+    rows, and the moment rows the parent does not claim, derive from the
+    parent's report of its marginal at *path*, read once, here: the view claims
+    the normalized density when the report includes it, and otherwise the
+    unnormalized one when the report includes that, and it claims each moment
+    the report includes. The covariance and quantile rows need a numeric node
+    from either source.
     """
     numeric = isinstance(node, NumericSpec)
     derived: set[type] = set()
-    for protocol in (SupportsSampling, SupportsMean, SupportsVariance, SupportsExpectation):
+    for protocol in (SupportsSampling, SupportsExpectation):
         if isinstance(parent, protocol):
             derived.add(protocol)
-    for protocol in (SupportsCovariance, SupportsQuantile):
-        if isinstance(parent, protocol) and numeric:
-            derived.add(protocol)
+    moments = {
+        protocol for protocol in _MOMENT_METHODS if numeric or protocol not in _NUMERIC_MOMENTS
+    }
+    derived.update(protocol for protocol in moments if isinstance(parent, protocol))
     if isinstance(parent, SupportsMarginals):
         derived.add(SupportsMarginals)
         report = _marginal_claims(parent, path)
@@ -563,6 +641,7 @@ def _derived_protocols(
             derived.add(SupportsLogProb)
         elif SupportsUnnormalizedLogProb in report:
             derived.add(SupportsUnnormalizedLogProb)
+        derived.update(protocol for protocol in moments if protocol in report)
     for conditioning in (SupportsExactConditioning, SupportsApproximateConditioning):
         if isinstance(parent, conditioning):
             derived.add(conditioning)
@@ -592,8 +671,9 @@ class FieldView(Distribution):
     capability on the view                  available when
     ======================================  ========================================
     ``_sample``                             the parent samples
-    ``_mean``, ``_variance``                the parent has the moment
-    ``_cov``, ``_quantile``                 the parent has it and the node is numeric
+    ``_mean``, ``_variance``                the parent has the moment, or has marginals
+                                            and reports it for its marginal at the path
+    ``_cov``, ``_quantile``                 as for the mean, and the node is numeric
     ``_expectation``                        the parent has it
     ``_log_prob``, ``_unnormalized_log_prob``  the parent has marginals and reports the
                                             density for its marginal at the path; the
@@ -603,11 +683,14 @@ class FieldView(Distribution):
     ======================================  ========================================
 
     Each derived capability carries the parent's guard for the call it makes.
-    The projection rows are exact whenever the parent's answer is, and only
-    sampling requires the parent to sample. The parent reports what its
-    marginal at the path claims through ``_marginal_capabilities``, and a
-    parent that defines none reports its own claims; the view reads the report
-    once, at construction.
+    A moment the parent does not claim is the moment of the parent's exact
+    marginal at the path, under the parent's marginal guard and then the
+    marginal's guard of the moment, so a view of a dependent joint at a root
+    factor takes the factor's moments. The projection rows are exact whenever
+    the parent's answer is, and only sampling requires the parent to sample.
+    The parent reports what its marginal at the path claims through
+    ``_marginal_capabilities``, and a parent that defines none reports its own
+    claims; the view reads the report once, at construction.
 
     The view's ``raw()`` is the parent's detached marginal at the path, and
     ``with_dim_sizes`` and ``with_dim_names`` apply to the parent and return

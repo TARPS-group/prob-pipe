@@ -44,7 +44,7 @@ from probpipe import (
     Record,
     RecordSpec,
 )
-from probpipe.core._dispatch import Feasibility
+from probpipe.core._dispatch import Feasibility, MathematicalDomainError
 from probpipe.distributions import (
     ConditionalDistribution,
     Distribution,
@@ -73,8 +73,11 @@ from probpipe.distributions._capabilities import (
     _marginal_claims,
 )
 from probpipe.distributions._empirical import EmpiricalDistribution
+from probpipe.families import Cauchy, StudentT
 from probpipe.inference import ApproximateDistribution
 from probpipe.linalg import DenseLinOp, LinOp
+from probpipe.operations._marginal import marginal
+from probpipe.operations._moments import mean
 
 # -- Declarations -------------------------------------------------------------
 
@@ -195,6 +198,17 @@ class _MarginalLaw(_UnguardedMarginalLaw):
 
     def _marginal_guard(self, path: str | tuple[str, ...]) -> Feasibility:
         return self.reports.get(path, Feasibility(True))
+
+
+class _MomentMarginalLaw(_MarginalLaw):
+    """A law with guarded marginals that reports a normal marginal's moments, and claims none.
+
+    A view of it answers each moment from the marginal at its path.
+    """
+
+    def _marginal_capabilities(self, path: str | tuple[str, ...]) -> frozenset[type]:
+        self.report_calls.append(path)
+        return frozenset({SupportsMean, SupportsVariance, SupportsCovariance, SupportsQuantile})
 
 
 class _GuardedMeanLaw(_Law, SupportsMean):
@@ -424,13 +438,16 @@ def _claimed(term: Any) -> set[type]:
 #: The density rows, which a view claims from its parent's report of its marginal.
 _DENSITIES = {SupportsLogProb, SupportsUnnormalizedLogProb}
 
+#: The moment rows, which a view also claims from its parent's report of its marginal.
+_MOMENTS = {SupportsMean, SupportsVariance, SupportsCovariance, SupportsQuantile}
+
 
 def _derived(parent_claims: set[type], report: frozenset[type], *, numeric: bool) -> set[type]:
     """What the derivation table gives a view of a parent claiming *parent_claims*.
 
     *report* is the parent's report of its marginal at the view's path, from
     which a parent with marginals gives the view the normalized density, or
-    else the unnormalized one.
+    else the unnormalized one, and each moment the report includes.
     """
     derived: set[type] = set()
     for capability, gives in _ROWS.items():
@@ -441,6 +458,11 @@ def _derived(parent_claims: set[type], report: frozenset[type], *, numeric: bool
             derived |= _DENSITIES
         elif SupportsUnnormalizedLogProb in report:
             derived.add(SupportsUnnormalizedLogProb)
+        derived |= {
+            moment
+            for moment in _MOMENTS
+            if moment in report and (numeric or moment not in _NUMERIC_ROWS)
+        }
     return derived
 
 
@@ -729,6 +751,23 @@ class TestCapabilityDerivation:
         silent = _UnguardedMarginalLaw("parent", _EVENT, scores=False)
         assert not _DENSITIES & _claimed(FieldView(silent, "y"))
 
+    def test_a_view_claims_each_moment_its_parent_reports_for_the_marginal(self):
+        parent = _MomentMarginalLaw("parent", _EVENT)
+        assert _claimed(FieldView(parent, "model/theta/mu")) >= _MOMENTS
+        assert parent.report_calls == ["model/theta/mu"]
+
+    def test_a_view_of_a_root_factor_of_a_dependent_joint_claims_its_moments(self):
+        """The dependent joint claims no moment, and its root factor's marginal has each one."""
+        joint = _dependent_joint()
+        assert not _MOMENTS & _claimed(joint)
+        assert _claimed(FieldView(joint, "beta")) >= _MOMENTS
+        assert not _MOMENTS & _claimed(FieldView(joint, "y"))
+
+    def test_a_moment_from_the_marginal_needs_a_numeric_node_for_covariance(self):
+        parent = _MomentMarginalLaw("parent", _MIXED)
+        assert _claimed(FieldView(parent, "label")) & _MOMENTS == {SupportsMean, SupportsVariance}
+        assert _claimed(FieldView(parent, "x")) >= _MOMENTS
+
     def test_a_view_reads_the_report_once_at_construction(self):
         parent = _UnguardedMarginalLaw("parent", _EVENT)
         view = FieldView(parent, "model/theta/mu")
@@ -777,6 +816,7 @@ class TestCapabilityDerivation:
                 lambda: Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0), "b", id="independent-joint"
             ),
             pytest.param(_dependent_joint, "y", id="dependent-joint"),
+            pytest.param(_dependent_joint, "beta", id="dependent-joint-root"),
             pytest.param(_joint_gaussian, "y", id="joint-gaussian"),
         ],
     )
@@ -863,6 +903,30 @@ class TestGuards:
         parent = _MarginalLaw("parent", _EVENT, {("model/theta/mu", "model/theta/tau"): rejected})
         view = FieldView(parent, "model/theta")
         assert _capability_guard(view, "_marginal", ("theta/mu", "theta/tau")) == rejected
+
+    @pytest.mark.parametrize("method", ["_mean", "_variance", "_cov"])
+    def test_a_moment_from_the_marginal_takes_the_parent_marginal_guard(self, method):
+        rejected = Feasibility(False, "no closed form at model/theta/mu")
+        parent = _MomentMarginalLaw("parent", _EVENT, {"model/theta/mu": rejected})
+        assert _capability_guard(FieldView(parent, "model/theta/mu"), method) == rejected
+        assert _capability_guard(FieldView(parent, "y"), method) == Feasibility(True)
+
+    def test_a_moment_from_the_marginal_takes_the_marginal_guard_of_the_moment(self):
+        """A traced tail parameter leaves the root factor's mean unresolved, and the view's."""
+        reports = []
+
+        def probe(df):
+            joint = _Kernel("likelihood", {"beta": _REAL}, OutputSpec(y=_REAL)) * StudentT(
+                "beta", df, 0.0, 1.0
+            )
+            reports.append(_capability_guard(FieldView(joint, "beta"), "_mean"))
+            reports.append(_capability_guard(marginal(joint, "beta"), "_mean"))
+            return df
+
+        jax.eval_shape(probe, 3.0)
+        view_report, marginal_report = reports
+        assert view_report.feasible is None
+        assert view_report == marginal_report
 
     def test_a_projected_capability_carries_the_parent_guard(self):
         view = FieldView(_GuardedMeanLaw("parent", _EVENT), "y")
@@ -977,6 +1041,33 @@ class TestDerivedBehavior:
         quantiles = FieldView(parent, "v")._quantile(levels)
         assert quantiles.shape == (2,)
         assert jnp.allclose(quantiles, parent._quantile(levels)["v"])
+
+    def test_a_moment_from_the_marginal_is_the_marginal_moment(self):
+        joint = _Kernel("likelihood", {"beta": _REAL}, OutputSpec(y=_REAL)) * Normal(
+            "beta", 1.5, 2.0
+        )
+        view = FieldView(joint, "beta")
+        assert jnp.allclose(view._mean(), 1.5)
+        assert jnp.allclose(view._variance(), 4.0)
+        assert jnp.allclose(view._cov().to_dense(), Normal("beta", 1.5, 2.0)._cov().to_dense())
+        assert jnp.allclose(view._quantile(0.5), 1.5)
+
+    def test_the_mean_of_a_root_factor_view_is_exact(self):
+        joint = _Kernel("likelihood", {"beta": _REAL}, OutputSpec(y=_REAL)) * Normal(
+            "beta", 1.5, 2.0
+        )
+        report = mean.check(joint["beta"])
+        assert (report.route, report.exact) == ("closed_form", True)
+        assert jnp.allclose(jnp.asarray(mean(joint["beta"])), 1.5)
+
+    def test_a_view_raises_as_its_marginal_does_for_a_moment_that_does_not_exist(self):
+        joint = _Kernel("likelihood", {"beta": _REAL}, OutputSpec(y=_REAL)) * Cauchy(
+            "beta", 0.0, 1.0
+        )
+        with pytest.raises(MathematicalDomainError, match="does not exist"):
+            mean(marginal(joint, "beta"))
+        with pytest.raises(MathematicalDomainError, match="does not exist"):
+            mean(joint["beta"])
 
     def test_the_view_expectation_composes_with_the_projection(self):
         expectation = FieldView(_FiniteLaw("parent"), "b")._expectation(lambda b: b**2)
