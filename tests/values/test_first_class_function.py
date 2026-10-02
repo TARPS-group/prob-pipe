@@ -400,7 +400,7 @@ class TestApplyContract:
             output_spec=RecordSpec(y=NumericArraySpec((), support=positive)),
         )
 
-        with pytest.raises(ValueError, match=r"support"):
+        with pytest.raises(ValueError, match=r"output/y support real does not conform to positive"):
             wrapped.apply()
 
     def test_a_shape_only_output_template_keeps_the_law_declaration(self):
@@ -550,32 +550,30 @@ class TestApplyContract:
         [RecordSpec(outer=RecordSpec(inner=(3,))), RecordSpec(x=(3,), empty=RecordSpec())],
         ids=["nested_leaf", "empty_sibling"],
     )
-    def test_sampling_lift_does_not_flatten_record_structure(self, template):
+    def test_sampling_plan_unwraps_the_sole_leaf_through_record_structure(self, template):
+        from probpipe.functions._contract import _bind_planned_function_inputs
+
         class StructuredNormal(Normal):
             def __init__(self, *args, **kwargs):
                 super().__init__(*args, **kwargs)
                 self._init_declaration(template)
 
-            def _sample(self, key, sample_shape=()):
-                raise AssertionError("An incompatible schema must be rejected before sampling")
-
-        law = StructuredNormal("x", 0, 1)
-        wrapped = Function(
-            name="function",
-            fn=lambda v: v,
-            input_spec=InputSpec(RecordSpec(v=(3,)).children),
-            dispatch="sequential",
-            n_broadcast_samples=5,
+        declared = InputSpec(v=NumericArraySpec((3,)))
+        bound, bindings = _bind_planned_function_inputs(
+            function_name="f",
+            input_spec=declared,
+            values={"v": StructuredNormal("x", 0, 1)},
+            lifted_names={"v"},
         )
-        with pytest.raises(ValueError, match=r"RecordSpec.*does not conform"):
-            wrapped(v=law)
+        assert bound == declared
+        assert bindings == {}
 
     @pytest.mark.parametrize(
         "template",
         [RecordSpec(x=(3,)), RecordSpec(outer=RecordSpec(inner=(3,)))],
         ids=["flat", "nested"],
     )
-    def test_sampling_lift_preserves_explicit_record_declarations(self, template):
+    def test_single_leaf_law_does_not_satisfy_a_record_input_declaration(self, template):
         from probpipe.functions._contract import _bind_planned_function_inputs
 
         class StructuredNormal(Normal):
@@ -584,14 +582,15 @@ class TestApplyContract:
                 self._init_declaration(template)
 
         declared = RecordSpec(v=template)
-        bound, bindings = _bind_planned_function_inputs(
-            function_name="f",
-            input_spec=InputSpec(declared.children),
-            values={"v": StructuredNormal("x", 0, 1)},
-            lifted_names={"v"},
-        )
-        assert bound == InputSpec(declared.children)
-        assert bindings == {}
+        with pytest.raises(
+            ValueError, match=r"input/v spec NumericArraySpec.*does not conform to .*RecordSpec"
+        ):
+            _bind_planned_function_inputs(
+                function_name="f",
+                input_spec=InputSpec(declared.children),
+                values={"v": StructuredNormal("x", 0, 1)},
+                lifted_names={"v"},
+            )
 
     def test_every_batch_kind_lifts_against_its_element_spec(self):
         """A batch states what one element satisfies in ``element_spec``, at every

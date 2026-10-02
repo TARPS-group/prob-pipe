@@ -1180,21 +1180,20 @@ class TestFunctionSpecIsValid:
 # ---------------------------------------------------------------------------
 
 
-class TestFunctionSpecTemplatesRequired:
+class TestFunctionSpecDeclarationsRequired:
     def test_explicit_sides_stored_per_the_storage_rule(self):
-        # The input side is a schema and is stored as given; the output side is
-        # a declaration, so a bare template is stored wrapped.
+        # FunctionSpec stores both declarations without changing their wrappers.
         inp, out = InputSpec(a=NumericArraySpec(())), OutputSpec(RecordSpec(b=()))
         spec = FunctionSpec(inp, out)
         assert spec.input_spec is inp
         assert spec.output_spec is out
 
-    def test_bare_value_spec_rejected_on_the_input_side_only(self):
-        # The input side is a record schema, written out as a RecordSpec, so
-        # a bare TermSpec is not wrapped into one. The output side is a
-        # declaration and accepts any value specification.
+    def test_bare_term_specs_require_declaration_wrappers_on_both_sides(self):
         with pytest.raises(TypeError, match="input_spec must be an InputSpec or None"):
             FunctionSpec(NumericArraySpec(()), OutputSpec(result=RecordSpec(b=())))  # type: ignore[arg-type]
+
+        with pytest.raises(TypeError, match="output_spec must be an OutputSpec or None"):
+            FunctionSpec(InputSpec(a=NumericArraySpec(())), OpaqueSpec())  # type: ignore[arg-type]
 
         assert (
             FunctionSpec(
@@ -2496,7 +2495,10 @@ class TestMultiplicityBindsFromAValue:
         """A fixed multiplicity is fixed, as a fixed array dimension is."""
         declared = RecordSpec(b=BatchSpec(OpaqueSpec(), [(4,)], ["item"]))
 
-        with pytest.raises(ValueError, match="does not conform"):
+        with pytest.raises(
+            ValueError,
+            match=r"value at 'b' does not conform to its field spec .*axis_groups=\(\(4,\),\)",
+        ):
             Record("r", b=self._batch(3), event_template=declared)
 
     def test_a_value_carrying_no_multiplicity_says_so(self):

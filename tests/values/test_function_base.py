@@ -228,6 +228,43 @@ class TestFunctionDeclarations:
         assert renamed.output_spec.components == {"score": NumericArraySpec(())}
         assert renamed(4).name == "score"
 
+    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax", "auto"])
+    @pytest.mark.parametrize("lift", ["sweep", "broadcast"])
+    def test_renamed_lift_records_the_called_function(self, dispatch, lift, full_provenance_mode):
+        original = Function(
+            "predict",
+            (lambda x: x["value"] + 1) if lift == "sweep" else (lambda x: x + 1),
+            output_name="prediction",
+            output_spec=OutputSpec(component=NumericArraySpec(())),
+            dispatch=dispatch,
+            n_broadcast_samples=8,
+        )
+        renamed = original.with_name("display")
+        source = (
+            NumericRecordBatch(
+                "inputs", {"value": jnp.arange(3.0)}, "row", element_spec=RecordSpec(value=())
+            )
+            if lift == "sweep"
+            else Normal("x", 0.0, 1.0)
+        )
+
+        with workflow_run(seed=0):
+            result = renamed(source)
+
+        assert result.name == "prediction"
+        assert result.provenance.parents[0].parent is renamed
+        assert result.provenance.parents[1].parent is source
+        assert renamed.output_spec is original.output_spec
+        assert original.name == "predict"
+        assert renamed.name == "display"
+        assert original.output_name == renamed.output_name == "prediction"
+        if lift == "sweep":
+            assert result.level_names == ("row",)
+            np.testing.assert_array_equal(np.asarray(result), [1.0, 2.0, 3.0])
+        else:
+            assert result.fields == ("component",)
+            assert result.num_atoms == 8
+
     def test_decorator_can_be_reused_with_its_name_override(self):
         decorate = function(name="shared", output_name="value")
         first = decorate(lambda: 1)

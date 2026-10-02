@@ -407,7 +407,8 @@ class TestDistributionView:
         prod = ProductDistribution(x=Normal("x", 0.0, 1.0), y=Normal("y", 0.0, 1.0))
         assert mean.apply(prod).name == prod.name
         assert variance.apply(prod).name == prod.name
-        assert mean(prod).name != "y"
+        assert mean(prod).name == "mean"
+        assert variance(prod).name == "variance"
 
     def test_parent_reference(self, joint_xy):
         view = joint_xy["x"]
