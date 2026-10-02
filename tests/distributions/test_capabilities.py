@@ -211,7 +211,7 @@ class _TruncatedLaw(Distribution, SupportsMarginals):
 
 
 class _BareGuardLaw(Distribution, SupportsMarginals):
-    """A law whose marginal guard declines and has no docstring."""
+    """A law whose marginal guard rejects and has no docstring."""
 
     def __init__(self, name: str) -> None:
         super().__init__(name, NumericArraySpec(()))
@@ -224,7 +224,7 @@ class _BareGuardLaw(Distribution, SupportsMarginals):
 
 
 class _GuardedDensityLaw(Distribution, SupportsLogProb):
-    """A law whose density guard declines."""
+    """A law whose density guard rejects."""
 
     def __init__(self, name: str) -> None:
         super().__init__(name, NumericArraySpec(()))
@@ -245,7 +245,7 @@ class _OwnUnnormalizedLaw(_GuardedDensityLaw):
 
 
 class _GuardedDensityKernel(ConditionalDistribution, SupportsConditionalLogProb):
-    """A kernel whose conditional density guard declines."""
+    """A kernel whose conditional density guard rejects."""
 
     def __init__(self, name: str) -> None:
         super().__init__(name, {"s": NumericArraySpec(())}, OutputSpec(y=NumericArraySpec(())))
@@ -427,7 +427,7 @@ class TestNormalization:
     def test_a_kernel_claiming_only_another_twin_is_unnormalized(self, protocol):
         assert not _kernel_is_normalized(_implementing(_methods(_CONDITIONAL_TWINS[protocol])))
 
-    def test_a_kernel_whose_density_guard_declines_is_still_normalized(self):
+    def test_a_kernel_whose_density_guard_rejects_is_still_normalized(self):
         assert _kernel_is_normalized(_GuardedDensityKernel("k"))
 
     def test_a_kernel_is_read_by_its_twins_and_a_law_by_its_capabilities(self):
@@ -483,11 +483,11 @@ class TestGuardReports:
     def test_a_guard_returning_true_is_feasible(self):
         assert _capability_guard(_TruncatedLaw("t", True), "_marginal", "a") == Feasibility(True)
 
-    def test_a_guard_returning_false_declines_and_quotes_its_condition(self):
+    def test_a_guard_returning_false_rejects_and_quotes_its_condition(self):
         report = _capability_guard(_TruncatedLaw("t", False), "_marginal", "block/x")
         assert report == Feasibility(
             False,
-            "_TruncatedLaw._marginal_guard('block/x') declined: "
+            "_TruncatedLaw._marginal_guard('block/x') rejected: "
             "Exact for a path outside the truncated block.",
         )
 
@@ -503,11 +503,11 @@ class TestGuardReports:
 
     def test_the_report_names_the_keyword_arguments(self):
         report = _capability_guard(_TruncatedLaw("t", False), "_marginal", path="a")
-        assert report.description.startswith("_TruncatedLaw._marginal_guard(path='a') declined")
+        assert report.description.startswith("_TruncatedLaw._marginal_guard(path='a') rejected")
 
     def test_a_guard_without_a_docstring_is_named_without_a_condition(self):
         report = _capability_guard(_BareGuardLaw("b"), "_marginal", "a")
-        assert report == Feasibility(False, "_BareGuardLaw._marginal_guard('a') declined")
+        assert report == Feasibility(False, "_BareGuardLaw._marginal_guard('a') rejected")
 
     def test_a_feasibility_is_returned_as_the_guard_gave_it(self):
         custom = Feasibility(False, "the block is truncated")
@@ -610,12 +610,12 @@ class TestConjunction:
     def test_no_report_is_feasible(self):
         assert _conjunction([]) == Feasibility(True)
 
-    def test_the_first_decline_is_the_report(self):
+    def test_the_first_rejection_is_the_report(self):
         first, second = Feasibility(False, "first"), Feasibility(False, "second")
         unresolved = Feasibility(None, pending=("the size of n",))
         assert _conjunction([Feasibility(True), unresolved, first, second]) is first
 
-    def test_every_pending_entry_is_kept_when_none_declines(self):
+    def test_every_pending_entry_is_kept_when_none_rejects(self):
         reports = [
             Feasibility(None, pending=("the size of n",)),
             Feasibility(True),

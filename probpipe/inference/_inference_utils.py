@@ -68,6 +68,7 @@ __all__ = [
     "flat_unflatten",
     "flat_vector",
     "get_init_state",
+    "integer_seed",
     "is_jax_traceable",
     "joint_and_given",
     "likelihood_flat",
@@ -78,6 +79,7 @@ __all__ = [
     "parameter_given",
     "posterior_var_order",
     "run_chain_scan",
+    "run_seed",
 ]
 
 
@@ -188,6 +190,46 @@ def as_prng_key(seed: int | Array) -> Array:
     the gradient-MCMC backends.
     """
     return jax.random.PRNGKey(seed) if isinstance(seed, int) else seed
+
+
+#: The sampling ABI of the key that seeds an inference method's run.
+_RUN_SEED_ABI = "probpipe.inference.run_seed/v1"
+
+
+def run_seed(options: Mapping[str, Any], method: str) -> int | Array:
+    """The seed of one run of the inference method *method*: its ``random_seed``, or a workflow key.
+
+    A ``random_seed`` the call's options set is returned as it is. Otherwise
+    the run's randomness is a workflow-owned random event (V.8), whose key the
+    enclosing scope derives from its root seed and the call's structure, so
+    ``workflow_run(seed=...)`` reproduces the run, and scopes with different
+    seeds, or two unscoped calls, run different chains.
+    """
+    seed = options.get("random_seed")
+    if seed is not None:
+        return seed
+    from ..functions import _broker
+
+    return _broker._resolve_automatic_key(
+        None,
+        _broker._singleton_effect_plan(
+            operation_kind="inference",
+            execution_mode="sampled",
+            sample_shape=None,
+            sampling_abi=_RUN_SEED_ABI,
+            provider_abi=f"probpipe.inference.{method}/v1",
+        ),
+    )
+
+
+def integer_seed(seed: int | Array) -> int:
+    """*seed* as the non-negative 32-bit integer a backend's own seed argument takes.
+
+    An integer is returned as it is, and a key gives an integer drawn from it.
+    """
+    if isinstance(seed, int | np.integer):
+        return int(seed)
+    return int(jax.random.randint(as_prng_key(seed), (), 0, np.iinfo(np.int32).max))
 
 
 # ---------------------------------------------------------------------------
@@ -341,6 +383,21 @@ def flat_vector(value: Any) -> Array:
     if isinstance(value, Record):
         return value.to_numeric().to_vector()
     return jnp.ravel(jnp.asarray(value))
+
+
+def _declared_vector(law: Any, draw: Record | Mapping[str, Any]) -> Array:
+    """*draw*, a record draw of *law*, as one flat vector laid out as *law* declares its leaves.
+
+    The leaves follow the canonical order of the numeric record :func:`flat_record`
+    names, which :func:`flat_unflatten` reads back, whatever order the draw's own
+    mapping keeps. A law that declares no such record lays the draw out as
+    :func:`flat_vector` does.
+    """
+    record = flat_record(law)
+    if record is None:
+        return flat_vector(draw)
+    value = draw if isinstance(draw, Record) else Record("draw", draw)
+    return jnp.concatenate([jnp.ravel(jnp.asarray(value[path])) for path in record])
 
 
 class ModelFactors(NamedTuple):
@@ -518,7 +575,8 @@ def get_init_state(
        prior's dtype).
     2. **Prior sample** — if the prior implements ``SupportsSampling``,
        draw a single sample with the supplied ``random_seed``. A record
-       draw is flattened to a numeric vector via ``NumericRecord``.
+       draw, or the nested mapping a factored prior draws, is flattened
+       to a numeric vector in the order of the prior's declaration.
     3. **Joint draw** — if the prior is an unnormalized conditional
        over a numeric record, return the draw of its joint restricted
        to the unconditioned fields, flattened. A factored joint that
@@ -553,12 +611,8 @@ def get_init_state(
     if isinstance(prior, SupportsSampling):
         try:
             s = prior._sample(key, sample_shape=())
-            if isinstance(s, Record):
-                from ..core._numeric_record import NumericRecord
-
-                if not isinstance(s, NumericRecord):
-                    s = s.to_numeric()
-                s = s.to_vector()
+            if isinstance(s, Record | Mapping):
+                s = _declared_vector(prior, s)
             return jnp.atleast_1d(jnp.asarray(s, dtype=target_dtype))
         except Exception:
             logger.debug(

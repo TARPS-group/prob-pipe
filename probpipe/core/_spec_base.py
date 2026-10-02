@@ -514,29 +514,47 @@ def _unify_array_shape(
     return tuple(unified)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class OpaqueSpec(TermSpec):
     """The fallback value spec, for a value no other spec describes.
 
-    An opaque value carries no exposed structure (a string, a DataFrame, an
-    arbitrary Python object, ...). ``meta`` is optional opaque metadata and
-    must be hashable (or ``None``).
+    An opaque value carries no exposed structure, as a string, a DataFrame, or
+    an arbitrary Python object does.
+
+    Parameters
+    ----------
+    type : type or None
+        The Python type of the values the spec admits, which :meth:`is_valid`
+        checks. ``None`` admits every value that is not a mapping. Construction
+        from a value infers it.
+    meta : Hashable
+        Free-form metadata, such as units or a tag. It is part of the spec's
+        equality and hash, and it is never checked against a value or inferred.
+
+    Raises
+    ------
+    TypeError
+        If *type* is neither a class nor ``None``, or *meta* is not hashable.
     """
 
+    type: type | None = None
     meta: Hashable = None
 
     def __post_init__(self) -> None:
+        if self.type is not None and not isinstance(self.type, type):
+            raise TypeError(
+                f"OpaqueSpec.type is the class of the admitted values or None, got {self.type!r}"
+            )
         _require_hashable(self.meta, context="OpaqueSpec.meta")
 
     def is_valid(self, value: Any) -> bool:
-        """Whether *value* is a valid opaque value — anything but a mapping.
+        """Whether *value* is a valid opaque value: an instance of :attr:`type`, and no mapping.
 
-        As the fallback spec, ``OpaqueSpec`` accepts any value **except** a
-        ``Mapping``: a mapping denotes tree structure (a subtree), never a
-        leaf. Every other value is valid, including a numeric array or scalar
-        — such a value is *typically* described by an :class:`NumericArraySpec`, but
-        an explicitly-opaque field still accepts it. ``meta`` is metadata
-        about the spec and is not checked against the value.
+        A ``Mapping`` denotes tree structure, a subtree rather than a leaf, so no
+        opaque spec admits one. With no type every other value is valid,
+        including a numeric array or scalar, which a :class:`NumericArraySpec`
+        typically describes but an explicitly opaque field still accepts.
+        ``meta`` is not checked against the value.
 
         Notes
         -----
@@ -544,4 +562,51 @@ class OpaqueSpec(TermSpec):
         :class:`~probpipe.Record` construction materialises a mapping field
         value into a nested subtree.
         """
-        return not isinstance(value, Mapping)
+        if isinstance(value, Mapping):
+            return False
+        return self.type is None or isinstance(_opaque_value(value), self.type)
+
+    def _bind_dims_from_spec(self, actual: TermSpec, bindings: dict[str, int], path: str) -> bool:
+        """Check another opaque spec: equal ``meta``, and types equal or one of them ``None``.
+
+        Raises
+        ------
+        ValueError
+            If the two opaque specs do not unify.
+        """
+        if not isinstance(actual, OpaqueSpec):
+            return False
+        known = self.type is None or actual.type is None or self.type is actual.type
+        if not known or self.meta != actual.meta:
+            raise ValueError(f"{path} spec {actual!r} does not conform to {self!r}")
+        return True
+
+    def __repr__(self) -> str:
+        parts = []
+        if self.type is not None:
+            parts.append(f"type={self.type.__qualname__}")
+        if self.meta is not None:
+            parts.append(f"meta={self.meta!r}")
+        return f"OpaqueSpec({', '.join(parts)})"
+
+
+def _known_type(first: OpaqueSpec, second: OpaqueSpec) -> OpaqueSpec:
+    """The unification of two opaque specs that unify, which takes the known type."""
+    return first if first.type is not None else second
+
+
+def _opaque_value(value: Any) -> Any:
+    """*value*, or the value it wraps when it is a tracked opaque value, an ``Opaque``."""
+    if isinstance(getattr(value, "spec", None), OpaqueSpec) and hasattr(value, "value"):
+        return value.value
+    return value
+
+
+def _opaque_spec_of(values: Iterable[Any]) -> OpaqueSpec:
+    """The opaque spec of *values*: the type they share exactly, or ``None`` when they differ.
+
+    A tracked opaque value counts by the value it wraps, and no values share no
+    type, so their spec admits any value.
+    """
+    types = {type(_opaque_value(value)) for value in values}
+    return OpaqueSpec(type=types.pop() if len(types) == 1 else None)

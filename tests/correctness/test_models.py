@@ -498,7 +498,10 @@ class TestFactoredJoints:
         assert float(mean.with_options(raw=True)(marginal_x)) == pytest.approx(1.0)
         assert float(variance.with_options(raw=True)(marginal_x)) == pytest.approx(4.0)
 
-    @pytest.mark.pending(reason="marginal's Monte Carlo route returns the empirical marginal")
+    @pytest.mark.pending(
+        reason="marginal's Monte Carlo route returns the empirical marginal",
+        raises=ResolutionError,
+    )
     def test_the_marginal_of_a_dependent_factor_is_estimated_from_draws(self):
         with workflow_run(seed=17):
             marginal_y = marginal(_chain(), "y")

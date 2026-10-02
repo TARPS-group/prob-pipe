@@ -41,6 +41,7 @@ from ..families import MultivariateNormal, Normal
 from ..operations._condition import InferenceMethod, _UnnormalizedConditional
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._inference_utils import (
+    as_prng_key,
     build_mcmc_datatree,
     get_init_state,
     is_jax_traceable,
@@ -48,6 +49,7 @@ from ._inference_utils import (
     model_factors,
     observed_target,
     parallel_chain_map,
+    run_seed,
 )
 
 logger = logging.getLogger(__name__)
@@ -135,7 +137,7 @@ def _run_ess_chains(
         mean=prior_mean,
         cov=prior_cov,
     )
-    key = jax.random.PRNGKey(random_seed)
+    key = as_prng_key(random_seed)
     chain_keys = jax.random.split(key, num_chains)
 
     def run_one_chain(chain_key):
@@ -180,7 +182,7 @@ def elliptical_slice(
     num_warmup: int = 500,
     num_chains: int = 1,
     init: ArrayLike | None = None,
-    random_seed: int = 0,
+    random_seed: int | None = None,
 ) -> ApproximateDistribution:
     """Elliptical slice sampling of a joint with a Gaussian prior, at observed fields.
 
@@ -201,7 +203,8 @@ def elliptical_slice(
         Initial chain state in the flat parameter vector. Defaults to
         a sample from the prior.
     random_seed
-        Seed for chain initialisation and sampling RNG.
+        Seed for chain initialisation and sampling RNG. Omitted, the run's
+        seed is a workflow-owned random event, which ``workflow_run`` fixes.
 
     Returns
     -------
@@ -223,7 +226,7 @@ def elliptical_slice(
         num_warmup=num_warmup,
         num_chains=num_chains,
         init=init,
-        random_seed=random_seed,
+        random_seed=run_seed({"random_seed": random_seed}, "blackjax_ess"),
     )
 
 
@@ -354,5 +357,5 @@ class BlackJAXESSMethod(InferenceMethod):
             num_warmup=kwargs.get("num_warmup", 500),
             num_chains=kwargs.get("num_chains", 1),
             init=kwargs.get("init"),
-            random_seed=kwargs.get("random_seed", 0),
+            random_seed=run_seed(kwargs, self.name),
         )

@@ -393,6 +393,11 @@ def _update_value_spec(
         _update_constraint(h, spec.support, depth + 1, max_array_bytes, state)
     elif isinstance(spec, OpaqueSpec):
         _update(h, spec.meta, depth + 1, max_array_bytes, state)
+        if spec.type is not None:
+            # A class hashes by where it is defined, so equal types hash alike
+            # across processes.
+            h.update(b":type=")
+            h.update(f"{spec.type.__module__}.{spec.type.__qualname__}".encode())
     elif isinstance(spec, RecordSpec):
         _update_event_template(h, spec, depth, max_array_bytes, state)
     elif isinstance(spec, DistributionSpec):

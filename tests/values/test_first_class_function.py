@@ -34,6 +34,7 @@ from probpipe import (
     NumericArraySpec,
     NumericRecord,
     NumericRecordBatch,
+    OpaqueSpec,
     OutputSpec,
     Provenance,
     ProvenanceMode,
@@ -613,7 +614,7 @@ class TestApplyContract:
                     [object(), object()],
                     "row",
                 ),
-                RecordSpec(v=None),
+                RecordSpec(v=OpaqueSpec()),
             ),
             (
                 FunctionBatch(

@@ -9,7 +9,13 @@ from ..core._dispatch import Feasibility
 from ..core._specs import OutputSpec
 from ..operations._condition import InferenceMethod, _UnnormalizedConditional
 from ._approximate_distribution import ApproximateDistribution, make_posterior
-from ._inference_utils import extract_chain_columns, joint_and_given, posterior_var_order
+from ._inference_utils import (
+    extract_chain_columns,
+    integer_seed,
+    joint_and_given,
+    posterior_var_order,
+    run_seed,
+)
 
 
 class PyMCNutsMethod(InferenceMethod):
@@ -67,7 +73,7 @@ class PyMCNutsMethod(InferenceMethod):
         # warning and falls back to single-process sampling — so multi-core
         # is the default without making serializability a hard requirement.
         cores = kwargs.get("cores", min(num_chains, os.cpu_count() or 1))
-        random_seed = kwargs.get("random_seed", 0)
+        random_seed = integer_seed(run_seed(kwargs, self.name))
 
         model = dist._pymc_model(data=observed)
         # Build the parameter record in canonical field order before sampling
@@ -151,7 +157,7 @@ class PyMCADVIMethod(InferenceMethod):
 
         num_iterations = kwargs.get("num_iterations", 30000)
         num_results = kwargs.get("num_results", 1000)
-        random_seed = kwargs.get("random_seed", 0)
+        random_seed = integer_seed(run_seed(kwargs, self.name))
         vi_method = kwargs.get("vi_method", "advi")
 
         model = dist._pymc_model(data=observed)

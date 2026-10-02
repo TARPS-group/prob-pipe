@@ -11,8 +11,9 @@ from typing import Any, cast
 import numpy as np
 
 from ._kinds import register_kind
-from ._object_batch import _ObjectBatch
+from ._object_batch import _as_object_array, _ObjectBatch
 from ._opaque import Opaque, OpaqueSpec
+from ._spec_base import _opaque_spec_of
 from .provenance import Provenance
 
 __all__ = ["OpaqueBatch"]
@@ -32,7 +33,9 @@ class OpaqueBatch(_ObjectBatch[Any]):
     level_names : str or iterable of str
         One name per level, outermost first.
     element_spec : OpaqueSpec, optional
-        What every element satisfies. Defaults to ``OpaqueSpec()``.
+        What every element satisfies. Defaults to the :class:`OpaqueSpec` of
+        the type the elements share exactly, which admits any value when they
+        differ.
     axes_per_level : iterable of int, optional
         How many axes each level holds, outermost first; they must account for
         every batch axis. Defaults to one axis per level, which requires as many
@@ -100,7 +103,8 @@ class OpaqueBatch(_ObjectBatch[Any]):
         provenance: Provenance | None = None,
     ) -> None:
         if element_spec is None:
-            element_spec = OpaqueSpec()
+            elements = _as_object_array(elements, kind=type(self).__name__)
+            element_spec = _opaque_spec_of(elements.flat)
         elif not isinstance(element_spec, OpaqueSpec):
             raise TypeError(
                 f"OpaqueBatch.element_spec must be an OpaqueSpec, got {type(element_spec).__name__}"

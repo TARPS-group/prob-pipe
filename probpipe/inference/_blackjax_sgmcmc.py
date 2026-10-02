@@ -40,7 +40,13 @@ from ..distributions._capabilities import SupportsLogProb
 from ..families._random_functions import RandomMeasure
 from ..operations._condition import InferenceMethod, _UnnormalizedConditional
 from ._approximate_distribution import ApproximateDistribution, make_posterior
-from ._inference_utils import as_prng_key, flat_unflatten, get_init_state, model_factors
+from ._inference_utils import (
+    as_prng_key,
+    flat_unflatten,
+    get_init_state,
+    model_factors,
+    run_seed,
+)
 from ._minibatch import MinibatchedDistribution, _reads_observations
 
 __all__ = ["BlackJAXSGHMCMethod", "BlackJAXSGLDMethod"]
@@ -168,7 +174,7 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
         num_results: int = kwargs.get("num_results", 1000)
         num_warmup: int = kwargs.get("num_warmup", 0)
         step_size: float = kwargs.get("step_size", 1e-3)
-        random_seed: int | PRNGKey = kwargs.get("random_seed", 0)
+        random_seed: int | PRNGKey = run_seed(kwargs, self.name)
         with_replacement: bool = kwargs.get("with_replacement", False)
 
         # The minibatched random measure supplies the stochastic gradients from

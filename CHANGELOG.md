@@ -62,8 +62,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the same rule.
   - A Function declares a returned law with `DistributionSpec`; matching uses
     event-declaration unification, including packaging, component names,
-    dimensions, and same-kind dtypes. Support metadata is not compared, and
-    the returned law retains its own declaration through calls and lifting.
+    dimensions, and same-kind dtypes. Where both are declared, a declared
+    support must contain the returned law's, component by component, and the
+    returned law retains its own declaration through calls and lifting.
   - The BayesFlow learners accept a prior whose declaration is numeric,
     whatever its class, and raise `TypeError` for any other before simulating.
 - `NumericRecord.from_vector` and `NumericRecordBatch.from_vector` name their

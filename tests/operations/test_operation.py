@@ -537,11 +537,16 @@ class TestSelection:
     def test_membership_suffices_where_the_class_defines_no_guard(self):
         assert center.check(Gaussian("g")).route == "closed_form"
 
-    def test_a_declining_guard_passes_to_the_fallback(self):
+    def test_a_rejecting_guard_passes_to_the_fallback(self):
         report = center.check(GuardedMean("g", False))
         assert (report.route, report.exact) == ("monte_carlo", False)
         declined = {info.method_name: info for info in report.routes}["closed_form"]
         assert "The stand-in's answer admits the closed form" in declined.description
+
+    def test_each_probed_route_reports_its_own_exactness(self):
+        report = center.check(GuardedMean("g", False))
+        routes = {info.method_name: info for info in report.routes}
+        assert (routes["closed_form"].exact, routes["monte_carlo"].exact) == (True, False)
 
     def test_an_admitting_guard_selects_the_capability(self):
         assert center.check(GuardedMean("g", True)).route == "closed_form"

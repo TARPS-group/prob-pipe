@@ -14,7 +14,13 @@ from ..custom_types import ArrayLike
 from ..functions import function
 from ..operations._condition import InferenceMethod, _UnnormalizedConditional
 from ._approximate_distribution import ApproximateDistribution, make_posterior
-from ._inference_utils import extract_chain_columns, joint_and_given, posterior_var_order
+from ._inference_utils import (
+    extract_chain_columns,
+    integer_seed,
+    joint_and_given,
+    posterior_var_order,
+    run_seed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -34,14 +40,15 @@ def condition_on_nutpie(
     num_results: int = 1000,
     num_warmup: int = 500,
     num_chains: int = 4,
-    random_seed: int = 0,
+    random_seed: int | None = None,
     **kwargs: Any,
 ) -> ApproximateDistribution:
     """MCMC sampling via nutpie (Rust-based NUTS).
 
     Accepts a :class:`~probpipe.families.StanModel` or its posterior, bound
     to *data* when it is a kernel, or a :class:`~probpipe.families.PyMCModel`
-    at the observed values *data*.
+    at the observed values *data*. Without ``random_seed`` the run is seeded
+    by a workflow-owned random event, so ``workflow_run(seed=...)`` fixes it.
     """
     return _nutpie_posterior(
         model,
@@ -50,7 +57,7 @@ def condition_on_nutpie(
         num_results=num_results,
         num_warmup=num_warmup,
         num_chains=num_chains,
-        random_seed=random_seed,
+        random_seed=integer_seed(run_seed({"random_seed": random_seed}, "nutpie_nuts")),
         **kwargs,
     )
 
@@ -63,7 +70,7 @@ def _nutpie_posterior(
     num_results: int = 1000,
     num_warmup: int = 500,
     num_chains: int = 4,
-    random_seed: int = 0,
+    random_seed: int,
     **kwargs: Any,
 ) -> ApproximateDistribution:
     """nutpie's posterior of *model* at *data*, whose provenance names *parent*.
@@ -265,4 +272,5 @@ class NutpieNutsMethod(InferenceMethod):
         """
         self._check_options(kwargs)
         dist, observed = joint_and_given(target)
-        return _nutpie_posterior(dist, observed, target, **kwargs)
+        seed = integer_seed(run_seed(kwargs, self.name))
+        return _nutpie_posterior(dist, observed, target, **{**kwargs, "random_seed": seed})

@@ -57,7 +57,8 @@ class DistributionBatch(_ObjectBatch[Distribution]):
     The batch stores its elements, and ``batch[i]`` is a view of the stored law:
     a copy under the name derived from the position, such as ``"laws[law=1]"``,
     sharing the stored law's representation, whose provenance records the batch
-    and the stored law.
+    and the stored law. A lift groups an element with its stored law, so every
+    access of one element draws together.
 
     Parameters
     ----------
@@ -130,6 +131,23 @@ class DistributionBatch(_ObjectBatch[Distribution]):
     def event_spec(self) -> OutputSpec:
         """The event declaration the elements share, a view on ``spec``."""
         return self.element_spec.event_spec
+
+    def _element_at(self, index: tuple[int, ...], *, name: str) -> Distribution:
+        """The stored law at *index*, as a view that records the stored law as its source.
+
+        The view is the stored law under the derived *name*, as every object
+        batch presents an element. Its source is the root the lift's capture
+        follows, so two accesses of one element, and an element and its stored
+        law, draw together (V.5).
+        """
+        view = super()._element_at(index, name=name)
+        object.__setattr__(view, "_element_source", self._store[index])
+        return view
+
+
+def _element_source(law: Distribution) -> Distribution | None:
+    """The stored law *law* is a batch element of, or None when no batch presented it."""
+    return getattr(law, "_element_source", None)
 
 
 class ConditionalDistributionBatch(_ObjectBatch[ConditionalDistribution]):

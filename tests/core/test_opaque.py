@@ -33,8 +33,13 @@ class TestOpaqueHoldsOneValue:
 
         assert Opaque("p", payload).value is payload
 
-    def test_the_spec_defaults_to_a_bare_one(self):
-        assert Opaque("p", _Payload()).spec == OpaqueSpec()
+    def test_the_spec_defaults_to_the_values_type(self):
+        assert Opaque("p", _Payload()).spec == OpaqueSpec(type=_Payload)
+        assert Opaque("s", "north").spec == OpaqueSpec(type=str)
+
+    def test_a_declared_type_the_value_lacks_is_refused(self):
+        with pytest.raises(TypeError, match="does not admit a _Payload"):
+            Opaque("p", _Payload(), spec=OpaqueSpec(type=str))
 
     def test_a_declared_spec_carries_its_meta(self):
         spec = OpaqueSpec(meta="fitted-model")

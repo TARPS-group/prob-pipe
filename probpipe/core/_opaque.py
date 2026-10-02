@@ -35,8 +35,8 @@ class Opaque(TrackedTerm, Annotated):
         The value this names, held as given. Any non-mapping value; the value
         layer reads a mapping as a subtree.
     spec : OpaqueSpec, optional
-        What this value satisfies, carrying any opaque ``meta``. Defaults to a
-        bare :class:`~probpipe.OpaqueSpec`.
+        What this value satisfies, carrying any opaque ``meta``. Defaults to the
+        :class:`~probpipe.OpaqueSpec` of the value's type.
     provenance : Provenance, optional
         How this value was produced.
 
@@ -77,7 +77,10 @@ class Opaque(TrackedTerm, Annotated):
                 "Opaque holds one unstructured value, and the value layer reads a mapping as a "
                 "subtree rather than a leaf; wrap it as a Record, or as a non-mapping value"
             )
-        spec = OpaqueSpec() if spec is None else spec
+        if spec is None:
+            spec = OpaqueSpec(type=type(value))
+        elif not spec.is_valid(value):
+            raise TypeError(f"{spec!r} does not admit a {type(value).__name__}")
         object.__setattr__(self, "_value", value)
         object.__setattr__(self, "_spec", spec)
         self._init_tracked(name, provenance=provenance)

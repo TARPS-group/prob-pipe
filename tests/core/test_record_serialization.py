@@ -100,7 +100,7 @@ def test_record_no_provenance_roundtrip():
 
 
 def test_event_template_pickle_roundtrip():
-    t = RecordSpec(label=None, x=())
+    t = RecordSpec(label=OpaqueSpec(), x=())
     t2 = roundtrip(t)
     assert type(t2) is RecordSpec
     assert t2.fields == ("label", "x")
@@ -332,6 +332,13 @@ class TestPicklePreservesTemplate:
         assert not isinstance(r, NumericRecord)  # opaque leaf keeps it a plain Record
         back = roundtrip(r)
         assert back.event_template == r.event_template
+        assert back == r
+
+    def test_an_opaque_type_survives(self):
+        tpl = RecordSpec(tag=OpaqueSpec(type=str, meta="units"))
+        r = Record("r", {"tag": "meters"}, event_template=tpl)
+        back = roundtrip(r)
+        assert back.event_template["tag"] == OpaqueSpec(type=str, meta="units")
         assert back == r
 
     def test_numeric_record_template_survives(self):

@@ -17,7 +17,14 @@ from ..distributions._capabilities import SupportsConditionalSampling
 from ..distributions._conditional import ConditionalDistribution
 from ..operations._condition import InferenceMethod, _UnnormalizedConditional
 from ._approximate_distribution import ApproximateDistribution, make_posterior
-from ._inference_utils import flat_unflatten, flat_vector, model_factors, parameter_given
+from ._inference_utils import (
+    flat_unflatten,
+    flat_vector,
+    integer_seed,
+    model_factors,
+    parameter_given,
+    run_seed,
+)
 
 if TYPE_CHECKING:
     from xarray import DataTree
@@ -266,7 +273,7 @@ class PyABCSMCMethod(InferenceMethod):
         n_particles = int(kwargs.get("n_particles", 100))
         max_populations = int(kwargs.get("max_populations", 4))
         eps_alpha = float(kwargs.get("eps_alpha", 0.5))
-        random_seed = int(kwargs.get("random_seed", 0))
+        random_seed = integer_seed(run_seed(kwargs, self.name))
         summary_fn: _SummaryFn | None = kwargs.get("summary_fn")
         distance_fn: _DistanceFn = kwargs.get("distance_fn") or _euclidean_distance
         sampler = kwargs.get("sampler") or SingleCoreSampler()

@@ -7,10 +7,14 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 import scipy.stats
+import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
+    ApproximateDistribution,
+    Beta,
     BootstrapDistribution,
     EmpiricalDistribution,
+    Gamma,
     MultivariateNormal,
     Normal,
     NumericArray,
@@ -24,9 +28,11 @@ from probpipe import (
     SupportsExactConditioning,
     SupportsSampling,
     expectation,
+    real,
 )
 from probpipe.core import ops
 from probpipe.distributions import FactoredDistribution
+from tests.inference.canonical import ObservationKernel
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -389,6 +395,21 @@ class TestConditionOn:
     def test_condition_product(self, joint):
         conditioned = ops.condition_on(joint, x=jnp.array(2.0))
         assert tuple(conditioned.event_spec.components) == ("y",)
+
+    def test_a_factored_law_is_sliced_at_a_whole_upstream_factor(self):
+        """Fixing one factor of an edge-free joint returns the other factor, exactly."""
+        conditioned = ops.condition_on(Gamma("a", 2.0, 1.0) * Beta("b", 2.0, 3.0), a=1.0)
+        assert isinstance(conditioned, Beta)
+        np.testing.assert_allclose(conditioned._mean(), 0.4, rtol=1e-6)
+
+    def test_a_kernel_is_curried_at_the_field_it_conditions_on(self):
+        """Fixing the law a kernel conditions on returns the kernel's law there, exactly."""
+        spec = NumericArraySpec((), jnp.float32, real)
+        kernel = ObservationKernel("y", {"x": spec}, spec, lambda x: tfd.Normal(2.0 * x, 0.5))
+        conditioned = ops.condition_on(kernel * Normal("x", 0.0, 1.0), x=1.0)
+        assert not isinstance(conditioned, ApproximateDistribution)
+        expected = tfd.Normal(2.0, 0.5).log_prob(1.5)
+        np.testing.assert_allclose(conditioned._log_prob(jnp.asarray(1.5)), expected, rtol=1e-6)
 
     def test_condition_case_mismatched_kwarg_raises(self, joint):
         """A case-mismatched data kwarg (`X` when the field is `x`) raises

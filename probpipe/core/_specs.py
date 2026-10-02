@@ -18,6 +18,7 @@ from ._spec_base import (
     NumericSpec,
     OpaqueSpec,
     TermSpec,
+    _known_type,
     _require_hashable,
     _unify_specs,
 )
@@ -263,6 +264,8 @@ class OutputSpec:
         if self._term_spec is not None:
             label = "the exposed record" if self.exposes_record else repr(self._component_name)
             _unify_specs(self._term_spec, spec, {}, f"Declared component {label}")
+            if isinstance(self._term_spec, OpaqueSpec) and isinstance(spec, OpaqueSpec):
+                spec = _known_type(self._term_spec, spec)
         return self._with_spec(spec)
 
     def with_path_names(

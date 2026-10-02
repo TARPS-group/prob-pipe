@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+from functools import partial
 from pathlib import Path
 
 import jax.numpy as jnp
@@ -15,6 +16,7 @@ from probpipe import (
     DistributionSpec,
     Function,
     FunctionSpec,
+    Gamma,
     InputSpec,
     Module,
     Normal,
@@ -32,10 +34,36 @@ from probpipe import (
     workflow_method,
     workflow_run,
 )
-from probpipe.core.constraints import positive
+from probpipe.core.constraints import positive, real
+
+
+def _unnamed_callables():
+    """A partial and a callable instance, neither of which has a ``__name__``."""
+
+    def add(a, b):
+        return a + b
+
+    class AddOne:
+        def __call__(self, x):
+            return x + 1
+
+    return {"partial": partial(add, 1), "instance": AddOne()}
 
 
 class TestFunctionDeclarations:
+    @pytest.mark.parametrize("kind", ["partial", "instance"])
+    def test_an_unnamed_callable_wraps_under_an_explicit_name(self, kind):
+        wrapped = function(name="add1")(_unnamed_callables()[kind])
+        assert (wrapped.name, wrapped.output_name) == ("add1", "add1")
+        assert float(wrapped(2.0)) == 3.0
+
+    @pytest.mark.parametrize("with_parentheses", [True, False], ids=["called", "bare"])
+    @pytest.mark.parametrize("kind", ["partial", "instance"])
+    def test_an_unnamed_callable_needs_an_explicit_name(self, kind, with_parentheses):
+        decorate = function() if with_parentheses else function
+        with pytest.raises(TypeError, match="explicit name"):
+            decorate(_unnamed_callables()[kind])
+
     def test_required_name_and_raw_representation(self):
         def add(x, /, *, y=2):
             return x + y
@@ -312,9 +340,9 @@ class TestCompletedOutputDeclarations:
 
     @pytest.mark.parametrize("mode", ["plain", "sweep", "broadcast"])
     def test_returned_laws_use_declaration_unification_across_paths(self, rows, mode):
-        stored = Normal("y", jnp.asarray(0.0, dtype="float32"), 1.0)
+        stored = Gamma("y", jnp.asarray(1.0, dtype="float32"), 1.0)
         declaration = DistributionSpec(
-            OutputSpec(y=NumericArraySpec((), dtype="float64", support=positive))
+            OutputSpec(y=NumericArraySpec((), dtype="float64", support=real))
         )
         factory = Function(
             "factory",
@@ -335,7 +363,42 @@ class TestCompletedOutputDeclarations:
         for law in laws:
             assert law.spec is stored.spec
             assert law.event_spec.components["y"].dtype == np.dtype("float32")
-            assert law.event_spec.components["y"].support != positive
+            assert law.event_spec.components["y"].support == positive
+
+    @pytest.mark.parametrize("mode", ["apply", "plain", "sweep", "broadcast"])
+    def test_a_returned_law_outside_the_declared_support_is_refused(self, rows, mode):
+        stored = Normal("y", 0.0, 1.0)
+        factory = Function(
+            "factory",
+            lambda x: stored,
+            output_spec=DistributionSpec(OutputSpec(y=NumericArraySpec((), support=positive))),
+            dispatch="sequential",
+            n_broadcast_samples=8,
+        )
+        operand = {
+            "apply": rows[0],
+            "plain": rows[0],
+            "sweep": rows,
+            "broadcast": Normal("x", 0.0, 1.0),
+        }[mode]
+        invoke = factory.apply if mode == "apply" else factory
+        with (
+            workflow_run(seed=0),
+            pytest.raises(ValueError, match=r"factory/y support real does not conform to positive"),
+        ):
+            invoke(operand)
+        assert stored.event_spec.components["y"].support == real
+
+    def test_a_returned_joint_is_checked_field_by_field(self):
+        stored = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
+        declared = RecordSpec(a=NumericArraySpec((), support=positive), b=NumericArraySpec(()))
+        factory = Function(
+            "factory", lambda: stored, output_spec=DistributionSpec(OutputSpec(declared))
+        )
+        with pytest.raises(
+            ValueError, match=r"factory/a support real does not conform to positive"
+        ):
+            factory.apply()
 
     @pytest.mark.parametrize("dispatch", ["sequential", "thread"])
     def test_swept_returned_functions_enforce_the_declared_contract(self, rows, dispatch):

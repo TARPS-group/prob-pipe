@@ -350,7 +350,7 @@ class TestPytreeAuxSplit:
             "mine",
             a=jnp.array(1.0, dtype=jnp.float32),
             b="label",
-            event_template=RecordSpec(a=spec, b=None),
+            event_template=RecordSpec(a=spec, b=OpaqueSpec()),
         )
         leaves, treedef = jax.tree_util.tree_flatten(r)
         back = jax.tree_util.tree_unflatten(treedef, leaves)

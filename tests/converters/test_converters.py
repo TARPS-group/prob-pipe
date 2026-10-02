@@ -292,6 +292,27 @@ class TestAllCrossFamilyConversions:
         with pytest.raises(ValueError, match="does not cast"):
             converter_registry.convert(b, Poisson, check_support=False)
 
+    def test_check_refuses_a_fit_whose_draws_do_not_cast_as_the_call_does(self):
+        """A Normal draws floats, which do not cast to the Bernoulli's integers."""
+        b = Bernoulli(probs=0.3, name="b")
+        with pytest.raises(ValueError, match="does not cast"):
+            converter_registry.check(b, Normal)
+        with pytest.raises(ValueError, match="does not cast"):
+            converter_registry.convert(b, Normal)
+
+    @pytest.mark.parametrize(
+        ("source", "target"),
+        [
+            pytest.param(lambda: Gamma(concentration=2.0, rate=1.0, name="g"), Normal, id="float"),
+            pytest.param(lambda: Normal(loc=0.5, scale=0.1, name="n"), Bernoulli, id="integer"),
+        ],
+    )
+    def test_the_promise_declares_the_dtype_of_the_fit(self, source, target):
+        law = source()
+        info = converter_registry.check(law, target, check_support=False)
+        result = converter_registry.convert(law, target, check_support=False)
+        assert info.target_spec.event_spec.spec.dtype == result.event_spec.spec.dtype
+
     def test_categorical_from_bernoulli(self):
         b = Bernoulli(probs=0.7, name="b")
         result = converter_registry.convert(b, Categorical, check_support=False, num_samples=500)
@@ -685,6 +706,13 @@ class TestFromDistributionDelegation:
         n = Normal(loc=0.5, scale=0.1, name="x")
         result = from_distribution(n, Beta, check_support=False)
         assert isinstance(result, Beta)
+
+    @pytest.mark.parametrize("target", [EmpiricalDistribution, KDEDistribution])
+    def test_check_support_reaches_only_a_converter_that_reads_it(self, target):
+        """The sampled representations read no support option, and the conversion runs."""
+        n = Normal(loc=0.0, scale=1.0, name="n")
+        result = from_distribution(n, target, check_support=False, num_samples=20)
+        assert isinstance(result, target)
 
     def test_from_distribution_to_empirical(self):
         n = Normal(loc=0.0, scale=1.0, name="x")

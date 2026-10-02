@@ -11,8 +11,10 @@ conditions a produced field, forms the **unnormalized conditional**, the law of
 the unconditioned fields whose unnormalized log-density is the joint's at the
 given values. The **normalization stage** returns a normalized result as it is,
 and otherwise passes the result as the target to the inference-method registry,
-whose selected method returns a normalized law. A kernel result is normalized
-per value: it normalizes each law it yields once its last given is bound.
+whose selected method returns a normalized law. A law renamed at its boundary
+passes the target it holds, so a renamed program keeps its methods, and the
+normalized law takes the renamed paths. A kernel result is normalized per
+value: it normalizes each law it yields once its last given is bound.
 
 The routes, in selection order:
 
@@ -93,6 +95,7 @@ from ..distributions._factored import (
     SupportsFactors,
     _bound_factor,
 )
+from ..distributions._views import _RenamedDistribution
 from ..functions._call import checking
 from ..functions._resolution import PointReport
 from ._convert import convert
@@ -536,13 +539,14 @@ class _Normalization:
         )
 
     def report(self, target: Any) -> Feasibility:
-        """The registry's report for normalizing the law *target*.
+        """The registry's report for normalizing the law *target*, or the target it holds.
 
         A report that no method applies names ``method="unnormalized"`` when
         ``exact_only`` excluded the approximate methods.
         """
+        held, _ = _held_target(target)
         report = self.registry.check(
-            target, method=self.method, exact_only=self.exact_only, **self.options
+            held, method=self.method, exact_only=self.exact_only, **self.options
         )
         if report.feasible is False and self.exact_only:
             return replace(report, description=f"{_NO_EXACT_METHOD}: {report.description}")
@@ -552,14 +556,45 @@ class _Normalization:
         """The selected method's normalized law for the target *law*.
 
         The result carries *law*'s event declaration, as the result rule of
-        currying requires.
+        currying requires. A law renamed at its boundary is normalized through
+        the target it holds, as :func:`_held_target` states.
         """
-        posterior = self.registry.execute(
-            law, method=self.method, exact_only=self.exact_only, **self.options
+        held, renamed = _held_target(law)
+        posterior = renamed(
+            self.registry.execute(
+                held, method=self.method, exact_only=self.exact_only, **self.options
+            )
         )
         if _packaged_alike(posterior.event_spec, law.event_spec):
             return posterior
         return _as_declared(law, posterior)
+
+
+def _held_target(target: Any) -> tuple[Any, Callable[[Any], Any]]:
+    """The target the registry normalizes for *target*, and the map of its result to *target*'s.
+
+    A law renamed at its boundary, or the unnormalized conditional of one at a
+    given its parent's nodes can take, holds a target the inference methods
+    recognize, such as a program's posterior. The registry normalizes that
+    target, at the given translated to the parent's nodes, and the normalized
+    law takes the renamed paths, since a renamed law conditions as the law it
+    holds does (III.7). Any other target is its own.
+    """
+    if isinstance(target, _RenamedDistribution):
+        held, renamed = _held_target(target._parent)
+        return held, lambda law: target._event.law(renamed(law))
+    if isinstance(target, _UnnormalizedConditional) and target.keyed:
+        joint = target.joint
+        if isinstance(joint, _RenamedDistribution):
+            given = joint._original_given(target.given)
+            if given is not None:
+                held, renamed = _held_target(_unnormalized_conditional(joint._parent, given))
+                return held, lambda law: joint._event.law(renamed(law))
+    return target, _unchanged
+
+
+def _unchanged(law: Any) -> Any:
+    return law
 
 
 def _per_value_sample(
@@ -1407,21 +1442,29 @@ class _NormalizingThen(_RegistryRoute):
         )
 
     def probe(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Feasibility:
-        """Whether the law is unnormalized and admitted, then the registry's report for it."""
+        """Whether the law is unnormalized and admitted, then the registry's report for it.
+
+        The registry reports on the target the law holds, as :func:`_held_target`
+        states.
+        """
         law = call.operands["d"]
         if not isinstance(law, Distribution) or _is_normalized(law):
             return Feasibility(False, f"route {self.name!r} declined: the law is normalized")
         admitted = self._admits(call)
         if admitted.feasible is not True:
             return admitted
+        held, _ = _held_target(law)
         return self.registry.check(
-            law, method=method, exact_only=exact_only, **self.method_options(call)
+            held, method=method, exact_only=exact_only, **self.method_options(call)
         )
 
     def run(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Any:
-        """The answer on the law the selected method returns."""
-        normalized = self.registry.execute(
-            call.operands["d"], method=method, exact_only=exact_only, **self.method_options(call)
+        """The answer on the law the selected method returns, under the law's own paths."""
+        held, renamed = _held_target(call.operands["d"])
+        normalized = renamed(
+            self.registry.execute(
+                held, method=method, exact_only=exact_only, **self.method_options(call)
+            )
         )
         return self._answer(call, normalized)
 

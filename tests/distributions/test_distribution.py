@@ -413,7 +413,7 @@ class TestWithNameTemplateRoundtrip:
             "rows",
             {"labels": np.array(["a", "b", "c"], dtype=object), "ids": np.array([0, 1, 2])},
             "row",
-            element_spec=RecordSpec(labels=None, ids=()),
+            element_spec=RecordSpec(labels=OpaqueSpec(), ids=()),
         )
         law = EmpiricalDistribution("rows", rows)
         original_fields = tuple(law.event_spec.components)
@@ -1082,7 +1082,7 @@ class TestEmpiricalDeclarations:
 
     def test_opaque_atoms_are_a_whole_term(self):
         law = EmpiricalDistribution("law", OpaqueBatch("labels", ["a", "b"], "atom"))
-        assert law.event_spec == OutputSpec(law=OpaqueSpec())
+        assert law.event_spec == OutputSpec(law=OpaqueSpec(type=str))
 
     def test_array_atoms_are_a_whole_term(self):
         law = EmpiricalDistribution("x", jnp.zeros((5, 2)))
@@ -1224,13 +1224,13 @@ class TestViewAndWrapperDeclarations:
         law = _DeclaredLaw("p", RecordSpec(a=a, b=RecordSpec(c=c)))
         assert law["a"].event_spec == OutputSpec(a=a)
         nested = law["b"]["b/c"]
-        assert nested.name == "b/c"
+        assert nested.name == "p"
         assert nested.event_spec == OutputSpec(c=c)
 
     def test_a_slash_path_selects_the_field_it_names(self):
         law = _DeclaredLaw("p", RecordSpec(a=(), b=RecordSpec(c=())))
         view = law["b/c"]
-        assert view.name == "b/c"
+        assert view.name == "p"
         assert view.event_spec == law["b"]["b/c"].event_spec
 
 

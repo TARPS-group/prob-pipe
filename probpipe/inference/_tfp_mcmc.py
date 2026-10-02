@@ -26,6 +26,7 @@ from ._inference_utils import (
     get_init_state,
     is_jax_traceable,
     observed_parts,
+    run_seed,
 )
 
 
@@ -196,7 +197,7 @@ class _TFPGradientMethod(InferenceMethod):
     def execute(self, target: Any, /, **kwargs: Any) -> ApproximateDistribution:
         """Chains of the TFP kernel on the target's unnormalized density."""
         self._check_options(kwargs)
-        random_seed = kwargs.get("random_seed", 0)
+        random_seed = run_seed(kwargs, self.name)
         model, observed = observed_parts(target)
         density, init, event_spec = _chain_target(
             model, observed, init=kwargs.get("init"), random_seed=random_seed

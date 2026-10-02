@@ -275,6 +275,11 @@ def _detached(law: Distribution, name: str) -> Distribution:
     return clone
 
 
+def _labeled(law: Distribution, name: str) -> Distribution:
+    """*law* under the label *name*, which a marginal takes from the law it is a marginal of."""
+    return law if law.name == name else law.with_name(name)
+
+
 def _named_as(law: Distribution, components: Sequence[str]) -> Distribution:
     """*law* with its components renamed, in order, to *components*."""
     renames = {
@@ -388,8 +393,9 @@ def _view_log_prob_guard(self: FieldView) -> Feasibility:
 def _view_marginal(self: FieldView, path: str | tuple[str, ...]) -> Distribution:
     """Path composition: the parent's marginal at the parent's paths for *path*.
 
-    *path* is an event path of the view, or a tuple of them, and the result is
-    named by the paths of the view.
+    *path* is an event path of the view, or a tuple of them, and the result's
+    components are named by the paths of the view. The result keeps the view's
+    label.
 
     Raises
     ------
@@ -401,7 +407,7 @@ def _view_marginal(self: FieldView, path: str | tuple[str, ...]) -> Distribution
     marginal = self._parent._marginal(
         parent_paths[0] if isinstance(path, str) else tuple(parent_paths)
     )
-    return _named_as(marginal, [_final_segment(each) for each in paths])
+    return _labeled(_named_as(marginal, [_final_segment(each) for each in paths]), self.name)
 
 
 def _view_marginal_guard(self: FieldView, path: str | tuple[str, ...]) -> Feasibility:
@@ -576,9 +582,9 @@ class FieldView(Distribution):
     rather than a detached law, so sibling views co-sample from one parent
     draw and the correlation between them is preserved. Its declaration is the
     parent's schema at the path, the leaf or subtree whole, under a component
-    named by the path's final segment, and its label is the path. A tuple of
-    paths selects several nodes: the view declares an exposed record of them,
-    in order, and is labeled by the paths joined with ``", "``.
+    named by the path's final segment, and it keeps its parent's label. A
+    tuple of paths selects several nodes: the view declares an exposed record
+    of them, in order, and keeps its parent's label as well.
 
     Its capabilities are derived from the parent's, one by one:
 
@@ -638,7 +644,7 @@ class FieldView(Distribution):
 
     def __init__(self, parent: Distribution, path: str | tuple[str, ...]) -> None:
         declaration = _view_declaration(parent.event_spec, path)
-        self._init_tracked(path if isinstance(path, str) else ", ".join(path))
+        self._init_tracked(parent.name)
         self._init_annotations(None)
         object.__setattr__(self, "_parent", parent)
         object.__setattr__(self, "_path", path)
@@ -1273,6 +1279,8 @@ def _renamed_unnormalized_log_prob(self: _RenamedDistribution, value: Any) -> Ar
 def _renamed_marginal(self: _RenamedDistribution, path: str | tuple[str, ...]) -> Distribution:
     """The parent's marginal at the original nodes for *path*, named and arranged by *path*.
 
+    The marginal keeps this law's label.
+
     Raises
     ------
     KeyError
@@ -1289,7 +1297,7 @@ def _renamed_marginal(self: _RenamedDistribution, path: str | tuple[str, ...]) -
             f"would collide"
         )
     marginal = self._parent._marginal(originals[0] if isinstance(path, str) else tuple(originals))
-    return self._event.marginal(marginal, paths, originals)
+    return _labeled(self._event.marginal(marginal, paths, originals), self.name)
 
 
 def _renamed_marginal_guard(self: _RenamedDistribution, path: str | tuple[str, ...]) -> Feasibility:
@@ -1315,14 +1323,21 @@ def _renamed_marginal_capabilities(
 ) -> frozenset[type]:
     """The parent's report of its marginal at the original nodes for *path*.
 
+    A path that holds no single node of the parent, as a regrouping node does,
+    has no exact marginal here, which the marginal guard reports, so its report
+    claims nothing and a view there claims no density.
+
     Raises
     ------
     KeyError
         If a path is not an event path of this law.
-    ValueError
-        If a path holds no single node of the parent.
     """
     paths = (path,) if isinstance(path, str) else tuple(path)
+    for each in paths:
+        if not _has_path(self.event_spec, each):
+            raise KeyError(each)
+    if any(self._event.original(each) is None for each in paths):
+        return frozenset()
     originals = self._originals(paths)
     return _marginal_claims(
         self._parent, originals[0] if isinstance(path, str) else tuple(originals)
@@ -1451,6 +1466,23 @@ class _RenamedDistribution(Distribution):
         renamed = self.event_spec.with_path_names(mapping, **kwargs)
         renames = {**dict(mapping or {}), **kwargs}
         return _renamed(self, _EventRenames.of(self.event_spec, renamed, renames), renames)
+
+    def _original_given(self, given: Any) -> Record | None:
+        """*given*, keyed by event paths of this law, as the record of the parent's nodes it binds.
+
+        ``None`` when a path holds no single node of the parent, as at a node a
+        rename gathered, or is not an event path of this law.
+        """
+        items = list(given.items())
+        if any(self._event.original(path) is None for path, _ in items):
+            return None
+        return Record(
+            "given",
+            {
+                self._event.original(path): self._event.undraw_at(path, value)
+                for path, value in items
+            },
+        )
 
     def _originals(self, paths: Sequence[str]) -> list[str]:
         """The parent's node for each of *paths*, event paths of this law.

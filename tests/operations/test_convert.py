@@ -140,6 +140,13 @@ class TestConvert:
         (route,) = [route for route in convert.routes if route.name == "converters"]
         assert route.registry is converter_registry
 
+    def test_the_identity_route_states_why_it_rejects(self):
+        report = convert.check(Gaussian("g"), _Target)
+        identity = {info.method_name: info for info in report.routes}["identity"]
+        assert identity.feasible is False
+        assert "is not a _Target" in identity.description
+        assert "already" not in identity.description
+
     def test_no_applicable_converter_raises_resolution_error(self):
         with pytest.raises(ResolutionError, match="identity"):
             convert(Gaussian("g"), _Target)

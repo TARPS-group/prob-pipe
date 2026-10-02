@@ -324,6 +324,30 @@ class TestNutpieStanIntegration:
         # check, since this run can't be re-seeded here to measure a bound).
         assert abs(beta_mean - 1.5) < abs(beta_mean - 0.0)
 
+    def test_a_renamed_program_keeps_its_routing(self, _stan_toolchain, tmp_path_factory):
+        """Renaming a StanModel's parameters leaves its conditioning on nutpie's path,
+        and the posterior takes the new paths."""
+        from probpipe import StanModel, workflow_run
+        from probpipe.operations._condition import condition_on
+
+        stan_file = tmp_path_factory.mktemp("stan_models") / "location.stan"
+        stan_file.write_text(
+            """
+            data { int<lower=0> N; vector[N] y; }
+            parameters { real mu; real<lower=0> sigma; }
+            model { mu ~ normal(0, 5); sigma ~ cauchy(0, 5); y ~ normal(mu, sigma); }
+            """
+        )
+        data = {"N": 3, "y": [0.5, -0.2, 1.0]}
+        renamed = StanModel("location", str(stan_file)).with_path_names(
+            {"mu": "scale_free/mu", "sigma": "scale_free/sigma"}
+        )
+        assert condition_on.check(renamed, data).method == "nutpie_nuts"
+        options = {"num_results": 30, "num_warmup": 30, "num_chains": 1}
+        with workflow_run(seed=0):
+            posterior = condition_on.with_options(method_options=options)(renamed, data)
+        assert list(posterior.event_spec.components) == ["scale_free"]
+
 
 # ---------------------------------------------------------------------------
 # Real integration: nutpie + PyMCModel
@@ -400,6 +424,20 @@ class TestNutpieIntegration:
             "_UnnormalizedConditional",
             target.provenance,
         )
+
+    def test_a_renamed_model_keeps_its_routing(self):
+        """Renaming a PyMC model's fields leaves its conditioning on nutpie's path, and the
+        posterior takes the new paths."""
+        from probpipe import workflow_run
+        from probpipe.operations._condition import condition_on
+
+        renamed = PyMCModel("gaussian", _gaussian_pymc_fn).with_path_names({"mu": "location/mu"})
+        data = {"y": np.array([0.0, 1.0])}
+        assert condition_on.check(renamed, data).method == "nutpie_nuts"
+        options = {"num_results": 30, "num_warmup": 30, "num_chains": 1}
+        with workflow_run(seed=0):
+            posterior = condition_on.with_options(method_options=options)(renamed, data)
+        assert list(posterior.event_spec.components) == ["location"]
 
     def test_annotations_trace_attached(self):
         model = PyMCModel("gaussian", _gaussian_pymc_fn)

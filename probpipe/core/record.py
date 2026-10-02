@@ -224,7 +224,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
         # Each field value maps to a value spec by type:
         Record("r", vec=jnp.zeros(3), label="fox").event_template
-        # RecordSpec(vec=(3,), label=None)   — array -> NumericArraySpec, str -> OpaqueSpec
+        # RecordSpec(vec=(3,), label=OpaqueSpec(type=str))   — array -> NumericArraySpec
 
     Metadata: identity and annotations
     ----------------------------------

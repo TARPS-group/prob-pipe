@@ -19,6 +19,7 @@ Usage::
 from __future__ import annotations
 
 import operator
+from collections.abc import Mapping
 from math import prod
 from typing import Any
 
@@ -739,12 +740,17 @@ def condition_on(
     2. **Exact conditioning** — if *dist* claims
        ``SupportsExactConditioning``, its ``_condition_on`` is called for a
        closed-form result (e.g., conjugate updates, joint marginalization).
-    3. **Approximate conditioning** — if *dist* claims
+    3. **Slice** — a factored law whose observed fields are the whole events
+       of factors upstream of the rest is conditioned by the ``slice`` route
+       of the ``condition_on`` operation: the result is the joint of the
+       other factors at the observed values, and the inference parameters
+       are its ``method_options``.
+    4. **Approximate conditioning** — if *dist* claims
        ``SupportsApproximateConditioning``, its ``_condition_on`` runs, such
        as one forward pass through a pre-trained amortized posterior. An
        exact registered method outranks it, and ``exact_only=True`` skips it
        altogether.
-    4. **Registry auto-select** — the inference method registry runs the
+    5. **Registry auto-select** — the inference method registry runs the
        first feasible method in selection order: exact methods before
        approximate ones, then by priority (NUTS, HMC, RWMH, etc.). A call
        with no feasible method raises ``ResolutionError``.
@@ -820,6 +826,20 @@ def condition_on(
     if isinstance(dist, SupportsExactConditioning):
         return dist._condition_on(given, **inference_kwargs)
 
+    # A factored law whose given fixes whole factors upstream of the rest is
+    # sliced by the condition_on operation.
+    from ..distributions._factored import SupportsFactors
+    from .record import Record
+
+    if isinstance(dist, SupportsFactors) and isinstance(given, Record | Mapping):
+        from ..operations._condition import condition_on as conditioned
+
+        sliced = conditioned.with_options(
+            method="slice", exact_only=exact_only, method_options=inference_kwargs
+        )
+        if sliced.check(dist, given).feasible is True:
+            return sliced(dist, given)
+
     # An approximate built-in path runs only when no exact route applies, so
     # an exact registered method outranks it and exact_only skips it.
     if not exact_only and isinstance(dist, SupportsApproximateConditioning):
@@ -856,7 +876,9 @@ def from_distribution(
         Refused when given: a conversion's draws are workflow-owned random
         events, which ``workflow_run(seed=...)`` makes reproducible.
     check_support : bool
-        If ``True`` (default), verify the supports are compatible.
+        If ``True`` (default), verify the supports are compatible. ``False``
+        reaches the selected converter only when it reads the option, as the
+        moment matcher does; a sampled representation checks no support.
     **kwargs
         Additional keyword arguments passed to the converter.
 
@@ -873,5 +895,9 @@ def from_distribution(
             "events, which workflow_run(seed=...) makes reproducible"
         )
     if not check_support:
-        kwargs["check_support"] = False
+        planned = converter_registry.check(source, target_type, **kwargs)
+        if planned.method_name is not None:
+            converter = converter_registry.get_method(planned.method_name)
+            if "check_support" in getattr(converter, "_reads", ()):
+                kwargs["check_support"] = False
     return converter_registry.convert(source, target_type, **kwargs)

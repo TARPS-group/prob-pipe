@@ -1,8 +1,8 @@
 """The root-ancestor capture of lifted arguments.
 
-A field view's root is its parent's, and a bijector-transformed law's is its
-base's, so a lift groups each with its root: the root draws once per repetition,
-and each member evaluates on that draw.
+A field view's root is its parent's, a batch element's is its stored law's, and
+a bijector-transformed law's is its base's, so a lift groups each with its root:
+the root draws once per repetition, and each member evaluates on that draw.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ import tensorflow_probability.substrates.jax.bijectors as tfb
 
 from probpipe import (
     BijectorTransformedDistribution,
+    DistributionBatch,
     EmpiricalDistribution,
     Function,
     MultivariateNormal,
@@ -25,6 +26,7 @@ from probpipe import (
     NumericRecord,
     NumericRecordBatch,
     NumericRecordSpec,
+    iterate,
     workflow_run,
 )
 from probpipe.distributions import FieldView
@@ -190,6 +192,71 @@ class TestFieldViews:
             result = workflow(root["x"], FieldView(root, "x"))
 
         np.testing.assert_allclose(_raw_variance(result), 0.0, atol=1e-6)
+
+
+# -- Batch elements ------------------------------------------------------------
+
+
+def _difference():
+    return Function("difference", lambda a, b: a - b, dispatch="sequential", n_broadcast_samples=16)
+
+
+class TestBatchElements:
+    def test_an_element_captures_its_stored_law_as_root(self):
+        root = _joint()
+        batch = DistributionBatch("laws", [root, _joint()], "law")
+
+        captured = _descendants.capture_stochastic_consumer(batch[0])
+
+        assert captured.root is root
+        assert captured.record_path == ()
+        assert captured.descendant_descriptor is None
+
+    def test_views_of_two_accesses_of_one_element_form_one_plan_group(self):
+        root = _joint()
+        batch = DistributionBatch("laws", [root, _joint()], "law")
+
+        plan = _stochastic_plan({"root": root, "x": batch[0]["x"], "y": batch[0]["y"]})
+
+        assert len(plan.source_groups) == 1
+        assert plan.runtime_bindings[0].root is root
+        assert tuple(consumer.record_path for consumer in plan.source_groups[0].consumers) == (
+            (),
+            ("x",),
+            ("y",),
+        )
+
+    def test_two_accesses_of_one_element_co_sample(self):
+        batch = DistributionBatch("laws", [_joint(), _joint()], "law")
+
+        with workflow_run(seed=35):
+            result = _difference()(batch[0]["x"], batch[0]["x"])
+
+        np.testing.assert_allclose(_raw_variance(result), 0.0, atol=1e-6)
+
+    def test_an_element_co_samples_with_its_stored_law(self):
+        root = _joint()
+        batch = DistributionBatch("laws", [root], "law")
+
+        with workflow_run(seed=36):
+            result = _difference()(root["x"], batch[0]["x"])
+
+        np.testing.assert_allclose(_raw_variance(result), 0.0, atol=1e-6)
+
+    def test_the_fields_of_an_iterated_law_co_sample(self):
+        laws = iterate(step_fn=lambda law, _input: law, initial=_joint(), inputs=[1, 2])
+
+        with workflow_run(seed=38):
+            result = _difference()(laws[-1]["x"], laws[-1]["x"])
+
+        np.testing.assert_allclose(_raw_variance(result), 0.0, atol=1e-6)
+
+    def test_cyclic_element_graphs_fail_closed(self):
+        element = DistributionBatch("laws", [_joint()], "law")[0]
+        object.__setattr__(element, "_element_source", element)
+
+        with pytest.raises(TypeError, match="Cyclic batch element"):
+            _descendants.capture_stochastic_consumer(element)
 
 
 # -- Bijector-transformed laws -------------------------------------------------
@@ -452,6 +519,24 @@ class TestLifts:
         with patch.object(type(root), "_sample", side_effect=AssertionError("sampled exact root")):
             result = workflow(root, exponentiated)
 
+        np.testing.assert_allclose(_raw_mean(result), 0.0, atol=1e-5)
+
+    def test_a_transform_passed_before_its_empirical_root_enumerates(self):
+        root = EmpiricalDistribution(
+            "base", jnp.asarray([1.0, 4.0]), weights=jnp.asarray([0.2, 0.8])
+        )
+        exponentiated = BijectorTransformedDistribution("exponentiated", root, tfb.Exp())
+        workflow = Function(
+            "function",
+            lambda exp_base, base: exp_base - jnp.exp(base),
+            dispatch="sequential",
+            n_broadcast_samples=16,
+        )
+
+        with patch.object(type(root), "_sample", side_effect=AssertionError("sampled exact root")):
+            result = workflow.with_options(exact_only=True)(exponentiated, root)
+
+        assert result.num_atoms == 2
         np.testing.assert_allclose(_raw_mean(result), 0.0, atol=1e-5)
 
     def test_an_exact_record_projection_then_transform_stays_diagonal(self):

@@ -16,12 +16,13 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
     ApproximateDistribution,
+    HalfNormal,
     MultivariateNormal,
     NumericArraySpec,
     condition_on,
     inference_method_registry,
 )
-from probpipe.families import BernoulliFamily, glm_likelihood
+from probpipe.families import BernoulliFamily, GaussianFamily, glm_likelihood
 from probpipe.inference._blackjax_sgmcmc import (
     BlackJAXSGHMCMethod,
     BlackJAXSGLDMethod,
@@ -341,6 +342,26 @@ class TestConditionOnDispatch:
         # sit close to `init` (it's at most one Langevin step away).
         first = np.asarray(_draws(post)[0])
         np.testing.assert_allclose(first, np.asarray(init), atol=0.05)
+
+    def test_a_factored_prior_starts_the_chain_inside_its_support(self):
+        """The chain over a factored prior starts at its draw, a positive dispersion."""
+        n, p = 200, 2
+        X = jax.random.normal(jax.random.PRNGKey(0), (n, p))
+        y = X @ jnp.array([1.0, -0.5]) + 0.5 * jax.random.normal(jax.random.PRNGKey(1), (n,))
+        prior = MultivariateNormal("beta", jnp.zeros(p), cov=jnp.eye(p)) * HalfNormal(
+            "dispersion", 1.0
+        )
+        post = condition_on(
+            glm_likelihood("y", GaussianFamily(), X=X) * prior,
+            y=y,
+            method="blackjax_sgld",
+            batch_size=20,
+            num_results=50,
+            num_warmup=0,
+            step_size=1e-4,
+            random_seed=1,
+        )
+        assert float(_draws(post)[0, 2]) > 0.0
 
     def test_with_replacement_kwarg_is_accepted_and_dispatches(self, logistic_problem):
         """``with_replacement=True`` is accepted and dispatches via the registry.

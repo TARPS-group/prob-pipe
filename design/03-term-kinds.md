@@ -55,8 +55,11 @@ The full set of array operators is safe here and only here: with no fields, an e
 
 ```python
 class OpaqueSpec(TermSpec):        # the fallback spec; is_valid accepts a value no other kind's spec class admits
-    meta: Hashable
+    type: type | None = None       # the Python type of the admitted values; None admits any non-mapping value
+    meta: Hashable = None          # free-form metadata, never checked or inferred
 ```
+
+**`type` and `meta`.** `type` is the Python type of the values the spec admits, and `is_valid` checks `isinstance(value, type)`. `None` admits every value that is not a mapping, since a mapping is a subtree (III.5). Construction from a value infers the type: an `Opaque` built from a string and a string leaf of a record built from values both have `OpaqueSpec(type=str)`. An `OpaqueBatch` infers the type its elements share exactly, and `None` when they differ. `meta` is free-form hashable metadata, such as units or a tag. It is part of the spec's equality and hash, and it is never checked against a value or inferred. Two opaque specs unify when their `meta` are equal and their types are equal or one of them is `None`, and the unification takes the known type. Completion keeps the declared type and checks the produced value (II.2). A repr prints an opaque spec in full, as `OpaqueSpec()` or `OpaqueSpec(type=str)`.
 
 `OpaqueBatch` is its batch form. It **stores** each element outright. Its `raw()` is an object array of the stored raw values.
 
@@ -213,8 +216,9 @@ When every leaf is a `NumericSpec`, the schema is fully numeric and construction
 ```python
 class RecordSpec(NamedTree[TermSpec], TermSpec):
     def __init__(self, field_specs: Mapping[str, Any] | None = None, /,
-                 **fields: TermSpec | Mapping | tuple[int, ...] | None) -> None: ...
-    # shorthand: a bare shape tuple means NumericArraySpec(shape) and None means OpaqueSpec();
+                 **fields: TermSpec | Mapping | tuple[int, ...]) -> None: ...
+    # shorthand: a bare shape tuple means NumericArraySpec(shape); a field given None raises
+    # TypeError, since None is a pending type (II.2), and an opaque field is OpaqueSpec();
     # the positional mapping form accepts "/"-path keys and names that collide with keywords
 
     @classmethod

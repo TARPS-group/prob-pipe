@@ -13,12 +13,14 @@ import inspect
 from collections.abc import Mapping
 from typing import Any
 
+from ..core._dispatch import Feasibility
 from ..core._spec_base import TermSpec
 from ..core._specs import OutputSpec
 from ..functions import _plan, _rules
 from ..functions._call import ApplicabilityError
+from ..functions._resolution import PointReport
 from ..values import Function, FunctionSpec
-from ._operation import BoundCall, RouteSource, _CheckedRoute, operation
+from ._operation import BoundCall, _RegistryRoute, operation
 
 __all__ = ["evaluate"]
 
@@ -102,51 +104,75 @@ def _lifts(f: Function, parameter: str, operand: Any) -> bool:
     return _plan.lift_at(f, parameter, operand) != "whole"
 
 
-def _evaluation_rules_check(call: BoundCall, result: OutputSpec | None) -> Any:
-    """The evaluation-rule registry selects a rule for the map's and the operand's types.
-
-    An operand the direct call does not lift is applied by the map's body, which
-    is exact.
-    """
-    f, parameter, operand, fixed = _call_values(call)
-    if not _lifts(f, parameter, operand):
-        return True
-    return _rules.evaluation_rule_registry.check(
-        f,
-        operand,
-        method=None,
-        exact_only=call.controls["exact_only"],
-        parameter=parameter,
-        fixed_args=fixed,
-        controls=call.controls,
-    )
-
-
-#: The engine controls evaluate forwards to the direct call of its map.
+#: The engine controls evaluate forwards to the direct call of its map, beside the
+#: rule the route selects and its exactness.
 _FORWARDED_CONTROLS = (
     "n_broadcast_samples",
     "dispatch",
     "max_workers",
     "include_inputs",
     "workflow_kind",
-    "exact_only",
     "method_options",
 )
 
 
-def _evaluation_rules_execute(call: BoundCall, result: OutputSpec | None) -> Any:
-    """The direct call of the map on the operand, which takes the route the registry selects."""
-    f, parameter, operand, fixed = _call_values(call)
-    forwarded = {name: call.controls[name] for name in _FORWARDED_CONTROLS if name in call.controls}
-    return f.with_options(**forwarded)(**{parameter: operand}, **fixed)
+class _EvaluationRules(_RegistryRoute):
+    """The evaluation-rule registry, from which the direct call ``f(v)`` also selects.
+
+    The probe asks the registry for a rule for the map's and the operand's
+    types, and an operand the direct call does not lift is applied by the map's
+    body, which is exact. The run is the direct call of the map under the
+    controls evaluate forwards, the rule the probe selected or the ``method``
+    control names, and the candidate's exactness, so ``evaluate`` and the
+    direct call take the same controls (VI.1).
+    """
+
+    def __init__(self) -> None:
+        super().__init__("evaluation_rules", registry=_rules.evaluation_rule_registry)
+
+    @property
+    def condition(self) -> str:
+        """The registry selects a rule, unless the direct call lifts nothing."""
+        return (
+            "The evaluation-rule registry selects a rule for the map's and the operand's "
+            "types; an operand the direct call does not lift is applied by the map's body."
+        )
+
+    def probe(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Feasibility:
+        """The registry's report for the lifted operand, or the body's for one it does not lift.
+
+        A rule named for an operand the direct call does not lift is refused, as
+        the direct call refuses it.
+        """
+        f, parameter, operand, fixed = _call_values(call)
+        if not _lifts(f, parameter, operand):
+            if method is not None:
+                return Feasibility(
+                    False,
+                    f"the call lifts nothing, so the body of {f.name!r} realizes it and the "
+                    f"rule {method!r} does not",
+                )
+            return PointReport(True, exact=True)
+        return self.registry.check(
+            f,
+            operand,
+            method=method,
+            exact_only=exact_only,
+            parameter=parameter,
+            fixed_args=fixed,
+            controls=call.controls,
+        )
+
+    def run(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Any:
+        """The direct call of the map on the operand, by the rule *method* names, if any."""
+        f, parameter, operand, fixed = _call_values(call)
+        forwarded = {
+            name: call.controls[name] for name in _FORWARDED_CONTROLS if name in call.controls
+        }
+        forwarded["exact_only"] = exact_only
+        if method is not None:
+            forwarded["method"] = method
+        return f.with_options(**forwarded)(**{parameter: operand}, **fixed)
 
 
-evaluate.register_route(
-    _CheckedRoute(
-        "evaluation_rules",
-        source=RouteSource.REGISTRY,
-        check=_evaluation_rules_check,
-        execute=_evaluation_rules_execute,
-        exact=None,
-    )
-)
+evaluate.register_route(_EvaluationRules())

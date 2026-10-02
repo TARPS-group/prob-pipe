@@ -23,7 +23,14 @@ from ..core._dispatch import Feasibility, ResolutionError
 from ..core._object_batch import _is_object_array
 from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
-from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
+from ..core._spec_base import (
+    NumericArraySpec,
+    NumericSpec,
+    OpaqueSpec,
+    TermSpec,
+    _known_type,
+    _unify_specs,
+)
 from ..core._specs import InputSpec, OutputSpec
 from ..core.named_tree import _unflatten_paths
 from ..core.provenance import Provenance
@@ -258,6 +265,8 @@ def _factor_graph(
             if producer is None:
                 if slot in unmet:
                     _unify_either_way(unmet[slot], slot_spec, bindings, f"the given {slot!r}")
+                    if isinstance(unmet[slot], OpaqueSpec) and isinstance(slot_spec, OpaqueSpec):
+                        unmet[slot] = _known_type(unmet[slot], slot_spec)
                 else:
                     unmet[slot] = slot_spec
                 continue
@@ -686,9 +695,13 @@ def _sole_field_expectation(self: _SoleField, f: Callable[[Any], Array]) -> Arra
 def _sole_field_marginal(self: _SoleField, path: str | tuple[str, ...]) -> Distribution:
     """This law at its component, and the record law's marginal at any other path.
 
-    The field and the record have the same event paths.
+    The field and the record have the same event paths, and the marginal keeps
+    this law's label.
     """
-    return self if path == self._component else self._law._marginal(path)
+    if path == self._component:
+        return self
+    marginal = self._law._marginal(path)
+    return marginal if marginal.name == self.name else marginal.with_name(self.name)
 
 
 def _sole_field_marginal_guard(self: _SoleField, path: str | tuple[str, ...]) -> Feasibility:
@@ -1087,9 +1100,10 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
     whole term: a kept factor that exposes a record of that one component is
     returned as the law of its field. A selection of several paths returns an
     exposed record: the one factor itself when it exposes a record, and
-    otherwise the joint of the kept factors in factor order. The marginal is
-    labeled as the view at *path* is: by the path, or by the paths of a
-    selection joined with ``", "``.
+    otherwise the joint of the kept factors in factor order, repackaged when
+    the paths name the fields in another order, so its fields follow the
+    order of the paths (III.8). The marginal keeps the joint's label, as the
+    view at *path* does.
 
     Parameters
     ----------
@@ -1121,7 +1135,7 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
         raise ResolutionError(f"{self.name!r} has no exact marginal at {path!r}: {reason}")
     graph: _FactorGraph = self._graph
     projection = isinstance(path, str)
-    label = path if projection else ", ".join(paths)
+    label = self.name
     kept: list[Distribution] = []
     for index, requested in _requests(graph, paths).items():
         factor = graph.factors[index]
@@ -1133,8 +1147,27 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
             kept.append(factor)
     if len(kept) == 1 and (projection or kept[0].event_spec.exposes_record):
         (marginal,) = kept
-        return marginal if marginal.name == label else marginal.with_name(label)
-    return FactoredDistribution(label, kept)
+        marginal = marginal if marginal.name == label else marginal.with_name(label)
+    else:
+        marginal = FactoredDistribution(label, kept)
+    return marginal if projection else _in_requested_order(marginal, paths)
+
+
+def _in_requested_order(marginal: Distribution, paths: tuple[str, ...]) -> Distribution:
+    """*marginal*, the marginal at the selection *paths*, with its fields in the order of the paths.
+
+    The kept factors declare their fields in factor order, so a selection that
+    names them in another order is repackaged, each field keeping its path.
+    """
+    from ._views import _leaf_paths, _renamed_by_leaves
+
+    order = [requested.rsplit(_PATH_SEP, 1)[-1] for requested in paths]
+    components = marginal.event_spec.components
+    if list(components) == order:
+        return marginal
+    target = OutputSpec(RecordSpec({name: components[name] for name in order}))
+    leaves = {leaf: leaf for leaf in _leaf_paths(marginal.event_spec)}
+    return _renamed_by_leaves(marginal, target, leaves)
 
 
 def _kept_claims(factor: Factor, requested: tuple[str, ...]) -> frozenset[type]:

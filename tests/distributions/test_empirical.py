@@ -71,7 +71,7 @@ _RECORD_WEIGHTS = np.array([0.5, 0.25, 0.25])
 _RECORD_SPEC = RecordSpec(b=(2,), a=())
 
 #: A mixed record: an opaque label and a numeric group.
-_MIXED_SPEC = RecordSpec(label=None, g=RecordSpec(u=(), v=(2,)))
+_MIXED_SPEC = RecordSpec(label=OpaqueSpec(), g=RecordSpec(u=(), v=(2,)))
 _LABELS = np.array(["north", "south", "east"], dtype=object)
 _U = jnp.array([1.0, 2.0, 3.0])
 _V = jnp.array([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])
@@ -125,7 +125,7 @@ class TestEventCompletion:
         assert law.event_shape == (2,)
 
     def test_opaque_atoms_form_a_whole_term_under_the_law_name(self):
-        assert _opaque_law().event_spec == OutputSpec(where=OpaqueSpec())
+        assert _opaque_law().event_spec == OutputSpec(where=OpaqueSpec(type=str))
 
     def test_laws_as_atoms_form_a_random_measure(self):
         laws = DistributionBatch("laws", [Normal("x", 0.0, 1.0), Normal("x", 1.0, 2.0)], "law")
@@ -146,7 +146,9 @@ class TestEventCompletion:
         [
             pytest.param(jnp.zeros((3, 2)), NumericArraySpec((2,), jnp.float32), id="array"),
             pytest.param(_record_atoms(), _RECORD_SPEC, id="record"),
-            pytest.param(OpaqueBatch("labels", ["a", "b"], "site"), OpaqueSpec(), id="opaque"),
+            pytest.param(
+                OpaqueBatch("labels", ["a", "b"], "site"), OpaqueSpec(type=str), id="opaque"
+            ),
         ],
     )
     def test_a_type_hole_is_filled_from_the_atoms(self, atoms, spec):
@@ -580,7 +582,7 @@ class TestMarginals:
         marginal = law._marginal("b")
         assert isinstance(marginal, EmpiricalDistribution)
         assert not isinstance(marginal, FieldView)
-        assert marginal.name == "b"
+        assert marginal.name == law.name
         assert marginal.event_spec == OutputSpec(b=_RECORD_SPEC["b"])
         assert jnp.array_equal(marginal.atoms.values, _B)
         assert np.allclose(marginal.weights, _RECORD_WEIGHTS)
@@ -598,7 +600,7 @@ class TestMarginals:
 
     def test_the_marginal_of_a_nested_leaf_takes_its_final_segment(self):
         marginal = EmpiricalDistribution("m", _mixed_atoms())._marginal("g/v")
-        assert marginal.name == "g/v"
+        assert marginal.name == "m"
         assert marginal.event_spec == OutputSpec(v=NumericArraySpec((2,)))
         assert jnp.allclose(marginal._mean(), jnp.mean(_V, axis=0))
 
@@ -610,8 +612,8 @@ class TestMarginals:
     def test_a_selection_of_paths_is_an_exposed_record_that_keeps_the_rows(self):
         law = EmpiricalDistribution("m", _mixed_atoms())
         marginal = law._marginal(("label", "g/v"))
-        assert marginal.name == "label, g/v"
-        assert marginal.event_spec == OutputSpec(RecordSpec(label=None, v=(2,)))
+        assert marginal.name == "m"
+        assert marginal.event_spec == OutputSpec(RecordSpec(label=OpaqueSpec(), v=(2,)))
         rows = {(label, *np.asarray(v)) for label, v in zip(_LABELS, _V)}
         for key in jax.random.split(jax.random.PRNGKey(0), 10):
             draw = marginal._sample(key)
@@ -625,7 +627,7 @@ class TestMarginals:
             law._marginal(("p/x", "q/x"))
         assert _capability_guard(law, "_marginal", ("p/x", "q/x")).feasible is False
 
-    def test_a_path_that_is_not_an_event_path_raises_and_is_declined(self):
+    def test_a_path_that_is_not_an_event_path_raises_and_is_rejected(self):
         law = _record_law()
         with pytest.raises(KeyError, match="not an event path"):
             law._marginal("c")

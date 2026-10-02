@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import NumericRecord, NumericRecordBatch, Record, RecordBatch, function
+from probpipe import NumericRecord, NumericRecordBatch, OpaqueSpec, Record, RecordBatch, function
 from probpipe.core._immutable import Immutable
 from probpipe.core._specs import RecordSpec
 
@@ -200,7 +200,7 @@ class TestTheHostsInTheTree:
         params=[
             pytest.param(lambda: Record("r", {"x": jnp.ones(2), "tag": "m"}), id="record"),
             pytest.param(lambda: NumericRecord("nr", {"x": jnp.ones(2)}), id="numeric-record"),
-            pytest.param(lambda: RecordSpec(x=(2,), tag=None), id="event-template"),
+            pytest.param(lambda: RecordSpec(x=(2,), tag=OpaqueSpec()), id="event-template"),
             pytest.param(
                 lambda: RecordBatch.stack(
                     [Record("r", {"x": jnp.ones(2), "tag": "m"})] * 2,

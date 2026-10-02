@@ -215,7 +215,7 @@ class BijectorTransformedDistribution(Distribution):
         *bijector* is neither a ``Function`` nor a backend bijector.
     ResolutionError
         If *bijector* does not claim ``SupportsInverse``, or its guard
-        declines, or it does not claim ``SupportsLogDetJacobian``.
+        rejects, or it does not claim ``SupportsLogDetJacobian``.
     """
 
     _capability_table: ClassVar = {

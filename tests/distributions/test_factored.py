@@ -253,7 +253,7 @@ class MomentLaw(
 
 
 class MarginalLaw(Law, SupportsMarginals):
-    """A law whose marginal is exact at the paths it lists, and declined at any other.
+    """A law whose marginal is exact at the paths it lists, and rejected at any other.
 
     It records each path it marginalizes, and the marginal is a law over the
     node under a component named by the path's final segment.
@@ -304,8 +304,8 @@ class PointLaw(Law, SupportsSampling):
         return self.draw
 
 
-class DecliningPointLaw(PointLaw):
-    """A point mass whose sampling guard declines."""
+class RejectingPointLaw(PointLaw):
+    """A point mass whose sampling guard rejects."""
 
     def _sample_guard(self) -> bool:
         """Draws only from a finite point."""
@@ -438,6 +438,17 @@ def _mentions(*fragments: str) -> str:
 
 class TestConstruction:
     """A factored joint is built from an ordered list of factors under the composition rules."""
+
+    def test_same_named_opaque_givens_unify_to_the_known_type(self):
+        first = NormalKernel("first", {"s": OpaqueSpec()}, OutputSpec(y=SCALAR))
+        second = NormalKernel("second", {"s": OpaqueSpec(type=str)}, OutputSpec(z=SCALAR))
+        assert (first * second).given_spec["s"] == OpaqueSpec(type=str)
+        with pytest.raises(ValueError, match="does not conform"):
+            _ = (
+                first
+                * NormalKernel("third", {"s": OpaqueSpec(type=int)}, OutputSpec(w=SCALAR))
+                * (second)
+            )
 
     def test_the_joint_holds_its_factors_in_order(self):
         lik, prior = _likelihood(), _prior()
@@ -800,12 +811,12 @@ class TestMarginalGuard:
         joint = _likelihood() * _prior() * _law("other", "c")
         assert joint._marginal_guard(("y", "beta")).feasible is True
 
-    def test_a_component_whose_ancestor_is_another_factor_is_declined(self):
+    def test_a_component_whose_ancestor_is_another_factor_is_rejected(self):
         report = (_likelihood() * _prior())._marginal_guard("y")
         assert report.feasible is False
         assert report.description
 
-    def test_a_group_that_is_not_ancestrally_closed_is_declined(self):
+    def test_a_group_that_is_not_ancestrally_closed_is_rejected(self):
         joint = _likelihood() * _prior() * _law("other", "c")
         assert joint._marginal_guard(("y", "c")).feasible is False
 
@@ -842,13 +853,13 @@ class TestMarginalGuard:
             pytest.param(("a", "gamma"), id="in-a-selection"),
         ],
     )
-    def test_a_path_that_is_not_an_event_path_is_declined_with_a_reason(self, path):
+    def test_a_path_that_is_not_an_event_path_is_rejected_with_a_reason(self, path):
         joint = _pair(law=TotalMarginalLaw) * _law("other", "c")
         report = joint._marginal_guard(path)
         assert report.feasible is False
         assert "not an event path" in report.description
 
-    def test_a_path_inside_a_factor_without_marginals_is_declined(self):
+    def test_a_path_inside_a_factor_without_marginals_is_rejected(self):
         report = (_pair() * _law("other", "c"))._marginal_guard("a")
         assert report.feasible is False
         assert report.description
@@ -886,11 +897,11 @@ class TestFactorGuards:
             ),
         )
 
-    def test_a_declining_factor_declines_the_joint_whatever_the_others_report(self):
-        point = DecliningPointLaw("point", OutputSpec(beta=SCALAR), jnp.zeros(()))
+    def test_a_rejecting_factor_rejects_the_joint_whatever_the_others_report(self):
+        point = RejectingPointLaw("point", OutputSpec(beta=SCALAR), jnp.zeros(()))
         joint = _likelihood(UndecidedSamplingKernel) * point
         assert _capability_guard(joint, "_sample") == Feasibility(
-            False, "DecliningPointLaw._sample_guard() declined: Draws only from a finite point."
+            False, "RejectingPointLaw._sample_guard() rejected: Draws only from a finite point."
         )
 
     def test_a_conditional_joint_takes_its_factors_guards(self):
@@ -922,15 +933,30 @@ class TestMarginalValues:
         assert marginal.event_spec.exposes_record
         assert list(marginal.event_spec.components) == ["a", "c"]
 
+    def test_a_selection_marginal_follows_the_order_of_its_paths(self):
+        joint = Normal("x", 0.0, 1.0) * Normal("z", 5.0, 2.0)
+        marginal = joint._marginal(("z", "x"))
+        assert list(marginal.event_spec.components) == ["z", "x"]
+        assert marginal.event_spec == FieldView(joint, ("z", "x")).event_spec
+        assert list(marginal._mean()) == ["z", "x"]
+        assert jnp.allclose(marginal._cov().to_dense(), jnp.diag(jnp.array([4.0, 1.0])))
+        value = {"z": jnp.asarray(4.0), "x": jnp.asarray(0.2)}
+        expected = norm.logpdf(4.0, 5.0, 2.0) + norm.logpdf(0.2, 0.0, 1.0)
+        assert jnp.allclose(marginal._log_prob(value), expected)
+
+    def test_a_sub_joint_selected_against_its_factor_order_follows_the_paths(self):
+        marginal = (_likelihood() * _prior())._marginal(("beta", "y"))
+        assert list(marginal.event_spec.components) == ["beta", "y"]
+
     def test_the_marginal_inside_one_factor_is_that_factor_marginal(self):
         pair = _pair(law=MarginalLaw, exact=("a",))
         marginal = (pair * _law("other", "c"))._marginal("a")
         assert pair.marginalized == ["a"]
         assert marginal.event_spec == OutputSpec(a=SCALAR)
 
-    def test_the_marginal_of_a_group_is_labeled_by_its_paths(self):
+    def test_the_marginal_of_a_group_keeps_the_joint_label(self):
         joint = _law("u", "a") * _law("v", "b") * _law("w", "c")
-        assert joint._marginal(("a", "c")).name == "a, c"
+        assert joint._marginal(("a", "c")).name == joint.name
 
     @pytest.mark.parametrize(
         "path",
@@ -942,11 +968,11 @@ class TestMarginalValues:
             pytest.param("params/u", id="reduced-factor"),
         ],
     )
-    def test_a_marginal_is_labeled_by_its_path_as_the_view_there_is(self, path):
+    def test_a_marginal_keeps_the_joint_label_as_the_view_there_does(self, path):
         record = OneFieldNormal("one", OutputSpec(RecordSpec(record=SCALAR)))
         params = MarginalLaw("p", OutputSpec(params=RecordSpec(u=SCALAR)), exact=("params/u",))
         joint = _likelihood() * _prior() * record * params
-        assert joint._marginal(path).name == FieldView(joint, path).name
+        assert joint._marginal(path).name == FieldView(joint, path).name == joint.name
 
     def test_a_selection_of_one_whole_term_is_an_exposed_record(self):
         prior = _prior()
@@ -956,9 +982,10 @@ class TestMarginalValues:
 
     def test_a_selection_of_a_record_factor_components_is_that_factor_under_the_paths(self):
         pair = _pair()
-        marginal = (pair * _law("other", "c"))._marginal(("a", "b"))
+        joint = pair * _law("other", "c")
+        marginal = joint._marginal(("a", "b"))
         assert type(marginal) is type(pair) and marginal.spec == pair.spec
-        assert (marginal.name, pair.name) == ("a, b", "pair")
+        assert (marginal.name, pair.name) == (joint.name, "pair")
 
     @pytest.mark.parametrize(
         "path",
@@ -992,7 +1019,7 @@ class TestMarginalValues:
         assert isinstance(value, dict) and list(value) == ["u", "v"]
         assert (float(value["u"]), float(value["v"])) == (1.0, 2.0)
 
-    def test_a_marginal_the_guard_declines_raises(self):
+    def test_a_marginal_the_guard_rejects_raises(self):
         with pytest.raises(ResolutionError, match=_mentions("'y'", "'prior'")):
             (_likelihood() * _prior())._marginal("y")
 

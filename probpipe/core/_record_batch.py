@@ -45,6 +45,7 @@ from ._function_batch import FunctionBatch
 from ._kinds import batch_class_for_spec
 from ._object_batch import _from_iterable, _frozen_object_column, _is_object_array
 from ._opaque_batch import OpaqueBatch
+from ._spec_base import OpaqueSpec, _opaque_spec_of
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec, TermSpec
 from .named_tree import _PATH_SEP, _unflatten_paths
 from .provenance import Provenance
@@ -669,7 +670,8 @@ class RecordBatch(Batch[Record]):
         element_spec : RecordSpec, optional
             What every element satisfies. Taken from the first record when
             omitted, which is exact whenever the records were built against a
-            shared declaration.
+            shared declaration, with each opaque field typed by what its values
+            share, as an ``OpaqueBatch`` types its elements.
         name : str, optional
             The batch's name. Taken from the first record when omitted — a batch of ``draw`` records is about ``draw``, so the name is
             derived from what is being stacked rather than invented. A caller with
@@ -697,6 +699,8 @@ class RecordBatch(Batch[Record]):
         spec = _record_element_spec(
             element_spec if element_spec is not None else records[0].event_template, kind=kind
         )
+        if element_spec is None:
+            spec = _shared_opaque_types(spec, records)
         fields = spec.keys()
         for position, record in enumerate(records):
             # Checked rather than left to a KeyError from the column loop: a
@@ -861,7 +865,7 @@ def _element_template_for(
             continue
         shape = _column_shape(column)
         if shape is None:
-            specs[path] = None  # an opaque value: no shape to describe
+            specs[path] = OpaqueSpec()  # an opaque value: no shape to describe
             continue
         if len(shape) < rank or tuple(shape[:rank]) != batch.batch_shape:
             raise ValueError(
@@ -895,6 +899,22 @@ def _unwrapped_field(value: Any) -> tuple[Any, TermSpec | None]:
     return value, None
 
 
+def _shared_opaque_types(spec: RecordSpec, records: list[Record]) -> RecordSpec:
+    """*spec* with each opaque field typed by the type its values in *records* share.
+
+    A field's values that differ in type leave it any value, and each field
+    keeps its metadata.
+    """
+    fields: dict[str, TermSpec] = {}
+    for key in spec:
+        field = spec[key]
+        if isinstance(field, OpaqueSpec) and key in records[0]:
+            shared = _opaque_spec_of(record[key] for record in records if key in record)
+            field = OpaqueSpec(type=shared.type, meta=field.meta)
+        fields[key] = field
+    return spec if fields == dict(spec.items()) else RecordSpec(fields)
+
+
 def _inferred_field_spec(column: Any, event_shape: tuple[int, ...]) -> Any:
     """The spec an edited field's values imply, in the template's own terms.
 
@@ -902,7 +922,8 @@ def _inferred_field_spec(column: Any, event_shape: tuple[int, ...]) -> Any:
     value per element, so the values decide: all callable makes it a function
     field, and otherwise it is opaque. This is what template inference concludes
     for a single value, applied across the column — a unicode array is not
-    numeric, and a column of callables does not become opaque.
+    numeric, and a column of callables does not become opaque. An opaque field
+    takes the type its entries share exactly, and none when they differ.
     """
     dtype = getattr(column, "dtype", None)
     if dtype is not None and _is_numeric_dtype(dtype):
@@ -910,7 +931,7 @@ def _inferred_field_spec(column: Any, event_shape: tuple[int, ...]) -> Any:
     entries = list(np.asarray(column, dtype=object).flat) if _is_object_array(column) else []
     if entries and all(callable(entry) for entry in entries):
         return FunctionSpec()
-    return None
+    return _opaque_spec_of(entries)
 
 
 def _event_shape(spec: TermSpec, *, path: str, kind: str) -> tuple[int, ...]:

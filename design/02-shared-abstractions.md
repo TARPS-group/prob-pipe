@@ -104,7 +104,7 @@ The keyword form takes exactly one entry, and the positional form exactly one `R
 
 **Paths.** A declaration's paths start with a component. An exposed record's paths are the paths of its record, and a whole term's are its component followed by the paths within its term. `OutputSpec(parameters=RecordSpec(beta=beta_spec))` and `OutputSpec(RecordSpec(parameters=RecordSpec(beta=beta_spec)))` therefore both have the paths `parameters` and `parameters/beta`, and they differ only in the term they return. `with_path_names` renames and moves nodes by these paths under the rules of II.6. Its result keeps the packaging, so a whole term's component is renamed in place and the term's fields stay under it.
 
-**Type holes.** `OutputSpec(mean=None)` declares the component `mean` with its term spec pending. `None` is permitted only in the keyword form, so an exposed record takes a complete `RecordSpec`. A producer fills the hole with `with_spec` once it knows the term's type.
+**Type holes.** `OutputSpec(mean=None)` declares the component `mean` with its term spec pending. `None` is permitted only in the keyword form, so an exposed record takes a complete `RecordSpec`. A producer fills the hole with `with_spec` once it knows the term's type. `None` means only a pending type, so an opaque field of a `RecordSpec` is declared as `OpaqueSpec()` (III.5).
 
 ### Rationale
 

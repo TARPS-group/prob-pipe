@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import Normal, Provenance, Record, RecordSpec, provenance_ancestors
+from probpipe import Normal, OpaqueSpec, Provenance, Record, RecordSpec, provenance_ancestors
 
 # ---------------------------------------------------------------------------
 # Construction
@@ -1103,7 +1103,7 @@ class TestSpecStorage:
         assert r.spec is spec
 
     def test_the_two_declaration_forms_agree(self):
-        tpl = RecordSpec(x=(2,), label=None)
+        tpl = RecordSpec(x=(2,), label=OpaqueSpec())
         fields = {"x": jnp.zeros(2), "label": "a"}
         assert Record("r", dict(fields), event_template=tpl) == Record(
             "r", dict(fields), event_template=RecordSpec(tpl)
@@ -1119,7 +1119,7 @@ class TestSpecStorage:
         numeric = RecordSpec(x=(2,))
         assert isinstance(Record("r", {"x": jnp.zeros(2)}, event_template=numeric), NumericRecord)
         # A non-numeric leaf in the declaration vetoes promotion.
-        mixed = RecordSpec(x=(2,), label=None)
+        mixed = RecordSpec(x=(2,), label=OpaqueSpec())
         r = Record("r", {"x": jnp.zeros(2), "label": "a"}, event_template=mixed)
         assert not isinstance(r, NumericRecord)
 
