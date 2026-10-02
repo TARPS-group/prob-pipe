@@ -175,6 +175,17 @@ Every tracked term exposes `raw()` as the single access point to the representat
 
 Accessing a container returns a **view**, for example a record field or a batch element. A container's view is a tracked term named from the accessor, which is the field key for a record and the selected levels for a batch; its provenance records the container and the source term where one was supplied.
 
+**The repr.** A term's repr reads as a call of its public class's constructor:
+1. the label: first and positionally, as in `RecordBatch('schools', ...)`;
+2. a batch's levels: a mapping of level name to size, as in `levels={'chain': 4, 'draw': 500}`, with the tuple of its sizes for a level of several axes;
+3. the element's structure, named for what it is:
+   - a record: its field paths, as in `fields=('data/effect', 'data/se', 'label')`;
+   - an array: its shape and dtype, as in `NumericArray('x', shape=(3,), dtype=float32)`;
+   - a batch of arrays or laws: its element spec;
+   - a distribution: its family parameters, and its event declaration where that differs from the default of III.7.
+
+A spec reads as its own constructor call, with the attributes it sets. A private class reads as its public class or kind, so a law that renames another reads as the class of the law it renames. A repr longer than about 100 characters shows one argument per line.
+
 **A tracked term is immutable.** `TrackedTerm` carries an immutability guard automatically, so assignment and deletion raise an error. Immutability requires that every transformation, including each `with_*` method, returns a new term that shares the representation.
 
 Identity is **boundary-attached** under compiled execution. Inside a `jit` or `vmap` trace a term presents as its raw representation with only its spec as static data, so name, provenance, and annotations never enter a trace and a name can never affect compilation-cache identity; the tracked result is minted at the enclosing call boundary.
@@ -216,7 +227,7 @@ Fingerprints are best-effort and tiered, from a content hash, through the code h
 
 ### Rationale
 
-`TrackedTerm` serves the two non-mathematical principles, `C5 – Naming for unambiguous meaning` and `C6 – Traceable and reproducible workflows`. Housing the spec on the tracked base is `D6 – Single source of truth` for a term's type: one slot, declared once, that every kind's accessors are views on. Recording the resolved controls, not just the parents, turns traceability into reproducibility: re-running the recorded operation on the recorded inputs with the recorded controls reproduces the result. Auto-derived names keep every intermediate object identifiable without forcing the user to label it (`C5 – Naming for unambiguous meaning`), and boundary attachment keeps names inert in computation, so a name never decides what gets compiled. Immutability is `C2 – Functional interface over immutable objects` embodied, and confining the one writable store to a container that no operation reads keeps that contract intact in substance. Carrying annotations on the base makes every tracked term annotatable, including a batch of draws. `raw()` is `B3 – Tracked forms out by default` for a term already in hand: the representation is one explicit call away.
+`TrackedTerm` serves the two non-mathematical principles, `C5 – Naming for unambiguous meaning` and `C6 – Traceable and reproducible workflows`. Housing the spec on the tracked base is `D6 – Single source of truth` for a term's type: one slot, declared once, that every kind's accessors are views on. Recording the resolved controls, not just the parents, turns traceability into reproducibility: re-running the recorded operation on the recorded inputs with the recorded controls reproduces the result. Auto-derived names keep every intermediate object identifiable without forcing the user to label it (`C5 – Naming for unambiguous meaning`), and boundary attachment keeps names inert in computation, so a name never decides what gets compiled. Immutability is `C2 – Functional interface over immutable objects` embodied, and confining the one writable store to a container that no operation reads keeps that contract intact in substance. Carrying annotations on the base makes every tracked term annotatable, including a batch of draws. `raw()` is `B3 – Tracked forms out by default` for a term already in hand: the representation is one explicit call away. The repr serves `C5 – Naming for unambiguous meaning`, since it names the term's label, its public class, and each part by what it is, so a reader learns what a term is and holds from its repr alone.
 
 ### Notes
 
@@ -260,7 +271,7 @@ class Batch[E](TrackedTerm):
     # rename levels old -> new; shapes and elements unchanged, as with_path_names is for fields
     def __len__(self) -> int: ...                       # leading-axis size, batch_shape[0]
     def __iter__(self) -> Iterator[E | Self]: ...       # over the leading batch axis
-    def __repr__(self) -> str: ...                      # the class, the name, and each level with its sizes
+    def __repr__(self) -> str: ...                      # the label, the levels, and the elements' structure (II.4)
     def __getitem__(self, key: Any) -> Any: ...         # a position indexes the axes, a name a component of every element
     def at_levels(self, /, **levels: int | slice | None | tuple[int | slice | None, ...]) -> E | Self: ...
     # index by named level (a view); unnamed levels kept whole, None means the whole axis (:)
