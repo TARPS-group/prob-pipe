@@ -73,7 +73,7 @@ from typing import Any, Self, cast
 
 from ._record_spec import RecordSpec, _check_kind_of
 from ._repr import format_levels, public_class_name, term_repr
-from ._spec_base import OpaqueSpec, _unify_array_shape, _unify_specs
+from ._spec_base import OpaqueSpec, _agree, _unify_array_shape, _unify_specs
 from ._specs import TermSpec
 from .provenance import Provenance
 from .tracked import TrackedTerm
@@ -360,7 +360,7 @@ def _admits(declared: TermSpec, actual: TermSpec) -> bool:
     if declared == actual:
         return True
     if isinstance(declared, OpaqueSpec) and isinstance(actual, OpaqueSpec):
-        return declared.type is None and declared.meta == actual.meta
+        return declared.type in (None, actual.type) and _agree(declared.meta, actual.meta)
     if isinstance(declared, RecordSpec) and isinstance(actual, RecordSpec):
         return list(declared.keys()) == list(actual.keys()) and all(
             _admits(declared[key], actual[key]) for key in declared

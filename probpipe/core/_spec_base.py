@@ -539,7 +539,9 @@ class OpaqueSpec(TermSpec):
         from a value infers it.
     meta : Hashable
         Free-form metadata, such as units or a tag. It is part of the spec's
-        equality and hash, and it is never checked against a value or inferred.
+        equality and hash, and it is never checked against a value or inferred,
+        so ``None`` unifies with a set ``meta``, as an open ``type`` does with a
+        set one.
 
     Raises
     ------
@@ -577,7 +579,7 @@ class OpaqueSpec(TermSpec):
         return self.type is None or isinstance(_opaque_value(value), self.type)
 
     def _bind_dims_from_spec(self, actual: TermSpec, bindings: dict[str, int], path: str) -> bool:
-        """Check another opaque spec: equal ``meta``, and types equal or one of them ``None``.
+        """Check another opaque spec: types and ``meta`` each equal or one of them ``None``.
 
         Raises
         ------
@@ -586,8 +588,7 @@ class OpaqueSpec(TermSpec):
         """
         if not isinstance(actual, OpaqueSpec):
             return False
-        known = self.type is None or actual.type is None or self.type is actual.type
-        if not known or self.meta != actual.meta:
+        if not _agree(self.type, actual.type) or not _agree(self.meta, actual.meta):
             raise ValueError(f"{path} spec {actual!r} does not conform to {self!r}")
         return True
 
@@ -605,9 +606,18 @@ class OpaqueSpec(TermSpec):
         return fields
 
 
+def _agree(first: Any, second: Any) -> bool:
+    """Whether two opaque attributes unify: equal, or one of them ``None``."""
+    return first is None or second is None or first == second
+
+
 def _known_type(first: OpaqueSpec, second: OpaqueSpec) -> OpaqueSpec:
-    """The unification of two opaque specs that unify, which takes the known type."""
-    return first if first.type is not None else second
+    """The unification of two opaque specs that unify, which takes the known type and ``meta``."""
+    unified = OpaqueSpec(
+        type=first.type if first.type is not None else second.type,
+        meta=first.meta if first.meta is not None else second.meta,
+    )
+    return first if unified == first else second if unified == second else unified
 
 
 def _opaque_value(value: Any) -> Any:

@@ -20,6 +20,7 @@ from probpipe import (
     Function,
     InputSpec,
     NumericRecord,
+    Opaque,
     OutputSpec,
     Record,
     positive,
@@ -112,6 +113,26 @@ class TestOpaqueSpecTypeAndMeta:
     def test_specs_with_different_types_or_meta_do_not_unify(self, first, second):
         with pytest.raises(ValueError, match="does not conform"):
             first.bind_dims_from_spec(second)
+
+    def test_an_open_meta_unifies_with_a_set_meta_and_takes_it(self):
+        """An inferred spec carries no meta, so a declared meta fills it in (Z20)."""
+        declared, inferred = OpaqueSpec(meta="units"), OpaqueSpec(type=str)
+
+        assert declared.bind_dims_from_spec(inferred) == declared
+        assert inferred.bind_dims_from_spec(declared) == inferred
+        unified = OpaqueSpec(type=str, meta="units")
+        assert OutputSpec(label=declared).with_spec(inferred).spec == unified
+        assert OutputSpec(label=inferred).with_spec(declared).spec == unified
+
+    def test_a_function_returning_an_opaque_value_keeps_the_declared_meta(self):
+        tagged = Function(
+            "tagged",
+            lambda: Opaque("unit", "m"),
+            output_spec=OutputSpec(unit=OpaqueSpec(meta="units")),
+        )
+
+        assert tagged().spec == OpaqueSpec(type=str, meta="units")
+        assert tagged().raw() == "m"
 
     def test_completion_keeps_the_declared_type(self):
         declared = OutputSpec(label=OpaqueSpec(type=str))

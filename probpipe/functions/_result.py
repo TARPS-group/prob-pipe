@@ -31,8 +31,8 @@ from ..core._opaque import Opaque
 from ..core._opaque_batch import OpaqueBatch
 from ..core._record_batch import RecordBatch, _batch_class_for, _MappedBatchColumns
 from ..core._record_spec import _reshaped_template
-from ..core._spec_base import _full_array_shape_or_none, _unify_specs
-from ..core._specs import NumericArraySpec, OutputSpec, RecordSpec
+from ..core._spec_base import _full_array_shape_or_none, _known_type, _unify_specs
+from ..core._specs import NumericArraySpec, OpaqueSpec, OutputSpec, RecordSpec
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
@@ -84,9 +84,6 @@ def _wrap_declared_function_output(
         from ..core._numeric_array import NumericArray
 
         return NumericArray(function_name, result, spec=spec)
-    from ..core._opaque import Opaque
-    from ..core._specs import OpaqueSpec
-
     if isinstance(spec, OpaqueSpec):
         return Opaque(function_name, result, spec=spec)
     from ..values import Function, FunctionSpec
@@ -223,6 +220,11 @@ def _copy_result_term(value: TrackedTerm, *, output_spec: OutputSpec | None = No
 
         if isinstance(clone, NumericArray):
             object.__setattr__(clone, "_spec", spec)
+    elif isinstance(spec, OpaqueSpec):
+        if isinstance(clone, Opaque):
+            # The declaration and the term's own spec unified at completion, so the
+            # term takes the known type and the set meta of the two.
+            object.__setattr__(clone, "_spec", _known_type(spec, clone.spec))
     elif spec is not None:
         from ..core._batch import Batch, BatchSpec
         from ..values import Function, FunctionSpec
