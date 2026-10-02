@@ -1125,8 +1125,10 @@ def _slots_of(
         spec = declared.get(parameter.name, parameter.annotation)
         if not isinstance(spec, TermSpec):
             raise TypeError(
-                f"the given slot {parameter.name!r} of {name!r} declares no term spec; annotate "
-                f"the parameter with one, or name it in given_spec"
+                f"the given slot {parameter.name!r} of {name!r} declares no term spec. Pass "
+                f"given_spec={{{parameter.name!r}: NumericArraySpec(())}} for a real scalar, or "
+                f"NumericArraySpec((n,)) for a vector of length n, or annotate the parameter "
+                f"with the spec"
             )
         slots[parameter.name] = spec
     return InputSpec(slots)

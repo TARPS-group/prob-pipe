@@ -95,6 +95,12 @@ class TestTheGivenSlots:
                 "y", lambda mu, tau: Normal("y", mu, tau), given_spec={"mu": REAL}
             )
 
+    def test_the_refusal_shows_the_declaration_that_fixes_it(self):
+        with pytest.raises(TypeError, match=r"given_spec=\{'tau': NumericArraySpec\(\(\)\)\}"):
+            conditional_distribution(
+                "y", lambda mu, tau: Normal("y", mu, tau), given_spec={"mu": REAL}
+            )
+
     def test_given_spec_naming_no_parameter_raises(self):
         with pytest.raises(TypeError, match="'sigma'"):
             conditional_distribution("y", _location, given_spec={**SLOTS, "sigma": POSITIVE})
