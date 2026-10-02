@@ -1077,6 +1077,52 @@ class TestCoSamplingThroughACall:
         np.testing.assert_allclose(np.asarray(result.weights), np.full(3, 1 / 3))
 
 
+class TestTheDrawsOfALargeEmpiricalLaw:
+    """A lift draws an empirical argument's atoms with a lower variance than independent draws."""
+
+    def test_equally_weighted_atoms_are_drawn_without_replacement(self):
+        @function
+        def identity(x):
+            return x
+
+        with workflow_run(seed=0):
+            result = identity(EmpiricalDistribution("x", jnp.arange(1000.0)))
+        values = np.asarray(result.atoms).ravel()
+        assert result.num_atoms == Function.DEFAULT_N_BROADCAST_SAMPLES
+        assert len(np.unique(values)) == result.num_atoms
+
+    def test_more_draws_than_atoms_take_each_atom_equally_often(self):
+        """Two 20-atom laws: one is enumerated and the other drawn 240 times, 12 per atom."""
+
+        @function
+        def pair(x, y):
+            return jnp.stack([x, y])
+
+        with workflow_run(seed=0):
+            result = pair(
+                EmpiricalDistribution("a", jnp.arange(20.0)),
+                EmpiricalDistribution("b", 100.0 + jnp.arange(20.0)),
+            )
+        sampled = np.asarray(result.atoms)[:, 1]
+        assert result.num_atoms == 240
+        assert set(np.unique(sampled, return_counts=True)[1].tolist()) == {12}
+
+    def test_weighted_atoms_are_drawn_by_stratified_resampling(self):
+        """Each atom is drawn within one stratum of its expected number of times on either side."""
+
+        @function
+        def identity(x):
+            return x
+
+        weights = jax.random.uniform(jax.random.PRNGKey(1), (1000,))
+        weights = weights / weights.sum()
+        with workflow_run(seed=0):
+            result = identity(EmpiricalDistribution("w", jnp.arange(1000.0), weights=weights))
+        drawn = np.bincount(np.asarray(result.atoms).ravel().astype(int), minlength=1000)
+        expected = result.num_atoms * np.asarray(weights)
+        assert np.all(np.abs(drawn - expected) < 2.0)
+
+
 class TestIndexSampleHelper:
     """Direct unit tests for the module-level ``_index_sample`` helper."""
 

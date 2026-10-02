@@ -21,12 +21,17 @@ transform does not reach a captured plan.
 from __future__ import annotations
 
 import hashlib
+import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+import jax
+import jax.numpy as jnp
+
 from ..distributions._batches import _element_source
 from ..distributions._distribution import Distribution
+from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._views import FieldView, _projector, _RenamedDistribution
 
 _DISTRIBUTION_SAMPLING_ABI = "probpipe.distribution_sampling/v1"
@@ -231,14 +236,45 @@ def _capture_stochastic_consumer(
 def _sampler(root: Distribution) -> Callable[[Any, tuple[int, ...]], Any]:
     """The sampler of *root*, which reads ``root._sample`` when it draws.
 
-    A check reads the root of a law that does not sample without failing, and
-    the sampling lift then declines the law.
+    An empirical root draws its atoms by :func:`_lift_indices`. A check reads
+    the root of a law that does not sample without failing, and the sampling
+    lift then declines the law.
     """
+    if isinstance(root, EmpiricalDistribution):
+
+        def sample_atoms(key: Any, sample_shape: tuple[int, ...]) -> Any:
+            return root._atoms_at(_lift_indices(key, root, sample_shape))
+
+        return sample_atoms
 
     def sample(key: Any, sample_shape: tuple[int, ...]) -> Any:
         return root._sample(key, sample_shape)
 
     return sample
+
+
+def _lift_indices(key: Any, law: EmpiricalDistribution, sample_shape: tuple[int, ...]) -> Any:
+    """The indices of the atoms a lift draws from the empirical *law*, shaped as *sample_shape*.
+
+    Both schemes estimate a mean under the law without bias and with no more
+    variance than independent draws. Equally weighted atoms are drawn without
+    replacement, so ``m`` draws of ``n`` atoms take each atom ``m // n`` or
+    ``m // n + 1`` times. Weighted atoms are drawn by stratified resampling,
+    which takes one atom from each of ``m`` equal strata of the cumulative
+    weights. The indices are then shuffled, so their order pairs them with the
+    other arguments' draws at random.
+    """
+    n, m = law.num_atoms, math.prod(sample_shape)
+    order_key, draw_key = jax.random.split(key)
+    weights = law._p
+    if weights is None:
+        whole, rest = divmod(m, n)
+        extra = jax.random.choice(draw_key, n, (rest,), replace=False)
+        index = jnp.concatenate([jnp.tile(jnp.arange(n), whole), extra])
+    else:
+        positions = (jnp.arange(m) + jax.random.uniform(draw_key, (m,))) / m
+        index = jnp.minimum(jnp.searchsorted(jnp.cumsum(weights), positions), n - 1)
+    return jnp.reshape(jax.random.permutation(order_key, index), sample_shape)
 
 
 def _capture_element(
