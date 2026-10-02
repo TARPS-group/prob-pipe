@@ -14,6 +14,7 @@ import pytest
 
 from probpipe import (
     DistributionSpec,
+    Function,
     FunctionSpec,
     InputSpec,
     Normal,
@@ -30,7 +31,6 @@ from probpipe.core._fingerprint import (
     fingerprint,
 )
 from probpipe.core.provenance import ParentInfo, Provenance
-from probpipe.values._function_base import Function
 
 # ===========================================================================
 # 1. Return type and format

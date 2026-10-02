@@ -12,11 +12,11 @@ import pytest
 from probpipe import (
     BroadcastDistribution,
     EmpiricalDistribution,
+    Function,
     MultivariateNormal,
     Normal,
     workflow_run,
 )
-from probpipe.values._function_base import Function
 
 
 @pytest.fixture

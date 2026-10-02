@@ -590,11 +590,14 @@ def _jax_traceability_error(
                     root = binding.root
                     from ..core._specs import _components_record
 
-                    template = _components_record(root.event_spec)
-                    if not isinstance(template, NumericRecordSpec) or not template.is_concrete:
+                    record_spec = _components_record(root.event_spec)
+                    if (
+                        not isinstance(record_spec, NumericRecordSpec)
+                        or not record_spec.is_concrete
+                    ):
                         raise TypeError(
                             f"{type(root).__name__} does not declare a concrete numeric "
-                            "event template for side-effect-free JAX probing"
+                            "event spec for side-effect-free JAX probing"
                         )
                     try:
                         dtypes = root.dtypes
@@ -604,12 +607,12 @@ def _jax_traceability_error(
                             "side-effect-free JAX probing"
                         ) from error
                     columns = {}
-                    for path in template:
+                    for path in record_spec:
                         dtype = dtypes.get(path)
                         if dtype is None:
                             dtype = dtypes[path.split("/", 1)[0]]
                         columns[path] = jax.ShapeDtypeStruct(
-                            (1, *template[path].shape),
+                            (1, *record_spec[path].shape),
                             dtype,
                         )
                     if isinstance(root, RecordDistribution):
@@ -617,7 +620,7 @@ def _jax_traceability_error(
                             root.name,
                             columns,
                             "draw",
-                            element_spec=template,
+                            element_spec=record_spec,
                             axes_per_level=(1,),
                         )
                     else:

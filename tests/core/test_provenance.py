@@ -12,6 +12,7 @@ import tensorflow_probability.substrates.jax.bijectors as tfb
 import probpipe
 from probpipe import (
     Beta,
+    Function,
     JointGaussian,
     Normal,
     NumericRecord,
@@ -29,7 +30,6 @@ from probpipe import (
     workflow_run,
 )
 from probpipe.core.provenance import ParentInfo
-from probpipe.values._function_base import Function
 
 # ===========================================================================
 # 1. Provenance basics (dataclass, with_provenance, write-once)

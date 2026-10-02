@@ -9,6 +9,7 @@ import pytest
 import scipy.stats
 
 from probpipe import (
+    Function,
     Normal,
     Record,
     RecordBatch,
@@ -21,7 +22,6 @@ from probpipe import (
     workflow_run,
 )
 from probpipe.core._record_distribution import _RecordDistributionView
-from probpipe.values._function_base import Function
 
 # ---------------------------------------------------------------------------
 # Construction

@@ -573,7 +573,7 @@ class TestFunctionRouting:
     """Verify public ops are Function instances."""
 
     def test_ops_are_functions(self):
-        from probpipe.values._function_base import Function
+        from probpipe import Function
 
         for name in ops.__all__:
             fn = getattr(ops, name)

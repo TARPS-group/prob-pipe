@@ -200,7 +200,7 @@ class TestPredictiveCheck:
         assert "p_value" in result
 
     def test_is_function(self):
-        from probpipe.values._function_base import Function
+        from probpipe import Function
 
         assert isinstance(predictive_check, Function)
 

@@ -18,6 +18,7 @@ import pytest
 from probpipe import (
     DistributionSpec,
     Function,
+    FunctionSpec,
     InputSpec,
     NumericRecord,
     OutputSpec,
@@ -39,7 +40,6 @@ from probpipe.core._specs import (
     RecordSpec,
     TermSpec,
 )
-from probpipe.values._function_base import FunctionSpec
 
 
 @dataclass(frozen=True)

@@ -9,6 +9,7 @@ import pytest
 
 from probpipe import (
     EmpiricalDistribution,
+    Function,
     JointEmpirical,
     Record,
     RecordBatch,
@@ -24,7 +25,6 @@ from probpipe import (
     workflow_run,
 )
 from probpipe.core._record_distribution import _RecordDistributionView
-from probpipe.values._function_base import Function
 
 # ---------------------------------------------------------------------------
 # Construction

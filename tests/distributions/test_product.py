@@ -9,6 +9,7 @@ import pytest
 
 from probpipe import (
     EmpiricalDistribution,
+    Function,
     Gamma,
     MultivariateNormal,
     Normal,
@@ -27,7 +28,6 @@ from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._record_batch import RecordBatch
 from probpipe.core._record_distribution import _RecordDistributionView
 from probpipe.core.record import Record
-from probpipe.values._function_base import Function
 
 # ---------------------------------------------------------------------------
 # Fixtures

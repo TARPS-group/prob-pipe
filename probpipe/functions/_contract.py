@@ -21,6 +21,10 @@ def _lifted_element_spec(
         return value.element_spec
     if isinstance(value, Distribution):
         spec = value.event_spec.spec
+        if spec is None:
+            raise ValueError(
+                f"Function {function_name!r} input {name!r} requires a declared event term spec"
+            )
         if isinstance(spec, RecordSpec):
             path = _sole_leaf_path(spec)
             if path is not None:
@@ -46,7 +50,7 @@ def _bind_planned_function_inputs(
     context = f"Function {function_name!r} input"
     if input_spec.keys() != values.keys():
         raise ValueError(
-            f"{context} fields {sorted(values)} do not match template fields {sorted(input_spec)}"
+            f"{context} slots {sorted(values)} do not match declared slots {sorted(input_spec)}"
         )
     bindings: dict[str, int] = {}
     for name, expected in input_spec.items():

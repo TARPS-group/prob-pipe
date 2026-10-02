@@ -39,7 +39,17 @@ _EXPORTS = {
     "workflow_method": "probpipe.functions._module",
     "abstract_workflow_method": "probpipe.functions._module",
 }
-__all__ = list(_EXPORTS)
+__all__ = [
+    "AbstractModule",
+    "Function",
+    "FunctionSpec",
+    "Module",
+    "abstract_workflow_method",
+    "function",
+    "replay_run",
+    "workflow_method",
+    "workflow_run",
+]
 
 
 def __getattr__(name: str) -> Any:

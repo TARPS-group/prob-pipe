@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from probpipe import (
+    Function,
     JointGaussian,
     MultivariateNormal,
     Record,
@@ -20,7 +21,6 @@ from probpipe import (
     variance,
     workflow_run,
 )
-from probpipe.values._function_base import Function
 
 # ---------------------------------------------------------------------------
 # Construction

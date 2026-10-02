@@ -734,7 +734,7 @@ class TestWorkflowCallableAnchor:
         assert source["source_location"].endswith("tests/functions/_replay_fixtures.py")
         assert len(source["source_artifact_digest"]) == 64
 
-    def test_function_templates_participate_in_definition_digest(self):
+    def test_function_declarations_participate_in_definition_digest(self):
         plain = Function(name="replayable_identity", fn=replayable_identity, n_broadcast_samples=5)
         declared = Function(
             name="replayable_identity",
