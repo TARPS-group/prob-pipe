@@ -563,6 +563,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   infers `n0`. An unmet optional slot leaves the joint unconditional.
   `InputSpec` records the optional slots, as `InputSpec.optional`,
   `InputSpec.required`, `with_optional`, and `without`.
+- **`AGENTS.md` and `CLAUDE.md` guide coding agents.** `AGENTS.md` maps each
+  task to the document that owns its rules, and it holds the everyday commands
+  and the verification steps, which move there from `CONTRIBUTING.md`.
+  `CLAUDE.md` imports it for Claude Code, and `.claude/settings.json` formats
+  each Python file that a Claude Code edit writes.
 - **Completing an `OutputSpec`.** A producer completes a declaration with the
   spec of the term it returns.
   - `with_spec(spec)` returns the declaration with its type set to `spec`. It

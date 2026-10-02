@@ -135,17 +135,11 @@ These commands build the **`probpipe-core`** distribution (the repository root);
 the friendly `probpipe` name is a separate code-less metapackage that bundles the
 backends — see *Package Structure* below.
 
-### Running Tests
+### Everyday commands
 
-```bash
-uv run pytest                              # parallel via xdist
-uv run pytest -p no:xdist -o "addopts="    # disable parallel for debugging
-uv run pytest tests/test_foo.py -x -v      # single file, stop on first failure
-```
-
-`uv run` executes inside the synced `.venv` without manual activation; you
-can also `source .venv/bin/activate` once per shell and then just type
-`pytest`.
+`AGENTS.md` § Commands lists the commands for the tests, the linter, the
+formatter, the type checker, the docs build, and the design checks.
+`AGENTS.md` § Verify states how to choose and check the tests a change needs.
 
 ### Test quality
 
@@ -158,14 +152,7 @@ can also `source .venv/bin/activate` once per shell and then just type
 - Inference code gets a statistical sanity check (parameter estimates and
   uncertainty roughly correct on a known target), not just shape
   assertions.
-
-### Coverage
-
-```bash
-uv run pytest --cov=probpipe --cov-report=term-missing
-```
-
-Target: >90% on all modules.
+- Coverage targets more than 90% of each module.
 
 ### Test quality for numerical code
 
@@ -182,16 +169,9 @@ conventions in [STYLE_GUIDE.md § 8.6](STYLE_GUIDE.md#86-numerical-correctness-a
 ### Code formatting
 
 Formatting is owned by **`ruff format`** (Black-style) — don't hand-format
-Python. The `ruff-format` pre-commit hook reformats on commit; run it directly
-with:
-
-```bash
-uv run ruff format .          # reformat the tree
-uv run ruff format --check .  # verify (this is what CI enforces)
-```
-
-CI checks the formatting with the blocking gate of *Linting & pre-commit*
-below. A few specifics: the line
+Python. The `ruff-format` pre-commit hook reformats on commit, and CI checks the
+formatting with the blocking gate of *Linting & pre-commit* below. A few
+specifics: the line
 length is 100 (`[tool.ruff]` in `pyproject.toml`); ruff keeps code on one line
 when it fits and explodes imports / call arguments one-item-per-line when it does
 not; string quotes normalize to double. Notebooks are excluded
@@ -235,15 +215,10 @@ Homebrew or pipx works too.
 
 Once the hooks are installed, `ruff` (lint + format) plus a few file-hygiene hooks
 run on your staged files at commit time. The hooks see only the files you're
-changing, so a commit is checked without re-linting the whole tree. To run
-manually:
+changing, so a commit is checked without re-linting the whole tree.
+`AGENTS.md` § Commands runs the linter and the hooks over the whole tree.
 
-```bash
-uv run ruff check .          # lint the whole tree (uses the uv.lock-pinned ruff)
-pre-commit run --all-files   # run every hook over everything
-```
-
-A full `--all-files` run may surface pre-existing file-hygiene nits (trailing
+A full `pre-commit run --all-files` run may surface pre-existing file-hygiene nits (trailing
 whitespace, end-of-file) in files you did not touch; the fixer hooks clean those
 as the relevant files are next edited.
 
@@ -256,12 +231,8 @@ pre-commit hooks apply the same checks to your staged files at commit time.
 ### Type checking
 
 Type checking uses [pyright](https://microsoft.github.io/pyright/)
-(configured in `pyrightconfig.json`, scoped to the `probpipe` package).
-Run it locally in the synced environment:
-
-```bash
-uv run --with 'pyright[nodejs]' pyright
-```
+(configured in `pyrightconfig.json`, scoped to the `probpipe` package), and
+`AGENTS.md` § Commands runs it in the synced environment.
 
 CI pins a specific pyright version for a reproducible baseline, so a
 local run on a newer pyright may report a slightly different count — pin
@@ -283,13 +254,9 @@ well-typed is user-facing quality, not just an internal nicety.
 
 ### Documentation
 
-```bash
-uv run mkdocs build --strict   # build docs, fail on warnings
-uv run mkdocs serve            # local preview
-```
-
-API docs use `mkdocstrings` directives in `docs/api/*.md` referencing
-fully-qualified Python paths.
+`AGENTS.md` § Commands builds and previews the docs site. API docs use
+`mkdocstrings` directives in `docs/api/*.md` referencing fully-qualified
+Python paths.
 
 A behavior or API change and its documentation ship in the **same PR**:
 docstrings, the user-guide notebooks, README / `docs/index.md`, the

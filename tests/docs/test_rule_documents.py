@@ -16,6 +16,9 @@ citation, and each kind of citation is checked:
 5. a link to a file resolves, and its anchor names a heading of that file;
 6. a section pointer, such as "STYLE_GUIDE.md §8.6" or "design II.4", names a
    heading of the file or a section of the design reference.
+
+``AGENTS.md`` also stays within :data:`AGENTS_LINE_BUDGET` lines and imports no
+other file, and ``CLAUDE.md`` imports it.
 """
 
 from __future__ import annotations
@@ -47,6 +50,9 @@ RULE_DOCUMENTS = (
     ".github/PULL_REQUEST_TEMPLATE.md",
 )
 AGENT_FILES = ("AGENTS.md", "CLAUDE.md")
+
+#: The most lines ``AGENTS.md`` may have, since every agent session loads all of it.
+AGENTS_LINE_BUDGET = 120
 
 #: Skills that describe documentation systems in general, so the paths they cite are examples.
 GENERIC_SKILLS = frozenset({"criticize-with-docs"})
@@ -343,3 +349,19 @@ def test_every_citation_exists(document):
     ``EXTERNAL_NAMES``.
     """
     assert _problems(document) == []
+
+
+def test_agents_md_is_short_and_imports_nothing():
+    """``AGENTS.md`` fits its line budget and holds its own content.
+
+    Codex and Copilot read an ``@path`` line as text rather than as an import,
+    so the file states everything it says itself.
+    """
+    lines = (ROOT / "AGENTS.md").read_text().splitlines()
+    assert len(lines) <= AGENTS_LINE_BUDGET
+    assert [line for line in lines if line.startswith("@")] == []
+
+
+def test_claude_md_imports_agents_md():
+    """Claude Code reads ``AGENTS.md`` through the import in ``CLAUDE.md``."""
+    assert "@AGENTS.md" in (ROOT / "CLAUDE.md").read_text().splitlines()
