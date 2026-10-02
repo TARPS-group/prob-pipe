@@ -1019,8 +1019,8 @@ class TestMarginalValues:
         assert isinstance(value, dict) and list(value) == ["u", "v"]
         assert (float(value["u"]), float(value["v"])) == (1.0, 2.0)
 
-    def test_a_marginal_the_guard_rejects_raises(self):
-        with pytest.raises(ResolutionError, match=_mentions("'y'", "'prior'")):
+    def test_a_marginal_the_guard_rejects_raises_naming_the_fields(self):
+        with pytest.raises(ResolutionError, match=_mentions("['y']", "['beta']")):
             (_likelihood() * _prior())._marginal("y")
 
 

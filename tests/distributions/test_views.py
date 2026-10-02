@@ -826,6 +826,15 @@ class TestGuards:
         # The root factor's marginal is exact, and the child's integrates out its parent.
         assert report.feasible is (path == "beta")
 
+    def test_the_density_refusal_names_the_fields_rather_than_the_factors(self):
+        joint = _ScoringKernel("likelihood", {"beta": _REAL}, OutputSpec(y=_REAL)) * Normal(
+            "beta", 0.0, 1.0
+        ).with_name("prior")
+        report = _capability_guard(FieldView(joint, "y"), "_log_prob")
+        assert report.feasible is False
+        assert "['y']" in report.description and "['beta']" in report.description
+        assert "prior" not in report.description
+
     def test_a_joint_view_of_a_factor_without_a_density_claims_none(self):
         joint = _dependent_joint()
         assert not _DENSITIES & _claimed(FieldView(joint, "y"))

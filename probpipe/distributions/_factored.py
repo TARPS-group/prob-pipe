@@ -823,6 +823,13 @@ def _requested_paths(joint: Any, path: str | tuple[str, ...]) -> tuple[str, ...]
     return paths
 
 
+def _fields_of(graph: _FactorGraph, indices: Sequence[int]) -> list[str]:
+    """The fields the factors of *graph* at *indices* produce, in the joint's order."""
+    return [
+        component for index in indices for component in graph.factors[index].event_spec.components
+    ]
+
+
 def _marginal_guard(self: Any, path: str | tuple[str, ...]) -> Feasibility:
     """Whether the marginal at *path* is exact, by the factor graph.
 
@@ -843,24 +850,30 @@ def _marginal_guard(self: Any, path: str | tuple[str, ...]) -> Feasibility:
     targets = {graph.producers[head] for head in heads}
     ancestors = graph.ancestors(targets) - targets
     if ancestors:
-        names = sorted(graph.factors[index].name for index in ancestors)
+        integrated = _fields_of(graph, sorted(ancestors))
         return Feasibility(
-            False, f"the marginal integrates out {names}, which the requested fields condition on"
+            False,
+            f"the marginal at {list(paths)} integrates out the fields {integrated}, which the "
+            f"requested fields condition on",
         )
     whole = {p for p in paths if _PATH_SEP not in p}
     for consumer, producer, name in graph.edges:
         if consumer in targets and producer in targets and name not in whole:
             return Feasibility(
                 False,
-                f"the marginal reduces {name!r}, which {graph.factors[consumer].name!r} "
-                f"conditions on",
+                f"the marginal at {list(paths)} reduces the field {name!r}, which the fields "
+                f"{_fields_of(graph, [consumer])} condition on",
             )
     for index, requested in _requests(graph, paths).items():
         factor = graph.factors[index]
         if _kept_whole(factor, requested):
             continue
         if not isinstance(factor, SupportsMarginals):
-            return Feasibility(False, f"the factor {factor.name!r} has no marginals")
+            return Feasibility(
+                False,
+                f"the factor that produces the fields {_fields_of(graph, [index])} has no "
+                f"marginals",
+            )
         report = _capability_guard(factor, "_marginal", _factor_request(requested))
         if report.feasible is not True:
             return report
