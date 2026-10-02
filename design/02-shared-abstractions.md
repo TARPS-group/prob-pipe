@@ -184,7 +184,7 @@ Accessing a container returns a **view**, for example a record field or a batch 
    - a batch of arrays or laws: its element spec;
    - a distribution: its family parameters, and its event declaration where that differs from the default of III.7.
 
-A spec reads as its own constructor call, with the attributes it sets. A private class reads as its public class or kind, so a law that renames another reads as the class of the law it renames. A repr longer than about 100 characters shows one argument per line.
+A spec reads as its own constructor call, with the attributes it sets, and so does a report, such as a `MethodInfo` or a `CallReport` (V.1). A private class reads as its public class or kind, so a law that renames another reads as the class of the law it renames. A repr longer than about 100 characters shows one argument per line. In a notebook a `CallReport` also displays as a table, with a row for each route and the selected route marked.
 
 **A tracked term is immutable.** `TrackedTerm` carries an immutability guard automatically, so assignment and deletion raise an error. Immutability requires that every transformation, including each `with_*` method, returns a new term that shares the representation.
 
