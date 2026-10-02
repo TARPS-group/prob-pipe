@@ -48,9 +48,9 @@ from tests.functions._replay_fixtures import (
 )
 
 _CALLABLE_ANCHOR_GOLDENS = {
-    "cpython-3.12": "92a795553325b6425781f9166cdfd83da29959d7d26129a01925000b4cbfbf9f",
-    "cpython-3.13": "2320bf1c33ce9d254fe20edf62278620598a17595d58508b7a96b333e50b9210",
-    "cpython-3.14": "bd7c852911e479307947862500636b6cb3f4ce55ae06eb3a76278b03afba2f9f",
+    "cpython-3.12": "2a92e733a2419f171a678312905caf6e06ead64cec83b8a885da2c11b63bd274",
+    "cpython-3.13": "65082e77a30fe7100db1b2e32f12b100dfc7804d0d6720ed2d5f118682f8f2b4",
+    "cpython-3.14": "7b4aafde7bb0a713bb07e6140c1fa6aa044c0e03b562e84eed19a92c28162603",
 }
 
 
@@ -705,7 +705,7 @@ class TestWorkflowCallableAnchor:
             "supported": True,
             "module": "tests.functions._replay_fixtures",
             "qualname": "replayable_affine",
-            "definition_abi": "probpipe.callable_definition/v2",
+            "definition_abi": "probpipe.callable_definition/v1",
             "sha256": _CALLABLE_ANCHOR_GOLDENS[python_replay_abi],
             "signature_and_declarations": {
                 "parameters": [

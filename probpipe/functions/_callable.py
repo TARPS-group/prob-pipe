@@ -25,8 +25,8 @@ from ..core._specs import RecordSpec
 from ..core.constraints import Constraint
 from ..values._function_base import _CallableFunctionImplementation
 
-_CALLABLE_DEFINITION_ABI = "probpipe.callable_definition/v2"
-_CALLABLE_DEFINITION_DOMAIN = b"ProbPipe-callable-definition-v2\0"
+_CALLABLE_DEFINITION_ABI = "probpipe.callable_definition/v1"
+_CALLABLE_DEFINITION_DOMAIN = b"ProbPipe-callable-definition-v1\0"
 _PROBPIPE_REPLAY_ABI = "probpipe.replay/v1"
 _PYTHON_REPLAY_ABI = f"{sys.implementation.name}-{sys.version_info.major}.{sys.version_info.minor}"
 

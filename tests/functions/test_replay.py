@@ -112,7 +112,7 @@ class TestReplayScope:
         original = _draw(seed=17)
         restored = Provenance.from_dict(json.loads(json.dumps(original.provenance.to_dict())))
         anchor = restored.controls["replay"]["callable"]
-        assert anchor["definition_abi"] == "probpipe.callable_definition/v2"
+        assert anchor["definition_abi"] == "probpipe.callable_definition/v1"
         assert "signature_and_declarations" in anchor
         assert "signature_and_templates" not in anchor
 
@@ -276,10 +276,10 @@ class TestReplayOwnership:
 
 
 class TestReplayAdmission:
-    def test_legacy_callable_abi_is_rejected_before_new_fields_are_read(self):
+    def test_unknown_callable_abi_is_rejected_before_fields_are_read(self):
         payload = _draw().provenance.to_dict()
         anchor = payload["controls"]["replay"]["callable"]
-        anchor["definition_abi"] = "probpipe.callable_definition/v1"
+        anchor["definition_abi"] = "probpipe.callable_definition/v99"
         signature = anchor.pop("signature_and_declarations")
         anchor["signature_and_templates"] = signature
         signature["input_template"] = signature.pop("input_spec")
@@ -290,10 +290,10 @@ class TestReplayAdmission:
                 "probpipe.functions._context.derive_event_key_words_from_encoded",
                 side_effect=AssertionError("derived key"),
             ),
-            pytest.raises(ReplayCompatibilityError, match=r"callable definition ABI.*expected.*v2"),
+            pytest.raises(ReplayCompatibilityError, match=r"callable definition ABI.*expected.*v1"),
             replay_run(Provenance.from_dict(payload)),
         ):
-            raise AssertionError("A legacy callable anchor was admitted")
+            raise AssertionError("An unknown callable ABI was admitted")
 
     def test_legacy_unknown_and_malformed_recipes_fail_at_entry(self):
         with (
@@ -370,14 +370,13 @@ class TestReplayAdmission:
             target = target[segment]
         target["unknown_field_v2"] = 1
         changed = Provenance.from_dict(payload)
-        version = 2 if mapping_path[:2] == ("replay", "callable") else 1
 
         with (
             patch(
                 "probpipe.functions._context.derive_event_key_words_from_encoded",
                 side_effect=AssertionError("derived key"),
             ) as derive_key,
-            pytest.raises(ReplayCompatibilityError, match=f"version-{version} schema"),
+            pytest.raises(ReplayCompatibilityError, match="version-1 schema"),
             replay_run(changed),
         ):
             raise AssertionError("replay admission accepted unknown structure")
@@ -510,8 +509,6 @@ class TestReplayAdmission:
             expected_error = "randomness RNG recipe must be a mapping"
         elif field_name == "schema":
             expected_error = "schema"
-        elif mapping_path[:2] == ("replay", "callable"):
-            expected_error = "version-2 schema"
         else:
             expected_error = "version-1 schema"
 

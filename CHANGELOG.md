@@ -34,9 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fingerprints and replay anchors change, so regenerate persisted artifacts.
   They include `output_name` as well as the input and output declarations;
   changing only the display label with `with_name` preserves the content identity.
-  Callable anchors use `probpipe.callable_definition/v2` and the field
-  `signature_and_declarations`. Old callable anchors are rejected with an ABI
-  incompatibility error; regenerate their recipes. The RNG recipe, stochastic
+  Callable anchors use `probpipe.callable_definition/v1` and the field
+  `signature_and_declarations`. Regenerate persisted recipes whose
+  declaration fields or fingerprints no longer match. The RNG recipe, stochastic
   plan, and outer replay schema remain at v1.
   `Function.effective_workflow_kind` remains public and read-only: it resolves
   instance controls against the current global configuration on each access,

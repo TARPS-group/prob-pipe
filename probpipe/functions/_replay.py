@@ -27,7 +27,7 @@ _RNG_RECIPE_ABI = "probpipe.rng_recipe/v1"
 _RNG_ABI = "ProbPipe-RNG-v1"
 _REPLAY_ANCHOR_ABI = "probpipe.replay_anchor/v1"
 _STOCHASTIC_PLAN_ABI = "probpipe.stochastic_plan/v1"
-_CALLABLE_DEFINITION_ABI = "probpipe.callable_definition/v2"
+_CALLABLE_DEFINITION_ABI = "probpipe.callable_definition/v1"
 _PROBPIPE_REPLAY_ABI = "probpipe.replay/v1"
 _MANAGED_CHILD_POLICY_ABI = "probpipe.managed_child/v1"
 
@@ -1103,7 +1103,7 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
 
 
 def _validate_replay_structure(controls: Mapping[str, Any]) -> None:
-    """Require exact replay-v1 fields and nested callable-definition-v2 fields."""
+    """Require exact replay-v1 fields and nested callable-definition-v1 fields."""
     _require_fields(
         controls,
         _CONTROLS_FIELDS,
@@ -1131,13 +1131,13 @@ def _validate_replay_structure(controls: Mapping[str, Any]) -> None:
         if callable_anchor.get("supported") is False
         else _SUPPORTED_CALLABLE_FIELDS
     )
-    _require_fields(callable_anchor, callable_fields, "replay.callable", version=2)
+    _require_fields(callable_anchor, callable_fields, "replay.callable", version=1)
     if callable_anchor.get("supported") is not False:
         signature = _record_with_fields(
             callable_anchor.get("signature_and_declarations"),
             _CALLABLE_SIGNATURE_FIELDS,
             "replay.callable.signature_and_declarations",
-            version=2,
+            version=1,
         )
         for index, parameter in enumerate(
             _list(
@@ -1149,7 +1149,7 @@ def _validate_replay_structure(controls: Mapping[str, Any]) -> None:
                 parameter,
                 _CALLABLE_PARAMETER_FIELDS,
                 f"replay.callable.signature_and_declarations.parameters[{index}]",
-                version=2,
+                version=1,
             )
 
     plan = _record_with_fields(replay.get("plan"), _PLAN_FIELDS, "replay.plan")
