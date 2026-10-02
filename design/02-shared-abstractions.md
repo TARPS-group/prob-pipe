@@ -180,14 +180,16 @@ Accessing a container returns a **view**, for example a record field or a batch 
 Identity is **boundary-attached** under compiled execution. Inside a `jit` or `vmap` trace a term presents as its raw representation with only its spec as static data, so name, provenance, and annotations never enter a trace and a name can never affect compilation-cache identity; the tracked result is minted at the enclosing call boundary.
 
 ```python
-class TrackedTerm:
+class TrackedTerm(ABC):
     name:         str
     spec:         TermSpec                       # the single stored source of the term's type (II.1)
     provenance:   Provenance | None              # write-once via with_provenance(...)
     annotations:  Mapping[str, Any] | None       # free-form; the one store written after construction
     def with_name(self, name: str) -> Self: ...  # the one way a name changes
     def with_provenance(self, p: Provenance) -> Self: ...
-    def raw(self) -> Any: ...                    # the representation, detached from the workflow
+    @abstractmethod
+    def raw(self) -> Any: ...
+    # the representation, detached from the workflow; each kind defines it, as its section states
     # immutable: __setattr__ / __delattr__ raise; state round-trips through the
     # attributes the term holds, so copy and pickle need nothing from the class
 
