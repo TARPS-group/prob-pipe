@@ -187,7 +187,12 @@ class _EvaluationRules(_RegistryRoute):
     def run(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Any:
         """The direct call of the map on the operand, by the rule *method* names, if any."""
         f, parameter, operand, fixed = self._values(call)
-        forwarded = {name: call.controls[name] for name in self._forwarded if name in call.controls}
+        # An unset control is None, which would reset the map's own setting.
+        forwarded = {
+            name: call.controls[name]
+            for name in self._forwarded
+            if call.controls.get(name) is not None
+        }
         forwarded["exact_only"] = exact_only
         if method is not None:
             forwarded["method"] = method

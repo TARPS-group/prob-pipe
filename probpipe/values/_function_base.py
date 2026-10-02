@@ -775,15 +775,19 @@ class Function(Node, TrackedTerm, Annotated):
     def with_options(self, **controls: Any) -> Self:
         """Return a copy with revised controls, preserving identity and declarations.
 
-        Raises TypeError for unknown controls, including construction metadata
-        and seed. None leaves an existing control unchanged. Invalid control
+        A control given as None resets to its framework default, whatever the
+        constructor or an earlier view set. Raises TypeError for unknown
+        controls, including construction metadata and seed. Invalid control
         values raise the same errors as construction.
         """
         unknown = controls.keys() - _CONTROL_DEFAULTS.keys()
         if unknown:
             raise TypeError(f"Unknown Function controls: {sorted(unknown)}")
+        # Only set controls are stored, so dropping one makes it read its default.
+        reset = {name for name, value in controls.items() if value is None}
+        kept = {name: value for name, value in self._options.items() if name not in reset}
         revisions = {name: value for name, value in controls.items() if value is not None}
-        options = _set_controls(self._control_defaults(), self._options, revisions, self.signature)
+        options = _set_controls(self._control_defaults(), kept, revisions, self.signature)
         clone = self._shallow_copy()
         object.__setattr__(clone, "_options", MappingProxyType(options))
         return clone

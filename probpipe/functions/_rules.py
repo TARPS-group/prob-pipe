@@ -109,8 +109,11 @@ def _run_by_name(
     The engine realizes the rules this module registers, so naming one runs it
     there, under the forwarded controls.
     """
+    # An unset control is None, which would reset the map's own setting.
     forwarded = {
-        name: controls[name] for name in _FORWARDED_CONTROLS if controls and name in controls
+        name: controls[name]
+        for name in _FORWARDED_CONTROLS
+        if controls and controls.get(name) is not None
     }
     bound = _binding.values_to_bound_arguments(
         f.signature, _call_values(operand, parameter, fixed_args)

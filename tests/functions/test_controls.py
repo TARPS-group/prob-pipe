@@ -153,6 +153,35 @@ class TestResolution:
 
         assert result.num_atoms == 6
 
+    @pytest.mark.parametrize(
+        ("control", "value"),
+        [
+            ("n_broadcast_samples", 7),
+            ("dispatch", "sequential"),
+            ("include_inputs", True),
+            ("method", "sampling_lift"),
+            ("exact_only", True),
+            ("conversions", {"x": {"exact_only": True}}),
+            ("method_options", {"num_results": 5}),
+            ("raw", True),
+        ],
+    )
+    def test_none_in_a_view_resets_a_control_to_its_default(self, control, value):
+        wrapped = Function("identity", _identity, **{control: value})
+        reset = wrapped.with_options(**{control: None})
+
+        assert reset.options[control] == Function("identity", _identity).options[control]
+        other = "exact_only" if control == "raw" else "raw"
+        assert wrapped.with_options(**{other: None}).options[control] == wrapped.options[control]
+
+    def test_a_reset_reads_the_default_when_it_is_read(self, monkeypatch):
+        reset = Function("identity", _identity, n_broadcast_samples=7).with_options(
+            n_broadcast_samples=None
+        )
+        monkeypatch.setattr(Function, "DEFAULT_N_BROADCAST_SAMPLES", 17)
+
+        assert reset.options["n_broadcast_samples"] == 17
+
     def test_a_declaration_is_kept_by_a_view(self):
         wrapped = Function("value", _identity, output_spec=OutputSpec(v=NumericArraySpec(())))
 

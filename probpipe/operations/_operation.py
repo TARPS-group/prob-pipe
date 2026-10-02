@@ -1120,7 +1120,7 @@ class Operation(Function):
         names a route or a method of a registry route's registry,
         ``exact_only`` excludes every approximate route, ``raw`` returns the
         result detached, and ``method_options`` holds the budgets the selected
-        method validates when it runs. ``None`` leaves a control unchanged.
+        method validates when it runs. ``None`` resets a control to its default.
 
         Raises
         ------
