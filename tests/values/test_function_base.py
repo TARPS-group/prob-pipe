@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
 
@@ -91,7 +92,106 @@ class TestFunctionSpecMatching:
         assert actual.name == "display"
 
 
+class TestCallEngineInstallation:
+    @pytest.fixture
+    def installation(self, monkeypatch):
+        import probpipe.values._function_base as base
+
+        monkeypatch.setattr(base, "_call_engine", base._plain_call)
+        monkeypatch.setattr(base, "_apply_scope", base.nullcontext)
+        monkeypatch.setattr(base, "_workflow_kind_resolver", base._plain_workflow_kind)
+        events = []
+
+        @contextmanager
+        def scope():
+            events.append("enter")
+            try:
+                yield
+            finally:
+                events.append("exit")
+
+        def engine(function, /, *args, **kwargs):
+            events.append("call")
+            return function.apply(*args, **kwargs)
+
+        base.install_call_engine(
+            engine, apply_scope=scope, workflow_kind_resolver=lambda _: WorkflowKind.TASK
+        )
+        return base, engine, events
+
+    @pytest.mark.parametrize("supplied_callbacks", [False, True])
+    def test_same_engine_preserves_first_installation(self, installation, supplied_callbacks):
+        base, engine, events = installation
+        if supplied_callbacks:
+            base.install_call_engine(
+                engine,
+                apply_scope=base.nullcontext,
+                workflow_kind_resolver=lambda _: WorkflowKind.OFF,
+            )
+        else:
+            base.install_call_engine(engine)
+        value = object()
+        wrapped = Function("value", lambda: value)
+        assert wrapped() is value
+        assert wrapped.apply() is value
+        assert events == ["call", "enter", "exit", "enter", "exit"]
+        assert wrapped.effective_workflow_kind is WorkflowKind.TASK
+
+    @pytest.mark.parametrize(
+        ("replacement", "error", "message"),
+        [
+            (lambda function: None, RuntimeError, "already installed"),
+            (None, TypeError, "must be callable"),
+        ],
+    )
+    def test_invalid_installation_keeps_existing_engine(
+        self, installation, replacement, error, message
+    ):
+        base, _, events = installation
+        with pytest.raises(error, match=message):
+            base.install_call_engine(replacement)
+        wrapped = Function("value", lambda: 7)
+        assert wrapped() == 7
+        assert events == ["call", "enter", "exit"]
+        assert wrapped.effective_workflow_kind is WorkflowKind.TASK
+
+
 class TestFunctionDeclarations:
+    @pytest.mark.parametrize(
+        ("options", "message"),
+        [
+            ({"output_name": ""}, "output_name must be a non-empty string"),
+            ({"output_name": 3}, "output_name must be a non-empty string"),
+            ({"output_spec": 3}, "output_spec must be an OutputSpec, TermSpec, or None"),
+        ],
+    )
+    def test_invalid_output_options(self, options, message):
+        with pytest.raises(TypeError, match=message):
+            Function("value", lambda: 1, **options)
+
+    @pytest.mark.parametrize("component", ["", "group/value"])
+    def test_invalid_explicit_output_component(self, component):
+        with pytest.raises(ValueError, match="component names must be non-empty and contain no"):
+            Function(
+                "value", lambda: 1, output_spec=OutputSpec(**{component: NumericArraySpec(())})
+            )
+
+    def test_invalid_default_output_component_reports_its_name(self):
+        with pytest.raises(ValueError, match="got 'group/value'"):
+            Function("group/value", lambda: 1, output_spec=NumericArraySpec(()))
+
+    @pytest.mark.parametrize("label", ["Model.fit", "<lambda>"])
+    def test_non_identifier_output_component_is_allowed(self, label):
+        wrapped = Function(label, lambda: 1, output_spec=NumericArraySpec(()))
+        assert tuple(wrapped.output_spec.components) == (label,)
+        assert wrapped().name == label
+
+    def test_decorated_lambda_keeps_its_default_component(self):
+        wrapped = function(output_spec=NumericArraySpec(()))(lambda: 1)
+        assert wrapped.name == "<lambda>"
+        assert wrapped.output_spec == OutputSpec(**{"<lambda>": NumericArraySpec(())})
+        assert float(wrapped()) == 1
+
     def test_required_name_and_raw_representation(self):
         def add(x, /, *, y=2):
             return x + y

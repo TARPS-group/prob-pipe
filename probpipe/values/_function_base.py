@@ -737,7 +737,8 @@ def install_call_engine(
     followed by its call arguments. This keeps keyword arguments such as
     ``function`` available to the wrapped callable. Before
     installation, calling a Function performs plain apply. Reinstalling the
-    same engine is harmless; replacing it raises RuntimeError. A non-callable
+    same engine leaves all installed callbacks unchanged, even if new callbacks
+    are supplied; replacing it raises RuntimeError. A non-callable
     engine raises TypeError. The optional apply_scope preserves workflow RNG
     admission around raw evaluation without coupling this module to the engine.
     The workflow_kind_resolver supplies the public effective_workflow_kind
@@ -746,7 +747,9 @@ def install_call_engine(
     global _call_engine, _apply_scope, _workflow_kind_resolver
     if not callable(engine):
         raise TypeError("The Function call engine must be callable")
-    if _call_engine is not _plain_call and _call_engine is not engine:
+    if _call_engine is engine:
+        return
+    if _call_engine is not _plain_call:
         raise RuntimeError("The Function call engine is already installed")
     _call_engine = engine
     _apply_scope = apply_scope
