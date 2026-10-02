@@ -289,7 +289,7 @@ class TestDeclinesToRWMH:
             num_warmup=20,
             random_seed=0,
         )
-        assert posterior.algorithm == "blackjax_rwmh"
+        assert posterior.method == "blackjax_rwmh"
 
 
 # ---------------------------------------------------------------------------
@@ -495,7 +495,7 @@ class TestProvenanceAndAnnotations:
             num_warmup=20,
             random_seed=0,
         )
-        assert post.algorithm == "elliptical_slice"
+        assert post.method == "elliptical_slice"
         assert post.provenance.operation == "elliptical_slice"
 
     def test_annotations_datatree_has_subiter_stats(self, gaussian_model, data):

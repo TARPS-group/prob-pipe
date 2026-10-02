@@ -327,7 +327,7 @@ class _AmortizedPosterior(
         return make_posterior(
             [flat],
             parents=(self,),
-            algorithm=f"bayesflow_{self._method}",
+            method=f"bayesflow_{self._method}",
             event_spec=self._prior.event_spec,
             num_results=num_results,
         )

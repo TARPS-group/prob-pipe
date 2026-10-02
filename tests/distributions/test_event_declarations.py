@@ -228,7 +228,7 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     ApproximateDistribution: lambda: make_posterior(
         [jnp.zeros((10, 2))],
         parents=(MultivariateNormal("z", jnp.zeros(2), cov=jnp.eye(2)),),
-        algorithm="test",
+        method="test",
     ),
     _LearnedDensity: lambda: BayesFlowLikelihood(
         None, Normal("theta", 0.0, 1.0), _Simulator(), data_dim=2

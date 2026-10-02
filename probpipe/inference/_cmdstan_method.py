@@ -112,7 +112,7 @@ class CmdStanNutsMethod(InferenceMethod):
         return make_posterior(
             chains,
             parents=(target,),
-            algorithm="cmdstan_nuts",
+            method="cmdstan_nuts",
             annotations=azb.from_cmdstanpy(fit),
             event_spec=event_spec,
             num_results=num_results,

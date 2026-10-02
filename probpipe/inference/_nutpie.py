@@ -122,7 +122,7 @@ def _nutpie_posterior(
     return make_posterior(
         chains,
         parents=(parent,),
-        algorithm="nutpie_nuts",
+        method="nutpie_nuts",
         annotations=trace,
         event_spec=event_spec,
         field_order=field_order,

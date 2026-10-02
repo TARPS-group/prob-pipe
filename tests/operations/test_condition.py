@@ -932,7 +932,7 @@ class TestEndToEnd:
             model, {"y": jnp.array([1, 0, 1, 0])}
         )
         assert posterior.name == "logistic"
-        assert posterior.algorithm == "blackjax_nuts"
+        assert posterior.method == "blackjax_nuts"
         assert posterior.provenance.metadata["method"] == "blackjax_nuts"
 
     def test_each_posterior_of_a_batch_names_its_method(self, full_provenance_mode):
@@ -946,7 +946,7 @@ class TestEndToEnd:
         )
         posteriors = condition_on.with_options(method_options=_MCMC)(_logistic_joint(), givens)
         element = posteriors[1]
-        assert element.algorithm == "blackjax_nuts"
+        assert element.method == "blackjax_nuts"
         operations = {
             ancestor.parent.provenance.operation
             for ancestor in provenance_ancestors(element)

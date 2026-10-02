@@ -136,7 +136,7 @@ class TestPyMCModel:
         assert isinstance(result, ApproximateDistribution)
         assert result.num_chains == 1
         assert result.num_draws == 20
-        assert result.algorithm == "pymc_nuts"
+        assert result.method == "pymc_nuts"
         assert result.inference_data is not None
         assert hasattr(result.inference_data, "posterior")
         assert hasattr(result.inference_data, "sample_stats")
@@ -172,7 +172,7 @@ class TestPyMCModel:
         assert isinstance(result, ApproximateDistribution)
         assert result.num_chains == 2
         assert result.num_draws == 50
-        assert result.algorithm == "pymc_nuts"
+        assert result.method == "pymc_nuts"
 
     def test_multicore_passes_spawn_to_pm_sample(self, model):
         """Deterministically prove production calls ``pm.sample`` with
@@ -202,7 +202,7 @@ class TestPyMCModel:
         assert captured["cores"] >= 2
         assert captured["chains"] == 2
         assert isinstance(result, ApproximateDistribution)
-        assert result.algorithm == "pymc_nuts"
+        assert result.method == "pymc_nuts"
 
     def test_default_chains_pass_spawn_to_pm_sample(self, model):
         """The default path (no ``cores`` kwarg, ``num_chains`` defaults to 4)
@@ -401,7 +401,7 @@ class TestRecordSpec:
             num_results=25,
             random_seed=0,
         )
-        assert result.algorithm == "pymc_advi"
+        assert result.method == "pymc_advi"
         draws = result.draws()
         assert draws.event_template.fields == ("intercept", "alpha")
         assert jnp.asarray(draws["intercept"]).shape == (25,)

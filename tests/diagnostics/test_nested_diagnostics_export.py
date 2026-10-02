@@ -25,7 +25,7 @@ def _posterior(template, vector_size, *, n_chains=2, n_draws=30, seed0=0):
         jax.random.normal(jax.random.PRNGKey(seed0 + i), (n_draws, vector_size))
         for i in range(n_chains)
     ]
-    post = make_posterior(chains, parents=(prior,), algorithm="test", event_spec=template)
+    post = make_posterior(chains, parents=(prior,), method="test", event_spec=template)
     return post, chains
 
 

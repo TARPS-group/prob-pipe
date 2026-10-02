@@ -324,7 +324,7 @@ class TestNutpieStanIntegration:
         )
         assert isinstance(result, ApproximateDistribution)
         assert result.num_chains == 2
-        assert result.algorithm == "nutpie_nuts"
+        assert result.method == "nutpie_nuts"
         post = result.inference_data.posterior
         assert "alpha" in post and "beta" in post
         beta_mean = float(np.asarray(post["beta"]).mean())
@@ -397,7 +397,7 @@ class TestNutpieIntegration:
         )
         assert isinstance(result, ApproximateDistribution)
         assert result.num_chains == 2
-        assert result.algorithm == "nutpie_nuts"
+        assert result.method == "nutpie_nuts"
         assert result.provenance is not None
         assert result.provenance.operation == "nutpie_nuts"
         # Analytical posterior: prior N(0, 10), likelihood N(mu, 1) with n=5

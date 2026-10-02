@@ -1244,13 +1244,13 @@ class TestModelDeclarations:
         post = make_posterior(
             [jnp.zeros((10, 2))],
             parents=(prior,),
-            algorithm="test",
+            method="test",
             event_spec=RecordSpec(a=(), b=()),
         )
         assert post.event_spec == OutputSpec(RecordSpec(a=(), b=()))
         positive_target = RecordSpec(a=NumericArraySpec((), None, positive), b=())
         post = make_posterior(
-            [jnp.ones((10, 2))], parents=(prior,), algorithm="test", event_spec=positive_target
+            [jnp.ones((10, 2))], parents=(prior,), method="test", event_spec=positive_target
         )
         assert post.event_spec == OutputSpec(positive_target)
 
