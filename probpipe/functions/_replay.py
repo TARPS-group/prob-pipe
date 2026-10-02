@@ -60,7 +60,7 @@ _UNSUPPORTED_CALLABLE_FIELDS = frozenset(
     {"supported", "module", "qualname", "definition_abi", "form"}
 )
 _CALLABLE_SIGNATURE_FIELDS = frozenset(
-    {"parameters", "return_annotation", "input_spec", "output_spec"}
+    {"parameters", "return_annotation", "input_spec", "output_spec", "output_name"}
 )
 _CALLABLE_PARAMETER_FIELDS = frozenset({"name", "kind", "default", "annotation"})
 _PLAN_FIELDS = frozenset({"schema", "canonical_fields", "expected_effects"})

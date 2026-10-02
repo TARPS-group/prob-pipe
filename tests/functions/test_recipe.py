@@ -22,8 +22,11 @@ from probpipe import (
     Normal,
     NumericRecord,
     NumericRecordBatch,
+    OpaqueSpec,
+    OutputSpec,
     Provenance,
     ProvenanceMode,
+    RecordSpec,
     ReplayCompatibilityError,
     TransformedDistribution,
     replay_run,
@@ -45,9 +48,9 @@ from tests.functions._replay_fixtures import (
 )
 
 _CALLABLE_ANCHOR_GOLDENS = {
-    "cpython-3.12": "52d15d19467f4500f1bdc354798e5dbd99e07b9425077a71b7af71b210756895",
-    "cpython-3.13": "d1a2b6bf380f4b96b19f3557b35ea91f88a811e2ea9a2c902e447f84e11768a8",
-    "cpython-3.14": "4acd2f2a0428a7c5422c41db52cb378446b589c8896876aa55d04cb57b221dda",
+    "cpython-3.12": "dfbaa99fcb3e8babd5564ce4469ed66f2be3b03a1af5889c58b53dc7250a7db0",
+    "cpython-3.13": "68bf3846b1d3d27573f2dd78236657fd57f8e0ed9c6eef109e22d2d58781de26",
+    "cpython-3.14": "9e6c6b6eecfde4863952f12a2fa09b65413a8e6ca89cf1c18dde48ff14a6a7fb",
 }
 
 
@@ -501,6 +504,36 @@ class TestWorkflowRecipeRecording:
 
 
 class TestWorkflowCallableAnchor:
+    @pytest.mark.parametrize(
+        "change", ["output_name", "component", "shape", "kind", "packaging", "declaration"]
+    )
+    def test_output_contract_participates_in_callable_anchor(self, change):
+        declaration = OutputSpec(bundle=RecordSpec(field=()))
+        baseline = Function(
+            "identity", replayable_identity, output_name="result", output_spec=declaration
+        )
+        declarations = {
+            "component": OutputSpec(other=RecordSpec(field=())),
+            "shape": OutputSpec(bundle=RecordSpec(field=(2,))),
+            "kind": OutputSpec(bundle=OpaqueSpec()),
+            "packaging": OutputSpec(RecordSpec(field=())),
+            "declaration": None,
+        }
+        changed = Function(
+            "identity",
+            replayable_identity,
+            output_name="other" if change == "output_name" else "result",
+            output_spec=declarations.get(change, declaration),
+        )
+        anchor = _callable.capture_function_anchor(baseline)
+        other = _callable.capture_function_anchor(changed)
+        assert anchor.supported and other.supported
+        assert anchor.sha256 != other.sha256
+        assert (
+            anchor.controls()
+            == _callable.capture_function_anchor(baseline.with_name("display")).controls()
+        )
+
     def test_callable_canonical_json_rejects_non_finite_values(self):
         with pytest.raises(ValueError, match="Out of range float values"):
             _callable._canonical_json({"value": float("nan")})
@@ -692,6 +725,7 @@ class TestWorkflowCallableAnchor:
                 "return_annotation": {"tag": "str", "value": "float"},
                 "input_spec": {"tag": "none"},
                 "output_spec": {"tag": "none"},
+                "output_name": {"tag": "str", "value": "replayable_affine"},
             },
             "python_replay_abi": python_replay_abi,
             "probpipe_replay_abi": "probpipe.replay/v1",

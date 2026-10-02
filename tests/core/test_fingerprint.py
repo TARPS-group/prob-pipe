@@ -437,6 +437,31 @@ class TestBootstrapSourceFingerprint:
 
 
 class TestFunctionHashing:
+    @pytest.mark.parametrize(
+        "change", ["output_name", "component", "shape", "kind", "packaging", "declaration"]
+    )
+    def test_output_contract_participates_in_function_fingerprint(self, change):
+        def identity(value):
+            return value
+
+        declaration = OutputSpec(bundle=RecordSpec(field=()))
+        baseline = Function("identity", identity, output_name="result", output_spec=declaration)
+        declarations = {
+            "component": OutputSpec(other=RecordSpec(field=())),
+            "shape": OutputSpec(bundle=RecordSpec(field=(2,))),
+            "kind": OutputSpec(bundle=OpaqueSpec()),
+            "packaging": OutputSpec(RecordSpec(field=())),
+            "declaration": None,
+        }
+        changed = Function(
+            "identity",
+            identity,
+            output_name="other" if change == "output_name" else "result",
+            output_spec=declarations.get(change, declaration),
+        )
+        assert fingerprint(baseline) != fingerprint(changed)
+        assert fingerprint(baseline) == fingerprint(baseline.with_name("display"))
+
     def _make_wf(self, func):
         return Function(name="func", fn=func, dispatch="sequential", n_broadcast_samples=10)
 

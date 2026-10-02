@@ -21,8 +21,11 @@ from probpipe import (
     EmpiricalDistribution,
     Function,
     Normal,
+    OpaqueSpec,
+    OutputSpec,
     ProductDistribution,
     Provenance,
+    RecordSpec,
     ReplayCompatibilityError,
     ReplayUnsupportedCallableError,
     TransformedDistribution,
@@ -410,6 +413,11 @@ class TestReplayAdmission:
                 ("replay", "callable", "signature_and_templates"),
                 "output_spec",
                 id="callable-signature",
+            ),
+            pytest.param(
+                ("replay", "callable", "signature_and_templates"),
+                "output_name",
+                id="callable-output-name",
             ),
             pytest.param(
                 ("replay", "callable", "signature_and_templates", "parameters", 0),
@@ -871,6 +879,45 @@ class TestReplayAdmission:
 
 
 class TestReplayPreflight:
+    @pytest.mark.parametrize(
+        "change", ["output_name", "component", "shape", "kind", "packaging", "declaration"]
+    )
+    def test_output_contract_drift_fails_before_sampling(self, change):
+        record = RecordSpec(left=(), right=())
+        declaration = OutputSpec(bundle=record)
+        baseline = Function(
+            "identity",
+            replayable_identity,
+            output_name="result",
+            output_spec=declaration,
+            dispatch="sequential",
+            n_broadcast_samples=8,
+        )
+        law = ProductDistribution(left=Normal("left", 0.0, 1.0), right=Normal("right", 0.0, 1.0))
+        with workflow_run(seed=4):
+            original = baseline(value=law)
+        declarations = {
+            "component": OutputSpec(other=record),
+            "shape": OutputSpec(bundle=RecordSpec(left=(2,), right=())),
+            "kind": OutputSpec(bundle=OpaqueSpec()),
+            "packaging": OutputSpec(record),
+            "declaration": None,
+        }
+        changed = Function(
+            "identity",
+            replayable_identity,
+            output_name="other" if change == "output_name" else "result",
+            output_spec=declarations.get(change, declaration),
+            dispatch="sequential",
+            n_broadcast_samples=8,
+        )
+        with (
+            patch.object(law, "_sample", side_effect=AssertionError("sampled")),
+            pytest.raises(ReplayCompatibilityError, match="callable"),
+            replay_run(original.provenance),
+        ):
+            changed(value=law)
+
     @pytest.mark.parametrize(
         ("path", "replacement"),
         [
