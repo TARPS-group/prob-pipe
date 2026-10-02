@@ -6,12 +6,14 @@ import inspect
 import math
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from probpipe import (
     ApplicabilityError,
+    InputSpec,
     NumericArray,
     NumericArrayBatch,
     NumericArraySpec,
@@ -43,7 +45,7 @@ from probpipe.operations._moments import (
     quantile,
     variance,
 )
-from probpipe.values import Function
+from probpipe.values import Function, FunctionSpec
 
 from ._laws import (
     REAL,
@@ -311,6 +313,37 @@ class TestQuantile:
     def test_the_levels_are_numeric(self):
         with pytest.raises(ApplicabilityError, match="levels"):
             quantile(Gaussian("g"), "median")
+
+
+class _RandomLine(Distribution, SupportsSampling):
+    """A law over the maps ``x ↦ s x``, which only samples."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name, FunctionSpec(InputSpec(x=REAL), OutputSpec(y=REAL)))
+
+    def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
+        slopes = np.asarray(jax.random.normal(key, tuple(sample_shape)))
+        if not sample_shape:
+            return Function("line", lambda x: slopes * x)
+        lines = np.empty(slopes.shape, dtype=object)
+        for index, slope in np.ndenumerate(slopes):
+            lines[index] = Function("line", lambda x, slope=slope: slope * x)
+        return lines
+
+
+class TestFunctionValuedEvents:
+    """The Monte Carlo average of function draws is not implemented, so no call selects it."""
+
+    @pytest.mark.parametrize("moment", [mean, variance], ids=["mean", "variance"])
+    def test_check_reports_the_monte_carlo_route_infeasible(self, moment):
+        routes = {info.method_name: info for info in moment.check(_RandomLine("f")).routes}
+        assert routes["monte_carlo"].feasible is False
+        assert "function-valued" in routes["monte_carlo"].description
+
+    @pytest.mark.parametrize("moment", [mean, variance], ids=["mean", "variance"])
+    def test_the_call_raises_resolution_error(self, moment):
+        with pytest.raises(ResolutionError, match="function-valued"):
+            moment(_RandomLine("f"))
 
 
 class TestTheFallbacksOnFewDraws:
