@@ -11,6 +11,7 @@ from probpipe import (
     Distribution,
     FunctionBatch,
     FunctionSpec,
+    Gamma,
     GaussianRandomFunction,
     LinearBasisFunction,
     MultivariateNormal,
@@ -21,6 +22,8 @@ from probpipe import (
     SupportsMean,
     SupportsSampling,
     SupportsVariance,
+    condition_on,
+    cov,
     mean,
     sample,
     variance,
@@ -1263,3 +1266,39 @@ class TestTheFactoredGaussian:
         symbolic = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
         assert isinstance(symbolic.with_dim_names(n="m"), FactoredMultivariateGaussian)
         assert isinstance(symbolic.with_path_names(a="c"), FactoredMultivariateGaussian)
+
+    def test_a_regrouped_joint_stays_the_factored_gaussian(self):
+        """A rename that gathers components packages their factors as one Gaussian
+        factor, so the joint keeps its class, its covariance, and its density."""
+        joint = (
+            Normal("a", 0.0, 1.0)
+            * Normal("b", 0.0, 2.0)
+            * MultivariateNormal("c", jnp.zeros(2), cov=jnp.eye(2))
+        )
+        regrouped = joint.with_path_names({"a": "g/a", "b": "g/b"})
+        assert isinstance(regrouped, FactoredMultivariateGaussian)
+        assert isinstance(regrouped.factors[0], FactoredMultivariateGaussian)
+        assert tuple(regrouped.event_spec.components) == ("g", "c")
+        np.testing.assert_allclose(np.asarray(cov(regrouped)), np.asarray(cov(joint)))
+        value = {"g": {"a": 0.3, "b": -0.4}, "c": jnp.array([0.1, 0.2])}
+        flat = {"a": 0.3, "b": -0.4, "c": jnp.array([0.1, 0.2])}
+        np.testing.assert_allclose(regrouped._log_prob(value), joint._log_prob(flat), rtol=1e-6)
+
+    def test_conditioning_a_regrouped_joint_on_a_component_is_exact(self):
+        joint = (
+            Normal("a", 0.0, 1.0)
+            * Normal("b", 0.0, 2.0)
+            * MultivariateNormal("c", jnp.zeros(2), cov=jnp.eye(2))
+        )
+        regrouped = joint.with_path_names({"a": "g/a", "b": "g/b"})
+        report = condition_on.check(regrouped, {"c": jnp.ones(2)})
+        assert report.exact is True
+        law = condition_on(regrouped, {"c": jnp.ones(2)})
+        assert isinstance(law, FactoredMultivariateGaussian)
+        assert tuple(law.event_spec.components) == ("g",)
+
+    def test_a_group_with_a_factor_of_another_family_is_a_plain_joint(self):
+        joint = Normal("a", 0.0, 1.0) * Gamma("s", 2.0, 1.0) * Normal("c", 0.0, 1.0)
+        regrouped = joint.with_path_names({"a": "g/a", "s": "g/s"})
+        assert not isinstance(regrouped, FactoredMultivariateGaussian)
+        assert not isinstance(regrouped.factors[0], FactoredMultivariateGaussian)

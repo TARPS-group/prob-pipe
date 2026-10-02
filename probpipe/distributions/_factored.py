@@ -1560,7 +1560,7 @@ class FactoredDistribution(Distribution, SupportsFactors):
     ) -> FactoredDistribution:
         graph = _factor_graph(factors, _scope)
         base = vars(cls).get("_capability_base", cls)
-        if base is FactoredDistribution and _component is None:
+        if base is FactoredDistribution:
             base = _refined_class(graph.factors)
         return object.__new__(
             _capability_subclass(base, _joint_protocols(graph, conditional=False))

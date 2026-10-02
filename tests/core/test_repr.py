@@ -110,7 +110,7 @@ class TestDistributions:
     def test_a_regrouped_rename_reads_as_a_factored_joint(self):
         joint = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
         renamed = repr(joint.with_path_names({"a": "g/a"}))
-        assert renamed.startswith("FactoredDistribution(\n    'a·b',\n    factors=(")
+        assert renamed.startswith("FactoredMultivariateGaussian(\n    'a·b',\n    factors=(")
         assert "_Renamed" not in renamed
 
     def test_an_empirical_law_reads_by_its_atoms(self):

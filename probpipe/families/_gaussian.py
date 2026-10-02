@@ -65,8 +65,9 @@ __all__ = [
 
 
 def _is_gaussian(factor: Any) -> bool:
-    """Whether *factor* is a Gaussian law: a normal or a multivariate normal family."""
-    return isinstance(factor, (Normal, MultivariateNormal))
+    """Whether *factor* is a Gaussian law: a normal or a multivariate normal family, or a
+    packaged joint of Gaussian factors, which a joint keeps as one factor."""
+    return isinstance(factor, (Normal, MultivariateNormal, FactoredMultivariateGaussian))
 
 
 def _jointly_gaussian(factors: Sequence[Distribution | ConditionalDistribution]) -> bool:
@@ -82,10 +83,11 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactCon
     """The factored joint whose factors are jointly Gaussian.
 
     The class registers with the factored joints at import, so ``*``, a joint
-    rebuilt by a transform, and a conditional joint bound at its givens
-    construct it as the most specific class whenever every factor is a
-    ``Normal`` or a ``MultivariateNormal``; it is derived rather than built by
-    hand. Such factors are independent, so the joint's sampling, log-density,
+    rebuilt by a transform, a packaged joint that a regrouping rename builds,
+    and a conditional joint bound at its givens construct it as the most
+    specific class whenever every factor is a ``Normal``, a
+    ``MultivariateNormal``, or a packaged joint of such factors; it is derived
+    rather than built by hand. Such factors are independent, so the joint's sampling, log-density,
     moments, quantiles, and marginals are the edge-free joint's, each in closed
     form, and its covariance is block diagonal over the flattened draw.
     Conditioning on some of its components is exact: the conditional law of
@@ -98,6 +100,8 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactCon
         The joint's label.
     factors : Sequence[Distribution | ConditionalDistribution]
         The jointly Gaussian factors, in conditional-first order.
+    _component : str, optional
+        The one component under which a packaged joint declares its record.
 
     Raises
     ------
@@ -114,15 +118,16 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactCon
         factors: Sequence[Distribution | ConditionalDistribution],
         *,
         _scope: Mapping[str, int] | None = None,
+        _component: str | None = None,
     ) -> None:
-        super().__init__(label, factors, _scope=_scope)
+        super().__init__(label, factors, _scope=_scope, _component=_component)
         if not _jointly_gaussian(self.factors):
             kinds = sorted(
                 {type(factor).__name__ for factor in self.factors if not _is_gaussian(factor)}
             )
             raise TypeError(
-                f"the factors of {label!r} are jointly Gaussian only when each is a Normal or a "
-                f"MultivariateNormal, got {kinds}"
+                f"the factors of {label!r} are jointly Gaussian only when each is a Normal, a "
+                f"MultivariateNormal, or a packaged joint of them, got {kinds}"
             )
 
     def _condition_on(self, given: Record | Mapping[str, Any], /, **options: Any) -> Distribution:
