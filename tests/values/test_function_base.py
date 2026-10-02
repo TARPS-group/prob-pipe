@@ -403,6 +403,38 @@ class TestLiftedInputDeclarations:
 
 
 class TestCompletedOutputDeclarations:
+    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax", "auto"])
+    def test_joint_broadcast_constructs_completed_output_declaration(self, dispatch):
+        factory = Function(
+            "factory",
+            lambda x: jnp.stack([x, x + 1, x + 2]),
+            output_name="results",
+            output_spec=OutputSpec(component=NumericArraySpec(("width",))),
+            dispatch=dispatch,
+            n_broadcast_samples=8,
+            include_inputs=True,
+        )
+        with workflow_run(seed=4):
+            result = factory(Normal("x", 0.0, 1.0))
+        assert result.name == "results"
+        assert result.event_spec.spec["_output"] == NumericArraySpec((3,))
+        assert factory.output_spec.spec.free_dims == {"width"}
+
+    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "auto"])
+    def test_enumerated_joint_constructs_completed_output_declaration(self, dispatch):
+        factory = Function(
+            "factory",
+            lambda x: jnp.stack([x, x + 1, x + 2]),
+            output_name="results",
+            output_spec=OutputSpec(component=None),
+            dispatch=dispatch,
+            include_inputs=True,
+        )
+        result = factory(EmpiricalDistribution("x", jnp.arange(3.0)))
+        assert result.name == "results"
+        assert result.event_spec.spec["_output"] == NumericArraySpec((3,), dtype="float32")
+        assert factory.output_spec.spec is None
+
     @pytest.mark.parametrize("kind", ["array", "record", "batch"])
     @pytest.mark.parametrize("mode", ["plain", "sweep"])
     def test_shape_only_output_preserves_array_metadata(self, kind, mode):

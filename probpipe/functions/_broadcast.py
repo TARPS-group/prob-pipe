@@ -40,7 +40,7 @@ from ._execution_contract import (
     transport_for_execution_mode,
     transport_for_workflow_kind,
 )
-from ._result import _aggregate_output_spec, _output_record_spec
+from ._result import _aggregate_output_spec
 
 MIN_BROADCAST_SAMPLES = 5
 
@@ -163,6 +163,8 @@ def execute_distribution_broadcast(
             get_key=get_key,
             make_execution_config=make_execution_config,
             output_template=output_template,
+            output_spec=output_spec,
+            output_name=output_name or function_name,
         )
     elif dispatch == "jax":
         _record_active_execution_contract(jax_contract)
@@ -177,6 +179,8 @@ def execute_distribution_broadcast(
             function_name=function_name,
             workflow_kind=workflow_kind,
             output_template=output_template,
+            output_spec=output_spec,
+            output_name=output_name or function_name,
         )
     else:
         result = _broadcast_sample(
@@ -187,6 +191,8 @@ def execute_distribution_broadcast(
             get_key=get_key,
             make_execution_config=make_execution_config,
             output_template=output_template,
+            output_spec=output_spec,
+            output_name=output_name or function_name,
         )
 
     provenance = _make_broadcast_provenance(
@@ -202,11 +208,6 @@ def execute_distribution_broadcast(
         stochastic_plan=stochastic_plan if record_recipe else None,
         record_recipe=record_recipe,
     )
-    result = result._with_name(output_name or function_name)
-    if output_spec is not None:
-        output_spec = _aggregate_output_spec(output_spec, result._output_samples)
-        object.__setattr__(result, "_output_spec", output_spec)
-        object.__setattr__(result, "_output_template", _output_record_spec(output_spec))
     result.with_provenance(provenance)
 
     if include_inputs:
@@ -303,6 +304,8 @@ def _broadcast_jax(
     function_name: str,
     workflow_kind: WorkflowKind,
     output_template: RecordSpec | None,
+    output_spec: OutputSpec | None,
+    output_name: str,
 ) -> BroadcastDistribution:
     """Execute distribution broadcasting through local ``jax.vmap``."""
     if workflow_kind in (WorkflowKind.TASK, WorkflowKind.FLOW) and (task is None or flow is None):
@@ -347,6 +350,8 @@ def _broadcast_jax(
         weights=None,
         broadcast_args=[ref.label for ref in broadcast_args],
         output_template=output_template,
+        output_spec=None if output_spec is None else _aggregate_output_spec(output_spec, results),
+        name=output_name,
     )
 
 
@@ -362,6 +367,8 @@ def _broadcast_enumerate(
         _execution.WorkflowExecutionConfig,
     ],
     output_template: RecordSpec | None,
+    output_spec: OutputSpec | None,
+    output_name: str,
 ) -> BroadcastDistribution:
     """Execute the plan's exact combinations and sampled repetitions."""
     execution = make_execution_config()
@@ -470,6 +477,8 @@ def _broadcast_enumerate(
         weights=jnp.array(weights),
         broadcast_args=[ref.label for ref in all_broadcast_args],
         output_template=output_template,
+        output_spec=None if output_spec is None else _aggregate_output_spec(output_spec, results),
+        name=output_name,
     )
 
 
@@ -485,6 +494,8 @@ def _broadcast_sample(
         _execution.WorkflowExecutionConfig,
     ],
     output_template: RecordSpec | None,
+    output_spec: OutputSpec | None,
+    output_name: str,
 ) -> BroadcastDistribution:
     """Sample distribution arguments and execute one function call per sample."""
     execution = make_execution_config()
@@ -534,6 +545,8 @@ def _broadcast_sample(
         weights=None,
         broadcast_args=[ref.label for ref in broadcast_args],
         output_template=output_template,
+        output_spec=None if output_spec is None else _aggregate_output_spec(output_spec, results),
+        name=output_name,
     )
 
 

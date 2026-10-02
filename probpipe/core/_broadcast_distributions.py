@@ -1376,6 +1376,9 @@ class BroadcastDistribution(Distribution, SupportsSampling):
         Ordered names of the broadcast arguments.
     name : str or None
         Distribution name for provenance. Keyword-only; defaults to ``"broadcast"``.
+    output_spec : OutputSpec or None
+        Completed declaration of one output, including its component interface.
+        Takes precedence over the legacy record-only ``output_template``.
     """
 
     #: The memo is not state: a copy recomputes rather than inheriting one. It
@@ -1397,12 +1400,15 @@ class BroadcastDistribution(Distribution, SupportsSampling):
         broadcast_args: list[str],
         name: str | None = None,
         output_template: RecordSpec | None = None,
+        output_spec: OutputSpec | None = None,
     ):
         self._input_samples = input_samples
         self._output_samples = output_samples
         self._output_distributions = output_distributions
+        if output_spec is not None:
+            output_template = output_spec.spec if isinstance(output_spec.spec, RecordSpec) else None
         self._output_template = output_template
-        self._output_spec = None
+        self._output_spec = output_spec
 
         # The row count, taken from the first broadcast arg.
         n = _row_count(input_samples[next(iter(broadcast_args))])
@@ -1417,8 +1423,9 @@ class BroadcastDistribution(Distribution, SupportsSampling):
         labels = (*self._broadcast_args, "_output")
         if all(label and _PATH_SEP not in label for label in labels):
             fields = {arg: _row_spec(input_samples[arg]) for arg in self._broadcast_args}
+            output_term = output_spec.spec if output_spec is not None else output_template
             fields["_output"] = (
-                output_template if output_template is not None else _row_spec(output_samples)
+                output_term if output_term is not None else _row_spec(output_samples)
             )
             event_spec = RecordSpec(fields)
         else:
