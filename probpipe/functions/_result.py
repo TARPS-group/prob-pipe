@@ -57,6 +57,7 @@ def _aggregate_output_spec(output_spec: OutputSpec, outputs: Any) -> OutputSpec:
     from ..core._numeric_array_batch import _MappedBatchStore
     from ..core._record_batch import _MappedBatchColumns
     from ..core._spec_base import _unify_specs
+    from ..values._function_base import _complete_output_metadata
 
     spec = output_spec.spec
     bindings: dict[str, int] = {}
@@ -73,6 +74,7 @@ def _aggregate_output_spec(output_spec: OutputSpec, outputs: Any) -> OutputSpec:
         if spec is None:
             spec = actual
         _unify_specs(spec, actual, bindings, "Function aggregate output")
+        spec = _complete_output_metadata(spec, actual)
     return output_spec._with_spec(None if spec is None else spec._substitute_dims(bindings))
 
 

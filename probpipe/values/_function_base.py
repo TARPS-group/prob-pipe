@@ -6,7 +6,7 @@ import inspect
 import warnings
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager, nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from types import MappingProxyType
 from typing import Any, Literal, Protocol, Self, cast
@@ -191,7 +191,9 @@ def _validate_function_output(
         return None
     spec = output_spec.spec
     if spec is None:
-        spec = RecordSpec.infer_from({"result": result}).children["result"]
+        # A hole imposes no return constraint. The engine infers its kind using
+        # the same wrapping rules as an undeclared return (including sequences).
+        return output_spec
     resolved = dict(bindings)
     path = f"Function {function_name!r} output"
     if output_spec._component_name is not None:
@@ -203,7 +205,35 @@ def _validate_function_output(
     spec._bind_dims_from_value(result, resolved, path)
     concrete = spec._substitute_dims(resolved)
     _validate_output_support(concrete, result, path)
+    if actual_spec is None:
+        actual_spec = RecordSpec.infer_from({"result": result}).children["result"]
+    concrete = _complete_output_metadata(concrete, actual_spec)
     return output_spec._with_spec(concrete)
+
+
+def _complete_output_metadata(expected: TermSpec, actual: TermSpec) -> TermSpec:
+    """Fill unspecified array metadata from a validated result, recursively."""
+    from ..core._batch import BatchSpec
+
+    if isinstance(expected, NumericArraySpec) and isinstance(actual, NumericArraySpec):
+        return replace(
+            expected,
+            dtype=actual.dtype if expected.dtype is None else expected.dtype,
+            support=actual.support if expected.support is None else expected.support,
+        )
+    if isinstance(expected, RecordSpec) and isinstance(actual, RecordSpec):
+        return RecordSpec(
+            {
+                name: _complete_output_metadata(child, actual.children[name])
+                for name, child in expected.children.items()
+            }
+        )
+    if isinstance(expected, BatchSpec) and isinstance(actual, BatchSpec):
+        return replace(
+            expected,
+            element_spec=_complete_output_metadata(expected.element_spec, actual.element_spec),
+        )
+    return expected
 
 
 def _validate_declared_support(expected: TermSpec, actual: TermSpec, path: str) -> None:

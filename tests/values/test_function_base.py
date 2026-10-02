@@ -367,6 +367,70 @@ class TestLiftedInputDeclarations:
 
 
 class TestCompletedOutputDeclarations:
+    @pytest.mark.parametrize("kind", ["array", "record", "batch"])
+    @pytest.mark.parametrize("mode", ["plain", "sweep"])
+    def test_shape_only_output_preserves_array_metadata(self, kind, mode):
+        from probpipe import BatchSpec
+
+        leaf = NumericArraySpec((3,), dtype="float32", support=positive)
+        values = jnp.ones(3, dtype="float32")
+        if kind == "array":
+            stored = NumericArray("stored", values, spec=leaf)
+            declaration = NumericArraySpec((3,))
+        elif kind == "record":
+            stored = Record("stored", stats=Record("stats", x=NumericArray("x", values, spec=leaf)))
+            declaration = RecordSpec(stats=RecordSpec(x=NumericArraySpec((3,))))
+        else:
+            stored = NumericArrayBatch("stored", values[None, :], "item", element_spec=leaf)
+            declaration = BatchSpec(NumericArraySpec((3,)), ((1,),), ("item",))
+        original_spec = stored.spec
+        factory = Function(
+            "factory", lambda row: stored, output_spec=declaration, dispatch="sequential"
+        )
+        if mode == "plain":
+            result = factory(0)
+            actual = result.spec
+        else:
+            rows = NumericArrayBatch(
+                "rows", jnp.arange(2.0), "row", element_spec=NumericArraySpec(())
+            )
+            result = factory(rows)
+            actual = result.element_spec
+        if kind == "record":
+            actual = actual["stats/x"]
+        elif kind == "batch" and mode == "plain":
+            actual = actual.element_spec
+        assert actual == leaf
+        assert stored.spec is original_spec
+        assert factory.output_spec.spec is declaration
+        assert factory.apply(0) is stored
+
+    @pytest.mark.parametrize("values", [[1.0, 2.0], (1.0, 2.0), []])
+    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax", "auto"])
+    def test_sequence_type_hole_matches_undeclared_return(self, values, dispatch):
+        ordinary = Function("f", lambda row: values, output_name="items", dispatch=dispatch)
+        declared = Function(
+            "f",
+            lambda row: values,
+            output_name="items",
+            output_spec=OutputSpec(component=None),
+            dispatch=dispatch,
+        )
+        rows = NumericRecordBatch(
+            "rows", {"x": jnp.arange(2.0)}, "row", element_spec=RecordSpec(x=())
+        )
+        for operand in (0, rows):
+            if not values and dispatch == "jax" and operand is rows:
+                continue  # Empty opaque batches are not JAX values.
+            expected = ordinary(operand)
+            result = declared(operand)
+            assert type(result) is type(expected)
+            assert result.spec == expected.spec
+            if values:
+                np.testing.assert_array_equal(result.values, expected.values)
+        assert declared.output_spec.spec is None
+        assert declared.apply(0) is values
+
     @pytest.mark.parametrize("mode", ["plain", "sweep", "broadcast"])
     @pytest.mark.parametrize("declared_side", [None, "input", "output"])
     def test_returned_function_preserves_unspecified_declarations(self, mode, declared_side):
@@ -498,7 +562,12 @@ class TestCompletedOutputDeclarations:
         declaration = NumericArraySpec((2,), support=positive)
         wrapped = Function("load", lambda row: stored, output_spec=declaration, dispatch=dispatch)
         result = wrapped(rows)
-        assert result.element_spec == wrapped(rows[0]).spec == declaration
+        assert (
+            result.element_spec
+            == wrapped(rows[0]).spec
+            == NumericArraySpec((2,), dtype=stored.dtype, support=positive)
+        )
+        assert wrapped.output_spec.spec is declaration
         np.testing.assert_array_equal(result.values, np.ones((3, 2)))
         assert stored.spec.support is None
 

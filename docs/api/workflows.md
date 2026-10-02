@@ -209,6 +209,9 @@ undeclared. Structures, kinds, shapes, same-kind dtypes, and declared output
 supports are checked. Symbolic dimensions are bound per call, shared across
 inputs and outputs, and never written back into the function declaration.
 Output-only dimensions and type holes are resolved from the returned value.
+Unset array dtype and support metadata are retained from the validated result,
+including inside records and batches. A type hole uses the same return-kind
+inference as an undeclared call; an explicit `OpaqueSpec` keeps a sequence atomic.
 An existing distribution retains its own matching event declaration.
 For a returned Function, an unspecified side of its declared `FunctionSpec`
 retains that Function's own input or output declaration.
