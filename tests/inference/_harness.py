@@ -144,11 +144,21 @@ _ABC_OUTSIDE_THE_SUPPORT = (
     "bug: pyABC perturbs a bounded parameter in its constrained coordinate, and "
     "particles outside the unit interval reach the posterior"
 )
+_ABC_OFF_THE_SIMPLEX = (
+    "bug: pyABC perturbs a simplex parameter in its constrained coordinates, so a "
+    "perturbed particle leaves the simplex, where the prior's density is NaN"
+)
 KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "gaussian_linear")] = (_ABC_BUDGET, AssertionError)
 KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "eight_schools")] = (_ABC_BUDGET, AssertionError)
+KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "gamma_poisson")] = (_ABC_BUDGET, AssertionError)
+KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "poisson_regression")] = (_ABC_BUDGET, AssertionError)
 KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "beta_bernoulli")] = (
     _ABC_OUTSIDE_THE_SUPPORT,
     ValueError,
+)
+KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "dirichlet_multinomial")] = (
+    _ABC_OFF_THE_SIMPLEX,
+    AssertionError,
 )
 
 

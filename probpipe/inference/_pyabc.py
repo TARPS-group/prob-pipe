@@ -72,17 +72,35 @@ class PyABCDistribution(pyabc.Distribution):
         self._d = prior.event_spec.spec.vector_size
         super().__init__(**{_flat_key(i): pyabc.RV("uniform", 0, 1) for i in range(self._d)})
 
+    #: The unflattening map and the compiled draw and density, which derive from
+    #: the prior and do not pickle, so a copy rebuilds them on first use.
+    _DERIVED = ("_unflatten", "_draw", "_log_density")
+
+    def __getstate__(self) -> dict[str, Any]:
+        return {k: v for k, v in self.__dict__.items() if k not in self._DERIVED}
+
+    def _compiled_prior(self) -> tuple[Callable[..., Any], Callable[..., Any]]:
+        """The prior's flat draw at a key and its log-density at a flat vector, compiled."""
+        if "_draw" not in self.__dict__:
+            prior = self._prior
+            unflatten = self.__dict__.get("_unflatten") or flat_unflatten(prior)
+            self._draw = _compiled(lambda key: flat_vector(prior._sample(key)))
+            self._log_density = _compiled(lambda vec: prior._log_prob(unflatten(vec)))
+        return self._draw, self._log_density
+
     def rvs(self, *args: Any, **kwargs: Any) -> pyabc.Parameter:
         """One joint draw from the prior, as a flat-keyed pyabc ``Parameter``."""
+        draw, _ = self._compiled_prior()
         self._key, sub = jax.random.split(self._key)
-        vec = np.asarray(flat_vector(self._prior._sample(sub)))
+        vec = np.asarray(draw(sub))
         return pyabc.Parameter(**{_flat_key(i): float(vec[i]) for i in range(self._d)})
 
     def pdf(self, x: Mapping[str, float]) -> float:
         """Joint prior density at *x*, the flat parameter vector reassembled
         from its ``pN`` keys and scored as the prior's draw it lays out."""
+        _, log_density = self._compiled_prior()
         vec = jnp.asarray([x[_flat_key(i)] for i in range(self._d)])
-        return float(np.exp(np.asarray(self._prior._log_prob(self._unflatten(vec)))))
+        return float(np.exp(np.asarray(log_density(vec))))
 
 
 def _euclidean_distance(x: _SumStat, x0: _SumStat) -> float:
@@ -95,6 +113,34 @@ def _summarize(data: Any, summary_fn: _SummaryFn | None) -> np.ndarray:
     if summary_fn is not None:
         data = summary_fn(data)
     return np.asarray(data, dtype=float).ravel()
+
+
+def _compiled(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """*fn*, compiled with ``jax.jit`` when it traces and run eagerly otherwise.
+
+    pyabc calls the prior and the simulator once per particle, so an eager call
+    repeats its dispatch at every particle, and its compilation too when it
+    samples with a JAX loop, as a Gamma or a Poisson draw does. The compiled
+    form traces once and is reused at every particle. A function that does not
+    trace, such as a simulator that calls NumPy or an external program, runs
+    eagerly instead: the first call decides, and the later calls keep its choice.
+    """
+    compiled = jax.jit(fn)
+    chosen: list[Callable[..., Any]] = []
+
+    def run(*args: Any) -> Any:
+        if chosen:
+            return chosen[0](*args)
+        try:
+            value = compiled(*args)
+        except Exception:
+            # The function does not trace; an error of its own raises again eagerly.
+            chosen.append(fn)
+            return fn(*args)
+        chosen.append(compiled)
+        return value
+
+    return run
 
 
 def _smc_diagnostics(history: Any) -> DataTree:
@@ -291,12 +337,16 @@ class PyABCSMCMethod(InferenceMethod):
         unflatten = flat_unflatten(prior)
 
         sim_key = [sim_key0]  # threaded per simulator call (no numpy reseed)
+        simulate = _compiled(
+            lambda vec, key: flat_vector(
+                simulator._conditional_sample(parameter_given(factors, unflatten(vec)), key)
+            )
+        )
 
         def model_fn(parameters: Mapping[str, float]) -> _SumStat:
             vec = jnp.asarray([float(parameters[_flat_key(i)]) for i in range(d)])
             sim_key[0], sub = jax.random.split(sim_key[0])
-            given = parameter_given(factors, unflatten(vec))
-            raw = flat_vector(simulator._conditional_sample(given, sub))[None, :]
+            raw = simulate(vec, sub)[None, :]
             return {_DATA_KEY: _summarize(raw, summary_fn)}
 
         # Known limitation: pyabc perturbs in the prior's *constrained* space, so
