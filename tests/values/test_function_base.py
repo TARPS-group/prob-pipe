@@ -221,6 +221,42 @@ class TestFunctionDeclarations:
 
 
 class TestLiftedNames:
+    @pytest.mark.parametrize("sliced", [False, True])
+    def test_returned_batch_relabels_its_view_root(self, sliced, full_provenance_mode):
+        stored = NumericArrayBatch(
+            "pts",
+            jnp.arange(6.0).reshape(2, 3),
+            ("chain", "row"),
+            axes_per_level=(1, 1),
+            element_spec=NumericArraySpec(()),
+        )
+        if sliced:
+            stored = stored[1]
+        original_name = stored.name
+        factory = Function("factory", lambda: stored, output_name="f")
+        result = factory()
+        assert result.name == "f"
+        assert result[0].name == ("f[row=0]" if sliced else "f[chain=0]")
+        if not sliced:
+            assert result[0][1].name == "f[chain=0, row=1]"
+        assert result.provenance.parents[0].parent is factory
+        assert result[0].provenance is result.provenance
+        assert stored.name == original_name
+        assert stored.provenance is None
+        renamed = result.with_name("display")
+        assert renamed[0].name.startswith("display[")
+        assert renamed.provenance.operation == "with_name"
+        np.testing.assert_array_equal(result.values, stored.values)
+
+    def test_returned_function_relabels_python_names(self, full_provenance_mode):
+        stored = Function("inner", lambda: 1, output_name="value")
+        factory = Function("factory", lambda: stored, output_name="result")
+        result = factory()
+        assert result.name == result.__name__ == result.__qualname__ == "result"
+        assert result.output_name == "value"
+        assert result.provenance.parents[0].parent is factory
+        assert stored.name == stored.__name__ == "inner"
+
     @pytest.mark.parametrize("dispatch", ["sequential", "jax", "thread"])
     def test_sweep_keeps_array_kind_and_result_label(self, dispatch):
         wrapped = Function(

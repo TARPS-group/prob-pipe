@@ -594,7 +594,11 @@ class Batch[E](TrackedTerm, ABC):
         TypeError
             If *name* is not a non-empty string.
         """
-        renamed = super().with_name(name)
+        return super().with_name(name)
+
+    def _with_name(self, name: str) -> Self:
+        """Relabel a copy and restart its view root without rename provenance."""
+        renamed = super()._with_name(name)
         object.__setattr__(renamed, "_root_name", name)
         object.__setattr__(renamed, "_root_spec", renamed._spec)
         object.__setattr__(renamed, "_root_selection", _whole_of(renamed._spec))

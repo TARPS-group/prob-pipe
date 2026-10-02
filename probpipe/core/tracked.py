@@ -223,11 +223,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         TypeError
             If *name* is not a non-empty string.
         """
-        if not isinstance(name, str) or not name:
-            raise TypeError(f"{type(self).__name__}.with_name() requires a non-empty string name")
-        clone = self._shallow_copy()
-        object.__setattr__(clone, "_name", name)
-        object.__setattr__(clone, "_provenance", None)
+        clone = self._with_name(name)
         clone.with_provenance(
             Provenance.create(
                 "with_name",
@@ -235,6 +231,20 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
                 metadata={"old_name": self.name, "new_name": name},
             )
         )
+        return clone
+
+    def _with_name(self, name: str) -> Self:
+        """Return a relabeled shallow copy without recording rename provenance.
+
+        Result boundaries supply their own provenance. Subclasses override this
+        to keep name-derived state consistent for both those boundaries and
+        public ``with_name`` calls.
+        """
+        if not isinstance(name, str) or not name:
+            raise TypeError(f"{type(self).__name__}.with_name() requires a non-empty string name")
+        clone = self._shallow_copy()
+        object.__setattr__(clone, "_name", name)
+        object.__setattr__(clone, "_provenance", None)
         return clone
 
     # -- provenance ----------------------------------------------------------

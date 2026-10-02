@@ -202,7 +202,7 @@ def execute_distribution_broadcast(
         stochastic_plan=stochastic_plan if record_recipe else None,
         record_recipe=record_recipe,
     )
-    object.__setattr__(result, "_name", output_name or function_name)
+    result = result._with_name(output_name or function_name)
     if output_spec is not None:
         output_spec = _aggregate_output_spec(output_spec, result._output_samples)
         object.__setattr__(result, "_output_spec", output_spec)

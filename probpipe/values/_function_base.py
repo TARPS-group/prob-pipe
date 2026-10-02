@@ -608,7 +608,11 @@ class Function(Node, TrackedTerm, Annotated):
 
     def with_name(self, name: str) -> Self:
         """Rename the function label, preserving output_name and its declaration."""
-        renamed = cast(Self, TrackedTerm.with_name(self, name))
+        return cast(Self, TrackedTerm.with_name(self, name))
+
+    def _with_name(self, name: str) -> Self:
+        """Relabel a copy's Python names without rename provenance."""
+        renamed = cast(Self, TrackedTerm._with_name(self, name))
         object.__setattr__(renamed, "__name__", name)
         object.__setattr__(renamed, "__qualname__", name)
         return renamed

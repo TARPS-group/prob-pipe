@@ -151,18 +151,10 @@ def _coerce_output(
     label in provenance and the declared output components. A tracked
     return is shallow-copied, sharing value data while owning its metadata.
     """
-    raw_value = value
     if broadcast_mode == BROADCAST_WRAP:
         value = _wrap_as_term(value, field_name)
     if isinstance(value, TrackedTerm):
-        if value is raw_value or value.provenance is not None:
-            value = _copy_result_term(value)
-        object.__setattr__(value, "_name", field_name)
-        from ..values import Function
-
-        if isinstance(value, Function):
-            object.__setattr__(value, "__name__", field_name)
-            object.__setattr__(value, "__qualname__", field_name)
+        value = value._with_name(field_name)
         if provenance is not None:
             value.with_provenance(provenance)
     return value
