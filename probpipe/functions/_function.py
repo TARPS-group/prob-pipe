@@ -173,7 +173,7 @@ def _make_execution_config(
 ) -> _execution.WorkflowExecutionConfig:
     """Build resolved execution metadata for row-wise call dispatch."""
     if mode is None:
-        match effective_workflow_kind(function):
+        match function.effective_workflow_kind:
             case WorkflowKind.TASK:
                 mode = "prefect_task"
             case WorkflowKind.FLOW:
@@ -274,7 +274,7 @@ def _call_with_options_in_context(
             ),
         )
 
-    workflow_kind = effective_workflow_kind(function)
+    workflow_kind = function.effective_workflow_kind
     _broker._record_active_requested_execution(
         function.options["dispatch"],
         workflow_kind.value,
@@ -754,4 +754,6 @@ def _apply_scope() -> Generator[None, None, None]:
         yield
 
 
-install_call_engine(_call_engine, apply_scope=_apply_scope)
+install_call_engine(
+    _call_engine, apply_scope=_apply_scope, workflow_kind_resolver=effective_workflow_kind
+)

@@ -30,6 +30,7 @@ from probpipe import (
     ProductDistribution,
     Record,
     RecordSpec,
+    WorkflowKind,
     function,
     workflow_method,
     workflow_run,
@@ -218,6 +219,19 @@ class TestFunctionDeclarations:
             node for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))
         ]
         assert all("functions" not in ast.unparse(node) for node in imports)
+
+    def test_plain_engine_resolves_to_off(self, monkeypatch):
+        import probpipe.values._function_base as base
+
+        monkeypatch.setattr(base, "_call_engine", base._plain_call)
+        monkeypatch.setattr(base, "_apply_scope", base.nullcontext)
+        monkeypatch.setattr(base, "_workflow_kind_resolver", base._plain_workflow_kind)
+        value = object()
+        wrapped = Function("value", lambda: value, workflow_kind=WorkflowKind.TASK)
+        assert wrapped.effective_workflow_kind is WorkflowKind.OFF
+        assert wrapped() is value
+        base.install_call_engine(base._plain_call)
+        assert wrapped.effective_workflow_kind is WorkflowKind.OFF
 
 
 class TestLiftedNames:

@@ -609,6 +609,16 @@ class Function(Node, TrackedTerm, Annotated):
         """Read-only engine controls, separate from domain arguments."""
         return self._options
 
+    @property
+    def effective_workflow_kind(self) -> WorkflowKind:
+        """Resolve orchestration from instance controls and current global config.
+
+        Recomputed on each access. Requested Prefect modes warn and fall back
+        to OFF when Prefect is unavailable. Before engine installation, plain
+        evaluation always uses OFF.
+        """
+        return _workflow_kind_resolver(self)
+
     def with_options(self, **controls: Any) -> Self:
         """Return a copy with revised controls, preserving identity and declarations.
 
@@ -705,14 +715,21 @@ def _plain_call(function: Function, /, *args: Any, **kwargs: Any) -> Any:
     return function.apply(*args, **kwargs)
 
 
+def _plain_workflow_kind(function: Function, /) -> WorkflowKind:
+    """Plain evaluation has no orchestration, regardless of stored controls."""
+    return WorkflowKind.OFF
+
+
 _call_engine: Callable[..., Any] = _plain_call
 _apply_scope: Callable[[], AbstractContextManager[Any]] = nullcontext
+_workflow_kind_resolver: Callable[[Function], WorkflowKind] = _plain_workflow_kind
 
 
 def install_call_engine(
     engine: Callable[..., Any],
     *,
     apply_scope: Callable[[], AbstractContextManager[Any]] = nullcontext,
+    workflow_kind_resolver: Callable[[Function], WorkflowKind] = _plain_workflow_kind,
 ) -> None:
     """Install the process's Function call engine once at package initialization.
 
@@ -723,11 +740,14 @@ def install_call_engine(
     same engine is harmless; replacing it raises RuntimeError. A non-callable
     engine raises TypeError. The optional apply_scope preserves workflow RNG
     admission around raw evaluation without coupling this module to the engine.
+    The workflow_kind_resolver supplies the public effective_workflow_kind
+    property; its default returns OFF for plain evaluation.
     """
-    global _call_engine, _apply_scope
+    global _call_engine, _apply_scope, _workflow_kind_resolver
     if not callable(engine):
         raise TypeError("The Function call engine must be callable")
     if _call_engine is not _plain_call and _call_engine is not engine:
         raise RuntimeError("The Function call engine is already installed")
     _call_engine = engine
     _apply_scope = apply_scope
+    _workflow_kind_resolver = workflow_kind_resolver

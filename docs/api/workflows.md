@@ -298,6 +298,15 @@ output name, with the same undeclared return inference as an ordinary Function.
 
 ## Orchestration configuration
 
+`fn.options["workflow_kind"]` is the stored setting;
+`fn.effective_workflow_kind` is the read-only mode used for execution. The latter
+resolves the instance override, then the current global configuration when the
+instance uses `DEFAULT`. If both are `DEFAULT`, the effective mode is `OFF`.
+Resolution runs on every access, including after global configuration changes
+or `with_options`. A requested `TASK` or `FLOW` warns and falls back to `OFF`
+when Prefect is unavailable. Before the call engine is installed, the property
+returns `OFF`, matching plain evaluation.
+
 ::: probpipe.WorkflowKind
 
 ::: probpipe.prefect_config

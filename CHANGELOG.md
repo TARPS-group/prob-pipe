@@ -38,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `signature_and_declarations`. Old callable anchors are rejected with an ABI
   incompatibility error; regenerate their recipes. The RNG recipe, stochastic
   plan, and outer replay schema remain at v1.
+  `Function.effective_workflow_kind` remains public and read-only: it resolves
+  instance controls against the current global configuration on each access,
+  including the warning and `OFF` fallback when Prefect is unavailable.
   `Module`, `AbstractModule`, and both method decorators are experimental.
   Resolved output declarations survive sweeps and broadcasts, including type
   holes, output-only dimensions, and returned Function contracts. Broadcast
