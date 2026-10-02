@@ -105,11 +105,9 @@ from probpipe.distributions._capabilities import (
 from probpipe.distributions._conditional import conditional_distribution
 from probpipe.distributions._conversion import ConversionInfo, Converter, converter_registry
 from probpipe.distributions._distribution import (
-    DEFAULT_NUM_EVALUATIONS,
     Distribution,
     DistributionSpec,
     NumericDistribution,
-    set_default_num_evaluations,
 )
 from probpipe.distributions._empirical import EmpiricalDistribution
 from probpipe.families import (
@@ -215,6 +213,7 @@ from probpipe.values import (
     SupportsLogDetJacobian,
     is_differentiable,
     is_invertible,
+    set_default_n_broadcast_samples,
 )
 
 __all__ = [
@@ -378,6 +377,7 @@ __all__ = [
     "replay_run",
     "rwmh",
     "sample",
+    "set_default_n_broadcast_samples",
     "simplex",
     "sphere",
     "unit_interval",

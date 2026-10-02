@@ -8,6 +8,7 @@ from ._function_base import (
     SupportsLogDetJacobian,
     is_differentiable,
     is_invertible,
+    set_default_n_broadcast_samples,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "SupportsLogDetJacobian",
     "is_differentiable",
     "is_invertible",
+    "set_default_n_broadcast_samples",
 ]

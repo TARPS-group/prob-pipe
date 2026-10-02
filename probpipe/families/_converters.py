@@ -50,6 +50,7 @@ from ..distributions._empirical import EmpiricalDistribution, _batch_form
 from ..functions import _broker
 from ..functions._result import SAMPLE_LEVEL
 from ..operations._operation import _workflow_draws
+from ..values import Function
 from ._backend import TFPDistribution
 from ._continuous import (
     Beta,
@@ -80,9 +81,6 @@ except ImportError:  # pragma: no cover - scipy is installed with the package's 
     _HAS_SCIPY = False
 
 __all__: list[str] = []
-
-#: The number of draws a sampling conversion takes when the caller names none.
-_DEFAULT_NUM_SAMPLES = 1024
 
 #: The provider contract of the draws of a SciPy distribution, from a workflow-owned key.
 _SCIPY_PROVIDER_ABI = "scipy.stats.seedsequence-pcg64/v1"
@@ -122,7 +120,9 @@ def _refuse_unread(converter: str, options: dict[str, Any], reads: tuple[str, ..
 
 
 def _sample_count(options: dict[str, Any]) -> int:
-    """The ``num_samples`` option as a positive integer, ``1024`` when it is absent.
+    """The ``num_samples`` option as a positive integer, or the default sample count without it.
+
+    The default is the one :func:`~probpipe.set_default_n_broadcast_samples` sets.
 
     Raises
     ------
@@ -131,7 +131,7 @@ def _sample_count(options: dict[str, Any]) -> int:
     ValueError
         If the count is not positive.
     """
-    value = options.get("num_samples", _DEFAULT_NUM_SAMPLES)
+    value = options.get("num_samples", Function.DEFAULT_N_BROADCAST_SAMPLES)
     if isinstance(value, bool):
         raise TypeError(f"num_samples must be an integer; got {value!r}")
     try:

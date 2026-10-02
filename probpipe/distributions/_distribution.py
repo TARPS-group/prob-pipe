@@ -4,7 +4,6 @@ Provides:
   - ``Distribution`` – Abstract base for all ProbPipe distributions.
   - ``NumericDistribution`` – The marker of a law whose event is numeric, with its views.
   - ``DistributionSpec`` – The term spec of the distribution kind.
-  - Global defaults for expectation sampling.
 """
 
 from __future__ import annotations
@@ -29,22 +28,6 @@ from ..core.constraints import _known_equal
 from ..core.provenance import Provenance
 from ..core.tracked import Annotated, TrackedTerm, _TrackedTermMeta
 from ._capabilities import _check_guards
-
-# ---------------------------------------------------------------------------
-# Global defaults
-# ---------------------------------------------------------------------------
-
-DEFAULT_NUM_EVALUATIONS: int = 1024
-"""Default number of function evaluations for sample-based expectations."""
-
-
-def set_default_num_evaluations(n: int) -> None:
-    """Set the global default for ``expectation()`` on infinite-support distributions."""
-    global DEFAULT_NUM_EVALUATIONS
-    if n < 1:
-        raise ValueError("num_evaluations must be at least 1")
-    DEFAULT_NUM_EVALUATIONS = n
-
 
 # ---------------------------------------------------------------------------
 # The event declaration: completion and class membership

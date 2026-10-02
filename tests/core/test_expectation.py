@@ -5,7 +5,6 @@ import jax.scipy.special as jsp
 import numpy as np
 import pytest
 
-import probpipe.distributions._distribution as dist_mod
 from probpipe import (
     Bernoulli,
     Beta,
@@ -21,7 +20,7 @@ from probpipe import (
     evaluate,
     expectation,
     mean,
-    set_default_num_evaluations,
+    set_default_n_broadcast_samples,
     variance,
 )
 from probpipe.core._dispatch import BinaryDispatchMethod, Feasibility, ResolutionError
@@ -251,34 +250,24 @@ _DEFAULT_SIZE_ESTIMATORS = [
 
 
 class TestGlobalDefaults:
-    def test_set_default_num_evaluations(self):
-        old = dist_mod.DEFAULT_NUM_EVALUATIONS
-        try:
-            set_default_num_evaluations(512)
-            assert dist_mod.DEFAULT_NUM_EVALUATIONS == 512
-        finally:
-            set_default_num_evaluations(old)
+    def test_the_setter_sets_the_default_sample_count(self, monkeypatch):
+        monkeypatch.setattr(Function, "DEFAULT_N_BROADCAST_SAMPLES", 256)
+        set_default_n_broadcast_samples(512)
+        assert Function.DEFAULT_N_BROADCAST_SAMPLES == 512
 
-    @pytest.mark.pending(
-        reason="the default sample count is one setting, read by the sampling lift's "
-        "n_broadcast_samples",
-        raises=AssertionError,
-    )
     @pytest.mark.parametrize(("make_dist", "f"), _DEFAULT_SIZE_ESTIMATORS)
-    def test_default_num_evaluations_sets_the_estimate_size(self, make_dist, f):
+    def test_the_default_sample_count_sets_the_estimate_size(self, monkeypatch, make_dist, f):
         """An estimator reads the current default sample count, not a copy taken at import."""
-        old = dist_mod.DEFAULT_NUM_EVALUATIONS
-        try:
-            set_default_num_evaluations(7)
-            law = make_dist()
-            assert evaluate(f, law).num_atoms == 7
-            assert np.isfinite(float(expectation(law, f)))
-        finally:
-            set_default_num_evaluations(old)
+        monkeypatch.setattr(Function, "DEFAULT_N_BROADCAST_SAMPLES", 256)
+        set_default_n_broadcast_samples(7)
+        law = make_dist()
+        assert evaluate(f, law).num_atoms == 7
+        assert np.isfinite(float(expectation(law, f)))
 
-    def test_set_default_invalid(self):
-        with pytest.raises(ValueError):
-            set_default_num_evaluations(0)
+    @pytest.mark.parametrize(("count", "error"), [(0, ValueError), (2.5, TypeError)])
+    def test_an_inadmissible_default_raises(self, count, error):
+        with pytest.raises(error):
+            set_default_n_broadcast_samples(count)
 
 
 # ---------------------------------------------------------------------------

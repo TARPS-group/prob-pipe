@@ -1434,7 +1434,7 @@ class TestARecordReturnLiftsToARecordLaw:
             result = transform(**self._laws())
         means, variances = result._mean(), result._variance()
         # sum ~ N(3, 0.02) and diff ~ N(-1, 0.02) for independent x and y.
-        tolerance = 3.0 * np.sqrt(0.02) / np.sqrt(128)
+        tolerance = 3.0 * np.sqrt(0.02) / np.sqrt(Function.DEFAULT_N_BROADCAST_SAMPLES)
         np.testing.assert_allclose(float(means["sum"]), 3.0, atol=tolerance)
         np.testing.assert_allclose(float(means["diff"]), -1.0, atol=tolerance)
         np.testing.assert_allclose(float(variances["sum"]), 0.02, atol=0.02)

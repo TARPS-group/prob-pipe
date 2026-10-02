@@ -67,7 +67,11 @@ This makes `C1 – Uniform interface to functions, distributions, and values` an
 
 A `Function` keeps two namespaces apart: the wrapped function's arguments, which are every positional and keyword argument of a call, and the framework's **controls**, which select realization, execution, or presentation. The construction metadata `name`, `output_label`, and `output_spec` are fixed at construction, apart from the controls. The controls are `n_broadcast_samples`, `include_inputs`, `method`, `exact_only`, the per-parameter `conversions`, `method_options`, `raw`, and the dispatch and orchestration selectors. `method_options` is one mapping of the numerical budgets the selected method reads, such as an MCMC method's warmup and draw counts, and the selected method validates its entries when it runs. The name that `method` gives resolves among an operation's routes and the methods of its registry routes (VI.0). Every ProbPipe-caused draw's key comes from the workflow scope (V.8), so a call takes no framework key or seed. A wrapped function's own `key` or `seed` parameter binds as an ordinary argument.
 
-**Setting a control.** Each control's effective value is resolved from the framework's default, then the decorator or constructor, then a `with_options` view. The view leaves the original `Function` unchanged. Every control has a default, and a view that sets a control to `None` resets it to the framework's default, whatever the decorator set. Per-call controls go through `with_options` for both ordinary functions and operations; direct call keywords always bind to the authored signature. Thus a wrapped function's own `raw` parameter remains an argument, distinct from the framework's control of that name.
+**Setting a control.** Each control's effective value is resolved from the framework's default, then the decorator or constructor, then a `with_options` view. The view leaves the original `Function` unchanged. Every control has a default, and a view that sets a control to `None` resets it to the framework's default, whatever the decorator set. The default sample count is 256, the budget of a rough estimate, which `set_default_n_broadcast_samples(n)` changes for the session; a call reads it when it runs, and a converter that draws takes it as its `num_samples` unless that option is given. Per-call controls go through `with_options` for both ordinary functions and operations; direct call keywords always bind to the authored signature. Thus a wrapped function's own `raw` parameter remains an argument, distinct from the framework's control of that name.
+
+```python
+def set_default_n_broadcast_samples(n: int) -> None: ...   # the session's default sample count
+```
 
 ```python
 predict.with_options(n_broadcast_samples=1000)(theta=prior, x=x_obs)
@@ -81,10 +85,6 @@ mean.with_options(method="monte_carlo", n_broadcast_samples=1000)(posterior)
 ### Rationale
 
 A `Function` must wrap an *ordinary* function with no naming restrictions (`C5 – Naming for unambiguous meaning`): a user should never have to rename a `seed` parameter because the framework wanted that word. Holding the controls in a separate namespace removes the collision while keeping the bare decorator and a single call site convenient, and with seeding scoped rather than carried (V.8), ProbPipe claims no `seed` argument.
-
-### Open points
-
-- *Default sample count.* How many draws a broadcast takes by default is unsettled; the default is a speed-versus-accuracy ceiling, and an explicit per-call override is always available. The default should signal "rough estimate," not "tuned."
 
 ## V.3 — Binding (step 2)
 

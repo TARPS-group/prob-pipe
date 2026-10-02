@@ -607,7 +607,7 @@ class Function(Node, TrackedTerm, Annotated):
     _output_label: str
     _options: Mapping[str, Any]
 
-    DEFAULT_N_BROADCAST_SAMPLES = 128
+    DEFAULT_N_BROADCAST_SAMPLES = 256
 
     def __init__(
         self,
@@ -940,6 +940,45 @@ class Function(Node, TrackedTerm, Annotated):
         return fields
 
 
+def _check_sample_count(count: Any) -> None:
+    """Refuse a sample count that is not a positive integer.
+
+    Raises
+    ------
+    TypeError
+        If *count* is not an integer.
+    ValueError
+        If *count* is not positive.
+    """
+    if isinstance(count, bool) or not isinstance(count, int):
+        raise TypeError(f"n_broadcast_samples must be an integer; got {count!r}")
+    if count <= 0:
+        raise ValueError(f"n_broadcast_samples must be a positive integer; got {count!r}")
+
+
+def set_default_n_broadcast_samples(n: int) -> None:
+    """Set the sample count of every function and operation that sets none of its own.
+
+    A call reads the default when it runs, so the setting also governs the
+    functions constructed before it. The converters that draw, such as moment
+    matching, draw this many unless their ``num_samples`` option is given.
+
+    Parameters
+    ----------
+    n : int
+        The number of draws, at least one. The default is 256.
+
+    Raises
+    ------
+    TypeError
+        If *n* is not an integer.
+    ValueError
+        If *n* is less than one.
+    """
+    _check_sample_count(n)
+    Function.DEFAULT_N_BROADCAST_SAMPLES = n
+
+
 def _set_controls(
     defaults: Mapping[str, Any],
     current: Mapping[str, Any],
@@ -986,11 +1025,7 @@ def _validate_options(options: Mapping[str, Any], signature: inspect.Signature) 
             )
     if not isinstance(options["workflow_kind"], WorkflowKind):
         raise TypeError("workflow_kind must be a WorkflowKind enum member")
-    count = options["n_broadcast_samples"]
-    if isinstance(count, bool) or not isinstance(count, int):
-        raise TypeError(f"n_broadcast_samples must be an integer; got {count!r}")
-    if count <= 0:
-        raise ValueError(f"n_broadcast_samples must be a positive integer; got {count!r}")
+    _check_sample_count(options["n_broadcast_samples"])
     for flag in ("include_inputs", "exact_only", "raw"):
         if not isinstance(options[flag], bool):
             raise TypeError(f"{flag} must be a bool; got {options[flag]!r}")
