@@ -628,17 +628,9 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         atoms = self._atoms
         if not segments:
             return atoms
-        key = _PATH_SEP.join(segments)
-        column = atoms[key]
-        if isinstance(node, NumericArraySpec):
-            return NumericArrayBatch(
-                f"{atoms.name}[{key!r}]",
-                column,
-                atoms.level_names,
-                element_spec=node,
-                axes_per_level=_ranks(atoms),
-            )
-        return column
+        # A batch of records presents a field's column as the batch of its kind on
+        # the atoms' levels, and an interior node as the sub-batch beneath it.
+        return atoms[_PATH_SEP.join(segments)]
 
     def _selection_batch(self, selected: tuple[_Selected, ...]) -> RecordBatch:
         """The atoms projected onto the selected nodes, one field per node under its final segment.

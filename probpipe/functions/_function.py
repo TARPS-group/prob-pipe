@@ -734,8 +734,8 @@ def _jax_traceability_error(
                     probe_leaves.append(
                         {
                             leaf: jnp.reshape(
-                                jnp.asarray(source[leaf]),
-                                (n_rows, *jnp.shape(source[leaf])[n_batch:]),
+                                jnp.asarray(source._raw_column(leaf)),
+                                (n_rows, *jnp.shape(source._raw_column(leaf))[n_batch:]),
                             )[:1]
                             for leaf in source.event_template
                         }

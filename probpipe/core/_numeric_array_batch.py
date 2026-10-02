@@ -159,6 +159,19 @@ class NumericArrayBatch(Batch[NumericArray]):
             provenance=provenance,
         )
 
+    @classmethod
+    def _over_store(cls, store: Any, *, spec: BatchSpec, name: str) -> NumericArrayBatch:
+        """This batch over *store* as given, without re-checking it, as a container's view of it.
+
+        A batch of records checked each column against its field's spec when it
+        was built, so presenting one column needs no second check. The store is
+        shared, not copied.
+        """
+        batch = object.__new__(cls)
+        object.__setattr__(batch, "_values", store)
+        batch._init_batch(spec, name=name)
+        return batch
+
     # -- what it holds ------------------------------------------------------
 
     @property

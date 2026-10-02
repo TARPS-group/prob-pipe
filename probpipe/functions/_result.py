@@ -287,7 +287,10 @@ def _stack_declared_columns(
     columns: dict[str, Any] = {}
     for path in template:
         if isinstance(records, list):
-            values = [record[path] for record in records]
+            values = [
+                record.raw(path) if isinstance(record, Record) else record[path]
+                for record in records
+            ]
             # The declared *kind* decides the storage, not what the values happen
             # to look like. An opaque field holding one array per row is a column
             # of two objects, not a numeric column whose second axis is another
@@ -310,7 +313,7 @@ def _stack_declared_columns(
             # stacked the rows itself and a declared-opaque field is whatever
             # shape its values happened to have. The declared kind decides here
             # too, or that shape is read as a second multiplicity.
-            batched = records[path]
+            batched = records.raw(path)
             if not isinstance(template[path], NumericArraySpec):
                 batched = _packed_object_column(list(batched))
 
@@ -786,7 +789,9 @@ def _make_stack(
                 return NumericRecordBatch(
                     result_name,
                     {
-                        path: flat[path].reshape(batch_shape + flat[path].shape[n_cur:])
+                        path: flat._raw_column(path).reshape(
+                            batch_shape + flat._raw_column(path).shape[n_cur:]
+                        )
                         for path in flat.event_template
                     },
                     level_names,
@@ -966,7 +971,7 @@ def _make_stack(
         # Leaf-keyed, so a nested output is one column per leaf and needs no
         # flattening by the caller.
         paths = list(inner_outputs.event_template)
-        resolved = [inner_outputs[path] for path in paths]
+        resolved = [inner_outputs.raw(path) for path in paths]
         if all(hasattr(v, "shape") and v.shape[:1] == (n_total,) for v in resolved):
             tpl = output_template or RecordSpec(
                 dict(zip(paths, (v.shape[1:] for v in resolved), strict=True))
@@ -1062,7 +1067,7 @@ def _batch_at(value: Any, spec: BatchSpec, label: str) -> Any:
         value = Record(label, **value)
     if isinstance(value, Record):
         template = value.event_template
-        columns = {path: value[path] for path in template}
+        columns = {path: value.raw(path) for path in template}
         for column in columns.values():
             require_leading(tuple(_event_shape_of(column)))
         element = _reshaped_template(template, lambda shape: shape[n_axes:])

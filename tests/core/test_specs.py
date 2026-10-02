@@ -534,7 +534,7 @@ class TestSpecKinds:
         assert law.event_spec == OutputSpec(law=OpaqueSpec(type=str))
 
         record = Record("r", law=law)
-        assert record["law"] is law
+        assert type(record["law"]) is type(law) and record["law"].spec == law.spec
         assert record.spec == schema
         assert schema.is_valid(record)
 
@@ -585,7 +585,7 @@ class TestDistributionSchemaAvailability:
         assert inferred["law"] == DistributionSpec(template)
         assert inferred["law"].event_spec.spec is template
         record = Record("r", law=law)
-        assert record["law"] is law
+        assert type(record["law"]) is type(law) and record["law"].spec == law.spec
         assert record.spec == inferred
 
 

@@ -212,7 +212,7 @@ def _simulate_offline(
     # the leaf's native (..., n, n) event shape, not the flat adapter layout.
     named = {}
     for leaf in leaf_keys:
-        arr = jnp.asarray(record[leaf])
+        arr = jnp.asarray(record.raw(leaf))
         if bijectors is not None:
             arr = bijectors[leaf]._inverse(arr)
         named[leaf] = np.asarray(jnp.reshape(arr, (num_simulations, -1)), dtype="float32")

@@ -74,15 +74,15 @@ class TestConstruction:
     def test_coerces_python_scalar_to_jax_array(self):
         """Every leaf is a jnp.ndarray after construction (uniform type)."""
         nr = NumericRecord("nr", a=1.0, b=2)
-        assert isinstance(nr["a"], jnp.ndarray)
-        assert isinstance(nr["b"], jnp.ndarray)
+        assert isinstance(nr.raw("a"), jnp.ndarray)
+        assert isinstance(nr.raw("b"), jnp.ndarray)
 
     def test_numpy_stored_native_converted_at_boundary(self):
         arr = np.array([1.0, 2.0])
         nr = NumericRecord("nr", x=arr)
-        # Native storage: navigation returns the numpy leaf verbatim; the
+        # Native storage: raw() returns the numpy leaf verbatim; the
         # compute boundary (to_vector) converts to jax.
-        assert nr["x"] is arr
+        assert nr.raw("x") is arr
         vec = nr.to_vector()
         assert isinstance(vec, jnp.ndarray)
         np.testing.assert_allclose(vec, [1.0, 2.0])
@@ -91,7 +91,7 @@ class TestConstruction:
         """An existing jnp.ndarray is stored without conversion or copy."""
         arr = jnp.array([1.0, 2.0])
         nr = NumericRecord("nr", x=arr)
-        assert nr["x"] is arr
+        assert nr.raw("x") is arr
 
     def test_xarray_accepted_and_stored_native(self):
         """xarray.DataArray wraps numeric data and is accepted **verbatim**:
@@ -104,8 +104,8 @@ class TestConstruction:
             coords={"time": [10, 20, 30]},
         )
         nr = NumericRecord("nr", y=da)
-        assert nr["y"] is da
-        assert nr["y"].dims == ("time",)
+        assert nr.raw("y") is da
+        assert nr.raw("y").dims == ("time",)
         np.testing.assert_allclose(nr.to_vector(), [1.0, 2.0, 3.0])
 
     # Regression: previous ``_is_numeric_leaf`` short-circuited True on
@@ -143,7 +143,7 @@ class TestConstruction:
             arr = np.array([1, 2, 3]).astype(dt)
             nr = NumericRecord("nr", x=arr)
             # Stored verbatim (native form); the boundary converts on demand.
-            assert nr["x"] is arr, f"failed for dtype {dt}"
+            assert nr.raw("x") is arr, f"failed for dtype {dt}"
 
     def test_numeric_dtype_predicate_shared(self):
         """Every numeric gate must agree on what counts as numeric by consuming

@@ -365,27 +365,26 @@ class RecordBatch(Batch[Record]):
         return dict(self._columns)
 
     def _column_as_batch(self, key: str) -> Any:
-        """One field's column, in the batch form its spec calls for.
+        """One field's column, as the batch of the field's kind on this batch's levels.
 
-        A ``NumericArraySpec`` batches natively — the column *is* the array, with the
-        batch axes leading — so it is returned as stored. A callable or an opaque
-        value has no such form, so the column is presented as the matching object
-        batch over the same elements, carrying this batch's own levels.
+        An array field's column is a ``NumericArrayBatch`` over the stored array,
+        and any other field's the batch form its kind registers, such as a
+        ``FunctionBatch`` or an ``OpaqueBatch`` over the stored object array. A
+        term presents as its raw representation inside a JAX trace (II.4), so a
+        traced column is the stored array.
 
-        Either way the result is a **view**: the object batch shares this batch's
-        column rather than copying it, so reading one field costs nothing per
-        element. That is what makes the object column safe to share — this batch
-        froze it and checked its entries against the same spec when it was built,
-        which is the whole of what the object batch's own constructor would
-        redo.
+        The result is a **view**: it shares this batch's column rather than
+        copying it, so reading one field costs nothing per element. This batch
+        checked the column against the field's spec when it was built, which is
+        the whole of what the column batch's own constructor would redo.
         """
         column = self._columns[key]
         spec = self.event_template[key]
-        if isinstance(spec, NumericArraySpec):
+        if isinstance(column, jax.core.Tracer):
             return column
-        # Every other kind presents through its registered batch form, so a new
-        # kind is reachable here by registering itself rather than by being added
-        # to a switch this module would otherwise have to know about.
+        # Every kind presents through its registered batch form, so a new kind is
+        # reachable here by registering itself rather than by being added to a
+        # switch this module would otherwise have to know about.
         column_cls = batch_class_for_spec(spec)
         if column_cls is None:
             raise TypeError(
@@ -733,8 +732,9 @@ class RecordBatch(Batch[Record]):
                     f"{kind}: the record at {position} must have exactly the fields "
                     f"{list(fields)} — {'; '.join(parts)}"
                 )
+        leaves = [dict(record._walk_leaves()) for record in records]
         columns = {
-            key: _stack_column([record[key] for record in records], spec[key], kind=kind)
+            key: _stack_column([stored[key] for stored in leaves], spec[key], kind=kind)
             for key in fields
         }
         return cls(
@@ -922,7 +922,7 @@ def _shared_opaque_types(spec: RecordSpec, records: list[Record]) -> RecordSpec:
     for key in spec:
         field = spec[key]
         if isinstance(field, OpaqueSpec) and key in records[0]:
-            shared = _opaque_spec_of(record[key] for record in records if key in record)
+            shared = _opaque_spec_of(record.raw(key) for record in records if key in record)
             field = OpaqueSpec(type=shared.type, meta=field.meta)
         fields[key] = field
     return spec if fields == dict(spec.items()) else RecordSpec(fields)
@@ -1434,7 +1434,7 @@ class _MappedBatchColumns:
         """
         return cls(
             record._name,
-            {path: record[path] for path in record.event_template},
+            {path: record.raw(path) for path in record.event_template},
             element_spec=record.spec,
             level_names=(),
             axis_groups=(),

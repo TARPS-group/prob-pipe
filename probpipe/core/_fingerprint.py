@@ -277,6 +277,13 @@ def _subdigest(
     return sub.digest()
 
 
+def _identity_fingerprint(obj: Any) -> str:
+    """The identity-tier digest of *obj*: its type and process-local identity, hashing no content."""
+    h = hashlib.sha256()
+    _update_weak_identity(h, obj, _FingerprintState())
+    return h.hexdigest()[:16]
+
+
 def _update_weak_identity(
     h: hashlib._Hash,
     obj: Any,
@@ -630,20 +637,24 @@ def _update_record(
     max_array_bytes: int | None,
     state: _FingerprintState,
 ) -> None:
-    """Hash a Record by its leaf-keyed items (full ``/``-paths → leaf values).
+    """Hash a Record by its stored leaves, keyed by their full ``/``-paths.
 
-    ``Record`` is a leaf-keyed collection: ``items()`` yields every leaf by its
-    canonical ``/``-joined path, so this flat walk captures the full nested
-    structure without recursing — and without indexing interior sub-Records,
-    which raises under the leaf-keyed API.
+    The traversal yields every stored leaf by its canonical ``/``-joined path,
+    so it captures the full nested structure in one flat pass. It reads the stored
+    leaves rather than the views ``items()`` returns, since a view records the
+    record as its provenance's parent, and hashing that parent would hash the
+    record again. A leaf is read as record equality reads it, so equal records
+    fingerprint alike.
     """
+    from .record import _leaf_value
+
     h.update(b"record:")
     h.update(type(record).__name__.encode())
     h.update(b":")
-    for path, value in record.items():
+    for path, value in record._walk_leaves():
         h.update(path.encode())
         h.update(b"=")
-        _update(h, value, depth + 1, max_array_bytes, state)
+        _update(h, _leaf_value(value), depth + 1, max_array_bytes, state)
         h.update(b";")
 
 

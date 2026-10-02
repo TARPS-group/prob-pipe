@@ -299,7 +299,7 @@ class TestMappingsAreNeverLeaves:
         r = Record("r", cfg={"a": 1.0, "b": 2.0}, x=3.0)
         assert type(r) is NumericRecord
         assert tuple(r.keys()) == ("cfg/a", "cfg/b", "x")
-        assert isinstance(r["cfg/a"], jnp.ndarray)
+        assert isinstance(r.raw("cfg/a"), jnp.ndarray)
         assert isinstance(r.at_path("cfg"), NumericRecord)
 
     def test_mapping_value_with_opaque_leaf_stays_plain(self):
@@ -308,7 +308,7 @@ class TestMappingsAreNeverLeaves:
         r = Record("r", cfg={"label": "horseshoe", "scale": 1.0})
         assert type(r) is Record
         assert tuple(r.keys()) == ("cfg/label", "cfg/scale")
-        assert r["cfg/label"] == "horseshoe"  # opaque leaf, stored as-is
+        assert r.raw("cfg/label") == "horseshoe"  # opaque leaf, stored as-is
         assert isinstance(r.at_path("cfg"), Record)
 
     def test_multi_level_nested_mapping_materializes(self):
@@ -432,12 +432,12 @@ class TestRecordAutoPromotion:
         da = xr.DataArray(np.arange(3.0), dims=["t"])
         r = Record("r", a=da)
         # A native backend leaf is first-class numeric: the record promotes
-        # and the leaf is stored verbatim — navigation returns it directly.
+        # and the leaf is stored verbatim, which raw() returns.
         from probpipe import NumericRecord
 
         assert type(r) is NumericRecord
-        assert r["a"] is da
-        assert type(r["a"]) is xr.DataArray
+        assert r.raw("a") is da
+        assert type(r.raw("a")) is xr.DataArray
 
     def test_edits_rederive_promotion_and_demotion(self):
         mixed = Record("r", a=1.0, label="tag")

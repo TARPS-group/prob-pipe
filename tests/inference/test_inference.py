@@ -1198,8 +1198,8 @@ class TestEndToEndValuesPipeline:
         # Posterior var  = sigma_prior^2 * sigma_lik^2 / (sigma_lik^2 + sigma_prior^2)
         #                = 10/11 ≈ 0.909
         draws = posterior.draws()
-        post_mean = np.asarray(draws["params"].mean(axis=0))
-        post_std = np.asarray(draws["params"].std(axis=0))
+        post_mean = np.asarray(draws["params"].raw().mean(axis=0))
+        post_std = np.asarray(draws["params"].raw().std(axis=0))
         analytical_mean = np.array([10 / 11, 20 / 11])
         analytical_std = np.sqrt(10 / 11)
         np.testing.assert_allclose(post_mean, analytical_mean, atol=0.15)
@@ -1215,7 +1215,7 @@ class TestEndToEndValuesPipeline:
         draws = posterior.draws()
         np.testing.assert_allclose(
             np.asarray(view._mean()),
-            np.asarray(draws["params"].mean(axis=0)),
+            np.asarray(draws["params"].raw().mean(axis=0)),
             atol=1e-5,
         )
         # Analytical check: view._mean() near analytical posterior mean
@@ -1280,7 +1280,7 @@ class TestEndToEndValuesPipeline:
         # Per-field views
         view_a = post["a"]
         assert isinstance(view_a, FieldView)
-        np.testing.assert_allclose(float(view_a._mean()), float(draws["a"].mean()), atol=1e-5)
+        np.testing.assert_allclose(float(view_a._mean()), float(draws["a"].raw().mean()), atol=1e-5)
 
     def test_workflow_mixed_posterior_and_independent(self, posterior):
         """Workflow with both posterior views and an independent distribution."""

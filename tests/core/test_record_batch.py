@@ -23,6 +23,7 @@ from probpipe import (
     ArrayBackend,
     FunctionBatch,
     FunctionSpec,
+    NumericArrayBatch,
     NumericArraySpec,
     NumericRecord,
     OpaqueBatch,
@@ -360,9 +361,12 @@ class TestLeafKeyedFieldColumns:
 
 
 class TestColumnBatchForms:
-    def test_an_array_field_yields_the_array_itself(self):
+    def test_an_array_field_yields_a_numeric_array_batch_over_its_column(self):
         batch = nested_batch()
-        assert batch["m"] is batch._columns["m"]
+        column = batch["m"]
+        assert isinstance(column, NumericArrayBatch)
+        assert column.raw() is batch._columns["m"]
+        assert column.level_names == batch.level_names
 
     def test_a_callable_field_yields_a_function_batch(self):
         functions = np.empty(2, dtype=object)
@@ -611,7 +615,7 @@ class TestPlainRecordBatch:
             element_spec=RecordSpec(site=OpaqueSpec()),
         )
         assert type(batch[0]) is Record
-        assert [element["site"] for element in batch] == ["north", "south"]
+        assert [element.raw("site") for element in batch] == ["north", "south"]
 
     def test_it_has_no_flat_layout(self):
         batch = RecordBatch(
@@ -1288,8 +1292,8 @@ class TestStack:
         batch = RecordBatch.stack(records, level_name="draw")
         assert isinstance(batch["tag"], OpaqueBatch)
         assert batch["tag"][1].value == 1
-        assert batch[0]["tag"] == 0
-        assert not isinstance(batch[0]["tag"], jnp.ndarray)
+        assert batch[0].raw("tag") == 0
+        assert not isinstance(batch[0].raw("tag"), jnp.ndarray)
 
     def test_stack_refuses_an_empty_list(self):
         with pytest.raises(ValueError, match="at least one record"):

@@ -115,8 +115,8 @@ class TestBlackJAXNuts:
             random_seed=0,
         )
         m = mean(posterior)
-        np.testing.assert_allclose(float(m["a"].squeeze()), 1.0, atol=0.15)
-        np.testing.assert_allclose(float(m["b"].squeeze()), -2.0, atol=0.15)
+        np.testing.assert_allclose(float(jnp.squeeze(m["a"])), 1.0, atol=0.15)
+        np.testing.assert_allclose(float(jnp.squeeze(m["b"])), -2.0, atol=0.15)
 
     def test_closed_form_gaussian_target(self):
         """Single-parameter conjugate Gaussian: closed-form posterior recovery.
@@ -147,8 +147,8 @@ class TestBlackJAXNuts:
         analytic_mean = 1.5
         analytic_var = 0.25
         sigma_mc = (analytic_var / (2 * 2000)) ** 0.5
-        post_mean = float(mean(posterior)["mu"].squeeze())
-        post_var = float(variance(posterior)["mu"].squeeze())
+        post_mean = float(jnp.squeeze(mean(posterior)["mu"]))
+        post_var = float(jnp.squeeze(variance(posterior)["mu"]))
         np.testing.assert_allclose(post_mean, analytic_mean, atol=3 * sigma_mc)
         # Variance MC SE for 4000 draws of an N(.,.25) is ~0.0056 — allow
         # ~3 sigma plus a small slack for residual warmup bias.
@@ -233,8 +233,8 @@ class TestBlackJAXHmc:
             random_seed=0,
         )
 
-        post_mean = float(mean(posterior)["mu"].squeeze())
-        post_var = float(variance(posterior)["mu"].squeeze())
+        post_mean = float(jnp.squeeze(mean(posterior)["mu"]))
+        post_var = float(jnp.squeeze(variance(posterior)["mu"]))
         np.testing.assert_allclose(post_mean, 1.5, atol=0.05)
         np.testing.assert_allclose(post_var, 0.25, rtol=0.10)
 
@@ -291,8 +291,8 @@ class TestBlackJAXHmc:
             num_integration_steps=10,
             random_seed=0,
         )
-        post_mean = float(mean(posterior)["mu"].squeeze())
-        post_var = float(variance(posterior)["mu"].squeeze())
+        post_mean = float(jnp.squeeze(mean(posterior)["mu"]))
+        post_var = float(jnp.squeeze(variance(posterior)["mu"]))
         np.testing.assert_allclose(post_mean, 1.5, atol=0.05)
         np.testing.assert_allclose(post_var, 0.25, rtol=0.12)
 

@@ -178,7 +178,7 @@ class TestAMemoIsRebuiltAfterARoundTrip:
         record = NumericRecord("nr", {"x": leaf})
         assert operation(record).to_vector().tolist() == [1.0, 2.0]
         # The native leaf itself survives; only the converted form is rebuilt.
-        assert operation(record)["x"].dims == ("t",)
+        assert operation(record).raw("x").dims == ("t",)
 
 
 class TestDecoupledState:

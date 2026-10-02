@@ -542,7 +542,7 @@ class TestCompletedOutputDeclarations:
         assert result.batch_shape == (3,)
         for marginal in result:
             assert marginal.event_spec.spec == result.event_spec.spec
-            values = marginal.atoms["component"]
+            values = marginal.atoms["component"].raw()
             np.testing.assert_array_equal(values[:, 0], values[:, 1])
         assert declaration.free_dims == {"width"}
 

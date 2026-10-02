@@ -248,8 +248,8 @@ class TestOpaqueColumnsAreRearrangedRaw:
 
         assert isinstance(batch["tag"], OpaqueBatch)
         assert isinstance(batch._raw_column("tag"), np.ndarray)
-        # An array field is its column either way.
-        assert batch._raw_column("x") is batch["x"]
+        # An array field's column batch holds the stored array.
+        assert batch["x"].raw() is batch._raw_column("x")
 
 
 class TestRetypingADeclaredOutputKeepsColumnsWithTheirKeys:
@@ -1084,8 +1084,8 @@ class TestDeclaredOpaqueOutputAcrossDispatches:
         column = result._raw_column("y")
         assert column.dtype == object
         assert column.shape == (2,)
-        assert [int(v) for v in result[0]["y"]] == [1, 2]
-        assert [int(v) for v in result[1]["y"]] == [2, 3]
+        assert [int(v) for v in result[0].raw("y")] == [1, 2]
+        assert [int(v) for v in result[1].raw("y")] == [2, 3]
 
 
 class TestEveryBatchIsAnOperand:

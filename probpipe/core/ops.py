@@ -202,7 +202,7 @@ def _drawn_at_its_batch_form(
     if isinstance(drawn, Record):
         columns = {}
         for path in drawn.event_template:
-            column = drawn[path]
+            column = drawn.raw(path)
             if not _is_numeric_leaf(column):
                 return drawn
             if tuple(_event_shape_of(column))[:n_draw_axes] != tuple(sample_shape):

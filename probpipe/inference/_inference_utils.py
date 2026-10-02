@@ -397,7 +397,7 @@ def _declared_vector(law: Any, draw: Record | Mapping[str, Any]) -> Array:
     if record is None:
         return flat_vector(draw)
     value = draw if isinstance(draw, Record) else Record("draw", draw)
-    return jnp.concatenate([jnp.ravel(jnp.asarray(value[path])) for path in record])
+    return jnp.concatenate([jnp.ravel(jnp.asarray(value.raw(path))) for path in record])
 
 
 class ModelFactors(NamedTuple):
