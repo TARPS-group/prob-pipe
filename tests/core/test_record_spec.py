@@ -115,7 +115,7 @@ class TestOpaqueSpecTypeAndMeta:
             first.bind_dims_from_spec(second)
 
     def test_an_open_meta_unifies_with_a_set_meta_and_takes_it(self):
-        """An inferred spec carries no meta, so a declared meta fills it in (Z20)."""
+        """An inferred spec carries no meta, so a declared meta fills it in."""
         declared, inferred = OpaqueSpec(meta="units"), OpaqueSpec(type=str)
 
         assert declared.bind_dims_from_spec(inferred) == declared
