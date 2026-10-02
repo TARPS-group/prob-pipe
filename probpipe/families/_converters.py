@@ -35,7 +35,7 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 from .._dtype import _default_float_dtype
 from ..core._spec_base import NumericArraySpec, NumericSpec
 from ..core._specs import OutputSpec
-from ..core.constraints import _supports_compatible
+from ..core.constraints import Constraint, _supports_compatible
 from ..distributions._capabilities import (
     _LAW_CAPABILITIES,
     SupportsCovariance,
@@ -726,8 +726,13 @@ def _cast_event(declaration: OutputSpec, label: str, family: type) -> str | None
     )
 
 
+def _same_support(first: Constraint, second: Constraint) -> bool:
+    """Whether the two supports contain each other."""
+    return _supports_compatible(first, second) and _supports_compatible(second, first)
+
+
 def _check_support(result: Distribution, law: Distribution) -> None:
-    """Refuse a fit whose support does not contain the law's.
+    """Refuse a fit whose support is not the law's.
 
     A law whose support is undeclared has nothing to compare, unless it is an
     empirical law, whose atoms are what it is supported on and must each lie in
@@ -736,15 +741,15 @@ def _check_support(result: Distribution, law: Distribution) -> None:
     Raises
     ------
     ValueError
-        If the law's support is not contained in the fit's, or an atom lies
-        outside it.
+        If the law's support and the fit's differ, or an atom lies outside the
+        fit's.
     """
     target = result.support
     if target is None:
         return
     source = getattr(law, "support", None)
     if source is not None:
-        if not _supports_compatible(source, target):
+        if not _same_support(source, target):
             raise ValueError(
                 f"Cannot convert {type(law).__name__} {law.label!r} (support={source}) to "
                 f"{type(result).__name__} (support={target}). Pass check_support=False to "
@@ -759,6 +764,17 @@ def _check_support(result: Distribution, law: Distribution) -> None:
             f"(support={target}): its atoms lie outside that support. Pass check_support=False "
             f"to override."
         )
+
+
+def _fixed_support(family: type) -> Constraint | None:
+    """The support every member of *family* shares, or None when it depends on the parameters.
+
+    A family whose support is fixed states it without reading its parameters.
+    """
+    try:
+        return family._event_support(None)
+    except AttributeError:
+        return None
 
 
 @dataclass(frozen=True)
@@ -784,8 +800,10 @@ class _MomentMatching(Converter):
     other statistic from one shared batch of ``num_samples`` draws. The fit
     keeps the law's label and component, and a family whose draws do not cast
     to the law's dtype is infeasible, as a ``Normal`` fit to a ``Bernoulli``
-    law is. Unless ``check_support=False``, its support must contain the
-    law's. The counted families need the option ``total_count``.
+    law is. Unless ``check_support=False``, the fit keeps the law's support:
+    a family whose support is fixed and differs from the law's is infeasible,
+    and a fit whose support depends on its parameters and differs is refused.
+    The counted families need the option ``total_count``.
     """
 
     _reads = ("num_samples", "total_count", "check_support", "event_spec")
@@ -848,8 +866,10 @@ class _MomentMatching(Converter):
 
         The promised declaration is the source's shape with the family's dtype.
         A fit whose draws do not cast to the source's dtype by the same-kind
-        rule is infeasible, so the registry tries the next converter. The
-        support is left to the fit.
+        rule is infeasible, so the registry tries the next converter, and so is
+        a family whose support is fixed and differs from the support the source
+        declares, unless ``check_support=False``. A support that depends on the
+        family's parameters is left to the fit.
 
         Raises
         ------
@@ -860,6 +880,21 @@ class _MomentMatching(Converter):
         if isinstance(planned, str):
             return ConversionInfo(False, description=planned)
         declaration = planned.declaration
+        declared, fixed = declaration.spec.support, _fixed_support(target_type)
+        if (
+            options.get("check_support", True)
+            and declared is not None
+            and fixed is not None
+            and not _same_support(declared, fixed)
+        ):
+            return ConversionInfo(
+                False,
+                description=(
+                    f"{target_type.__name__} is supported on {fixed}, and {planned.label!r} "
+                    f"declares the support {declared}; pass check_support=False to the "
+                    f"converter registry to fit it anyway"
+                ),
+            )
         promised = declaration._with_spec(
             NumericArraySpec(declaration.spec.shape, _fit_dtype(target_type))
         )
@@ -881,8 +916,7 @@ class _MomentMatching(Converter):
         TypeError
             If an option is not one the converter reads, or the fit is infeasible.
         ValueError
-            As :meth:`check` raises it, or if the fit's support does not contain
-            the law's.
+            As :meth:`check` raises it, or if the fit's support is not the law's.
         """
         _refuse_unread(self.name, options, self._reads)
         planned = self._fit(source, target_type, options)

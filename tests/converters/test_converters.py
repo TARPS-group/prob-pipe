@@ -103,7 +103,7 @@ class TestConverterRegistry:
 
     def test_an_option_no_converter_reads_raises_type_error(self):
         with pytest.raises(TypeError, match=r"'moment_match' reads the options"):
-            converter_registry.convert(Gamma("g", 9.0, 1.0), Normal, bandwidth=0.5)
+            converter_registry.convert(Laplace("g", 9.0, 1.0), Normal, bandwidth=0.5)
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +123,7 @@ class TestMomentMatching:
         np.testing.assert_allclose(float(result._scale), 0.5)
 
     def test_cross_family_moment_match(self):
-        g = Gamma(concentration=9.0, rate=1.0, label="g")
+        g = Laplace(loc=9.0, scale=1.0, label="g")
         info = converter_registry.check(g, Normal)
         assert (info.method_name, info.exact, info.samples) == ("moment_match", False, False)
 
@@ -132,15 +132,21 @@ class TestMomentMatching:
         np.testing.assert_allclose(float(result._loc), 9.0, atol=0.5)
 
     def test_the_fit_keeps_the_source_label_and_component(self):
-        g = Gamma(concentration=9.0, rate=1.0, label="g", event_spec=OutputSpec(theta=None))
+        g = Laplace(loc=9.0, scale=1.0, label="g", event_spec=OutputSpec(theta=None))
         result = converter_registry.convert(g, Normal)
         assert result.label == "g"
         assert list(result.event_spec.components) == ["theta"]
 
     def test_support_mismatch_raises_by_default(self):
+        """A fit to a family on another support is infeasible at check, before any fitting."""
         n = Normal(loc=0.5, scale=0.1, label="x")
-        with pytest.raises(ValueError, match="support"):
+        assert converter_registry.check(n, Beta).feasible is False
+        with pytest.raises(ResolutionError, match="check_support=False"):
             converter_registry.convert(n, Beta)
+
+    def test_a_wider_support_is_refused_as_well(self):
+        with pytest.raises(ResolutionError, match="declares the support positive"):
+            converter_registry.convert(Gamma("g", 9.0, 1.0), Normal)
 
     def test_support_mismatch_override(self):
         n = Normal(loc=0.5, scale=0.1, label="x")
@@ -158,7 +164,7 @@ class TestMomentMatching:
         assert emp.atoms.level_names == ("sample",)
 
     def test_provenance_attached(self):
-        g = Gamma(concentration=3.0, rate=1.0, label="prior")
+        g = Laplace(loc=3.0, scale=1.0, label="prior")
         result = converter_registry.convert(g, Normal)
         assert result.provenance is not None
         assert result.provenance.operation == "convert"
@@ -521,8 +527,8 @@ class TestTFPConverter:
         np.testing.assert_allclose(float(n2._scale), 2.0)
 
     def test_tfp_cross_family_chain(self):
-        """A TFP Gamma moment-matches to a ProbPipe Normal as the Gamma it enters as."""
-        tfp_g = tfd.Gamma(concentration=9.0, rate=1.0)
+        """A TFP Laplace moment-matches to a ProbPipe Normal as the Laplace it enters as."""
+        tfp_g = tfd.Laplace(loc=9.0, scale=1.0)
         info = converter_registry.check(tfp_g, Normal)
         assert (info.method_name, info.exact) == ("moment_match", False)
         result = converter_registry.convert(tfp_g, Normal, num_samples=5000)
@@ -744,7 +750,8 @@ class TestConvertDelegation:
 
     def test_convert_support_check(self):
         n = Normal(loc=0.5, scale=0.1, label="x")
-        with pytest.raises(ValueError, match="support"):
+        assert convert.check(n, Beta).route is None
+        with pytest.raises(ResolutionError, match="check_support=False"):
             convert(n, Beta)
 
     def test_convert_check_support_false(self):
@@ -791,7 +798,7 @@ class TestConversionProvenance:
 
     def test_cross_family_provenance_attached(self):
         """Cross-family conversion attaches provenance with source as parent."""
-        g = Gamma(concentration=9.0, rate=1.0, label="g")
+        g = Laplace(loc=9.0, scale=1.0, label="g")
         result = converter_registry.convert(g, Normal)
         assert result.provenance is not None
         assert result.provenance.operation == "convert"

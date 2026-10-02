@@ -24,7 +24,7 @@ from probpipe import (
     Converter,
     Distribution,
     EmpiricalDistribution,
-    Gamma,
+    Laplace,
     MultivariateNormal,
     Normal,
     NumericArraySpec,
@@ -87,7 +87,7 @@ def _flat_samples(dist):
 class TestBuiltInConversionRandomness:
     def test_exact_and_analytic_paths_claim_no_event(self):
         source = Normal(loc=0.0, scale=1.0, label="x")
-        analytic_source = Gamma(concentration=9.0, rate=1.0, label="g")
+        analytic_source = Laplace(loc=9.0, scale=1.0, label="g")
 
         with (
             patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
@@ -204,7 +204,7 @@ class TestBuiltInConversionRandomness:
         root = _RecordingNormal(calls)
         descendant = BijectorTransformedDistribution("descendant", root, tfb.Exp())
 
-        info = converter_registry.check(descendant, Normal, num_samples=16)
+        info = converter_registry.check(descendant, Normal, num_samples=16, check_support=False)
         assert (info.method_name, info.samples) == ("moment_match", True)
         with (
             patch(

@@ -26,6 +26,7 @@ from probpipe import (
     Function,
     Gamma,
     InputSpec,
+    Laplace,
     Normal,
     NumericArray,
     NumericArraySpec,
@@ -144,7 +145,7 @@ class TestConversionPlanning:
             return 0.0
 
         consume.__annotations__ = {"d": annotation}
-        Function("consume", consume)(Gamma("g", 2.0, 1.0))
+        Function("consume", consume)(Laplace("g", 2.0, 1.0))
 
         assert isinstance(seen[0], Normal)
 

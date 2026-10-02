@@ -8,6 +8,7 @@ from probpipe import (
     EmpiricalDistribution,
     NumericArrayBatch,
     NumericArraySpec,
+    ResolutionError,
     convert,
     converter_registry,
 )
@@ -265,9 +266,9 @@ class TestConvert:
         assert jnp.isclose(n.loc, 9.0, atol=1.0)
 
     def test_gamma_from_normal(self):
-        """Normal -> Gamma should fail support check by default."""
+        """Normal -> Gamma is refused by default, since the fit's support is not the source's."""
         n = Normal(loc=5.0, scale=1.0, label="n")
-        with pytest.raises(ValueError, match="support"):
+        with pytest.raises(ResolutionError, match="check_support=False"):
             convert(n, Gamma)
 
     def test_gamma_from_normal_override(self):
