@@ -1188,7 +1188,9 @@ def _check_routes(
         )
     finally:
         _call._CHECKING.reset(token)
-    return _resolution.call_report(point, lifted=lifted, conversions=conversions)
+    return _resolution.call_report(
+        point, lifted=lifted, conversions=conversions, candidates=candidates
+    )
 
 
 def _run_registered_rule(

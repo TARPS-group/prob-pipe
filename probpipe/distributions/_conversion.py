@@ -495,9 +495,20 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
         return _Plan(registration, replace(info, feasible=None, pending=(pending,)), method)
 
     def _plan(
-        self, args: tuple[Any, ...], method: str | None, exact_only: bool, options: dict[str, Any]
+        self,
+        args: tuple[Any, ...],
+        method: str | None,
+        exact_only: bool,
+        options: dict[str, Any],
+        *,
+        listing: bool = True,
     ) -> _Plan:
-        """The source as it is, or the selected converter and its report, executing nothing."""
+        """The source as it is, or the selected converter and its report, executing nothing.
+
+        With *listing*, the report of a key no converter admits lists the
+        registered converters, as an execution's error does; a check's report
+        leaves them out.
+        """
         key = self._cache_key(args)
         source, target = args[0], args[1]
         as_is = _satisfaction(source, target)
@@ -541,7 +552,9 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
             tried.append(f"{candidate.name}: {plan.info.description or 'infeasible'}")
         return _Plan(
             None,
-            ConversionInfo(False, description=self._no_method_message(key, tried, exact_only)),
+            ConversionInfo(
+                False, description=self._no_method_message(key, tried, exact_only, listing=listing)
+            ),
         )
 
     # -- the dispatch interface ---------------------------------------------
@@ -585,7 +598,7 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
             If a converter promises a law that does not carry the source's event
             declaration.
         """
-        return self._plan(args, method, exact_only, dict(options)).info
+        return self._plan(args, method, exact_only, dict(options), listing=False).info
 
     def execute(
         self,

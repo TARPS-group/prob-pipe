@@ -568,6 +568,13 @@ class _Candidate:
         """The name of the route the candidate belongs to."""
         return self.route.name
 
+    @property
+    def methods(self) -> tuple[str, ...] | None:
+        """The methods of a registry route's registry, in its selection order, or ``None``."""
+        if not isinstance(self.route, _RegistryRoute):
+            return None
+        return tuple(self.route.registry.list_methods())
+
     def probe(self, call: BoundCall, result: OutputSpec | None) -> Feasibility:
         """The candidate's report for *call*, without executing anything."""
         route = self.route
@@ -595,11 +602,14 @@ class _Candidate:
 
         A route that delegates its exactness reports that of what its probe
         selected: a registry route's method, or the route a derived operation's
-        constituent selects.
+        constituent selects. Any other report reads at the exactness of the
+        methods the candidate covers.
         """
-        if self.route.exact is None and isinstance(report, (MethodInfo, PointReport)):
+        if self.route.exact is not None:
+            return self.route.exact
+        if isinstance(report, (MethodInfo, PointReport)) and report.exact is not None:
             return report.exact
-        return self.route.exact
+        return self.exact
 
     def method_of(self, report: Feasibility) -> str | None:
         """The registry method a registry route delegates to, as *report* names it."""

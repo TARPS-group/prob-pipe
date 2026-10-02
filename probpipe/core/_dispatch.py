@@ -555,7 +555,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
             tried.append(f"{candidate.name}: {info.description or 'infeasible'}")
         return MethodInfo(
             feasible=False,
-            description=self._no_method_message(key, tried, exact_only),
+            description=self._no_method_message(key, tried, exact_only, listing=False),
         )
 
     def execute(
@@ -641,14 +641,21 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
             exact=registration.exact,
         )
 
-    def _no_method_message(self, key: Any, tried: list[str], exact_only: bool) -> str:
+    def _no_method_message(
+        self, key: Any, tried: list[str], exact_only: bool, *, listing: bool = True
+    ) -> str:
+        """Why no method applies: each method tried, or, when none admits the key, that none does.
+
+        With *listing*, a key no method admits also lists the registered
+        methods. A report leaves them out, since a call's report lists each
+        registry's methods once.
+        """
         formatted = self._format_key(key)
         restriction = " with exact_only" if exact_only else ""
         if tried:
             return f"No feasible method for {formatted}{restriction}. Tried: " + "; ".join(tried)
-        return (
-            f"No method registered for {formatted}{restriction}. Available: {self.list_methods()}"
-        )
+        message = f"No method registered for {formatted}{restriction}"
+        return f"{message}. Available: {self.list_methods()}" if listing else message
 
     @abstractmethod
     def _cache_key(self, args: tuple[Any, ...]) -> Any:
