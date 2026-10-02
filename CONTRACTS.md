@@ -109,8 +109,9 @@ if it were user-guide reference text.
 | `NumericArrayBatch` (the batch form of the numeric-array kind; one native store, not columns) | docstrings in `probpipe/core/_numeric_array_batch.py`; #235 Chapter 2 |
 | `RecordBatch` / `NumericRecordBatch` (columnar, leaf-path-keyed storage; a collection, not a named tree) | docstrings in `probpipe/core/_record_batch.py`, `_numeric_record_batch.py`; #235 Chapter 2 |
 | `FunctionBatch` / `OpaqueBatch` (the batch forms that *store* their elements, over shared object-array storage) | docstrings in `probpipe/core/_function_batch.py`, `_opaque_batch.py` (storage in `_object_batch.py`); #235 Chapter 2 |
-| `Function` (`input_spec`, `output_spec`, `output_name`, legacy constructor keyword warnings) & ops (`sample`, `log_prob`, …) | docstrings in `values/_function_base.py`, `functions/_function.py`, `functions/_result.py`, and `core/ops.py`; design III.3 and V.1; #448 B1 |
-| Naming / provenance / annotations (`TrackedTerm` / `Annotated` mixins) | docstrings in `probpipe/core/tracked.py` (and `provenance.py` for `Provenance` / `ParentInfo`); the naming contract in #235 Chapter 5 |
+| `Function` (`input_spec`, `output_spec`, `output_label`, legacy constructor keyword warnings) | docstrings in `values/_function_base.py`, `functions/_function.py`, and `functions/_result.py`; design III.3 and V.1; #448 B1 |
+| The operations (`sample`, `log_prob`, `mean`, `expectation`, `condition_on`, …), their routes, and `operation_registry` | docstrings in `probpipe/operations/`, with the operation model in `_operation.py`; design VI |
+| Labels / provenance / annotations (`TrackedTerm` / `Annotated` mixins) | docstrings in `probpipe/core/tracked.py` (and `provenance.py` for `Provenance` / `ParentInfo`); design II.4 |
 | Immutability (`Immutable` mixin: the assignment guard, and the `copy` / `pickle` state round-trip it forces) | docstrings in `probpipe/core/_immutable.py`; `design/02-shared-abstractions.md` §II.4 |
 
 ## Canonical variable names (use these; don't invent synonyms)
