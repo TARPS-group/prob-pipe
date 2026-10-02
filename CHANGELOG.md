@@ -34,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fingerprints and replay anchors change, so regenerate persisted artifacts.
   They include `output_name` as well as the input and output declarations;
   changing only the display label with `with_name` preserves the content identity.
+  Callable anchors use `probpipe.callable_definition/v2` and the field
+  `signature_and_declarations`. Old callable anchors are rejected with an ABI
+  incompatibility error; regenerate their recipes. The RNG recipe, stochastic
+  plan, and outer replay schema remain at v1.
   `Module`, `AbstractModule`, and both method decorators are experimental.
   Resolved output declarations survive sweeps and broadcasts, including type
   holes, output-only dimensions, and returned Function contracts. Broadcast

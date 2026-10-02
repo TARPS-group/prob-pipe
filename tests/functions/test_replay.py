@@ -111,6 +111,10 @@ class TestReplayScope:
     def test_seeded_serialized_and_replay_of_replay_roundtrip(self):
         original = _draw(seed=17)
         restored = Provenance.from_dict(json.loads(json.dumps(original.provenance.to_dict())))
+        anchor = restored.controls["replay"]["callable"]
+        assert anchor["definition_abi"] == "probpipe.callable_definition/v2"
+        assert "signature_and_declarations" in anchor
+        assert "signature_and_templates" not in anchor
 
         with replay_run(restored):
             first = sample(Normal(loc=0.0, scale=1.0, name="value"))
@@ -272,6 +276,25 @@ class TestReplayOwnership:
 
 
 class TestReplayAdmission:
+    def test_legacy_callable_abi_is_rejected_before_new_fields_are_read(self):
+        payload = _draw().provenance.to_dict()
+        anchor = payload["controls"]["replay"]["callable"]
+        anchor["definition_abi"] = "probpipe.callable_definition/v1"
+        signature = anchor.pop("signature_and_declarations")
+        anchor["signature_and_templates"] = signature
+        signature["input_template"] = signature.pop("input_spec")
+        signature["output_template"] = signature.pop("output_spec")
+        signature.pop("output_name")
+        with (
+            patch(
+                "probpipe.functions._context.derive_event_key_words_from_encoded",
+                side_effect=AssertionError("derived key"),
+            ),
+            pytest.raises(ReplayCompatibilityError, match=r"callable definition ABI.*expected.*v2"),
+            replay_run(Provenance.from_dict(payload)),
+        ):
+            raise AssertionError("A legacy callable anchor was admitted")
+
     def test_legacy_unknown_and_malformed_recipes_fail_at_entry(self):
         with (
             pytest.raises(ReplayCompatibilityError, match="RNG recipe"),
@@ -296,11 +319,11 @@ class TestReplayAdmission:
             pytest.param(("replay", "standalone"), id="standalone"),
             pytest.param(("replay", "callable"), id="callable"),
             pytest.param(
-                ("replay", "callable", "signature_and_templates"),
+                ("replay", "callable", "signature_and_declarations"),
                 id="callable-signature",
             ),
             pytest.param(
-                ("replay", "callable", "signature_and_templates", "parameters", 0),
+                ("replay", "callable", "signature_and_declarations", "parameters", 0),
                 id="callable-parameter",
             ),
             pytest.param(("replay", "plan"), id="plan"),
@@ -340,20 +363,21 @@ class TestReplayAdmission:
             ),
         ],
     )
-    def test_unknown_version_one_fields_fail_at_replay_entry(self, mapping_path):
+    def test_unknown_fields_fail_at_replay_entry(self, mapping_path):
         payload = _lifted_draw().provenance.to_dict()
         target = payload["controls"]
         for segment in mapping_path:
             target = target[segment]
         target["unknown_field_v2"] = 1
         changed = Provenance.from_dict(payload)
+        version = 2 if mapping_path[:2] == ("replay", "callable") else 1
 
         with (
             patch(
                 "probpipe.functions._context.derive_event_key_words_from_encoded",
                 side_effect=AssertionError("derived key"),
             ) as derive_key,
-            pytest.raises(ReplayCompatibilityError, match="version-1 schema"),
+            pytest.raises(ReplayCompatibilityError, match=f"version-{version} schema"),
             replay_run(changed),
         ):
             raise AssertionError("replay admission accepted unknown structure")
@@ -410,17 +434,17 @@ class TestReplayAdmission:
             pytest.param(("replay", "standalone"), "restriction", id="standalone"),
             pytest.param(("replay", "callable"), "sha256", id="callable"),
             pytest.param(
-                ("replay", "callable", "signature_and_templates"),
+                ("replay", "callable", "signature_and_declarations"),
                 "output_spec",
                 id="callable-signature",
             ),
             pytest.param(
-                ("replay", "callable", "signature_and_templates"),
+                ("replay", "callable", "signature_and_declarations"),
                 "output_name",
                 id="callable-output-name",
             ),
             pytest.param(
-                ("replay", "callable", "signature_and_templates", "parameters", 0),
+                ("replay", "callable", "signature_and_declarations", "parameters", 0),
                 "annotation",
                 id="callable-parameter",
             ),
@@ -471,7 +495,7 @@ class TestReplayAdmission:
             ),
         ],
     )
-    def test_missing_version_one_fields_fail_at_replay_entry(
+    def test_missing_fields_fail_at_replay_entry(
         self,
         mapping_path,
         field_name,
@@ -486,6 +510,8 @@ class TestReplayAdmission:
             expected_error = "randomness RNG recipe must be a mapping"
         elif field_name == "schema":
             expected_error = "schema"
+        elif mapping_path[:2] == ("replay", "callable"):
+            expected_error = "version-2 schema"
         else:
             expected_error = "version-1 schema"
 
@@ -570,9 +596,9 @@ class TestReplayAdmission:
                 id="callable-module",
             ),
             pytest.param(
-                ("replay", "callable", "signature_and_templates"),
+                ("replay", "callable", "signature_and_declarations"),
                 [],
-                "signature_and_templates",
+                "signature_and_declarations",
                 id="callable-signature",
             ),
             pytest.param(

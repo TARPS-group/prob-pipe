@@ -25,8 +25,8 @@ from ..core._specs import RecordSpec
 from ..core.constraints import Constraint
 from ..values._function_base import _CallableFunctionImplementation
 
-_CALLABLE_DEFINITION_ABI = "probpipe.callable_definition/v1"
-_CALLABLE_DEFINITION_DOMAIN = b"ProbPipe-callable-definition-v1\0"
+_CALLABLE_DEFINITION_ABI = "probpipe.callable_definition/v2"
+_CALLABLE_DEFINITION_DOMAIN = b"ProbPipe-callable-definition-v2\0"
 _PROBPIPE_REPLAY_ABI = "probpipe.replay/v1"
 _PYTHON_REPLAY_ABI = f"{sys.implementation.name}-{sys.version_info.major}.{sys.version_info.minor}"
 
@@ -44,7 +44,7 @@ class CallableAnchor:
     module: str | None
     qualname: str | None
     sha256: str | None = None
-    signature_and_templates_json: str | None = None
+    signature_and_declarations_json: str | None = None
     source_location: str | None = None
     source_artifact_digest: str | None = None
 
@@ -59,12 +59,12 @@ class CallableAnchor:
         if not self.supported:
             result["form"] = self.form
             return result
-        if self.sha256 is None or self.signature_and_templates_json is None:
+        if self.sha256 is None or self.signature_and_declarations_json is None:
             raise RuntimeError("supported callable anchor is incomplete")
         result.update(
             {
                 "sha256": self.sha256,
-                "signature_and_templates": json.loads(self.signature_and_templates_json),
+                "signature_and_declarations": json.loads(self.signature_and_declarations_json),
                 "python_replay_abi": _PYTHON_REPLAY_ABI,
                 "probpipe_replay_abi": _PROBPIPE_REPLAY_ABI,
             }
@@ -103,13 +103,13 @@ def capture_function_anchor(function: Any) -> CallableAnchor:
         return _unsupported_anchor(function, candidate, "module_resolution_mismatch")
 
     try:
-        signature_and_templates = _signature_and_templates(function, candidate)
+        signature_and_declarations = _signature_and_declarations(function, candidate)
         definition = {
             "code": _canonical_value(candidate.__code__),
             "defaults": _canonical_value(candidate.__defaults__),
             "kwdefaults": _canonical_value(candidate.__kwdefaults__),
             "annotations": _canonical_value(candidate.__annotations__),
-            "signature_and_templates": signature_and_templates,
+            "signature_and_declarations": signature_and_declarations,
         }
         encoded = _canonical_json(definition)
     except _UnsupportedDefinition:
@@ -126,7 +126,7 @@ def capture_function_anchor(function: Any) -> CallableAnchor:
         module=module_name,
         qualname=qualname,
         sha256=hashlib.sha256(_CALLABLE_DEFINITION_DOMAIN + encoded).hexdigest(),
-        signature_and_templates_json=_canonical_json(signature_and_templates).decode("utf-8"),
+        signature_and_declarations_json=_canonical_json(signature_and_declarations).decode("utf-8"),
         source_location=source_location,
         source_artifact_digest=source_digest,
     )
@@ -187,7 +187,7 @@ def _resolves_to_callable(
     return False
 
 
-def _signature_and_templates(function: Any, candidate: Any) -> dict[str, Any]:
+def _signature_and_declarations(function: Any, candidate: Any) -> dict[str, Any]:
     try:
         signature = inspect.signature(candidate, follow_wrapped=False)
     except (TypeError, ValueError) as error:

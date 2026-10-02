@@ -179,6 +179,12 @@ bound methods, partials, callable objects, classes, and builtins may execute
 normally, but replay raises `ReplayUnsupportedCallableError` rather than using
 a weak identity.
 
+Callable anchors use `probpipe.callable_definition/v2`, with signature and
+output/input contracts stored in `signature_and_declarations`. Earlier callable
+anchor versions are rejected before their fields are read; regenerate those
+recipes with the current version. The outer replay, RNG recipe, and stochastic
+plan formats remain at v1.
+
 The definition anchor covers the callable's local executable definition and
 the names it references, but not the current values of module globals,
 referenced helper functions, imported implementations, files, services, or

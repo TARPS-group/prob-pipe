@@ -48,9 +48,9 @@ from tests.functions._replay_fixtures import (
 )
 
 _CALLABLE_ANCHOR_GOLDENS = {
-    "cpython-3.12": "dfbaa99fcb3e8babd5564ce4469ed66f2be3b03a1af5889c58b53dc7250a7db0",
-    "cpython-3.13": "68bf3846b1d3d27573f2dd78236657fd57f8e0ed9c6eef109e22d2d58781de26",
-    "cpython-3.14": "9e6c6b6eecfde4863952f12a2fa09b65413a8e6ca89cf1c18dde48ff14a6a7fb",
+    "cpython-3.12": "92a795553325b6425781f9166cdfd83da29959d7d26129a01925000b4cbfbf9f",
+    "cpython-3.13": "2320bf1c33ce9d254fe20edf62278620598a17595d58508b7a96b333e50b9210",
+    "cpython-3.14": "bd7c852911e479307947862500636b6cb3f4ce55ae06eb3a76278b03afba2f9f",
 }
 
 
@@ -670,7 +670,7 @@ class TestWorkflowCallableAnchor:
         with (
             patch.object(
                 _callable,
-                "_signature_and_templates",
+                "_signature_and_declarations",
                 side_effect=_callable._UnsupportedDefinition("unsupported"),
             ),
             patch.object(
@@ -705,9 +705,9 @@ class TestWorkflowCallableAnchor:
             "supported": True,
             "module": "tests.functions._replay_fixtures",
             "qualname": "replayable_affine",
-            "definition_abi": "probpipe.callable_definition/v1",
+            "definition_abi": "probpipe.callable_definition/v2",
             "sha256": _CALLABLE_ANCHOR_GOLDENS[python_replay_abi],
-            "signature_and_templates": {
+            "signature_and_declarations": {
                 "parameters": [
                     {
                         "name": "value",
@@ -835,7 +835,7 @@ class TestWorkflowCallableAnchor:
         assert controls["supported"] is True
         defaults = {
             parameter["name"]: parameter["default"]
-            for parameter in controls["signature_and_templates"]["parameters"]
+            for parameter in controls["signature_and_declarations"]["parameters"]
         }
         assert defaults["ellipsis_value"] == {"tag": "ellipsis"}
         assert defaults["complex_value"] == {

@@ -27,7 +27,7 @@ _RNG_RECIPE_ABI = "probpipe.rng_recipe/v1"
 _RNG_ABI = "ProbPipe-RNG-v1"
 _REPLAY_ANCHOR_ABI = "probpipe.replay_anchor/v1"
 _STOCHASTIC_PLAN_ABI = "probpipe.stochastic_plan/v1"
-_CALLABLE_DEFINITION_ABI = "probpipe.callable_definition/v1"
+_CALLABLE_DEFINITION_ABI = "probpipe.callable_definition/v2"
 _PROBPIPE_REPLAY_ABI = "probpipe.replay/v1"
 _MANAGED_CHILD_POLICY_ABI = "probpipe.managed_child/v1"
 
@@ -51,7 +51,7 @@ _SUPPORTED_CALLABLE_FIELDS = frozenset(
         "qualname",
         "definition_abi",
         "sha256",
-        "signature_and_templates",
+        "signature_and_declarations",
         "python_replay_abi",
         "probpipe_replay_abi",
     }
@@ -960,7 +960,13 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
         raise ReplayCompatibilityError("unknown or missing workflow RNG recipe schema")
     if replay.get("schema") != _REPLAY_ANCHOR_ABI:
         raise ReplayCompatibilityError("recorded replay anchor schema is incompatible")
-    _validate_version_one_structure(controls)
+    callable_anchor = copy.deepcopy(dict(_mapping(replay.get("callable"), "replay.callable")))
+    if callable_anchor.get("definition_abi") != _CALLABLE_DEFINITION_ABI:
+        raise ReplayCompatibilityError(
+            f"recorded callable definition ABI {callable_anchor.get('definition_abi')!r} "
+            f"is incompatible; expected {_CALLABLE_DEFINITION_ABI!r}. Regenerate the recipe."
+        )
+    _validate_replay_structure(controls)
     if randomness.get("rng_abi") != _RNG_ABI:
         raise ReplayCompatibilityError("recorded workflow RNG ABI is incompatible")
 
@@ -991,9 +997,6 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
             )
         raise ReplayCompatibilityError("recorded standalone replay eligibility is invalid")
 
-    callable_anchor = copy.deepcopy(dict(_mapping(replay.get("callable"), "replay.callable")))
-    if callable_anchor.get("definition_abi") != _CALLABLE_DEFINITION_ABI:
-        raise ReplayCompatibilityError("recorded callable definition ABI is incompatible")
     if callable_anchor.get("supported") is not True:
         form = callable_anchor.get("form", "unsupported")
         raise ReplayUnsupportedCallableError(
@@ -1005,9 +1008,9 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
     for field_name in ("module", "qualname", "python_replay_abi", "sha256"):
         if not isinstance(callable_anchor.get(field_name), str):
             raise ReplayCompatibilityError(f"recorded callable anchor has invalid {field_name}")
-    if not isinstance(callable_anchor.get("signature_and_templates"), dict):
+    if not isinstance(callable_anchor.get("signature_and_declarations"), dict):
         raise ReplayCompatibilityError(
-            "recorded callable anchor has invalid signature_and_templates"
+            "recorded callable anchor has invalid signature_and_declarations"
         )
 
     plan_anchor = _mapping(replay.get("plan"), "replay.plan")
@@ -1099,24 +1102,24 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
     )
 
 
-def _validate_version_one_structure(controls: Mapping[str, Any]) -> None:
-    """Require exact fields for every record owned by the replay-v1 schema."""
-    _require_version_one_fields(
+def _validate_replay_structure(controls: Mapping[str, Any]) -> None:
+    """Require exact replay-v1 fields and nested callable-definition-v2 fields."""
+    _require_fields(
         controls,
         _CONTROLS_FIELDS,
         "workflow RNG recipe controls",
     )
-    randomness = _version_one_record(
+    randomness = _record_with_fields(
         controls.get("randomness"),
         _RANDOMNESS_FIELDS,
         "randomness recipe",
     )
-    replay = _version_one_record(
+    replay = _record_with_fields(
         controls.get("replay"),
         _REPLAY_FIELDS,
         "replay anchor",
     )
-    _version_one_record(
+    _record_with_fields(
         replay.get("standalone"),
         _STANDALONE_FIELDS,
         "replay.standalone",
@@ -1128,27 +1131,29 @@ def _validate_version_one_structure(controls: Mapping[str, Any]) -> None:
         if callable_anchor.get("supported") is False
         else _SUPPORTED_CALLABLE_FIELDS
     )
-    _require_version_one_fields(callable_anchor, callable_fields, "replay.callable")
+    _require_fields(callable_anchor, callable_fields, "replay.callable", version=2)
     if callable_anchor.get("supported") is not False:
-        signature = _version_one_record(
-            callable_anchor.get("signature_and_templates"),
+        signature = _record_with_fields(
+            callable_anchor.get("signature_and_declarations"),
             _CALLABLE_SIGNATURE_FIELDS,
-            "replay.callable.signature_and_templates",
+            "replay.callable.signature_and_declarations",
+            version=2,
         )
         for index, parameter in enumerate(
             _list(
                 signature.get("parameters"),
-                "replay.callable.signature_and_templates.parameters",
+                "replay.callable.signature_and_declarations.parameters",
             )
         ):
-            _version_one_record(
+            _record_with_fields(
                 parameter,
                 _CALLABLE_PARAMETER_FIELDS,
-                f"replay.callable.signature_and_templates.parameters[{index}]",
+                f"replay.callable.signature_and_declarations.parameters[{index}]",
+                version=2,
             )
 
-    plan = _version_one_record(replay.get("plan"), _PLAN_FIELDS, "replay.plan")
-    canonical_plan = _version_one_record(
+    plan = _record_with_fields(replay.get("plan"), _PLAN_FIELDS, "replay.plan")
+    canonical_plan = _record_with_fields(
         plan.get("canonical_fields"),
         _CANONICAL_PLAN_FIELDS,
         "replay.plan.canonical_fields",
@@ -1164,12 +1169,12 @@ def _validate_version_one_structure(controls: Mapping[str, Any]) -> None:
         )
     ):
         group_name = f"replay.plan.canonical_fields.source_groups[{group_index}]"
-        group = _version_one_record(source_group, _SOURCE_GROUP_FIELDS, group_name)
+        group = _record_with_fields(source_group, _SOURCE_GROUP_FIELDS, group_name)
         for consumer_index, consumer_raw in enumerate(
             _list(group.get("consumers"), f"{group_name}.consumers")
         ):
             consumer_name = f"{group_name}.consumers[{consumer_index}]"
-            consumer = _version_one_record(
+            consumer = _record_with_fields(
                 consumer_raw,
                 _CONSUMER_FIELDS,
                 consumer_name,
@@ -1184,14 +1189,14 @@ def _validate_version_one_structure(controls: Mapping[str, Any]) -> None:
             "replay.plan.canonical_fields.logical_units",
         )
     ):
-        _version_one_record(
+        _record_with_fields(
             logical_unit,
             _LOGICAL_UNIT_FIELDS,
             f"replay.plan.canonical_fields.logical_units[{index}]",
         )
 
     for index, event in enumerate(_list(randomness.get("events"), "randomness.events")):
-        _version_one_record(
+        _record_with_fields(
             event,
             _RANDOM_EVENT_FIELDS,
             f"randomness.events[{index}]",
@@ -1212,27 +1217,31 @@ def _validate_version_one_structure(controls: Mapping[str, Any]) -> None:
 
 
 def _validate_arg_ref_structure(value: Any, field_name: str) -> None:
-    _version_one_record(value, _ARG_REF_FIELDS, field_name)
+    _record_with_fields(value, _ARG_REF_FIELDS, field_name)
 
 
-def _version_one_record(
+def _record_with_fields(
     value: Any,
     expected_fields: frozenset[str],
     field_name: str,
+    *,
+    version: int = 1,
 ) -> Mapping[str, Any]:
     record = _mapping(value, field_name)
-    _require_version_one_fields(record, expected_fields, field_name)
+    _require_fields(record, expected_fields, field_name, version=version)
     return record
 
 
-def _require_version_one_fields(
+def _require_fields(
     record: Mapping[str, Any],
     expected_fields: frozenset[str],
     field_name: str,
+    *,
+    version: int = 1,
 ) -> None:
     if set(record) != expected_fields:
         raise ReplayCompatibilityError(
-            f"recorded {field_name} fields do not match the version-1 schema"
+            f"recorded {field_name} fields do not match the version-{version} schema"
         )
 
 
