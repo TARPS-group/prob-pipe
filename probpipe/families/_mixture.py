@@ -8,11 +8,13 @@ Provides:
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from ..core._record_spec import RecordSpec
 from ..core._spec_base import NumericArraySpec, TermSpec
@@ -111,15 +113,43 @@ def _mixture_sample(
 ) -> Any:
     """Draws whose component is chosen by the weights, each from its chosen component.
 
-    Every component draws at *sample_shape*, and each draw keeps the one of its
-    chosen component, so the draws are independent with the mixture's law.
+    Each draw's component is chosen first, and each component then draws as
+    many times as it was chosen, so the draws are independent with the
+    mixture's law. Under tracing, where the counts are unknown, every
+    component draws at *sample_shape* and each draw keeps its chosen
+    component's.
     """
     shape = tuple(sample_shape)
     choice_key, *component_keys = jax.random.split(key, len(self._components) + 1)
     choice = jax.random.categorical(choice_key, jnp.log(self._weights), shape=shape)
+    if isinstance(choice, jax.core.Tracer) or not math.prod(shape):
+        return _drawn_from_every_component(self, choice, component_keys, shape)
+    chosen = np.asarray(choice).reshape(-1)
+    positions = [np.flatnonzero(chosen == index) for index in range(len(self._components))]
+    drawn = [
+        (component._sample(component_key, (len(where),)), where)
+        for component, component_key, where in zip(
+            self._components, component_keys, positions, strict=True
+        )
+        if len(where)
+    ]
+    # The draws come grouped by component; this order puts each at its position.
+    order = np.argsort(np.concatenate([where for _, where in drawn]), kind="stable")
+
+    def assembled(*leaves: Array) -> Array:
+        rows = jnp.concatenate([jnp.asarray(leaf) for leaf in leaves])[order]
+        return jnp.reshape(rows, (*shape, *rows.shape[1:]))
+
+    return _combined([draws for draws, _ in drawn], self.event_spec.spec, assembled)
+
+
+def _drawn_from_every_component(
+    self: MixtureDistribution, choice: Array, keys: Sequence[PRNGKey], shape: tuple[int, ...]
+) -> Any:
+    """Draws at the components *choice* holds, every component drawing at *shape*."""
     draws = [
         component._sample(component_key, shape)
-        for component, component_key in zip(self._components, component_keys, strict=True)
+        for component, component_key in zip(self._components, keys, strict=True)
     ]
 
     def chosen(*leaves: Array) -> Array:
