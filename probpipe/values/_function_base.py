@@ -56,6 +56,24 @@ class FunctionSpec(TermSpec):
     sides. Missing declarations add no bindings. Incompatible slot names,
     output exposure, kinds, or dimensions raise ValueError. Labels are outside
     this spec; component names participate in declaration matching.
+
+    Examples
+    --------
+    Bind a dimension shared by the input and output declarations:
+
+    >>> from probpipe import FunctionSpec, InputSpec, NumericArraySpec, OutputSpec
+    >>> declared = FunctionSpec(
+    ...     InputSpec(x=NumericArraySpec(("n",))),
+    ...     OutputSpec(result=NumericArraySpec(("n",))),
+    ... )
+    >>> actual = FunctionSpec(
+    ...     InputSpec(x=NumericArraySpec((3,))),
+    ...     OutputSpec(result=NumericArraySpec((3,))),
+    ... )
+    >>> declared.bind_dims_from_spec(actual) == actual
+    True
+    >>> declared.free_dims == {"n"}
+    True
     """
 
     input_spec: InputSpec | None
@@ -389,8 +407,9 @@ class Function(Node, TrackedTerm, Annotated):
         named type hole is inferred independently for each call.
     output_name : str or None
         Result label. Defaults to the initial name and survives with_name.
-        Whole-term components default to this name, which must then be a Python
-        identifier; an explicit OutputSpec can supply a different component.
+        Whole-term components default to this name, which must then contain no
+        ``/``. Non-identifier names such as ``Model.fit`` and ``<lambda>`` are
+        allowed; an explicit OutputSpec can supply a different component.
     bind : Mapping or None
         Construction-time argument defaults, overridden by call arguments.
     module : object or None
@@ -412,11 +431,19 @@ class Function(Node, TrackedTerm, Annotated):
     Raises
     ------
     TypeError
-        For an invalid name, callable, declaration type, orchestration mode, or
+        For an invalid name or output_name, callable, declaration type, orchestration mode, or
         worker-count type.
     ValueError
         For mismatched input slots, invalid defaults or bindings, unknown
         dispatch, nonpositive worker counts, or invalid component names.
+
+    Warns
+    -----
+    FutureWarning
+        Once per supplied legacy keyword: func, seed, input_template, or
+        output_template. See Notes for their remaining behavior.
+    UserWarning
+        If max_workers is supplied with a dispatch other than thread.
 
     Notes
     -----
@@ -620,11 +647,35 @@ class Function(Node, TrackedTerm, Annotated):
         return _workflow_kind_resolver(self)
 
     def with_options(self, **controls: Any) -> Self:
-        """Return a copy with revised controls, preserving identity and declarations.
+        """Return a reusable shallow copy with revised execution controls.
 
-        Raises TypeError for unknown controls, including construction metadata
-        and seed. None leaves an existing control unchanged. Invalid control
-        values raise the same errors as construction.
+        Parameters
+        ----------
+        **controls : Any
+            Any of workflow_kind, n_broadcast_samples, dispatch, max_workers,
+            and include_inputs. None leaves that setting unchanged. The
+            revised controls apply to every call of the returned copy.
+
+        Returns
+        -------
+        Self
+            A distinct Function with the same label, output_name, signature,
+            declarations, implementation, and provenance. Its annotations
+            container is independent; the original's controls are unchanged.
+
+        Raises
+        ------
+        TypeError
+            For unknown controls (including seed and construction metadata),
+            a non-WorkflowKind mode, or a non-integer worker count.
+        ValueError
+            For an unknown dispatch or nonpositive worker count. Broadcast
+            sample counts are validated when a distribution lift executes.
+
+        Warns
+        -----
+        UserWarning
+            If the resulting controls specify max_workers outside thread dispatch.
         """
         unknown = controls.keys() - self.options.keys()
         if unknown:
@@ -636,7 +687,26 @@ class Function(Node, TrackedTerm, Annotated):
         return clone
 
     def with_name(self, name: str) -> Self:
-        """Rename the function label, preserving output_name and its declaration."""
+        """Return a shallow copy with a new function label.
+
+        Parameters
+        ----------
+        name : str
+            Non-empty label for the copy and its Python callable metadata.
+
+        Returns
+        -------
+        Self
+            A distinct Function retaining output_name, declarations, controls,
+            signature, and implementation. Its annotations container is
+            independent. Rename provenance points to the original when
+            provenance recording is enabled; the original is unchanged.
+
+        Raises
+        ------
+        TypeError
+            If name is not a non-empty string.
+        """
         return cast(Self, TrackedTerm.with_name(self, name))
 
     def _with_name(self, name: str) -> Self:
@@ -655,9 +725,38 @@ class Function(Node, TrackedTerm, Annotated):
     def apply(self, *args: Any, **kwargs: Any) -> Any:
         """Evaluate one point, validating declarations and returning the raw result.
 
-        Python binding errors raise TypeError. Input or output declaration
-        violations raise ValueError. Dimension bindings are local to this call.
-        Existing returned objects retain their identity and metadata.
+        Parameters
+        ----------
+        *args : Any
+            Positional arguments bound against the frozen Python signature.
+        **kwargs : Any
+            Domain keyword arguments. Missing inputs are resolved from
+            construction bindings, the optional Module, and Python defaults.
+
+        Returns
+        -------
+        Any
+            The implementation's exact result after declaration validation,
+            preserving identity, shape, annotations, and provenance. There is
+            no lifting, batching, result wrapping, or result renaming.
+
+        Raises
+        ------
+        TypeError
+            If Python argument binding or missing-input resolution fails.
+        ValueError
+            If input or output kinds, structures, dimensions, dtypes, or
+            declared supports disagree, or a returned callable's signature
+            cannot satisfy its declared input slots.
+        RuntimeError
+            If evaluation violates workflow scope or replay admission rules.
+
+        Notes
+        -----
+        Dimension bindings are local to this evaluation; stored declarations
+        are unchanged. A returned callable is not executed for validation.
+        Exceptions from the wrapped implementation propagate. Support checks
+        require concrete values and can raise tracer errors inside JAX transforms.
         """
         with _apply_scope():
             bound = self.signature.bind_partial(*args, **kwargs)
@@ -689,6 +788,46 @@ class Function(Node, TrackedTerm, Annotated):
         )
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        """Evaluate through the installed engine, lifting inputs when needed.
+
+        Parameters
+        ----------
+        *args : Any
+            Positional domain inputs interpreted using the frozen signature.
+        **kwargs : Any
+            Keyword domain inputs. Set engine controls with with_options.
+
+        Returns
+        -------
+        TrackedTerm or Any
+            A point result wrapped in its value kind under output_name. An
+            existing tracked result is shallow-copied, with shared value data,
+            independent annotations, and the current call's provenance.
+            A batch sweep returns the result kind's batch form, with swept
+            axes preceding each point's shape or existing batch levels.
+            Distribution lifting returns an output law, or an input/output
+            joint when include_inputs is true. Explicit declarations determine
+            component exposure independently of the result label.
+            Before engine installation, this method returns the raw apply result.
+
+        Raises
+        ------
+        TypeError
+            For argument binding errors, unsupported input/output types, or
+            invalid broadcast sample-count types.
+        ValueError
+            For declaration violations, incompatible sweep levels or shapes,
+            nonpositive broadcast sample counts, or unsupported explicit JAX
+            dispatch (including concrete output-support checks).
+        RuntimeError
+            For workflow scope, managed-execution, or replay admission failures.
+
+        Notes
+        -----
+        User implementation exceptions propagate. Prefect modes warn and fall
+        back to OFF when Prefect is unavailable; automatic dispatch may use a
+        row-wise route when JAX cannot execute the call.
+        """
         return _call_engine(self, *args, **kwargs)
 
 
@@ -733,16 +872,37 @@ def install_call_engine(
 ) -> None:
     """Install the process's Function call engine once at package initialization.
 
-    The callable receives the Function as a positional-only first parameter,
-    followed by its call arguments. This keeps keyword arguments such as
-    ``function`` available to the wrapped callable. Before
-    installation, calling a Function performs plain apply. Reinstalling the
-    same engine leaves all installed callbacks unchanged, even if new callbacks
-    are supplied; replacing it raises RuntimeError. A non-callable
-    engine raises TypeError. The optional apply_scope preserves workflow RNG
-    admission around raw evaluation without coupling this module to the engine.
-    The workflow_kind_resolver supplies the public effective_workflow_kind
-    property; its default returns OFF for plain evaluation.
+    Parameters
+    ----------
+    engine : Callable
+        Receives the Function as a positional-only first parameter followed
+        by its domain call arguments, leaving keywords such as ``function``
+        available to the wrapped callable.
+    apply_scope : Callable, optional
+        Zero-argument context-manager factory for raw-evaluation admission.
+        Defaults to nullcontext.
+    workflow_kind_resolver : Callable, optional
+        Maps a Function to its effective WorkflowKind on each property access.
+        Defaults to OFF for plain evaluation.
+
+    Returns
+    -------
+    None
+        Installs the callbacks. Reinstalling the same engine is a no-op,
+        including when different callbacks are supplied.
+
+    Raises
+    ------
+    TypeError
+        If engine is not callable.
+    RuntimeError
+        If a different engine has already been installed. Failed installation
+        leaves all existing callbacks unchanged.
+
+    Notes
+    -----
+    Before installation, Function calls perform plain apply. Callback
+    installation keeps the value-layer base independent of the engine.
     """
     global _call_engine, _apply_scope, _workflow_kind_resolver
     if not callable(engine):

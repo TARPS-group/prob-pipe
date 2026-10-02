@@ -822,18 +822,34 @@ def _make_stack(
         the levels it swept, so the aggregate aligns with the input it came from.
     name : str, optional
         Name for the resulting aggregate.
+    axis_groups : tuple of tuple of int or None
+        Shapes assigned to the new levels, concatenating to batch_shape.
+        Defaults to one group containing the entire batch_shape.
+    field_name : str
+        Result name when name is None, and the name used when wrapping each
+        point return. Existing record fields keep their own names.
+    output_template : RecordSpec or None
+        Legacy record-only declaration for a point return, used when
+        output_spec is absent.
+    output_spec : OutputSpec or None
+        Completed per-point declaration. Determines the element kind,
+        metadata, and empty-aggregate type; its term spec takes precedence
+        over output_template. Component exposure is retained by the enclosing
+        output declaration rather than becoming extra batch levels.
 
     Returns
     -------
-    NumericRecordBatch | RecordBatch | DistributionArray
-        Output type depends on the inner-return type; see module
-        docstring for the dispatch table.
+    Batch or DistributionArray
+        A NumericArrayBatch, RecordBatch (possibly NumericRecordBatch),
+        FunctionBatch, OpaqueBatch, or DistributionArray, selected by the
+        point-return kind. New axes have shape batch_shape; when each point
+        returns a batch, its axes and levels follow the new ones.
 
     Raises
     ------
     TypeError
-        If the inner outputs can't be coerced into any of the three
-        aggregate types. The error lists the observed types.
+        If neither or both of batch_shape and n are supplied, or the inner
+        outputs cannot be represented by a supported aggregate kind.
     ValueError
         If rows have incompatible declarations, shapes, or batch levels, or
         the output shape does not match the requested batch shape and grouping.

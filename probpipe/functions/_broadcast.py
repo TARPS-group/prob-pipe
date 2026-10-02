@@ -110,6 +110,15 @@ def execute_distribution_broadcast(
         error before executing.
     function_name : str
         Human-readable Function name recorded in provenance metadata.
+    output_name : str or None
+        Result label for the joint and its output marginal. Defaults to
+        function_name; also supplies the component name for an undeclared
+        whole-term output.
+    output_spec : OutputSpec or None
+        Per-point output declaration, including component exposure. Each
+        execution route completes it from evaluated outputs before building
+        the joint; explicit component names are preserved. Takes precedence
+        over the record-only output_template.
     workflow_kind : WorkflowKind
         Effective orchestration mode for this call. The value is recorded in
         provenance and passed to the JAX path so Prefect task/flow requests can
@@ -121,12 +130,32 @@ def execute_distribution_broadcast(
     provenance_inputs : mapping of str to Any or None
         Call-level resolved plain inputs. Per-row sampled values do not replace
         these original descriptors.
+    record_recipe : bool
+        Whether to attach the standalone RNG recipe and stochastic plan to
+        the broadcast provenance. Defaults to True.
 
     Returns
     -------
     BroadcastDistribution or Distribution
         The full broadcast distribution when ``include_inputs`` is true;
         otherwise the output marginal distribution.
+
+    Raises
+    ------
+    TypeError
+        If the planned sample count is not an integer, or result wrapping
+        cannot represent the evaluated outputs.
+    ValueError
+        If the sample count is nonpositive, the explicit JAX route is
+        unsupported, or outputs have incompatible declarations or shapes.
+    RuntimeError
+        If the stochastic plan lacks required source or sample-shape data,
+        or execution violates workflow admission rules.
+
+    Warns
+    -----
+    UserWarning
+        If n_broadcast_samples is below the recommended minimum of five.
     """
     broadcast_args = list(stochastic_plan.arg_refs)
     n_broadcast_samples = stochastic_plan.n_broadcast_samples
