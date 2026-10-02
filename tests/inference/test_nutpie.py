@@ -170,6 +170,39 @@ class TestCompileForNutpie:
         assert NutpieNutsMethod().check(posterior).feasible is True
 
 
+def _stan_trace():
+    """A nutpie trace of two chains of three draws of a scalar ``mu``."""
+    import xarray as xr
+
+    mu = np.array([[0.0, 1.0, 2.0], [10.0, 11.0, 12.0]])
+    return xr.DataTree.from_dict({"posterior": xr.Dataset({"mu": (("chain", "draw"), mu)})})
+
+
+@pytest.mark.usefixtures("_stanc")
+class TestMethodOptions:
+    """The method's options pass to nutpie's sampler, whose defaults stand otherwise."""
+
+    def _sampled_with(self, tmp_path, **options):
+        from probpipe.families import StanModel
+        from probpipe.inference._nutpie import NutpieNutsMethod
+
+        program = tmp_path / "program.stan"
+        program.write_text("parameters { real mu; } model { }")
+        posterior = StanModel("program", str(program))
+        with (
+            patch.object(nutpie, "compile_stan_model", _compile_stan_model),
+            patch.object(nutpie, "sample", return_value=_stan_trace()) as sample,
+        ):
+            NutpieNutsMethod().execute(posterior, num_results=3, num_chains=2, **options)
+        return sample.call_args.kwargs
+
+    def test_progress_bar_is_passed_to_the_sampler(self, tmp_path):
+        assert self._sampled_with(tmp_path, progress_bar=False)["progress_bar"] is False
+
+    def test_without_progress_bar_the_sampler_keeps_its_default(self, tmp_path):
+        assert "progress_bar" not in self._sampled_with(tmp_path)
+
+
 class TestImportError:
     """When nutpie is missing, condition_on_nutpie raises a helpful
     ImportError.  This path is exercised by temporarily hiding nutpie."""

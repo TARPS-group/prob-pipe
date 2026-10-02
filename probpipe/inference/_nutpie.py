@@ -220,6 +220,10 @@ class NutpieNutsMethod(InferenceMethod):
     Applies to a Stan program's posterior at its data, and to a ``PyMCModel``
     target at its observed values; infeasible while nutpie is not installed.
 
+    Its ``method_options`` are the draw, warmup, and chain counts, the seed,
+    and ``progress_bar``, which passes to nutpie's sampler; an unset
+    ``progress_bar`` leaves nutpie's default.
+
     Notes
     -----
     An optimised backend: Rust-implemented NUTS with in-process gradients,
@@ -227,7 +231,7 @@ class NutpieNutsMethod(InferenceMethod):
     class, so it ranks above all of them.
     """
 
-    _method_options = ("num_chains", "num_results", "num_warmup", "random_seed")
+    _method_options = ("num_chains", "num_results", "num_warmup", "progress_bar", "random_seed")
 
     def __init__(self) -> None:
         from ..families._programs import PyMCModel, _StanPosterior
