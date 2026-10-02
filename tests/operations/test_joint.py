@@ -29,6 +29,10 @@ class TestJoint:
         assert isinstance(realigned, FactoredDistribution)
         assert set(realigned.event_spec.components) == {"y", "slope"}
 
+    def test_the_joint_is_labeled_as_composition_labels_it(self):
+        likelihood, prior = Kernel("y", ("slope",)), Gaussian("beta")
+        assert joint(likelihood, prior, beta="slope").name == (likelihood * prior).name
+
     def test_joint_equals_composition_with_the_renamed_right_factor(self):
         likelihood, prior = Kernel("y", ("slope",)), Gaussian("beta")
         assert (

@@ -76,7 +76,7 @@ from ..functions import _broker, _descendants, function
 from ..functions._call import ApplicabilityError
 from ..functions._result import SAMPLE_LEVEL
 from ..values import Function, FunctionSpec
-from ._operation import BoundCall, _workflow_draws, operation
+from ._operation import BoundCall, _call_label, _workflow_draws, operation
 from ._sample import _record_batch
 
 __all__ = [
@@ -434,7 +434,7 @@ def _empirical_of(call: BoundCall, draws: Any) -> EmpiricalDistribution:
     declaration calls for, whether they arrive as a nested mapping of raw
     columns or as a record of columns. A batch of records is taken as it is.
     """
-    name = call.operation.name
+    name = _call_label(call)
     event = call.operands["d"].event_spec.spec
     if isinstance(draws, Batch) or not isinstance(event, RecordSpec):
         return EmpiricalDistribution(
@@ -470,7 +470,7 @@ def _mc_mean(call: BoundCall, result: OutputSpec | None) -> Any:
         draws = _monte_carlo_draws(call, "mean")
         stored = draws.raw() if isinstance(draws, Batch) else draws
         laws = list(np.asarray(stored, dtype=object).reshape(-1))
-        return _mixture_factory(call.operation.name, laws, jnp.full(len(laws), 1.0 / len(laws)))
+        return _mixture_factory(_call_label(call), laws, jnp.full(len(laws), 1.0 / len(laws)))
     raise NotImplementedError("mean.monte_carlo: the average of function-valued draws")
 
 

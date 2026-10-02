@@ -152,6 +152,11 @@ class BoundCall:
         )
 
 
+def _call_label(call: BoundCall) -> str:
+    """The label the result of *call* takes, as its operation derives it (II.4)."""
+    return call.operation._derived_label(call.operands)
+
+
 def _spec_of(value: Any) -> TermSpec:
     """The spec of *value*: a term's own, and otherwise the kind the wrap table gives it.
 
@@ -759,14 +764,18 @@ class Operation(Function):
         for ``prob``; the first paragraph of its docstring is the identity
         route's condition. Without it, the identity route admits every call
         that planning admits.
+    label : callable, optional
+        The label rule, called with the call's arguments it names and
+        returning the result's label. Without it, the result takes the label
+        of the primary operand, the first parameter's argument (II.4).
 
     Raises
     ------
     TypeError
-        If *declaration*, *result*, a condition, or *identity_check* is not
-        callable, the result rule or a condition reads a name the declaration
-        does not declare, a role is malformed, or a primitive operation is
-        given an identity check.
+        If *declaration*, *result*, a condition, *identity_check*, or *label*
+        is not callable, the result rule, a condition, or the label rule reads
+        a name the declaration does not declare, a role is malformed, or a
+        primitive operation is given an identity check.
     """
 
     def __init__(
@@ -777,6 +786,7 @@ class Operation(Function):
         conditions: Iterable[Callable[..., Any]] = (),
         roles: Mapping[str, Iterable[type[TermSpec]]] | None = None,
         identity_check: Callable[..., Any] | None = None,
+        label: Callable[..., str] | None = None,
     ) -> None:
         if not callable(declaration):
             raise TypeError(f"an operation is declared by a function; got {declaration!r}")
@@ -787,11 +797,15 @@ class Operation(Function):
         conditions = tuple(conditions)
         if not all(callable(condition) for condition in conditions):
             raise TypeError(f"{owner} was given an applicability condition that is not callable")
+        if label is not None and not callable(label):
+            raise TypeError(f"{owner} needs a callable label rule; got {label!r}")
         parameters = self.signature.parameters
         read = {parameter for rule in (result, *conditions) for parameter in _parameter_names(rule)}
-        unknown = read - set(parameters)
+        unknown = (read | set(_parameter_names(label) if label else ())) - set(parameters)
         if unknown:
-            raise TypeError(f"{owner} has a result rule or condition reading {sorted(unknown)}")
+            raise TypeError(
+                f"{owner} has a result rule, condition, or label rule reading {sorted(unknown)}"
+            )
         derived = not _has_empty_body(declaration)
         if identity_check is not None:
             if not derived:
@@ -817,10 +831,25 @@ class Operation(Function):
         set_attribute(self, "_derived", derived)
         set_attribute(self, "_identity", _identity_source(declaration) if derived else None)
         set_attribute(self, "_route_table", _RouteTable())
+        set_attribute(self, "_label_rule", label)
         if derived:
             self.register_route(_identity_route(declaration, self.signature, identity_check))
 
     # -- declarations ------------------------------------------------------
+
+    def _derived_label(self, values: Mapping[str, Any]) -> str:
+        """The label of the result of a call on *values*, the bound arguments by parameter name.
+
+        The label rule derives it where the operation has one. Otherwise the
+        result takes the label of the primary operand, the first parameter's
+        argument, and an argument that is not a tracked term leaves the
+        operation's own output name.
+        """
+        rule = self._label_rule
+        if rule is not None:
+            return rule(**{name: values.get(name) for name in _parameter_names(rule)})
+        primary = values.get(next(iter(self.signature.parameters), ""))
+        return primary.name if isinstance(primary, TrackedTerm) else self.output_name
 
     @property
     def is_derived(self) -> bool:
@@ -1527,6 +1556,7 @@ def operation(
     conditions: Iterable[Callable[..., Any]] = (),
     roles: Mapping[str, Iterable[type[TermSpec]]] | None = None,
     identity_check: Callable[..., Any] | None = None,
+    label: Callable[..., str] | None = None,
     registry: OperationRegistry | None = None,
 ) -> Callable[[Callable[..., Any]], Operation]:
     """Declare an operation from its signature and register it.
@@ -1546,6 +1576,8 @@ def operation(
         Roles that override the kinds the annotations name.
     identity_check : callable, optional
         A derived operation's probe of its identity; see :class:`Operation`.
+    label : callable, optional
+        The label rule; see :class:`Operation`.
     registry : OperationRegistry, optional
         The registry to register in; :data:`operation_registry` by default.
 
@@ -1569,6 +1601,7 @@ def operation(
             conditions=conditions,
             roles=roles,
             identity_check=identity_check,
+            label=label,
         )
         (operation_registry if registry is None else registry).register(op)
         return op

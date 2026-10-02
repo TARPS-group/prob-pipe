@@ -13,6 +13,7 @@ from typing import Any
 from ..core._specs import OutputSpec
 from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
 from ..distributions._distribution import Distribution, DistributionSpec
+from ..distributions._factored import _LABEL_SEP
 from ._operation import BoundCall, operation
 
 __all__ = ["joint"]
@@ -25,7 +26,16 @@ def _joint_result(A: Any, B: Any, align: Any) -> OutputSpec:
     return OutputSpec(joint=None)
 
 
-@operation(result=_joint_result, roles={"A": _FACTOR_KINDS, "B": _FACTOR_KINDS})
+def _composed_label(A: Any, B: Any) -> str:
+    """The factors' labels joined as composition joins them (IV.2); a rename keeps a label."""
+    return f"{A.name}{_LABEL_SEP}{B.name}"
+
+
+@operation(
+    result=_joint_result,
+    roles={"A": _FACTOR_KINDS, "B": _FACTOR_KINDS},
+    label=_composed_label,
+)
 def joint(A: Any, B: Any, **align: str):
     """Compose *A* with *B* after renaming *B*'s fields, as ``A * B.with_path_names(**align)``.
 

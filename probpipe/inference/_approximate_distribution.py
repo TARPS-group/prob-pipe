@@ -268,6 +268,9 @@ class ApproximateDistribution(EmpiricalDistribution):
         sorts variable names, so columns are aligned to fields by name
         rather than position. Requires *event_spec*, and must be a
         permutation of its components.
+    algorithm : str or None
+        The name of the inference method that produced the chains, such as
+        ``"blackjax_nuts"``, which :attr:`algorithm` reports.
 
     Raises
     ------
@@ -292,6 +295,7 @@ class ApproximateDistribution(EmpiricalDistribution):
         name: str | None = None,
         event_spec: OutputSpec | TermSpec | None = None,
         field_order: list[str] | None = None,
+        algorithm: str | None = None,
     ) -> ApproximateDistribution:
         base = vars(cls).get("_capability_base", cls)
         return object.__new__(_capability_subclass(base, _NUMERIC_MOMENTS))
@@ -304,6 +308,7 @@ class ApproximateDistribution(EmpiricalDistribution):
         name: str | None = None,
         event_spec: OutputSpec | TermSpec | None = None,
         field_order: list[str] | None = None,
+        algorithm: str | None = None,
     ):
         if not chains:
             raise ValueError("Must provide at least one chain")
@@ -341,6 +346,7 @@ class ApproximateDistribution(EmpiricalDistribution):
         super().__init__(label, atoms, weights, event_spec=declaration)
         object.__setattr__(self, "_chains", flat_chains)
         object.__setattr__(self, "_target_record", record)
+        object.__setattr__(self, "_algorithm", algorithm)
         # A memo, filled on first read. Reading fills it in place, which leaves
         # the term's own attributes as construction set them — what the
         # immutability guard sees, and what a copy drops rather than inherits.
@@ -377,11 +383,12 @@ class ApproximateDistribution(EmpiricalDistribution):
 
     @property
     def algorithm(self) -> str:
-        """Name of the inference algorithm (read from provenance)."""
-        src = self.provenance
-        if src is not None:
-            return src.metadata.get("algorithm", src.operation)
-        return "unknown"
+        """The name of the inference method that produced the draws, or ``"unknown"``.
+
+        It is recorded at construction, as :func:`make_posterior` records it,
+        so the result of an operation and an element of a batch keep it.
+        """
+        return self._algorithm or "unknown"
 
     @property
     def arviz_data(self) -> DataTree | None:
@@ -547,6 +554,7 @@ def make_posterior(
         event_spec=event_spec,
         field_order=field_order,
         weights=weights,
+        algorithm=algorithm,
     )
 
     if annotations is not None:

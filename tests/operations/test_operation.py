@@ -964,11 +964,26 @@ class TestRawResults:
 
 
 class TestResultAndRandomness:
-    def test_a_call_returns_a_tracked_term_labeled_by_the_operation(self):
+    def test_a_call_returns_a_tracked_term_labeled_by_its_primary_operand(self):
         result = center(Gaussian("g"))
         assert isinstance(result, TrackedTerm)
-        assert result.name == "center"
+        assert result.name == "g"
         assert result.provenance is not None
+
+    def test_a_label_rule_derives_the_label_from_the_arguments(self):
+        toy = _toy(label=lambda d: f"{d.name}_toy")
+        toy.structural_route("value", **_route(True, 1.0), exact=True)
+        assert toy(Gaussian("g")).name == "g_toy"
+
+    def test_a_label_rule_reads_only_the_declarations_parameters(self):
+        with pytest.raises(TypeError, match="label rule reading"):
+            _toy(label=lambda law: "x")
+
+    def test_a_sweep_is_labeled_by_the_batch_it_sweeps(self):
+        laws = DistributionBatch("laws", [Gaussian("g", 1.0), Gaussian("g", 2.0)], "law")
+        centers = center(laws)
+        assert centers.name == "laws"
+        assert centers[0].name == "laws[law=0]"
 
     def test_an_operation_takes_no_key(self):
         assert "key" not in inspect.signature(center).parameters

@@ -300,6 +300,34 @@ def _call_with_options_in_context(
         _call._CHECKING.reset(token)
 
 
+def _result_label(function: Function, values: Mapping[str, Any]) -> str:
+    """The label of the result of a call of *function* on the arguments *values* (V.10).
+
+    A function's result takes its output name, and an operation's result the
+    label its operands give it (II.4).
+    """
+    derive = getattr(function, "_derived_label", None)
+    return function.output_name if derive is None else derive(values)
+
+
+def _keeping_route_record(term: Any, value: Any) -> Any:
+    """*term*, the declared form of a route's result *value*, with the record *value* carries.
+
+    A route whose result records how it was produced, as an inference
+    method's posterior names the method, passes that record on to the term,
+    so each point of a lifted call keeps it.
+    """
+    if (
+        isinstance(term, TrackedTerm)
+        and isinstance(value, TrackedTerm)
+        and term is not value
+        and term.provenance is None
+        and value.provenance is not None
+    ):
+        term.with_provenance(value.provenance)
+    return term
+
+
 def _realized_point(
     function: Function,
     values: Mapping[str, Any],
@@ -309,7 +337,8 @@ def _realized_point(
     """One point of a call realized by the route selected among *candidates*, as a term.
 
     The point is planned, its route selected and run, and the raw result
-    validated against the point's declaration and wrapped at the kind it names.
+    validated against the point's declaration, wrapped at the kind it names,
+    and labeled as the call's result is.
 
     Raises
     ------
@@ -323,7 +352,8 @@ def _realized_point(
     point, result, _ = function._plan_point(values, controls)
     candidate, report = _resolution.selected(function.name, controls, candidates, point, result)
     value = candidate.run(point, result, report)
-    return _result.declared_term(value, result, function.output_name)
+    term = _result.declared_term(value, result, _result_label(function, values))
+    return _keeping_route_record(term, value)
 
 
 def _run_call(
@@ -362,6 +392,7 @@ def _run_call(
         signature_info=function._signature_info,
         roles=function._roles,
     )
+    label = _result_label(function, values)
     controls = function.options
     candidates = function._route_candidates(controls)
     selection: tuple[Any, OutputSpec | None, Any, Any] | None = None
@@ -448,7 +479,7 @@ def _run_call(
                 and id(value) not in seen_parent_ids
             ):
                 route_records.append(value)
-            return _result.declared_term(value, result, function.output_name)
+            return _result.declared_term(value, result, label)
         if candidates is not None:
             return _realized_point(function, point_values, controls, candidates)
         try:
@@ -545,7 +576,7 @@ def _run_call(
             resolve_dispatch=resolve_dispatch,
             require_jax_traceable=require_jax_traceable,
             workflow_name=function._name,
-            output_name=function.output_name,
+            output_name=label,
             output_spec=concrete_output_spec,
             workflow_kind=workflow_kind,
             output_template=concrete_output_template,
@@ -556,7 +587,7 @@ def _run_call(
         )
 
     if route.rule is not None and route.name not in _rules._ENGINE_RULES:
-        return _run_registered_rule(function, route, provenance_parents, provenance_inputs)
+        return _run_registered_rule(function, route, provenance_parents, provenance_inputs, label)
     if broadcast_plan.regime == "distribution":
         if stochastic_plan is None:  # pragma: no cover - planner contract guard
             raise RuntimeError("distribution broadcast is missing its stochastic plan")
@@ -598,7 +629,7 @@ def _run_call(
             require_jax_traceable=require_jax_traceable,
             distribution_broadcast=distribution_broadcast,
             workflow_name=function._name,
-            output_name=function.output_name,
+            output_name=label,
             output_spec=concrete_output_spec,
             include_inputs=call.overrides.include_inputs,
             output_template=concrete_output_template,
@@ -643,7 +674,7 @@ def _run_call(
         result,
         broadcast_mode=_result.BROADCAST_WRAP,
         provenance=provenance,
-        field_name=function.output_name,
+        field_name=label,
     )
 
 
@@ -1196,11 +1227,12 @@ def _run_registered_rule(
     route: _Route,
     provenance_parents: list[TrackedTerm],
     provenance_inputs: Mapping[str, Any],
+    label: str,
 ) -> Any:
     """Execute a registered evaluation rule and give its result the call's identity.
 
     The rule returns the result over raw forms, and the return step wraps it at
-    its kind under the function's output name, with provenance recording the
+    its kind under the call's result label, with provenance recording the
     function, its inputs, and the rule.
     """
     result = route.rule.execute(
@@ -1223,7 +1255,7 @@ def _run_registered_rule(
         result,
         broadcast_mode=_result.BROADCAST_WRAP,
         provenance=provenance,
-        field_name=function.output_name,
+        field_name=label,
     )
 
 
