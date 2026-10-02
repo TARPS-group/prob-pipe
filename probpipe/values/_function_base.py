@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import os
 import warnings
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager, nullcontext
@@ -28,6 +29,7 @@ from ._binding import (
 )
 
 _FunctionDispatch = Literal["auto", "jax", "sequential", "thread"]
+_WARNING_SKIP_PREFIXES = (os.path.dirname(os.path.dirname(__file__)) + os.sep,)
 
 
 @dataclass(frozen=True, init=False)
@@ -422,6 +424,8 @@ class Function(Node, TrackedTerm, Annotated):
     ``fn``; ``seed``, ``input_template``, and ``output_template`` are ignored.
     Use ``workflow_run(seed=...)`` for workflow randomness or ``bind`` for a
     wrapped callable's seed parameter. ``name`` and ``fn`` remain required.
+    Old templates do not install validation; ``func`` cannot be supplied without
+    ``fn``. Each warning identifies the supplied option at the user's call site.
 
     ``spec`` contains only input/output declarations. ``with_name`` changes the
     function label and callable metadata; output_name and component names are
@@ -457,14 +461,18 @@ class Function(Node, TrackedTerm, Annotated):
     ) -> None:
         removed = {"seed", "input_template", "output_template", "func"}.intersection(kwargs)
         if removed:
-            warnings.warn(
-                f"Removed Function options {sorted(removed)} detected: func aliases fn; "
-                "input_template, output_template and seed are ignored. "
-                "Use fn, input_spec and output_spec instead; use workflow_run(seed=...) "
-                "or bind={'seed': ...} for a wrapped-function seed.",
-                FutureWarning,
-                stacklevel=2,
-            )
+            messages = {
+                "func": "aliases fn and overrides it; fn remains required. Use fn instead.",
+                "input_template": "is ignored; its validation is not retained. Use input_spec instead.",
+                "output_template": "is ignored; its validation is not retained. Use output_spec instead.",
+                "seed": "is ignored. Use workflow_run(seed=...) or bind={'seed': ...} for a wrapped-function seed.",
+            }
+            for key in sorted(removed):
+                warnings.warn(
+                    f"Legacy Function option {key!r} {messages[key]}",
+                    FutureWarning,
+                    skip_file_prefixes=_WARNING_SKIP_PREFIXES,
+                )
             fn = kwargs.pop("func", fn) if "func" in removed else fn
             for key in removed - {"func"}:
                 kwargs.pop(key, None)

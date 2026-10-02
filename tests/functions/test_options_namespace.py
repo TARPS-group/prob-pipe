@@ -45,6 +45,51 @@ def test_function_has_no_options_alias():
     assert not hasattr(function, "options")
 
 
+@pytest.mark.parametrize("decorated", [False, True])
+@pytest.mark.parametrize("option", ["seed", "input_template", "output_template", "func"])
+def test_legacy_warning_identifies_the_option_and_user_callsite(option, decorated):
+    def identity(x):
+        return x
+
+    value = (lambda x: x + 1) if option == "func" else object()
+    frame = inspect.currentframe()
+    assert frame is not None
+    with pytest.warns(FutureWarning) as caught:
+        if decorated:
+            decorate = function(**{option: value})
+            line = frame.f_lineno + 1
+            wrapped = decorate(identity)
+        else:
+            line = frame.f_lineno + 1
+            wrapped = Function("identity", identity, **{option: value})
+    assert len(caught) == 1
+    warning = caught[0]
+    assert str(warning.message).startswith(f"Legacy Function option {option!r} ")
+    assert warning.filename == __file__
+    assert warning.lineno == line
+    assert float(wrapped(3)) == (4 if option == "func" else 3)
+
+
+def test_each_legacy_option_has_its_own_warning():
+    with pytest.warns(FutureWarning) as caught:
+        Function(
+            "identity",
+            lambda x: x,
+            func=lambda x: x,
+            seed=1,
+            input_template=object(),
+            output_template=object(),
+        )
+    assert len(caught) == 4
+    for warning, option in zip(caught, ["func", "input_template", "output_template", "seed"]):
+        assert str(warning.message).startswith(f"Legacy Function option {option!r} ")
+
+
+def test_func_does_not_replace_the_required_fn_argument():
+    with pytest.raises(TypeError, match="required positional argument: 'fn'"):
+        Function(name="identity", func=lambda x: x)
+
+
 def test_function_rng_seed_controls_are_removed():
     def identity(x):
         return x
@@ -99,7 +144,7 @@ def test_removed_templates_warn_without_installing_declarations(option):
 
 
 def test_legacy_func_alias_warns_and_uses_the_replacement_signature():
-    with pytest.warns(FutureWarning, match="func aliases fn"):
+    with pytest.warns(FutureWarning, match="option 'func' aliases fn"):
         wrapped = Function("replace", lambda x: x, func=lambda y: y + 1)
     assert tuple(wrapped.signature.parameters) == ("y",)
     assert float(wrapped(y=2)) == 3
@@ -107,7 +152,7 @@ def test_legacy_func_alias_warns_and_uses_the_replacement_signature():
 
 def test_legacy_func_alias_validates_the_effective_callable():
     with (
-        pytest.warns(FutureWarning, match="func aliases fn"),
+        pytest.warns(FutureWarning, match="option 'func' aliases fn"),
         pytest.raises(TypeError, match="fn must be callable"),
     ):
         Function("invalid", lambda: 1, func=3)

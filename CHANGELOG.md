@@ -15,7 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `FunctionSpec` now stores `InputSpec` and `OutputSpec`. The old Function
   template properties are removed. Legacy constructor keywords emit
   `FutureWarning`: template parameters and `seed` are ignored, while `func`
-  overrides `fn`; the required `name` and `fn` arguments remain. Bare record
+  overrides `fn`; the required `name` and `fn` arguments remain. Warnings identify
+  each supplied legacy option at the caller, and ignored templates install no
+  validation. `func` cannot replace an omitted `fn`. Bare record
   specs expose fields; other bare term specs declare one whole component under
   `output_name`, which defaults to the initial function name and survives
   `with_name`. Arrays remain arrays and single-field records remain records.

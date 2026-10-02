@@ -197,6 +197,9 @@ identity = Function("identity", lambda x: x)
 constructor keywords emit `FutureWarning`: `input_template`, `output_template`,
 and `seed` are ignored; `func` overrides `fn`. Both `name` and `fn` remain
 required constructor arguments. The old template properties are unavailable.
+Each warning identifies the supplied option at the caller's location. This is
+not full legacy compatibility: ignored templates install no validation, and
+`Function(name="n", func=f)` still fails because `fn` is required.
 Use `input_spec` and `output_spec` for declarations, `workflow_run(seed=...)`
 for workflow randomness, and `bind={"seed": ...}` for a callable's seed parameter.
 `with_options(seed=...)` remains an error.
