@@ -73,7 +73,7 @@ from ..core._dispatch import (
 )
 from ..core._record_spec import RecordSpec
 from ..core._repr import format_names
-from ..core._spec_base import NumericSpec, OpaqueSpec, TermSpec
+from ..core._spec_base import NumericSpec, OpaqueSpec, TermSpec, _full_array_shape_or_none
 from ..core._specs import InputSpec, OutputSpec, _components_record
 from ..core.provenance import Provenance
 from ..core.record import Record
@@ -1067,22 +1067,84 @@ def _sliced_is_normalized(call: BoundCall) -> bool | None:
     return True if all(states) else None
 
 
+def _reads_shapes_from_data(law: Any) -> bool:
+    """Whether *law*, or a law it views or renames, is a program that reads its shapes from its data."""
+    while law is not None:
+        if getattr(law, "_shapes_from_data", False):
+            return True
+        law = getattr(law, "_parent", None)
+    return False
+
+
+def _spec_at(declaration: Any, path: str) -> TermSpec | None:
+    """The term spec *declaration* states at *path*, or None where it states none.
+
+    The path's first segment names a component of an output declaration or a
+    slot of an input declaration, and the rest addresses a node of its record.
+    """
+    head, _, rest = path.partition("/")
+    parts = declaration.components if isinstance(declaration, OutputSpec) else declaration
+    spec = parts.get(head) if isinstance(parts, Mapping) else None
+    if spec is None or not rest:
+        return spec
+    try:
+        return spec.at_path(rest)
+    except (AttributeError, KeyError, TypeError):
+        return None
+
+
+def _given_conformance(call: BoundCall) -> Feasibility | None:
+    """Each numeric given conforms to the numeric declaration at its path, a given slot's or a produced field's.
+
+    A path the law declares nothing at is left to the stage's own check. A
+    given that is no numeric array, such as a list of numbers, is checked by
+    value when the call converts it. A program family reads its observed
+    variables' shapes from the data it receives, so the program checks them.
+    """
+    d, given = call.operands["d"], call.operands["given"]
+    if _reads_shapes_from_data(d) or _given_keys(given) is None:
+        return None
+    slots = d.given_spec if isinstance(d, ConditionalDistribution) else {}
+    for path, value in _given_values(given).items():
+        expected = _spec_at(slots, path)
+        if expected is None:
+            expected = _spec_at(d.event_spec, path)
+        if not isinstance(expected, NumericSpec) or _full_array_shape_or_none(value) is None:
+            continue
+        try:
+            expected._bind_dims_from_value(value, {}, repr(path))
+        except ValueError as error:
+            return Feasibility(False, f"the given at {path!r} does not conform: {error}")
+    return None
+
+
+def _conforming(check: Callable[[BoundCall], Any]) -> Callable[[BoundCall], Any]:
+    """*check*, preceded by :func:`_given_conformance`."""
+
+    def checked(call: BoundCall) -> Any:
+        mismatch = _given_conformance(call)
+        return mismatch if mismatch is not None else check(call)
+
+    checked.__doc__ = check.__doc__
+    return checked
+
+
 _CURRY = _ExactStage(
-    check=_can_curry,
+    check=_conforming(_can_curry),
     compute=_curry,
     exact=_evaluation_is_exact,
     normalized=_curried_is_normalized,
     yields_kernel=_leaves_a_slot,
 )
 _SLICE = _ExactStage(
-    check=_can_slice,
+    check=_conforming(_can_slice),
     compute=_slice,
     exact=_slice_is_exact,
     normalized=_sliced_is_normalized,
     yields_kernel=_leaves_a_slot,
 )
 _BAYES = _ExactStage(
-    check=_can_form_the_unnormalized_conditional,
+    check=_conforming(_can_form_the_unnormalized_conditional),
     compute=_bayes,
     exact=_bayes_is_exact,
     normalized=_never,

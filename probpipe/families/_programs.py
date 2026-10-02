@@ -642,6 +642,10 @@ class _StanPosterior(Distribution, SupportsUnnormalizedLogProb):
         A value of every data-block variable.
     """
 
+    #: The program reads its observed variables' shapes from the data it
+    #: receives, so ``condition_on`` leaves their givens to the program.
+    _shapes_from_data: ClassVar[bool] = True
+
     #: The BridgeStan model, built on first use, is not state.
     _transient_state = ("_memo",)
 
@@ -725,6 +729,10 @@ class _UnconstrainedStanView(Distribution, SupportsUnnormalizedLogProb):
     unconstrained parameter blocks.
     """
 
+    #: The program reads its observed variables' shapes from the data it
+    #: receives, so ``condition_on`` leaves their givens to the program.
+    _shapes_from_data: ClassVar[bool] = True
+
     def __init__(self, posterior: _StanPosterior) -> None:
         self._posterior = posterior
         self._blocks = _param_blocks(posterior._bridgestan_model().param_unc_names())
@@ -802,6 +810,10 @@ class StanModel(
         If stanc rejects the program, the program declares no parameters, or a
         declaration cannot be read.
     """
+
+    #: The program reads its observed variables' shapes from the data it
+    #: receives, so ``condition_on`` leaves their givens to the program.
+    _shapes_from_data: ClassVar[bool] = True
 
     def __init__(self, name: str, stan_file: str, *, data: Mapping[str, Any] | None = None) -> None:
         program = _StanProgram.read(stan_file)
@@ -1086,6 +1098,10 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
         If *model_fn* cannot be built with its arguments' defaults.
     """
 
+    #: The program reads its observed variables' shapes from the data it
+    #: receives, so ``condition_on`` leaves their givens to the program.
+    _shapes_from_data: ClassVar[bool] = True
+
     _capability_table: ClassVar = {
         SupportsLogProb: {"_log_prob": _pymc_density},
         SupportsUnnormalizedLogProb: {"_unnormalized_log_prob": _pymc_density},
@@ -1257,6 +1273,10 @@ class _PyMCKernel(ConditionalDistribution):
     model claims: conditional sampling and the normalized density, or the
     unnormalized density alone.
     """
+
+    #: The program reads its observed variables' shapes from the data it
+    #: receives, so ``condition_on`` leaves their givens to the program.
+    _shapes_from_data: ClassVar[bool] = True
 
     _capability_table: ClassVar = {
         SupportsConditionalLogProb: {"_conditional_log_prob": _pymc_kernel_log_prob},
