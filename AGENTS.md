@@ -15,13 +15,15 @@ The design reference in `design/` describes the target state, and the documents 
 | Any change to `probpipe/` | `CONTRACTS.md`: the contract directives every PR follows |
 | Naming, imports, types, tests, and module layout | `STYLE_GUIDE.md` |
 | The contract of an abstraction or an operation | its section of `design/`, listed in `design/README.md` |
-| A term of art | `design/glossary.md` |
+| A term of art, or the canonical name of a recurring concept | `design/glossary.md` |
 | The package a module belongs in | `design/package-structure.md` |
 | A new family, inference method, converter, or array backend | `docs/api/extending.md` |
 | Test tolerances and baselines | `STYLE_GUIDE.md` §8.6 |
 | A docs page or a notebook | `CONTRIBUTING.md` § Documentation |
 | Installation | `CONTRIBUTING.md` § Installation |
 | The branch, the PR title and body, the CHANGELOG entry, and labels | `CONTRIBUTING.md` § PR Workflow and `.github/PULL_REQUEST_TEMPLATE.md` |
+
+Where `design/` disagrees with the code or with a contributor document, `CONTRACTS.md` directive 5 decides.
 
 ## Commands
 

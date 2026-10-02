@@ -695,6 +695,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ran one chain, so a fit under the default budget had no R-hat. They now run
   four, as `cmdstan_nuts`, `pymc_nuts`, and `nutpie_nuts` do. Pass
   `method_options={"num_chains": 1}` for one chain.
+- **`CONTRACTS.md` applies to every PR.** Directive 5 states that `design/`
+  decides where it disagrees with the code or a contributor document, and
+  `design/package-structure.md` § Correspondence to the implementation replaces
+  the abstraction index. The canonical names move to `design/glossary.md`, and
+  the per-PR checklist moves into the PR template, which gains a contract
+  assessment section.
 - **The rule documents cite only what exists.** `STYLE_GUIDE.md`,
   `CONTRIBUTING.md`, and `CONTRACTS.md` drop the packages, modules, and classes
   the code no longer has, and `tests/docs/test_rule_documents.py` checks that

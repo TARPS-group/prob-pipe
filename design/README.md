@@ -45,7 +45,7 @@ The document has seven parts and one more planned, and it has a glossary and a p
 - **[Part VI — Operations](06-operations.md)** — precise contracts for the core operations, functions before distributions: function evaluation, inversion, sampling, density evaluation, distribution functionals, conditioning, joints, marginals and factors, mixtures, conversion between representations, and batched operations.
 - **[Part VII — The Distribution Catalog](07-distribution-catalog.md)** — the concrete families: parametric, empirical, mixtures, evaluation results, random functions and measures, the Gaussian algebra, inference-produced distributions, and the conditional families, including GLM likelihoods.
 - **Part VIII — Agentic Interface (planned)** — A higher-level agentic interface to help guide the process of designing, building, and auditing a ProbPipe workflow.
-- **[Glossary](glossary.md)** — the terms of art in alphabetical order, each defined once with the section that owns its rules.
+- **[Glossary](glossary.md)** — the terms of art in alphabetical order, each defined once with the section that owns its rules, and the canonical names of the code's recurring concepts.
 - **[Package Structure](package-structure.md)** — the target package and module layout realizing the parts: the layered import graph, upward registration, and the public-API conventions.
 
 ### Conventions

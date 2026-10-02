@@ -46,3 +46,24 @@ The terms of art of the reference, in alphabetical order. Each entry defines its
 - **type hole**: a component of an `OutputSpec` whose term spec is pending, written `None`, which a producer fills with `with_spec` (II.2). `None` means only a pending type, so an opaque field is declared as `OpaqueSpec()` (III.2, III.5).
 - **unresolved**: the outcome of a feasibility check whose required declarations are not yet available (II.7).
 - **view**: a tracked term that refers into its source, such as a record field, a batch element or sub-batch, or a distribution's field view `d[path]` (B4, II.4, III.7).
+
+## Canonical names
+
+The canonical name of a recurring concept is the name that its parameters, attributes, and variables take in the code.
+
+| Concept | Name |
+|---|---|
+| a draw or a value of a term | `value` |
+| a 1-D numeric serialization | `vec` |
+| the batch dimensions | `batch_shape` |
+| the batch axes tiled into levels | `axis_groups`, as reported; construction takes `axes_per_level` |
+| one name per level of a batch | `level_names` |
+| the spec every element of a batch satisfies | `element_spec` |
+| the objects a batch is built from | `elements` |
+| the independent-draw shape prefix of `sample` | `sample_shape` |
+| a distribution's event declaration, an `OutputSpec` | `event_spec` |
+| a PRNG key | `key` |
+| a tracked term's identity, the required first argument of `Record` and of a distribution | `label` |
+| a field key within a tree, or the name assigned to a field | `field_name` or `key` |
+| the attributes an immutable class keeps out of its state round-trip, such as a memo | `_transient_state` |
+| the attributes an immutable class restores into a container of their own, such as a store written in place | `_decoupled_state` |
