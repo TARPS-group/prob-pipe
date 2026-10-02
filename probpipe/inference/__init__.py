@@ -24,7 +24,6 @@ from ..core._dispatch import (
     UnarySupportedTypes,
 )
 from ..operations._condition import InferenceMethod, inference_method_registry
-from ._approximate_distribution import ApproximateDistribution
 from ._bayesflow_likelihoods import (
     BayesFlowLikelihood,
     BayesFlowRatio,
@@ -44,7 +43,6 @@ from ._minibatch import MinibatchedDistribution
 from ._nutpie import condition_on_nutpie
 
 __all__ = [
-    "ApproximateDistribution",
     "BaseDispatchMethod",
     "BaseDispatchRegistry",
     "BayesFlowLikelihood",

@@ -14,12 +14,11 @@ import jax.numpy as jnp
 import pytest
 import tensorflow_probability.substrates.jax as tfp
 
-from probpipe import Beta, MultivariateNormal, NumericArraySpec, condition_on
+from probpipe import Beta, EmpiricalDistribution, MultivariateNormal, NumericArraySpec, condition_on
 from probpipe.core.constraints import boolean
 from probpipe.custom_types import Array
 from probpipe.distributions import Distribution
 from probpipe.families import GaussianFamily, glm_likelihood
-from probpipe.inference._approximate_distribution import ApproximateDistribution
 from probpipe.validation import Reference
 from tests.inference.canonical import ObservationKernel
 
@@ -60,7 +59,7 @@ def conjugate_linear_model() -> ConjugateLinearModel:
 @pytest.fixture(scope="session")
 def conjugate_nuts_posterior(
     conjugate_linear_model: ConjugateLinearModel,
-) -> ApproximateDistribution:
+) -> EmpiricalDistribution:
     """A well-mixed NUTS fit of the conjugate model — the method under validation."""
     m = conjugate_linear_model
     return condition_on.with_options(
@@ -117,7 +116,7 @@ def beta_bernoulli_model() -> BetaBernoulliModel:
 @pytest.fixture(scope="session")
 def beta_bernoulli_nuts_posterior(
     beta_bernoulli_model: BetaBernoulliModel,
-) -> ApproximateDistribution:
+) -> EmpiricalDistribution:
     """A NUTS fit of the constrained, skewed Beta-Bernoulli posterior."""
     m = beta_bernoulli_model
     return condition_on.with_options(

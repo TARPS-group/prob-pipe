@@ -1,8 +1,8 @@
 """Tests for the probpipe.inference package.
 
 Covers:
-- ApproximateDistribution: chain access, warmup, inference_data, draws
-- ApproximateDistribution with Record template: named draws
+- make_posterior: an inference result's levels, annotations, warmup, and draws
+- make_posterior with a record target: named draws
 - FieldView: component views, select, broadcasting
 - rwmh Function: basic sampling with SupportsLogProb
 """
@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 
 from probpipe import (
-    ApproximateDistribution,
+    EmpiricalDistribution,
     MultivariateNormal,
     Normal,
     NumericRecordBatch,
@@ -33,14 +33,24 @@ from probpipe.distributions import FieldView
 from probpipe.inference import rwmh
 from probpipe.inference._approximate_distribution import make_posterior
 from probpipe.inference._inference_utils import build_mcmc_datatree
+from tests._posterior import (
+    arviz_data,
+    flat_chains,
+    flat_draws,
+    method_of,
+    num_chains,
+    num_draws,
+    posterior_of,
+    warmup_samples,
+)
 
 # ---------------------------------------------------------------------------
-# ApproximateDistribution
+# make_posterior
 # ---------------------------------------------------------------------------
 
 
-class TestApproximateDistribution:
-    """Test chain-structured empirical distribution."""
+class TestMakePosterior:
+    """An inference result: the empirical law of a run's draws on the levels chain and draw."""
 
     @pytest.fixture
     def two_chain_dist(self):
@@ -61,13 +71,15 @@ class TestApproximateDistribution:
 
     def test_empty_chains_raises(self):
         with pytest.raises(ValueError, match="at least one chain"):
-            ApproximateDistribution([], label="x")
+            posterior_of([], label="x")
 
-    def test_num_chains(self, two_chain_dist):
-        assert two_chain_dist.num_chains == 2
+    def test_the_result_is_an_empirical_law(self, two_chain_dist):
+        assert isinstance(two_chain_dist, EmpiricalDistribution)
 
-    def test_num_draws(self, two_chain_dist):
-        assert two_chain_dist.num_draws == 50
+    def test_atoms_lie_on_the_chain_and_draw_levels(self, two_chain_dist):
+        assert two_chain_dist.atoms.level_names == ("chain", "draw")
+        assert two_chain_dist.atoms.batch_shape == (2, 50)
+        assert (num_chains(two_chain_dist), num_draws(two_chain_dist)) == (2, 50)
 
     def test_event_shape(self, two_chain_dist):
         assert two_chain_dist.event_shape == (2,)
@@ -75,8 +87,9 @@ class TestApproximateDistribution:
     def test_num_atoms(self, two_chain_dist):
         assert two_chain_dist.num_atoms == 100  # 50 * 2 chains
 
-    def test_algorithm_from_provenance(self, two_chain_dist):
-        assert two_chain_dist.method == "test"
+    def test_annotations_record_the_method(self, two_chain_dist):
+        assert two_chain_dist.annotations.attrs["method"] == "test"
+        assert method_of(two_chain_dist) == "test"
         assert two_chain_dist.provenance.metadata["method"] == "test"
 
     def test_annotations_contains_arviz_data(self, two_chain_dist):
@@ -91,50 +104,19 @@ class TestApproximateDistribution:
         assert aux is not None
         assert "arviz" in aux.children
 
-        arviz_data = two_chain_dist.arviz_data
-        assert arviz_data is not None
-        assert "posterior" in arviz_data.children
-        assert "warmup" in arviz_data.children
+        tree = arviz_data(two_chain_dist)
+        assert tree is not None
+        assert "posterior" in tree.children
+        assert "warmup" in tree.children
 
-    def test_inference_data_alias(self, two_chain_dist):
-        aux = two_chain_dist.annotations
-        assert aux is not None
-        assert "arviz" in aux.children
-
-        idata = two_chain_dist.inference_data
-        assert idata is not None
-        assert "posterior" in idata.children
-        assert "warmup" in idata.children
-
-    def test_arviz_data_none_without_annotations(self):
-        dist = ApproximateDistribution(
+    def test_no_arviz_groups_without_the_methods_annotations(self):
+        dist = posterior_of(
             [jax.random.normal(jax.random.PRNGKey(0), (5, 2))],
             label="x",
         )
-        assert dist.arviz_data is None
-        assert dist.inference_data is None
-
-    def test_arviz_data_falls_back_to_legacy_annotations_layout(self):
-        import xarray as xr
-
-        dist = ApproximateDistribution(
-            [jax.random.normal(jax.random.PRNGKey(0), (5, 2))],
-            label="x",
-        )
-        legacy_aux = xr.DataTree.from_dict({"posterior": xr.Dataset()})
-        dist._annotations = legacy_aux
-
-        assert dist.arviz_data is legacy_aux
-        assert dist.inference_data is legacy_aux
-
-    def test_warmup_samples_none_when_arviz_data_has_no_children_attr(self):
-        dist = ApproximateDistribution(
-            [jax.random.normal(jax.random.PRNGKey(0), (5, 2))],
-            label="x",
-        )
-        dist._annotations = object()
-
-        assert dist.warmup_samples is None
+        assert "arviz" not in dist.annotations.children
+        assert dist.annotations.attrs["method"] == "test"
+        assert arviz_data(dist) is None
 
     def test_make_posterior_accepts_annotations_dataset_nodes(self):
         import xarray as xr
@@ -148,8 +130,8 @@ class TestApproximateDistribution:
             annotations={"posterior": xr.Dataset()},
         )
 
-        assert posterior.inference_data is not None
-        assert "posterior" in posterior.inference_data.children
+        assert arviz_data(posterior) is not None
+        assert "posterior" in arviz_data(posterior).children
 
     def test_make_posterior_skips_annotations_root_group(self):
         import xarray as xr
@@ -167,30 +149,31 @@ class TestApproximateDistribution:
         )
 
         assert posterior.annotations is not None
+        assert posterior.annotations.attrs == {"method": "test"}
         assert "arviz" in posterior.annotations.children
-        assert "posterior" in posterior.inference_data.children
-        assert "" not in posterior.inference_data.children
+        assert "posterior" in arviz_data(posterior).children
+        assert "" not in arviz_data(posterior).children
 
     def test_warmup_from_annotations(self, two_chain_dist):
-        warmup = two_chain_dist.warmup_samples
+        warmup = warmup_samples(two_chain_dist)
         assert warmup is not None
         assert len(warmup) == 2
         assert warmup[0].shape == (10, 2)
 
     def test_draws_single_chain(self, two_chain_dist):
-        d = two_chain_dist.draws(chain=0)
+        d = flat_draws(two_chain_dist, chain=0)
         assert d.shape == (50, 2)
 
     def test_draws_all_chains(self, two_chain_dist):
-        d = two_chain_dist.draws()
+        d = flat_draws(two_chain_dist)
         assert d.shape == (100, 2)
 
     def test_draws_with_warmup(self, two_chain_dist):
-        d = two_chain_dist.draws(chain=0, include_warmup=True)
+        d = flat_draws(two_chain_dist, chain=0, include_warmup=True)
         assert d.shape == (60, 2)
 
     def test_draws_all_with_warmup(self, two_chain_dist):
-        d = two_chain_dist.draws(include_warmup=True)
+        d = flat_draws(two_chain_dist, include_warmup=True)
         assert d.shape == (120, 2)
 
     def test_mean_and_variance(self, two_chain_dist):
@@ -207,10 +190,8 @@ class TestApproximateDistribution:
 
     def test_repr(self, two_chain_dist):
         r = repr(two_chain_dist)
-        assert "ApproximateDistribution" in r
-        assert "num_chains=2" in r
-        assert "num_draws=50" in r
-        assert "test" in r
+        assert r.startswith("EmpiricalDistribution(")
+        assert "levels={'chain': 2, 'draw': 50}" in r
 
     def test_make_posterior_forwards_weights(self):
         """make_posterior(weights=) flows through to the posterior so a
@@ -238,8 +219,8 @@ class TestApproximateDistribution:
         np.testing.assert_allclose(np.asarray(mean(post)).ravel(), [5.0], atol=1e-6)
 
 
-class TestApproximateDistributionValuesTemplate:
-    """draws() returns a named Record when the target is declared."""
+class TestMakePosteriorRecordTarget:
+    """A declared record target names the fields of the draws."""
 
     @pytest.fixture
     def template(self):
@@ -258,32 +239,32 @@ class TestApproximateDistributionValuesTemplate:
         )
 
     def test_draws_returns_values(self, posterior_with_template):
-        draws = posterior_with_template.draws()
+        draws = flat_draws(posterior_with_template)
         assert isinstance(draws, NumericRecordBatch)
         # Insertion order from the template fixture: r, K, phi.
         assert tuple(draws.event_template.keys()) == ("r", "K", "phi")
         assert draws["r"].shape == (100,)
 
     def test_draws_has_correct_fields(self, posterior_with_template):
-        draws = posterior_with_template.draws()
+        draws = flat_draws(posterior_with_template)
         assert tuple(draws.event_template.keys()) == ("r", "K", "phi")
 
     def test_draws_field_shapes(self, posterior_with_template):
-        draws = posterior_with_template.draws()
+        draws = flat_draws(posterior_with_template)
         assert draws["r"].shape == (100,)
         assert draws["K"].shape == (100,)
         assert draws["phi"].shape == (100,)
 
     def test_draws_values_match_raw(self, posterior_with_template):
         """Named draws must contain the same data as raw flat draws."""
-        raw = posterior_with_template.draws()
+        raw = flat_draws(posterior_with_template)
         # Reconstruct flat from named (template insertion order).
         flat = jnp.stack([raw["r"], raw["K"], raw["phi"]], axis=-1)
-        chain = posterior_with_template.chains[0]
+        chain = flat_chains(posterior_with_template)[0]
         np.testing.assert_allclose(flat, chain, atol=1e-6)
 
     def test_draws_single_chain_returns_values(self, posterior_with_template):
-        draws = posterior_with_template.draws(chain=0)
+        draws = flat_draws(posterior_with_template, chain=0)
         assert isinstance(draws, NumericRecordBatch)
         assert draws["r"].shape == (100,)
 
@@ -291,7 +272,7 @@ class TestApproximateDistributionValuesTemplate:
         chain = jax.random.normal(jax.random.PRNGKey(0), (50, 3))
         prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), label="z")
         post = make_posterior([chain], parents=(prior,), method="test")
-        draws = post.draws()
+        draws = flat_draws(post)
         assert isinstance(draws, jnp.ndarray)
         assert draws.shape == (50, 3)
 
@@ -305,7 +286,7 @@ class TestApproximateDistributionValuesTemplate:
         chains = [jnp.zeros((5, width)), jnp.ones((5, width))]
         post = make_posterior(chains, parents=(), method="test", event_spec=RecordSpec(theta=shape))
         assert post.event_spec.spec["theta"].shape == shape
-        assert post.draws()["theta"].shape == (10, *shape)
+        assert flat_draws(post)["theta"].shape == (10, *shape)
         assert jnp.shape(post._mean()["theta"]) == shape
 
     def test_field_order_reassembles_by_name(self):
@@ -330,7 +311,7 @@ class TestApproximateDistributionValuesTemplate:
             event_spec=template,
             field_order=["b", "a"],
         )
-        draws = post.draws()
+        draws = flat_draws(post)
         # a is the trailing column; b is the leading 2-column block.
         np.testing.assert_allclose(np.asarray(draws["a"]), [1.0, 2.0])
         np.testing.assert_allclose(np.asarray(draws["b"]), b_block)
@@ -346,7 +327,7 @@ class TestApproximateDistributionValuesTemplate:
             method="test",
             event_spec=template,
         )
-        draws = post.draws()
+        draws = flat_draws(post)
         np.testing.assert_allclose(np.asarray(draws["a"]), [1.0, 2.0])
         np.testing.assert_allclose(np.asarray(draws["b"]), [[10.0, 11.0], [12.0, 13.0]])
 
@@ -481,7 +462,7 @@ class TestApproximateDistributionValuesTemplate:
             method="test",
             event_spec=template,
         )
-        draws = post.draws()
+        draws = flat_draws(post)
         assert draws["mean"].shape == (20, 3)
         assert draws["cov"].shape == (20, 2, 2)
 
@@ -499,7 +480,7 @@ class TestApproximateDistributionValuesTemplate:
             annotations=annotations,
             event_spec=template,
         )
-        draws = post.draws(include_warmup=True)
+        draws = flat_draws(post, include_warmup=True)
         assert isinstance(draws, NumericRecordBatch)
         assert draws["a"].shape == (60,)  # 10 warmup + 50 draws
         assert draws["b"].shape == (60,)
@@ -519,7 +500,7 @@ class TestApproximateDistributionValuesTemplate:
             method="test",
             event_spec=template,
         )
-        draws = post.draws()
+        draws = flat_draws(post)
         assert isinstance(draws, NumericRecordBatch)
         assert isinstance(draws["params"], RecordBatch)
         assert draws["params/a"].shape == (30,)
@@ -575,7 +556,7 @@ class TestApproximateDistributionValuesTemplate:
         assert v.fields == expected_fields
         assert jnp.shape(v["params/b"]) == ()
         # ``draws()`` walks the full template, nesting included.
-        draws = post.draws()
+        draws = flat_draws(post)
         assert tuple(draws.event_template.children) == expected_fields
         assert draws["params/a"].shape == (40,)
         assert draws["params/b"].shape == (40,)
@@ -583,16 +564,16 @@ class TestApproximateDistributionValuesTemplate:
 
     def test_without_warmup(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
-        dist = ApproximateDistribution([chain], label="x")
-        assert dist.warmup_samples is None
-        assert dist.num_chains == 1
-        assert dist.num_draws == 20
+        dist = posterior_of([chain], label="x")
+        assert warmup_samples(dist) is None
+        assert num_chains(dist) == 1
+        assert num_draws(dist) == 20
 
-    def test_bare_dist_no_annotations(self):
+    def test_without_the_methods_groups_the_annotations_record_the_method(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
-        dist = ApproximateDistribution([chain], label="x")
-        assert dist.annotations is None
-        assert dist.inference_data is None
+        dist = posterior_of([chain], label="x")
+        assert dist.annotations.attrs["method"] == "test"
+        assert arviz_data(dist) is None
 
     def test_annotations_has_posterior_group(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
@@ -608,14 +589,9 @@ class TestApproximateDistributionValuesTemplate:
         assert post.annotations is not None
         assert "arviz" in post.annotations.children
 
-        idata = post.inference_data
+        idata = arviz_data(post)
         assert idata is not None
         assert "posterior" in idata.children
-
-    def test_algorithm_default_without_annotations(self):
-        chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
-        dist = ApproximateDistribution([chain], label="x")
-        assert dist.method == "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -636,11 +612,11 @@ class TestRWMH:
             step_size=0.5,
             random_seed=42,
         )
-        assert isinstance(result, ApproximateDistribution)
-        assert result.num_draws == 100
-        assert result.num_chains == 1
+        assert isinstance(result, EmpiricalDistribution)
+        assert num_draws(result) == 100
+        assert num_chains(result) == 1
         assert result.event_shape == (2,)
-        assert result.method == "blackjax_rwmh"
+        assert method_of(result) == "blackjax_rwmh"
 
     def test_inference_data_produced(self):
         """RWMH produces an annotations DataTree with posterior group."""
@@ -652,8 +628,8 @@ class TestRWMH:
             step_size=0.5,
             random_seed=42,
         )
-        assert result.inference_data is not None
-        assert "posterior" in result.inference_data
+        assert arviz_data(result) is not None
+        assert "posterior" in arviz_data(result)
         # RWMH scalar stats (accept_rate, step_size) live in provenance,
         # not as per-draw arrays in sample_stats.
         assert result.provenance.metadata["accept_rate"] > 0
@@ -670,8 +646,8 @@ class TestRWMH:
             step_size=0.5,
             random_seed=42,
         )
-        assert result.num_chains == 3
-        assert result.num_draws == 50
+        assert num_chains(result) == 3
+        assert num_draws(result) == 50
         assert result.num_atoms == 150  # 50 * 3
 
     def test_warmup_stored(self):
@@ -684,8 +660,8 @@ class TestRWMH:
             step_size=0.5,
             random_seed=42,
         )
-        assert result.warmup_samples is not None
-        assert result.warmup_samples[0].shape == (20, 2)
+        assert warmup_samples(result) is not None
+        assert warmup_samples(result)[0].shape == (20, 2)
 
     def test_provenance(self):
         """RWMH attaches provenance."""
@@ -727,7 +703,7 @@ class TestRWMH:
             step_size=0.3,
             random_seed=42,
         )
-        assert isinstance(result, ApproximateDistribution)
+        assert isinstance(result, EmpiricalDistribution)
 
         # Analytical posterior.
         y_bar = np.asarray(jnp.mean(data, axis=0))
@@ -735,7 +711,7 @@ class TestRWMH:
         analytical_mean = (n * sigma_p**2 / denom) * y_bar
         analytical_var = (sigma_p**2 * sigma_y**2) / denom
 
-        raw_draws = result.draws()
+        raw_draws = flat_draws(result)
         if hasattr(raw_draws, "fields"):
             raw_draws = jnp.concatenate([raw_draws[f] for f in raw_draws.event_template], axis=-1)
         draws = np.asarray(raw_draws).reshape(-1, 2)
@@ -790,9 +766,9 @@ class TestRWMH:
             init=far_init,
             random_seed=42,
         )
-        assert isinstance(result, ApproximateDistribution)
+        assert isinstance(result, EmpiricalDistribution)
 
-        first = np.asarray(result.chains[0][0])
+        first = np.asarray(flat_chains(result)[0][0])
         # A chain seeded at the origin (init ignored) would land within a
         # few units of it; a step_size=0.5 RWMH move from [20, 20] stays
         # far out. Use a conservative band well clear of both regimes.
@@ -814,7 +790,7 @@ class TestRWMH:
             init=other_init,
             random_seed=42,
         )
-        first_other = np.asarray(result_other.chains[0][0])
+        first_other = np.asarray(flat_chains(result_other)[0][0])
         assert np.linalg.norm(first - first_other) > 1.0, (
             "Different inits produced near-identical first draws — init may be ignored."
         )
@@ -829,8 +805,8 @@ class TestRWMH:
             step_size=0.5,
             random_seed=42,
         )
-        assert result.warmup_samples is None
-        assert result.num_draws == 50
+        assert warmup_samples(result) is None
+        assert num_draws(result) == 50
 
     def test_non_supports_mean_init(self):
         """RWMH falls back to zeros init when dist has no SupportsMean."""
@@ -861,7 +837,7 @@ class TestRWMH:
             step_size=0.5,
             random_seed=42,
         )
-        assert isinstance(result, ApproximateDistribution)
+        assert isinstance(result, EmpiricalDistribution)
 
     def test_mean_exception_fallback(self):
         """RWMH falls back to zeros init when _mean() raises."""
@@ -895,7 +871,7 @@ class TestRWMH:
             step_size=0.5,
             random_seed=42,
         )
-        assert isinstance(result, ApproximateDistribution)
+        assert isinstance(result, EmpiricalDistribution)
 
 
 # ---------------------------------------------------------------------------
@@ -931,12 +907,12 @@ class TestPosteriorFieldView:
             posterior["nonexistent"]
 
     def test_getitem_without_template_uses_single_field_autowrap(self):
-        """Without a multi-field template, ApproximateDistribution
-        auto-wraps the chain as a single-field Record keyed by ``name=``.
+        """Without a multi-field template, an inference result
+        wraps the chain as a single-field Record keyed by its label.
         Indexing the field returns a view; accessing a different name
         raises ``KeyError``."""
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
-        dist = ApproximateDistribution([chain], label="x")
+        dist = posterior_of([chain], label="x")
         # The auto-wrap field is "x"; that should resolve to a view.
         view = dist["x"]
         assert view is not None
@@ -950,7 +926,7 @@ class TestPosteriorFieldView:
     def test_a_posterior_without_a_target_is_a_whole_term(self):
         """Without a target, each draw is one array under the result's name."""
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
-        dist = ApproximateDistribution([chain], label="x")
+        dist = posterior_of([chain], label="x")
         assert tuple(dist.event_spec.components) == ("x",)
         assert dist.event_shape == (3,)
 
@@ -968,12 +944,12 @@ class TestPosteriorFieldView:
 
     def test_view_mean(self, posterior):
         view = posterior["K"]
-        draws = posterior.draws()
+        draws = flat_draws(posterior)
         np.testing.assert_allclose(float(view._mean()), float(jnp.mean(draws["K"])), atol=1e-5)
 
     def test_view_variance(self, posterior):
         view = posterior["K"]
-        draws = posterior.draws()
+        draws = flat_draws(posterior)
         np.testing.assert_allclose(float(view._variance()), float(jnp.var(draws["K"])), atol=1e-5)
 
     def test_view_sample(self, posterior):
@@ -990,7 +966,7 @@ class TestPosteriorFieldView:
 
     def test_view_mean_fallback_without_supports_mean(self):
         """_mean() falls back to _field_draws() when parent lacks SupportsMean."""
-        # ApproximateDistribution IS SupportsMean, so we test the fallback
+        # An inference result IS SupportsMean, so we test the fallback
         # by checking the empirical mean matches the draws directly.
         template = RecordSpec(a=(), b=())
         chain = jnp.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
@@ -1030,7 +1006,7 @@ class TestViewProtocolDuckTyping:
         assert isinstance(view, SupportsLogProb)
 
     def test_view_from_posterior_not_isinstance_log_prob(self):
-        """ApproximateDistribution lacks SupportsLogProb → view doesn't have it."""
+        """An inference result lacks SupportsLogProb → view doesn't have it."""
         from probpipe import SupportsLogProb
 
         template = RecordSpec(a=(), b=())
@@ -1180,7 +1156,7 @@ class TestEndToEndValuesPipeline:
 
     def test_draws_are_named_values(self, posterior):
         """draws() returns Record with correct field names and shapes."""
-        draws = posterior.draws()
+        draws = flat_draws(posterior)
         assert isinstance(draws, NumericRecordBatch)
         assert tuple(draws.event_template.keys()) == ("params",)
         assert draws["params"].shape == (500, 2)
@@ -1192,7 +1168,7 @@ class TestEndToEndValuesPipeline:
         #                = 10/11 * [1, 2] ≈ [0.909, 1.818]
         # Posterior var  = sigma_prior^2 * sigma_lik^2 / (sigma_lik^2 + sigma_prior^2)
         #                = 10/11 ≈ 0.909
-        draws = posterior.draws()
+        draws = flat_draws(posterior)
         post_mean = np.asarray(draws["params"].raw().mean(axis=0))
         post_std = np.asarray(draws["params"].raw().std(axis=0))
         analytical_mean = np.array([10 / 11, 20 / 11])
@@ -1207,7 +1183,7 @@ class TestEndToEndValuesPipeline:
         assert view.event_shape == (2,)
 
         # Delegation check: view._mean() == draws().params.mean()
-        draws = posterior.draws()
+        draws = flat_draws(posterior)
         np.testing.assert_allclose(
             np.asarray(view._mean()),
             np.asarray(draws["params"].raw().mean(axis=0)),
@@ -1267,7 +1243,7 @@ class TestEndToEndValuesPipeline:
             method="test",
             event_spec=template,
         )
-        draws = post.draws()
+        draws = flat_draws(post)
         assert isinstance(draws, NumericRecordBatch)
         assert tuple(draws.event_template.keys()) == ("a", "b", "c")
         assert draws["a"].shape == (200,)
@@ -1285,7 +1261,7 @@ class TestEndToEndValuesPipeline:
         def noisy_predict(params, noise):
             return params[0] + params[1] * 0.5 + noise
 
-        params = np.asarray(posterior.draws()["params"])
+        params = np.asarray(flat_draws(posterior)["params"])
         expected_values = params[:, 0] + params[:, 1] * 0.5
         expected_mean = float(np.mean(expected_values))
         expected_variance = float(np.var(expected_values) + 0.01**2)

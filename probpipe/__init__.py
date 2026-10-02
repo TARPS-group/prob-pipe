@@ -170,7 +170,6 @@ from probpipe.functions._replay import replay_run
 from probpipe.functions._result import ResultKindError, ResultSchemaError
 from probpipe.functions._rules import evaluation_rule_registry
 from probpipe.inference import (
-    ApproximateDistribution,
     BayesFlowLikelihood,
     BayesFlowRatio,
     MinibatchedDistribution,
@@ -222,7 +221,6 @@ __all__ = [
     "AbstractModule",
     "Annotated",
     "ApplicabilityError",
-    "ApproximateDistribution",
     "ArrayBackend",
     "Batch",
     "BatchSpec",

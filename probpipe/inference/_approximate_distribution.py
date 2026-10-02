@@ -1,4 +1,4 @@
-"""Inference results: the empirical law of a run's draws, with its chains and annotations."""
+"""Inference results: the empirical law of a run's draws on the levels ``chain`` and ``draw``."""
 
 from __future__ import annotations
 
@@ -13,9 +13,7 @@ if TYPE_CHECKING:
 import jax.numpy as jnp
 
 from .._weights import Weights
-from ..core._immutable import transient_memo
 from ..core._numeric_array_batch import NumericArrayBatch
-from ..core._numeric_record import _reconstruct_from_vector
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._opaque import OpaqueSpec
 from ..core._specs import (
@@ -26,13 +24,11 @@ from ..core._specs import (
     _components_record,
 )
 from ..core.provenance import Provenance
-from ..core.record import Record
 from ..custom_types import Array, ArrayLike
-from ..distributions._capabilities import _capability_subclass
 from ..distributions._distribution import Distribution, _complete_event_spec
-from ..distributions._empirical import _NUMERIC_MOMENTS, EmpiricalDistribution
+from ..distributions._empirical import EmpiricalDistribution
 
-__all__ = ["ApproximateDistribution", "make_posterior"]
+__all__ = ["make_posterior"]
 
 #: The levels of an inference result's atoms, outermost first.
 _CHAIN_LEVELS = ("chain", "draw")
@@ -109,9 +105,8 @@ def _column_permutation(
         spec = record.children[field_name]
         if isinstance(spec, OpaqueSpec):
             raise ValueError(
-                f"ApproximateDistribution requires a numeric template; "
-                f"field {field_name!r} has an opaque spec. Opaque "
-                f"leaves don't have a flat size."
+                f"An inference result requires a numeric template; field {field_name!r} has "
+                f"an opaque spec. Opaque leaves don't have a flat size."
             )
         sizes[field_name] = _spec_size(spec)
     bounds: dict[str, tuple[int, int]] = {}
@@ -176,12 +171,12 @@ def _record_atoms(name: str, stacked: Array, record: RecordSpec) -> NumericRecor
     for path, spec in record.items():
         if isinstance(spec, OpaqueSpec):
             raise ValueError(
-                f"ApproximateDistribution requires a numeric template; field {path!r} has an "
+                f"An inference result requires a numeric template; field {path!r} has an "
                 f"opaque spec. Opaque leaves don't have a flat size."
             )
     if not isinstance(record, NumericRecordSpec):
         raise TypeError(
-            f"ApproximateDistribution requires a numeric target; {record!r} has a leaf "
+            f"An inference result requires a numeric target; {record!r} has a leaf "
             f"without a flat size."
         )
     chains, draws = stacked.shape[:2]
@@ -217,285 +212,72 @@ def _chain_atoms(name: str, stacked: Array, declaration: OutputSpec | None) -> A
         return _record_atoms(name, stacked, term)
     if not isinstance(term, NumericArraySpec):
         raise TypeError(
-            f"ApproximateDistribution requires a numeric target; {name!r} declares {term!r}"
+            f"An inference result requires a numeric target; {name!r} declares {term!r}"
         )
     return _array_atoms(name, stacked, term)
 
 
 # ---------------------------------------------------------------------------
-# ApproximateDistribution
+# Reading a result's chains
 # ---------------------------------------------------------------------------
 
 
-class ApproximateDistribution(EmpiricalDistribution):
-    """The empirical law of an inference run's draws, with the chains that produced them.
+def _has_chains(law: Any) -> bool:
+    """Whether *law* is an empirical law whose atoms lie on the levels ``chain`` and ``draw``."""
+    return isinstance(law, EmpiricalDistribution) and tuple(law.atoms.level_names) == _CHAIN_LEVELS
 
-    An MCMC or ABC result is an :class:`~probpipe.EmpiricalDistribution` whose
-    atoms are its draws on the levels ``chain`` and ``draw``, so its sampling,
-    expectation, moments, quantiles, and marginals are the empirical law's. Its
-    event declaration is its target's: a whole-term target stays whole, and a
-    record target keeps its fields' supports, scalar shapes, and nested groups.
-    The method's chains are kept as it produced them, in the target's flat
-    layout, for :attr:`chains` and :meth:`draws`.
 
-    What the result shares with every inference result is its record:
-    :func:`make_posterior` gives it ``provenance`` naming the method and the
-    target, and stores the method's diagnostics, sample statistics, and warmup
-    draws in :attr:`~probpipe.Distribution.annotations`, an ArviZ-compatible
-    ``DataTree`` under ``arviz/``. Whether the result is exact or approximate,
-    and relative to what, is read from that record.
+def _num_chains(law: Any) -> int:
+    """The number of chains of an inference result, and 1 for any other law."""
+    return int(law.atoms.batch_shape[0]) if _has_chains(law) else 1
 
-    Parameters
-    ----------
-    chains : list of Array
-        Per-chain draws, each of shape ``(num_draws, *flat)`` in the target's
-        flat layout; the chains have equal lengths.
-    weights : array-like, :class:`~probpipe.Weights`, or None
-        Optional per-draw importance weights, across all chains in chain order.
-    label : str or None
-        The result's label. Keyword-only; defaults to ``"posterior"``.
-    event_spec : OutputSpec, TermSpec, or None
-        The target's declaration, usually the prior's ``event_spec``, which the
-        result declares as its event. A bare ``RecordSpec`` exposes its fields,
-        as :class:`~probpipe.Distribution` completes one, and any other term is
-        a whole term under *name*. ``None`` makes each draw one array, a whole
-        term under *name*.
-    field_order : list of str or None
-        Names the field each contiguous column-block of *chains* belongs
-        to, in the order they appear. Default (``None``) assumes the
-        columns are already in the order of the target's components. Pass
-        this when the chain's column order may differ, as for a backend that
-        sorts variable names, so columns are aligned to fields by name
-        rather than position. Requires *event_spec*, and must be a
-        permutation of its components.
-    method : str or None
-        The name of the inference method that produced the chains, such as
-        ``"blackjax_nuts"``, which :attr:`method` reports.
+
+def _chain_columns(law: EmpiricalDistribution) -> dict[str, Array]:
+    """The draws of *law* by leaf path, each an array ``(chains, draws, *shape)``.
+
+    A whole-term result has one entry, under its component.
 
     Raises
     ------
     ValueError
-        If *chains* is empty or the chains differ in length, *field_order* is
-        given without *event_spec* or is not a permutation of its components, or
-        a draw's flat width is not the target's flat size.
-    TypeError
-        If the target has a leaf without a flat size.
+        If the atoms of *law* do not lie on the levels ``chain`` and ``draw``.
     """
+    if not _has_chains(law):
+        raise ValueError(
+            f"{law.label!r} holds atoms on the levels {list(law.atoms.level_names)}, while an "
+            f"inference result's atoms lie on {list(_CHAIN_LEVELS)}"
+        )
+    chains, draws = law.atoms.batch_shape
+    rows = law._rows
+    if isinstance(rows, dict):
+        return {
+            path: jnp.reshape(column, (chains, draws, *column.shape[1:]))
+            for path, column in rows.items()
+        }
+    (component,) = law.event_spec.components
+    return {component: jnp.reshape(rows, (chains, draws, *rows.shape[1:]))}
 
-    #: The memo is not state: a copy recomputes rather than inheriting one. It
-    #: matters for more than size here, since a memoised value can carry the
-    #: provenance of the term that computed it.
-    _transient_state = (*EmpiricalDistribution._transient_state, "_memo")
 
-    def __new__(
-        cls,
-        chains: list[Array],
-        *,
-        weights: ArrayLike | Weights | None = None,
-        label: str | None = None,
-        event_spec: OutputSpec | TermSpec | None = None,
-        field_order: list[str] | None = None,
-        method: str | None = None,
-    ) -> ApproximateDistribution:
-        base = vars(cls).get("_capability_base", cls)
-        return object.__new__(_capability_subclass(base, _NUMERIC_MOMENTS))
+def _flat_chains(law: EmpiricalDistribution) -> Array:
+    """The draws of *law* as one array ``(chains, draws, d)`` in its target's flat layout.
 
-    def __init__(
-        self,
-        chains: list[Array],
-        *,
-        weights: ArrayLike | Weights | None = None,
-        label: str | None = None,
-        event_spec: OutputSpec | TermSpec | None = None,
-        field_order: list[str] | None = None,
-        method: str | None = None,
-    ):
-        if not chains:
-            raise ValueError("Must provide at least one chain")
-        label = label or "posterior"
-        declaration = None if event_spec is None else _complete_event_spec(event_spec, label)
-        # The record the target's components form, which names the fields of draws().
-        record = None if declaration is None else _components_record(declaration)
-        flat_chains = [jnp.asarray(chain) for chain in chains]
+    The columns follow the leaf order of the result's components, nested groups
+    included, as the method's chains did.
 
-        # When the chain columns are laid out in a different field order than the
-        # record, as for a backend whose trace sorts variable names, permute them
-        # into the record's order, so each column is read by name.
-        if field_order is not None:
-            if record is None:
-                raise ValueError(
-                    "field_order requires an event_spec; it names the "
-                    "target's components and is meaningless without one."
-                )
-            perm = _column_permutation(record, field_order)
-            # The width is checked before the gather, which would otherwise drop
-            # extra columns or clamp out-of-bounds indices.
-            for chain in flat_chains:
-                if chain.shape[-1] != len(perm):
-                    raise ValueError(
-                        f"chain last dim ({chain.shape[-1]}) doesn't match "
-                        f"the template total flat size ({len(perm)})."
-                    )
-            if len(record.fields) > 1:
-                flat_chains = [chain[..., perm] for chain in flat_chains]
-
-        lengths = sorted({int(chain.shape[0]) for chain in flat_chains})
-        if len(lengths) > 1:
-            raise ValueError(f"the chains of an inference result have equal lengths, got {lengths}")
-        atoms = _chain_atoms(label, jnp.stack(flat_chains), declaration)
-        super().__init__(label, atoms, weights, event_spec=declaration)
-        object.__setattr__(self, "_chains", flat_chains)
-        object.__setattr__(self, "_target_record", record)
-        object.__setattr__(self, "_method", method)
-        # A memo, filled on first read. Reading fills it in place, which leaves
-        # the term's own attributes as construction set them — what the
-        # immutability guard sees, and what a copy drops rather than inherits.
-        object.__setattr__(self, "_memo", {})
-
-    def _concat_chains(self) -> Array:
-        """Lazily concatenated view of all chains."""
-        concatenated = transient_memo(self).get("concatenated")
-        if concatenated is None:
-            concatenated = jnp.concatenate(self._chains, axis=0)
-            transient_memo(self)["concatenated"] = concatenated
-        return concatenated
-
-    # -- Chain access ---------------------------------------------------------
-
-    @property
-    def chains(self) -> list[Array]:
-        """Per-chain draws, in the target's flat layout."""
-        return self._chains
-
-    @property
-    def num_chains(self) -> int:
-        """Number of chains."""
-        return len(self._chains)
-
-    @property
-    def num_draws(self) -> int:
-        """Number of draws *per chain*.
-
-        Distinct from ``num_atoms``, which counts the draws across all chains,
-        ``num_atoms == num_chains * num_draws``.
-        """
-        return self._chains[0].shape[0]
-
-    @property
-    def method(self) -> str:
-        """The name of the inference method that produced the draws, or ``"unknown"``.
-
-        It is the name the ``method`` control gives the inference method, such as
-        ``"blackjax_nuts"``. It is recorded at construction, as
-        :func:`make_posterior` records it, so the result of an operation and an
-        element of a batch keep it.
-        """
-        return self._method or "unknown"
-
-    @property
-    def arviz_data(self) -> DataTree | None:
-        """The ArviZ-compatible xarray DataTree stored under ``_annotations["arviz"]``.
-
-        Use ArviZ, arviz-stats, and arviz-plots functions for diagnostics and
-        plots::
-
-            import arviz_stats
-            arviz_stats.summary(posterior.arviz_data)
-
-        Plotting utilities may also consume this tree where supported.
-
-        Returns ``None`` if no annotations have been attached. Falls
-        back to ``_annotations`` directly if set before the ``/arviz/``
-        subtree convention was adopted.
-        """
-        aux = self.annotations
-        if aux is None:
-            return None
-        if hasattr(aux, "children") and "arviz" in aux.children:
-            return aux["arviz"]
-        return aux
-
-    @property
-    def inference_data(self) -> DataTree | None:
-        """Backward-compatible alias for :attr:`arviz_data`.
-
-        Modern ArviZ uses ``xarray.DataTree`` via ``arviz-base`` rather than
-        the legacy ``InferenceData`` object. New ProbPipe code should prefer
-        ``posterior.arviz_data``.
-        """
-        return self.arviz_data
-
-    @property
-    def warmup_samples(self) -> list[Array] | None:
-        """Per-chain warmup samples extracted from the annotations."""
-        arviz_data = self.arviz_data
-        if arviz_data is None:
-            return None
-
-        # ``arviz_data`` is expected to be an ArviZ-compatible xarray DataTree.
-        # Warmup samples, when present, live under the ``warmup`` group.
-        children = arviz_data.children if hasattr(arviz_data, "children") else {}
-        if "warmup" not in children:
-            return None
-
-        warmup = arviz_data["warmup"]["params"]
-        n_chains = warmup.sizes.get("chain", 1)
-        return [jnp.asarray(warmup.sel(chain=i).values) for i in range(n_chains)]
-
-    def draws(
-        self,
-        chain: int | None = None,
-        *,
-        include_warmup: bool = False,
-    ) -> Array | Record:
-        """Access draws, named by the target's components when there is a target.
-
-        Parameters
-        ----------
-        chain : int or None
-            Chain index.  If ``None``, concatenates all chains.
-        include_warmup : bool
-            If ``True`` and warmup samples are in the annotations DataTree,
-            prepend them.
-
-        Returns
-        -------
-        Array or Record
-            With a target declaration, a batch of records whose fields are its
-            components. Otherwise a raw array in the flat layout.
-        """
-        if chain is not None:
-            samples = self._chains[chain]
-            if include_warmup:
-                warmup = self.warmup_samples
-                if warmup is not None:
-                    samples = jnp.concatenate([warmup[chain], samples], axis=0)
-        else:
-            parts = list(self._chains)
-            if include_warmup:
-                warmup = self.warmup_samples
-                if warmup is not None:
-                    parts = [jnp.concatenate([w, c], axis=0) for w, c in zip(warmup, parts)]
-            samples = jnp.concatenate(parts, axis=0)
-
-        record = self._target_record
-        if record is not None:
-            # Reconstruct: batch_shape is inferred from the leading axes of
-            # the concatenated draws (a matrix ``(n, vector_size)``).
-            return _reconstruct_from_vector(self.label, record, samples)
-        return samples
-
-    def _repr_arguments(self) -> list[tuple[str, str]]:
-        """The method that produced the draws, and the number of chains and of draws per chain."""
-        return [
-            ("method", repr(self.method)),
-            ("num_chains", repr(self.num_chains)),
-            ("num_draws", repr(self.num_draws)),
-        ]
+    Raises
+    ------
+    ValueError
+        If the atoms of *law* do not lie on the levels ``chain`` and ``draw``.
+    """
+    columns = _chain_columns(law)
+    chains, draws = law.atoms.batch_shape
+    return jnp.concatenate(
+        [jnp.reshape(column, (chains, draws, -1)) for column in columns.values()], axis=-1
+    )
 
 
 # ---------------------------------------------------------------------------
-# Factory
+# The result
 # ---------------------------------------------------------------------------
 
 
@@ -508,67 +290,109 @@ def make_posterior(
     event_spec: OutputSpec | TermSpec | None = None,
     field_order: list[str] | None = None,
     weights: ArrayLike | Weights | None = None,
+    label: str = "posterior",
     **meta: Any,
-) -> ApproximateDistribution:
-    """Build an ApproximateDistribution with provenance.
+) -> EmpiricalDistribution:
+    """The empirical law of an inference run's draws, with its record of the run.
+
+    The result is an :class:`~probpipe.EmpiricalDistribution` labeled *label*,
+    whose atoms are the draws on the levels ``chain`` and ``draw``. Its event declaration is the target's: a whole-term target stays
+    whole, and a record target keeps its fields' supports, scalar shapes, and
+    nested groups. Its provenance names the method and the target. Its
+    annotations are a ``DataTree`` whose root attribute ``method`` is *method*,
+    and which stores the method's diagnostics, sample statistics, and warmup
+    draws as ArviZ-compatible groups under ``arviz/``.
 
     Parameters
     ----------
     chains : list of Array
-        Per-chain draws, each shaped ``(num_draws, *flat)`` in the target's
-        flat layout.
+        Per-chain draws, each of shape ``(num_draws, *flat)`` in the target's
+        flat layout; the chains have equal lengths.
     parents : tuple of Distribution
-        Parent distributions for provenance tracking.
+        The provenance's parents, usually the target alone.
     method : str
-        The inference method's name, such as ``"tfp_nuts"`` or ``"blackjax_rwmh"``.
+        The inference method's name, by which the ``method`` control selects it,
+        such as ``"tfp_nuts"`` or ``"blackjax_rwmh"``.
     annotations : DataTree or None
-        Pre-built annotations DataTree (diagnostics, sample stats, warmup).
-        Inference methods are responsible for building this.
+        The method's diagnostics, sample statistics, and warmup draws.
     event_spec : OutputSpec, TermSpec, or None
         The target's declaration, usually the prior's ``event_spec``, which the
-        result declares as its event.
+        result declares as its event. A bare ``RecordSpec`` exposes its fields,
+        and any other term is a whole term. ``None`` makes each draw one array.
     field_order : list of str or None
-        Names the field each contiguous column-block of ``chains`` belongs
-        to. Default (``None``) assumes the columns are laid out in the
-        order of the target's components. Pass this when the chain's
-        column order may differ, as for a backend that sorts variable names,
-        so columns are aligned to fields by name rather than position.
+        The field each contiguous column block of *chains* belongs to, in the
+        order the blocks appear, for a backend whose columns follow another
+        order than the target's components, such as one that sorts variable
+        names. It requires *event_spec* and is a permutation of its components.
     weights : array-like, :class:`~probpipe.Weights`, or None
-        Optional per-sample importance weights (across all chains),
-        forwarded to :class:`ApproximateDistribution`. Lets weighted
-        backends — e.g. SMC-ABC, which returns importance-weighted
-        particles — preserve their weights instead of resampling to an
-        equal-weight chain.
+        Per-draw importance weights across all chains in chain order, as SMC-ABC
+        returns them.
+    label : str
+        The result's label, which is also the component of a whole-term event
+        that *event_spec* leaves unnamed.
     **meta
-        Additional metadata stored in provenance.
+        Further metadata recorded in the provenance.
 
     Returns
     -------
-    ApproximateDistribution
-        Posterior with chain structure, annotations DataTree, and provenance.
+    EmpiricalDistribution
+        The posterior, with its atoms on the levels ``chain`` and ``draw``.
+
+    Raises
+    ------
+    ValueError
+        If *chains* is empty or the chains differ in length, *field_order* is
+        given without *event_spec* or is not a permutation of its components, or
+        a draw's flat width is not the target's flat size.
+    TypeError
+        If the target has a leaf without a flat size.
     """
     import xarray as xr
 
-    result = ApproximateDistribution(
-        chains,
-        label="posterior",
-        event_spec=event_spec,
-        field_order=field_order,
-        weights=weights,
-        method=method,
-    )
+    if not chains:
+        raise ValueError("an inference result needs at least one chain")
+    declaration = None if event_spec is None else _complete_event_spec(event_spec, label)
+    flat_chains = [jnp.asarray(chain) for chain in chains]
 
+    # When the chain columns follow another field order than the target's, as for
+    # a backend whose trace sorts variable names, permute them into the target's
+    # order, so each column is read by name.
+    if field_order is not None:
+        if declaration is None:
+            raise ValueError(
+                "field_order requires an event_spec; it names the target's components."
+            )
+        record = _components_record(declaration)
+        perm = _column_permutation(record, field_order)
+        # The width is checked before the gather, which would otherwise drop
+        # extra columns or clamp out-of-bounds indices.
+        for chain in flat_chains:
+            if chain.shape[-1] != len(perm):
+                raise ValueError(
+                    f"chain last dim ({chain.shape[-1]}) doesn't match "
+                    f"the template total flat size ({len(perm)})."
+                )
+        if len(record.fields) > 1:
+            flat_chains = [chain[..., perm] for chain in flat_chains]
+
+    lengths = sorted({int(chain.shape[0]) for chain in flat_chains})
+    if len(lengths) > 1:
+        raise ValueError(f"the chains of an inference result have equal lengths, got {lengths}")
+    atoms = _chain_atoms(label, jnp.stack(flat_chains), declaration)
+    result = EmpiricalDistribution(label, atoms, weights, event_spec=declaration)
+
+    # The root records the method, and the ArviZ-compatible groups are nested
+    # under /arviz/, so the annotations can hold other subtrees, such as
+    # /diagnostics/, alongside them.
+    dicto: dict = {"/": xr.Dataset(attrs={"method": method})}
     if annotations is not None:
-        # Nest ArviZ-compatible DataTree groups under /arviz/ so _annotations
-        # can hold other subtrees (e.g. /diagnostics/) alongside it.
-        dicto: dict = {}
         for group_path, node in annotations.items():
             if group_path == "/":
                 continue
             clean = group_path.lstrip("/")
             ds = node.to_dataset() if isinstance(node, xr.DataTree) else node
             dicto[f"arviz/{clean}"] = ds
-        result._init_annotations(xr.DataTree.from_dict(dicto))
+    result._init_annotations(xr.DataTree.from_dict(dicto))
 
     result.with_provenance(
         Provenance.create(method, parents=list(parents), metadata={"method": method, **meta})

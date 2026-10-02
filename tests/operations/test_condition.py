@@ -40,6 +40,7 @@ from probpipe.operations._condition import (
 from probpipe.operations._convert import convert
 from probpipe.operations._operation import _RegistryRoute
 from probpipe.operations._sample import sample
+from tests._posterior import flat_draws, method_of
 
 from ._laws import (
     REAL,
@@ -932,7 +933,7 @@ class TestEndToEnd:
             model, {"y": jnp.array([1, 0, 1, 0])}
         )
         assert posterior.label == "logistic"
-        assert posterior.method == "blackjax_nuts"
+        assert method_of(posterior) == "blackjax_nuts"
         assert posterior.provenance.metadata["method"] == "blackjax_nuts"
 
     def test_each_posterior_of_a_batch_names_its_method(self, full_provenance_mode):
@@ -946,7 +947,7 @@ class TestEndToEnd:
         )
         posteriors = condition_on.with_options(method_options=_MCMC)(_logistic_joint(), givens)
         element = posteriors[1]
-        assert element.method == "blackjax_nuts"
+        assert method_of(element) == "blackjax_nuts"
         operations = {
             ancestor.parent.provenance.operation
             for ancestor in provenance_ancestors(element)
@@ -1089,7 +1090,9 @@ class TestEndToEnd:
         assert _is_normalized(posterior)
         assert tuple(posterior.event_spec.components) == ("mu",)
         # mu ~ N(0, 1) and y_i ~ N(mu, 1) give mu | y ~ N(1.5, 0.25).
-        assert float(np.mean(np.asarray(posterior.draws()["mu"]))) == pytest.approx(1.5, abs=0.3)
+        assert float(np.mean(np.asarray(flat_draws(posterior)["mu"]))) == pytest.approx(
+            1.5, abs=0.3
+        )
 
     def test_unnormalized_returns_the_exact_stage_of_a_joint(self):
         target = condition_on.with_options(method="unnormalized")(

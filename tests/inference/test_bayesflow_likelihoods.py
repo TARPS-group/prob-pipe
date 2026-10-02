@@ -38,6 +38,7 @@ from probpipe.distributions._capabilities import (
 )
 from probpipe.inference._bayesflow_common import _adapter_field_keys
 from probpipe.operations._condition import condition_on as condition_on_operation
+from tests._posterior import flat_draws
 
 from ._bayesflow_helpers import SimulatorKernel, theta_vec
 from .canonical import ObservationKernel
@@ -287,7 +288,7 @@ class TestConditioning:
 
     def _check_posterior(self, lik, prior, y_rows, mean_tol, ratio_band):
         post = _posterior(lik, prior, y_rows)
-        draws = np.stack([np.asarray(post.draws()[f]).reshape(-1) for f in ("a", "b")], axis=-1)
+        draws = np.stack([np.asarray(flat_draws(post)[f]).reshape(-1) for f in ("a", "b")], axis=-1)
         an_mean, an_std = _analytic_posterior(np.asarray(y_rows))
         mean_err = np.abs(draws.mean(0) - an_mean).max() / an_std
         ratio = draws.std(0) / an_std
@@ -326,7 +327,8 @@ class TestConditioning:
         the analytic posterior lines up with observation column j."""
         post = _posterior(lik, prior, y)
         draws = np.stack(
-            [np.asarray(post.draws()[f]).reshape(-1) for f in ("outer/a", "outer/b", "m")], axis=-1
+            [np.asarray(flat_draws(post)[f]).reshape(-1) for f in ("outer/a", "outer/b", "m")],
+            axis=-1,
         )
         an_mean, an_std = _analytic_posterior(np.asarray(y))
         mean_err = np.abs(draws.mean(0) - an_mean).max() / an_std
@@ -393,7 +395,7 @@ class TestConditioning:
         ref_post = condition_on.with_options(
             method_options={"num_results": 1500, "num_warmup": 500, "random_seed": 0}
         )(true_likelihood * prior, {"observation": jnp.asarray(y)})
-        ref = np.asarray(ref_post.draws()["lam"]).reshape(-1)
+        ref = np.asarray(flat_draws(ref_post)["lam"]).reshape(-1)
         lik = learn_amortized_likelihood(
             _gamma_prior(),
             _sim(_gamma_prior()),
@@ -403,7 +405,7 @@ class TestConditioning:
             random_seed=0,
             verbose=0,
         )
-        lam = np.asarray(_posterior(lik, _gamma_prior(), y).draws()["lam"]).reshape(-1)
+        lam = np.asarray(flat_draws(_posterior(lik, _gamma_prior(), y))["lam"]).reshape(-1)
         assert (lam > 0).all()
         # Observed across seeds: |mean diff| 0.00-0.26 reference-std units,
         # std ratio 1.02-1.10.
@@ -443,7 +445,7 @@ class TestConditioning:
             rtol=1e-6,
         )
         post = _posterior(lik, pp.Gamma("lam", 2.0, 2.0), y_obs)
-        lam = np.asarray(post.draws()["lam"]).reshape(-1)
+        lam = np.asarray(flat_draws(post)["lam"]).reshape(-1)
         assert (lam > 0).all()
         # Observed across seeds 0-2: mean err 0.03-0.17 posterior-std units,
         # std ratio 0.96-1.02.

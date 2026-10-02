@@ -713,12 +713,8 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
             posterior.diagnostics
                 # structured ProbPipe view over posterior.annotations["diagnostics"]
 
-            posterior.arviz_data
-                # ArviZ-compatible xarray DataTree subtree, typically
-                # posterior.annotations["arviz"]
-
-            posterior.inference_data
-                # backward-compatible alias for posterior.arviz_data
+            posterior.annotations["arviz"]
+                # the ArviZ-compatible xarray DataTree
 
         Examples
         --------

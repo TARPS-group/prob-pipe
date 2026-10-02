@@ -49,15 +49,13 @@ subtree. The accessor classes are available as::
 ArviZ plotting
 --------------
 
-ArviZ-compatible data live under ``posterior._annotations["arviz"]`` and are
-exposed as ``posterior.arviz_data``. For backward compatibility,
-``posterior.inference_data`` is an alias for the same DataTree subtree.
+ArviZ-compatible data are stored under ``posterior.annotations["arviz"]``.
 Plotting support depends on which ArviZ groups have been written::
 
     import arviz as az
 
-    az.plot_trace(posterior.arviz_data)
-    az.plot_loo_pit(posterior.arviz_data)
+    az.plot_trace(posterior.annotations["arviz"])
+    az.plot_loo_pit(posterior.annotations["arviz"])
 """
 
 from __future__ import annotations

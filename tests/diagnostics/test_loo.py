@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from probpipe import MultivariateNormal
+from probpipe import MultivariateNormal, NumericArraySpec, OutputSpec
 from probpipe.diagnostics._datatree_store import _add_group
 from probpipe.diagnostics._loo import (
     _add_log_likelihood,
@@ -25,6 +25,7 @@ from probpipe.diagnostics._loo import (
 )
 from probpipe.diagnostics._views import LOOView
 from probpipe.families import GaussianFamily, glm_likelihood
+from tests._posterior import flat_chains, num_chains, num_draws, posterior_of
 
 # ---------------------------------------------------------------------------
 # Fake posterior
@@ -528,21 +529,6 @@ class TestGetArvizTree:
         assert tree is not None
         assert _has_group(tree, "log_likelihood")
 
-    def test_falls_back_to_inference_data(self):
-        from probpipe.diagnostics._loo import _get_arviz_tree
-
-        class _PostWithInferenceData:
-            _annotations = None
-
-            @property
-            def inference_data(self):
-                ll = np.random.default_rng(0).standard_normal((1, 10, 5))
-                ll_ds = xr.Dataset({"y": xr.DataArray(ll, dims=["chain", "draw", "obs"])})
-                return xr.DataTree.from_dict({"log_likelihood": ll_ds})
-
-        tree = _get_arviz_tree(_PostWithInferenceData())
-        assert tree is not None
-
     def test_returns_none_when_nothing_available(self):
         from probpipe.diagnostics._loo import _get_arviz_tree
 
@@ -655,37 +641,20 @@ def _gaussian_regression(n_obs: int = 20, n_features: int = 1):
     return glm_likelihood("y", GaussianFamily(), X=design, dispersion=1.0) * prior, design
 
 
-class _FakePostForLL:
-    """Fake posterior whose chains lie in the flat layout of the coefficients."""
-
-    def __init__(self, n_chains: int = 2, n_draws: int = 50, n_features: int = 1):
-        self._annotations = None
-        self._n_chains = n_chains
-        self._n_draws = n_draws
-        rng = np.random.default_rng(1)
-        self._chains = [
-            rng.standard_normal((n_draws, n_features + 1)).astype(np.float32)
-            for _ in range(n_chains)
-        ]
-
-    @property
-    def num_chains(self):
-        return self._n_chains
-
-    @property
-    def num_draws(self):
-        return self._n_draws
-
-    @property
-    def chains(self):
-        return self._chains
+def _post_for_ll(n_chains: int = 2, n_draws: int = 50, n_features: int = 1):
+    """An inference result whose draws lie in the flat layout of the coefficients."""
+    rng = np.random.default_rng(1)
+    chains = [
+        rng.standard_normal((n_draws, n_features + 1)).astype(np.float32) for _ in range(n_chains)
+    ]
+    return posterior_of(chains, event_spec=OutputSpec(beta=NumericArraySpec((n_features + 1,))))
 
 
 class TestAddLogLikelihood:
     def _setup(self, n_obs=20):
         rng = np.random.default_rng(2)
         model, _ = _gaussian_regression(n_obs=n_obs)
-        post = _FakePostForLL()
+        post = _post_for_ll()
         data = {"y": jnp.asarray(rng.standard_normal(n_obs), dtype=jnp.float32)}
         return post, model, data
 
@@ -702,7 +671,7 @@ class TestAddLogLikelihood:
         ll_ds = post._annotations["arviz"]["log_likelihood"].to_dataset()
         da = ll_ds["y"]
         assert da.dims == ("chain", "draw", "obs")
-        assert da.shape == (post.num_chains, post.num_draws, n_obs)
+        assert da.shape == (num_chains(post), num_draws(post), n_obs)
 
     def test_values_are_the_pointwise_gaussian_log_densities(self):
         n_obs = 6
@@ -710,7 +679,7 @@ class TestAddLogLikelihood:
         _, design = _gaussian_regression(n_obs=n_obs)
         _add_log_likelihood(post, model, data)
         ll = np.asarray(post._annotations["arviz"]["log_likelihood"].to_dataset()["y"].values)
-        beta = post.chains[0][0]
+        beta = flat_chains(post)[0][0]
         residual = np.asarray(data["y"]) - np.asarray(design) @ beta
         expected = -0.5 * residual**2 - 0.5 * np.log(2 * np.pi)
         np.testing.assert_allclose(ll[0, 0], expected, rtol=1e-5, atol=1e-5)
@@ -737,7 +706,7 @@ class TestAddLogLikelihood:
         with patch("jax.vmap", side_effect=Exception("no vmap")):
             _add_log_likelihood(post, model, data)
         ll_ds = post._annotations["arviz"]["log_likelihood"].to_dataset()
-        assert ll_ds["y"].shape == (post.num_chains, post.num_draws, 5)
+        assert ll_ds["y"].shape == (num_chains(post), num_draws(post), 5)
 
     def test_add_loo_computes_missing_log_likelihood_from_model_and_data(self):
         """Integration: add_loo owns the internal log-likelihood path."""
@@ -759,8 +728,8 @@ class TestAddLogLikelihood:
 
     def test_fast_path_and_fallback_log_likelihoods_match(self):
         _, model, data = self._setup(n_obs=3)
-        fast_post = _FakePostForLL(n_chains=1, n_draws=4)
-        fallback_post = _FakePostForLL(n_chains=1, n_draws=4)
+        fast_post = _post_for_ll(n_chains=1, n_draws=4)
+        fallback_post = _post_for_ll(n_chains=1, n_draws=4)
 
         _add_log_likelihood(fast_post, model, data)
         with patch("jax.vmap", side_effect=Exception("no vmap")):

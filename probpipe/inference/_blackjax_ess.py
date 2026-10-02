@@ -36,10 +36,11 @@ from ..core._dispatch import Feasibility
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike
 from ..distributions._distribution import Distribution
+from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import FactoredDistribution
 from ..families import MultivariateNormal, Normal
 from ..operations._condition import InferenceMethod, _UnnormalizedConditional
-from ._approximate_distribution import ApproximateDistribution, make_posterior
+from ._approximate_distribution import make_posterior
 from ._inference_utils import (
     as_prng_key,
     build_mcmc_datatree,
@@ -183,7 +184,7 @@ def elliptical_slice(
     num_chains: int = 1,
     init: ArrayLike | None = None,
     random_seed: int | None = None,
-) -> ApproximateDistribution:
+) -> EmpiricalDistribution:
     """Elliptical slice sampling of a joint with a Gaussian prior, at observed fields.
 
     The joint is a factored one, such as ``likelihood * prior``. The factors that
@@ -208,7 +209,7 @@ def elliptical_slice(
 
     Returns
     -------
-    ApproximateDistribution
+    EmpiricalDistribution
         Posterior samples with chain structure and an annotations
         ArviZ-shaped ``DataTree`` carrying per-step ``subiter`` counts
         (the inner shrinkage iterations BlackJAX performed before
@@ -238,7 +239,7 @@ def _elliptical_slice(
     num_chains: int,
     init: ArrayLike | None,
     random_seed: int,
-) -> ApproximateDistribution:
+) -> EmpiricalDistribution:
     """Elliptical slice chains on the unnormalized conditional *target* of a factored joint."""
     factors = model_factors(target)
     if factors is None:
@@ -348,7 +349,7 @@ class BlackJAXESSMethod(InferenceMethod):
             )
         return Feasibility(feasible=True)
 
-    def execute(self, target: Any, /, **kwargs: Any) -> ApproximateDistribution:
+    def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
         """Elliptical slice chains on the joint the target conditions, at its data."""
         self._check_options(kwargs)
         return _elliptical_slice(

@@ -17,6 +17,7 @@ from probpipe import (
 from probpipe.distributions import FactoredDistribution
 from probpipe.inference import inference_method_registry
 from probpipe.inference._inference_utils import observed_target
+from tests._posterior import arviz_data, flat_draws
 from tests.inference._harness import validate_method
 from tests.inference.canonical import ObservationKernel
 
@@ -178,7 +179,7 @@ class TestBlackJAXNuts:
         assert jnp.isfinite(m["b"]).all()
 
         # With no warmup, the kernel runs at exactly the user step size.
-        step_size = posterior.inference_data["sample_stats"]["step_size"]
+        step_size = arviz_data(posterior)["sample_stats"]["step_size"]
         np.testing.assert_allclose(np.asarray(step_size), 0.05)
 
 
@@ -260,7 +261,7 @@ class TestBlackJAXHmc:
                 "random_seed": 0,
             },
         )(model, {"y": jnp.asarray([1.0, 2.0, 3.0])})
-        steps = np.asarray(posterior.inference_data["sample_stats"]["num_integration_steps"])
+        steps = np.asarray(arviz_data(posterior)["sample_stats"]["num_integration_steps"])
         # Randomized, not a single fixed L.
         assert np.unique(steps).size >= 5
         # Mean trajectory length tracks the configured value.
@@ -335,12 +336,12 @@ class TestBlackJAXHmc:
                 "random_seed": 0,
             },
         )(model, {"y": jnp.asarray([1.0, 2.0, 3.0])})
-        draws = np.asarray(posterior.draws()["mu"]).reshape(-1)
+        draws = np.asarray(flat_draws(posterior)["mu"]).reshape(-1)
         assert draws.shape[0] == 100
         assert np.all(np.isfinite(draws))
         # Trajectory length is still randomized (and floored) on the
         # zero-warmup path.
-        steps = np.asarray(posterior.inference_data["sample_stats"]["num_integration_steps"])
+        steps = np.asarray(arviz_data(posterior)["sample_stats"]["num_integration_steps"])
         assert steps.min() >= 1
         assert np.unique(steps).size >= 5
 
@@ -365,7 +366,7 @@ class TestSampleStats:
                 "random_seed": 0,
             },
         )(small_model, {"y": jnp.zeros((4,))})
-        ds = posterior.inference_data["sample_stats"]
+        ds = arviz_data(posterior)["sample_stats"]
 
         # NUTS plumbs these four info fields plus the injected step_size.
         expected = {
@@ -410,9 +411,9 @@ class TestSampleStats:
                 "random_seed": 0,
             },
         )(small_model, {"y": jnp.zeros((4,))})
-        post_grp = posterior.inference_data["posterior"]
+        post_grp = arviz_data(posterior)["posterior"]
         assert post_grp.sizes["chain"] == num_chains
-        assert posterior.inference_data["sample_stats"].sizes["chain"] == num_chains
+        assert arviz_data(posterior)["sample_stats"].sizes["chain"] == num_chains
 
 
 class TestCheckFeasibility:

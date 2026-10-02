@@ -37,9 +37,10 @@ import jax.numpy as jnp
 from ..core._dispatch import Feasibility
 from ..custom_types import Array, PRNGKey
 from ..distributions._capabilities import SupportsLogProb
+from ..distributions._empirical import EmpiricalDistribution
 from ..families._random_functions import RandomMeasure
 from ..operations._condition import InferenceMethod, _UnnormalizedConditional
-from ._approximate_distribution import ApproximateDistribution, make_posterior
+from ._approximate_distribution import make_posterior
 from ._inference_utils import (
     as_prng_key,
     flat_unflatten,
@@ -166,8 +167,8 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
 
     # -- execution -----------------------------------------------------------
 
-    def execute(self, target: Any, /, **kwargs: Any) -> ApproximateDistribution:
-        """Run the SGMCMC kernel; return an :class:`ApproximateDistribution`."""
+    def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
+        """Run the SGMCMC kernel; return an :class:`~probpipe.EmpiricalDistribution`."""
         self._check_options(kwargs)
         factors = model_factors(target)
         batch_size: int = kwargs["batch_size"]

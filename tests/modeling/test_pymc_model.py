@@ -14,9 +14,10 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from probpipe import ApproximateDistribution, PyMCModel
+from probpipe import EmpiricalDistribution, PyMCModel
 from probpipe.core._specs import NumericArraySpec
 from probpipe.core.constraints import real
+from tests._posterior import arviz_data, flat_draws, method_of, num_chains, num_draws
 
 #: The dtype the array backend gives a PyMC float variable.
 _FLOAT = np.dtype(jnp.result_type(float))
@@ -119,7 +120,7 @@ class TestPyMCModel:
         assert len(m.observed_RVs) > 0
 
     def test_condition_on(self, model):
-        """condition_on runs PyMC sampling and returns ApproximateDistribution.
+        """condition_on runs PyMC sampling and returns an inference result.
 
         Explicitly pins ``method="pymc_nuts"`` — the registry would
         otherwise prefer nutpie (higher priority) when it's installed,
@@ -137,13 +138,13 @@ class TestPyMCModel:
                 "random_seed": 42,
             },
         )(model, {"y": data})
-        assert isinstance(result, ApproximateDistribution)
-        assert result.num_chains == 1
-        assert result.num_draws == 20
-        assert result.method == "pymc_nuts"
-        assert result.inference_data is not None
-        assert hasattr(result.inference_data, "posterior")
-        assert hasattr(result.inference_data, "sample_stats")
+        assert isinstance(result, EmpiricalDistribution)
+        assert num_chains(result) == 1
+        assert num_draws(result) == 20
+        assert method_of(result) == "pymc_nuts"
+        assert arviz_data(result) is not None
+        assert hasattr(arviz_data(result), "posterior")
+        assert hasattr(arviz_data(result), "sample_stats")
         assert result.provenance is not None
         assert result.provenance.operation == "workflow.condition_on"
 
@@ -173,10 +174,10 @@ class TestPyMCModel:
                 "random_seed": 0,
             },
         )(model, {"y": data})
-        assert isinstance(result, ApproximateDistribution)
-        assert result.num_chains == 2
-        assert result.num_draws == 50
-        assert result.method == "pymc_nuts"
+        assert isinstance(result, EmpiricalDistribution)
+        assert num_chains(result) == 2
+        assert num_draws(result) == 50
+        assert method_of(result) == "pymc_nuts"
 
     def test_multicore_passes_spawn_to_pm_sample(self, model):
         """Deterministically prove production calls ``pm.sample`` with
@@ -205,8 +206,8 @@ class TestPyMCModel:
         assert captured["mp_ctx"] == "spawn"
         assert captured["cores"] >= 2
         assert captured["chains"] == 2
-        assert isinstance(result, ApproximateDistribution)
-        assert result.method == "pymc_nuts"
+        assert isinstance(result, EmpiricalDistribution)
+        assert method_of(result) == "pymc_nuts"
 
     def test_default_chains_pass_spawn_to_pm_sample(self, model):
         """The default path (no ``cores`` kwarg, ``num_chains`` defaults to 4)
@@ -357,7 +358,7 @@ class TestRecordSpec:
             method="pymc_nuts",
             method_options={"num_results": 20, "num_warmup": 10, "num_chains": 1, "random_seed": 0},
         )(model, {"X": X, "y": y})
-        draws = result.draws()
+        draws = flat_draws(result)
         assert draws.event_template.fields == ("intercept", "alpha")
         assert jnp.asarray(draws["intercept"]).shape == (20,)
         assert jnp.asarray(draws["alpha"]).shape == (20, N)
@@ -388,8 +389,8 @@ class TestRecordSpec:
             method="pymc_advi",
             method_options={"num_iterations": 200, "num_results": 25, "random_seed": 0},
         )(PyMCModel("model", model_fn), {"y": y})
-        assert result.method == "pymc_advi"
-        draws = result.draws()
+        assert method_of(result) == "pymc_advi"
+        draws = flat_draws(result)
         assert draws.event_template.fields == ("intercept", "alpha")
         assert jnp.asarray(draws["intercept"]).shape == (25,)
         assert jnp.asarray(draws["alpha"]).shape == (25, 3)
@@ -487,7 +488,7 @@ class TestRecordSpec:
             method="pymc_nuts",
             method_options={"num_results": 20, "num_warmup": 10, "num_chains": 1, "random_seed": 0},
         )(model, {"y": np.zeros(5, dtype=np.float32)})
-        assert set(result.draws().event_template.fields) == {"mu", "X"}
+        assert set(flat_draws(result).event_template.fields) == {"mu", "X"}
 
     def test_partial_conditioning_draws_not_mislabeled(self):
         """The inferred observed variable's draws are labeled correctly —
@@ -518,7 +519,7 @@ class TestRecordSpec:
                 "random_seed": 0,
             },
         )(model, {"y": np.zeros(5, dtype=np.float32)})
-        draws = result.draws()
+        draws = flat_draws(result)
         assert set(draws.event_template.fields) == {"mu", "X"}
         assert float(jnp.mean(jnp.asarray(draws["mu"]))) > 50.0  # ~ +100
         assert float(jnp.mean(jnp.asarray(draws["X"]))) < -50.0  # ~ -100
@@ -555,7 +556,7 @@ class TestRecordSpec:
                 "random_seed": 0,
             },
         )(model, {"y": np.zeros(5, dtype=np.float32)})
-        draws = result.draws()
+        draws = flat_draws(result)
         # Declared order, not nutpie/pymc's alphabetical data_vars order.
         assert draws.event_template.fields == ("zeta", "alpha", "mu")
         for field, prior_mean in [("zeta", 100.0), ("alpha", 0.0), ("mu", -100.0)]:

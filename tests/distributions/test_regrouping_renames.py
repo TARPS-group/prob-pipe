@@ -32,7 +32,6 @@ from probpipe.distributions._capabilities import (
     SupportsMean,
     _capability_guard,
 )
-from probpipe.inference import ApproximateDistribution
 from tests._ops import condition_on, factor, log_prob, marginal, mean, sample
 
 J = 8
@@ -180,7 +179,6 @@ class TestTheFactoredRoutes:
         report = condition_on.check(prior, given)
         assert (report.route, report.exact) == ("slice", True)
         posterior = condition_on(prior, given)
-        assert not isinstance(posterior, ApproximateDistribution)
         assert "method" not in posterior.provenance.metadata
         assert list(posterior.event_spec.components) == ["groups"]
         expected = 1.0 if field == "theta" else 0.0

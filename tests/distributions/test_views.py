@@ -74,10 +74,10 @@ from probpipe.distributions._capabilities import (
 )
 from probpipe.distributions._empirical import EmpiricalDistribution
 from probpipe.families import Cauchy, HalfCauchy, StudentT
-from probpipe.inference import ApproximateDistribution
 from probpipe.linalg import DenseLinOp, LinOp
 from probpipe.operations._marginal import marginal
 from probpipe.operations._moments import mean
+from tests._posterior import posterior_of
 
 # -- Declarations -------------------------------------------------------------
 
@@ -1239,9 +1239,7 @@ class TestTheViewOfAWeightedLaw:
     def test_a_weighted_posterior(self):
         prior = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
         chain = jnp.stack([self._A, self._B], axis=1)
-        posterior = ApproximateDistribution(
-            [chain], weights=self._WEIGHTS, event_spec=prior.event_spec
-        )
+        posterior = posterior_of([chain], weights=self._WEIGHTS, event_spec=prior.event_spec)
         view = posterior["a"]
         assert float(probpipe.mean(view)) == pytest.approx(0.6)
         assert float(probpipe.variance(view)) == pytest.approx(1.04)

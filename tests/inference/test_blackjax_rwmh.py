@@ -32,6 +32,7 @@ from probpipe.inference._blackjax_rwmh import (
     _rgg_scale,
     _window_sizes,
 )
+from tests._posterior import arviz_data, flat_chains, num_draws
 from tests.inference._harness import validate_method
 
 # Suppress an unrelated TFP/JAX deprecation that fires during random-key
@@ -250,7 +251,7 @@ class TestAdaptiveWarmup:
             random_seed=7,
         )
         draws = np.concatenate(
-            [np.asarray(c) for c in result.chains],
+            [np.asarray(c) for c in flat_chains(result)],
             axis=0,
         )
         np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.15)
@@ -318,7 +319,7 @@ class TestAdaptiveWarmup:
             proposal_cov=tiny_chol,
             random_seed=0,
         )
-        assert result.num_draws == 400
+        assert num_draws(result) == 400
         assert result.provenance.metadata["accept_rate"] > 0.9
 
     def test_explicit_proposal_cov_huge_kills_acceptance(self, iso_gaussian):
@@ -501,7 +502,7 @@ class TestWindowedWarmup:
             random_seed=11,
         )
         draws = np.concatenate(
-            [np.asarray(c) for c in result.chains],
+            [np.asarray(c) for c in flat_chains(result)],
             axis=0,
         )
         np.testing.assert_allclose(
@@ -523,10 +524,10 @@ class TestWindowedWarmup:
             n_windows=1,
             random_seed=7,
         )
-        assert result.num_draws == 4000
+        assert num_draws(result) == 4000
         assert result.provenance.metadata["n_windows"] == 1
         draws = np.concatenate(
-            [np.asarray(c) for c in result.chains],
+            [np.asarray(c) for c in flat_chains(result)],
             axis=0,
         )
         np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.2)
@@ -550,8 +551,8 @@ def _assert_every_chain_moves(result, min_std):
     proposal is always accepted and a NaN one never is, and either leaves
     the coordinates' standard deviations at zero.
     """
-    is_accepted = np.asarray(result.inference_data["sample_stats"]["is_accepted"])
-    for accept_rate, chain in zip(is_accepted.mean(axis=1), result.chains, strict=True):
+    is_accepted = np.asarray(arviz_data(result)["sample_stats"]["is_accepted"])
+    for accept_rate, chain in zip(is_accepted.mean(axis=1), flat_chains(result), strict=True):
         assert 0.1 < accept_rate < 0.9, f"accept rate {accept_rate}"
         stds = np.asarray(chain).std(0, ddof=1)
         assert stds.min() > min_std, f"per-coordinate std {stds}"
@@ -686,7 +687,7 @@ class TestEagerFallback:
             random_seed=42,
         )
         draws = np.concatenate(
-            [np.asarray(c) for c in result.chains],
+            [np.asarray(c) for c in flat_chains(result)],
             axis=0,
         )
         # Standard normal target — sample mean ~ 0, sample sd ~ 1.
@@ -746,7 +747,7 @@ class TestFastEagerEquivalence:
             random_seed=7,
         )
         draws = np.concatenate(
-            [np.asarray(c) for c in result.chains],
+            [np.asarray(c) for c in flat_chains(result)],
             axis=0,
         )
         np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.2)
@@ -770,7 +771,7 @@ class TestFastEagerEquivalence:
             random_seed=7,
         )
         draws = np.concatenate(
-            [np.asarray(c) for c in result.chains],
+            [np.asarray(c) for c in flat_chains(result)],
             axis=0,
         )
         np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.4)
@@ -781,8 +782,8 @@ class TestFastEagerEquivalence:
         kw = dict(num_results=500, num_warmup=200, num_chains=2, random_seed=11)
         a = rwmh(dist=aniso_gaussian, **kw)
         b = rwmh(dist=aniso_gaussian, **kw)
-        da = np.concatenate([np.asarray(c) for c in a.chains], axis=0)
-        db = np.concatenate([np.asarray(c) for c in b.chains], axis=0)
+        da = np.concatenate([np.asarray(c) for c in flat_chains(a)], axis=0)
+        db = np.concatenate([np.asarray(c) for c in flat_chains(b)], axis=0)
         np.testing.assert_array_equal(da, db)
 
     def test_eager_path_deterministic(self):
@@ -791,8 +792,8 @@ class TestFastEagerEquivalence:
         kw = dict(num_results=150, num_warmup=80, num_chains=1, random_seed=5)
         a = rwmh(dist=dist, **kw)
         b = rwmh(dist=dist, **kw)
-        da = np.concatenate([np.asarray(c) for c in a.chains], axis=0)
-        db = np.concatenate([np.asarray(c) for c in b.chains], axis=0)
+        da = np.concatenate([np.asarray(c) for c in flat_chains(a)], axis=0)
+        db = np.concatenate([np.asarray(c) for c in flat_chains(b)], axis=0)
         np.testing.assert_array_equal(da, db)
 
 

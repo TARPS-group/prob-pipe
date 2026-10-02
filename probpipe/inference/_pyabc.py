@@ -15,8 +15,9 @@ from ..core._dispatch import Feasibility
 from ..custom_types import PRNGKey
 from ..distributions._capabilities import SupportsConditionalSampling
 from ..distributions._conditional import ConditionalDistribution
+from ..distributions._empirical import EmpiricalDistribution
 from ..operations._condition import InferenceMethod, _UnnormalizedConditional
-from ._approximate_distribution import ApproximateDistribution, make_posterior
+from ._approximate_distribution import make_posterior
 from ._inference_utils import (
     flat_unflatten,
     flat_vector,
@@ -102,7 +103,7 @@ def _smc_diagnostics(history: Any) -> DataTree:
     Builds a ``smc_diagnostics`` group indexed by generation, holding the
     epsilon (acceptance-threshold) schedule, the sample attempts, the accepted
     particles, and the acceptance rate; ``total_nr_simulations`` is a scalar
-    attribute. Recovered from ``dist.arviz_data`` after a run.
+    attribute. It is stored under ``arviz/`` in the result's annotations.
     """
     import xarray as xr
 
@@ -203,7 +204,7 @@ class PyABCSMCMethod(InferenceMethod):
             )
         return Feasibility(feasible=True)
 
-    def execute(self, target: Any, /, **kwargs: Any) -> ApproximateDistribution:
+    def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
         """Run SMC-ABC and return a weighted posterior.
 
         Parameters
@@ -253,7 +254,7 @@ class PyABCSMCMethod(InferenceMethod):
 
         Returns
         -------
-        ApproximateDistribution
+        EmpiricalDistribution
             The final population's particles, keyed by parameter name, carrying
             their (non-resampled) SMC importance weights. The per-generation
             convergence trajectory (epsilon schedule, sample / particle counts,

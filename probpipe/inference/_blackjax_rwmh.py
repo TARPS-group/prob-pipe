@@ -42,8 +42,9 @@ from ..core._dispatch import Feasibility
 from ..custom_types import Array, ArrayLike
 from ..distributions._capabilities import SupportsUnnormalizedLogProb
 from ..distributions._distribution import Distribution
+from ..distributions._empirical import EmpiricalDistribution
 from ..operations._condition import InferenceMethod
-from ._approximate_distribution import ApproximateDistribution, make_posterior
+from ._approximate_distribution import make_posterior
 from ._inference_utils import (
     as_prng_key,
     build_mcmc_datatree,
@@ -582,7 +583,7 @@ def rwmh(
     proposal_cov: ArrayLike | None = None,
     init: ArrayLike | None = None,
     random_seed: int | None = None,
-) -> ApproximateDistribution:
+) -> EmpiricalDistribution:
     """Gradient-free random-walk Metropolis-Hastings (BlackJAX-backed).
 
     Two execution paths share the same BlackJAX kernel:
@@ -644,7 +645,7 @@ def rwmh(
 
     Returns
     -------
-    ApproximateDistribution
+    EmpiricalDistribution
         Posterior samples with chain structure and an annotations
         ArviZ-shaped ``DataTree`` carrying per-step acceptance stats
         and warmup positions.
@@ -818,7 +819,7 @@ class BlackJAXRWMHMethod(InferenceMethod):
             )
         return Feasibility(feasible=True)
 
-    def execute(self, target: Any, /, **kwargs: Any) -> ApproximateDistribution:
+    def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
         """Random-walk chains on the target's parameters, scored by its prior and likelihood."""
         self._check_options(kwargs)
         dist, observed = observed_parts(target)

@@ -95,10 +95,6 @@ from probpipe.families._programs import (
     _StanPosterior,
     _UnconstrainedStanView,
 )
-from probpipe.inference._approximate_distribution import (
-    ApproximateDistribution,
-    make_posterior,
-)
 from probpipe.inference._bayesflow_likelihoods import (
     BayesFlowLikelihood,
     BayesFlowRatio,
@@ -227,11 +223,6 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     _ShiftedGRF: lambda: _basis_function() + 1.0,
     _ScaledGRF: lambda: 2.0 * _basis_function(),
     _IndependentSumGRF: lambda: _basis_function("f") + _basis_function("g"),
-    ApproximateDistribution: lambda: make_posterior(
-        [jnp.zeros((10, 2))],
-        parents=(MultivariateNormal("z", jnp.zeros(2), cov=jnp.eye(2)),),
-        method="test",
-    ),
     _LearnedDensity: lambda: BayesFlowLikelihood(
         None, Normal("theta", 0.0, 1.0), _Simulator(), data_dim=2
     )._condition_on({"theta": 0.0}),

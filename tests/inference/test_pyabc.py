@@ -37,6 +37,7 @@ from probpipe.families import BijectorTransformedDistribution
 from probpipe.inference import inference_method_registry
 from probpipe.inference._inference_utils import observed_target
 from probpipe.inference._pyabc import PyABCDistribution, PyABCSMCMethod
+from tests._posterior import arviz_data, flat_draws, method_of
 from tests.inference._harness import validate_method
 
 # Observation noise: small enough that the conjugate posterior concentrates.
@@ -132,7 +133,7 @@ class TestPyABCRecovery:
             method_options={"n_particles": 300, "max_populations": 6, "random_seed": seed},
         )(_model(_product("theta")), _observed(2.0))
         assert _means(post)["theta"][0] == pytest.approx(2.0, abs=0.15)
-        std = float(np.asarray(post.draws()["theta"]).std())
+        std = float(np.asarray(flat_draws(post)["theta"]).std())
         assert 0.08 < std < 0.30
 
     def test_recovery_2d(self):
@@ -153,14 +154,14 @@ class TestPyABCRecovery:
             method_options={"n_particles": 300, "max_populations": 6, "random_seed": 0},
         )(_model(prior), _observed(1.5, -1.0))
         m = _means(post)["m"]
-        assert np.asarray(post.draws()["m"]).shape == (post.num_atoms, 2)
+        assert np.asarray(flat_draws(post)["m"]).shape == (post.num_atoms, 2)
         np.testing.assert_allclose(m, [1.5, -1.0], atol=0.6)
 
     def test_auto_dispatch(self):
         post = condition_on.with_options(
             method_options={"n_particles": 200, "max_populations": 4, "random_seed": 0}
         )(_model(_product("theta")), _observed(2.0))
-        assert post.method == "pyabc_smcabc"
+        assert method_of(post) == "pyabc_smcabc"
         assert _means(post)["theta"][0] == pytest.approx(2.0, abs=0.2)
 
 
@@ -183,7 +184,7 @@ class TestPyABCWeightsAndDraws:
             method="pyabc_smcabc",
             method_options={"n_particles": 200, "max_populations": 4, "random_seed": 0},
         )(_model(_product("theta")), _observed(2.0))
-        draws = np.asarray(post.draws()["theta"]).reshape(-1)
+        draws = np.asarray(flat_draws(post)["theta"]).reshape(-1)
         weighted = float(np.asarray(mean(post)["theta"]).reshape(-1)[0])
         assert weighted != pytest.approx(float(draws.mean()), abs=1e-6)
 
@@ -195,7 +196,7 @@ class TestPyABCWeightsAndDraws:
         a = smc(_model(_product("theta")), _observed(2.0))
         b = smc(_model(_product("theta")), _observed(2.0))
         np.testing.assert_array_equal(
-            np.asarray(a.draws()["theta"]), np.asarray(b.draws()["theta"])
+            np.asarray(flat_draws(a)["theta"]), np.asarray(flat_draws(b)["theta"])
         )
 
     def test_draws_are_name_keyed(self):
@@ -203,7 +204,7 @@ class TestPyABCWeightsAndDraws:
             method="pyabc_smcabc",
             method_options={"n_particles": 80, "max_populations": 3, "random_seed": 0},
         )(_model(_product("theta")), _observed(2.0))
-        draws = post.draws()
+        draws = flat_draws(post)
         assert "theta" in draws.event_template.fields
         assert np.asarray(draws["theta"]).shape == (post.num_atoms,)
 
@@ -253,7 +254,7 @@ class TestPyABCDiagnostics:
             method="pyabc_smcabc",
             method_options={"n_particles": 100, "max_populations": 4, "random_seed": 0},
         )(_model(_product("theta")), _observed(2.0))
-        diag = post.arviz_data["smc_diagnostics"]
+        diag = arviz_data(post)["smc_diagnostics"]
         eps = np.asarray(diag["epsilon"].values)
         rate = np.asarray(diag["acceptance_rate"].values)
         assert 1 <= eps.shape[0] <= 4

@@ -411,7 +411,8 @@ class TestUnnormalizedDistribution:
         normalized = convert.with_options(method="blackjax_nuts", method_options=FIT)(
             law, EmpiricalDistribution
         )
-        atoms = np.asarray(normalized.atoms.values)
+        # One row per atom, across the levels chain and draw.
+        atoms = np.reshape(np.asarray(normalized.atoms.values), (normalized.num_atoms, -1))
         for draw in np.asarray(draws.values):
             assert np.any(np.all(np.isclose(atoms, draw), axis=1))
 

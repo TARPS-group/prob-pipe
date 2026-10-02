@@ -14,8 +14,9 @@ from ..core._dispatch import Feasibility
 from ..custom_types import Array
 from ..distributions._capabilities import SupportsUnnormalizedLogProb
 from ..distributions._distribution import Distribution
+from ..distributions._empirical import EmpiricalDistribution
 from ..operations._condition import InferenceMethod
-from ._approximate_distribution import ApproximateDistribution, make_posterior
+from ._approximate_distribution import make_posterior
 from ._inference_utils import (
     as_prng_key,
     build_mcmc_datatree,
@@ -196,7 +197,7 @@ class _TFPGradientMethod(InferenceMethod):
             return Feasibility(feasible=False, description=str(e))
         return Feasibility(feasible=True)
 
-    def execute(self, target: Any, /, **kwargs: Any) -> ApproximateDistribution:
+    def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
         """Chains of the TFP kernel on the target's unnormalized density."""
         self._check_options(kwargs)
         random_seed = run_seed(kwargs, self.name)

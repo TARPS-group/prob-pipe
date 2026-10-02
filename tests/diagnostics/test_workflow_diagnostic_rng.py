@@ -35,6 +35,7 @@ def _certified_likelihood():
 
 class TestPpcDiagnosticBroker:
     def test_duplicate_test_function_names_fail_before_randomness(self, posterior):
+        annotations = posterior.annotations
         with (
             patch("probpipe.diagnostics._ppc_spc._predictive_check_batched") as sample,
             patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
@@ -51,7 +52,7 @@ class TestPpcDiagnosticBroker:
 
         sample.assert_not_called()
         commit.assert_not_called()
-        assert posterior._annotations is None
+        assert posterior.annotations is annotations
 
     def test_seeded_multi_test_ppc_claims_stable_ordered_events(self, posterior):
         claims = []
@@ -212,6 +213,7 @@ class TestPpcDiagnosticBroker:
         commit.assert_not_called()
 
     def test_failed_multi_test_computation_writes_no_annotations(self, posterior):
+        annotations = posterior.annotations
         with (
             patch(
                 "probpipe.diagnostics._ppc_spc._predictive_check_batched",
@@ -228,4 +230,4 @@ class TestPpcDiagnosticBroker:
                 n_replications=3,
             )
 
-        assert posterior._annotations is None
+        assert posterior.annotations is annotations

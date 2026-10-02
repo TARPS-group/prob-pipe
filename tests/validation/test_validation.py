@@ -8,7 +8,6 @@ import numpy as np
 import pytest
 
 from probpipe import (
-    ApproximateDistribution,
     EmpiricalDistribution,
     MultivariateNormal,
     Normal,
@@ -22,6 +21,7 @@ from probpipe.validation import predictive_check as pc_direct
 from probpipe.validation._predictive_check import (
     _supports_key_arg,
 )
+from tests._posterior import posterior_of
 from tests._regression_provider import CertifiedRegression
 
 # ---------------------------------------------------------------------------
@@ -390,8 +390,8 @@ class TestPredictiveCheck:
 def _posteriors_of(draws, spec):
     """A posterior over the record of one field holding *draws*, and the same as a whole term."""
     chains = [draws[: len(draws) // 2], draws[len(draws) // 2 :]]
-    record = ApproximateDistribution(chains, event_spec=RecordSpec(beta=spec))
-    whole = ApproximateDistribution(chains, event_spec=OutputSpec(beta=spec))
+    record = posterior_of(chains, event_spec=RecordSpec(beta=spec))
+    whole = posterior_of(chains, event_spec=OutputSpec(beta=spec))
     return record, whole
 
 

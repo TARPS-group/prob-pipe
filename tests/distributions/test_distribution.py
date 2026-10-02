@@ -74,6 +74,7 @@ from probpipe.core.provenance import Provenance, provenance_ancestors
 from probpipe.distributions._capabilities import SupportsMean
 from probpipe.families import BijectorTransformedDistribution
 from probpipe.functions._normalization import DISTRIBUTION_HINT_PROTOCOLS
+from tests._posterior import posterior_of
 
 
 def _make_transformed():
@@ -503,10 +504,6 @@ def _public_distribution_classes() -> list[type]:
     return [cls for cls in found if not cls.__name__.startswith("_")]
 
 
-# The classes the design retires keep a keyword name until they are removed.
-_RETIRING = {
-    "ApproximateDistribution",
-}
 _PUBLIC_CLASSES = _public_distribution_classes()
 
 # Laws that indexing constructs from a parent, so no caller names them.
@@ -514,15 +511,11 @@ _CONSTRUCTED_BY_INDEXING = {"FieldView"}
 
 
 class TestNameFirstSignature:
-    """Every constructor the design keeps takes ``name`` first, required."""
+    """Every public distribution constructor takes ``label`` first, required."""
 
     @pytest.mark.parametrize(
         "cls",
-        [
-            cls
-            for cls in _PUBLIC_CLASSES
-            if cls.__name__ not in _RETIRING | _CONSTRUCTED_BY_INDEXING
-        ],
+        [cls for cls in _PUBLIC_CLASSES if cls.__name__ not in _CONSTRUCTED_BY_INDEXING],
         ids=lambda cls: cls.__name__,
     )
     def test_label_is_the_required_first_parameter(self, cls):
@@ -532,9 +525,6 @@ class TestNameFirstSignature:
         assert first.name == "label"
         assert first.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
         assert first.default is inspect.Parameter.empty
-
-    def test_retiring_list_names_existing_classes(self):
-        assert {cls.__name__ for cls in _PUBLIC_CLASSES} >= _RETIRING
 
 
 class TestNameBinding:
@@ -1076,9 +1066,8 @@ class TestEmpiricalDeclarations:
         assert spec.is_valid(sample(replicate))
 
     def test_a_replicate_of_a_nested_posterior_keeps_its_groups(self):
-        from probpipe.inference._approximate_distribution import ApproximateDistribution
 
-        posterior = ApproximateDistribution(
+        posterior = posterior_of(
             [jnp.ones((10, 4))],
             label="post",
             event_spec=RecordSpec(a=RecordSpec(b=(2,), c=()), d=()),

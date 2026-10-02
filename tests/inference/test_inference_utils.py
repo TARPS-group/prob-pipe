@@ -42,6 +42,7 @@ from probpipe.inference._inference_utils import (
     run_chain_scan,
     unconstrained_chain,
 )
+from tests._posterior import flat_chains, flat_draws
 from tests.inference.canonical import ObservationKernel
 
 
@@ -154,7 +155,7 @@ class TestExtractEventSpec:
             _FlatTarget(), method=method, num_results=20, num_warmup=20, num_chains=1, random_seed=0
         )
         assert list(posterior.event_spec.components) == ["posterior"]
-        assert isinstance(posterior.draws(), jax.Array)
+        assert isinstance(flat_draws(posterior), jax.Array)
 
 
 # ---------------------------------------------------------------------------
@@ -433,7 +434,7 @@ def _first_draws(method, seed, **options):
         posterior = condition_on.with_options(
             method=method, method_options={"num_results": 8, "num_warmup": 4, **options}
         )(model, {"y": data})
-    return np.asarray(posterior.chains[0])
+    return np.asarray(flat_chains(posterior)[0])
 
 
 class TestRunSeed:

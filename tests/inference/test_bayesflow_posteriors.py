@@ -19,7 +19,7 @@ import numpy as np
 
 import probpipe as pp
 from probpipe import (
-    ApproximateDistribution,
+    EmpiricalDistribution,
     Normal,
     NumericRecord,
     condition_on,
@@ -35,6 +35,7 @@ from probpipe.distributions._capabilities import (
     _is_normalized,
 )
 from probpipe.operations._condition import condition_on as condition_on_operation
+from tests._posterior import flat_draws, method_of
 
 from ._bayesflow_helpers import SimulatorKernel, theta_vec
 
@@ -209,7 +210,7 @@ class TestBayesFlowNPE:
         parameters. Both truths sit >0.5 from the prior mean (0), so neither
         assertion passes without the model actually learning the parameter."""
         post = condition_on(npe_model, {"observation": _observe(0.6, -0.6, seed=7)})
-        draws = post.draws()
+        draws = flat_draws(post)
         a = float(np.mean(np.asarray(draws["a"])))
         b = float(np.mean(np.asarray(draws["b"])))
         # Loose, calibration-style tolerance (brief training, stochastic).
@@ -223,14 +224,16 @@ class TestBayesFlowNPE:
         mean_a_hi = float(
             np.mean(
                 np.asarray(
-                    condition_on(npe_model, {"observation": _observe(1.0, 0.0, 2)}).draws()["a"]
+                    flat_draws(condition_on(npe_model, {"observation": _observe(1.0, 0.0, 2)}))["a"]
                 )
             )
         )
         mean_a_lo = float(
             np.mean(
                 np.asarray(
-                    condition_on(npe_model, {"observation": _observe(-1.0, 0.0, 3)}).draws()["a"]
+                    flat_draws(condition_on(npe_model, {"observation": _observe(-1.0, 0.0, 3)}))[
+                        "a"
+                    ]
                 )
             )
         )
@@ -238,19 +241,19 @@ class TestBayesFlowNPE:
 
     def test_contract(self, npe_model):
         """``condition_on`` honours ``num_results`` (and its model default); the
-        result is a named ``ApproximateDistribution``."""
+        result is an ``EmpiricalDistribution`` whose annotations name the method."""
         post = condition_on.with_options(method_options={"num_results": 300})(
             npe_model, {"observation": _observe(0.0, 0.0, 1)}
         )
-        assert isinstance(post, ApproximateDistribution)
-        assert post.method == "bayesflow_npe"
-        draws = post.draws()
+        assert isinstance(post, EmpiricalDistribution)
+        assert method_of(post) == "bayesflow_npe"
+        draws = flat_draws(post)
         # Fields named by the prior's declaration, 300 draws.
         assert np.asarray(draws["a"]).reshape(-1).shape[0] == 300
         assert np.isfinite(np.asarray(draws["b"])).all()
         # Omitting num_results falls back to the model default (500 here).
         default_post = condition_on(npe_model, {"observation": _observe(0.0, 0.0, 1)})
-        assert np.asarray(default_post.draws()["a"]).reshape(-1).shape[0] == 500
+        assert np.asarray(flat_draws(default_post)["a"]).reshape(-1).shape[0] == 500
 
     def test_an_mcmc_option_is_refused(self, npe_model):
         """The posterior reads its sample count and seed, and refuses the options it does not."""
@@ -329,8 +332,8 @@ class TestBayesFlowNPE:
             method_options={"num_results": 300, "random_seed": 11}
         )
         observation = {"observation": _observe(0.3, 0.1, 4)}
-        first = np.asarray(view(npe_model, observation).draws()["a"]).reshape(-1)
-        second = np.asarray(view(npe_model, observation).draws()["a"]).reshape(-1)
+        first = np.asarray(flat_draws(view(npe_model, observation))["a"]).reshape(-1)
+        second = np.asarray(flat_draws(view(npe_model, observation))["a"]).reshape(-1)
         assert first.shape == (300,)
         np.testing.assert_array_equal(first, second)
 
@@ -350,19 +353,25 @@ class TestBayesFlowNPE:
         seed reproduces the draws exactly; a different seed changes them."""
         obs = _observe(0.3, 0.1, 4)
         d1 = np.asarray(
-            condition_on.with_options(method_options={"random_seed": 11})(
-                npe_model, {"observation": obs}
-            ).draws()["a"]
+            flat_draws(
+                condition_on.with_options(method_options={"random_seed": 11})(
+                    npe_model, {"observation": obs}
+                )
+            )["a"]
         ).reshape(-1)
         d2 = np.asarray(
-            condition_on.with_options(method_options={"random_seed": 11})(
-                npe_model, {"observation": obs}
-            ).draws()["a"]
+            flat_draws(
+                condition_on.with_options(method_options={"random_seed": 11})(
+                    npe_model, {"observation": obs}
+                )
+            )["a"]
         ).reshape(-1)
         d3 = np.asarray(
-            condition_on.with_options(method_options={"random_seed": 12})(
-                npe_model, {"observation": obs}
-            ).draws()["a"]
+            flat_draws(
+                condition_on.with_options(method_options={"random_seed": 12})(
+                    npe_model, {"observation": obs}
+                )
+            )["a"]
         ).reshape(-1)
         np.testing.assert_array_equal(d1, d2)
         assert not np.array_equal(d1, d3)
@@ -390,8 +399,8 @@ class TestBayesFlowMethods:
             verbose=0,
         )
         post = condition_on(model, {"observation": _observe(0.5, 0.0, 0)})
-        assert post.method == f"bayesflow_{method}"
-        draws = post.draws()
+        assert method_of(post) == f"bayesflow_{method}"
+        draws = flat_draws(post)
         assert np.isfinite(np.asarray(draws["a"])).all()
         assert np.asarray(draws["a"]).reshape(-1).shape[0] == 200
 
@@ -410,7 +419,7 @@ class TestBayesFlowMethods:
             verbose=0,
         )
         obs = _vec(jnp.array([0.5, -0.5, 0.2]), jax.random.PRNGKey(5))
-        draws = condition_on(model, {"observation": obs}).draws()
+        draws = flat_draws(condition_on(model, {"observation": obs}))
         m = np.asarray(draws["m"]).reshape(200, -1)
         s = np.asarray(draws["s"]).reshape(200, -1)
         assert m.shape == (200, 2)  # the (2,)-vector field is preserved
@@ -438,7 +447,7 @@ class TestBayesFlowMethods:
         # The exact instance passed in is the one used (not a method default).
         assert model._approximator.inference_network is net
         post = condition_on(model, {"observation": _observe(0.5, 0.0, 0)})
-        assert np.asarray(post.draws()["a"]).reshape(-1).shape[0] == 200
+        assert np.asarray(flat_draws(post)["a"]).reshape(-1).shape[0] == 200
 
     def test_single_field_prior(self):
         """A single-field prior (not a factored joint) is supported: its
@@ -458,7 +467,7 @@ class TestBayesFlowMethods:
             verbose=0,
         )
         obs = _single_field(jnp.array([0.5, -0.5]), jax.random.PRNGKey(4))
-        draws = condition_on(model, {"observation": obs}).draws()
+        draws = flat_draws(condition_on(model, {"observation": obs}))
         assert np.asarray(draws["theta"]).reshape(200, -1).shape == (200, 2)
         assert np.isfinite(np.asarray(draws["theta"])).all()
 
@@ -479,8 +488,8 @@ class TestBayesFlowMethods:
             verbose=0,
         )
         post = condition_on(model, {"observation": _observe(0.5, 0.0, 0)})
-        assert post.method == "bayesflow_npe"
-        draws = post.draws()
+        assert method_of(post) == "bayesflow_npe"
+        draws = flat_draws(post)
         assert np.asarray(draws["a"]).reshape(-1).shape[0] == 200
         assert np.isfinite(np.asarray(draws["a"])).all()
 
@@ -500,7 +509,7 @@ class TestBayesFlowMethods:
             verbose=0,
         )
         obs = _scalar(jnp.array([0.7]), jax.random.PRNGKey(4))
-        draws = condition_on(model, {"observation": obs}).draws()
+        draws = flat_draws(condition_on(model, {"observation": obs}))
         assert np.asarray(draws["a"]).reshape(-1).shape[0] == 200
         assert np.isfinite(np.asarray(draws["a"])).all()
 
@@ -537,7 +546,7 @@ class TestBayesFlowMethods:
         for i in range(6):
             theta = jax.random.normal(jax.random.PRNGKey(100 + i), (1,))
             obs = _conjugate(theta, jax.random.PRNGKey(900 + i))
-            x = np.asarray(condition_on(model, {"observation": obs}).draws()["a"]).reshape(-1)
+            x = np.asarray(flat_draws(condition_on(model, {"observation": obs}))["a"]).reshape(-1)
             mean_errs.append(abs(float(x.mean()) - float(obs[0]) / (1 + s2)))
             std_ratios.append(float(x.std()) / post_std)
         # Estimate: mean posterior-mean error under 0.5 posterior-std.
@@ -564,7 +573,7 @@ class TestBayesFlowMethods:
         )
         obs = _multi_field(jnp.array([0.5, -0.5, 0.3, -0.2]), jax.random.PRNGKey(6))
         assert obs.shape == (8,)  # higher-dimensional observation
-        draws = condition_on(model, {"observation": obs}).draws()
+        draws = flat_draws(condition_on(model, {"observation": obs}))
         assert np.asarray(draws["a"]).reshape(200, -1).shape == (200, 1)
         assert np.asarray(draws["b"]).reshape(200, -1).shape == (200, 2)  # 2-vector field
         assert np.asarray(draws["c"]).reshape(200, -1).shape == (200, 1)
@@ -573,10 +582,10 @@ class TestBayesFlowMethods:
         obs_hi = _multi_field(jnp.array([1.0, 0.0, 0.0, 0.0]), jax.random.PRNGKey(1))
         obs_lo = _multi_field(jnp.array([-1.0, 0.0, 0.0, 0.0]), jax.random.PRNGKey(2))
         mean_a_hi = float(
-            np.mean(np.asarray(condition_on(model, {"observation": obs_hi}).draws()["a"]))
+            np.mean(np.asarray(flat_draws(condition_on(model, {"observation": obs_hi}))["a"]))
         )
         mean_a_lo = float(
-            np.mean(np.asarray(condition_on(model, {"observation": obs_lo}).draws()["a"]))
+            np.mean(np.asarray(flat_draws(condition_on(model, {"observation": obs_lo}))["a"]))
         )
         assert mean_a_hi > mean_a_lo
 
@@ -604,7 +613,7 @@ class TestBayesFlowMethods:
         for i in range(6):
             theta = jax.random.normal(jax.random.PRNGKey(100 + i), (2,))
             obs = _conjugate(theta, jax.random.PRNGKey(900 + i))
-            draws = condition_on(model, {"observation": obs}).draws()
+            draws = flat_draws(condition_on(model, {"observation": obs}))
             for j, f in enumerate(("a", "b")):
                 x = np.asarray(draws[f]).reshape(-1)
                 analytic_mean = float(obs[j]) / (1 + s2)
@@ -635,9 +644,9 @@ class TestBayesFlowMethods:
             random_seed=0,
             verbose=0,
         )
-        draws = condition_on(
-            model, {"observation": _nested_observe(2.0, -0.5, 0.4, seed=7)}
-        ).draws()
+        draws = flat_draws(
+            condition_on(model, {"observation": _nested_observe(2.0, -0.5, 0.4, seed=7)})
+        )
         r = np.asarray(draws["outer/r"]).reshape(-1)
         m = np.asarray(draws["outer/m"]).reshape(-1)
         c = np.asarray(draws["c"]).reshape(-1)
@@ -648,18 +657,18 @@ class TestBayesFlowMethods:
         mean_c_hi = float(
             np.mean(
                 np.asarray(
-                    condition_on(model, {"observation": _nested_observe(2.0, 0.0, 1.0, 2)}).draws()[
-                        "c"
-                    ]
+                    flat_draws(
+                        condition_on(model, {"observation": _nested_observe(2.0, 0.0, 1.0, 2)})
+                    )["c"]
                 )
             )
         )
         mean_c_lo = float(
             np.mean(
                 np.asarray(
-                    condition_on(
-                        model, {"observation": _nested_observe(2.0, 0.0, -1.0, 3)}
-                    ).draws()["c"]
+                    flat_draws(
+                        condition_on(model, {"observation": _nested_observe(2.0, 0.0, -1.0, 3)})
+                    )["c"]
                 )
             )
         )
@@ -694,7 +703,7 @@ class TestBayesFlowMethods:
         for i in range(6):
             theta = jax.random.normal(jax.random.PRNGKey(100 + i), (3,))
             obs = _conjugate(theta, jax.random.PRNGKey(900 + i))
-            draws = condition_on(model, {"observation": obs}).draws()
+            draws = flat_draws(condition_on(model, {"observation": obs}))
             for j, leaf in enumerate(leaves):
                 x = np.asarray(draws[leaf]).reshape(-1)
                 analytic_mean = float(obs[j]) / (1 + s2)
@@ -728,9 +737,9 @@ class TestBayesFlowMethods:
             verbose=0,
         )
         obs = jnp.array([1.5, 0.3, 0.3, 1.2, 0.5, 0.0])  # flat (cov 2x2, m, c)
-        cov = np.asarray(condition_on(model, {"observation": obs}).draws()["outer/cov"]).reshape(
-            -1, 2, 2
-        )
+        cov = np.asarray(
+            flat_draws(condition_on(model, {"observation": obs}))["outer/cov"]
+        ).reshape(-1, 2, 2)
         assert np.isfinite(cov).all()
         np.testing.assert_allclose(cov, np.swapaxes(cov, -1, -2), atol=1e-5)  # symmetric
         assert np.linalg.eigvalsh(cov).min() > 0  # positive definite
@@ -751,7 +760,7 @@ class TestBayesFlowMethods:
             random_seed=0,
             verbose=0,
         )
-        draws = condition_on(model, {"observation": jnp.array([0.8, 0.2])}).draws()
+        draws = flat_draws(condition_on(model, {"observation": jnp.array([0.8, 0.2])}))
         assert np.asarray(draws["a"]).reshape(-1).shape[0] == 200
         assert np.isfinite(np.asarray(draws["a"])).all()
 
@@ -772,7 +781,7 @@ class TestBayesFlowMethods:
             verbose=0,
         )
         r = np.asarray(
-            condition_on(model, {"observation": jnp.array([3.0, 1.0])}).draws()["r"]
+            flat_draws(condition_on(model, {"observation": jnp.array([3.0, 1.0])}))["r"]
         ).reshape(-1)
         assert np.isfinite(r).all()
         assert (r > 0).all()  # forward bijector (Exp) keeps every draw in support
@@ -800,7 +809,7 @@ class TestBayesFlowMethods:
         )
         (slot,) = model.given_spec
         assert slot == "observation_"
-        draws = condition_on(model, {slot: jnp.array([0.5, 0.1])}).draws()
+        draws = flat_draws(condition_on(model, {slot: jnp.array([0.5, 0.1])}))
         for f in ("observation", "inference_variables"):
             x = np.asarray(draws[f]).reshape(-1)
             assert x.shape[0] == 200
@@ -823,7 +832,7 @@ class TestBayesFlowMethods:
             verbose=0,
         )
         q = np.asarray(
-            condition_on(model, {"observation": jnp.array([0.5, 0.0])}).draws()["q"]
+            flat_draws(condition_on(model, {"observation": jnp.array([0.5, 0.0])}))["q"]
         ).reshape(-1)
         assert np.isfinite(q).all()
         assert ((q > 0) & (q < 1)).all()  # Sigmoid forward keeps draws in (0, 1)
@@ -849,7 +858,9 @@ class TestBayesFlowMethods:
             verbose=0,
         )
         obs = jnp.array([1.5, 0.3, 0.3, 1.2, 0.5])  # flattened (cov, m) observation
-        cov = np.asarray(condition_on(model, {"observation": obs}).draws()["cov"]).reshape(-1, 2, 2)
+        cov = np.asarray(flat_draws(condition_on(model, {"observation": obs}))["cov"]).reshape(
+            -1, 2, 2
+        )
         assert np.isfinite(cov).all()
         np.testing.assert_allclose(cov, np.swapaxes(cov, -1, -2), atol=1e-5)  # symmetric
         assert np.linalg.eigvalsh(cov).min() > 0  # positive definite
@@ -874,7 +885,7 @@ class TestBayesFlowMethods:
         )
         assert isinstance(model._approximator.inference_network, bf.networks.FlowMatching)
         p = np.asarray(
-            condition_on(model, {"observation": jnp.array([0.7, 0.3])}).draws()["p"]
+            flat_draws(condition_on(model, {"observation": jnp.array([0.7, 0.3])}))["p"]
         ).reshape(-1, 2)
         np.testing.assert_allclose(p.sum(axis=-1), 1.0, atol=1e-5)
         assert ((p > 0) & (p < 1)).all()
@@ -900,9 +911,9 @@ class TestBayesFlowMethods:
         obs = _observe(0.4, -0.2, 5)
         # The draws are seeded by the workflow scope, so each call has the same one.
         with pp.workflow_run(seed=0):
-            d1 = np.asarray(condition_on(_fit(), {"observation": obs}).draws()["a"]).reshape(-1)
+            d1 = np.asarray(flat_draws(condition_on(_fit(), {"observation": obs}))["a"]).reshape(-1)
         with pp.workflow_run(seed=0):
-            d2 = np.asarray(condition_on(_fit(), {"observation": obs}).draws()["a"]).reshape(-1)
+            d2 = np.asarray(flat_draws(condition_on(_fit(), {"observation": obs}))["a"]).reshape(-1)
         np.testing.assert_array_equal(d1, d2)
 
     def test_global_rng_state_restored(self):

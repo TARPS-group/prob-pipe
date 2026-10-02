@@ -13,9 +13,8 @@ import pytest
 
 nutpie = pytest.importorskip("nutpie")
 
-from probpipe import NumericArraySpec
+from probpipe import EmpiricalDistribution, NumericArraySpec
 from probpipe.core.constraints import real
-from probpipe.inference import ApproximateDistribution
 from probpipe.inference._nutpie import (
     _compile_for_nutpie,
     _extract_chains,
@@ -113,7 +112,7 @@ class TestCompileForNutpie:
             (2,), jnp.result_type(float), real
         )
         np.testing.assert_array_equal(
-            np.asarray(result.chains[1]), [[10, 110, 1010], [11, 111, 1011], [12, 112, 1012]]
+            np.asarray(flat_chains(result)[1]), [[10, 110, 1010], [11, 111, 1011], [12, 112, 1012]]
         )
 
     @pytest.mark.usefixtures("_stanc")
@@ -355,10 +354,10 @@ class TestNutpieStanIntegration:
             num_chains=2,
             random_seed=0,
         )
-        assert isinstance(result, ApproximateDistribution)
-        assert result.num_chains == 2
-        assert result.method == "nutpie_nuts"
-        post = result.inference_data.posterior
+        assert isinstance(result, EmpiricalDistribution)
+        assert num_chains(result) == 2
+        assert method_of(result) == "nutpie_nuts"
+        post = arviz_data(result).posterior
         assert "alpha" in post and "beta" in post
         beta_mean = float(np.asarray(post["beta"]).mean())
         assert np.isfinite(beta_mean)
@@ -400,6 +399,7 @@ class TestNutpieStanIntegration:
 pm = pytest.importorskip("pymc")
 
 from probpipe import PyMCModel
+from tests._posterior import arviz_data, flat_chains, flat_draws, method_of, num_chains
 
 
 def _gaussian_pymc_fn(y=None):
@@ -428,9 +428,9 @@ class TestNutpieIntegration:
             num_chains=2,
             random_seed=42,
         )
-        assert isinstance(result, ApproximateDistribution)
-        assert result.num_chains == 2
-        assert result.method == "nutpie_nuts"
+        assert isinstance(result, EmpiricalDistribution)
+        assert num_chains(result) == 2
+        assert method_of(result) == "nutpie_nuts"
         assert result.provenance is not None
         assert result.provenance.operation == "nutpie_nuts"
         # Analytical posterior: prior N(0, 10), likelihood N(mu, 1) with n=5
@@ -442,7 +442,7 @@ class TestNutpieIntegration:
         # PyMCModel declares one field per PyMC RV, so draws() returns a
         # NumericRecordBatch keyed by RV name. The only parameter is `mu`,
         # with event_shape ().
-        draws = result.draws()
+        draws = flat_draws(result)
         assert draws.event_template.fields == ("mu",)
         mu_draws = jnp.asarray(draws["mu"])
         assert mu_draws.shape == (1000,)  # 2 chains × 500 draws, flattened
@@ -493,9 +493,9 @@ class TestNutpieIntegration:
             num_chains=1,
             random_seed=0,
         )
-        assert result.inference_data is not None
+        assert arviz_data(result) is not None
         # arviz-like trace exposes posterior as an xarray Dataset/DataTree
-        assert hasattr(result.inference_data, "posterior")
+        assert hasattr(arviz_data(result), "posterior")
 
     def test_multiparam_draws_not_mislabeled(self):
         """Draws are labeled by the model's parameter order, not nutpie's
@@ -525,7 +525,7 @@ class TestNutpieIntegration:
             num_chains=1,
             random_seed=0,
         )
-        draws = result.draws()
+        draws = flat_draws(result)
         assert draws.event_template.fields == ("zeta", "alpha", "mu")
         for field, prior_mean in [("zeta", 100.0), ("alpha", 0.0), ("mu", -100.0)]:
             got = float(jnp.mean(jnp.asarray(draws[field])))
@@ -558,7 +558,7 @@ class TestNutpieIntegration:
             num_chains=1,
             random_seed=0,
         )
-        draws = result.draws()
+        draws = flat_draws(result)
         assert set(draws.event_template.fields) == {"mu", "X"}
         np.testing.assert_allclose(float(jnp.mean(jnp.asarray(draws["mu"]))), 100.0, atol=10.0)
         np.testing.assert_allclose(float(jnp.mean(jnp.asarray(draws["X"]))), -100.0, atol=10.0)

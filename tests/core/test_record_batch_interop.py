@@ -187,16 +187,11 @@ class TestDistributionBroadcastIndexing:
 class TestDiagnosticsBridge:
     """The ArviZ bridge reads a batch of draws by its schema, not by ``.fields``."""
 
-    def test_draws_returning_a_batch_yields_one_variable_per_column(self):
+    def test_an_empirical_law_of_a_batch_yields_one_variable_per_column(self):
+        from probpipe import EmpiricalDistribution
         from probpipe.diagnostics._arviz_bridge import extract_draws
 
-        batch = _draws(4)
-
-        class Posterior:
-            def draws(self):
-                return batch
-
-        extracted = extract_draws(Posterior())
+        extracted = extract_draws(EmpiricalDistribution("post", _draws(4)))
 
         assert sorted(extracted) == ["a", "b"]
         assert extracted["a"].shape == (4,)

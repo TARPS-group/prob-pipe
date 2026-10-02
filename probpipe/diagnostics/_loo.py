@@ -97,14 +97,10 @@ def _as_numpy(obj: Any) -> np.ndarray | None:
 
 
 def _get_arviz_tree(posterior: Distribution) -> Any:
-    """Return the ArviZ-compatible subtree for a posterior.
+    """The ArviZ-compatible subtree ``arviz`` of a posterior's annotations.
 
-    Preferred layout::
-
-        posterior._annotations["arviz"]
-
-    This function is defensive so that it also works during transition periods
-    where older posteriors expose only ``posterior.inference_data``.
+    A posterior whose annotations have no ``arviz`` subtree gives its
+    annotations, which are ``None`` when it has none.
     """
     aux = getattr(posterior, "_annotations", None)
 
@@ -113,20 +109,6 @@ def _get_arviz_tree(posterior: Distribution) -> Any:
             return aux["arviz"]
         except Exception:
             pass
-
-    for attr in ("arviz_data", "inference_data"):
-        try:
-            arviz_data = getattr(posterior, attr)
-        except Exception:
-            continue
-
-        if arviz_data is not None:
-            # If the accessor accidentally returns the full annotations tree,
-            # prefer its /arviz subtree when present.
-            try:
-                return arviz_data["arviz"]
-            except Exception:
-                return arviz_data
 
     return aux
 
@@ -548,8 +530,9 @@ def _add_log_likelihood(
 
     Parameters
     ----------
-    posterior : ApproximateDistribution
-        Fitted posterior, whose chains lie in the flat layout of the prior.
+    posterior : EmpiricalDistribution
+        The fitted posterior, an inference result whose atoms lie on the levels
+        ``chain`` and ``draw``.
     model : Distribution
         The factored joint the posterior was conditioned from, such as
         ``likelihood * prior``. Its likelihood factor scores each of its
@@ -603,8 +586,11 @@ def _add_log_likelihood(
         )
     likelihood, observed = factors.likelihood, factors.observed
     unflatten = flat_unflatten(factors.prior)
-    n_chains = posterior.num_chains
-    n_draws = posterior.num_draws
+    from ..inference._approximate_distribution import _flat_chains
+
+    # The draws in the prior's flat layout, (chains, draws, d).
+    flat = _flat_chains(posterior)
+    n_chains, n_draws = flat.shape[:2]
     n_obs = _data_size(observed)
 
     def _log_lik_single(params_flat: Any, row: Any) -> Any:
@@ -622,7 +608,7 @@ def _add_log_likelihood(
     log_lik = np.zeros((n_chains, n_draws, n_obs), dtype=np.float32)
 
     for c in range(n_chains):
-        params_flat = jnp.asarray(posterior.chains[c])  # (n_draws, n_params)
+        params_flat = flat[c]  # (n_draws, n_params)
 
         try:
             if _log_lik_draws is None:

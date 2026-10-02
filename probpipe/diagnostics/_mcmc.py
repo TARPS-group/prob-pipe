@@ -43,7 +43,7 @@ from ._utils import _dataset_values
 if TYPE_CHECKING:
     import xarray as xr
 
-    from ..inference._approximate_distribution import ApproximateDistribution
+    from ..distributions._empirical import EmpiricalDistribution
 
 __all__ = [
     "add_ess",
@@ -232,7 +232,7 @@ def _payload_kind(payload: Mapping[str, Any]) -> str:
 
 
 def _compute_rhat_op(
-    posterior: ApproximateDistribution,
+    posterior: EmpiricalDistribution,
     *,
     method: str = "rank",
     threshold: float = _RHAT_THRESHOLD,
@@ -244,7 +244,7 @@ def _compute_rhat_op(
 
     Parameters
     ----------
-    posterior : ApproximateDistribution
+    posterior : EmpiricalDistribution
         Fitted posterior.
     method : str
         ArviZ R-hat variant: ``"rank"`` by default.
@@ -256,9 +256,10 @@ def _compute_rhat_op(
     dict
         Payload dict with keys ``kind``, ``values``, ``warnings``, and ``attrs``.
     """
+    from ..inference._approximate_distribution import _num_chains
     from ._datatree import NotComputed, to_named_posterior_dataset
 
-    if getattr(posterior, "num_chains", 1) < 2:
+    if _num_chains(posterior) < 2:
         values = {
             component: NotComputed("R-hat requires at least 2 chains")
             for component in posterior.event_spec.components
@@ -305,7 +306,7 @@ def _compute_rhat_op(
 
 
 def _compute_ess_op(
-    posterior: ApproximateDistribution,
+    posterior: EmpiricalDistribution,
     *,
     threshold: int = _ESS_THRESHOLD,
 ) -> dict[str, Any]:
@@ -316,7 +317,7 @@ def _compute_ess_op(
 
     Parameters
     ----------
-    posterior : ApproximateDistribution
+    posterior : EmpiricalDistribution
         Fitted posterior.
     threshold : int
         Warning threshold.
@@ -366,7 +367,7 @@ def _compute_ess_op(
 
 
 def _compute_mcse_op(
-    posterior: ApproximateDistribution,
+    posterior: EmpiricalDistribution,
 ) -> dict[str, Any]:
     """Pure MCSE diagnostic operation.
 
@@ -375,7 +376,7 @@ def _compute_mcse_op(
 
     Parameters
     ----------
-    posterior : ApproximateDistribution
+    posterior : EmpiricalDistribution
         Fitted posterior.
 
     Returns
@@ -418,7 +419,7 @@ def _compute_mcse_op(
 
 
 def _write_mcmc_payload(
-    posterior: ApproximateDistribution,
+    posterior: EmpiricalDistribution,
     payload: Mapping[str, Any],
 ) -> None:
     """Write an MCMC diagnostic payload into ``posterior._annotations``."""
@@ -480,7 +481,7 @@ def _write_mcmc_payload(
 
 
 def add_rhat(
-    posterior: ApproximateDistribution,
+    posterior: EmpiricalDistribution,
     *,
     method: str = "rank",
     threshold: float = _RHAT_THRESHOLD,
@@ -516,7 +517,7 @@ def add_rhat(
 
 
 def add_ess(
-    posterior: ApproximateDistribution,
+    posterior: EmpiricalDistribution,
     *,
     threshold: int = _ESS_THRESHOLD,
     force: bool = False,
@@ -550,7 +551,7 @@ def add_ess(
 
 
 def add_mcse(
-    posterior: ApproximateDistribution,
+    posterior: EmpiricalDistribution,
     *,
     force: bool = False,
 ) -> None:
@@ -579,7 +580,7 @@ def add_mcse(
 
 
 def add_mcmc_diagnostics(
-    posterior: ApproximateDistribution,
+    posterior: EmpiricalDistribution,
     *,
     metrics: list[str] | None = None,
     rhat_method: str = "rank",
@@ -594,7 +595,7 @@ def add_mcmc_diagnostics(
 
     Parameters
     ----------
-    posterior : ApproximateDistribution
+    posterior : EmpiricalDistribution
         The fitted posterior. Mutated in place.
     metrics : list of str or None
         Subset to compute. ``None`` computes all: ``["rhat", "ess", "mcse"]``.

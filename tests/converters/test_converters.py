@@ -61,6 +61,7 @@ from probpipe.families._continuous import (
 from probpipe.families._converters import _MomentMatching
 from probpipe.families._discrete import Binomial, NegativeBinomial
 from probpipe.families._multivariate import Dirichlet, Multinomial, VonMisesFisher, Wishart
+from tests._posterior import posterior_of
 
 # ---------------------------------------------------------------------------
 # Registry basics
@@ -979,18 +980,14 @@ class TestProtocolConversion:
         assert isinstance(result, KDEDistribution)
         assert result.event_spec.spec.fields == ("intercept", "slope")
 
-    def test_approximate_distribution_preserves_template_through_kde(self):
+    def test_inference_result_preserves_template_through_kde(self):
         """An inference result converts to a KDE over its target's record."""
-        from probpipe.inference._approximate_distribution import (
-            ApproximateDistribution,
-        )
-
         n_draws = 100
         chain_intercept = jax.random.normal(jax.random.PRNGKey(0), (n_draws,))
         chain_slope = jax.random.normal(jax.random.PRNGKey(1), (n_draws,))
         # Stack into per-chain (num_draws, total_dim) layout
         chains = [jnp.stack([chain_intercept, chain_slope], axis=-1)]
-        approx = ApproximateDistribution(
+        approx = posterior_of(
             chains,
             label="posterior",
             event_spec=NumericRecordSpec(intercept=(), slope=()),

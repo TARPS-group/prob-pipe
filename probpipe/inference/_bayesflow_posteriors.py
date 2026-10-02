@@ -39,9 +39,10 @@ from ..distributions._capabilities import (
 )
 from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution
+from ..distributions._empirical import EmpiricalDistribution
 from ..functions import function
 from ..values import Function
-from ._approximate_distribution import ApproximateDistribution, make_posterior
+from ._approximate_distribution import make_posterior
 from ._bayesflow_common import (
     _OBSERVATION_KEY,
     SimBackend,
@@ -293,7 +294,7 @@ class _AmortizedPosterior(
             )
         return Feasibility(True)
 
-    def _condition_on(self, given: Any, /, **kwargs: Any) -> ApproximateDistribution:
+    def _condition_on(self, given: Any, /, **kwargs: Any) -> EmpiricalDistribution:
         """The network's draws at the observation *given* binds, as an empirical posterior.
 
         *given* is a mapping or record keyed by the observation slot, or the

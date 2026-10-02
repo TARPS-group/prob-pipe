@@ -19,6 +19,7 @@ import pytest
 
 from probpipe import NumericArraySpec
 from probpipe.core.constraints import real
+from tests._posterior import flat_chains, flat_draws
 from tests._stanc import require_stanc
 from tests.inference._harness import validate_method
 
@@ -98,9 +99,9 @@ def test_the_posterior_keeps_the_parameter_record_chain_by_chain(fake_cmdstanpy,
     assert tuple(result.event_spec.components) == ("mu", "theta")
     assert result.event_spec.spec["theta"] == NumericArraySpec((2,), jnp.result_type(float), real)
     np.testing.assert_array_equal(
-        np.asarray(result.chains[1]), [[10, 100, 1000], [11, 101, 1001], [12, 102, 1002]]
+        np.asarray(flat_chains(result)[1]), [[10, 100, 1000], [11, 101, 1001], [12, 102, 1002]]
     )
-    assert np.shape(result.draws()["theta"]) == (6, 2)
+    assert np.shape(flat_draws(result)["theta"]) == (6, 2)
 
 
 @pytest.mark.usefixtures("_stanc")

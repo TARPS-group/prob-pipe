@@ -49,6 +49,7 @@ from tests._ops import (
     sample,
     variance,
 )
+from tests._posterior import flat_draws, num_chains
 from tests.correctness._laws import (
     GROUPS,
     POPULATION,
@@ -71,8 +72,8 @@ def _from_draws(posterior, target) -> EmpiricalDistribution:
     The draws are read in the target's layout, so the law declares the
     target's record whatever declaration the result itself carries.
     """
-    raw = _raw_record(posterior.draws())
-    chains = posterior.num_chains
+    raw = _raw_record(flat_draws(posterior))
+    chains = num_chains(posterior)
 
     def split(leaf):
         values = jnp.asarray(leaf)
@@ -143,7 +144,7 @@ class TestNestedHierarchicalModel:
     def test_a_view_at_a_nested_path_reads_the_posterior(self, schools):
         _, _, posterior = schools
         view = FieldView(posterior, "population/tau")
-        draws = _raw_record(posterior.draws())
+        draws = _raw_record(flat_draws(posterior))
         assert float(mean.with_options(raw=True)(view)) == pytest.approx(
             float(np.mean(draws["population"]["tau"])), rel=1e-5
         )

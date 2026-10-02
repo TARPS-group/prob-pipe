@@ -15,7 +15,6 @@ import pickle
 from collections.abc import Mapping
 
 import jax.numpy as jnp
-import numpy as np
 import pytest
 
 from probpipe import Normal
@@ -69,6 +68,24 @@ class _ShiftKernel(ConditionalDistribution, SupportsConditionalSampling):
         return Normal("x", given["z"], 0.5)._sample(key, sample_shape)
 
 
+def _normal_pymc_model(y=None):
+    import pymc as pm
+
+    with pm.Model() as model:
+        mu = pm.Normal("mu", 0.0, 1.0)
+        pm.Normal("y", mu, 1.0, observed=y)
+    return model
+
+
+def _pymc_memo_case():
+    """A PyMC program, whose memo holds its compiled density, and a read that fills it."""
+    pytest.importorskip("pymc")
+    from probpipe import PyMCModel
+
+    term = PyMCModel("m", _normal_pymc_model)
+    return term, lambda t: t._log_prob({"mu": 0.0, "y": 0.0})
+
+
 class TestTheCheckItself:
     """The helper has to catch the kind of mutation these tests are about.
 
@@ -94,26 +111,13 @@ class TestTheCheckItself:
 
     def test_it_ignores_the_memo(self):
         # The one store a read is meant to fill.
-        from probpipe.inference._approximate_distribution import ApproximateDistribution
-
-        posterior = ApproximateDistribution([np.zeros((4, 1)), np.ones((4, 1))], label="p")
-        before = assigned_state(posterior)
-        assert posterior._concat_chains() is not None  # fills the memo
-        assert assigned_state(posterior) == before
+        term, read = _pymc_memo_case()
+        before = assigned_state(term)
+        assert read(term) is not None  # fills the memo
+        assert assigned_state(term) == before
 
 
 class TestAQueryLeavesTheTermUnchanged:
-    def test_an_approximate_distribution_concatenates_at_construction(self):
-        # The constructor reads the concatenation, so the memo is filled before
-        # a caller holds the object and no later read assigns anything.
-        from probpipe.inference._approximate_distribution import ApproximateDistribution
-
-        posterior = ApproximateDistribution([np.zeros((4, 1)), np.ones((4, 1))], label="p")
-        before = assigned_state(posterior)
-        first = posterior._concat_chains()
-        assert assigned_state(posterior) == before
-        assert posterior._concat_chains() is first
-
     def test_a_factored_joint_is_unchanged_by_a_field_view(self):
         # The view reads the joint's marginal report at the view's construction,
         # which fills nothing on the joint.
@@ -149,20 +153,9 @@ class TestEveryMemoHolderDropsItsMemoOnACopy:
     the memo, and it can still rebuild the value.
     """
 
-    @staticmethod
-    def _approximate():
-        from probpipe.inference._approximate_distribution import ApproximateDistribution
-
-        term = ApproximateDistribution([np.zeros((4, 1)), np.ones((4, 1))], label="p")
-        return term, lambda d: d._concat_chains()
-
-    @pytest.fixture(
-        params=[
-            pytest.param("_approximate", id="approximate-chains"),
-        ]
-    )
+    @pytest.fixture(params=[pytest.param(_pymc_memo_case, id="pymc-density")])
     def case(self, request):
-        return getattr(self, request.param)()
+        return request.param()
 
     @pytest.fixture(
         params=[

@@ -27,6 +27,7 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
     Beta,
+    EmpiricalDistribution,
     Gamma,
     MultivariateNormal,
     Normal,
@@ -36,12 +37,19 @@ from probpipe.inference import (
     elliptical_slice,
     inference_method_registry,
 )
-from probpipe.inference._approximate_distribution import ApproximateDistribution
 from probpipe.inference._blackjax_ess import (
     BlackJAXESSMethod,
     _gaussian_prior_params,
 )
 from probpipe.inference._inference_utils import observed_target
+from tests._posterior import (
+    arviz_data,
+    flat_chains,
+    method_of,
+    num_chains,
+    num_draws,
+    warmup_samples,
+)
 from tests.inference._harness import validate_method
 from tests.inference.canonical import ObservationKernel
 
@@ -289,7 +297,7 @@ class TestDeclinesToRWMH:
         posterior = condition_on.with_options(
             method_options={"num_results": 50, "num_warmup": 20, "random_seed": 0}
         )(model, {"y": np.zeros((5, 2))})
-        assert posterior.method == "blackjax_rwmh"
+        assert method_of(posterior) == "blackjax_rwmh"
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +329,7 @@ class TestPosteriorRecovery:
             random_seed=42,
         )
         draws = np.concatenate(
-            [np.asarray(c) for c in post.chains],
+            [np.asarray(c) for c in flat_chains(post)],
             axis=0,
         )
         n = data.shape[0]
@@ -372,7 +380,7 @@ class TestPosteriorRecovery:
             random_seed=42,
         )
         draws = np.concatenate(
-            [np.asarray(c) for c in post.chains],
+            [np.asarray(c) for c in flat_chains(post)],
             axis=0,
         )
 
@@ -414,7 +422,7 @@ class TestPosteriorRecovery:
             num_chains=2,
             random_seed=7,
         )
-        draws = np.concatenate([np.asarray(c) for c in post.chains], axis=0)
+        draws = np.concatenate([np.asarray(c) for c in flat_chains(post)], axis=0)
 
         lam_prior = np.linalg.inv(sigma_prior)
         lam_post = lam_prior + (n / obs_var) * np.eye(2)
@@ -460,7 +468,7 @@ class TestPosteriorRecovery:
             num_chains=2,
             random_seed=13,
         )
-        draws = np.concatenate([np.asarray(c) for c in post.chains], axis=0)
+        draws = np.concatenate([np.asarray(c) for c in flat_chains(post)], axis=0)
 
         lam_prior = np.linalg.inv(sigma_prior)
         lam_post = lam_prior + (n / obs_var) * np.eye(2)
@@ -495,7 +503,7 @@ class TestProvenanceAndAnnotations:
             num_warmup=20,
             random_seed=0,
         )
-        assert post.method == "elliptical_slice"
+        assert method_of(post) == "elliptical_slice"
         assert post.provenance.operation == "elliptical_slice"
 
     def test_annotations_datatree_has_subiter_stats(self, gaussian_model, data):
@@ -508,11 +516,11 @@ class TestProvenanceAndAnnotations:
             num_chains=num_chains,
             random_seed=0,
         )
-        assert post.inference_data is not None
-        assert "posterior" in post.inference_data
-        assert "sample_stats" in post.inference_data
+        assert arviz_data(post) is not None
+        assert "posterior" in arviz_data(post)
+        assert "sample_stats" in arviz_data(post)
         # The ESS-specific stat is ``subiter`` (number of bracket shrinkages).
-        ss = post.inference_data["sample_stats"]
+        ss = arviz_data(post)["sample_stats"]
         assert "subiter" in ss.variables
         subiter = np.asarray(ss["subiter"].values)
         # One count per (chain, draw); shrinkage counts are positive integers.
@@ -530,8 +538,8 @@ class TestProvenanceAndAnnotations:
             num_chains=2,
             random_seed=0,
         )
-        assert post.warmup_samples is not None
-        assert post.warmup_samples[0].shape == (15, 1)
+        assert warmup_samples(post) is not None
+        assert warmup_samples(post)[0].shape == (15, 1)
 
     def test_no_warmup_path(self, gaussian_model, data):
         """``num_warmup=0`` runs and stores no warmup chains."""
@@ -542,9 +550,9 @@ class TestProvenanceAndAnnotations:
             num_warmup=0,
             random_seed=0,
         )
-        assert isinstance(post, ApproximateDistribution)
-        assert post.warmup_samples is None
-        assert post.num_draws == 30
+        assert isinstance(post, EmpiricalDistribution)
+        assert warmup_samples(post) is None
+        assert num_draws(post) == 30
 
     def test_explicit_init_smoke(self, gaussian_model, data):
         """An explicit ``init=`` (matching the 1-D param dim) runs cleanly."""
@@ -556,9 +564,9 @@ class TestProvenanceAndAnnotations:
             init=jnp.array([2.5]),
             random_seed=0,
         )
-        assert isinstance(post, ApproximateDistribution)
+        assert isinstance(post, EmpiricalDistribution)
         # 1-D Normal prior → single-parameter chains.
-        assert np.asarray(post.chains[0]).shape == (30, 1)
+        assert np.asarray(flat_chains(post)[0]).shape == (30, 1)
 
     def test_multi_chain_shape(self, gaussian_model, data):
         post = elliptical_slice(
@@ -569,8 +577,8 @@ class TestProvenanceAndAnnotations:
             num_chains=3,
             random_seed=0,
         )
-        assert post.num_chains == 3
-        assert post.num_draws == 30
+        assert num_chains(post) == 3
+        assert num_draws(post) == 30
 
 
 # ---------------------------------------------------------------------------

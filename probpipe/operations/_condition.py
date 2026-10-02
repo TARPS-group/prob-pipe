@@ -506,12 +506,14 @@ def _packaged_alike(declared: OutputSpec, expected: OutputSpec) -> bool:
 def _as_declared(source: Any, law: Any) -> EmpiricalDistribution:
     """The atoms and weights of the normalized *law* under *source*'s event declaration.
 
-    The result is an ``EmpiricalDistribution`` carrying *law*'s provenance,
-    since a posterior over a whole-term event draws a one-field record of it.
+    The result is an ``EmpiricalDistribution`` carrying *law*'s provenance and
+    annotations, since a posterior over a whole-term event draws a one-field
+    record of it.
     """
     empirical = EmpiricalDistribution(
-        source.label, law.draws(), law.weights, event_spec=source.event_spec
+        source.label, law.atoms, law.weights, event_spec=source.event_spec
     )
+    empirical._init_annotations(law.annotations)
     return empirical.with_provenance(law.provenance)
 
 
@@ -1614,8 +1616,9 @@ def _empirical_of(call: BoundCall, law: Any) -> Any:
         if isinstance(candidate, target) and candidate.event_spec == source.event_spec:
             return candidate
     empirical = EmpiricalDistribution(
-        source.label, law.draws(), law.weights, event_spec=source.event_spec
+        source.label, law.atoms, law.weights, event_spec=source.event_spec
     )
+    empirical._init_annotations(law.annotations)
     if not isinstance(empirical, target):
         raise TypeError(f"the normalized law of {source.label!r} is not a {target.__name__}")
     return empirical

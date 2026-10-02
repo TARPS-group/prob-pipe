@@ -16,7 +16,7 @@ import pytest
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
-    ApproximateDistribution,
+    EmpiricalDistribution,
     HalfNormal,
     MultivariateNormal,
     NumericArraySpec,
@@ -31,13 +31,14 @@ from probpipe.inference._blackjax_sgmcmc import (
 )
 from probpipe.inference._inference_utils import observed_target
 from probpipe.inference._minibatch import MinibatchedDistribution
+from tests._posterior import flat_chains
 from tests.inference._harness import validate_method
 from tests.inference.canonical import ObservationKernel
 
 
-def _draws(posterior: ApproximateDistribution) -> jax.Array:
+def _draws(posterior: EmpiricalDistribution) -> jax.Array:
     """The posterior's draws across its chains, in the target's flat layout."""
-    return jnp.concatenate(posterior.chains)
+    return jnp.concatenate(flat_chains(posterior))
 
 
 # -- Fixtures ------------------------------------------------------------------
@@ -300,7 +301,7 @@ class TestConditionOnDispatch:
                 "random_seed": 7,
             },
         )(logistic_problem["model"], logistic_problem["data"])
-        assert isinstance(post, ApproximateDistribution)
+        assert isinstance(post, EmpiricalDistribution)
         assert _draws(post).shape == (1000, 2)
 
     def test_chain_shape_is_num_results_by_event_shape(self, logistic_problem):
@@ -371,7 +372,7 @@ class TestConditionOnDispatch:
         only changes the index-draw inside
         :meth:`MinibatchedDistribution._draw_one` (``randint`` vs
         ``permutation``); it does not surface through the
-        ``ApproximateDistribution`` output, so there is no public handle
+        ``EmpiricalDistribution`` result, so there is no public handle
         that distinguishes a with- from a without-replacement run without
         contrived hooks into the minibatch RNG. We therefore assert only
         that the kwarg threads through ``condition_on`` -> ``execute()``

@@ -21,6 +21,7 @@ from probpipe.distributions import Distribution
 from probpipe.distributions._capabilities import SupportsSampling
 from probpipe.inference import inference_method_registry
 from probpipe.inference._inference_utils import observed_target
+from tests._posterior import flat_draws, method_of
 from tests.inference.canonical import ObservationKernel
 
 # ---------------------------------------------------------------------------
@@ -77,7 +78,7 @@ class TestInferenceMethodRegistry:
             method="blackjax_rwmh",
             method_options={"num_results": 50, "num_warmup": 20, "random_seed": 0},
         )(simple_model, data)
-        assert posterior.method == "blackjax_rwmh"
+        assert method_of(posterior) == "blackjax_rwmh"
 
     def test_condition_on_default(self, simple_model, data):
         """Default condition_on should work through the registry."""
@@ -296,22 +297,22 @@ class TestUnnormalizedLogProbInference:
         ``_unnormalized_log_prob`` accidentally breaks the protocol's
         default delegation.
         """
-        from probpipe import ApproximateDistribution
+        from probpipe import EmpiricalDistribution
 
         dist = _make_normalized_distribution()
         posterior = inference_method_registry.execute(
             dist, method="blackjax_nuts", num_results=1000, num_warmup=200, random_seed=0
         )
-        assert isinstance(posterior, ApproximateDistribution)
+        assert isinstance(posterior, EmpiricalDistribution)
         # Standard normal target. Observed across seeds 0-7: max |mean|
         # 0.02-0.06, max |std - 1| 0.01-0.08. A wrong target such as
         # N(3, 0.25 I) fails both bounds.
-        draws = np.asarray(posterior.draws()).reshape(-1, 2)
+        draws = np.asarray(flat_draws(posterior)).reshape(-1, 2)
         np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.15)
         np.testing.assert_allclose(draws.std(0), [1.0, 1.0], atol=0.2)
 
     def test_normalized_only_still_works_via_rwmh(self):
-        from probpipe import ApproximateDistribution
+        from probpipe import EmpiricalDistribution
 
         dist = _make_normalized_distribution()
         posterior = inference_method_registry.execute(
@@ -322,11 +323,11 @@ class TestUnnormalizedLogProbInference:
             step_size=0.5,
             random_seed=0,
         )
-        assert isinstance(posterior, ApproximateDistribution)
+        assert isinstance(posterior, EmpiricalDistribution)
         # Standard normal target. Observed across seeds 0-7: max |mean|
         # 0.01-0.11, max |std - 1| 0.02-0.06. A wrong target such as
         # N(3, 0.25 I) fails both bounds.
-        draws = np.asarray(posterior.draws()).reshape(-1, 2)
+        draws = np.asarray(flat_draws(posterior)).reshape(-1, 2)
         np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.3)
         np.testing.assert_allclose(draws.std(0), [1.0, 1.0], atol=0.2)
 
@@ -474,14 +475,14 @@ class TestTargets:
             target, num_results=30, num_warmup=30, random_seed=0
         )
         assert set(posterior.event_spec.components) == {"beta"}
-        assert posterior.draws()["beta"].shape == (30, 2)
+        assert flat_draws(posterior)["beta"].shape == (30, 2)
 
     def test_the_random_walk_normalizes_a_keyed_target(self):
         posterior = inference_method_registry.execute(
             _logistic_target(), method="blackjax_rwmh", num_results=20, num_warmup=30
         )
         assert set(posterior.event_spec.components) == {"beta"}
-        assert posterior.draws()["beta"].shape == (20, 2)
+        assert flat_draws(posterior)["beta"].shape == (20, 2)
 
     def test_a_keyed_target_starts_at_a_draw_of_its_joint(self):
         from probpipe.inference._inference_utils import get_init_state

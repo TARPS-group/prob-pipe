@@ -12,9 +12,10 @@ import numpy as np
 
 from ..core._dispatch import Feasibility
 from ..core._specs import OutputSpec
+from ..distributions._empirical import EmpiricalDistribution
 from ..families._programs import _parameter_record_at, _StanPosterior
 from ..operations._condition import InferenceMethod
-from ._approximate_distribution import ApproximateDistribution, make_posterior
+from ._approximate_distribution import make_posterior
 from ._inference_utils import integer_seed, run_seed
 
 
@@ -66,7 +67,7 @@ class CmdStanNutsMethod(InferenceMethod):
             return Feasibility(feasible=False, description="cmdstanpy is not installed")
         return Feasibility(feasible=True)
 
-    def execute(self, target: Any, /, **kwargs: Any) -> ApproximateDistribution:
+    def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
         """Stan's NUTS on the target's program at its data, through cmdstanpy.
 
         The posterior keeps the target's parameter record: each chain holds the

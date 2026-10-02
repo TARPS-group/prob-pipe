@@ -12,6 +12,7 @@ import numpy as np
 
 from probpipe import Normal, workflow_run
 from probpipe.inference._bayesflow_posteriors import _AmortizedPosterior
+from tests._posterior import flat_draws
 from tests.operations._laws import Kernel
 
 
@@ -35,7 +36,7 @@ def _posterior() -> _AmortizedPosterior:
 
 def _seeds(posterior: Any) -> np.ndarray:
     """The seeds of the posterior's draws, which the stand-in network makes the draws."""
-    return np.asarray(posterior.draws()["a"]).ravel()
+    return np.asarray(flat_draws(posterior)["a"]).ravel()
 
 
 def test_the_draws_follow_the_workflow_seed():

@@ -219,14 +219,12 @@ INDEPENDENT_DRAWS = 4000
 def independent_draws(posterior: Any) -> Any:
     """*posterior* when it keeps its draws, and otherwise the empirical law of independent draws of it.
 
-    An MCMC result keeps its chains, and an empirical law its atoms. Any other
+    An empirical law, an MCMC result among them, keeps its atoms. Any other
     law gives :data:`INDEPENDENT_DRAWS` draws under a seeded workflow, so that
     every summary the harness compares, and its MCSE, is read from one set of
     draws, whatever routes the law's own moments and quantiles take.
     """
-    if getattr(posterior, "num_chains", None) is not None or isinstance(
-        posterior, EmpiricalDistribution
-    ):
+    if isinstance(posterior, EmpiricalDistribution):
         return posterior
     with workflow_run(seed=0):
         draws = sample(posterior, sample_shape=(INDEPENDENT_DRAWS,))
@@ -236,19 +234,13 @@ def independent_draws(posterior: Any) -> Any:
 def chains_at(posterior: Any, path: str, shape: tuple[int, ...]) -> np.ndarray:
     """The draws of the leaf at *path*, as ``(chains, draws, *shape)``.
 
-    An MCMC result gives one row per chain, read from its draws, whose layout
-    is the target's. An empirical law gives its atoms, one row per entry of its
-    outer level when its atoms have several levels and one row otherwise. Any
-    other law is drawn from first, as :func:`independent_draws` does.
+    An empirical law gives its atoms, one row per entry of its outer level when
+    its atoms have several levels, as an MCMC result's chain and draw levels
+    are, and one row otherwise. Any other law is drawn from first, as
+    :func:`independent_draws` does.
     """
     from probpipe.distributions._factored import _raw_record
 
-    num_chains = getattr(posterior, "num_chains", None)
-    if num_chains is not None:
-        draws = posterior.draws()
-        column = _at(_raw_record(draws), path) if hasattr(draws, "element_spec") else draws
-        values = np.asarray(column, dtype=np.float64)
-        return values.reshape(num_chains, values.shape[0] // num_chains, *shape)
     posterior = independent_draws(posterior)
     atoms = posterior.atoms
     raw = atoms.values if isinstance(atoms, NumericArrayBatch) else _raw_record(atoms)
