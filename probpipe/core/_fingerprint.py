@@ -161,16 +161,7 @@ def _update(
         state.is_weak = True
         return
 
-    from ._specs import InputSpec, OutputSpec
-
-    if isinstance(obj, InputSpec):
-        h.update(b"input_spec:")
-        _update(h, dict(obj), depth + 1, max_array_bytes, state)
-    elif isinstance(obj, OutputSpec):
-        h.update(b"output_spec:")
-        _update(h, obj._component_name, depth + 1, max_array_bytes, state)
-        _update(h, obj.spec, depth + 1, max_array_bytes, state)
-    elif isinstance(obj, (_NP_ARRAY_TYPE, _JAX_ARRAY_TYPE)):
+    if isinstance(obj, (_NP_ARRAY_TYPE, _JAX_ARRAY_TYPE)):
         _update_array(h, obj, max_array_bytes, state)
     elif _is_record_batch(obj):
         _update_record_batch(h, obj, depth, max_array_bytes, state)
@@ -242,29 +233,39 @@ def _update(
         for k, v in sorted(obj.items(), key=lambda kv: str(kv[0])):
             _update(h, k, depth + 1, max_array_bytes, state)
             _update(h, v, depth + 1, max_array_bytes, state)
-    elif _is_tfp_object(obj):
-        _update_tfp_object(h, obj, depth, max_array_bytes, state)
-    elif (content := _numeric_container_to_numpy(obj)) is not None:
-        # A numeric container (xarray / pandas / a registered array backend):
-        # hash by concrete type, materialised values, AND the container's
-        # identity-bearing metadata (coords / index / dims / attrs), so the
-        # digest is a complete content identifier — two containers with equal
-        # values but different coords fingerprint differently — and is
-        # content-stable across processes rather than falling to ``repr``.
-        h.update(b"container:")
-        h.update(type(obj).__qualname__.encode())
-        h.update(b":")
-        _update_array(h, content, max_array_bytes, state)
-        from ._array_backend import _metadata_of
-
-        metadata = _metadata_of(obj)
-        if metadata is not None:
-            h.update(b":meta:")
-            _update(h, metadata, depth + 1, max_array_bytes, state)
-    elif inspect.isfunction(obj) and obj.__closure__ is None:
-        _update_plain_function(h, obj, depth, max_array_bytes, state)
     else:
-        _update_weak_identity(h, obj, state)
+        from ._specs import InputSpec, OutputSpec
+
+        if isinstance(obj, InputSpec):
+            h.update(b"input_spec:")
+            _update(h, dict(obj), depth + 1, max_array_bytes, state)
+        elif isinstance(obj, OutputSpec):
+            h.update(b"output_spec:")
+            _update(h, obj._component_name, depth + 1, max_array_bytes, state)
+            _update(h, obj.spec, depth + 1, max_array_bytes, state)
+        elif _is_tfp_object(obj):
+            _update_tfp_object(h, obj, depth, max_array_bytes, state)
+        elif (content := _numeric_container_to_numpy(obj)) is not None:
+            # A numeric container (xarray / pandas / a registered array backend):
+            # hash by concrete type, materialised values, AND the container's
+            # identity-bearing metadata (coords / index / dims / attrs), so the
+            # digest is a complete content identifier — two containers with equal
+            # values but different coords fingerprint differently — and is
+            # content-stable across processes rather than falling to ``repr``.
+            h.update(b"container:")
+            h.update(type(obj).__qualname__.encode())
+            h.update(b":")
+            _update_array(h, content, max_array_bytes, state)
+            from ._array_backend import _metadata_of
+
+            metadata = _metadata_of(obj)
+            if metadata is not None:
+                h.update(b":meta:")
+                _update(h, metadata, depth + 1, max_array_bytes, state)
+        elif inspect.isfunction(obj) and obj.__closure__ is None:
+            _update_plain_function(h, obj, depth, max_array_bytes, state)
+        else:
+            _update_weak_identity(h, obj, state)
 
 
 def _subdigest(
