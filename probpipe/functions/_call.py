@@ -10,6 +10,7 @@ annotation. A violation of the call contract raises
 
 from __future__ import annotations
 
+import html
 from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -19,6 +20,7 @@ from typing import Any, Literal, Union, get_args, get_origin
 from ..core._array_backend import _is_numeric_leaf
 from ..core._batch import Batch, BatchSpec
 from ..core._dispatch import MethodInfo
+from ..core._repr import call_repr, format_names, mapping_repr, sequence_repr
 from ..core._specs import (
     InputSpec,
     NumericArraySpec,
@@ -86,12 +88,14 @@ class ApplicabilityError(TypeError):
     """
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class CallReport:
     """What ``check`` reports about a call, without executing it (V.1).
 
     A route's report is a :class:`~probpipe.core._dispatch.MethodInfo` named
-    by the route, and by ``route/method`` for a method of a registry route.
+    by the route, and by ``route/method`` for the method a registry route
+    selects. The repr follows the repr convention (II.4), and in a notebook
+    the report displays as a table with one row per route.
 
     Attributes
     ----------
@@ -111,6 +115,11 @@ class CallReport:
         The parameters whose arguments lift or sweep.
     conversions : Mapping of str to ConversionInfo
         The planned conversion of each parameter that converts.
+    methods : Mapping of str to tuple of str
+        The methods of each registry the routes delegate to, in its selection
+        order, keyed by the names of those routes joined by ``", "``. The
+        routes' reports leave them out, so each registry's methods are listed
+        once.
     """
 
     routes: tuple[MethodInfo, ...] = ()
@@ -119,6 +128,80 @@ class CallReport:
     result: OutputSpec | None = None
     lifted: tuple[str, ...] = ()
     conversions: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
+    methods: Mapping[str, tuple[str, ...]] = field(default_factory=lambda: MappingProxyType({}))
+
+    def __repr__(self) -> str:
+        """The fields the report sets, as a call of its constructor (II.4)."""
+        keywords: list[tuple[str, str]] = []
+        if self.routes:
+            keywords.append(("routes", sequence_repr(repr(info) for info in self.routes)))
+        if self.selected is not None:
+            keywords.append(("selected", repr(self.selected)))
+        if self.deferred:
+            keywords.append(("deferred", sequence_repr(repr(item) for item in self.deferred)))
+        if self.result is not None:
+            keywords.append(("result", repr(self.result)))
+        if self.lifted:
+            keywords.append(("lifted", format_names(self.lifted)))
+        if self.conversions:
+            converted = {name: repr(info) for name, info in self.conversions.items()}
+            keywords.append(("conversions", mapping_repr(converted)))
+        if self.methods:
+            listed = {route: format_names(names) for route, names in self.methods.items()}
+            keywords.append(("methods", mapping_repr(listed)))
+        return call_repr("CallReport", keywords=keywords)
+
+    def _repr_html_(self) -> str:
+        """The report as an HTML table, for a notebook's display.
+
+        Each probed route is a row with its route, method, exactness,
+        feasibility, and reason, and the selected route's row is marked. An
+        unresolved route's reason names what it waits on, and each check left
+        to the return is a row of its own. The lifted arguments, the planned
+        conversions, the registry methods, and the result declaration follow
+        the table. Every value is escaped.
+        """
+        chosen = self.selected is not None and self.selected.feasible is True
+        rows = []
+        marked = False
+        for info in self.routes:
+            route, method = _route_and_method(info.method_name or "")
+            mark = chosen and not marked and info.feasible is True
+            marked = marked or mark
+            reason = info.description
+            if info.feasible is None:
+                reason = "pending: " + ", ".join(info.pending)
+            feasibility = _FEASIBILITY_TEXT[info.feasible]
+            cells = ("selected" if mark else "", route, method, _exact_text(info.exact))
+            rows.append(_html_row((*cells, feasibility, reason), selected=mark))
+        for check in self.deferred:
+            rows.append(_html_row(("", "", "", "", "deferred", check), selected=False))
+        header = "".join(
+            f"<th>{title}</th>" for title in ("", "route", "method", "exact", "feasible", "reason")
+        )
+        notes = []
+        if self.selected is not None and self.selected.feasible is False:
+            notes.append(("no route applies", self.selected.description))
+        if self.selected is None:
+            notes.append(("selection is undecided", "pending: " + ", ".join(self.pending)))
+        if self.lifted:
+            notes.append(("lifted", ", ".join(self.lifted)))
+        for name, info in self.conversions.items():
+            notes.append((f"conversion of {name}", repr(info)))
+        for route, names in self.methods.items():
+            notes.append((f"methods of {route}", ", ".join(names)))
+        if self.result is not None:
+            notes.append(("result", repr(self.result)))
+        listed = "".join(
+            f'<li><b>{html.escape(term)}</b>: <code style="white-space: pre">'
+            f"{html.escape(text)}</code></li>"
+            for term, text in notes
+        )
+        section = f"<ul>{listed}</ul>" if listed else ""
+        return (
+            f"<div><b>CallReport</b><table><thead><tr>{header}</tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody></table>{section}</div>"
+        )
 
     @property
     def feasible(self) -> bool | None:
@@ -155,6 +238,34 @@ class CallReport:
     def description(self) -> str:
         """The selected report's description, which names every route tried when none applies."""
         return "" if self.selected is None else self.selected.description
+
+
+#: How a report's feasibility reads in the notebook table.
+_FEASIBILITY_TEXT = {True: "feasible", False: "infeasible", None: "unresolved"}
+
+
+def _route_and_method(label: str) -> tuple[str, str]:
+    """A route report's label as its route and its method.
+
+    A registry route's label is ``route/method`` for the method it selects and
+    ``route (exact methods)`` for the methods it covers when it selects none.
+    """
+    route, _, method = label.partition("/")
+    if method:
+        return route, method
+    route, _, covered = label.partition(" (")
+    return route, covered.removesuffix(")")
+
+
+def _exact_text(exact: bool | None) -> str:
+    """An exactness as the notebook table shows it."""
+    return "" if exact is None else ("exact" if exact else "approximate")
+
+
+def _html_row(cells: tuple[str, ...], *, selected: bool) -> str:
+    """One table row of escaped *cells*, bold when it is the *selected* route's."""
+    style = ' style="font-weight: bold"' if selected else ""
+    return f"<tr{style}>" + "".join(f"<td>{html.escape(cell)}</td>" for cell in cells) + "</tr>"
 
 
 @dataclass(frozen=True)

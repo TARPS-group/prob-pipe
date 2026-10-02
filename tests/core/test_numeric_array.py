@@ -292,68 +292,62 @@ class TestNumericArrayComputesAsAnArray:
     """The full array surface, because with no fields `arr + 1` has one meaning."""
 
     @pytest.mark.parametrize(
-        "compute",
+        ("compute", "name"),
         [
-            lambda v: v + 1,
-            lambda v: 1 + v,
-            lambda v: v * v,
-            lambda v: v - 1.0,
-            lambda v: 2.0 / (v + 1),
-            lambda v: -v,
-            lambda v: abs(v),
-            lambda v: v**2,
+            (lambda v: v + 1, "v + 1"),
+            (lambda v: 1 + v, "1 + v"),
+            (lambda v: v * v, "v * v"),
+            (lambda v: v - 1.0, "v - 1.0"),
+            (lambda v: 2.0 / (v + 1), "2.0 / (v + 1)"),
+            (lambda v: -v, "-v"),
+            (lambda v: abs(v), "abs(v)"),
+            (lambda v: v**2, "v ** 2"),
         ],
     )
-    def test_arithmetic_yields_a_bare_array(self, compute):
-        """Identity is attached by operations; arithmetic is not one."""
-        result = compute(
-            NumericArray(
-                "v",
-                jnp.arange(3.0),
-            )
-        )
+    def test_arithmetic_returns_a_term_named_in_evaluation_order(self, compute, name):
+        """III.1: arithmetic returns a tracked term under an evaluation-order name."""
+        result = compute(NumericArray("v", jnp.arange(3.0)))
 
-        assert not isinstance(result, NumericArray)
-        assert isinstance(result, jax.Array)
+        assert isinstance(result, NumericArray)
+        assert result.name == name
+        assert isinstance(result.raw(), jax.Array)
 
-    def test_arithmetic_returns_the_stored_types_own_result(self):
+    def test_a_result_records_the_operator_and_its_tracked_operands(self):
+        left, right = NumericArray("a", jnp.arange(3.0)), NumericArray("b", jnp.ones(3))
+
+        result = left * right + 1
+
+        assert result.provenance.operation == "__add__"
+        (product,) = result.provenance.parents
+        assert product.name == "a * b"
+        np.testing.assert_array_equal(np.asarray(result), np.arange(3.0) + 1)
+
+    def test_a_result_declares_what_its_operands_declare(self):
+        """The shape always, and the dtype when every tracked operand declares one."""
+        inferred = NumericArray("v", jnp.arange(3.0))
+        open_dtype = NumericArray("w", jnp.arange(3.0), spec=NumericArraySpec((3,)))
+
+        assert (inferred + 1).spec == NumericArraySpec((3,), dtype=jnp.float32)
+        assert (inferred + open_dtype).spec == NumericArraySpec((3,))
+
+    def test_arithmetic_keeps_the_stored_types_own_result(self):
         """The operators forward to the value, so numpy stays numpy."""
-        result = (
-            NumericArray(
-                "v",
-                np.arange(3.0),
-            )
-            + 1
-        )
+        result = NumericArray("v", np.arange(3.0)) + 1
 
-        assert isinstance(result, np.ndarray)
-        assert not isinstance(result, jax.Array)
+        assert isinstance(result.raw(), np.ndarray)
+        assert not isinstance(result.raw(), jax.Array)
 
     def test_it_computes_the_same_values_as_the_array_it_holds(self):
         raw = jnp.arange(3.0)
 
         np.testing.assert_array_equal(
-            np.asarray(
-                NumericArray(
-                    "v",
-                    raw,
-                )
-                * 2
-                + 1
-            ),
-            np.asarray(raw * 2 + 1),
+            np.asarray(NumericArray("v", raw) * 2 + 1), np.asarray(raw * 2 + 1)
         )
 
     def test_two_numeric_arrays_combine(self):
-        pair = NumericArray(
-            "v",
-            jnp.arange(3.0),
-        ) + NumericArray(
-            "v",
-            jnp.ones(3),
-        )
+        pair = NumericArray("v", jnp.arange(3.0)) + NumericArray("v", jnp.ones(3))
 
-        assert not isinstance(pair, NumericArray)
+        assert pair.name == "v + v"
         np.testing.assert_array_equal(np.asarray(pair), np.asarray(jnp.arange(1.0, 4.0)))
 
     def test_the_reflected_operators_agree_with_the_forward_ones(self):
@@ -363,32 +357,38 @@ class TestNumericArrayComputesAsAnArray:
         computes one way and refuses the other would be a trap rather than a
         simplification.
         """
-        value = NumericArray(
-            "v",
-            jnp.arange(3.0),
-        )
+        value = NumericArray("v", jnp.arange(3.0))
 
         np.testing.assert_array_equal(np.asarray(1.0 - value), np.asarray(1.0 - jnp.arange(3.0)))
         np.testing.assert_array_equal(np.asarray(2.0 * value), np.asarray(value * 2.0))
 
-    def test_an_in_place_operator_rebinds_to_a_bare_array(self):
+    def test_an_in_place_operator_rebinds_to_a_new_term(self):
         """An in-place operator on an immutable term is the out-of-place one.
 
-        The name is rebound to the *result*, which is a bare array like any other
-        arithmetic result — the term is not mutated, and does not survive.
+        The name is rebound to the *result*, a new term, and the original term
+        is not mutated.
         """
-        value = NumericArray(
-            "kept",
-            jnp.arange(3.0),
-        )
+        value = NumericArray("kept", jnp.arange(3.0))
         original = value
 
         value += 1.0
 
-        assert not isinstance(value, NumericArray)
-        assert isinstance(original, NumericArray)
+        assert value is not original and value.name == "kept + 1.0"
         assert original.name == "kept"
         np.testing.assert_array_equal(np.asarray(value), np.arange(1.0, 4.0))
+
+    def test_arithmetic_inside_a_trace_is_bare(self):
+        """A term presents as its raw representation inside a JAX trace (II.4)."""
+        results = []
+
+        @jax.jit
+        def double(x):
+            results.append(NumericArray("v", x) * 2)
+            return results[-1]
+
+        double(jnp.arange(3.0))
+
+        assert isinstance(results[0], jax.core.Tracer)
 
     def test_comparison_is_elementwise(self):
         np.testing.assert_array_equal(
@@ -523,9 +523,10 @@ class TestNumericArrayBatchHoldsTheMultiplicity:
         assert batch.values.shape == (4, 3)
         assert batch.dtype == jnp.float32
 
-    def test_the_repr_states_the_split(self):
-        assert repr(_batch()) == (
-            "NumericArrayBatch(batch_shape=(4,), levels=('draw',), event_shape=(3,))"
+    def test_the_repr_states_the_levels_and_the_element_spec(self):
+        assert repr(_batch(name="x")) == (
+            "NumericArrayBatch('x', levels={'draw': 4}, "
+            "element_spec=NumericArraySpec(shape=(3,), dtype=float32))"
         )
 
     def test_one_level_may_span_several_axes(self):
@@ -534,6 +535,32 @@ class TestNumericArrayBatchHoldsTheMultiplicity:
 
         assert batch.level_names == ("cell",)
         assert batch.axis_groups == ((2, 4),)
+
+
+class TestNumericArrayBatchInfersItsElementSpec:
+    """With no element spec, the axes past those the levels hold are the event shape."""
+
+    def test_four_scalars_need_no_element_spec(self):
+        batch = NumericArrayBatch("draws", jnp.arange(4.0), "draw")
+
+        assert batch.batch_shape == (4,)
+        assert batch.element_spec == NumericArraySpec(shape=(), dtype=jnp.float32)
+
+    def test_the_levels_fix_where_the_event_axes_start(self):
+        batch = NumericArrayBatch("draws", jnp.zeros((2, 4, 3), dtype=jnp.int32), ("chain", "draw"))
+
+        assert batch.batch_shape == (2, 4)
+        assert batch.element_spec == NumericArraySpec(shape=(3,), dtype=jnp.int32)
+
+    def test_a_level_of_several_axes_counts_them_all(self):
+        batch = NumericArrayBatch("cells", jnp.zeros((2, 4, 3)), "cell", axes_per_level=iter([2]))
+
+        assert batch.axis_groups == ((2, 4),)
+        assert batch.element_spec.shape == (3,)
+
+    def test_an_array_with_fewer_axes_than_the_levels_is_refused(self):
+        with pytest.raises(ValueError, match="fewer axes than the 2 batch axes"):
+            NumericArrayBatch("draws", jnp.arange(4.0), ("chain", "draw"))
 
 
 class TestNumericArrayBatchSelection:

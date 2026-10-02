@@ -46,9 +46,11 @@ import numpy as np
 from ..custom_types import ArrayLike
 from ._array_backend import _metadata_of, _numpy_dtype_of, _to_numpy_array, array_backend_for
 from ._record_spec import _unify_record_spec_with_value
-from ._spec_base import _full_array_shape_or_none
-from ._specs import NumericRecordSpec, RecordSpec
+from ._repr import format_names, public_class_name, term_repr
+from ._spec_base import OpaqueSpec, _full_array_shape_or_none
+from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
 from .named_tree import _PATH_SEP, NamedTree, _check_no_path_sep, _unflatten_paths
+from .provenance import Provenance
 from .tracked import Annotated, TrackedTerm
 
 if TYPE_CHECKING:
@@ -604,6 +606,36 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         """
         return self._spec
 
+    # -- The representation -------------------------------------------------
+
+    def raw(self, path: str | tuple[str, ...] | None = None) -> Any:
+        """The stored representation: the nested mapping of raw leaves, or one node's.
+
+        A leaf is held in native form, so its raw value is the leaf itself, and a
+        tracked term held as a leaf, such as a law, gives its own ``raw()``. An
+        interior node gives the nested mapping of the raw leaves beneath it.
+
+        Parameters
+        ----------
+        path : str or tuple of str, optional
+            The path of one node, a field or a subtree. Omitted, the whole
+            record.
+
+        Returns
+        -------
+        Any
+            The raw leaf at a key, and otherwise a nested ``dict`` of raw leaves.
+
+        Raises
+        ------
+        KeyError
+            If *path* is not a path of the record.
+        """
+        node = self if path is None else self._node_at(path)
+        if isinstance(node, Record):
+            return _raw_nested(node)
+        return _raw_leaf(node)
+
     # -- Tree structure -----------------------------------------------------
     #
     # The mapping and path-navigation methods (``keys`` / ``values`` /
@@ -614,6 +646,55 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     @classmethod
     def _node_type(cls) -> type:
         return Record
+
+    # -- Field access -------------------------------------------------------
+
+    def _present(self, key: str, leaf: Any) -> Any:
+        """The view of the field at *key*, whose stored leaf is *leaf*.
+
+        Access returns views (III.5), so the leaf-keyed accessors give a field
+        as a tracked term named by its key and declared by the field's spec. An
+        array field gives a ``NumericArray``, an opaque field an ``Opaque``, and
+        a callable field a ``Function``. A stored term other than an array or an
+        opaque value, such as a law or a function, gives a copy of itself under
+        the key. The view's provenance
+        records this record and the stored term. A term presents as its raw
+        representation inside a JAX trace (II.4), so a traced field is its
+        stored leaf. A leaf that is no value of the field's declared kind, as a
+        transform leaves when it maps the leaves to ``None``, is returned as it
+        is, and :meth:`raw` returns the stored leaf.
+
+        Raises
+        ------
+        ValueError
+            If the leaf is a callable whose signature cannot be inspected, which
+            has no ``Function`` view.
+        """
+        from ._numeric_array import NumericArray
+        from ._opaque import Opaque
+
+        if isinstance(leaf, jax.core.Tracer):
+            return leaf
+        source = leaf if isinstance(leaf, TrackedTerm) else None
+        provenance = Provenance.of_view(self, source, metadata={"path": key})
+        if isinstance(leaf, TrackedTerm) and not isinstance(leaf, NumericArray | Opaque):
+            view = leaf.with_name(key) if leaf.name != key else leaf._shallow_copy()
+            object.__setattr__(view, "_provenance", None)
+            return view.with_provenance(provenance)
+        value = _leaf_value(leaf)
+        spec = self._spec[key]
+        if isinstance(spec, NumericArraySpec):
+            if _full_array_shape_or_none(value) is None:
+                return value
+            return NumericArray._view(key, value, spec, provenance)
+        if isinstance(spec, OpaqueSpec):
+            return Opaque._view(key, value, spec, provenance)
+        from ..values._function_base import Function, FunctionSpec
+
+        if isinstance(spec, FunctionSpec) and callable(value):
+            view = Function(key, value, input_spec=spec.input_spec, output_spec=spec.output_spec)
+            return view.with_provenance(provenance)
+        return value
 
     @classmethod
     def _rebuild_class(cls) -> type:
@@ -706,7 +787,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         """
         norms = [self._norm_path(p) for p in paths]
         for p in norms:
-            self.at_path(p)  # KeyError if the path does not exist
+            self._node_at(p)  # KeyError if the path does not exist
         full_drops = {p for p in norms if _PATH_SEP not in p}
         sub_drops: dict[str, list[str]] = {}
         for p in norms:
@@ -1018,15 +1099,10 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     # -- Repr ---------------------------------------------------------------
 
     def __repr__(self) -> str:
-        parts = []
-        for name, val in self._tree.items():
-            if isinstance(val, Record):
-                parts.append(f"{name}={val!r}")
-            elif hasattr(val, "shape") and val.shape != ():
-                parts.append(f"{name}=array(shape={val.shape})")
-            else:
-                parts.append(f"{name}={val!r}")
-        return f"{type(self).__name__}({', '.join(parts)})"
+        """The label, then the field paths in canonical order, read from the schema."""
+        return term_repr(
+            public_class_name(type(self)), self.name, [("fields", format_names(self.keys()))]
+        )
 
     # -- Call-forwarding shim for single-field Records ----------------------
     #
@@ -1091,7 +1167,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         if self.event_template != other.event_template:
             return False
         for name, a in self._tree.items():
-            b = other._tree[name]
+            a, b = _leaf_value(a), _leaf_value(other._tree[name])
             if isinstance(a, Record) and isinstance(b, Record):
                 if a != b:
                     return False
@@ -1128,6 +1204,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         # equal.
         parts: list[Any] = [type(self).__name__]
         for name, val in self._tree.items():
+            val = _leaf_value(val)
             if isinstance(val, Record):
                 parts.append((name, hash(val)))
                 continue
@@ -1137,6 +1214,34 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                 continue
             parts.append((name, shape, _canonical_dtype_str(val)))
         return hash(tuple(parts))
+
+
+def _raw_leaf(leaf: Any) -> Any:
+    """A stored leaf's raw value: a tracked term's ``raw()``, and any other leaf as stored."""
+    return leaf.raw() if isinstance(leaf, TrackedTerm) else leaf
+
+
+def _leaf_value(leaf: Any) -> Any:
+    """A stored leaf by its value, as equality, the hash, and the fingerprint read it.
+
+    A stored ``NumericArray``, ``Opaque``, or ``Function`` reads as its raw
+    value, so a record that stores the views of another record equals that
+    record. Any other leaf, such as a law or a nested record, reads as stored,
+    since the raw value of a law is a detached copy.
+    """
+    from ..values._function_base import Function
+    from ._numeric_array import NumericArray
+    from ._opaque import Opaque
+
+    return leaf.raw() if isinstance(leaf, NumericArray | Opaque | Function) else leaf
+
+
+def _raw_nested(record: Record) -> dict[str, Any]:
+    """*record* as the nested ``dict`` of its raw leaves, in canonical order."""
+    return {
+        name: _raw_nested(child) if isinstance(child, Record) else _raw_leaf(child)
+        for name, child in record._tree.items()
+    }
 
 
 def _pack_fields(

@@ -21,6 +21,7 @@ from ._array_backend import (
     _to_numpy_array,
 )
 from ._numeric import Numeric
+from ._repr import format_dtype, format_value, term_repr
 from ._specs import NumericArraySpec
 from .provenance import Provenance
 from .tracked import Annotated, TrackedTerm
@@ -77,10 +78,14 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
     meaning, which is what lets :class:`~probpipe.Record` stay a container.
     It implements :class:`~probpipe.Numeric`: its vector is the array raveled in
     row-major order, and its conversion hooks present the array itself rather
-    than that vector, so NumPy and JAX functions see its shape.
-    The operators forward to the stored value and return what it returns, so
-    arithmetic on a numpy-backed one yields ``numpy``, and identity stays with
-    the operations that attach it.
+    than that vector, so NumPy and JAX functions see its shape and return bare
+    arrays.
+
+    An operator returns a ``NumericArray`` holding the stored value's result,
+    named by the expression in evaluation order, such as ``draw + 1``, with its
+    tracked operands as the provenance's parents. A term presents as its raw
+    representation inside a JAX trace, so there an operator returns the bare
+    result. Indexing and iteration return the stored value's entries and rows.
 
     Examples
     --------
@@ -88,8 +93,8 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
     >>> value = NumericArray("draw", jnp.arange(3.0))
     >>> value.shape
     (3,)
-    >>> value + 1          # a bare array, not a NumericArray
-    Array([1., 2., 3.], dtype=float32)
+    >>> value + 1
+    NumericArray('draw + 1', shape=(3,), dtype=float32)
     """
 
     __slots__ = (
@@ -139,11 +144,34 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
         object.__setattr__(self, "_spec", spec)
         self._init_tracked(name, provenance=provenance)
 
+    @classmethod
+    def _view(
+        cls, name: str, value: Any, spec: NumericArraySpec, provenance: Provenance | None
+    ) -> NumericArray:
+        """The array *value* under *spec*, as a container's view of it, without validation.
+
+        The container validated the value against *spec* when it was built, and
+        under a JAX transform a shape is transform-relative, so checking it again
+        would refuse a value the container holds. A Python scalar is normalized as
+        the constructor normalizes it.
+        """
+        if isinstance(value, (int, float, complex, bool)) and not isinstance(value, np.generic):
+            value = _to_jax_array(value)
+        view = object.__new__(cls)
+        object.__setattr__(view, "_value", value)
+        object.__setattr__(view, "_spec", spec)
+        view._init_tracked(name, provenance=provenance)
+        return view
+
     # -- what it holds ------------------------------------------------------
 
     @property
     def value(self) -> Any:
         """The stored value, in the form it was given. Untracked."""
+        return self._value
+
+    def raw(self) -> Any:
+        """The stored array, in the form it was given, as :attr:`value` holds it."""
         return self._value
 
     def as_jax(self) -> Any:
@@ -260,8 +288,26 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
     def __len__(self) -> int:
         return len(self._value)
 
+    def __str__(self) -> str:
+        """The stored value's string, as ``print`` and an f-string show the array."""
+        return str(self._value)
+
+    def __format__(self, format_spec: str) -> str:
+        """The stored value formatted by *format_spec*, as ``f"{x:.2f}"`` formats a scalar."""
+        return format(self._value, format_spec)
+
     def __repr__(self) -> str:
-        return f"NumericArray({self.name!r}, {self._value!r})"
+        """The label, then the declared shape and dtype, and the support when one is declared.
+
+        A declaration with an open dtype shows the stored value's dtype. The repr
+        reads the spec and the value's metadata alone.
+        """
+        spec = self._spec
+        dtype = spec.dtype if spec.dtype is not None else self.dtype
+        fields = [("shape", repr(tuple(spec.shape))), ("dtype", format_dtype(dtype))]
+        if spec.support is not None:
+            fields.append(("support", repr(spec.support)))
+        return term_repr("NumericArray", self.name, fields)
 
     # -- the array surface --------------------------------------------------
 
@@ -300,47 +346,109 @@ def _unwrap(other: Any) -> Any:
     return other._value if isinstance(other, NumericArray) else other
 
 
+#: The symbol each binary operator writes in the name its result derives.
+_BINARY_SYMBOLS = {
+    "add": "+", "sub": "-", "mul": "*", "matmul": "@", "truediv": "/", "floordiv": "//",
+    "mod": "%", "pow": "**", "lshift": "<<", "rshift": ">>", "and": "&", "xor": "^", "or": "|",
+    "lt": "<", "le": "<=", "eq": "==", "ne": "!=", "gt": ">", "ge": ">=",
+}  # fmt: skip
+
+#: The form each unary operator gives the name its result derives.
+_UNARY_FORMS = {"neg": "-{}", "pos": "+{}", "abs": "abs({})", "invert": "~{}"}
+
+
+def _operand_label(operand: Any) -> str:
+    """How *operand* reads in a derived name: its label, or its value when it is untracked.
+
+    A label that is itself an expression, which contains a space, is
+    parenthesized, so the name states the order of evaluation.
+    """
+    if isinstance(operand, NumericArray):
+        return f"({operand.name})" if " " in operand.name else operand.name
+    return format_value(operand)
+
+
+def _tracked_result(value: Any, name: str, operator_name: str, operands: tuple[Any, ...]) -> Any:
+    """The operator's *value* as a ``NumericArray`` named *name*, its tracked *operands* its parents.
+
+    The result declares its value's shape, and its value's dtype when every
+    tracked operand declares a dtype, so it declares as much as its operands
+    do. A traced value is returned bare, since a term presents as its raw
+    representation inside a JAX trace (II.4), and a value that is not numeric,
+    ``NotImplemented`` among them, is returned as it is.
+    """
+    if isinstance(value, jax.core.Tracer) or not _is_numeric_leaf(value):
+        return value
+    parents = [operand for operand in operands if isinstance(operand, TrackedTerm)]
+    declared = all(
+        operand.spec.dtype is not None for operand in parents if isinstance(operand, NumericArray)
+    )
+    dtype = _numpy_dtype_of(value) if declared else None
+    return NumericArray(
+        name,
+        value,
+        spec=NumericArraySpec(_event_shape_of(value), dtype),
+        provenance=Provenance.create(operator_name, parents=parents),
+    )
+
+
 def _install_array_operators() -> None:
-    """Forward the array operators to the held array, returning what it returns.
+    """Install the array operators, each applying the stored value's operator and tracking its result.
 
     Installed from a table so the forty of them stay one rule. An in-place
-    operator on an immutable term is the out-of-place one.
+    operator on an immutable term is the out-of-place one. ``divmod`` returns
+    the stored value's pair, since a pair is no numeric array.
     """
-    binary = [
-        "add", "sub", "mul", "matmul", "truediv", "floordiv", "mod", "divmod",
-        "pow", "lshift", "rshift", "and", "xor", "or",
-    ]  # fmt: skip
-    comparison = ["lt", "le", "eq", "ne", "gt", "ge"]
-    unary = ["neg", "pos", "abs", "invert"]
 
     def _binary(name: str):
+        symbol = _BINARY_SYMBOLS.get(name)
+
         def method(self: NumericArray, other: Any) -> Any:
-            return getattr(self._value, f"__{name}__")(_unwrap(other))
+            value = getattr(self._value, f"__{name}__")(_unwrap(other))
+            if symbol is None:
+                return value
+            label = f"{_operand_label(self)} {symbol} {_operand_label(other)}"
+            return _tracked_result(value, label, f"__{name}__", (self, other))
 
         method.__name__ = f"__{name}__"
         return method
 
     def _reflected(name: str):
+        symbol = _BINARY_SYMBOLS.get(name)
+
         def method(self: NumericArray, other: Any) -> Any:
-            return getattr(self._value, f"__r{name}__")(_unwrap(other))
+            value = getattr(self._value, f"__r{name}__")(_unwrap(other))
+            if symbol is None:
+                return value
+            label = f"{_operand_label(other)} {symbol} {_operand_label(self)}"
+            return _tracked_result(value, label, f"__r{name}__", (other, self))
 
         method.__name__ = f"__r{name}__"
         return method
 
     def _unary(name: str):
+        form = _UNARY_FORMS[name]
+
         def method(self: NumericArray) -> Any:
-            return getattr(self._value, f"__{name}__")()
+            value = getattr(self._value, f"__{name}__")()
+            # A call form brackets its operand already.
+            operand = self.name if form.endswith("({})") else _operand_label(self)
+            return _tracked_result(value, form.format(operand), f"__{name}__", (self,))
 
         method.__name__ = f"__{name}__"
         return method
 
+    binary = [
+        "add", "sub", "mul", "matmul", "truediv", "floordiv", "mod", "divmod",
+        "pow", "lshift", "rshift", "and", "xor", "or",
+    ]  # fmt: skip
     for op in binary:
         setattr(NumericArray, f"__{op}__", _binary(op))
         setattr(NumericArray, f"__r{op}__", _reflected(op))
         setattr(NumericArray, f"__i{op}__", _binary(op))
-    for op in comparison:
+    for op in ("lt", "le", "eq", "ne", "gt", "ge"):
         setattr(NumericArray, f"__{op}__", _binary(op))
-    for op in unary:
+    for op in _UNARY_FORMS:
         setattr(NumericArray, f"__{op}__", _unary(op))
 
 

@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Self
 
 from ..core._record_spec import RecordSpec
+from ..core._repr import format_names, public_class_name, term_repr
 from ..core._spec_base import NumericSpec, TermSpec, _unify_specs
 from ..core._specs import InputSpec, OutputSpec
 from ..core.provenance import Provenance
@@ -27,6 +28,8 @@ from ._distribution import (
     _check_marker_claims,
     _complete_event_spec,
     _compose_operands,
+    _detached_term,
+    _is_default_declaration,
     _unify_declarations,
 )
 
@@ -315,6 +318,14 @@ class ConditionalDistributionSpec(TermSpec):
         self._unify_with(actual.given_spec, actual.event_spec, bindings, path)
         return True
 
+    def __repr__(self) -> str:
+        """The given slots and the event declaration, as the constructor takes them."""
+        return term_repr(
+            "ConditionalDistributionSpec",
+            None,
+            [("given_spec", repr(self.given_spec)), ("event_spec", repr(self.event_spec))],
+        )
+
     def is_valid(self, value: Any) -> bool:
         """Whether *value* is a ``ConditionalDistribution`` whose declarations match these."""
         if not isinstance(value, ConditionalDistribution):
@@ -441,6 +452,17 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
                 _complete_given_spec(given_spec), _complete_event_spec(event_spec, self._name)
             ),
         )
+
+    # -- the representation -------------------------------------------------
+
+    def raw(self) -> ConditionalDistribution:
+        """This kernel detached from the workflow, under its name and declarations.
+
+        A kernel is represented by itself, so its raw form is a copy that shares
+        its representation and carries no provenance, no annotations, and no
+        reference to a batch it was an element of.
+        """
+        return _detached_term(self)
 
     # -- the declarations ---------------------------------------------------
 
@@ -638,7 +660,31 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         return _compose_operands(self, other)
 
     def __repr__(self) -> str:
-        return f"{type(self).__name__}(name={self.name!r})"
+        """The public class, the label, the family parameters, the given slots, and the declaration.
+
+        The event declaration is shown when it differs from the default for the
+        kernel's label, as for a law.
+        """
+        fields = [
+            *self._repr_arguments(),
+            ("given", format_names(self.given_spec)),
+            *self._event_repr_arguments(),
+        ]
+        return term_repr(self._repr_class_name(), self.name, fields)
+
+    def _repr_class_name(self) -> str:
+        """The first public class in this kernel's method-resolution order, which the repr names."""
+        return public_class_name(type(self))
+
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The family parameters the repr shows, each by name and formatted value; none here."""
+        return []
+
+    def _event_repr_arguments(self) -> list[tuple[str, str]]:
+        """The event declaration, unless it is the default for this kernel's label."""
+        if _is_default_declaration(self.event_spec, self.name):
+            return []
+        return [("event_spec", repr(self.event_spec))]
 
 
 # ---------------------------------------------------------------------------

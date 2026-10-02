@@ -381,6 +381,9 @@ class TestElements:
             def __init__(self, name):
                 self._init_tracked(name)
 
+            def raw(self):
+                return self
+
             def __call__(self):
                 return self._name
 
@@ -588,6 +591,17 @@ class TestProvenance:
 
         assert produced[0:2].provenance is produced.provenance
 
+    def test_an_element_records_the_batch_and_the_stored_term(self, full_provenance_mode):
+        """Its parents are identity descriptors, so a read hashes no content."""
+        element = Record("r", x=1.0)
+        batch = OpaqueBatch("recs", [element, Record("r2", x=2.0)], "site")
+
+        parents = batch[0].provenance.parents
+
+        assert [parent.parent for parent in parents] == [batch, element]
+        assert all(parent.fingerprint_is_weak for parent in parents)
+        assert batch[0].provenance.metadata == {"position": [0]}
+
     def test_reading_an_element_leaves_the_caller_object_untouched(self, full_provenance_mode):
         """These batches store what they were given, so a read writes to nothing."""
         element = Record("r", x=1.0)
@@ -644,9 +658,9 @@ class TestTheseAreBatches:
             for cls in (FunctionBatch, OpaqueBatch)
             for ancestor in cls.__mro__[: cls.__mro__.index(Batch)]
             for name in vars(ancestor)
-            if not name.startswith("_")
+            if not name.startswith("_") and not hasattr(Batch, name)
         }
-        assert added == {"element_spec"}
+        assert added == set()
 
     def test_repr_reads_the_levels_and_no_elements(self):
         """Load-bearing: `with_provenance` interpolates the batch into its own error."""
@@ -663,4 +677,6 @@ class TestTheseAreBatches:
             "site",
         )
 
-        assert repr(batch) == "OpaqueBatch(name='s', site=2)"
+        text = repr(batch)
+        assert text.startswith("OpaqueBatch(") and "levels={'site': 2}" in text
+        assert "element_spec=OpaqueSpec(" in text and "<locals>._Unreadable" in text

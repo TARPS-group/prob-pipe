@@ -1087,6 +1087,7 @@ class TestKDEDistribution:
     def test_repr(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (50,))
         kde = KDEDistribution("test_kde", samples)
-        r = repr(kde)
-        assert "KDEDistribution" in r
-        assert "num_atoms=50" in r
+        assert repr(kde) == (
+            "KDEDistribution('test_kde', atoms=array(shape=(50,), dtype=float32), "
+            "kernel=GaussianKernel)"
+        )

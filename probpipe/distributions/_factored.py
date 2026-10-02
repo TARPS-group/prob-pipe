@@ -23,6 +23,7 @@ from ..core._dispatch import Feasibility, ResolutionError
 from ..core._object_batch import _is_object_array
 from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
+from ..core._repr import sequence_repr
 from ..core._spec_base import (
     NumericArraySpec,
     NumericSpec,
@@ -785,6 +786,18 @@ class _SoleField(Distribution):
         object.__setattr__(self, "_law", law)
         object.__setattr__(self, "_component", component)
 
+    def _repr_class_name(self) -> str:
+        """The class of the record law, which this law presents as a whole term."""
+        return self._law._repr_class_name()
+
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The family parameters of the record law."""
+        return self._law._repr_arguments()
+
+    def _event_repr_arguments(self) -> list[tuple[str, str]]:
+        """The whole-term declaration, by which this law differs from the record law."""
+        return [("event_spec", repr(self.event_spec))]
+
 
 def _requested_paths(joint: Any, path: str | tuple[str, ...]) -> tuple[str, ...]:
     """The event paths of *joint* that *path* requests: one path, or a selection of several.
@@ -1497,6 +1510,10 @@ class FactoredDistribution(Distribution, SupportsFactors):
         """The factors, in conditional-first order."""
         return self._graph.factors
 
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The factors, in conditional-first order."""
+        return [("factors", sequence_repr(repr(factor) for factor in self.factors))]
+
     def with_dim_sizes(self, **sizes: int) -> Self:
         """Bind named symbolic dimensions in every factor that declares them.
 
@@ -1588,6 +1605,10 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
     def factors(self) -> tuple[Factor, ...]:
         """The factors, in conditional-first order."""
         return self._graph.factors
+
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The factors, in conditional-first order."""
+        return [("factors", sequence_repr(repr(factor) for factor in self.factors))]
 
     def with_dim_sizes(self, **sizes: int) -> Self:
         """Bind named symbolic dimensions in every factor that declares them.

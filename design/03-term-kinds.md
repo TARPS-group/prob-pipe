@@ -28,7 +28,7 @@ class NumericArraySpec(NumericSpec):  # the numeric-array kind's spec, a Numeric
     support: Constraint            # the support (II.3)
 ```
 
-It carries the full set of array operators, for example arithmetic and comparison, and the coordinate protocols. Its arithmetic returns tracked terms under a deterministically derived, evaluation-order name, with identity attached as for any operation (II.4).
+It carries the full set of array operators, for example arithmetic and comparison, and the coordinate protocols. An operator returns a tracked term under a deterministically derived, evaluation-order name, such as `x + 1` or `(x + y) * x`, with identity attached as for any operation (II.4). The result declares its value's shape, and its value's dtype when every tracked operand declares a dtype. Indexing and iteration return bare arrays.
 
 `NumericArray` implements the `Numeric` interface of II.3. Its vector is the array raveled in row-major order, and its coordinate protocols present the array itself, so NumPy and JAX functions see its shape:
 
@@ -59,7 +59,7 @@ class OpaqueSpec(TermSpec):        # the fallback spec; is_valid accepts a value
     meta: Hashable = None          # free-form metadata, never checked or inferred
 ```
 
-**`type` and `meta`.** `type` is the Python type of the values the spec admits, and `is_valid` checks `isinstance(value, type)`. `None` admits every value that is not a mapping, since a mapping is a subtree (III.5). Construction from a value infers the type: an `Opaque` built from a string and a string leaf of a record built from values both have `OpaqueSpec(type=str)`. An `OpaqueBatch` infers the type its elements share exactly, and `None` when they differ. `meta` is free-form hashable metadata, such as units or a tag. It is part of the spec's equality and hash, and it is never checked against a value or inferred. Two opaque specs unify when their `meta` are equal and their types are equal or one of them is `None`, and the unification takes the known type. Completion keeps the declared type and checks the produced value (II.2). A repr prints an opaque spec in full, as `OpaqueSpec()` or `OpaqueSpec(type=str)`.
+**`type` and `meta`.** `type` is the Python type of the values the spec admits, and `is_valid` checks `isinstance(value, type)`. `None` admits every value that is not a mapping, since a mapping is a subtree (III.5). Construction from a value infers the type: an `Opaque` built from a string and a string leaf of a record built from values both have `OpaqueSpec(type=str)`. An `OpaqueBatch` infers the type its elements share exactly, and `None` when they differ. `meta` is free-form hashable metadata, such as units or a tag. It is part of the spec's equality and hash, and it is never checked against a value or inferred. Two opaque specs unify when their types are equal or one of them is `None` and their `meta` are equal or one of them is `None`, and the unification takes the known type and the set `meta`, so a declared `meta` unifies with the spec a value infers, which carries none. Completion keeps the declared type and checks the produced value (II.2).
 
 `OpaqueBatch` is its batch form. It **stores** each element outright. Its `raw()` is an object array of the stored raw values.
 
@@ -191,7 +191,14 @@ A `LinOp` claims `SupportsInverse` and `SupportsLogDetJacobian` (III.3) with a g
 
 **The operator algebra.** `A @ B`, `A + B`, `c * A`, and `A.T` return lazy composite operators that defer to their parts: `ProductLinOp`, `SumLinOp`, `ScaledLinOp`, and a transpose view. The algebra checks and propagates the schemas: `A @ B` requires `B`'s output schema to equal `A`'s input schema and declares `B`'s input schema and `A`'s output schema as its own sides, `A + B` requires both pairs to match, and `A.T` exchanges the term specs of the two sides: its one input slot accepts the original output's packaging, and its output is the original input, offered whole under that slot's name. Each side keeps its own declaration type, since an `InputSpec` and an `OutputSpec` are different contracts (II.2). Composite operators are tracked terms like any other, with names derived from their operands.
 
-**Structured subclasses.** `DenseLinOp`, `DiagonalLinOp`, `TriangularLinOp`, `CholeskyLinOp`, `RootLinOp`, and `DiagonalRootLinOp` each override the queries their structure accelerates, such as a triangular solve or a diagonal log-determinant. A constructor from arrays derives the output declaration from the matrix shape as a whole term whose component defaults to the operator's `output_name`, and accepts an `output_spec` that names the component otherwise or fills a type hole; a consumer that knows the event declaration, such as covariance construction (VII.6), passes it. Each also fixes the kind's `raw()` (II.4) as its stored parameterization, for example the matrix for `DenseLinOp` or the diagonal for `DiagonalLinOp`; a composite's `raw()` is its operand tuple, since laziness is its representation.
+**Structured subclasses.** `DenseLinOp`, `DiagonalLinOp`, `TriangularLinOp`, `CholeskyLinOp`, `RootLinOp`, and `DiagonalRootLinOp` each override the queries their structure accelerates, such as a triangular solve or a diagonal log-determinant. A constructor from arrays derives the output declaration from the matrix shape as a whole term whose component defaults to the operator's `output_name`, and accepts an `output_spec` that names the component otherwise or fills a type hole; a consumer that knows the event declaration, such as covariance construction (VII.6), passes it. Each also fixes the kind's `raw()` (II.4) as its stored parameterization:
+- `DenseLinOp`: the matrix;
+- `DiagonalLinOp`: the diagonal;
+- `TriangularLinOp`: the triangular matrix, whose flags name the triangle;
+- `CholeskyLinOp`: the triangular factor;
+- `RootLinOp` and `DiagonalRootLinOp`: the root operator `S` of `A = S Sᵀ`.
+
+A composite's `raw()` is its operand tuple in its constructor's order, such as `(A, B)` for `A @ B` and `(A, c)` for `c * A`, since laziness is its representation.
 
 **The batch form.** `LinOpBatch` is the element batch over operators, a thin `Batch[LinOp]` whose elements share both schemas. It is what a batched `cov` returns. Application is elementwise: a single operator maps over a batch's elements, and a `LinOpBatch` zips with a broadcast-compatible batch of numeric values, element by element in both cases. The queries lift the same way, elementwise to batched results.
 
@@ -254,7 +261,7 @@ Since the structure of `Record` matches that of its schema, the following invari
 
 Construction binds the schema, so a `Record` always carries the concrete, bound form, and the data and its schema agree.
 
-Two records are equal when they share a class, a `RecordSpec`, and field-by-field equal data. Because the schema is carried, an identity transform that threads it through compares equal to its input. A transform that instead rebuilds the schema by inference matches only when that inference recovers the original, for instance when the original schema was itself produced by `infer_from`.
+Two records are equal when they share a class, a `RecordSpec`, and field-by-field equal data. A stored array, opaque value, or function counts by its raw value, so a record built from the views of another record equals it. Because the schema is carried, an identity transform that threads it through compares equal to its input. A transform that instead rebuilds the schema by inference matches only when that inference recovers the original, for instance when the original schema was itself produced by `infer_from`.
 
 ```python
 class Record(NamedTree[Any], TrackedTerm):
@@ -271,8 +278,8 @@ class Record(NamedTree[Any], TrackedTerm):
     def spec(self) -> RecordSpec: ...
     def to_numeric(self) -> NumericRecord: ...  # requires every leaf to be numeric
     def raw(self, path: str | tuple[str, ...] | None = None) -> Any: ...
-    # the stored representation: a field's raw value at path, or the whole
-    # record as the nested mapping of raw leaves
+    # the whole record as the nested mapping of raw leaves, or one node's at path:
+    # a field's raw value, or a subtree's nested mapping
 
     @classmethod
     def from_field_values(cls, name: str, spec: RecordSpec, values: Sequence[Any]) -> Record: ...
@@ -286,7 +293,13 @@ class Record(NamedTree[Any], TrackedTerm):
 
 `select` resolves each argument with `at_path`, so a key selects a leaf and a partial path a subtree view, and returns a plain `dict` of tracked values carrying no schema; its purpose is `**`-splatting a value's parts into a `Function` call, with `select_all` the whole-record form over the top-level children.
 
-**Storage and access are separate contracts.** Storage retains the representation and the source: leaves are held in native form, so a supplied `NumericArray`'s array is stored as that array, and a supplied term's identity is held as a reference or a descriptor per the provenance mode (II.4). Access returns views: `record[key]` returns a view (II.4) of the field's kind, and `record.at_path(path)` at an interior path returns a sub-`Record` view (II.6). `record.raw(path)` returns the stored representation, and `record.raw()` the whole record's nested mapping of raw leaves — the record kind's raw host.
+**Storage and access are separate contracts.** Storage retains the representation and the source: leaves are held in native form, so a supplied `NumericArray`'s array is stored as that array, and a supplied term's identity is held as a reference or a descriptor per the provenance mode (II.4). Access returns views. `record[key]`, `values()`, and `items()` give each field as a view (II.4) of the field's kind, named by its key:
+1. an array field as a `NumericArray`;
+2. an opaque field as an `Opaque`;
+3. a callable field as a `Function`;
+4. a stored term of another kind, such as a law, as a copy of that term.
+
+`record.at_path(path)` gives the field's view at a key and a sub-`Record` view at an interior path (II.6). `record.raw(path)` returns the stored representation, and `record.raw()` the whole record's nested mapping of raw leaves — the record kind's raw host.
 
 When every leaf is numeric, a `Record` is a `NumericRecord`. Leaves are stored in native form, for example a bare array or an `xarray` container, and convert to `jax.Array` only at the compute boundary, which is the pytree flatten that `grad`, `vmap`, and `jit` traverse and `to_vector`; each leaf converts at most once. A `Record` is promoted exactly as its schema is (above): when every leaf is numeric and no explicit non-numeric schema vetoes it, re-derived by every transform. Flat vectorization reads its layout from the schema: `leaf_shapes`, `vector_size`, and the canonical order. Flattening is numeric-only, which is why `NamedTree` itself has no `flatten`.
 
@@ -546,7 +559,7 @@ Making each operation a *capability* rather than a base-class method follows `D3
 
 A `ConditionalDistribution` is a *probability kernel* `K : S → P(T)` — a family of distributions p(· | s) indexed by a *conditioning value* `s : S`. Supply a value for what it conditions on and it yields an ordinary `Distribution` over what it produces. A `Distribution` is the empty-given case, a kernel with nothing to condition on, so its marginal law exists and the unconditional operations apply; a kernel with a non-empty given has none. The two are distinct tracked types, siblings under `TrackedTerm`. A `ConditionalDistribution` and its spec always carry a non-empty `given_spec`, since binding the last given field returns a `Distribution` directly; the empty-given case is `DistributionSpec`'s.
 
-A `ConditionalDistribution` carries a `given_spec`, which is the `InputSpec` of independently bindable slots it conditions on (II.2), and an `event_spec`, which is the output declaration of one produced draw and is read as for a `Distribution` (III.7); both are views on its stored `ConditionalDistributionSpec`. Unlike a function's domain and codomain, a kernel's given and event are distinct *roles*, the value conditioned on and the law produced, so their given-slot and produced-component names stay disjoint even when the two spaces coincide. A Markov kernel with `S = T` uses names like `state → next_state` rather than `state → state`, for the same reason we write `K(x, dy)` rather than `K(x, dx)`. Symbolic dimensions are scoped over the two sides jointly, so a name shared between given and event fields is one dimension, bound by `with_dim_sizes` or, in the fused conditional calls, from the given value at call time. `with_path_names` renames or moves names across both sides, returning the same kernel: the event side behaves exactly as a `Distribution`'s, and on the given side a path-valued target may split or group slots, since a kernel carries no signature to fix its top level. The slots that a split makes bind independently: after `{"theta/a": "a"}` splits `theta`, binding `a` alone curries the kernel, and the original kernel is evaluated once the rest of `theta` is bound. A `Function`'s input slots are fixed by its signature instead (III.3), so restructuring across its top level makes a new signature, obtained by wrapping the callable in one that takes the parameters wanted.
+A `ConditionalDistribution` carries a `given_spec`, which is the `InputSpec` of independently bindable slots it conditions on (II.2), and an `event_spec`, which is the output declaration of one produced draw and is read as for a `Distribution` (III.7); both are views on its stored `ConditionalDistributionSpec`. Its `raw()` is the kernel detached (II.4), as a law's is. Unlike a function's domain and codomain, a kernel's given and event are distinct *roles*, the value conditioned on and the law produced, so their given-slot and produced-component names stay disjoint even when the two spaces coincide. A Markov kernel with `S = T` uses names like `state → next_state` rather than `state → state`, for the same reason we write `K(x, dy)` rather than `K(x, dx)`. Symbolic dimensions are scoped over the two sides jointly, so a name shared between given and event fields is one dimension, bound by `with_dim_sizes` or, in the fused conditional calls, from the given value at call time. `with_path_names` renames or moves names across both sides, returning the same kernel: the event side behaves exactly as a `Distribution`'s, and on the given side a path-valued target may split or group slots, since a kernel carries no signature to fix its top level. The slots that a split makes bind independently: after `{"theta/a": "a"}` splits `theta`, binding `a` alone curries the kernel, and the original kernel is evaluated once the rest of `theta` is bound. A `Function`'s input slots are fixed by its signature instead (III.3), so restructuring across its top level makes a new signature, obtained by wrapping the callable in one that takes the parameters wanted.
 
 `condition_on(K, s)` binds the given fields and evaluates the kernel to a `Distribution`. The evaluation is exact unless the kernel claims `SupportsApproximateConditioning`, as an amortized posterior does, whose evaluation stands in for the posterior it was trained to approximate (VII.7), and `condition_on` normalizes a result that is unnormalized (VI.6). `sample(K, given=s)`, `log_prob(K, y, given=s)`, and `mean(K, given=s)` are the **fused conditional calls**, with the invariant `op(K, given=s) == op(condition_on(K, s))`: the same law for exact realizations, and equal in law for their random draws. Equality draw for draw needs, beyond a shared workflow scope, the same sampling realization, random-event identity, and key derivation (V.8). A fused call served by an approximate route records the route and its assumptions in place of that invariant. Binding a subset of the given slots *curries* to a smaller `ConditionalDistribution` (VI.6).
 
@@ -608,7 +621,7 @@ Applying a `ConditionalDistribution` to a conditioning value returns a `Distribu
 
 ### Contract
 
-A `DistributionBatch` is a `Batch` of `Distribution`s: `N` separate distributions sharing one event declaration, indexed along a batch axis. A `ConditionalDistributionBatch` is the same construction over `ConditionalDistribution`s: `N` separate conditional distributions sharing one `given_spec` and one event declaration. The shared event declaration is the elements' `event_spec`, so a batch of random measures declares term-valued draws exactly as its elements do. They are the native batch forms of `DistributionSpec`- and `ConditionalDistributionSpec`-valued draws.
+A `DistributionBatch` is a `Batch` of `Distribution`s: `N` separate distributions sharing one event declaration, indexed along a batch axis. A `ConditionalDistributionBatch` is the same construction over `ConditionalDistribution`s: `N` separate conditional distributions sharing one `given_spec` and one event declaration. The shared event declaration is the elements' `event_spec`, so a batch of random measures declares term-valued draws exactly as its elements do. They are the native batch forms of `DistributionSpec`- and `ConditionalDistributionSpec`-valued draws. Each stores its elements as `OpaqueBatch` does (III.2), so its `raw()` is the object array of the stored laws or kernels.
 
 ```python
 class DistributionBatch(Batch[Distribution]):

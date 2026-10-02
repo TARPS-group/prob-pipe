@@ -13,6 +13,7 @@ import numpy as np
 import numpy.typing as npt
 
 from ._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
+from ._repr import format_dtype, public_class_name, term_repr
 from .constraints import Constraint
 from .named_tree import NamedTree
 
@@ -386,6 +387,15 @@ class NumericArraySpec(NumericSpec):
     def __hash__(self) -> int:
         return hash((self.shape, self.dtype, self.support))
 
+    def __repr__(self) -> str:
+        """The shape, then the dtype and the support where they are set."""
+        fields = [("shape", repr(self.shape))]
+        if self.dtype is not None:
+            fields.append(("dtype", format_dtype(self.dtype)))
+        if self.support is not None:
+            fields.append(("support", repr(self.support)))
+        return term_repr(public_class_name(type(self)), None, fields)
+
     def is_valid(self, value: Any) -> bool:
         """Whether *value* is a numeric array (or scalar) matching this spec.
 
@@ -529,7 +539,9 @@ class OpaqueSpec(TermSpec):
         from a value infers it.
     meta : Hashable
         Free-form metadata, such as units or a tag. It is part of the spec's
-        equality and hash, and it is never checked against a value or inferred.
+        equality and hash, and it is never checked against a value or inferred,
+        so ``None`` unifies with a set ``meta``, as an open ``type`` does with a
+        set one.
 
     Raises
     ------
@@ -567,7 +579,7 @@ class OpaqueSpec(TermSpec):
         return self.type is None or isinstance(_opaque_value(value), self.type)
 
     def _bind_dims_from_spec(self, actual: TermSpec, bindings: dict[str, int], path: str) -> bool:
-        """Check another opaque spec: equal ``meta``, and types equal or one of them ``None``.
+        """Check another opaque spec: types and ``meta`` each equal or one of them ``None``.
 
         Raises
         ------
@@ -576,23 +588,36 @@ class OpaqueSpec(TermSpec):
         """
         if not isinstance(actual, OpaqueSpec):
             return False
-        known = self.type is None or actual.type is None or self.type is actual.type
-        if not known or self.meta != actual.meta:
+        if not _agree(self.type, actual.type) or not _agree(self.meta, actual.meta):
             raise ValueError(f"{path} spec {actual!r} does not conform to {self!r}")
         return True
 
     def __repr__(self) -> str:
-        parts = []
+        """The type and the metadata where they are set, so an open spec reads ``OpaqueSpec()``."""
+        return term_repr(public_class_name(type(self)), None, self._repr_arguments())
+
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The type and the metadata where they are set, formatted for a repr."""
+        fields = []
         if self.type is not None:
-            parts.append(f"type={self.type.__qualname__}")
+            fields.append(("type", self.type.__qualname__))
         if self.meta is not None:
-            parts.append(f"meta={self.meta!r}")
-        return f"OpaqueSpec({', '.join(parts)})"
+            fields.append(("meta", repr(self.meta)))
+        return fields
+
+
+def _agree(first: Any, second: Any) -> bool:
+    """Whether two opaque attributes unify: equal, or one of them ``None``."""
+    return first is None or second is None or first == second
 
 
 def _known_type(first: OpaqueSpec, second: OpaqueSpec) -> OpaqueSpec:
-    """The unification of two opaque specs that unify, which takes the known type."""
-    return first if first.type is not None else second
+    """The unification of two opaque specs that unify, which takes the known type and ``meta``."""
+    unified = OpaqueSpec(
+        type=first.type if first.type is not None else second.type,
+        meta=first.meta if first.meta is not None else second.meta,
+    )
+    return first if unified == first else second if unified == second else unified
 
 
 def _opaque_value(value: Any) -> Any:

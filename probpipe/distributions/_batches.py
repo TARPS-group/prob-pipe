@@ -18,7 +18,7 @@ from ..core._object_batch import _as_object_array, _ObjectBatch
 from ..core._specs import InputSpec, OutputSpec
 from ..core.provenance import Provenance
 from ._conditional import ConditionalDistribution, ConditionalDistributionSpec
-from ._distribution import Distribution, DistributionSpec
+from ._distribution import _ELEMENT_SOURCE, Distribution, DistributionSpec
 
 __all__ = ["ConditionalDistributionBatch", "DistributionBatch"]
 
@@ -141,13 +141,13 @@ class DistributionBatch(_ObjectBatch[Distribution]):
         law, draw together (V.5).
         """
         view = super()._element_at(index, name=name)
-        object.__setattr__(view, "_element_source", self._store[index])
+        object.__setattr__(view, _ELEMENT_SOURCE, self._store[index])
         return view
 
 
 def _element_source(law: Distribution) -> Distribution | None:
     """The stored law *law* is a batch element of, or None when no batch presented it."""
-    return getattr(law, "_element_source", None)
+    return getattr(law, _ELEMENT_SOURCE, None)
 
 
 class ConditionalDistributionBatch(_ObjectBatch[ConditionalDistribution]):

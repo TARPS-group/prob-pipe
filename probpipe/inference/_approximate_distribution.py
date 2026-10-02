@@ -476,14 +476,13 @@ class ApproximateDistribution(EmpiricalDistribution):
             return _reconstruct_from_vector(self.name, record, samples)
         return samples
 
-    def __repr__(self) -> str:
-        return (
-            f"ApproximateDistribution("
-            f"algorithm={self.algorithm!r}, "
-            f"num_chains={self.num_chains}, "
-            f"num_draws={self.num_draws}, "
-            f"components={list(self.event_spec.components)})"
-        )
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The algorithm that produced the draws, and the number of chains and of draws per chain."""
+        return [
+            ("algorithm", repr(self.algorithm)),
+            ("num_chains", repr(self.num_chains)),
+            ("num_draws", repr(self.num_draws)),
+        ]
 
 
 # ---------------------------------------------------------------------------

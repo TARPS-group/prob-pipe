@@ -27,6 +27,7 @@ import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ..core._dispatch import ResolutionError
+from ..core._repr import format_value
 from ..core._spec_base import _unify_specs
 from ..core._specs import InputSpec, NumericArraySpec, OutputSpec
 from ..core.constraints import Constraint, boolean, non_negative_integer, positive, real
@@ -128,9 +129,6 @@ class _Link(Function, SupportsInverse):
         if _CANONICAL_LINKS.get(self.name) is self:
             return (_canonical_link, (self.name,))
         return super().__reduce__()
-
-    def __repr__(self) -> str:
-        return f"link({self.name!r})"
 
 
 def _identity(mean: Array) -> Array:
@@ -698,11 +696,10 @@ class _GLMLikelihood(
         """The covariance of the response vector at a value of every given slot."""
         return self._law(self._complete_values(given))._cov()
 
-    def __repr__(self) -> str:
-        return (
-            f"glm_likelihood(name={self.name!r}, family={type(self._family).__name__}, "
-            f"link={self._link.name!r})"
-        )
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The family, the link, and each slot whose value is fixed."""
+        fixed = [(slot, format_value(value)) for slot, value in self._fixed.items()]
+        return [("family", repr(self._family)), ("link", repr(self._link)), *fixed]
 
 
 def glm_likelihood(

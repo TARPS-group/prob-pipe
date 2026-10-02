@@ -20,6 +20,7 @@ from probpipe import (
     Function,
     InputSpec,
     NumericRecord,
+    Opaque,
     OutputSpec,
     Record,
     positive,
@@ -112,6 +113,26 @@ class TestOpaqueSpecTypeAndMeta:
     def test_specs_with_different_types_or_meta_do_not_unify(self, first, second):
         with pytest.raises(ValueError, match="does not conform"):
             first.bind_dims_from_spec(second)
+
+    def test_an_open_meta_unifies_with_a_set_meta_and_takes_it(self):
+        """An inferred spec carries no meta, so a declared meta fills it in (Z20)."""
+        declared, inferred = OpaqueSpec(meta="units"), OpaqueSpec(type=str)
+
+        assert declared.bind_dims_from_spec(inferred) == declared
+        assert inferred.bind_dims_from_spec(declared) == inferred
+        unified = OpaqueSpec(type=str, meta="units")
+        assert OutputSpec(label=declared).with_spec(inferred).spec == unified
+        assert OutputSpec(label=inferred).with_spec(declared).spec == unified
+
+    def test_a_function_returning_an_opaque_value_keeps_the_declared_meta(self):
+        tagged = Function(
+            "tagged",
+            lambda: Opaque("unit", "m"),
+            output_spec=OutputSpec(unit=OpaqueSpec(meta="units")),
+        )
+
+        assert tagged().spec == OpaqueSpec(type=str, meta="units")
+        assert tagged().raw() == "m"
 
     def test_completion_keeps_the_declared_type(self):
         declared = OutputSpec(label=OpaqueSpec(type=str))
@@ -799,13 +820,24 @@ class TestRepr:
         assert "label=OpaqueSpec(type=str)" in repr(RecordSpec(label=OpaqueSpec(type=str)))
 
     def test_populated_numeric_array_spec_shows_full_repr(self):
-        # A spec carrying dtype/support is not bare, so repr falls back to the
-        # full dataclass repr rather than the bare-shape shorthand. The dtype
-        # renders in its normalised ``numpy.dtype`` form.
+        # A spec carrying a dtype or a support is not bare, so it prints in full
+        # rather than as the bare-shape shorthand, its dtype by name.
         tpl = RecordSpec(x=NumericArraySpec((3,), dtype="float32"))
-        r = repr(tpl)
-        assert "NumericArraySpec(" in r
-        assert "dtype=dtype('float32')" in r
+        assert repr(tpl) == "NumericRecordSpec(x=NumericArraySpec(shape=(3,), dtype=float32))"
+
+    def test_a_long_schema_shows_one_field_per_line(self):
+        tpl = RecordSpec(
+            effect=NumericArraySpec((), dtype="float32"),
+            se=NumericArraySpec((), dtype="float32"),
+            label=OpaqueSpec(type=str, meta="the school's two-letter code"),
+        )
+        assert repr(tpl) == (
+            "RecordSpec(\n"
+            "    effect=NumericArraySpec(shape=(), dtype=float32),\n"
+            "    se=NumericArraySpec(shape=(), dtype=float32),\n"
+            '    label=OpaqueSpec(type=str, meta="the school\'s two-letter code"),\n'
+            ")"
+        )
 
     def test_populated_opaque_spec_shows_full_repr(self):
         tpl = RecordSpec(label=OpaqueSpec(meta="tag"), x=())

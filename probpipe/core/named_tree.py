@@ -282,11 +282,11 @@ class NamedTree[L]:
     a ``/``-delimited string or a tuple of names, so
     ``x["a/b/c"] == x["a", "b", "c"]``. Since interior nodes are *not* keys,
     ``[]`` raises on an interior path; interior nodes are reached via the
-    one-level :attr:`children` view or :meth:`at_path`, which can access any
-    field or subtree — ``x.children["a"].children["b"] == x.at_path("a", "b")
-    == x.at_path("a/b")``. Sibling names are distinct, so every path
-    identifies at most one node; distinct subtrees may reuse a name (``a/c``
-    and ``b/c``).
+    one-level :attr:`children` view of the storage or :meth:`at_path`, which
+    can access any field or subtree, so ``x.children["a"].children["b"]`` is
+    the node that ``x.at_path("a", "b")`` and ``x.at_path("a/b")`` address.
+    Sibling names are distinct, so every path identifies at most one node;
+    distinct subtrees may reuse a name (``a/c`` and ``b/c``).
 
     A child is an interior node if and only if it is an instance of the
     family's own node class (the hook :meth:`_node_type`); every other value
@@ -296,7 +296,9 @@ class NamedTree[L]:
     binds :class:`~probpipe.core._specs.TermSpec`, :class:`~probpipe.Record`
     binds ``Any`` — which the leaf-trafficking accessors (``[]``,
     :meth:`values`, :meth:`items`, :meth:`map`) carry through to typed
-    consumers. Mappings are never leaves: a mapping value denotes tree
+    consumers. Those accessors return each leaf as the family presents it
+    (the hook :meth:`_present`), which is the stored leaf unless the family
+    overrides the hook. Mappings are never leaves: a mapping value denotes tree
     structure (see :meth:`_check_leaf`).
     Navigation yields views into the same storage; the structure-preserving
     transforms (:meth:`map`, :meth:`replace`, :meth:`merge`, :meth:`without`,
@@ -438,11 +440,11 @@ class NamedTree[L]:
 
     def values(self) -> tuple[L, ...]:
         """The field objects (one per leaf), in canonical order (materialised)."""
-        return tuple(leaf for _, leaf in self._walk_leaves())
+        return tuple(self._present(key, leaf) for key, leaf in self._walk_leaves())
 
     def items(self) -> tuple[tuple[str, L], ...]:
         """``(key, field_object)`` pairs, in canonical order (materialised)."""
-        return tuple(self._walk_leaves())
+        return tuple((key, self._present(key, leaf)) for key, leaf in self._walk_leaves())
 
     def __getitem__(self, key: str | tuple[str, ...]) -> L:
         """Return the field object at *key* — leaf access only.
@@ -455,12 +457,12 @@ class NamedTree[L]:
         """
         if not isinstance(key, (str, tuple)):
             raise TypeError(f"key must be str or tuple[str, ...], got {type(key).__name__}")
-        node = self.at_path(key)
+        node = self._node_at(key)
         if isinstance(node, self._node_type()):
             raise KeyError(f"{key!r} is a subtree, not a field; use at_path() to navigate to it")
         # Past the node-type guard the value is a leaf; ``_node_type()`` is a
         # runtime ``type`` a checker cannot use to narrow the ``L | Self`` union.
-        return cast(L, node)
+        return self._present(self._norm_path(key), cast(L, node))
 
     def __contains__(self, key: object) -> bool:
         """Whether *key* is a field key (a leaf). Partial paths are not members."""
@@ -497,7 +499,23 @@ class NamedTree[L]:
         rooted there, a collection of the same class.
 
         This is the one operator that reaches interior nodes; the mapping
-        operators (``[]`` / ``in`` / iteration) range only over fields.
+        operators (``[]`` / ``in`` / iteration) range only over fields. A field
+        object is the leaf as the family presents it (:meth:`_present`).
+
+        Raises
+        ------
+        KeyError
+            If the path reaches nothing, or tries to descend through a leaf.
+        TypeError
+            If a path segment is not a string.
+        """
+        node = self._node_at(*path)
+        if isinstance(node, self._node_type()):
+            return node
+        return self._present(_PATH_SEP.join(self._split_path(path)), node)
+
+    def _node_at(self, *path: Any) -> L | Self:
+        """The stored node at *path*: the leaf as stored, or the subtree.
 
         Raises
         ------
@@ -542,7 +560,7 @@ class NamedTree[L]:
         Accepts the same path forms as :meth:`at_path`.
         """
         try:
-            node = self.at_path(*path)
+            node = self._node_at(*path)
         except (KeyError, TypeError):
             return False
         return not isinstance(node, self._node_type())
@@ -573,6 +591,23 @@ class NamedTree[L]:
         return result
 
     # -- Leaf traversal primitives ------------------------------------------
+
+    def _present(self, key: str, leaf: L) -> L:
+        """The field object the leaf-keyed accessors return for the stored *leaf* at *key* (hook).
+
+        The stored leaf itself; a family whose access returns views overrides
+        it. The structure-preserving transforms read the stored leaves.
+        """
+        return leaf
+
+    def _node_paths(self) -> Iterator[str]:
+        """Every node's path, interior nodes included, in canonical order."""
+        node_type = self._node_type()
+        for name, child in self._tree.items():
+            yield name
+            if isinstance(child, node_type):
+                for sub_path in child._node_paths():
+                    yield f"{name}{_PATH_SEP}{sub_path}"
 
     def _walk_leaves(self) -> Iterator[tuple[str, L]]:
         """Yield ``(path, leaf_object)`` for every field, in canonical order.
@@ -687,7 +722,7 @@ class NamedTree[L]:
     def _leaves_without(self, paths: tuple[str, ...]) -> dict[str, Any]:
         """Flat leaf-map with the fields/subtrees at *paths* dropped."""
         for path in paths:
-            self.at_path(path)  # KeyError if the path does not exist
+            self._node_at(path)  # KeyError if the path does not exist
         drops = [self._norm_path(p) for p in paths]
 
         def is_dropped(key: str) -> bool:
@@ -754,7 +789,7 @@ class NamedTree[L]:
             overlapping paths are rejected outright.
         """
         for path in resolved:
-            self.at_path(path)  # KeyError if the path does not exist
+            self._node_at(path)  # KeyError if the path does not exist
         norms = [self._norm_path(p) for p in resolved]
         for i, a in enumerate(norms):
             for b in norms[i + 1 :]:
@@ -805,7 +840,7 @@ class NamedTree[L]:
         Raises
         ------
         KeyError
-            If a key is not the path of a node.
+            If a key is not the path of a node, naming the paths the tree has.
         ValueError
             If a target is empty or has an empty segment, two keys resolve to the
             same node, no renames are given, a target lies inside its own node,
@@ -822,8 +857,14 @@ class NamedTree[L]:
                         f"(no leading, trailing, or doubled {_PATH_SEP!r})"
                     )
                 segments = self._split_path((old,))
-                self.at_path(segments)  # KeyError if absent
                 resolved = _PATH_SEP.join(segments)
+                try:
+                    self._node_at(segments)
+                except KeyError:
+                    raise KeyError(
+                        f"with_path_names(): {resolved!r} is not the path of a node; the paths "
+                        f"are {list(self._node_paths())}"
+                    ) from None
                 if resolved in pairs:
                     raise ValueError(f"node {resolved!r} is renamed more than once")
                 pairs[resolved] = new

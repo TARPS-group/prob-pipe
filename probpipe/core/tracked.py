@@ -20,6 +20,7 @@ their constructor via :meth:`TrackedTerm._init_tracked`.
 
 from __future__ import annotations
 
+from abc import abstractmethod
 from collections.abc import Mapping
 
 # ``_ProtocolMeta`` is technically private (leading underscore in
@@ -88,7 +89,8 @@ class _TrackedTermMeta(_ProtocolMeta):
     ``ABCMeta``) so ``TrackedTerm`` hosts can mix in ``@runtime_checkable``
     protocols (``SupportsSampling``, ``SupportsLogProb``, …) without a
     metaclass conflict. ``_ProtocolMeta`` is itself an ``ABCMeta``
-    subclass.
+    subclass, so an abstract method such as :meth:`TrackedTerm.raw` keeps a class
+    that does not define it from being instantiated.
     """
 
     def __call__(cls, *args: Any, **kwargs: Any) -> Any:
@@ -143,6 +145,9 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     returns a new term. Construction assigns inside the window the metaclass
     opens, so a host's ``__init__`` is written normally. The distribution layer
     is exempt for now, for the reason its ``__setattr__`` gives.
+
+    :meth:`raw` is the one access to the representation, and it is abstract:
+    each kind defines it, as its section of the design states.
 
     Attributes
     ----------
@@ -238,6 +243,19 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
             )
         )
         return clone
+
+    # -- the representation --------------------------------------------------
+
+    @abstractmethod
+    def raw(self) -> Any:
+        """The term's representation, detached from the workflow.
+
+        Detachment removes the provenance, the annotations, and any reference to
+        a container or a parent, and it keeps the spec and the name. A kind
+        represented by an object from outside ProbPipe returns that object, such
+        as a backing array or a wrapped callable, and a kind represented by a
+        ProbPipe object returns that object detached.
+        """
 
     # -- provenance ----------------------------------------------------------
 

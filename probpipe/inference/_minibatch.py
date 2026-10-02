@@ -288,12 +288,14 @@ class MinibatchedDistribution(
 
     # -- repr ----------------------------------------------------------------
 
-    def __repr__(self) -> str:
-        return (
-            f"MinibatchedDistribution(prior={type(self._prior).__name__}, "
-            f"likelihood={type(self._likelihood).__name__}, "
-            f"dataset_size={self._n}, batch_size={self._batch_size})"
-        )
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The prior, the likelihood, the dataset size, and the minibatch size."""
+        return [
+            ("prior", repr(self._prior)),
+            ("likelihood", repr(self._likelihood)),
+            ("dataset_size", repr(self._n)),
+            ("batch_size", repr(self._batch_size)),
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -372,8 +374,13 @@ class _FixedMinibatchDistribution(
         batch = self._likelihood._observation_log_prob(given, self._data, self._rows)
         return self._prior._log_prob(theta) + self._rescale_factor * batch
 
-    def __repr__(self) -> str:
-        return f"_FixedMinibatchDistribution(rescale_factor={self._rescale_factor:.3g})"
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The prior, the likelihood, and the factor that rescales the minibatch to the dataset."""
+        return [
+            ("prior", repr(self._prior)),
+            ("likelihood", repr(self._likelihood)),
+            ("rescale_factor", f"{self._rescale_factor:.3g}"),
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -435,8 +442,9 @@ class _RandomMinibatchLogProb(
         # Return the bound method as a deterministic callable.
         return inner._unnormalized_log_prob
 
-    def __repr__(self) -> str:
-        return f"_RandomMinibatchLogProb(measure={self._measure.name})"
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The minibatched law whose log-density this random function draws."""
+        return [("measure", repr(self._measure))]
 
 
 # ---------------------------------------------------------------------------
@@ -482,5 +490,6 @@ class _MinibatchLogProbAtPoint(Distribution, SupportsSampling):
         vals = jax.vmap(_one_draw)(keys)
         return vals.reshape(sample_shape)
 
-    def __repr__(self) -> str:
-        return f"_MinibatchLogProbAtPoint(measure={self._measure.name})"
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The minibatched law whose log-density this law draws at a fixed point."""
+        return [("measure", repr(self._measure))]

@@ -85,12 +85,18 @@ class TestNameEnforcement:
             def __init__(self):
                 pass
 
+            def raw(self):
+                return None
+
         with pytest.raises(TypeError, match="non-empty name"):
             Nameless()
 
         class EmptyNamed(TrackedTerm):
             def __init__(self):
                 self._init_tracked("")
+
+            def raw(self):
+                return None
 
         with pytest.raises(TypeError, match="non-empty name"):
             EmptyNamed()
@@ -227,7 +233,7 @@ class TestWithName:
         r2 = r.with_name("new")
         assert r2.name == "new"
         # shallow copy: field data is shared, not copied
-        assert r2["a"] is r["a"]
+        assert r2.raw("a") is r.raw("a")
         assert r2.event_template is r.event_template
         assert r == r2 or r2["b"] is r["b"]
 
@@ -289,7 +295,7 @@ class TestWithNameOnBatchTypes:
         ra2 = ra.with_name("mine")
         assert ra2 is not ra
         assert ra2.name == "mine"
-        assert ra2["a"] is ra["a"]
+        assert ra2["a"].raw() is ra["a"].raw()
         assert ra2.batch_shape == ra.batch_shape
         assert ra2.event_template is ra.event_template
 
@@ -303,7 +309,7 @@ class TestWithNameOnBatchTypes:
         )
         nra2 = nrb.with_name("new")
         assert nra2.name == "new"
-        assert nra2["a"] is nrb["a"]
+        assert nra2["a"].raw() is nrb["a"].raw()
         assert nrb.name == "orig"
 
     def test_distribution_batch(self):

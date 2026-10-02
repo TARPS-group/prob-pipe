@@ -13,6 +13,7 @@ from types import MappingProxyType
 from typing import cast
 
 from ._record_spec import NumericRecordSpec, RecordSpec
+from ._repr import call_repr, term_repr
 from ._spec_base import (
     NumericArraySpec,
     NumericSpec,
@@ -107,6 +108,10 @@ class InputSpec(Mapping[str, TermSpec]):
 
     def __hash__(self) -> int:
         return hash(frozenset(self._slots.items()))
+
+    def __repr__(self) -> str:
+        """Each slot as a keyword, as the constructor takes it."""
+        return term_repr("InputSpec", None, [(name, repr(spec)) for name, spec in self.items()])
 
     @property
     def free_dims(self) -> frozenset[str]:
@@ -207,6 +212,12 @@ class OutputSpec:
             raise ValueError("OutputSpec requires one keyword or an explicit RecordSpec")
         object.__setattr__(self, "_component_name", name)
         object.__setattr__(self, "_term_spec", spec)
+
+    def __repr__(self) -> str:
+        """The declaration as the constructor takes it: one keyword, or the exposed record."""
+        if self._component_name is None:
+            return call_repr("OutputSpec", [repr(self._term_spec)])
+        return term_repr("OutputSpec", None, [(self._component_name, repr(self._term_spec))])
 
     @property
     def spec(self) -> TermSpec | None:

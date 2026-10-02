@@ -18,7 +18,9 @@ A candidate has the members the engine reads:
    check, which reads the point's call object and result declaration and runs
    nothing, and its execution, which returns the raw result;
 4. ``exactness(report)`` and ``method_of(report)``: the exactness of the
-   implementation its report selected, and the registry method, if any.
+   implementation its report selected, and the registry method, if any;
+5. ``methods``: the methods of its route's registry, or ``None`` for a route
+   that delegates to none.
 
 The check of a call the engine lifts is made at each of its points: a swept
 batch at each element, and a law the call broadcasts at a stand-in for its
@@ -183,7 +185,7 @@ def check_point(
         return PointReport(True, result=result, deferred=deferred)
     candidate, report, probed = _probe(candidates, call, result)
     reports = tuple(
-        (probed_candidate.label, probe, probed_candidate.exactness(probe))
+        (_label(probed_candidate, probe), probe, probed_candidate.exactness(probe))
         for probed_candidate, probe in probed
     )
     if candidate is None or report is None:
@@ -207,6 +209,12 @@ def check_point(
         routes=reports,
         deferred=deferred,
     )
+
+
+def _label(candidate: Any, report: Feasibility) -> str:
+    """How a report names *candidate*: ``route/method`` for the method its report names."""
+    method = candidate.method_of(report)
+    return candidate.label if method is None else f"{candidate.route_name}/{method}"
 
 
 def _element_spec(values: Mapping[str, Any], ref: WorkflowInputRef) -> TermSpec:
@@ -298,13 +306,19 @@ def check_points(
 
 
 def call_report(
-    point: PointReport, *, lifted: tuple[str, ...], conversions: Mapping[str, Any]
+    point: PointReport,
+    *,
+    lifted: tuple[str, ...],
+    conversions: Mapping[str, Any],
+    candidates: Sequence[Any] = (),
 ) -> CallReport:
     """The CallReport of a call from the check of its points.
 
-    Each probed candidate's report is named by its label and states the
-    candidate's exactness, and a report whose exactness is open states the
-    call approximate.
+    Each probed candidate's report is named by its label, or by ``route/method``
+    for the method its report names, and states the candidate's exactness; a
+    report whose exactness is open states the call approximate. The report lists
+    the methods of each registry that a route among *candidates* delegates to
+    once, keyed by the names of the routes that delegate to it.
     """
     routes = tuple(
         MethodInfo(
@@ -326,6 +340,14 @@ def call_report(
         if point.route is not None and point.method is not None:
             name = f"{point.route}/{point.method}"
         chosen = MethodInfo(True, method_name=name, exact=bool(point.exact))
+    # Routes that delegate to one registry share its listing, as an exact and an
+    # approximate candidate of one route do.
+    sharing: dict[tuple[str, ...], list[str]] = {}
+    for candidate in candidates:
+        listing = getattr(candidate, "methods", None)
+        if listing is not None and candidate.route_name not in sharing.get(listing, []):
+            sharing.setdefault(listing, []).append(candidate.route_name)
+    methods = {", ".join(routes): listing for listing, routes in sharing.items()}
     return CallReport(
         routes=routes,
         selected=chosen,
@@ -333,4 +355,5 @@ def call_report(
         result=point.result,
         lifted=lifted,
         conversions=MappingProxyType(dict(conversions)),
+        methods=MappingProxyType(methods),
     )

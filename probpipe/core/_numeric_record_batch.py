@@ -31,8 +31,10 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..custom_types import Array
+from ._batch import _batch_axis_count
 from ._record_batch import (
     RecordBatch,
+    _inferred_element_spec,
     _record_batch_flatten,
     _record_element_spec,
     _unflatten_with,
@@ -53,8 +55,9 @@ class NumericRecordBatch(RecordBatch):
     them; see the module docstring. It adds the batched flat layout,
     :meth:`to_vector` and :meth:`from_vector`.
 
-    Construction is that of :class:`RecordBatch`, narrowed: *element_spec* must
-    describe an all-numeric element, and every column must carry a numeric dtype.
+    Construction is that of :class:`RecordBatch`, narrowed: *element_spec*, given
+    or inferred from the columns, must describe an all-numeric element, and every
+    column must carry a numeric dtype.
 
     Raises
     ------
@@ -72,10 +75,15 @@ class NumericRecordBatch(RecordBatch):
         /,
         level_names: str | Iterable[str],
         *,
-        element_spec: RecordSpec,
+        element_spec: RecordSpec | None = None,
         axes_per_level: Iterable[int] | None = None,
         provenance: Provenance | None = None,
     ) -> None:
+        if element_spec is None:
+            names = (level_names,) if isinstance(level_names, str) else tuple(level_names)
+            axes_per_level = None if axes_per_level is None else tuple(axes_per_level)
+            n_batch = _batch_axis_count(names, axes_per_level)
+            element_spec = _inferred_element_spec(fields, n_batch, kind=type(self).__name__)
         template = _record_element_spec(element_spec, kind=type(self).__name__)
         if not isinstance(template, NumericRecordSpec):
             raise TypeError(

@@ -134,7 +134,6 @@ class TestRaw:
 
         assert result is inner
 
-    @pytest.mark.pending(reason="every kind's raw() returns its representation")
     def test_raw_returns_an_array_result_as_its_backing_array(self):
         result = Function("double", lambda x: 2.0 * x).with_options(raw=True)(jnp.ones(2))
 

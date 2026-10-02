@@ -31,9 +31,8 @@ from ..core._opaque import Opaque
 from ..core._opaque_batch import OpaqueBatch
 from ..core._record_batch import RecordBatch, _batch_class_for, _MappedBatchColumns
 from ..core._record_spec import _reshaped_template
-from ..core._spec_base import _full_array_shape_or_none, _unify_specs
-from ..core._specs import NumericArraySpec, OutputSpec, RecordSpec
-from ..core.named_tree import _unflatten_paths
+from ..core._spec_base import _full_array_shape_or_none, _known_type, _unify_specs
+from ..core._specs import NumericArraySpec, OpaqueSpec, OutputSpec, RecordSpec
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
@@ -68,17 +67,8 @@ class ResultSchemaError(ValueError):
 
 
 def _detach(result: Any) -> Any:
-    """The result detached from the workflow, as its ``raw()`` returns it.
-
-    Raises
-    ------
-    NotImplementedError
-        If the result's kind does not provide ``raw()`` yet.
-    """
-    raw = getattr(result, "raw", None)
-    if not callable(raw):
-        raise NotImplementedError("TrackedTerm.raw")
-    return raw()
+    """The result detached from the workflow, as its ``raw()`` returns it."""
+    return raw_form(result)
 
 
 def _wrap_declared_function_output(
@@ -94,9 +84,6 @@ def _wrap_declared_function_output(
         from ..core._numeric_array import NumericArray
 
         return NumericArray(function_name, result, spec=spec)
-    from ..core._opaque import Opaque
-    from ..core._specs import OpaqueSpec
-
     if isinstance(spec, OpaqueSpec):
         return Opaque(function_name, result, spec=spec)
     from ..values import Function, FunctionSpec
@@ -233,6 +220,11 @@ def _copy_result_term(value: TrackedTerm, *, output_spec: OutputSpec | None = No
 
         if isinstance(clone, NumericArray):
             object.__setattr__(clone, "_spec", spec)
+    elif isinstance(spec, OpaqueSpec):
+        if isinstance(clone, Opaque):
+            # The declaration and the term's own spec unified at completion, so the
+            # term takes the known type and the set meta of the two.
+            object.__setattr__(clone, "_spec", _known_type(spec, clone.spec))
     elif spec is not None:
         from ..core._batch import Batch, BatchSpec
         from ..values import Function, FunctionSpec
@@ -297,7 +289,10 @@ def _stack_declared_columns(
     columns: dict[str, Any] = {}
     for path in template:
         if isinstance(records, list):
-            values = [record[path] for record in records]
+            values = [
+                record.raw(path) if isinstance(record, Record) else record[path]
+                for record in records
+            ]
             # The declared *kind* decides the storage, not what the values happen
             # to look like. An opaque field holding one array per row is a column
             # of two objects, not a numeric column whose second axis is another
@@ -320,7 +315,7 @@ def _stack_declared_columns(
             # stacked the rows itself and a declared-opaque field is whatever
             # shape its values happened to have. The declared kind decides here
             # too, or that shape is read as a second multiplicity.
-            batched = records[path]
+            batched = records.raw(path)
             if not isinstance(template[path], NumericArraySpec):
                 batched = _packed_object_column(list(batched))
 
@@ -796,7 +791,9 @@ def _make_stack(
                 return NumericRecordBatch(
                     result_name,
                     {
-                        path: flat[path].reshape(batch_shape + flat[path].shape[n_cur:])
+                        path: flat._raw_column(path).reshape(
+                            batch_shape + flat._raw_column(path).shape[n_cur:]
+                        )
                         for path in flat.event_template
                     },
                     level_names,
@@ -976,7 +973,7 @@ def _make_stack(
         # Leaf-keyed, so a nested output is one column per leaf and needs no
         # flattening by the caller.
         paths = list(inner_outputs.event_template)
-        resolved = [inner_outputs[path] for path in paths]
+        resolved = [inner_outputs.raw(path) for path in paths]
         if all(hasattr(v, "shape") and v.shape[:1] == (n_total,) for v in resolved):
             tpl = output_template or RecordSpec(
                 dict(zip(paths, (v.shape[1:] for v in resolved), strict=True))
@@ -1072,7 +1069,7 @@ def _batch_at(value: Any, spec: BatchSpec, label: str) -> Any:
         value = Record(label, **value)
     if isinstance(value, Record):
         template = value.event_template
-        columns = {path: value[path] for path in template}
+        columns = {path: value.raw(path) for path in template}
         for column in columns.values():
             require_leading(tuple(_event_shape_of(column)))
         element = _reshaped_template(template, lambda shape: shape[n_axes:])
@@ -1107,35 +1104,8 @@ def _batch_at(value: Any, spec: BatchSpec, label: str) -> Any:
 
 
 def raw_form(term: Any) -> Any:
-    """*term*'s representation, detached from the workflow, as a routed call returns it raw.
+    """*term*'s representation, detached from the workflow, as its kind's ``raw()`` gives it.
 
-    An array is its stored array, a record the nested mapping of its raw
-    leaves, and a batch its storage view: the stacked array, the nested
-    mapping of raw columns, or the object array of the stored elements. An
-    opaque value is the object it wraps, a function its wrapped callable, and
-    a law or a kernel is its own representation, without provenance.
+    A value that is not a tracked term is already raw and is returned as it is.
     """
-    from ..values import Function
-
-    if isinstance(term, (NumericArray, Opaque)):
-        return term.value
-    if isinstance(term, Record):
-        return _raw_leaves(term.to_nested_dict())
-    if isinstance(term, NumericArrayBatch):
-        return term.values
-    if isinstance(term, RecordBatch):
-        return _unflatten_paths(term._raw_columns())
-    if isinstance(term, _ObjectBatch):
-        return term._store
-    if isinstance(term, Function):
-        return term.raw()
-    if isinstance(term, TrackedTerm) and term.provenance is not None:
-        return _copy_result_term(term)
-    return term
-
-
-def _raw_leaves(node: Any) -> Any:
-    """A record's nested mapping, each leaf at its raw form."""
-    if isinstance(node, dict):
-        return {name: _raw_leaves(child) for name, child in node.items()}
-    return raw_form(node)
+    return term.raw() if isinstance(term, TrackedTerm) else term

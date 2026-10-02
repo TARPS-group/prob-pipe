@@ -23,6 +23,7 @@ from .._array_utils import (
     _ensure_square_matrix,
     _ensure_vector,
 )
+from ..core._repr import format_dtype, format_value, sequence_repr, term_repr
 from ..custom_types import Array, ArrayLike
 
 
@@ -118,6 +119,12 @@ class LinOp(ABC):
     @abstractmethod
     def dtype(self) -> Any:
         """Return the dtype of this operator's elements."""
+        ...
+
+    # ---- The representation ----
+    @abstractmethod
+    def raw(self) -> Any:
+        """The stored parameterization, such as a dense operator's matrix or a lazy composite's operands."""
         ...
 
     # ---- Minimal numeric primitives ----
@@ -277,7 +284,13 @@ class LinOp(ABC):
 
     # ---- Default representations ----
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}(shape={self.shape}, dtype={self.dtype})"
+        """The class, the shape and the dtype, and a composite's operands."""
+        fields = [("shape", repr(self.shape)), ("dtype", format_dtype(self.dtype))]
+        return term_repr(type(self).__name__, None, [*fields, *self._operand_repr_arguments()])
+
+    def _operand_repr_arguments(self) -> list[tuple[str, str]]:
+        """The operands a composite's repr shows; a structured operator has none."""
+        return []
 
 
 # -----------------------------------------------------------------------------
@@ -303,6 +316,14 @@ class ProductLinOp(LinOp):
             # product of two diagonal operators is diagonal
             self.add_flag("diagonal")
             self.add_flag("symmetric")
+
+    def _operand_repr_arguments(self) -> list[tuple[str, str]]:
+        """The operands, in the constructor's order."""
+        return [("operands", sequence_repr(format_value(operand) for operand in self.raw()))]
+
+    def raw(self) -> tuple[LinOp, LinOp]:
+        """The operands ``(A, B)`` of ``A @ B``."""
+        return (self.A, self.B)
 
     @property
     def shape(self) -> tuple[int, int]:
@@ -355,6 +376,14 @@ class SumLinOp(LinOp):
         if all("positive_definite" in op.flags for op in ops):
             # sum of PD matrices is PD
             self.add_flag("positive_definite")
+
+    def _operand_repr_arguments(self) -> list[tuple[str, str]]:
+        """The operands, in the constructor's order."""
+        return [("operands", sequence_repr(format_value(operand) for operand in self.raw()))]
+
+    def raw(self) -> tuple[LinOp, ...]:
+        """The summands, in order."""
+        return tuple(self.ops)
 
     @property
     def shape(self) -> tuple[int, int]:
@@ -451,6 +480,14 @@ class ScaledLinOp(LinOp):
         if "positive_definite" in op.flags and _known_positive(self.scalar):
             self.add_flag("positive_definite")
 
+    def _operand_repr_arguments(self) -> list[tuple[str, str]]:
+        """The operands, in the constructor's order."""
+        return [("operands", sequence_repr(format_value(operand) for operand in self.raw()))]
+
+    def raw(self) -> tuple[LinOp, float | Array]:
+        """The operands ``(A, c)`` of ``c * A``, in the constructor's order."""
+        return (self.op, self.scalar)
+
     @property
     def shape(self) -> tuple[int, int]:
         return self.op.shape
@@ -501,6 +538,14 @@ class TransposedLinOp(LinOp):
         if "triangular_upper" in op.flags:
             self.add_flag("triangular_lower")
 
+    def _operand_repr_arguments(self) -> list[tuple[str, str]]:
+        """The operands, in the constructor's order."""
+        return [("operands", sequence_repr(format_value(operand) for operand in self.raw()))]
+
+    def raw(self) -> tuple[LinOp]:
+        """The one operand ``A`` of ``A.T``."""
+        return (self.op,)
+
     @property
     def shape(self) -> tuple[int, int]:
         n_out, n_in = self.op.shape
@@ -545,6 +590,10 @@ class DenseLinOp(LinOp):
         self._dtype = self.array.dtype
         self.add_flag("dense")
 
+    def raw(self) -> Array:
+        """The stored matrix."""
+        return self.array
+
     @property
     def shape(self) -> tuple[int, int]:
         return self.array.shape
@@ -575,6 +624,10 @@ class DiagonalLinOp(LinOp):
         self.add_flag("symmetric")
         if jnp.all(self.diagonal > 0):
             self.add_flag("positive_definite")
+
+    def raw(self) -> Array:
+        """The stored diagonal."""
+        return self.diagonal
 
     @property
     def shape(self) -> tuple[int, int]:
@@ -657,6 +710,10 @@ class TriangularLinOp(LinOp):
         if jnp.allclose(jnp.diag(self.tri), 1.0):
             self.add_flag("unit_diagonal")
 
+    def raw(self) -> Array:
+        """The stored triangular matrix; its flags state which triangle it is."""
+        return self.tri
+
     @property
     def shape(self) -> tuple[int, int]:
         return (self._n, self._n)
@@ -709,6 +766,10 @@ class RootLinOp(LinOp):
         self.root = _as_linear_operator(root)
         self._n = self.root.shape[0]
         self.add_flag("symmetric")
+
+    def raw(self) -> LinOp:
+        """The stored root ``S`` of ``A = S @ S.T``, an operator."""
+        return self.root
 
     @property
     def shape(self) -> tuple[int, int]:
@@ -780,6 +841,10 @@ class CholeskyLinOp(RootLinOp):
 
         super().__init__(root)
         self.add_flag("positive_definite")
+
+    def raw(self) -> TriangularLinOp:
+        """The stored Cholesky factor, ``L`` of ``A = L @ L.T`` or ``U`` of ``A = U.T @ U``."""
+        return self.root
 
     def matvec(self, x: ArrayLike) -> Array:
         """Return ``A @ x`` for the represented SPD operator."""
@@ -860,6 +925,10 @@ class DiagonalRootLinOp(DiagonalLinOp):
         # Call DiagonalLinOp constructor
         super().__init__(root.diagonal**2)
         self.root = root
+
+    def raw(self) -> DiagonalLinOp:
+        """The stored diagonal root ``S`` of ``A = S @ S.T``, an operator."""
+        return self.root
 
     def cholesky(self, lower: bool = True, **kwargs) -> DiagonalLinOp:
         """Note that `lower` has no effect on Cholesky decomposition of diagonal matrix"""

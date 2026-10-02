@@ -24,6 +24,7 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import functools
+import inspect
 from collections.abc import Callable, Generator
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -33,6 +34,7 @@ import numpy as np
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from .._array_utils import _slice_leading_axes
+from ..core._repr import format_value
 from ..core._specs import NumericArraySpec, OutputSpec
 from ..core.constraints import Constraint
 from ..custom_types import Array, ArrayLike, PRNGKey
@@ -327,8 +329,30 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
         """The backend's normalized log-density, keeping the leading axes of *value*."""
         return self._tfp_dist.log_prob(jnp.asarray(value))
 
-    def __repr__(self) -> str:
-        return f"{type(self).__name__}(name={self.name!r}, event_shape={self.event_shape})"
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The arguments the family's constructor was called with, other than the label and the declaration.
+
+        The repr shows the arguments the call passed, so it reads as the call
+        that built the law.
+        """
+        recorded = getattr(self, "_constructor_arguments", None)
+        if recorded is None:
+            return []
+        args, kwargs, _ = recorded
+        try:
+            bound = inspect.signature(type(self).__init__).bind(self, *args, **kwargs)
+        except TypeError:
+            return []
+        parameters = bound.signature.parameters
+        fields: list[tuple[str, str]] = []
+        for parameter, value in list(bound.arguments.items())[1:]:
+            if parameter in ("name", "event_spec"):
+                continue
+            if parameters[parameter].kind is inspect.Parameter.VAR_KEYWORD:
+                fields.extend((key, format_value(entry)) for key, entry in value.items())
+            else:
+                fields.append((parameter, format_value(value)))
+        return fields
 
     # -- the fused storage of laws at batched parameters ------------------------
 

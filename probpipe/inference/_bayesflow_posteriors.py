@@ -349,8 +349,9 @@ class _AmortizedPosterior(
         vector = flat.reshape(*sample_shape, flat.shape[-1]) if sample_shape else flat[0]
         return _reconstruct_from_vector(self.name, spec, vector)
 
-    def __repr__(self) -> str:
-        return f"AmortizedPosterior(method={self._method!r}, num_results={self._num_results})"
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The network the posterior was learned with, and how many draws it returns."""
+        return [("method", repr(self._method)), ("num_results", repr(self._num_results))]
 
 
 # ---------------------------------------------------------------------------

@@ -384,7 +384,9 @@ def execute_sweep_rows_jax(
         n_batch = len(array_value.batch_shape)
         vmap_input.append(
             {
-                leaf: array_value[leaf].reshape((n_total, *array_value[leaf].shape[n_batch:]))
+                leaf: array_value._raw_column(leaf).reshape(
+                    (n_total, *array_value._raw_column(leaf).shape[n_batch:])
+                )
                 for leaf in array_value.event_template
             }
         )

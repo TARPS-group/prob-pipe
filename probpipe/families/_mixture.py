@@ -15,6 +15,7 @@ import jax
 import jax.numpy as jnp
 
 from ..core._record_spec import RecordSpec
+from ..core._repr import format_value, sequence_repr
 from ..core._spec_base import NumericArraySpec, TermSpec
 from ..core._specs import OutputSpec
 from ..core.constraints import _known_equal
@@ -324,6 +325,10 @@ def _weights(weights: ArrayLike, count: int) -> Array:
     return array
 
 
+#: How many components a mixture's repr shows before it gives their count instead.
+_SHOWN_COMPONENTS = 4
+
+
 class MixtureDistribution(Distribution):
     """A convex combination of component laws that share one event declaration.
 
@@ -375,8 +380,15 @@ class MixtureDistribution(Distribution):
         object.__setattr__(self, "_weights", _weights(weights, len(laws)))
         super().__init__(name, _declaration(laws))
 
-    def __repr__(self) -> str:
-        return f"MixtureDistribution(name={self.name!r}, components={len(self._components)})"
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The components, by their count when there are more than four, and the weights."""
+        components = self._components
+        shown = (
+            sequence_repr(repr(law) for law in components)
+            if len(components) <= _SHOWN_COMPONENTS
+            else repr(len(components))
+        )
+        return [("components", shown), ("weights", format_value(self._weights))]
 
 
 # The Monte Carlo mean of a law over laws is the finite mixture of its draws.

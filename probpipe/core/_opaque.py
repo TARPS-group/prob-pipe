@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from ._repr import term_repr
 from ._spec_base import OpaqueSpec
 from .provenance import Provenance
 from .tracked import Annotated, TrackedTerm
@@ -85,9 +86,27 @@ class Opaque(TrackedTerm, Annotated):
         object.__setattr__(self, "_spec", spec)
         self._init_tracked(name, provenance=provenance)
 
+    @classmethod
+    def _view(
+        cls, name: str, value: Any, spec: OpaqueSpec, provenance: Provenance | None
+    ) -> Opaque:
+        """The opaque *value* under *spec*, as a container's view of it, without validation.
+
+        The container validated the value against *spec* when it was built.
+        """
+        view = object.__new__(cls)
+        object.__setattr__(view, "_value", value)
+        object.__setattr__(view, "_spec", spec)
+        view._init_tracked(name, provenance=provenance)
+        return view
+
     @property
     def value(self) -> Any:
         """The wrapped value, untracked."""
+        return self._value
+
+    def raw(self) -> Any:
+        """The wrapped value, as :attr:`value` holds it."""
         return self._value
 
     @property
@@ -96,4 +115,13 @@ class Opaque(TrackedTerm, Annotated):
         return self._spec
 
     def __repr__(self) -> str:
-        return f"Opaque({self.name!r}, {self._value!r})"
+        """The label, then the declared type and the metadata where the spec sets them."""
+        return term_repr("Opaque", self.name, self._spec._repr_arguments())
+
+    def __str__(self) -> str:
+        """The wrapped value's string, as ``print`` and an f-string show the value."""
+        return str(self._value)
+
+    def __format__(self, format_spec: str) -> str:
+        """The wrapped value formatted by *format_spec*."""
+        return format(self._value, format_spec)

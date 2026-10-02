@@ -32,6 +32,7 @@ import jax
 import jax.numpy as jnp
 
 from ..core._dispatch import Feasibility
+from ..core._repr import format_value
 from ..core._specs import OutputSpec
 from ..core.provenance import Provenance
 from ..core.record import Record
@@ -392,9 +393,6 @@ class GaussianRandomFunction(RandomFunction, SupportsMean, SupportsVariance, ABC
     def __rsub__(self, other: Any) -> GaussianRandomFunction:
         return (-self) + other
 
-    def __repr__(self) -> str:
-        return f"{type(self).__name__}(name={self.name!r})"
-
 
 class GaussianProcess(GaussianRandomFunction):
     """The Gaussian random function specified by a mean function and a covariance kernel.
@@ -441,6 +439,13 @@ class GaussianProcess(GaussianRandomFunction):
         self._mean_fn = mean_fn
         self._cov_kernel = cov_kernel
         super().__init__(name, output_spec=output_spec, event_spec=event_spec)
+
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The parameters ``mean_fn`` and ``cov_kernel``."""
+        return [
+            ("mean_fn", format_value(self._mean_fn)),
+            ("cov_kernel", format_value(self._cov_kernel)),
+        ]
 
     def predict_mean(self, X: Array) -> Array:
         """The mean function at the stacked input points *X*."""
@@ -518,6 +523,10 @@ class LinearBasisFunction(GaussianRandomFunction, SupportsSampling):
         self._w_cov = weights.cov
         super().__init__(name, output_spec=output_spec, event_spec=event_spec)
 
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The parameters ``basis`` and ``weights``."""
+        return [("basis", format_value(self._basis)), ("weights", repr(self._weights))]
+
     def _features(self, X: Array) -> Array:
         """The basis at the stacked inputs *X*, checked against the weights' dimension."""
         phi = jnp.asarray(self._basis(_stacked(X)))
@@ -583,6 +592,10 @@ class _LinearMapGRF(GaussianRandomFunction):
             f"linear_map({base.name})", output_spec=base._output_spec, event_spec=base.event_spec
         )
 
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The parameters ``base`` and ``A``."""
+        return [("base", format_value(self._base)), ("A", format_value(self._A))]
+
     @property
     def _joint(self) -> bool:
         return self._base._joint
@@ -638,6 +651,10 @@ class _ShiftedGRF(GaussianRandomFunction):
             f"shift({base.name})", output_spec=base._output_spec, event_spec=base.event_spec
         )
 
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The parameters ``base`` and ``b``."""
+        return [("base", format_value(self._base)), ("b", format_value(self._b))]
+
     @property
     def _joint(self) -> bool:
         return self._base._joint
@@ -665,6 +682,10 @@ class _ScaledGRF(GaussianRandomFunction):
         super().__init__(
             f"scale({base.name})", output_spec=base._output_spec, event_spec=base.event_spec
         )
+
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The parameters ``base`` and ``alpha``."""
+        return [("base", format_value(self._base)), ("alpha", format_value(self._alpha))]
 
     @property
     def _joint(self) -> bool:
@@ -717,6 +738,10 @@ class _IndependentSumGRF(GaussianRandomFunction):
             output_spec=left._output_spec,
             event_spec=left.event_spec,
         )
+
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The parameters ``left`` and ``right``."""
+        return [("left", format_value(self._left)), ("right", format_value(self._right))]
 
     @property
     def _joint(self) -> bool:

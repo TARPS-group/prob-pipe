@@ -86,7 +86,13 @@ class TestConditionalRoundTrip:
         # A template carrying dtype is not recoverable from a value-only dict.
         tpl = RecordSpec(x=NumericArraySpec((), dtype=jnp.dtype("float32")))
         r = Record("r", {"x": jnp.float32(1.0)}, event_template=tpl)
-        assert Record("r", dict(r)) != r  # re-inferred template drops the dtype
+        assert Record("r", r.raw()) != r  # re-inferred template drops the dtype
+
+    def test_a_dict_of_views_keeps_the_dtype(self):
+        # Each view carries its field's declaration, so inference recovers it.
+        tpl = RecordSpec(x=NumericArraySpec((), dtype=jnp.dtype("float32")))
+        r = Record("r", {"x": jnp.float32(1.0)}, event_template=tpl)
+        assert Record("r", dict(r)) == r
 
     def test_numeric_record_value_only_round_trips(self):
         nr = NumericRecord("nr", a=1.0, b=2.0)
@@ -274,7 +280,7 @@ class TestEditTemplateThreading:
         r = Record("r", x=1.0, y=2.0)
         assert isinstance(r.event_template, NumericRecordSpec)
         r2 = r.replace(x="hello")
-        assert r2["x"] == "hello"
+        assert r2.raw("x") == "hello"
         assert not isinstance(r2.event_template, NumericRecordSpec)
         # ... and merging a mixed record into a numeric one likewise demotes.
         m = r.merge(Record("r", label="fox"))
@@ -402,7 +408,7 @@ class TestBoundaryRules:
         xr = pytest.importorskip("xarray")
         da = xr.DataArray(jnp.array([1.0, 2.0]), dims=["t"], coords={"t": [10, 20]})
         nr = NumericRecord("nr", {"a/b": da, "c": 3.0})
-        restored = nr.at_path("a/b")
+        restored = nr.raw("a/b")
         assert isinstance(restored, xr.DataArray)
         assert restored.dims == ("t",)
 

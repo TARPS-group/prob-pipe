@@ -734,8 +734,8 @@ def _jax_traceability_error(
                     probe_leaves.append(
                         {
                             leaf: jnp.reshape(
-                                jnp.asarray(source[leaf]),
-                                (n_rows, *jnp.shape(source[leaf])[n_batch:]),
+                                jnp.asarray(source._raw_column(leaf)),
+                                (n_rows, *jnp.shape(source._raw_column(leaf))[n_batch:]),
                             )[:1]
                             for leaf in source.event_template
                         }
@@ -1188,7 +1188,9 @@ def _check_routes(
         )
     finally:
         _call._CHECKING.reset(token)
-    return _resolution.call_report(point, lifted=lifted, conversions=conversions)
+    return _resolution.call_report(
+        point, lifted=lifted, conversions=conversions, candidates=candidates
+    )
 
 
 def _run_registered_rule(

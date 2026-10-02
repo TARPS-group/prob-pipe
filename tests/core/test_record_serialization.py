@@ -263,29 +263,29 @@ class TestNumericRecordNativePickle:
         nr = NumericRecord("nr", temps=xr_da, extra=jnp.array(1.0))
         restored = roundtrip(nr)
         # Native leaves pickle themselves: the restored field IS a DataArray.
-        assert restored["temps"].dims == ("t",)
-        assert _coord_ints(restored["temps"]) == [10, 20, 30]
-        assert restored["temps"].attrs == {"units": "meters"}
-        assert type(restored["temps"]).__name__ == "DataArray"
+        assert restored.raw("temps").dims == ("t",)
+        assert _coord_ints(restored.raw("temps")) == [10, 20, 30]
+        assert restored.raw("temps").attrs == {"units": "meters"}
+        assert type(restored.raw("temps")).__name__ == "DataArray"
 
     def test_pickle_preserves_nested_xarray_native(self, xr_da):
         # A nested native leaf pickles through the nested record verbatim.
         outer = NumericRecord("outer", grp=NumericRecord("grp", temps=xr_da))
         back = roundtrip(outer)
-        assert back.at_path("grp/temps").dims == ("t",)
-        assert _coord_ints(back.at_path("grp/temps")) == [10, 20, 30]
+        assert back.raw("grp/temps").dims == ("t",)
+        assert _coord_ints(back.raw("grp/temps")) == [10, 20, 30]
 
     def test_cloudpickle_preserves_xarray_native(self, xr_da):
         # Ray ships task arguments via cloudpickle.
         back = cloudpickle_roundtrip(NumericRecord("nr", temps=xr_da))
-        assert back["temps"].dims == ("t",)
-        assert _coord_ints(back["temps"]) == [10, 20, 30]
+        assert back.raw("temps").dims == ("t",)
+        assert _coord_ints(back.raw("temps")) == [10, 20, 30]
 
     def test_pickle_preserves_pandas_series_native(self):
         pd = pytest.importorskip("pandas")
         s = pd.Series([1.0, 2.0, 3.0], index=["a", "b", "c"], name="obs")
         back = roundtrip(NumericRecord("nr", vals=s))
-        restored = back["vals"]
+        restored = back.raw("vals")
         assert isinstance(restored, pd.Series)
         assert list(restored.index) == ["a", "b", "c"]
         assert restored.name == "obs"
@@ -296,7 +296,7 @@ class TestNumericRecordNativePickle:
         pd = pytest.importorskip("pandas")
         df = pd.DataFrame({"x": [1.0, 2.0], "y": [3.0, 4.0]}, index=["r0", "r1"])
         back = roundtrip(NumericRecord("nr", table=df))
-        restored = back["table"]
+        restored = back.raw("table")
         assert isinstance(restored, pd.DataFrame)
         assert list(restored.columns) == ["x", "y"]
         assert list(restored.index) == ["r0", "r1"]
@@ -306,8 +306,8 @@ class TestNumericRecordNativePickle:
         pd = pytest.importorskip("pandas")
         s = pd.Series([4.0, 5.0], index=["p", "q"], name="w")
         back = cloudpickle_roundtrip(NumericRecord("nr", vals=s))
-        assert list(back["vals"].index) == ["p", "q"]
-        assert back["vals"].name == "w"
+        assert list(back.raw("vals").index) == ["p", "q"]
+        assert back.raw("vals").name == "w"
 
 
 # ---------------------------------------------------------------------------
@@ -366,7 +366,7 @@ class TestPicklePreservesTemplate:
         nr = NumericRecord("nr", {"x": da}, event_template=tpl)
         back = roundtrip(nr)
         assert back.event_template == nr.event_template  # explicit template survived
-        assert back["x"].dims == ("t",)  # the native leaf survived verbatim
+        assert back.raw("x").dims == ("t",)  # the native leaf survived verbatim
 
     def test_pickle_bare_array_record(self):
         # Bare jax leaves are their own native form; the single pickle path

@@ -178,7 +178,7 @@ class TestAMemoIsRebuiltAfterARoundTrip:
         record = NumericRecord("nr", {"x": leaf})
         assert operation(record).to_vector().tolist() == [1.0, 2.0]
         # The native leaf itself survives; only the converted form is rebuilt.
-        assert operation(record)["x"].dims == ("t",)
+        assert operation(record).raw("x").dims == ("t",)
 
 
 class TestDecoupledState:
@@ -349,6 +349,9 @@ class TestTheConstructionWindow:
                 self._init_tracked("t")
                 return "oops"
 
+            def raw(self):
+                return None
+
         with pytest.raises(TypeError, match="should return None"):
             Returning()
 
@@ -372,6 +375,9 @@ class TestTheConstructionWindow:
                 self._init_tracked("failing")
                 self.partial = 1
                 raise ValueError("no")
+
+            def raw(self):
+                return None
 
         with pytest.raises(ValueError, match="no"):
             Failing()

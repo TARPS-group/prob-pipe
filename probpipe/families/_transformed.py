@@ -275,11 +275,9 @@ class BijectorTransformedDistribution(Distribution):
         """The invertible map ``f``."""
         return self._bijector
 
-    def __repr__(self) -> str:
-        return (
-            f"BijectorTransformedDistribution(name={self.name!r}, base={type(self._base).__name__}, "
-            f"bijector={self._bijector.name!r}, event_shape={self.event_shape})"
-        )
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The base law and the bijector."""
+        return [("base", repr(self._base)), ("bijector", repr(self._bijector))]
 
 
 def _descent(law: BijectorTransformedDistribution) -> _Descent:

@@ -38,6 +38,7 @@ from ..core._batch import BatchSpec
 from ..core._numeric_record import NumericRecord
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._record_spec import NumericRecordSpec, RecordSpec
+from ..core._repr import format_value
 from ..core._spec_base import NumericArraySpec, TermSpec
 from ..core._specs import OutputSpec
 from ..core.constraints import real
@@ -266,11 +267,9 @@ class BootstrapReplicateDistribution(Distribution, SupportsSampling):
         """
         return _replicates(self._source, key, sample_shape, self._replicate_size)
 
-    def __repr__(self) -> str:
-        return (
-            f"{type(self).__name__}(name={self.name!r}, source={self._source.name!r}, "
-            f"replicate_size={self._replicate_size})"
-        )
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The source law and the replicate size."""
+        return [("source", repr(self._source)), ("replicate_size", repr(self._replicate_size))]
 
 
 def _replicate_spec(source: Distribution, size: int, level: str) -> TermSpec:
@@ -400,11 +399,9 @@ class BootstrapDistribution(RandomMeasure, SupportsSampling, SupportsMean):
         """The marginalized law of a draw, which is the source."""
         return self._source
 
-    def __repr__(self) -> str:
-        return (
-            f"{type(self).__name__}(name={self.name!r}, source={self._source.name!r}, "
-            f"replicate_size={self._replicate_size})"
-        )
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The source law and the replicate size."""
+        return [("source", repr(self._source)), ("replicate_size", repr(self._replicate_size))]
 
 
 # ---------------------------------------------------------------------------
@@ -466,7 +463,7 @@ def _record_scales(scales: NumericRecord, fields: NumericRecordSpec | None) -> A
     shapes = fields.leaf_shapes
     blocks = []
     for path in expected:
-        scale = jnp.asarray(scales[path])
+        scale = jnp.asarray(scales.raw(path))
         try:
             block = jnp.broadcast_to(scale, shapes[path])
         except ValueError:
@@ -1032,8 +1029,9 @@ class KDEDistribution(
         smoothing = self._kernel.variance * weighted_mean(self._p, scales**2)
         return DenseLinOp(weighted_covariance(self._p, centers) + jnp.diag(smoothing))
 
-    def __repr__(self) -> str:
-        return (
-            f"{type(self).__name__}(name={self.name!r}, num_atoms={self.num_atoms}, "
-            f"kernel={self._kernel.__name__})"
-        )
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The atoms, the weights when nonuniform, and the kernel."""
+        fields = [("atoms", format_value(self._atoms))]
+        if self._p is not None:
+            fields.append(("weights", format_value(self._p)))
+        return [*fields, ("kernel", self._kernel.__name__)]

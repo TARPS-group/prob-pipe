@@ -320,9 +320,12 @@ class BayesFlowLikelihood(_BayesFlowLikelihoodBase, SupportsConditionalLogProb):
         )
         return a.inference_network.log_prob(z, conditions=conds) + ldj
 
-    def __repr__(self) -> str:
-        dq = ", dequantized=True" if self._dequantized else ""
-        return f"BayesFlowLikelihood(theta_dim={self._theta_dim}, data_dim={self._data_dim}{dq})"
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The parameter and data dimensions, and whether the data are dequantized."""
+        fields = [("theta_dim", repr(self._theta_dim)), ("data_dim", repr(self._data_dim))]
+        if self._dequantized:
+            fields.append(("dequantized", "True"))
+        return fields
 
 
 class BayesFlowRatio(_BayesFlowLikelihoodBase, SupportsConditionalUnnormalizedLogProb):
@@ -380,8 +383,9 @@ class BayesFlowRatio(_BayesFlowLikelihoodBase, SupportsConditionalUnnormalizedLo
         )
         return a.logits(thv, conds, stage="inference")
 
-    def __repr__(self) -> str:
-        return f"BayesFlowRatio(theta_dim={self._theta_dim}, data_dim={self._data_dim})"
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The parameter and data dimensions."""
+        return [("theta_dim", repr(self._theta_dim)), ("data_dim", repr(self._data_dim))]
 
 
 # ---------------------------------------------------------------------------

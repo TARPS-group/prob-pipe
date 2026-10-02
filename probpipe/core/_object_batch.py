@@ -144,6 +144,10 @@ class _ObjectBatch[E](Batch[E]):
         batch._init_batch(spec, name=name)
         return batch
 
+    def raw(self) -> np.ndarray:
+        """The storage view: the frozen object array of the stored elements, batch axes leading."""
+        return self._store
+
     # -- the storage seam ---------------------------------------------------
 
     def _element_at(self, index: tuple[int, ...], *, name: str) -> E:
@@ -164,10 +168,8 @@ class _ObjectBatch[E](Batch[E]):
             it no term, as :meth:`_wrap_element` states.
         """
         stored = self._store[index]
-        parents = [self, stored] if isinstance(stored, TrackedTerm) else [self]
-        provenance = Provenance.create(
-            "__getitem__", parents=parents, metadata={"position": list(index)}
-        )
+        source = stored if isinstance(stored, TrackedTerm) else None
+        provenance = Provenance.of_view(self, source, metadata={"position": list(index)})
         if isinstance(stored, TrackedTerm):
             view = stored.with_name(name)
             # ``with_name`` records a rename; the view's lineage is its selection.

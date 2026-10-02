@@ -602,9 +602,6 @@ class TestRawForms:
         assert np.shape(raw["model"]["theta"]["sd"]) == (2, 3, 2)
         assert np.shape(raw["y"]) == (2, 3, 3)
 
-    @pytest.mark.pending(
-        reason="a record detaches to the nested mapping of its raw leaves", raises=AttributeError
-    )
     def test_a_record_result_detaches_to_its_nested_mapping(self):
         law = _law("two-groups", "one-level")
         detached = mean(law).raw()

@@ -203,6 +203,41 @@ class Provenance:
         )
 
     @classmethod
+    def of_view(
+        cls, container: Any, source: Any = None, *, metadata: dict[str, Any]
+    ) -> Provenance | None:
+        """The provenance of a view of *container*, with *source* the term stored at the view.
+
+        Its parents are the container and the source term where one was
+        supplied (II.4), each as an identity-tier descriptor, so the cost of
+        reading a field or an element is independent of what the container
+        holds. *metadata* states where the view is, such as a record's path or
+        a batch's position. The active provenance mode applies as for
+        :meth:`create`.
+        """
+        from ..functions import _context
+
+        mode = _context._active_provenance_mode()
+        if mode is ProvenanceMode.OFF or _context._workflow_side_effects_forbidden():
+            return None
+        from ._fingerprint import _identity_fingerprint
+
+        keep = mode is ProvenanceMode.FULL
+        parents = tuple(
+            ParentInfo(
+                type_name=type(parent).__name__,
+                name=getattr(parent, "name", None),
+                provenance=getattr(parent, "provenance", None),
+                fingerprint=_identity_fingerprint(parent),
+                parent=parent if keep else None,
+                fingerprint_is_weak=True,
+            )
+            for parent in (container, source)
+            if parent is not None
+        )
+        return cls("__getitem__", parents=parents, metadata=metadata)
+
+    @classmethod
     def create(
         cls,
         operation: str,
