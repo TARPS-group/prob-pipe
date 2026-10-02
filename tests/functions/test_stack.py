@@ -56,7 +56,7 @@ class TestTheFunction:
         assert isinstance(result, NumericArray)
         np.testing.assert_allclose(result.value, predict.apply(2.0, x))
         assert result.provenance is not None
-        assert result.provenance.parents[0].name == "predict"
+        assert result.provenance.parents[0].label == "predict"
 
 
 class TestTheEngine:

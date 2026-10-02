@@ -1563,7 +1563,7 @@ class TestReentrancyAndProvenance:
         result = wrapped(2)
         ancestors = probpipe.provenance_ancestors(result)
 
-        assert [ancestor.name for ancestor in ancestors] == ["fitted", "training"]
+        assert [ancestor.label for ancestor in ancestors] == ["fitted", "training"]
 
     def test_off_mode_attaches_no_call_provenance(self):
         probpipe.provenance_config.mode = ProvenanceMode.OFF

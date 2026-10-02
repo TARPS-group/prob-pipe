@@ -312,7 +312,7 @@ class TestRenamedLawDeclaration:
         assert renamed.event_spec == parent.event_spec.with_path_names(a="x")
         assert renamed.provenance is not None
         assert renamed.provenance.operation == "with_path_names"
-        assert [info.name for info in renamed.provenance.parents] == [parent.label]
+        assert [info.label for info in renamed.provenance.parents] == [parent.label]
 
     def test_a_renamed_law_claims_the_capabilities_of_its_parent(self):
         parent = MultivariateNormal("x", _MEAN[:1], cov=_COV[:1, :1]) * MultivariateNormal(

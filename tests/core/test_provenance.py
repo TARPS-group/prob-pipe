@@ -161,13 +161,13 @@ class TestProvenanceBasics:
 class TestParentInfoHashEq:
     def test_hashable_without_provenance(self):
         """Root ParentInfo (provenance=None) is hashable."""
-        p = ParentInfo(type_name="Normal", name="prior")
+        p = ParentInfo(type_name="Normal", label="prior")
         assert isinstance(hash(p), int)
 
     def test_hashable_with_provenance(self):
         """Non-root ParentInfo (source set) is hashable despite Provenance.metadata."""
         src = Provenance("op", metadata={"key": "val"})
-        p = ParentInfo(type_name="Gamma", name="mid", provenance=src)
+        p = ParentInfo(type_name="Gamma", label="mid", provenance=src)
         assert isinstance(hash(p), int)
 
     def test_usable_in_set(self):
@@ -182,32 +182,32 @@ class TestParentInfoHashEq:
     def test_equal_same_fields(self):
         """Two ParentInfo with identical fields compare equal."""
         src = Provenance("op")
-        a = ParentInfo(type_name="Normal", name="x", provenance=src)
-        b = ParentInfo(type_name="Normal", name="x", provenance=src)
+        a = ParentInfo(type_name="Normal", label="x", provenance=src)
+        b = ParentInfo(type_name="Normal", label="x", provenance=src)
         assert a == b
 
     def test_not_equal_different_name(self):
-        a = ParentInfo(type_name="Normal", name="x")
-        b = ParentInfo(type_name="Normal", name="y")
+        a = ParentInfo(type_name="Normal", label="x")
+        b = ParentInfo(type_name="Normal", label="y")
         assert a != b
 
     def test_not_equal_different_type(self):
-        a = ParentInfo(type_name="Normal", name="x")
-        b = ParentInfo(type_name="Gamma", name="x")
+        a = ParentInfo(type_name="Normal", label="x")
+        b = ParentInfo(type_name="Gamma", label="x")
         assert a != b
 
     def test_obj_excluded_from_eq(self):
         """obj field does not affect equality — same ancestor, different live ref."""
         n = Normal(loc=0.0, scale=1.0, label="x")
-        a = ParentInfo(type_name="Normal", name="x", parent=n)
-        b = ParentInfo(type_name="Normal", name="x", parent=None)
+        a = ParentInfo(type_name="Normal", label="x", parent=n)
+        b = ParentInfo(type_name="Normal", label="x", parent=None)
         assert a == b
 
     def test_hash_contract(self):
         """Equal ParentInfo must have equal hashes."""
         src = Provenance("op", metadata={"k": 1})
-        a = ParentInfo(type_name="Normal", name="x", provenance=src)
-        b = ParentInfo(type_name="Normal", name="x", provenance=src)
+        a = ParentInfo(type_name="Normal", label="x", provenance=src)
+        b = ParentInfo(type_name="Normal", label="x", provenance=src)
         assert a == b
         assert hash(a) == hash(b)
 
@@ -224,8 +224,8 @@ class TestConvertProvenance:
         assert converted.provenance is not None
         assert converted.provenance.operation == "workflow.convert"
         assert isinstance(converted.provenance.parents[0], ParentInfo)
-        assert converted.provenance.parents[0].name == "convert"
-        assert converted.provenance.parents[1].name == "t_src"
+        assert converted.provenance.parents[0].label == "convert"
+        assert converted.provenance.parents[1].label == "t_src"
 
     def test_empirical_by_convert(self):
         src = Normal(loc=0.0, scale=1.0, label="norm_src")
@@ -233,8 +233,8 @@ class TestConvertProvenance:
         assert ed.provenance is not None
         assert ed.provenance.operation == "workflow.convert"
         assert isinstance(ed.provenance.parents[0], ParentInfo)
-        assert ed.provenance.parents[0].name == "convert"
-        assert ed.provenance.parents[1].name == "norm_src"
+        assert ed.provenance.parents[0].label == "convert"
+        assert ed.provenance.parents[1].label == "norm_src"
 
 
 # ===========================================================================
@@ -250,7 +250,7 @@ class TestBijectorTransformedDistributionProvenance:
         assert td.provenance.operation == "transform"
         assert len(td.provenance.parents) == 1
         assert isinstance(td.provenance.parents[0], ParentInfo)
-        assert td.provenance.parents[0].name == "base"
+        assert td.provenance.parents[0].label == "base"
         assert td.provenance.metadata["bijector"] == "exp"
 
     def test_transform_chain_provenance(self):
@@ -266,7 +266,7 @@ class TestBijectorTransformedDistributionProvenance:
         assert td.provenance.operation == "transform"
         assert len(td.provenance.parents) == 1
         assert isinstance(td.provenance.parents[0], ParentInfo)
-        assert td.provenance.parents[0].name == "x"
+        assert td.provenance.parents[0].label == "x"
 
 
 # ===========================================================================
@@ -282,7 +282,7 @@ class TestConditioningProvenance:
         assert cond.provenance.operation == "workflow.condition_on"
         assert isinstance(cond.provenance.parents[0], ParentInfo)
         # The operation, the joint, and the slice's law, whose own record names its stage.
-        assert [parent.name for parent in cond.provenance.parents] == [
+        assert [parent.label for parent in cond.provenance.parents] == [
             "condition_on",
             joint.label,
             "y",
@@ -308,7 +308,7 @@ class TestConditioningProvenance:
         cond = condition_on_operation(joint, {"z": jnp.array(1.0)})
         assert cond.provenance.operation == "workflow.condition_on"
         # The operation, the joint, and the slice's law, whose own record names its stage.
-        assert [parent.name for parent in cond.provenance.parents] == [
+        assert [parent.label for parent in cond.provenance.parents] == [
             "condition_on",
             joint.label,
             "x",
@@ -321,7 +321,7 @@ class TestConditioningProvenance:
         )
         cond = condition_on(jg, {"x": jnp.array([0.0])})
         assert cond.provenance.operation == "workflow.condition_on"
-        assert [parent.name for parent in cond.provenance.parents] == [
+        assert [parent.label for parent in cond.provenance.parents] == [
             "condition_on",
             jg.label,
             "y",
@@ -397,7 +397,7 @@ class TestBroadcastingProvenance:
             result = wf(x=a, y=b)
         assert result.provenance is not None
         assert len(result.provenance.parents) == 3
-        assert [parent.name for parent in result.provenance.parents] == ["add", "a", "b"]
+        assert [parent.label for parent in result.provenance.parents] == ["add", "a", "b"]
 
     def test_broadcast_enumerate_provenance(self):
         """Enumeration path should also get provenance."""
@@ -472,7 +472,7 @@ class TestProvenanceChains:
         # but converted has provenance pointing to src
         assert converted.provenance.operation == "workflow.convert"
         assert isinstance(converted.provenance.parents[1], ParentInfo)
-        assert converted.provenance.parents[1].name == "prior"
+        assert converted.provenance.parents[1].label == "prior"
 
     def test_transform_then_broadcast(self, full_provenance_mode):
         """transform → broadcast creates a 2-step chain."""
@@ -515,7 +515,7 @@ class TestSerialization:
         d = p.to_dict()
         assert len(d["parents"]) == 1
         assert d["parents"][0]["type"] == "Normal"
-        assert d["parents"][0]["name"] == "my_normal"
+        assert d["parents"][0]["label"] == "my_normal"
 
     def test_to_dict_with_plain_inputs(self):
         value = jnp.array([1.0, 2.0])
@@ -525,7 +525,7 @@ class TestSerialization:
         d = p.to_dict()
 
         assert d["inputs"]["x"]["type"] == type(value).__name__
-        assert d["inputs"]["x"]["name"] is None
+        assert d["inputs"]["x"]["label"] is None
         assert d["inputs"]["x"]["fingerprint"] == p.inputs["x"].fingerprint
         assert d["inputs"]["x"]["fingerprint_is_weak"] is False
 
@@ -563,7 +563,7 @@ class TestSerialization:
         restored = Provenance.from_dict(d)
         # Parent info preserved in metadata
         assert restored.metadata["_parents_info"][0]["type"] == "Normal"
-        assert restored.metadata["_parents_info"][0]["name"] == "n"
+        assert restored.metadata["_parents_info"][0]["label"] == "n"
 
     def test_from_dict_preserves_plain_input_info(self):
         p = Provenance.create("op", inputs={"x": jnp.array([1.0, 2.0])})
@@ -630,7 +630,7 @@ class TestSerialization:
 
     def test_to_dict_fingerprint_included(self):
         """fingerprint is serialized when set on a ParentInfo."""
-        pi = ParentInfo(type_name="Normal", name="x", fingerprint="abc123")
+        pi = ParentInfo(type_name="Normal", label="x", fingerprint="abc123")
         p = Provenance("op", parents=(pi,))
         d = p.to_dict()
         assert d["parents"][0]["fingerprint"] == "abc123"
@@ -639,7 +639,7 @@ class TestSerialization:
     def test_to_dict_weak_fingerprint_classification_included(self):
         pi = ParentInfo(
             type_name="Opaque",
-            name=None,
+            label=None,
             fingerprint="abc123",
             fingerprint_is_weak=True,
         )
@@ -649,7 +649,7 @@ class TestSerialization:
 
     def test_to_dict_fingerprint_omitted_when_none(self):
         """fingerprint key is absent when fingerprint is None."""
-        pi = ParentInfo(type_name="Normal", name="x")
+        pi = ParentInfo(type_name="Normal", label="x")
         p = Provenance("op", parents=(pi,))
         d = p.to_dict()
         assert "fingerprint" not in d["parents"][0]
@@ -678,7 +678,7 @@ class TestProvenanceAncestors:
         ancestors = provenance_ancestors(td)
         assert len(ancestors) == 1
         assert isinstance(ancestors[0], ParentInfo)
-        assert ancestors[0].name == "base"
+        assert ancestors[0].label == "base"
 
     def test_chain_of_ancestors(self, full_provenance_mode):
         """Function plus base → transform are all broadcast ancestors."""
@@ -740,7 +740,7 @@ class TestProvenanceAncestors:
         C.with_provenance(Provenance.create("op", parents=[A, B]))
 
         ancestors = provenance_ancestors(C)
-        names = [a.name for a in ancestors]
+        names = [a.label for a in ancestors]
         assert names.count("X") == 1, f"X appeared {names.count('X')} times: {names}"
         assert set(names) == {"A", "B", "X"}
 
@@ -776,7 +776,7 @@ class TestProvenanceDag:
         ancestors = provenance_ancestors(td)
         assert len(ancestors) == 1
         assert isinstance(ancestors[0], ParentInfo)
-        assert ancestors[0].name == "base"
+        assert ancestors[0].label == "base"
 
     def test_no_provenance_single_node(self):
         n = Normal(loc=0.0, scale=1.0, label="alone")
@@ -814,7 +814,7 @@ class TestProvenanceDag:
         result = wf(jnp.asarray(2.0))
 
         ancestors = provenance_ancestors(result)
-        assert [ancestor.name for ancestor in ancestors] == [wf.label]
+        assert [ancestor.label for ancestor in ancestors] == [wf.label]
         dag = provenance_dag(result)
         assert _count_dag_entries(dag) == (2, 1)
 
@@ -868,10 +868,10 @@ class TestProvenanceModes:
         assert len(result.provenance.parents) == 2
         function_parent, parent = result.provenance.parents
         assert function_parent.type_name == "Function"
-        assert function_parent.name == "identity"
+        assert function_parent.label == "identity"
         assert isinstance(parent, ParentInfo)
         assert parent.type_name == "Normal"
-        assert parent.name == "input"
+        assert parent.label == "input"
 
     def test_lightweight_parent_info_not_live_ref(self):
         """In LIGHTWEIGHT mode, parents are not live Distribution references."""
@@ -893,7 +893,7 @@ class TestProvenanceModes:
 
         assert provenance is not None
         info = provenance.inputs["value"]
-        assert info.name is None
+        assert info.label is None
         assert info.parent is None
         assert info.fingerprint is not None
 
@@ -914,7 +914,7 @@ class TestProvenanceModes:
         ancestors = provenance_ancestors(result)
         assert len(ancestors) == 2
         assert isinstance(ancestors[0], ParentInfo)
-        assert [ancestor.name for ancestor in ancestors] == ["identity", "input"]
+        assert [ancestor.label for ancestor in ancestors] == ["identity", "input"]
         assert ancestors[0].parent is None
 
     def test_lightweight_dag_includes_function_and_input(self):

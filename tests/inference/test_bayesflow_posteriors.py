@@ -341,7 +341,7 @@ class TestBayesFlowNPE:
 
     def test_provenance_names_the_joint_it_was_trained_on(self, npe_model):
         record = npe_model.provenance
-        parents = [parent.name for parent in record.parents]
+        parents = [parent.label for parent in record.parents]
         assert npe_model.prior.label in parents
         assert npe_model.simulator.label in parents
 

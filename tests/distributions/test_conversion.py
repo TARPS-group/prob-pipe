@@ -920,7 +920,7 @@ class TestConvert:
         source = Source("theta")
         result = _registry(ToyConverter("m", exact=False)).convert(source, Target)
         assert result.provenance.operation == "convert"
-        assert [parent.name for parent in result.provenance.parents] == ["theta"]
+        assert [parent.label for parent in result.provenance.parents] == ["theta"]
         assert result.provenance.metadata == {"converter": "m", "exact": False}
 
     def test_a_result_that_is_not_a_law_raises_type_error(self):

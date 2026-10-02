@@ -85,7 +85,7 @@ class TestAViewRecordsItsContainer:
         view = _mixed()["effect"]
 
         assert view.provenance.operation == "__getitem__"
-        assert [parent.name for parent in view.provenance.parents] == ["school"]
+        assert [parent.label for parent in view.provenance.parents] == ["school"]
         assert view.provenance.metadata == {"path": "effect"}
 
     def test_a_stored_term_is_the_second_parent(self):
@@ -93,7 +93,7 @@ class TestAViewRecordsItsContainer:
 
         parents = record["theta"].provenance.parents
 
-        assert [parent.name for parent in parents] == ["r", "prior"]
+        assert [parent.label for parent in parents] == ["r", "prior"]
 
     def test_the_parents_are_identity_descriptors(self, full_provenance_mode):
         record = _mixed()

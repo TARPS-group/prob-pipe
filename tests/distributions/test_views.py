@@ -550,7 +550,7 @@ class TestDeclaration:
         parent = _product()
         view = FieldView(parent, "a")
         assert view.provenance is not None
-        assert [info.name for info in view.provenance.parents] == [parent.label]
+        assert [info.label for info in view.provenance.parents] == [parent.label]
 
     def test_binding_a_dimension_of_a_view_binds_it_in_the_parent(self):
         parent = _Law("parent", OutputSpec(RecordSpec(a=("n",), b=("n",))))

@@ -1257,7 +1257,7 @@ class TestPathRenames:
         assert [edge[:2] for edge in renamed._graph.edges] == [
             edge[:2] for edge in joint._graph.edges
         ]
-        assert [info.name for info in renamed.provenance.parents] == [joint.label]
+        assert [info.label for info in renamed.provenance.parents] == [joint.label]
 
     def test_gathering_components_of_two_factors_regroups_them(self, key):
         """The node ``g`` is one factor: the sub-joint of the two factors, packaged as ``g``."""

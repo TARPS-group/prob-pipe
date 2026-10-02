@@ -37,7 +37,7 @@ def test_the_result_has_the_capabilities_of_its_family(posterior):
 def test_the_provenance_names_the_method_and_the_target(posterior, target):
     assert posterior.provenance.operation == "blackjax_rwmh"
     (parent,) = posterior.provenance.parents
-    assert (parent.type_name, parent.name) == (type(target).__name__, target.label)
+    assert (parent.type_name, parent.label) == (type(target).__name__, target.label)
 
 
 def test_the_result_keeps_the_target_component(posterior):

@@ -46,8 +46,8 @@ class ParentInfo:
     type_name : str
         Class name of the tracked parent or plain input (e.g.
         ``"EmpiricalDistribution"`` or ``"ArrayImpl"``).
-    name : str or None
-        Name of the tracked parent. ``None`` for plain inputs and unnamed
+    label : str or None
+        Label of the tracked parent. ``None`` for plain inputs and unlabeled
         tracked terms.
     provenance : Provenance or None
         The parent's own provenance node.  Kept in both LIGHTWEIGHT and
@@ -60,7 +60,7 @@ class ParentInfo:
         :meth:`Provenance.create`. ``None`` only when fingerprinting raises an
         unexpected error. Consult ``fingerprint_is_weak`` before treating it
         as a portable cache-key component. Excluded from equality and hashing:
-        descriptor identity is structural (``type_name`` / ``name`` /
+        descriptor identity is structural (``type_name`` / ``label`` /
         ``provenance``), so a digest must not perturb ancestor-set dedup.
     parent : Any or None
         The live tracked parent or plain input object.  Set in FULL mode;
@@ -74,7 +74,7 @@ class ParentInfo:
     """
 
     type_name: str
-    name: str | None
+    label: str | None
     provenance: Provenance | None = field(default=None, hash=False)
     fingerprint: str | None = field(default=None, compare=False)
     parent: Any | None = field(default=None, compare=False)
@@ -152,7 +152,7 @@ class Provenance:
         def serialize_info(p: ParentInfo) -> dict[str, Any]:
             entry: dict[str, Any] = {
                 "type": p.type_name,
-                "name": p.name,
+                "label": p.label,
             }
             if p.fingerprint is not None:
                 entry["fingerprint"] = p.fingerprint
@@ -226,7 +226,7 @@ class Provenance:
         parents = tuple(
             ParentInfo(
                 type_name=type(parent).__name__,
-                name=getattr(parent, "label", None),
+                label=getattr(parent, "label", None),
                 provenance=getattr(parent, "provenance", None),
                 fingerprint=_identity_fingerprint(parent),
                 parent=parent if keep else None,
@@ -296,7 +296,7 @@ class Provenance:
                 fp = None
             return ParentInfo(
                 type_name=type(p).__name__,
-                name=getattr(p, "label", None),
+                label=getattr(p, "label", None),
                 provenance=getattr(p, "provenance", None),
                 fingerprint=fp,
                 parent=p if keep else None,
@@ -369,7 +369,7 @@ def _parent_key(p: Any) -> Any:
     if isinstance(p, ParentInfo):
         if p.parent is not None:
             return id(p.parent)
-        return (p.type_name, p.name, id(p.provenance))
+        return (p.type_name, p.label, id(p.provenance))
     return id(p)
 
 
@@ -447,7 +447,7 @@ def provenance_dag(node: ProvenanceNode):
         nid = _stable_nid(p)
         if key not in visited:
             visited.add(key)
-            dot.node(nid, _label(p.type_name, p.name))
+            dot.node(nid, _label(p.type_name, p.label))
             if p.provenance is not None:
                 for pp in p.provenance.parents:
                     _visit_parent(pp, nid, p.provenance.operation)

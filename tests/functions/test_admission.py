@@ -86,7 +86,7 @@ class TestBinding:
         tracked = NumericArray("a", jnp.ones(2))
         result = add(tracked, 3.0)
 
-        assert [parent.name for parent in result.provenance.parents] == ["add", "a"]
+        assert [parent.label for parent in result.provenance.parents] == ["add", "a"]
         assert set(result.provenance.inputs) == {"y"}
 
     def test_an_argument_that_binds_to_no_parameter_raises_pythons_error(self):

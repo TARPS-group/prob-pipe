@@ -771,7 +771,7 @@ class TestViewProvenance:
 
         element = outer[0]
         assert element.provenance.operation == "with_label"
-        assert [parent.name for parent in element.provenance.parents] == ["inner"]
+        assert [parent.label for parent in element.provenance.parents] == ["inner"]
 
 
 class TestImmutability:
@@ -979,7 +979,7 @@ class TestRenamingAView:
         view = nested[1]
         renamed = view.with_level_names(draw="d")
         assert renamed.provenance.operation == "with_level_names"
-        assert [parent.name for parent in renamed.provenance.parents] == [view.label]
+        assert [parent.label for parent in renamed.provenance.parents] == [view.label]
         assert renamed.provenance is not view.provenance
 
     def test_renaming_onto_a_dropped_root_level_name_says_why(self, nested):

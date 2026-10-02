@@ -145,7 +145,7 @@ class TestWithNameProvenance:
         n = Normal(loc=0.0, scale=1.0, label="x")
         n2 = n.with_label("y")
         assert len(n2.provenance.parents) == 1
-        assert n2.provenance.parents[0].name == "x"
+        assert n2.provenance.parents[0].label == "x"
 
     def test_provenance_metadata(self):
         n = Normal(loc=0.0, scale=1.0, label="x")

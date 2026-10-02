@@ -319,7 +319,7 @@ class TestNumericArrayComputesAsAnArray:
 
         assert result.provenance.operation == "__add__"
         (product,) = result.provenance.parents
-        assert product.name == "a * b"
+        assert product.label == "a * b"
         np.testing.assert_array_equal(np.asarray(result), np.arange(3.0) + 1)
 
     def test_a_result_declares_what_its_operands_declare(self):

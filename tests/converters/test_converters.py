@@ -163,7 +163,7 @@ class TestMomentMatching:
         assert result.provenance.operation == "convert"
         assert result.provenance.metadata == {"converter": "moment_match", "exact": False}
         assert len(result.provenance.parents) == 1
-        assert result.provenance.parents[0].name == "prior"
+        assert result.provenance.parents[0].label == "prior"
 
     def test_same_class_returns_source(self):
         """Same-class conversion returns the source object itself."""
@@ -780,7 +780,7 @@ class TestConversionProvenance:
         result = converter_registry.convert(emp, Normal)
         assert result.provenance is not None
         assert result.provenance.operation == "convert"
-        assert [parent.name for parent in result.provenance.parents] == ["x"]
+        assert [parent.label for parent in result.provenance.parents] == ["x"]
 
     def test_same_class_records_nothing(self):
         """Same-class conversion returns source directly, no provenance."""
@@ -795,7 +795,7 @@ class TestConversionProvenance:
         assert result.provenance is not None
         assert result.provenance.operation == "convert"
         assert len(result.provenance.parents) == 1
-        assert result.provenance.parents[0].name == "g"
+        assert result.provenance.parents[0].label == "g"
 
 
 class TestEdgeCases:
@@ -960,7 +960,7 @@ class TestProtocolConversion:
         result = converter_registry.convert(emp, SupportsLogProb)
         assert result.provenance is not None
         assert len(result.provenance.parents) == 1
-        assert result.provenance.parents[0].name == "posterior"
+        assert result.provenance.parents[0].label == "posterior"
 
     def test_multi_field_empirical_preserves_template_through_kde(self):
         """An empirical law over a record converts to a KDE over that record's fields."""

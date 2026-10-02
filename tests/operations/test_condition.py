@@ -568,7 +568,7 @@ class TestTheNormalizationStage:
         assert target.provenance.operation == "condition_on"
         assert target.provenance.metadata == {"stage": "exact", "route": "curry"}
         (parent,) = target.provenance.parents
-        assert (parent.type_name, parent.name) == ("_UnnormalizedKernel", kernel.label)
+        assert (parent.type_name, parent.label) == ("_UnnormalizedKernel", kernel.label)
 
     def test_the_target_of_bayes_rule_records_the_curry_of_its_slots(self, approximate_method):
         joint = Kernel("y", ("mu",)) * Kernel("z", ("mu",))

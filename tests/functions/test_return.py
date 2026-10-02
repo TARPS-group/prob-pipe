@@ -110,7 +110,7 @@ class TestLabelAndProvenance:
 
         provenance = wrapped(tracked, 3.0).provenance
 
-        assert [parent.name for parent in provenance.parents] == ["add", "a"]
+        assert [parent.label for parent in provenance.parents] == ["add", "a"]
         assert set(provenance.inputs) == {"y"}
 
     @pytest.mark.pending(

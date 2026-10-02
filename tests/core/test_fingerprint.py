@@ -854,22 +854,22 @@ class TestParentInfoIdentity:
     def test_fingerprint_excluded_from_equality(self):
         # Two descriptors for the same ancestor compare/hash equal regardless of
         # the content digest, so a fingerprint can't perturb ancestor-set dedup.
-        a = ParentInfo(type_name="X", name="n", provenance=None, fingerprint="aaaaaaaaaaaaaaaa")
-        b = ParentInfo(type_name="X", name="n", provenance=None, fingerprint="bbbbbbbbbbbbbbbb")
+        a = ParentInfo(type_name="X", label="n", provenance=None, fingerprint="aaaaaaaaaaaaaaaa")
+        b = ParentInfo(type_name="X", label="n", provenance=None, fingerprint="bbbbbbbbbbbbbbbb")
         assert a == b
         assert hash(a) == hash(b)
 
     def test_fingerprint_strength_excluded_from_equality(self):
         strong = ParentInfo(
             type_name="X",
-            name="n",
+            label="n",
             provenance=None,
             fingerprint="aaaaaaaaaaaaaaaa",
             fingerprint_is_weak=False,
         )
         weak = ParentInfo(
             type_name="X",
-            name="n",
+            label="n",
             provenance=None,
             fingerprint="bbbbbbbbbbbbbbbb",
             fingerprint_is_weak=True,

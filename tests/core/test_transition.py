@@ -84,7 +84,7 @@ class TestIterate:
         assert produced.operation == "iterate"
         assert produced.metadata["step"] == 0
         assert len(produced.parents) == 1
-        assert produced.parents[0].name == initial.label
+        assert produced.parents[0].label == initial.label
 
     def test_provenance_preserved(self, initial):
         """Provenance set by step function is not overwritten."""
@@ -98,7 +98,7 @@ class TestIterate:
         dists = iterate(step_fn=shift_step, initial=initial, inputs=[1.0, 2.0, 3.0])
         for step in (1, 2, 3):
             previous = _produced(dists[step]).parents[0]
-            assert previous.name == "initial"
+            assert previous.label == "initial"
             assert previous.provenance == _produced(dists[step - 1])
 
     def test_callback(self, initial):

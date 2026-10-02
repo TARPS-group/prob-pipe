@@ -258,7 +258,7 @@ class TestIndexing:
         batch = DistributionBatch("laws", laws, "law")
         provenance = batch[2].provenance
         assert provenance.operation == "__getitem__"
-        assert [parent.name for parent in provenance.parents] == ["laws", "x"]
+        assert [parent.label for parent in provenance.parents] == ["laws", "x"]
         assert provenance.metadata == {"position": [2]}
 
     def test_iteration_visits_the_laws_along_the_leading_axis(self):
@@ -397,7 +397,7 @@ class TestConditionalDistributionBatch:
         batch = ConditionalDistributionBatch("kernels", kernels, "kernel")
         element = batch[1]
         assert element.label == "kernels[kernel=1]"
-        assert [parent.name for parent in element.provenance.parents] == ["kernels", "lik"]
+        assert [parent.label for parent in element.provenance.parents] == ["kernels", "lik"]
         assert kernels[1].label == "lik"
 
     def test_a_distribution_batch_refuses_kernels(self):

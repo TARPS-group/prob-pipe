@@ -362,7 +362,7 @@ class TestElements:
     def test_an_element_records_the_batch_it_was_read_from(self, labels):
         provenance = labels[2].provenance
         assert provenance.operation == "__getitem__"
-        assert [parent.name for parent in provenance.parents] == ["s"]
+        assert [parent.label for parent in provenance.parents] == ["s"]
         assert provenance.metadata == {"position": [2]}
 
     def test_a_callable_element_is_callable(self, functions):
@@ -398,7 +398,7 @@ class TestElements:
         assert view is not element
         assert view.label == "f[variant=0]"
         assert view() == "f[variant=0]"
-        assert [parent.name for parent in view.provenance.parents] == ["f", "alpha"]
+        assert [parent.label for parent in view.provenance.parents] == ["f", "alpha"]
         assert element.label == "alpha"
 
     def test_iteration_walks_the_leading_axis(self, functions):

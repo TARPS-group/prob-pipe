@@ -226,7 +226,7 @@ class TestWithName:
         assert m.provenance is not None
         assert m.provenance.operation == "with_label"
         assert m.provenance.metadata == {"old_label": "x", "new_label": "y"}
-        assert m.provenance.parents[0].name == "x"
+        assert m.provenance.parents[0].label == "x"
 
     def test_with_name_on_immutable_record(self):
         r = Record("orig", a=jnp.array(1.0), b=jnp.array(2.0))
