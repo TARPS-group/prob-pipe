@@ -204,6 +204,17 @@ def _validate_function_output(
         _validate_declared_support(spec, actual_spec, path)
     spec._bind_dims_from_value(result, resolved, path)
     concrete = spec._substitute_dims(resolved)
+    if isinstance(concrete, FunctionSpec) and concrete.input_spec is not None:
+        _validate_function_declarations(
+            function_name=function_name,
+            signature=(
+                result.signature
+                if isinstance(result, Function)
+                else make_signature_info(result).signature
+            ),
+            input_spec=concrete.input_spec,
+            construction_bindings=result._bind if isinstance(result, Function) else {},
+        )
     _validate_output_support(concrete, result, path)
     if actual_spec is None:
         actual_spec = RecordSpec.infer_from({"result": result}).children["result"]

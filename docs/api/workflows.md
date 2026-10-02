@@ -228,6 +228,9 @@ reconstructed before execution. Provenance labels retain the slot, such as
 bindings, and declaration checks. It preserves the returned object's identity,
 annotations, and provenance. It does not lift distributions, sweep batches,
 wrap results, orchestrate execution, or create call provenance.
+A returned callable's declared input slots and defaults are checked against its
+signature without executing it; its future output is checked when the wrapped
+Function is called.
 
 `__call__` adds those operations. An existing tracked return is shallow-copied,
 shares value data, receives `output_name`, and owns independent annotations and

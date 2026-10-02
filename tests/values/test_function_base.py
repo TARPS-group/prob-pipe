@@ -675,7 +675,8 @@ class TestCompletedOutputDeclarations:
         assert wrapped.apply() is value
 
     @pytest.mark.parametrize("tracked", [False, True])
-    def test_returned_function_declaration_must_match_its_signature(self, tracked):
+    @pytest.mark.parametrize("raw", [False, True])
+    def test_returned_function_declaration_must_match_its_signature(self, tracked, raw):
         def body(x):
             return x
 
@@ -683,12 +684,13 @@ class TestCompletedOutputDeclarations:
         declaration = FunctionSpec(input_spec=InputSpec(y=NumericArraySpec(())))
         factory = Function("factory", lambda: returned, output_spec=declaration)
         with pytest.raises(ValueError, match=r"input_spec slots.*signature parameters"):
-            factory()
+            (factory.apply if raw else factory)()
         if tracked:
             assert returned.input_spec is None
 
     @pytest.mark.parametrize("bound", [False, True])
-    def test_returned_function_checks_defaults_and_bindings(self, bound):
+    @pytest.mark.parametrize("raw", [False, True])
+    def test_returned_function_checks_defaults_and_bindings(self, bound, raw):
         default = jnp.ones(2)
         returned = (
             Function("inner", lambda x: x, bind={"x": default})
@@ -701,8 +703,20 @@ class TestCompletedOutputDeclarations:
             output_spec=FunctionSpec(input_spec=InputSpec(x=NumericArraySpec(()))),
         )
         with pytest.raises(ValueError, match=r"default/x|construction binding/x"):
-            factory()
+            (factory.apply if raw else factory)()
         assert returned.input_spec is None
+
+    def test_apply_validates_a_callable_without_invoking_or_wrapping_it(self):
+        def returned(*, x=1.0):
+            raise AssertionError("A return contract must not execute the callable")
+
+        factory = Function(
+            "factory",
+            lambda: returned,
+            output_spec=FunctionSpec(input_spec=InputSpec(x=NumericArraySpec(()))),
+        )
+        assert factory.apply() is returned
+        assert factory().signature == inspect.signature(returned)
 
     @pytest.mark.parametrize("dispatch", ["sequential", "thread"])
     def test_nested_lift_carries_completed_output_dimensions(self, rows, dispatch):
