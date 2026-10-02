@@ -22,8 +22,11 @@ from probpipe import (
     EmpiricalDistribution,
     Normal,
     NumericRecord,
+    NumericRecordBatch,
     condition_on,
     learn_amortized_posterior,
+    log_prob,
+    sample,
     workflow_run,
 )
 from probpipe.core._dispatch import ResolutionError
@@ -31,10 +34,13 @@ from probpipe.core._specs import NumericArraySpec, OutputSpec
 from probpipe.distributions import ConditionalDistribution
 from probpipe.distributions._capabilities import (
     SupportsApproximateConditioning,
+    SupportsConditionalLogProb,
     SupportsConditionalSampling,
+    SupportsLogProb,
     SupportsSampling,
     _is_normalized,
 )
+from probpipe.inference._bayesflow_posteriors import _AmortizedPosterior
 from probpipe.operations._condition import condition_on as condition_on_operation
 from tests._posterior import law_draws, method_of
 
@@ -249,6 +255,41 @@ class TestBayesFlowNPE:
         assert np.asarray(draws["a"]).reshape(-1).shape[0] == 300
         assert np.isfinite(np.asarray(draws["b"])).all()
 
+    def test_a_coupling_flow_posterior_has_the_flow_density(self, npe_model):
+        """The kernel and its law claim the density, which equals the approximator's
+        own ``log_prob`` for a batch of values and for each value alone."""
+        observation = np.asarray(_observe(0.6, -0.6, seed=7), dtype="float32")
+        law = condition_on(npe_model, {"observation": observation})
+        assert isinstance(npe_model, SupportsConditionalLogProb)
+        assert isinstance(law, SupportsLogProb)
+        with workflow_run(seed=0):
+            draws = sample(law, sample_shape=(5,))
+        a, b = np.asarray(draws["a"]), np.asarray(draws["b"])
+        reference = npe_model._approximator.log_prob(
+            data={
+                "theta_0": a[:, None],
+                "theta_1": b[:, None],
+                "observation": np.tile(observation, (5, 1)),
+            }
+        )
+        scores = np.asarray(log_prob(law, draws))
+        np.testing.assert_allclose(scores, np.ravel(reference), rtol=1e-5, atol=1e-5)
+        one = float(np.asarray(log_prob(law, {"a": a[0], "b": b[0]})))
+        np.testing.assert_allclose(one, scores[0], rtol=1e-5)
+        given = {"observation": observation}
+        conditional = npe_model._conditional_log_prob(given, {"a": a[0], "b": b[0]})
+        np.testing.assert_allclose(float(conditional), one, rtol=1e-6)
+
+    def test_the_density_integrates_to_one(self, npe_model):
+        law = condition_on(npe_model, {"observation": _observe(0.6, -0.6, seed=7)})
+        grid = np.linspace(-3.0, 3.0, 241)
+        a, b = np.meshgrid(grid, grid, indexing="ij")
+        points = NumericRecordBatch(
+            "grid", {"a": jnp.asarray(a.ravel()), "b": jnp.asarray(b.ravel())}, "point"
+        )
+        density = np.exp(np.asarray(log_prob(law, points)))
+        assert density.sum() * (grid[1] - grid[0]) ** 2 == pytest.approx(1.0, abs=0.01)
+
     def test_an_mcmc_option_is_refused(self, npe_model):
         """Conditioning the posterior takes no method options and refuses them."""
         with pytest.raises(TypeError, match=r"\['num_chains', 'num_warmup'\].*takes none"):
@@ -288,14 +329,34 @@ class TestBayesFlowNPE:
         assert _is_normalized(law)
         assert tuple(law.event_spec.components) == ("a", "b")
 
-    def test_a_parameter_given_with_the_observation_is_not_left_free(self, npe_model):
-        """Conditioning a parameter is Bayes' rule on the network's draws, which no
-        method normalizes, so the call raises rather than drop the parameter."""
+    def test_a_parameter_given_with_the_observation_is_conditioned_by_bayes_rule(self, npe_model):
+        """Conditioning a parameter is Bayes' rule on the learned law, which inference
+        normalizes through the coupling flow's density, so the result is the law of
+        the other parameter."""
         given = {"observation": _observe(0.5, 0.0, 0), "a": 0.5}
-        report = condition_on_operation.check(npe_model, given)
+        budgets = {"num_warmup": 200, "num_results": 400}
+        with workflow_run(seed=0):
+            law = condition_on_operation.with_options(method_options=budgets)(npe_model, given)
+        assert isinstance(law, EmpiricalDistribution)
+        assert tuple(law.event_spec.components) == ("b",)
+        assert abs(float(np.asarray(pp.mean(law)["b"]).ravel()[0])) < 0.5
+
+    def test_without_a_density_a_given_parameter_is_not_left_free(self, npe_model):
+        """A posterior whose network gives no density has no route for Bayes' rule, so
+        the call raises rather than drop the parameter."""
+        bare = _AmortizedPosterior(
+            npe_model._approximator,
+            npe_model.prior,
+            npe_model.simulator,
+            method="npe",
+            data_dim=2,
+            bijectors=npe_model._bijectors,
+        )
+        given = {"observation": _observe(0.5, 0.0, 0), "a": 0.5}
+        report = condition_on_operation.check(bare, given)
         assert report.route != "approximate_conditioning"
         with pytest.raises(ResolutionError):
-            condition_on_operation(npe_model, given)
+            condition_on_operation(bare, given)
 
     @pytest.mark.parametrize("keys", [("observation", "typo"), ("obsrevation",)])
     def test_a_key_that_names_no_field_raises(self, npe_model, keys):
@@ -357,6 +418,9 @@ class TestBayesFlowMethods:
         )
         post = condition_on(model, {"observation": _observe(0.5, 0.0, 0)})
         assert method_of(post) == f"bayesflow_{method}"
+        # Only NPE's coupling flow computes the learned law's density.
+        assert isinstance(model, SupportsConditionalLogProb) == (method == "npe")
+        assert isinstance(post, SupportsLogProb) == (method == "npe")
         draws = law_draws(post, 200)
         assert np.isfinite(np.asarray(draws["a"])).all()
         assert np.asarray(draws["a"]).reshape(-1).shape[0] == 200
@@ -401,6 +465,7 @@ class TestBayesFlowMethods:
         )
         # The exact instance passed in is the one used (not a method default).
         assert model._approximator.inference_network is net
+        assert isinstance(model, SupportsConditionalLogProb)
         post = condition_on(model, {"observation": _observe(0.5, 0.0, 0)})
         assert np.asarray(law_draws(post, 200)["a"]).reshape(-1).shape[0] == 200
 
@@ -491,6 +556,7 @@ class TestBayesFlowMethods:
             verbose=0,
         )
         assert isinstance(model._approximator.inference_network, bf.networks.FlowMatching)
+        assert not isinstance(model, SupportsConditionalLogProb)
         s2 = _CONJ_SIGMA**2
         post_std = (s2 / (1 + s2)) ** 0.5  # analytic posterior std
         mean_errs, std_ratios = [], []
@@ -729,6 +795,62 @@ class TestBayesFlowMethods:
         ).reshape(-1)
         assert np.isfinite(r).all()
         assert (r > 0).all()  # forward bijector (Exp) keeps every draw in support
+
+    def test_a_positive_leaf_density_changes_variables(self):
+        """A positive leaf trains on its log, so its density is the flow's density at
+        the log less the log-Jacobian of ``exp``, which is the log itself."""
+        prior = pp.Gamma("r", 3.0, 1.0) * Normal(loc=0.0, scale=1.0, label="m")
+        model = learn_amortized_posterior(
+            prior,
+            SimulatorKernel(prior, (2,), _positive),
+            method="npe",
+            num_simulations=1500,
+            epochs=3,
+            batch_size=256,
+            random_seed=0,
+            verbose=0,
+        )
+        observation = np.array([3.0, 1.0], dtype="float32")
+        law = condition_on(model, {"observation": observation})
+        with workflow_run(seed=0):
+            draws = sample(law, sample_shape=(4,))
+        r, m = np.asarray(draws["r"]), np.asarray(draws["m"])
+        unconstrained = model._approximator.log_prob(
+            data={
+                "theta_0": np.log(r)[:, None],
+                "theta_1": m[:, None],
+                "observation": np.tile(observation, (4, 1)),
+            }
+        )
+        np.testing.assert_allclose(
+            np.asarray(log_prob(law, draws)), np.ravel(unconstrained) - np.log(r), atol=1e-4
+        )
+
+    def test_a_simplex_leaf_density_integrates_to_one(self):
+        """A 3-simplex trains on two coordinates, so its coupling flow's density, taken
+        in the simplex's first two coordinates, integrates to one over the triangle."""
+        prior = pp.Dirichlet("p", jnp.ones(3))
+        model = learn_amortized_posterior(
+            prior,
+            _conjugate_simulator(prior),
+            method="npe",
+            num_simulations=2000,
+            epochs=4,
+            batch_size=256,
+            random_seed=0,
+            verbose=0,
+        )
+        law = condition_on(model, {"observation": jnp.array([0.5, 0.3, 0.2])})
+        assert isinstance(law, SupportsLogProb)
+        cells = 400
+        grid = (np.arange(cells) + 0.5) / cells
+        first, second = np.meshgrid(grid, grid, indexing="ij")
+        inside = first + second < 1
+        points = np.stack(
+            [first[inside], second[inside], 1 - first[inside] - second[inside]], axis=-1
+        )
+        density = np.exp(np.asarray(law._log_prob(jnp.asarray(points, dtype=jnp.float32))))
+        assert density.sum() / cells**2 == pytest.approx(1.0, abs=0.02)
 
     def test_adapter_internal_names_avoid_collisions(self):
         """Theta fields are re-keyed away from BayesFlow adapter internals.

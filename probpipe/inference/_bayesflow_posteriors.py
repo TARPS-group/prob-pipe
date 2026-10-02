@@ -7,7 +7,8 @@ observation to the parameters: ``condition_on(q, {"observation": y})`` returns
 the amortized posterior's law at ``y``, each of whose draws is one forward pass
 through the trained network -- no MCMC, no gradient bridge, and no prior
 translation (the prior is used only to draw ``theta`` at train time via the
-:func:`~probpipe.sample` op).
+:func:`~probpipe.sample` op). When the network is a coupling flow, NPE's
+default, the kernel and its laws also have the flow's density.
 
 The shared bridge (lazy import, validation, offline simulation, adapter keying,
 seeded training) lives in :mod:`._bayesflow_common`;
@@ -21,8 +22,9 @@ not pull keras.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from math import prod
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import jax
 import jax.numpy as jnp
@@ -36,11 +38,15 @@ from ..core.record import Record
 from ..custom_types import Array
 from ..distributions._capabilities import (
     SupportsApproximateConditioning,
+    SupportsConditionalLogProb,
     SupportsConditionalSampling,
+    SupportsLogProb,
     SupportsSampling,
+    _capability_subclass,
 )
 from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution
+from ..distributions._factored import _raw_record
 from ..functions import function
 from ..values import Function
 from ._approximate_distribution import _record_run
@@ -50,6 +56,7 @@ from ._bayesflow_common import (
     _adapter_field_keys,
     _import_bayesflow,
     _isolated_keras_seeding,
+    _leaf_draws,
     _observation_slot,
     _simulate_offline,
     _validate_learn_inputs,
@@ -160,6 +167,61 @@ def _unconstrained_shape(bijector: Function, shape: tuple[int, ...]) -> tuple[in
 # ---------------------------------------------------------------------------
 
 
+def _flow_log_density(kernel: _AmortizedPosterior, observation: np.ndarray, value: Any) -> Array:
+    """The coupling flow's log-density of the parameters *value* at *observation*.
+
+    Each leaf is mapped by the inverse of its bijector to the unconstrained
+    coordinates the network was trained in. The flow scores the point as
+    ``approximator.log_prob`` does, adding the standardization's
+    log-Jacobian, and each bijector's log-Jacobian at the point is subtracted.
+
+    Returns
+    -------
+    Array
+        One log-density per value, shaped like the value's leading axes.
+    """
+    raw = _raw_record(value)
+    leaves = {leaf: jnp.asarray(_leaf_draws(raw, leaf)) for leaf in kernel._leaf_keys}
+    first = kernel._leaf_keys[0]
+    batch = leaves[first].shape[: leaves[first].ndim - len(kernel._leaf_shapes[first])]
+    count = prod(batch)
+    points, log_jacobian = [], jnp.zeros(count)
+    for leaf, x in leaves.items():
+        x = jnp.reshape(x, (count, *kernel._leaf_shapes[leaf]))
+        bijector = kernel._bijectors.get(leaf)
+        if bijector is not None:
+            x = jax.vmap(bijector._inverse)(x)
+            log_jacobian = log_jacobian + jax.vmap(bijector._log_det_jacobian)(x)
+        points.append(jnp.reshape(x, (count, -1)))
+    standardizer = kernel._approximator.standardizer
+    conditions = standardizer.maybe_standardize(
+        jnp.tile(jnp.asarray(observation)[None, :], (count, 1)),
+        key="inference_conditions",
+        stage="inference",
+    )
+    z, standardization = standardizer.maybe_standardize(
+        jnp.concatenate(points, axis=-1).astype(jnp.float32),
+        key="inference_variables",
+        stage="inference",
+        log_det_jac=True,
+    )
+    network = kernel._approximator.inference_network
+    log_density = network.log_prob(z, conditions=conditions) + standardization
+    return jnp.reshape(log_density - log_jacobian, batch)
+
+
+def _amortized_conditional_log_prob(
+    self: _AmortizedPosterior, given: Record | Mapping[str, Any], value: Any
+) -> Array:
+    """The flow's log-density of the parameters *value* at the observation *given* binds."""
+    return _flow_log_density(self, self._observation(given), value)
+
+
+def _amortized_log_prob(self: _AmortizedPosteriorLaw, value: Any) -> Array:
+    """The flow's log-density of the parameters *value* at the law's observation."""
+    return _flow_log_density(self._kernel, self._observation_value, value)
+
+
 class _AmortizedPosterior(
     ConditionalDistribution, SupportsApproximateConditioning, SupportsConditionalSampling
 ):
@@ -168,11 +230,19 @@ class _AmortizedPosterior(
     Its given slot is the observation, named ``observation`` unless the prior
     declares that name, and its event is the parameters, declared as the prior
     declares them. Evaluating it at an observation yields the law whose draws
-    each run the trained network once, with no retraining and no inference. The evaluation stands in for the posterior of the joint of the prior
-    and the simulator the network was trained on, so the kernel claims
+    each run the trained network once, with no retraining and no inference.
+    The evaluation stands in for the posterior of the joint of the prior and
+    the simulator the network was trained on, so the kernel claims
     ``SupportsApproximateConditioning`` and ``exact_only=True`` excludes it. The
     network samples in unconstrained space, and the draws are mapped back to each
     leaf's support by the forward bijectors recorded at training.
+
+    When the network is a coupling flow, the kernel claims
+    ``SupportsConditionalLogProb`` and its law at an observation claims
+    ``SupportsLogProb``. The log-density at a value of the parameters is the
+    flow's log-density at the value's unconstrained coordinates less each
+    bijector's log-Jacobian there, which is exact for the learned law. A
+    flow-matching or consistency network gives no density.
 
     Parameters
     ----------
@@ -188,7 +258,28 @@ class _AmortizedPosterior(
         The flattened size of the observation the network conditions on.
     bijectors : dict of str to Function, optional
         The forward bijector of each constrained leaf.
+    has_density : bool, default False
+        Whether the network computes the learned law's density, as a coupling
+        flow does.
     """
+
+    _capability_table: ClassVar = {
+        SupportsConditionalLogProb: {"_conditional_log_prob": _amortized_conditional_log_prob}
+    }
+
+    def __new__(
+        cls,
+        approximator: ContinuousApproximator,
+        prior: Distribution,
+        simulator: ConditionalDistribution,
+        *,
+        method: AmortizedMethod,
+        data_dim: int,
+        bijectors: dict[str, Function] | None = None,
+        has_density: bool = False,
+    ) -> _AmortizedPosterior:
+        claimed = [SupportsConditionalLogProb] if has_density else []
+        return object.__new__(_capability_subclass(_AmortizedPosterior, claimed))
 
     def __init__(
         self,
@@ -199,11 +290,13 @@ class _AmortizedPosterior(
         method: AmortizedMethod,
         data_dim: int,
         bijectors: dict[str, Function] | None = None,
+        has_density: bool = False,
     ):
         slot = _observation_slot(prior)
         super().__init__(
             f"amortized_posterior_{method}", {slot: NumericArraySpec((data_dim,))}, prior.event_spec
         )
+        leaf_shapes = dict(_components_record(prior.event_spec).leaf_shapes)
         attributes = {
             "_slot": slot,
             "_approximator": approximator,
@@ -211,7 +304,8 @@ class _AmortizedPosterior(
             "_simulator": simulator,
             # Numeric leaves (slash paths for a nested prior; == fields for a flat
             # one) -- the column order the network emits, matching training.
-            "_leaf_keys": tuple(_components_record(prior.event_spec).leaf_shapes),
+            "_leaf_keys": tuple(leaf_shapes),
+            "_leaf_shapes": leaf_shapes,
             "_method": method,
             "_data_dim": data_dim,
             # Forward bijectors (unconstrained -> support); missing entries mean identity.
@@ -341,8 +435,17 @@ class _AmortizedPosteriorLaw(Distribution, SupportsSampling):
     """An amortized posterior's law at an observation, whose draws are the network's.
 
     Its event is the parameters, declared as the prior declares them, and each
-    draw runs the trained network at the observation.
+    draw runs the trained network at the observation. The law claims
+    ``SupportsLogProb`` when its kernel claims the conditional density.
     """
+
+    _capability_table: ClassVar = {SupportsLogProb: {"_log_prob": _amortized_log_prob}}
+
+    def __new__(
+        cls, kernel: _AmortizedPosterior, observation: np.ndarray
+    ) -> _AmortizedPosteriorLaw:
+        claimed = [SupportsLogProb] if isinstance(kernel, SupportsConditionalLogProb) else []
+        return object.__new__(_capability_subclass(_AmortizedPosteriorLaw, claimed))
 
     def __init__(self, kernel: _AmortizedPosterior, observation: np.ndarray) -> None:
         super().__init__("posterior", kernel.event_spec)
@@ -411,7 +514,7 @@ def learn_amortized_posterior(
         (consistency model). NPE's coupling flow needs at least two *unconstrained*
         parameter dimensions (a one-parameter prior has one; so does a single
         2-simplex), below which the NPE default falls back to a flow-matching
-        network (still reported as ``method="npe"``).
+        network (still reported as ``method="npe"``), which gives no density.
     num_simulations : int
         Number of ``(theta, y)`` pairs simulated offline for training.
     epochs, batch_size : int
@@ -423,7 +526,7 @@ def learn_amortized_posterior(
         code) at the cost of speed. Mirrors ``Function``'s dispatch names.
     inference_network : bayesflow.networks.InferenceNetwork or None
         Overrides the method default (``CouplingFlow`` / ``FlowMatching`` /
-        ``ConsistencyModel``).
+        ``ConsistencyModel``). A ``CouplingFlow`` gives the posterior a density.
     random_seed : int
         Seed for offline simulation (``jax.random``) and keras network init +
         training (via ``keras.utils.set_random_seed``). The caller's global
@@ -439,8 +542,9 @@ def learn_amortized_posterior(
     -------
     ConditionalDistribution
         The amortized posterior ``q(theta | y)``, which claims
-        ``SupportsApproximateConditioning`` and ``SupportsConditionalSampling``;
-        its ``prior`` and ``simulator`` are the joint it was trained on.
+        ``SupportsApproximateConditioning`` and ``SupportsConditionalSampling``,
+        and ``SupportsConditionalLogProb`` when its network is a coupling flow.
+        Its ``prior`` and ``simulator`` are the joint it was trained on.
 
     Raises
     ------
@@ -520,4 +624,5 @@ def learn_amortized_posterior(
         method=method,
         data_dim=int(y.shape[-1]),
         bijectors=bijectors,
+        has_density=isinstance(net, bf.networks.CouplingFlow),
     )
