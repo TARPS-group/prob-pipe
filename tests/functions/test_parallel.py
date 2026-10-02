@@ -18,6 +18,7 @@ import probpipe.functions._function as node_mod
 import probpipe.functions._managed as managed_mod
 import probpipe.functions._replay as replay_mod
 from probpipe import (
+    Function,
     Normal,
     Provenance,
     ReplayCompatibilityError,
@@ -26,7 +27,6 @@ from probpipe import (
     workflow_run,
 )
 from probpipe.core.config import ProvenanceMode, WorkflowKind, prefect_config
-from probpipe.values._function_base import Function
 
 
 def add_one(x):

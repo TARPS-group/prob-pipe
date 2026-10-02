@@ -12,11 +12,11 @@ from typing import Any
 import jax.numpy as jnp
 import pytest
 
+from probpipe import Function
 from probpipe import BroadcastDistribution, Normal, workflow_run
 from probpipe.core.node import Node
 from probpipe.functions import Module, _call, workflow_method
 from probpipe.values import _binding
-from probpipe.values._function_base import Function
 
 
 @pytest.mark.parametrize("engine", ["installed", "plain"])

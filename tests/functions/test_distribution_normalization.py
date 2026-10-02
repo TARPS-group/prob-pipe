@@ -13,6 +13,7 @@ import pytest
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
+    Function,
     Distribution,
     DistributionArray,
     EmpiricalDistribution,
@@ -32,7 +33,6 @@ from probpipe.functions._normalization import (
     normalize_distribution_values,
 )
 from probpipe.values._binding import make_signature_info_from_signature
-from probpipe.values._function_base import Function
 
 
 @pytest.fixture
