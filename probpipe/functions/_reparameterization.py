@@ -274,6 +274,22 @@ def _factory(constraint: Constraint) -> BijectorFactory:
 # The canonical bijectors
 # ---------------------------------------------------------------------------
 
+
+class _SimplexBijector(tfb.SoftmaxCentered):
+    """The backend's map from ``R^(K-1)`` onto the ``K``-simplex, with its Jacobian taken in the simplex's first ``K - 1`` coordinates.
+
+    A density on the simplex, a Dirichlet's for one, is stated in those
+    coordinates. The backend's log-determinant measures the simplex by its
+    surface area in ``R^K``, which adds ``log(K) / 2`` to it.
+    """
+
+    def _forward_log_det_jacobian(self, x: Any) -> Any:
+        return super()._forward_log_det_jacobian(x) - 0.5 * jnp.log(x.shape[-1] + 1.0)
+
+    def _inverse_log_det_jacobian(self, y: Any) -> Any:
+        return super()._inverse_log_det_jacobian(y) + 0.5 * jnp.log(float(y.shape[-1]))
+
+
 register_bijector(_Real, lambda c: tfb.Identity())
 register_bijector(_Positive, lambda c: tfb.Exp())
 # Softplus is defined at zero, which the boundary of the non-negative half-line includes.
@@ -281,7 +297,7 @@ register_bijector(_NonNegative, lambda c: tfb.Softplus())
 register_bijector(_UnitInterval, lambda c: tfb.Sigmoid())
 register_bijector(_Interval, lambda c: tfb.Sigmoid(low=c.low, high=c.high))
 register_bijector(_GreaterThan, lambda c: tfb.Chain([tfb.Shift(c.lower_bound), tfb.Exp()]))
-register_bijector(_Simplex, lambda c: tfb.SoftmaxCentered())
+register_bijector(_Simplex, lambda c: _SimplexBijector())
 # ℝ^{n(n+1)/2} to a lower-triangular L, then to L Lᵀ; Chain applies its last bijector first.
 register_bijector(
     _PositiveDefinite, lambda c: tfb.Chain([tfb.CholeskyOuterProduct(), tfb.FillScaleTriL()])

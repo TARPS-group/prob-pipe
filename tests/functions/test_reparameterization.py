@@ -128,6 +128,20 @@ class TestRoundTrip:
         assert simplex.check(y)
         assert y.shape == (3,)
 
+    def test_the_simplex_log_jacobian_is_taken_in_its_first_coordinates(self):
+        """A Dirichlet's density is stated in the simplex's first K - 1 coordinates, so the
+        log-Jacobian is that of the map onto them."""
+        bijector = bijector_for(simplex)
+        z = jnp.array([0.3, -0.2, 0.9])
+        jacobian = jax.jacfwd(lambda u: bijector.raw()(u)[:-1])(z)
+        expected = jnp.log(jnp.abs(jnp.linalg.det(jacobian)))
+        np.testing.assert_allclose(bijector._log_det_jacobian(z), expected, rtol=1e-5)
+        backend = bijector._bijector
+        x = backend.forward(z)
+        np.testing.assert_allclose(
+            backend.inverse_log_det_jacobian(x, event_ndims=1), -expected, rtol=1e-5
+        )
+
     def test_positive_definite(self):
         bijector = bijector_for(positive_definite)
         # 6 unconstrained parameters fill a 3x3 lower-triangular L, then L Lᵀ.

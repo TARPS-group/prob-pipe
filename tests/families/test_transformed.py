@@ -207,6 +207,20 @@ class TestSampling:
         assert float(jnp.sum(draw)) == pytest.approx(1.0, rel=1e-5)
         assert jnp.isfinite(transformed._log_prob(jnp.array([0.2, 0.3, 0.5])))
 
+    def test_a_density_onto_the_simplex_integrates_to_one(self):
+        """The density is stated in the simplex's first two coordinates, as a Dirichlet's is."""
+        base = MultivariateNormal("z", jnp.zeros(2), cov=jnp.eye(2))
+        transformed = BijectorTransformedDistribution("p", base, bijector_for(simplex))
+        cells = 300
+        grid = (np.arange(cells) + 0.5) / cells
+        first, second = np.meshgrid(grid, grid, indexing="ij")
+        inside = first + second < 1
+        points = np.stack(
+            [first[inside], second[inside], 1 - first[inside] - second[inside]], axis=-1
+        )
+        density = jnp.exp(jax.vmap(transformed._log_prob)(jnp.asarray(points, jnp.float32)))
+        assert float(density.sum()) / cells**2 == pytest.approx(1.0, abs=0.01)
+
     def test_an_empirical_base(self, key):
         atoms = jax.random.normal(key, (50, 2))
         transformed = BijectorTransformedDistribution(
