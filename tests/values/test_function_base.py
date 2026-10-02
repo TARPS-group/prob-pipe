@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+from functools import partial
 from pathlib import Path
 
 import jax.numpy as jnp
@@ -35,7 +36,33 @@ from probpipe import (
 from probpipe.core.constraints import positive
 
 
+def _unnamed_callables():
+    """A partial and a callable instance, neither of which has a ``__name__``."""
+
+    def add(a, b):
+        return a + b
+
+    class AddOne:
+        def __call__(self, x):
+            return x + 1
+
+    return {"partial": partial(add, 1), "instance": AddOne()}
+
+
 class TestFunctionDeclarations:
+    @pytest.mark.parametrize("kind", ["partial", "instance"])
+    def test_an_unnamed_callable_wraps_under_an_explicit_name(self, kind):
+        wrapped = function(name="add1")(_unnamed_callables()[kind])
+        assert (wrapped.name, wrapped.output_name) == ("add1", "add1")
+        assert float(wrapped(2.0)) == 3.0
+
+    @pytest.mark.parametrize("with_parentheses", [True, False], ids=["called", "bare"])
+    @pytest.mark.parametrize("kind", ["partial", "instance"])
+    def test_an_unnamed_callable_needs_an_explicit_name(self, kind, with_parentheses):
+        decorate = function() if with_parentheses else function
+        with pytest.raises(TypeError, match="explicit name"):
+            decorate(_unnamed_callables()[kind])
+
     def test_required_name_and_raw_representation(self):
         def add(x, /, *, y=2):
             return x + y

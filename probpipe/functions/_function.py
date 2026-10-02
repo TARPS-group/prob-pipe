@@ -149,6 +149,7 @@ def function(
         Users should not pass this argument by keyword.
     name : str or None
         The function label, defaulting to the decorated callable's ``__name__``.
+        A callable with none, such as a ``functools.partial``, needs it.
     input_spec, output_spec, output_name, differentiable, bind, module
         The declarations and construction bindings :class:`Function` takes.
     **controls : Any
@@ -163,13 +164,21 @@ def function(
     Raises
     ------
     TypeError
-        If a keyword is no control, before any callable is wrapped.
+        If a keyword is no control, before any callable is wrapped; or if
+        *name* is omitted for a callable that has no ``__name__``, such as a
+        ``functools.partial`` or a callable instance.
     """
     _refuse_unknown_controls(controls)
 
     def decorator(func: Callable[..., Any]) -> Function:
+        label = getattr(func, "__name__", None) if name is None else name
+        if label is None:
+            raise TypeError(
+                f"function() needs an explicit name for a {type(func).__name__}, which has no "
+                f"__name__ to take it from; pass name=..."
+            )
         return Function(
-            func.__name__ if name is None else name,
+            label,
             func,
             input_spec=input_spec,
             output_spec=output_spec,
