@@ -42,6 +42,7 @@ from ..custom_types import Array, PRNGKey
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import _raw_record
 from ..values._binding import FunctionInputRef, input_ref_value, replace_input_refs
+from ..values._function_base import _validate_stacked_output
 from . import _execution, _plan, _recipe
 from ._broker import _record_active_execution_contract
 from ._call import ApplicabilityError
@@ -353,6 +354,10 @@ def _output_atoms(
         raise NotImplementedError("_SamplingLift.execute: a lifted function that returns a batch")
     if output_spec is None:
         return atoms, OutputSpec.default(atoms.element_spec, component=output_label)
+    try:
+        _validate_stacked_output(function_name=output_label, output_spec=output_spec, batch=atoms)
+    except ValueError as error:
+        raise ResultSchemaError(str(error)) from error
     return atoms, output_spec.with_spec(atoms.element_spec)
 
 

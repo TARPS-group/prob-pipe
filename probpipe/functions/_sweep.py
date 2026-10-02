@@ -17,6 +17,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..values import _binding
+from ..values._function_base import _validate_stacked_output
 
 try:
     from prefect import flow, task
@@ -120,6 +121,12 @@ def execute_sweep(
             output_spec=output_spec,
             output_template=output_template,
         )
+        try:
+            _validate_stacked_output(
+                function_name=function_name, output_spec=output_spec, batch=aggregate
+            )
+        except ValueError as error:
+            raise _result.ResultSchemaError(str(error)) from error
         provenance = make_sweep_provenance(
             values=values,
             array_args=array_args,

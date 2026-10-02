@@ -23,6 +23,7 @@ from functools import partial
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol, Self, cast, runtime_checkable
 
+import jax
 import jax.numpy as jnp
 
 from ..core._dispatch import Feasibility
@@ -357,8 +358,40 @@ def _validate_output_values(spec: TermSpec, value: Any, path: str) -> None:
             _validate_output_values(child, children[name], f"{path}/{name}")
     elif isinstance(spec, NumericArraySpec):
         _validate_output_dtype(spec, value, path)
-        if spec.support is not None and not bool(jnp.all(spec.support.check(value))):
-            raise ValueError(f"{path} does not conform to declared support {spec.support!r}")
+        # A traced value has no truth to test, so a mapped call checks its
+        # support on the stacked results once the map returns.
+        if spec.support is not None and not _is_traced(value):
+            if not bool(jnp.all(spec.support.check(value))):
+                raise ValueError(f"{path} does not conform to declared support {spec.support!r}")
+
+
+def _validate_stacked_output(
+    *, function_name: str, output_spec: OutputSpec | None, batch: Any
+) -> None:
+    """Check the supports *output_spec* declares on *batch*, the stacked results of a mapped call.
+
+    A traced point skips its support check, so a mapped call checks every
+    stacked value once the map returns.
+
+    Raises
+    ------
+    ValueError
+        If a stacked value lies outside a declared support.
+    """
+    from ..core._batch import BatchSpec
+
+    spec = getattr(batch, "spec", None)
+    if output_spec is None or output_spec.spec is None or not isinstance(spec, BatchSpec):
+        return
+    path = f"Function {function_name!r} output"
+    if output_spec._component_name is not None:
+        path += f"/{output_spec._component_name}"
+    _validate_output_values(spec, batch, path)
+
+
+def _is_traced(value: Any) -> bool:
+    """Whether *value* is, or wraps, a JAX tracer, whose values are known only at run time."""
+    return isinstance(jnp.asarray(value), jax.core.Tracer)
 
 
 #: The kinds of numeric dtype; a returned dtype conforms to a declared one of its kind.

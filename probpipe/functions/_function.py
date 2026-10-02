@@ -49,7 +49,7 @@ from ..core._batch import Batch
 from ..core._dispatch import MethodInfo, ResolutionError
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._spec_base import NumericSpec, TermSpec
-from ..core._specs import InputSpec, NumericArraySpec, NumericRecordSpec, OutputSpec, RecordSpec
+from ..core._specs import InputSpec, NumericRecordSpec, OutputSpec
 from ..core.config import ProvenanceMode, WorkflowKind, prefect_config
 from ..core.node import Node
 from ..core.provenance import Provenance
@@ -815,16 +815,6 @@ def _jax_traceability_error(
     return None
 
 
-def _has_output_support(spec: Any) -> bool:
-    from ..core._batch import BatchSpec
-
-    if isinstance(spec, RecordSpec):
-        return any(_has_output_support(child) for child in spec.values())
-    if isinstance(spec, BatchSpec):
-        return _has_output_support(spec.element_spec)
-    return isinstance(spec, NumericArraySpec) and spec.support is not None
-
-
 def _require_jax_traceable(
     function: Function,
     values: dict[str, Any],
@@ -841,12 +831,6 @@ def _require_jax_traceable(
     :class:`~._result.ResultSchemaError` or :class:`~._result.ResultKindError` of
     a result that violates its declaration, which the return raises.
     """
-    output = function.output_spec.spec if function.output_spec is not None else None
-    if _has_output_support(output):
-        raise ValueError(
-            "dispatch='jax' cannot validate output_spec support constraints "
-            "during JAX tracing; use dispatch='auto', 'sequential', or 'thread'."
-        )
     trace_error = _jax_traceability_error(
         function, values, broadcast_args, func=func, stochastic_plan=stochastic_plan
     )

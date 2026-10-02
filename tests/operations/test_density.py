@@ -156,6 +156,17 @@ class TestABatchOfArraysIsScoredInOneMappedCall:
             rtol=1e-6,
         )
 
+    @pytest.mark.parametrize("score", [prob, unnormalized_prob])
+    def test_a_density_that_declares_its_support_also_runs_in_one_map(self, score):
+        """The scores declare a non-negative support, which is checked once the map returns."""
+        law = CountedVector("v")
+        score(law, self._points(1000))
+        thousand = len(law.calls)
+        law.calls.clear()
+        scores = score(law, self._points(5))
+        assert len(law.calls) == thousand < 5
+        assert bool(jnp.all(jnp.asarray(scores.values) >= 0))
+
     @pytest.mark.parametrize("score", [log_prob, unnormalized_log_prob])
     def test_the_mapped_scores_equal_the_sequential_ones_at_every_level(self, score):
         points = NumericArrayBatch(

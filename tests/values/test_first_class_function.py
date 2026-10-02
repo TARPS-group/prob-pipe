@@ -519,15 +519,15 @@ class TestApplyContract:
                 label="function", fn=lambda: invalid, output_spec=OutputSpec(**template.children)
             ).apply()
 
-    def test_support_validation_rejects_direct_jax_jit(self):
+    def test_support_validation_is_skipped_under_a_users_jax_jit(self):
+        """A traced value has no truth to test, so a user's own trace skips the support check."""
         wrapped = Function(
             label="function",
-            fn=lambda x: x + 1,
+            fn=lambda x: x - 5.0,
             output_spec=OutputSpec(**RecordSpec(y=NumericArraySpec((), support=positive)).children),
         )
 
-        with pytest.raises(jax.errors.TracerBoolConversionError):
-            jax.jit(wrapped.apply)(jnp.asarray(1.0))
+        assert float(jnp.asarray(jax.jit(wrapped.apply)(jnp.asarray(1.0)))) == -4.0
 
     def test_input_template_support_remains_descriptive_for_lifting(self):
         # A Normal declares its support as real, which the declared positive
@@ -1082,7 +1082,8 @@ class TestSymbolicCalls:
         with pytest.raises(ValueError, match=r"output/value.*support positive"):
             wrapped(rows)
 
-    def test_support_pinned_broadcast_auto_falls_back_to_sequential(self):
+    def test_support_pinned_broadcast_auto_runs_in_one_map(self):
+        """A declared support is checked on the stacked results, so the lift need not run draw by draw."""
         wrapped = Function(
             label="function",
             fn=lambda x: x**2 + 1,
@@ -1095,28 +1096,32 @@ class TestSymbolicCalls:
         with workflow_run(seed=11):
             result = wrapped(Normal("x", 0, 1))
 
-        assert result.provenance.metadata["dispatch"] == "sequential"
+        assert result.provenance.metadata["dispatch"] == "jax"
         assert list(result.event_spec.components) == ["y"]
         assert result.event_spec.spec.support == positive
         assert bool(jnp.all(result._rows > 0))
 
-    def test_support_pinned_broadcast_explicit_jax_reports_traceability_error(self):
+    @pytest.mark.parametrize(
+        ("fn", "holds"), [(lambda x: x**2 + 1, True), (lambda x: -(x**2) - 1, False)]
+    )
+    def test_support_pinned_broadcast_explicit_jax_checks_the_stacked_results(self, fn, holds):
         wrapped = Function(
             label="function",
-            fn=lambda x: x**2 + 1,
+            fn=fn,
             input_spec=InputSpec(RecordSpec(x=()).children),
             output_spec=OutputSpec(**RecordSpec(y=NumericArraySpec((), support=positive)).children),
             dispatch="jax",
             n_broadcast_samples=8,
         )
 
-        with pytest.raises(
-            ValueError,
-            match=r"dispatch='jax' cannot validate output_spec support constraints",
-        ):
-            wrapped(Normal("x", 0, 1))
+        with workflow_run(seed=11):
+            if holds:
+                assert bool(jnp.all(wrapped(Normal("x", 0, 1))._rows > 0))
+            else:
+                with pytest.raises(ValueError, match=r"output/y.*support positive"):
+                    wrapped(Normal("x", 0, 1))
 
-    def test_support_pinned_sweep_auto_falls_back_to_sequential(self):
+    def test_support_pinned_sweep_auto_keeps_the_declared_support(self):
         rows = NumericRecordBatch.stack(
             [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)], level_name="draw"
         )
@@ -1134,23 +1139,24 @@ class TestSymbolicCalls:
         assert result.element_spec == template["y"]
         np.testing.assert_allclose(result.values, np.arange(3.0) + 1)
 
-    def test_support_pinned_sweep_explicit_jax_reports_traceability_error(self):
+    @pytest.mark.parametrize(("shift", "holds"), [(1.0, True), (-5.0, False)])
+    def test_support_pinned_sweep_explicit_jax_checks_the_stacked_results(self, shift, holds):
         rows = NumericRecordBatch.stack(
             [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)], level_name="draw"
         )
         wrapped = Function(
             label="function",
-            fn=lambda row: row["value"] + 1,
+            fn=lambda row: row["value"] + shift,
             input_spec=InputSpec(RecordSpec(row=RecordSpec(value=())).children),
             output_spec=OutputSpec(**RecordSpec(y=NumericArraySpec((), support=positive)).children),
             dispatch="jax",
         )
 
-        with pytest.raises(
-            ValueError,
-            match=r"dispatch='jax' cannot validate output_spec support constraints",
-        ):
-            wrapped(rows)
+        if holds:
+            np.testing.assert_allclose(wrapped(rows).values, np.arange(3.0) + shift)
+        else:
+            with pytest.raises(ValueError, match=r"output/y.*support positive"):
+                wrapped(rows)
 
     @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
     def test_nested_mapping_sweep_preserves_declared_structure(self, dispatch):
