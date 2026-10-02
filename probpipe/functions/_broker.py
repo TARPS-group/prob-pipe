@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from ..custom_types import PRNGKey
 from . import _context
-from ._rng import _RandomEventPath, _validate_random_event_value
+from ._rng import _RandomEventPath, _encode_value
 
 if TYPE_CHECKING:
     from ._callable import CallableAnchor
@@ -85,8 +85,8 @@ def _validate_stochastic_event(
         ) from error
     if not isinstance(source_id, tuple) or not isinstance(unit_id, tuple):
         raise TypeError("stochastic effect source and unit identities must be tuples")
-    _validate_random_event_value(source_id)
-    _validate_random_event_value(unit_id)
+    _encode_value(source_id)
+    _encode_value(unit_id)
     return source_id, unit_id
 
 

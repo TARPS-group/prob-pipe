@@ -141,12 +141,8 @@ def _certify_jax_key_adapter(
         raise RuntimeError("installed JAX key adapter changed the raw key word values")
 
 
-def _validate_random_event_value(value: object) -> None:
-    """Validate one value against the recursive workflow RNG identity ABI."""
-    _encode_value(value)
-
-
 def _encode_value(value: object) -> bytes:
+    """Validate one value against the recursive workflow RNG identity ABI."""
     if isinstance(value, bool):
         raise TypeError("boolean values are not valid workflow RNG identity fields")
     if isinstance(value, int):

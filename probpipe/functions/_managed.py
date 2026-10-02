@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..core.config import ProvenanceMode
-from ._rng import _RandomEventPath, _validate_random_event_value
+from ._rng import _RandomEventPath, _encode_value
 
 _MANAGED_WORK_ITEM_ABI = "probpipe.managed_work_item/v1"
 
@@ -100,9 +100,9 @@ def _validate_managed_effect_claim_fields(
         tuple,
     ):
         raise TypeError("managed effect source and unit identities must be tuples")
-    _validate_random_event_value(occurrence_path)
-    _validate_random_event_value(stochastic_source_id)
-    _validate_random_event_value(logical_unit_id)
+    _encode_value(occurrence_path)
+    _encode_value(stochastic_source_id)
+    _encode_value(logical_unit_id)
     if not isinstance(occurrence_kind, str):
         raise TypeError("managed effect occurrence_kind must be a string")
     if occurrence_kind not in {"invocation", "operation"}:
@@ -356,7 +356,7 @@ def _validate_managed_parent_envelope_fields(
         raise TypeError("managed parent root words must be two uint32 integers")
     if not isinstance(parent_occurrence_path, tuple):
         raise TypeError("managed parent occurrence paths must be tuples")
-    _validate_random_event_value(parent_occurrence_path)
+    _encode_value(parent_occurrence_path)
     if attempt.work_item_token != frame.token:
         raise ValueError("managed parent attempt must own its frame")
     if replay_expected_effects is not None and (
