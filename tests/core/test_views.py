@@ -150,7 +150,7 @@ class TestABatchColumnIsTheBatchOfItsKind:
         column = batch["x"]
 
         assert isinstance(column, NumericArrayBatch)
-        assert column.label == "draws['x']" and column.level_names == ("draw",)
+        assert column.label == "x" and column.level_names == ("draw",)
         assert column.element_spec == NumericArraySpec((2,))
         assert column.raw() is batch._raw_column("x")
 

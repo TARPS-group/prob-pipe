@@ -422,7 +422,7 @@ class TestColumnBatchForms:
                 element_spec=spec,
             )
 
-    def test_a_column_batch_carries_a_derived_name(self):
+    def test_a_column_batch_is_labeled_by_its_key(self):
         labels = np.empty(2, dtype=object)
         labels[0], labels[1] = "north", "south"
         batch = RecordBatch(
@@ -431,7 +431,7 @@ class TestColumnBatchForms:
             "row",
             element_spec=RecordSpec(site=OpaqueSpec()),
         )
-        assert batch["site"].label == "design['site']"
+        assert batch["site"].label == "site"
 
     def test_an_object_column_is_presented_as_a_view_not_a_copy(self):
         """Reading a field is O(1), as it is for an array field.
