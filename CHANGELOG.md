@@ -55,6 +55,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `with_options` returns a reusable Function copy accepting every engine control
   (`workflow_kind`, `n_broadcast_samples`, `dispatch`, `max_workers`, and
   `include_inputs`); it does not accept construction metadata or domain arguments.
+  Omitted controls stay unchanged; explicit `max_workers=None` clears the limit
+  and `n_broadcast_samples=None` restores the default sample count. Other controls
+  use constructor validation. Worker-count warnings now point to the user's
+  call for direct construction, decorators, and `with_options`.
   Broadcast joint results now use `output_name` instead of `"broadcast"`.
   Undeclared whole-term output components use `output_name` instead of
   `"marginal"`; explicit output declarations retain their component names.

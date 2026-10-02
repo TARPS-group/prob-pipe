@@ -45,8 +45,11 @@ result = configured(x, seed=7)
 ```
 
 All engine controls are accepted: `workflow_kind`, `n_broadcast_samples`,
-`dispatch`, `max_workers`, and `include_inputs`. A value of `None` keeps the
-existing setting. Construction metadata (`name`, `output_name`, declarations,
+`dispatch`, `max_workers`, and `include_inputs`. Omitted controls keep their
+existing settings. Explicit `max_workers=None` clears the worker limit, and
+`n_broadcast_samples=None` restores the default sample count. Other controls
+follow constructor validation, so `dispatch=None` and `workflow_kind=None`
+are rejected. Construction metadata (`name`, `output_name`, declarations,
 and bindings) and domain arguments are not controls.
 
 Keyword arguments in the final workflow call belong to the wrapped user

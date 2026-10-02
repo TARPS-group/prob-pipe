@@ -653,8 +653,10 @@ class Function(Node, TrackedTerm, Annotated):
         ----------
         **controls : Any
             Any of workflow_kind, n_broadcast_samples, dispatch, max_workers,
-            and include_inputs. None leaves that setting unchanged. The
-            revised controls apply to every call of the returned copy.
+            and include_inputs. Omitted controls remain unchanged. Explicit
+            None clears max_workers or restores the default n_broadcast_samples;
+            other controls follow their constructor validation. The revised
+            controls apply to every call of the returned copy.
 
         Returns
         -------
@@ -680,7 +682,9 @@ class Function(Node, TrackedTerm, Annotated):
         unknown = controls.keys() - self.options.keys()
         if unknown:
             raise TypeError(f"Unknown Function controls: {sorted(unknown)}")
-        options = dict(self.options) | {k: v for k, v in controls.items() if v is not None}
+        options = dict(self.options) | controls
+        if options["n_broadcast_samples"] is None:
+            options["n_broadcast_samples"] = self.DEFAULT_N_BROADCAST_SAMPLES
         _validate_options(options)
         clone = self._shallow_copy()
         object.__setattr__(clone, "_options", MappingProxyType(options))
@@ -844,7 +848,7 @@ def _validate_options(options: Mapping[str, Any]) -> None:
         if dispatch != "thread":
             warnings.warn(
                 f"max_workers configures only dispatch='thread'; ignoring it for dispatch={dispatch!r}.",
-                stacklevel=3,
+                skip_file_prefixes=_WARNING_SKIP_PREFIXES,
             )
     if not isinstance(options["workflow_kind"], WorkflowKind):
         raise TypeError("workflow_kind must be a WorkflowKind enum member")

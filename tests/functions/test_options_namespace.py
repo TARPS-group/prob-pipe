@@ -45,6 +45,60 @@ def test_function_has_no_options_alias():
     assert not hasattr(function, "options")
 
 
+@pytest.mark.parametrize("entrypoint", ["constructor", "decorator", "with_options"])
+def test_max_workers_warning_points_to_the_user_call(entrypoint):
+    def identity(x):
+        return x
+
+    wrapped = Function("identity", identity)
+    frame = inspect.currentframe()
+    assert frame is not None
+    with pytest.warns(UserWarning, match="max_workers configures only") as caught:
+        if entrypoint == "constructor":
+            line = frame.f_lineno + 1
+            Function("identity", identity, max_workers=2)
+        elif entrypoint == "decorator":
+            decorate = function(max_workers=2)
+            line = frame.f_lineno + 1
+            decorate(identity)
+        else:
+            line = frame.f_lineno + 1
+            wrapped.with_options(max_workers=2)
+    assert len(caught) == 1
+    assert caught[0].filename == __file__
+    assert caught[0].lineno == line
+
+
+def test_with_options_clears_workers_and_resets_sample_count():
+    wrapped = Function(
+        "identity", lambda x: x, dispatch="thread", max_workers=2, n_broadcast_samples=7
+    )
+    unchanged = wrapped.with_options(include_inputs=True)
+    assert unchanged.options["max_workers"] == 2
+    assert unchanged.options["n_broadcast_samples"] == 7
+
+    reset = wrapped.with_options(max_workers=None, n_broadcast_samples=None)
+    defaults = Function("defaults", lambda x: x, dispatch="thread")
+    assert reset.options == defaults.options
+    assert wrapped.options["max_workers"] == 2
+    assert wrapped.options["n_broadcast_samples"] == 7
+    with workflow_run(seed=3):
+        result = reset(Normal("x", 0, 1))
+    assert result.num_atoms == Function.DEFAULT_N_BROADCAST_SAMPLES
+
+
+@pytest.mark.parametrize(
+    ("control", "error", "message"),
+    [("dispatch", ValueError, "dispatch must"), ("workflow_kind", TypeError, "WorkflowKind")],
+)
+def test_with_options_none_uses_constructor_validation(control, error, message):
+    wrapped = Function("identity", lambda x: x)
+    with pytest.raises(error, match=message):
+        wrapped.with_options(**{control: None})
+    with pytest.raises(error, match=message):
+        Function("identity", lambda x: x, **{control: None})
+
+
 @pytest.mark.parametrize("decorated", [False, True])
 @pytest.mark.parametrize("option", ["seed", "input_template", "output_template", "func"])
 def test_legacy_warning_identifies_the_option_and_user_callsite(option, decorated):
