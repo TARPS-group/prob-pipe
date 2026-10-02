@@ -145,12 +145,12 @@ def _coerce_output(
     label in provenance and the declared output components. A tracked
     return is shallow-copied, sharing value data while owning its metadata.
     """
-    if broadcast_mode == BROADCAST_WRAP:
+    if broadcast_mode == BROADCAST_WRAP and not isinstance(value, TrackedTerm):
         value = _wrap_as_term(value, field_name)
-    if isinstance(value, TrackedTerm):
+    elif isinstance(value, TrackedTerm):
         value = value._with_name(field_name)
-        if provenance is not None:
-            value.with_provenance(provenance)
+    if isinstance(value, TrackedTerm) and provenance is not None:
+        value.with_provenance(provenance)
     return value
 
 
