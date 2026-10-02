@@ -427,7 +427,9 @@ class TestCompletedOutputDeclarations:
         declaration = NumericArraySpec((2,), support=positive)
         wrapped = Function("load", lambda row: stored, output_spec=declaration, dispatch=dispatch)
         result = wrapped(rows)
-        assert result.element_spec == wrapped(rows[0]).spec == declaration
+        # The declaration leaves the dtype open, so completion takes the produced one (II.2).
+        completed = NumericArraySpec((2,), dtype=stored.dtype, support=positive)
+        assert result.element_spec == wrapped(rows[0]).spec == completed
         np.testing.assert_array_equal(result.values, np.ones((3, 2)))
         assert stored.spec.support is None
 
@@ -575,3 +577,66 @@ class TestModuleReturnInference:
         assert type(result) is type(expected)
         assert result.spec == expected.spec
         assert result.value == expected.value == sequence
+
+
+@pytest.mark.parametrize("kind", ["array", "record", "batch"])
+@pytest.mark.parametrize("mode", ["plain", "sweep"])
+def test_a_shape_only_declaration_keeps_the_returned_terms_dtype_and_support(kind, mode):
+    """Completion unifies the declared type with the produced one (II.2)."""
+    from probpipe import BatchSpec, positive
+
+    leaf = NumericArraySpec((3,), dtype="float32", support=positive)
+    values = jnp.ones(3, dtype="float32")
+    if kind == "array":
+        stored = NumericArray("stored", values, spec=leaf)
+        declaration = NumericArraySpec((3,))
+    elif kind == "record":
+        stored = Record("stored", stats=Record("stats", x=NumericArray("x", values, spec=leaf)))
+        declaration = RecordSpec(stats=RecordSpec(x=NumericArraySpec((3,))))
+    else:
+        stored = NumericArrayBatch("stored", values[None, :], "item", element_spec=leaf)
+        declaration = BatchSpec(NumericArraySpec((3,)), ((1,),), ("item",))
+    factory = Function(
+        "factory", lambda row: stored, output_spec=declaration, dispatch="sequential"
+    )
+    if mode == "plain":
+        actual = factory(0).spec
+    else:
+        rows = NumericArrayBatch("rows", jnp.arange(2.0), "row", element_spec=NumericArraySpec(()))
+        actual = factory(rows).element_spec
+    if kind == "record":
+        actual = actual["stats/x"]
+    elif kind == "batch" and mode == "plain":
+        actual = actual.element_spec
+    assert actual == leaf
+    assert factory.output_spec.spec is declaration
+
+
+@pytest.mark.parametrize("mode", ["plain", "sweep", "lift"])
+@pytest.mark.parametrize("declared_side", [None, "input", "output"])
+def test_a_returned_function_keeps_the_declarations_its_result_leaves_open(mode, declared_side):
+    """A side the outer declaration leaves unspecified keeps the returned function's own."""
+    from probpipe import EmpiricalDistribution, positive
+
+    inputs = InputSpec(x=NumericArraySpec(()))
+    outputs = OutputSpec(value=NumericArraySpec((), support=positive))
+    inner = Function("inner", lambda x: x, input_spec=inputs, output_spec=outputs)
+    declaration = FunctionSpec(
+        input_spec=inputs if declared_side == "input" else None,
+        output_spec=outputs if declared_side == "output" else None,
+    )
+    factory = Function("outer", lambda row: inner, output_spec=declaration, dispatch="sequential")
+    if mode == "plain":
+        returned = [factory(0)]
+    elif mode == "sweep":
+        rows = NumericArrayBatch("rows", jnp.arange(2.0), "row", element_spec=NumericArraySpec(()))
+        returned = list(factory(rows))
+    else:
+        returned = list(factory(EmpiricalDistribution("row", jnp.arange(2.0))).atoms)
+    for result in returned:
+        assert result is not inner
+        assert result.spec == inner.spec
+        with pytest.raises(ValueError, match="support positive"):
+            result.apply(-1.0)
+    assert inner.input_spec is inputs
+    assert inner.output_spec is outputs

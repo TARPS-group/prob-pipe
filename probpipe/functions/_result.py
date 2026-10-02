@@ -111,6 +111,7 @@ def _aggregate_output_spec(output_spec: OutputSpec, outputs: Any) -> OutputSpec:
     from ..core._numeric_array_batch import _MappedBatchStore
     from ..core._record_batch import _MappedBatchColumns
     from ..core._spec_base import _unify_specs
+    from ..values._function_base import _complete_output_metadata
 
     spec = output_spec.spec
     bindings: dict[str, int] = {}
@@ -130,6 +131,7 @@ def _aggregate_output_spec(output_spec: OutputSpec, outputs: Any) -> OutputSpec:
             _unify_specs(spec, actual, bindings, "Function aggregate output")
         except ValueError as error:
             raise ResultSchemaError(str(error)) from error
+        spec = _complete_output_metadata(spec, actual)
     return output_spec._with_spec(None if spec is None else spec._substitute_dims(bindings))
 
 
@@ -232,6 +234,11 @@ def _copy_result_term(value: TrackedTerm, *, output_spec: OutputSpec | None = No
         if isinstance(spec, FunctionSpec) and isinstance(clone, Function):
             from ..values._function_base import _validate_function_declarations
 
+            # A side the declaration leaves unspecified keeps the returned function's own.
+            spec = FunctionSpec(
+                input_spec=clone.input_spec if spec.input_spec is None else spec.input_spec,
+                output_spec=clone.output_spec if spec.output_spec is None else spec.output_spec,
+            )
             _validate_function_declarations(
                 function_name=clone.label,
                 signature=clone.signature,

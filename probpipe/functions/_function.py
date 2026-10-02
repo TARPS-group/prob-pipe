@@ -1278,7 +1278,7 @@ def _apply_scope() -> Generator[None, None, None]:
 class _CallEngine:
     """The call stack of design Part V, installed as the call path of every Function."""
 
-    def __call__(self, function: Function, *args: Any, **kwargs: Any) -> Any:
+    def __call__(self, function: Function, /, *args: Any, **kwargs: Any) -> Any:
         result = _call_with_options(function, args, kwargs, _call.FunctionCallOptions())
         if not function.options["raw"]:
             return result
@@ -1287,7 +1287,7 @@ class _CallEngine:
         return _result._detach(result)
 
     @staticmethod
-    def check(function: Function, *args: Any, **kwargs: Any) -> CallReport:
+    def check(function: Function, /, *args: Any, **kwargs: Any) -> CallReport:
         """The probe of steps 1 to 6 that :meth:`Function.check` returns."""
         return _check_call(function, args, kwargs)
 

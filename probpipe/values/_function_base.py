@@ -241,7 +241,43 @@ def _validate_function_output(
     spec._bind_dims_from_value(result, resolved, path)
     concrete = spec._substitute_dims(resolved)
     _validate_output_values(concrete, result, path)
-    return output_spec._with_spec(concrete)
+    if not isinstance(actual_spec, TermSpec):
+        actual_spec = RecordSpec.infer_from({"result": result}).children["result"]
+    return output_spec._with_spec(_complete_output_metadata(concrete, actual_spec))
+
+
+def _complete_output_metadata(expected: TermSpec, actual: TermSpec) -> TermSpec:
+    """*expected* with each array leaf's unset dtype and support taken from *actual*.
+
+    Completion stores the unification of the declared type and the produced one
+    (II.2), so a leaf the declaration leaves without a dtype or a support takes
+    the produced term's.
+    """
+    from dataclasses import replace
+
+    from ..core._batch import BatchSpec
+
+    if isinstance(expected, NumericArraySpec) and isinstance(actual, NumericArraySpec):
+        return replace(
+            expected,
+            dtype=actual.dtype if expected.dtype is None else expected.dtype,
+            support=actual.support if expected.support is None else expected.support,
+        )
+    if isinstance(expected, RecordSpec) and isinstance(actual, RecordSpec):
+        return RecordSpec(
+            {
+                key: _complete_output_metadata(child, actual.children[key])
+                if key in actual.children
+                else child
+                for key, child in expected.children.items()
+            }
+        )
+    if isinstance(expected, BatchSpec) and isinstance(actual, BatchSpec):
+        return replace(
+            expected,
+            element_spec=_complete_output_metadata(expected.element_spec, actual.element_spec),
+        )
+    return expected
 
 
 def _validate_declared_support(expected: TermSpec, actual: TermSpec, path: str) -> None:
@@ -960,11 +996,11 @@ def _validate_options(options: Mapping[str, Any], signature: inspect.Signature) 
     }
 
 
-def _plain_call(function: Function, *args: Any, **kwargs: Any) -> Any:
+def _plain_call(function: Function, /, *args: Any, **kwargs: Any) -> Any:
     return function.apply(*args, **kwargs)
 
 
-def _plain_check(function: Function, *args: Any, **kwargs: Any) -> Any:
+def _plain_check(function: Function, /, *args: Any, **kwargs: Any) -> Any:
     raise NotImplementedError("Function.check")
 
 
