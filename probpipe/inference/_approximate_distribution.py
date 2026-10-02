@@ -347,8 +347,6 @@ def make_posterior(
     TypeError
         If the target has a leaf without a flat size.
     """
-    import xarray as xr
-
     if not chains:
         raise ValueError("an inference result needs at least one chain")
     declaration = None if event_spec is None else _complete_event_spec(event_spec, label)
@@ -380,6 +378,24 @@ def make_posterior(
         raise ValueError(f"the chains of an inference result have equal lengths, got {lengths}")
     atoms = _chain_atoms(label, jnp.stack(flat_chains), declaration)
     result = EmpiricalDistribution(label, atoms, weights, event_spec=declaration)
+    return _record_run(result, parents, method, annotations=annotations, **meta)
+
+
+def _record_run(
+    result: Distribution,
+    parents: tuple[Distribution, ...],
+    method: str,
+    *,
+    annotations: DataTree | None = None,
+    **meta: Any,
+) -> Distribution:
+    """*result* with the record of the inference run that produced it.
+
+    Its annotations become a ``DataTree`` whose root attribute ``method`` is
+    *method*, with the method's ArviZ-compatible groups under ``arviz/``, and its
+    provenance names the method and *parents*.
+    """
+    import xarray as xr
 
     # The root records the method, and the ArviZ-compatible groups are nested
     # under /arviz/, so the annotations can hold other subtrees, such as

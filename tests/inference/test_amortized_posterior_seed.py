@@ -9,10 +9,11 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+import pytest
 
 from probpipe import Normal, workflow_run
 from probpipe.inference._bayesflow_posteriors import _AmortizedPosterior
-from tests._posterior import flat_draws
+from tests._posterior import law_draws
 from tests.operations._laws import Kernel
 
 
@@ -30,28 +31,26 @@ def _posterior() -> _AmortizedPosterior:
         Kernel("y", ("a",)),
         method="npe",
         data_dim=1,
-        num_results=4,
     )
 
 
-def _seeds(posterior: Any) -> np.ndarray:
-    """The seeds of the posterior's draws, which the stand-in network makes the draws."""
-    return np.asarray(flat_draws(posterior)["a"]).ravel()
+def _seeds(law: Any) -> np.ndarray:
+    """The seeds of four draws of the law, which the stand-in network makes the draws."""
+    return np.asarray(law_draws(law, 4)["a"]).ravel()
 
 
 def test_the_draws_follow_the_workflow_seed():
-    posterior = _posterior()
+    law = _posterior()._condition_on({"observation": 0.5})
     with workflow_run(seed=1):
-        first = posterior._condition_on({"observation": 0.5})
+        first = _seeds(law)
     with workflow_run(seed=1):
-        again = posterior._condition_on({"observation": 0.5})
+        again = _seeds(law)
     with workflow_run(seed=2):
-        other = posterior._condition_on({"observation": 0.5})
-    np.testing.assert_array_equal(_seeds(first), _seeds(again))
-    assert not np.array_equal(_seeds(first), _seeds(other))
+        other = _seeds(law)
+    np.testing.assert_array_equal(first, again)
+    assert not np.array_equal(first, other)
 
 
-def test_a_random_seed_option_seeds_the_draws():
-    with workflow_run(seed=1):
-        law = _posterior()._condition_on({"observation": 0.5}, random_seed=7)
-    np.testing.assert_array_equal(_seeds(law), np.full(4, 7.0))
+def test_conditioning_takes_no_method_options():
+    with pytest.raises(TypeError, match="takes none"):
+        _posterior()._condition_on({"observation": 0.5}, random_seed=7)

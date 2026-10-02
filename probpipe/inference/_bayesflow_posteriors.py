@@ -3,10 +3,11 @@
 Trains amortized conditional posterior estimators -- NPE (neural posterior
 estimation), FMPE (flow-matching) and CMPE (consistency-model) -- with BayesFlow
 (keras-on-JAX) and returns the learned kernel ``q(theta | y)`` from the
-observation to the parameters: ``condition_on(q, {"observation": y})`` draws from
-the amortized posterior in a single forward pass through the trained network --
-no MCMC, no gradient bridge, and no prior translation (the prior is used only
-to draw ``theta`` at train time via the :func:`~probpipe.sample` op).
+observation to the parameters: ``condition_on(q, {"observation": y})`` returns
+the amortized posterior's law at ``y``, each of whose draws is one forward pass
+through the trained network -- no MCMC, no gradient bridge, and no prior
+translation (the prior is used only to draw ``theta`` at train time via the
+:func:`~probpipe.sample` op).
 
 The shared bridge (lazy import, validation, offline simulation, adapter keying,
 seeded training) lives in :mod:`._bayesflow_common`;
@@ -36,13 +37,13 @@ from ..custom_types import Array
 from ..distributions._capabilities import (
     SupportsApproximateConditioning,
     SupportsConditionalSampling,
+    SupportsSampling,
 )
 from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution
-from ..distributions._empirical import EmpiricalDistribution
 from ..functions import function
 from ..values import Function
-from ._approximate_distribution import make_posterior
+from ._approximate_distribution import _record_run
 from ._bayesflow_common import (
     _OBSERVATION_KEY,
     SimBackend,
@@ -53,7 +54,6 @@ from ._bayesflow_common import (
     _simulate_offline,
     _validate_learn_inputs,
 )
-from ._inference_utils import integer_seed, run_seed
 
 if TYPE_CHECKING:
     # Type-only: bayesflow/keras load at runtime in _import_bayesflow.
@@ -167,9 +167,8 @@ class _AmortizedPosterior(
 
     Its given slot is the observation, named ``observation`` unless the prior
     declares that name, and its event is the parameters, declared as the prior
-    declares them. Evaluating it at an observation runs the trained
-    network once, with no retraining and no inference, and the law it yields
-    samples. The evaluation stands in for the posterior of the joint of the prior
+    declares them. Evaluating it at an observation yields the law whose draws
+    each run the trained network once, with no retraining and no inference. The evaluation stands in for the posterior of the joint of the prior
     and the simulator the network was trained on, so the kernel claims
     ``SupportsApproximateConditioning`` and ``exact_only=True`` excludes it. The
     network samples in unconstrained space, and the draws are mapped back to each
@@ -187,8 +186,6 @@ class _AmortizedPosterior(
         The amortized estimator.
     data_dim : int
         The flattened size of the observation the network conditions on.
-    num_results : int
-        The default number of draws of the law at an observation.
     bijectors : dict of str to Function, optional
         The forward bijector of each constrained leaf.
     """
@@ -201,7 +198,6 @@ class _AmortizedPosterior(
         *,
         method: AmortizedMethod,
         data_dim: int,
-        num_results: int = 2000,
         bijectors: dict[str, Function] | None = None,
     ):
         slot = _observation_slot(prior)
@@ -218,7 +214,6 @@ class _AmortizedPosterior(
             "_leaf_keys": tuple(_components_record(prior.event_spec).leaf_shapes),
             "_method": method,
             "_data_dim": data_dim,
-            "_num_results": num_results,
             # Forward bijectors (unconstrained -> support); missing entries mean identity.
             "_bijectors": bijectors or {},
         }
@@ -264,14 +259,14 @@ class _AmortizedPosterior(
             )
         return obs_flat
 
-    def _network_draws(self, observation: np.ndarray, num_results: int, seed: int) -> Array:
-        """``num_results`` flat draws of the network at *observation*, in the prior's supports."""
+    def _network_draws(self, observation: np.ndarray, count: int, seed: int) -> Array:
+        """``count`` flat draws of the network at *observation*, in the prior's supports."""
         out = self._approximator.sample(
-            num_samples=num_results,
+            num_samples=count,
             conditions={_OBSERVATION_KEY: observation[None, :]},
             seed=seed,
         )
-        # ``out`` maps each internal theta key to ``(1, num_results, d_leaf)``.
+        # ``out`` maps each internal theta key to ``(1, count, d_leaf)``.
         # Stays in jnp end-to-end: this is the latency-critical amortized path,
         # so no per-leaf host round-trips. Columns are concatenated in leaf order,
         # which is the canonical flatten order the posterior's record unflattens by.
@@ -281,7 +276,7 @@ class _AmortizedPosterior(
             bij = self._bijectors.get(leaf)
             if bij is not None:
                 draws = bij.apply(draws)
-            cols.append(jnp.reshape(draws, (num_results, -1)))
+            cols.append(jnp.reshape(draws, (count, -1)))
         return jnp.concatenate(cols, axis=-1)
 
     def _condition_on_guard(self, paths: tuple[str, ...]) -> Feasibility:
@@ -294,42 +289,31 @@ class _AmortizedPosterior(
             )
         return Feasibility(True)
 
-    def _condition_on(self, given: Any, /, **kwargs: Any) -> EmpiricalDistribution:
-        """The network's draws at the observation *given* binds, as an empirical posterior.
+    def _condition_on(self, given: Any, /, **kwargs: Any) -> Distribution:
+        """The learned law at the observation *given* binds, which samples the network.
 
         *given* is a mapping or record keyed by the observation slot, or the
-        observation itself. ``num_results`` sets the number of draws, and
-        ``random_seed`` their seed; without it the draws are a workflow-owned
-        random event, so ``workflow_run(seed=...)`` fixes them.
+        observation itself. Evaluating the kernel runs no network and takes no
+        method options. Each draw of the law runs the network at the
+        observation, seeded by the draw's key, so ``workflow_run(seed=...)``
+        fixes the draws.
 
         Raises
         ------
         TypeError
-            If a keyword is neither ``num_results`` nor ``random_seed``.
+            If a method option is given.
         KeyError
             If *given* names a key other than the observation slot.
         ValueError
-            If ``num_results`` is not positive, or the observation's size is not
-            the trained one.
+            If the observation's size is not the trained one.
         """
-        unread = sorted(set(kwargs) - {"num_results", "random_seed"})
-        if unread:
+        if kwargs:
             raise TypeError(
-                f"method_options {unread} are not options of the amortized posterior "
-                f"{self.label!r}, which reads ['num_results', 'random_seed']"
+                f"method_options {sorted(kwargs)} are not options of the amortized posterior "
+                f"{self.label!r}, which takes none"
             )
-        num_results = int(kwargs.get("num_results", self._num_results))
-        if num_results < 1:
-            raise ValueError(f"num_results must be a positive integer, got {num_results}.")
-        seed = integer_seed(run_seed(kwargs, f"bayesflow_{self._method}"))
-        flat = self._network_draws(self._observation(given), num_results, seed)
-        return make_posterior(
-            [flat],
-            parents=(self,),
-            method=f"bayesflow_{self._method}",
-            event_spec=self._prior.event_spec,
-            num_results=num_results,
-        )
+        law = _AmortizedPosteriorLaw(self, self._observation(given))
+        return _record_run(law, (self,), f"bayesflow_{self._method}")
 
     def _conditional_sample(
         self, given: Any, key: Array, sample_shape: tuple[int, ...] = ()
@@ -349,8 +333,25 @@ class _AmortizedPosterior(
         return _reconstruct_from_vector(self.label, spec, vector)
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
-        """The network the posterior was learned with, and how many draws it returns."""
-        return [("method", repr(self._method)), ("num_results", repr(self._num_results))]
+        """The network the posterior was learned with."""
+        return [("method", repr(self._method))]
+
+
+class _AmortizedPosteriorLaw(Distribution, SupportsSampling):
+    """An amortized posterior's law at an observation, whose draws are the network's.
+
+    Its event is the parameters, declared as the prior declares them, and each
+    draw runs the trained network at the observation.
+    """
+
+    def __init__(self, kernel: _AmortizedPosterior, observation: np.ndarray) -> None:
+        super().__init__("posterior", kernel.event_spec)
+        self._kernel = kernel
+        self._observation_value = observation
+
+    def _sample(self, key: Array, sample_shape: tuple[int, ...] = ()) -> Any:
+        """Draws of the network at the observation, seeded by *key*."""
+        return self._kernel._conditional_sample(self._observation_value, key, sample_shape)
 
 
 # ---------------------------------------------------------------------------
@@ -369,7 +370,6 @@ def learn_amortized_posterior(
     batch_size: int = 128,
     sim_backend: SimBackend = "jax",
     inference_network: InferenceNetwork | None = None,
-    num_results: int = 2000,
     random_seed: int = 0,
     optimizer: str | KerasOptimizer = "adam",
     **fit_kwargs: Any,
@@ -379,9 +379,10 @@ def learn_amortized_posterior(
     Trains an amortized neural posterior estimator (NPE / FMPE / CMPE) from a
     ``prior`` and a ``simulator`` and returns the learned kernel from the
     observation to the parameters, whose given slot is ``observation``.
-    ``condition_on(result, {"observation": y})`` evaluates it in a single forward
-    pass, with no MCMC, and returns a law that samples; the evaluation is
-    approximate, so ``exact_only=True`` refuses it. Provenance names the prior
+    ``condition_on(result, {"observation": y})`` evaluates it without retraining
+    or MCMC and returns the law at ``y``, each of whose draws is one forward pass
+    of the network; the evaluation is approximate, so ``exact_only=True`` refuses
+    it. Provenance names the prior
     and the simulator it was trained on.
 
     Parameters
@@ -423,15 +424,12 @@ def learn_amortized_posterior(
     inference_network : bayesflow.networks.InferenceNetwork or None
         Overrides the method default (``CouplingFlow`` / ``FlowMatching`` /
         ``ConsistencyModel``).
-    num_results : int
-        Default number of posterior draws per ``condition_on`` call.
     random_seed : int
         Seed for offline simulation (``jax.random``) and keras network init +
         training (via ``keras.utils.set_random_seed``). The caller's global
         NumPy / Python RNG state is snapshotted and restored after training, so the
-        call does not perturb unrelated random streams. The learned posterior's
-        draws are seeded by the workflow scope, or by a ``random_seed`` method
-        option of the conditioning call.
+        call does not perturb unrelated random streams. The draws of the learned
+        posterior's law at an observation are seeded by the workflow scope.
     optimizer : str or keras.Optimizer
         Passed to ``approximator.compile``.
     **fit_kwargs
@@ -449,8 +447,7 @@ def learn_amortized_posterior(
     ValueError
         If ``method`` is not one of ``"npe"`` / ``"fmpe"`` / ``"cmpe"``,
         ``sim_backend`` is not ``"jax"`` / ``"sequential"``, any of
-        ``num_simulations`` / ``batch_size`` / ``epochs`` / ``num_results`` is
-        less than one, or a prior field's support is not declared or admits no
+        ``num_simulations`` / ``batch_size`` / ``epochs`` is less than one, or a prior field's support is not declared or admits no
         smooth bijector to ``R^d`` (e.g. a discrete prior).
     TypeError
         If a count parameter is not an integer, ``simulator`` is not a kernel
@@ -471,7 +468,6 @@ def learn_amortized_posterior(
             ("num_simulations", num_simulations),
             ("batch_size", batch_size),
             ("epochs", epochs),
-            ("num_results", num_results),
         ),
     )
     # Per numeric leaf (slash paths for a nested prior; == fields for a flat
@@ -523,6 +519,5 @@ def learn_amortized_posterior(
         simulator,
         method=method,
         data_dim=int(y.shape[-1]),
-        num_results=num_results,
         bijectors=bijectors,
     )

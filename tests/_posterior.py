@@ -76,6 +76,24 @@ def warmup_samples(posterior: Any) -> list[Any] | None:
     return [jnp.asarray(warmup.sel(chain=i).values) for i in range(count)]
 
 
+def law_draws(law: Any, count: int = 500) -> dict[str, Any]:
+    """*count* draws of *law* under the caller's workflow, each leaf an array ``(count, *shape)``.
+
+    A record event gives one entry per leaf path, and any other event one entry
+    under its component.
+    """
+    import numpy as np
+
+    from probpipe import sample
+    from probpipe.distributions._empirical import _flat_rows
+
+    rows = _flat_rows(sample(law, sample_shape=(count,)))
+    if isinstance(rows, dict):
+        return {path: np.asarray(column) for path, column in rows.items()}
+    (component,) = law.event_spec.components
+    return {component: np.asarray(rows)}
+
+
 def flat_draws(posterior: Any, chain: int | None = None, *, include_warmup: bool = False) -> Any:
     """The draws of one chain, or of all chains in order, optionally after the warmup.
 

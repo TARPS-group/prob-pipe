@@ -363,33 +363,120 @@ class TestRecordSpec:
         assert jnp.asarray(draws["intercept"]).shape == (20,)
         assert jnp.asarray(draws["alpha"]).shape == (20, N)
 
-    def test_advi_field_order_realignment(self):
-        """End-to-end: ``pymc_advi`` realigns posterior columns to the
-        template by name, like the NUTS/nutpie paths.
+    @staticmethod
+    def _intercept_alpha_model(y=None):
+        # The backend sorts ``alpha`` before ``intercept``, while the template
+        # defines ``intercept`` first, and the shapes differ (scalar vs. (3,)).
+        with pm.Model() as m:
+            intercept = pm.Normal("intercept", 0, 1)
+            pm.Normal("alpha", 0, 1, shape=3)
+            pm.Normal("y", mu=intercept, sigma=1.0, observed=y)
+        return m
 
-        ADVI's trace comes from ``approx.sample`` rather than a NUTS run,
-        so it exercises ``posterior_var_order`` on a distinct trace source.
-        The names are chosen so the backend's alphabetical column order
-        (``alpha`` before ``intercept``) differs from the template order
-        (``intercept`` defined first), and the shapes differ (scalar vs.
-        ``(3,)``) — a positional split would shape-scramble instead of
-        realigning by name.
+    def test_advi_returns_the_fitted_family_in_template_order(self):
+        """``pymc_advi`` returns the fitted mean-field family, one factor per parameter.
+
+        The factors follow the template's order, and each draws at its
+        parameter's shape.
         """
-        from probpipe import condition_on
+        from probpipe import condition_on, sample, workflow_run
+        from probpipe.distributions import FactoredDistribution
+
+        y = np.zeros(8, dtype=np.float32)
+        result = condition_on.with_options(
+            method="pymc_advi", method_options={"num_iterations": 200, "random_seed": 0}
+        )(PyMCModel("model", self._intercept_alpha_model), {"y": y})
+        assert isinstance(result, FactoredDistribution)
+        assert method_of(result) == "pymc_advi"
+        assert tuple(result.event_spec.components) == ("intercept", "alpha")
+        with workflow_run(seed=0):
+            draws = sample(result, sample_shape=(25,))
+        assert jnp.asarray(draws["intercept"].values).shape == (25,)
+        assert jnp.asarray(draws["alpha"].values).shape == (25, 3)
+
+    def test_the_mean_field_family_is_the_fitted_approximation(self):
+        """The family's density is the fitted Gaussian at PyMC's unconstrained value
+        less PyMC's log-Jacobian, for the log, logodds, interval, and simplex transforms."""
+        import jax
+
+        from probpipe import log_prob
+        from probpipe.inference._pymc_method import _mean_field_family
+
+        with pm.Model() as model:
+            pm.Normal("mu", 0, 5)
+            pm.HalfCauchy("tau", 5)
+            pm.Beta("p", 2, 3)
+            pm.Dirichlet("w", np.ones(3))
+            pm.Uniform("u", -1, 2)
+            pm.TruncatedNormal("lo", 0, 1, lower=0.5)
+            pm.Normal("y", 0.0, 1.0, observed=np.zeros(2))
+            approx = pm.fit(n=200, method="advi", random_seed=1, progressbar=False)
+            trace = approx.sample(3, random_seed=2)
+        names = [rv.name for rv in model.free_RVs]
+        family = _mean_field_family(approx, model, names)
+        assert tuple(family.event_spec.components) == tuple(names)
+        group, mean, std = approx.groups[0], approx.mean.eval(), approx.std.eval()
+
+        def evaluated(x):
+            return x.eval() if hasattr(x, "eval") else np.asarray(x)
+
+        for k in range(3):
+            point = {n: trace.posterior[n].values[0, k] for n in names}
+            expected = 0.0
+            for n in names:
+                rv = model[n]
+                transform = model.rvs_to_transforms.get(rv)
+                _, coordinates, _, _ = group.ordering[model.rvs_to_values[rv].name]
+                x = np.asarray(point[n], dtype="float64")
+                y = x if transform is None else evaluated(transform.forward(x, *rv.owner.inputs))
+                expected += jax.scipy.stats.norm.logpdf(
+                    np.ravel(y), mean[coordinates], std[coordinates]
+                ).sum()
+                if transform is not None:
+                    expected -= np.sum(evaluated(transform.log_jac_det(y, *rv.owner.inputs)))
+            actual = float(log_prob(family, {n: jnp.asarray(point[n]) for n in names}))
+            assert actual == pytest.approx(float(expected), rel=1e-4, abs=1e-4)
+
+    def test_a_transform_the_family_does_not_cover_gives_draws(self):
+        """A bound that depends on another parameter has no fixed bijector, so the
+        result is the approximation's draws."""
+        from probpipe import EmpiricalDistribution, condition_on
 
         def model_fn(y=None):
             with pm.Model() as m:
-                intercept = pm.Normal("intercept", 0, 1)  # scalar, defined first
-                pm.Normal("alpha", 0, 1, shape=3)  # shape (3,), sorts first
-                pm.Normal("y", mu=intercept, sigma=1.0, observed=y)
+                upper = pm.HalfNormal("upper", 1.0)
+                pm.Uniform("x", 0.0, upper)
+                pm.Normal("y", 0.0, 1.0, observed=y)
             return m
+
+        result = condition_on.with_options(
+            method="pymc_advi",
+            method_options={"num_iterations": 100, "num_results": 10, "random_seed": 0},
+        )(PyMCModel("model", model_fn), {"y": np.zeros(3, dtype=np.float32)})
+        assert isinstance(result, EmpiricalDistribution)
+        assert method_of(result) == "pymc_advi"
+        assert result.atoms.batch_shape == (1, 10)
+
+    def test_fullrank_advi_draws_realign_by_name(self):
+        """Full-rank ADVI's draws are realigned to the template by name.
+
+        Its trace comes from ``approx.sample`` rather than a NUTS run, so it
+        exercises ``posterior_var_order`` on a distinct trace source, where a
+        positional split would shape-scramble the fields.
+        """
+        from probpipe import condition_on
 
         y = np.zeros(8, dtype=np.float32)
         result = condition_on.with_options(
             method="pymc_advi",
-            method_options={"num_iterations": 200, "num_results": 25, "random_seed": 0},
-        )(PyMCModel("model", model_fn), {"y": y})
-        assert method_of(result) == "pymc_advi"
+            method_options={
+                "num_iterations": 200,
+                "num_results": 25,
+                "random_seed": 0,
+                "vi_method": "fullrank_advi",
+            },
+        )(PyMCModel("model", self._intercept_alpha_model), {"y": y})
+        assert method_of(result) == "pymc_fullrank_advi"
         draws = flat_draws(result)
         assert draws.event_template.fields == ("intercept", "alpha")
         assert jnp.asarray(draws["intercept"]).shape == (25,)

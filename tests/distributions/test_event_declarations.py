@@ -102,6 +102,7 @@ from probpipe.inference._bayesflow_likelihoods import (
     _LearnedLaw,
     _LearnedRatioLaw,
 )
+from probpipe.inference._bayesflow_posteriors import _AmortizedPosterior, _AmortizedPosteriorLaw
 from probpipe.inference._minibatch import (
     _FixedMinibatchDistribution,
     _MinibatchLogProbAtPoint,
@@ -134,6 +135,13 @@ def _measure() -> MinibatchedDistribution:
     prior = MultivariateNormal("beta", loc=jnp.zeros(2), cov=jnp.eye(2))
     likelihood = glm_likelihood("y", BernoulliFamily(), X=X)
     return MinibatchedDistribution("measure", prior, likelihood, y, batch_size=5)
+
+
+class _ZeroNetwork:
+    """A stand-in for a trained posterior network, whose draws are zeros."""
+
+    def sample(self, *, num_samples, conditions, seed):
+        return {"theta_0": np.zeros((1, num_samples, 1))}
 
 
 class _Simulator:
@@ -223,6 +231,9 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     _ShiftedGRF: lambda: _basis_function() + 1.0,
     _ScaledGRF: lambda: 2.0 * _basis_function(),
     _IndependentSumGRF: lambda: _basis_function("f") + _basis_function("g"),
+    _AmortizedPosteriorLaw: lambda: _AmortizedPosterior(
+        _ZeroNetwork(), Normal("theta", 0.0, 1.0), _Simulator(), method="npe", data_dim=2
+    )._condition_on({"observation": jnp.zeros(2)}),
     _LearnedDensity: lambda: BayesFlowLikelihood(
         None, Normal("theta", 0.0, 1.0), _Simulator(), data_dim=2
     )._condition_on({"theta": 0.0}),
