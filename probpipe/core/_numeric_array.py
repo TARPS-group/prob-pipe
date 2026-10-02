@@ -146,6 +146,10 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
         """The stored value, in the form it was given. Untracked."""
         return self._value
 
+    def raw(self) -> Any:
+        """The stored array, in the form it was given, as :attr:`value` holds it."""
+        return self._value
+
     def as_jax(self) -> Any:
         """The value as a ``jax.Array`` — the single conversion point.
 

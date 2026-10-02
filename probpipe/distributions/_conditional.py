@@ -27,6 +27,7 @@ from ._distribution import (
     _check_marker_claims,
     _complete_event_spec,
     _compose_operands,
+    _detached_term,
     _unify_declarations,
 )
 
@@ -441,6 +442,17 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
                 _complete_given_spec(given_spec), _complete_event_spec(event_spec, self._name)
             ),
         )
+
+    # -- the representation -------------------------------------------------
+
+    def raw(self) -> ConditionalDistribution:
+        """This kernel detached from the workflow, under its name and declarations.
+
+        A kernel is represented by itself, so its raw form is a copy that shares
+        its representation and carries no provenance, no annotations, and no
+        reference to a batch it was an element of.
+        """
+        return _detached_term(self)
 
     # -- the declarations ---------------------------------------------------
 

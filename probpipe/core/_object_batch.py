@@ -144,6 +144,10 @@ class _ObjectBatch[E](Batch[E]):
         batch._init_batch(spec, name=name)
         return batch
 
+    def raw(self) -> np.ndarray:
+        """The storage view: the frozen object array of the stored elements, batch axes leading."""
+        return self._store
+
     # -- the storage seam ---------------------------------------------------
 
     def _element_at(self, index: tuple[int, ...], *, name: str) -> E:

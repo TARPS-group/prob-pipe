@@ -171,6 +171,10 @@ class NumericArrayBatch(Batch[NumericArray]):
         """The stored array, batch axes leading, in native form. Untracked."""
         return self._values
 
+    def raw(self) -> Any:
+        """The storage view: the stored array with the batch axes leading, as :attr:`values` holds it."""
+        return self._values
+
     # -- the array shim, as ``NumericRecordBatch`` carries from its sole field.
     # ``batch_shape`` / ``batch_size`` stay the names for the batch axes alone.
 

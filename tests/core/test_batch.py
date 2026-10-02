@@ -51,6 +51,9 @@ class _Leaf(TrackedTerm):
         object.__setattr__(self, "value", value)
         self._init_tracked(name)
 
+    def raw(self):
+        return self.value
+
 
 class _ListBatch(Batch[_Leaf]):
     """A batch storing elements in a flat list, row-major over ``batch_shape``."""
@@ -60,6 +63,9 @@ class _ListBatch(Batch[_Leaf]):
     def __init__(self, store, spec, *, name="b"):
         object.__setattr__(self, "_store", list(store))
         self._init_batch(spec, name=name)
+
+    def raw(self):
+        return self._store
 
     # -- the storage seam --
 
@@ -142,6 +148,9 @@ class _ViewBatch(Batch[_Leaf]):
         )
         self._init_batch(spec, name=name)
 
+    def raw(self):
+        return self._root_store
+
     def _offset(self, index):
         """Where this view's positional *index* lands in the root store."""
         positions = []
@@ -200,6 +209,9 @@ class _StoringBatch(Batch[_Leaf]):
         object.__setattr__(self, "_store", list(elements))
         self._init_batch(spec, name=name)
 
+    def raw(self):
+        return self._store
+
     def _element_at(self, index, *, name):
         return self._store[index[0]]
 
@@ -221,6 +233,9 @@ class _StringSlotsBatch(Batch[int]):
     def __init__(self, store, spec, *, name="b"):
         object.__setattr__(self, "_store", list(store))
         self._init_batch(spec, name=name)
+
+    def raw(self):
+        return self._store
 
     def _element_at(self, index, *, name):
         return self._store[index[0]]
@@ -592,8 +607,8 @@ class TestABC:
     def test_a_batch_is_a_tracked_term(self, flat):
         assert isinstance(flat, TrackedTerm)
 
-    def test_the_storage_seam_is_abstract(self):
-        assert set(Batch.__abstractmethods__) == {"_element_at", "_sub_batch_at"}
+    def test_the_storage_seam_and_the_storage_view_are_abstract(self):
+        assert set(Batch.__abstractmethods__) == {"_element_at", "_sub_batch_at", "raw"}
 
 
 class TestDerivedNamesIdentifyTheObject:

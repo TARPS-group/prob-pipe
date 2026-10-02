@@ -334,6 +334,14 @@ class RecordBatch(Batch[Record]):
 
     # -- field access -------------------------------------------------------
 
+    def raw(self) -> dict[str, Any]:
+        """The storage view: the nested mapping of the raw columns, in canonical order.
+
+        Each column is its field's raw batch form, the stacked array for an
+        array field and the frozen object array for any other field.
+        """
+        return _unflatten_paths(self._columns)
+
     def _raw_column(self, path: str) -> Any:
         """One field's column exactly as stored, before any presentation.
 

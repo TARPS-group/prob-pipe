@@ -604,6 +604,36 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         """
         return self._spec
 
+    # -- The representation -------------------------------------------------
+
+    def raw(self, path: str | tuple[str, ...] | None = None) -> Any:
+        """The stored representation: the nested mapping of raw leaves, or one node's.
+
+        A leaf is held in native form, so its raw value is the leaf itself, and a
+        tracked term held as a leaf, such as a law, gives its own ``raw()``. An
+        interior node gives the nested mapping of the raw leaves beneath it.
+
+        Parameters
+        ----------
+        path : str or tuple of str, optional
+            The path of one node, a field or a subtree. Omitted, the whole
+            record.
+
+        Returns
+        -------
+        Any
+            The raw leaf at a key, and otherwise a nested ``dict`` of raw leaves.
+
+        Raises
+        ------
+        KeyError
+            If *path* is not a path of the record.
+        """
+        node = self if path is None else self.at_path(path)
+        if isinstance(node, Record):
+            return _raw_nested(node)
+        return _raw_leaf(node)
+
     # -- Tree structure -----------------------------------------------------
     #
     # The mapping and path-navigation methods (``keys`` / ``values`` /
@@ -1137,6 +1167,19 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                 continue
             parts.append((name, shape, _canonical_dtype_str(val)))
         return hash(tuple(parts))
+
+
+def _raw_leaf(leaf: Any) -> Any:
+    """A stored leaf's raw value: a tracked term's ``raw()``, and any other leaf as stored."""
+    return leaf.raw() if isinstance(leaf, TrackedTerm) else leaf
+
+
+def _raw_nested(record: Record) -> dict[str, Any]:
+    """*record* as the nested ``dict`` of its raw leaves, in canonical order."""
+    return {
+        name: _raw_nested(child) if isinstance(child, Record) else _raw_leaf(child)
+        for name, child in record._tree.items()
+    }
 
 
 def _pack_fields(

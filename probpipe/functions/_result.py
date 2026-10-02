@@ -33,7 +33,6 @@ from ..core._record_batch import RecordBatch, _batch_class_for, _MappedBatchColu
 from ..core._record_spec import _reshaped_template
 from ..core._spec_base import _full_array_shape_or_none, _unify_specs
 from ..core._specs import NumericArraySpec, OutputSpec, RecordSpec
-from ..core.named_tree import _unflatten_paths
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
@@ -68,17 +67,8 @@ class ResultSchemaError(ValueError):
 
 
 def _detach(result: Any) -> Any:
-    """The result detached from the workflow, as its ``raw()`` returns it.
-
-    Raises
-    ------
-    NotImplementedError
-        If the result's kind does not provide ``raw()`` yet.
-    """
-    raw = getattr(result, "raw", None)
-    if not callable(raw):
-        raise NotImplementedError("TrackedTerm.raw")
-    return raw()
+    """The result detached from the workflow, as its ``raw()`` returns it."""
+    return raw_form(result)
 
 
 def _wrap_declared_function_output(
@@ -1107,35 +1097,8 @@ def _batch_at(value: Any, spec: BatchSpec, label: str) -> Any:
 
 
 def raw_form(term: Any) -> Any:
-    """*term*'s representation, detached from the workflow, as a routed call returns it raw.
+    """*term*'s representation, detached from the workflow, as its kind's ``raw()`` gives it.
 
-    An array is its stored array, a record the nested mapping of its raw
-    leaves, and a batch its storage view: the stacked array, the nested
-    mapping of raw columns, or the object array of the stored elements. An
-    opaque value is the object it wraps, a function its wrapped callable, and
-    a law or a kernel is its own representation, without provenance.
+    A value that is not a tracked term is already raw and is returned as it is.
     """
-    from ..values import Function
-
-    if isinstance(term, (NumericArray, Opaque)):
-        return term.value
-    if isinstance(term, Record):
-        return _raw_leaves(term.to_nested_dict())
-    if isinstance(term, NumericArrayBatch):
-        return term.values
-    if isinstance(term, RecordBatch):
-        return _unflatten_paths(term._raw_columns())
-    if isinstance(term, _ObjectBatch):
-        return term._store
-    if isinstance(term, Function):
-        return term.raw()
-    if isinstance(term, TrackedTerm) and term.provenance is not None:
-        return _copy_result_term(term)
-    return term
-
-
-def _raw_leaves(node: Any) -> Any:
-    """A record's nested mapping, each leaf at its raw form."""
-    if isinstance(node, dict):
-        return {name: _raw_leaves(child) for name, child in node.items()}
-    return raw_form(node)
+    return term.raw() if isinstance(term, TrackedTerm) else term

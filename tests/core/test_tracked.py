@@ -85,12 +85,18 @@ class TestNameEnforcement:
             def __init__(self):
                 pass
 
+            def raw(self):
+                return None
+
         with pytest.raises(TypeError, match="non-empty name"):
             Nameless()
 
         class EmptyNamed(TrackedTerm):
             def __init__(self):
                 self._init_tracked("")
+
+            def raw(self):
+                return None
 
         with pytest.raises(TypeError, match="non-empty name"):
             EmptyNamed()

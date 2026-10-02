@@ -381,6 +381,9 @@ class TestElements:
             def __init__(self, name):
                 self._init_tracked(name)
 
+            def raw(self):
+                return self
+
             def __call__(self):
                 return self._name
 
@@ -644,9 +647,9 @@ class TestTheseAreBatches:
             for cls in (FunctionBatch, OpaqueBatch)
             for ancestor in cls.__mro__[: cls.__mro__.index(Batch)]
             for name in vars(ancestor)
-            if not name.startswith("_")
+            if not name.startswith("_") and not hasattr(Batch, name)
         }
-        assert added == {"element_spec"}
+        assert added == set()
 
     def test_repr_reads_the_levels_and_no_elements(self):
         """Load-bearing: `with_provenance` interpolates the batch into its own error."""

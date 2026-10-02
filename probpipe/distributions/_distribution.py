@@ -187,6 +187,24 @@ def _install_field_view(factory: Callable[[Any, Any], Any]) -> None:
     _field_view_factory = factory
 
 
+#: The attribute a batch of laws sets on an element view to name the law it stores,
+#: which detachment removes as a reference to a container.
+_ELEMENT_SOURCE = "_element_source"
+
+
+def _detached_term(term: Any) -> Any:
+    """*term*, a law or a kernel, detached from the workflow under its own name.
+
+    The copy shares the representation, and it carries no provenance, no
+    annotations, and no reference to a batch it was an element of.
+    """
+    clone = term._shallow_copy()
+    object.__setattr__(clone, "_provenance", None)
+    for workflow_state in ("_annotations", _ELEMENT_SOURCE):
+        clone.__dict__.pop(workflow_state, None)
+    return clone
+
+
 def _compose_operands(left: Any, right: Any) -> Any:
     """*left* ``*`` *right* through the installed engine.
 
@@ -341,6 +359,19 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         object.__setattr__(
             self, "_spec", DistributionSpec(_complete_event_spec(event_spec, self._name))
         )
+
+    # -- the representation ---------------------------------------------------
+
+    def raw(self) -> Distribution:
+        """This law detached from the workflow, under its name and declaration.
+
+        A law is represented by itself, so its raw form is a copy that shares
+        its representation and carries no provenance, no annotations, and no
+        reference to a batch it was an element of. A field view returns its
+        detached marginal instead, and a backend adapter its wrapped backend
+        distribution.
+        """
+        return _detached_term(self)
 
     # -- the event declaration ----------------------------------------------
 

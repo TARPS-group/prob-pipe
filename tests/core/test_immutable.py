@@ -349,6 +349,9 @@ class TestTheConstructionWindow:
                 self._init_tracked("t")
                 return "oops"
 
+            def raw(self):
+                return None
+
         with pytest.raises(TypeError, match="should return None"):
             Returning()
 
@@ -372,6 +375,9 @@ class TestTheConstructionWindow:
                 self._init_tracked("failing")
                 self.partial = 1
                 raise ValueError("no")
+
+            def raw(self):
+                return None
 
         with pytest.raises(ValueError, match="no"):
             Failing()
