@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -126,7 +125,7 @@ class TestTheOperationsReturnTheirDeclaredKind:
         assert isinstance(mean(Normal(loc=2.0, scale=1.0, name="x")), NumericArray)
 
     def test_a_scalar_draw_is_a_numeric_array(self):
-        drawn = sample(Normal(loc=0.0, scale=1.0, name="x"), key=jax.random.PRNGKey(0))
+        drawn = sample(Normal(loc=0.0, scale=1.0, name="x"))
 
         assert isinstance(drawn, NumericArray)
 
@@ -143,7 +142,7 @@ class TestASampleShapeGetsADrawLevel:
     """Design V.2: the leading dimensions go on a level named `draw`."""
 
     def test_no_sample_shape_is_one_value(self):
-        drawn = sample(Normal(loc=0.0, scale=1.0, name="x"), key=jax.random.PRNGKey(0))
+        drawn = sample(Normal(loc=0.0, scale=1.0, name="x"))
 
         assert isinstance(drawn, NumericArray)
 
@@ -151,11 +150,7 @@ class TestASampleShapeGetsADrawLevel:
     def test_draws_land_on_one_draw_level(self, sample_shape):
         from probpipe import NumericArrayBatch
 
-        drawn = sample(
-            Normal(loc=0.0, scale=1.0, name="x"),
-            sample_shape=sample_shape,
-            key=jax.random.PRNGKey(0),
-        )
+        drawn = sample(Normal(loc=0.0, scale=1.0, name="x"), sample_shape=sample_shape)
 
         assert isinstance(drawn, NumericArrayBatch)
         assert drawn.batch_shape == sample_shape
@@ -167,7 +162,7 @@ class TestASampleShapeGetsADrawLevel:
 
         law = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="v")
 
-        drawn = sample(law, sample_shape=(5,), key=jax.random.PRNGKey(0))
+        drawn = sample(law, sample_shape=(5,))
 
         assert isinstance(drawn, NumericArrayBatch)
         assert drawn.batch_shape == (5,)
@@ -175,9 +170,7 @@ class TestASampleShapeGetsADrawLevel:
         assert drawn.shape == (5, 3)
 
     def test_an_element_is_one_draw(self):
-        drawn = sample(
-            Normal(loc=0.0, scale=1.0, name="x"), sample_shape=(5,), key=jax.random.PRNGKey(0)
-        )
+        drawn = sample(Normal(loc=0.0, scale=1.0, name="x"), sample_shape=(5,))
 
         assert isinstance(drawn[2], NumericArray)
         assert drawn[2].shape == ()
@@ -188,7 +181,7 @@ class TestASampleShapeGetsADrawLevel:
 
         law = Normal(loc=0.0, scale=1.0, name="a") * Normal(loc=0.0, scale=1.0, name="b")
 
-        drawn = sample(law, sample_shape=(4,), key=jax.random.PRNGKey(0))
+        drawn = sample(law, sample_shape=(4,))
 
         assert isinstance(drawn, NumericRecordBatch)
         assert (drawn.batch_shape, drawn.level_names) == ((4,), ("sample",))
@@ -197,37 +190,10 @@ class TestASampleShapeGetsADrawLevel:
     def test_one_draw_of_a_joint_is_a_record_under_its_declaration(self):
         law = Normal(loc=0.0, scale=1.0, name="a") * Normal(loc=0.0, scale=1.0, name="b")
 
-        drawn = sample(law, key=jax.random.PRNGKey(0))
+        drawn = sample(law)
 
         assert isinstance(drawn, Record)
         assert drawn.spec == law.event_spec.spec
-
-    @pytest.mark.parametrize("kind", ["numeric", "record", "object"])
-    @pytest.mark.parametrize(
-        "shape, sample_shape",
-        [
-            ((2, 7), (5,)),
-            ((5,), (3,)),
-            ((3, 2), (2, 3)),
-            ((6,), (2, 3)),
-            ((), (1,)),
-            ((0, 2), (2, 0)),
-        ],
-        ids=["event-axes", "count", "same-size", "missing-axis", "scalar", "empty"],
-    )
-    def test_a_law_that_does_not_prepend_its_draws_is_left_alone(self, kind, shape, sample_shape):
-        """Mismatched leading axes leave the original draw intact."""
-        from probpipe.core.ops import _drawn_at_its_batch_form
-
-        if kind == "object":
-            original = np.full(shape, "value", dtype=object)
-        else:
-            values = jnp.zeros(shape)
-            original = Record("law", x=values) if kind == "record" else values
-
-        drawn = _drawn_at_its_batch_form(original, sample_shape, name="law")
-
-        assert drawn is original
 
 
 class TestAnEmptyReturnKeepsItsHostsKind:

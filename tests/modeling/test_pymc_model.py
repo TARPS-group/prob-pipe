@@ -101,7 +101,7 @@ class TestPyMCModel:
     def test_the_sample_operation_returns_a_draw_of_the_declaration(self, model):
         from probpipe import sample
 
-        assert model.event_spec.spec.is_valid(sample(model, key=jax.random.PRNGKey(0)))
+        assert model.event_spec.spec.is_valid(sample(model))
 
     def test_pymc_model_no_data(self, model):
         m = model._pymc_model()
@@ -128,15 +128,15 @@ class TestPyMCModel:
         from probpipe import condition_on
 
         data = np.random.randn(50)
-        result = condition_on.apply(
-            model,
-            {"y": data},
+        result = condition_on.with_options(
             method="pymc_nuts",
-            num_results=20,
-            num_warmup=10,
-            num_chains=1,
-            random_seed=42,
-        )
+            method_options={
+                "num_results": 20,
+                "num_warmup": 10,
+                "num_chains": 1,
+                "random_seed": 42,
+            },
+        )(model, {"y": data})
         assert isinstance(result, ApproximateDistribution)
         assert result.num_chains == 1
         assert result.num_draws == 20
@@ -145,7 +145,7 @@ class TestPyMCModel:
         assert hasattr(result.inference_data, "posterior")
         assert hasattr(result.inference_data, "sample_stats")
         assert result.provenance is not None
-        assert result.provenance.operation == "pymc_nuts"
+        assert result.provenance.operation == "workflow.condition_on"
 
     def test_condition_on_multicore_spawn(self, model):
         """Multi-core sampling (``cores=2``) runs under the spawn start method
@@ -163,16 +163,16 @@ class TestPyMCModel:
         _ = jnp.ones(1000).sum().block_until_ready()
 
         data = np.random.randn(50)
-        result = condition_on.apply(
-            model,
-            {"y": data},
+        result = condition_on.with_options(
             method="pymc_nuts",
-            num_results=50,
-            num_warmup=50,
-            num_chains=2,
-            cores=2,
-            random_seed=0,
-        )
+            method_options={
+                "num_results": 50,
+                "num_warmup": 50,
+                "num_chains": 2,
+                "cores": 2,
+                "random_seed": 0,
+            },
+        )(model, {"y": data})
         assert isinstance(result, ApproximateDistribution)
         assert result.num_chains == 2
         assert result.num_draws == 50
@@ -191,16 +191,16 @@ class TestPyMCModel:
 
         data = np.random.randn(50)
         with _captured_pm_sample_kwargs() as captured:
-            result = condition_on.apply(
-                model,
-                {"y": data},
+            result = condition_on.with_options(
                 method="pymc_nuts",
-                num_results=20,
-                num_warmup=10,
-                num_chains=2,
-                cores=2,
-                random_seed=0,
-            )
+                method_options={
+                    "num_results": 20,
+                    "num_warmup": 10,
+                    "num_chains": 2,
+                    "cores": 2,
+                    "random_seed": 0,
+                },
+            )(model, {"y": data})
 
         assert captured["mp_ctx"] == "spawn"
         assert captured["cores"] >= 2
@@ -224,14 +224,10 @@ class TestPyMCModel:
             patch("probpipe.inference._pymc_method.os.cpu_count", return_value=4),
             _captured_pm_sample_kwargs() as captured,
         ):
-            _ = condition_on(
-                model,
-                {"y": data},
+            _ = condition_on.with_options(
                 method="pymc_nuts",
-                num_results=20,
-                num_warmup=10,
-                random_seed=0,
-            )
+                method_options={"num_results": 20, "num_warmup": 10, "random_seed": 0},
+            )(model, {"y": data})
 
         assert captured["chains"] == 4  # the documented default
         assert captured["cores"] == 4  # min(num_chains=4, cpu_count=4)
@@ -250,14 +246,10 @@ class TestPyMCModel:
             patch("probpipe.inference._pymc_method.os.cpu_count", return_value=1),
             _captured_pm_sample_kwargs() as captured,
         ):
-            _ = condition_on(
-                model,
-                {"y": data},
+            _ = condition_on.with_options(
                 method="pymc_nuts",
-                num_results=20,
-                num_warmup=10,
-                random_seed=0,
-            )
+                method_options={"num_results": 20, "num_warmup": 10, "random_seed": 0},
+            )(model, {"y": data})
 
         assert captured["cores"] == 1
         assert captured["mp_ctx"] is None
@@ -361,15 +353,10 @@ class TestRecordSpec:
         X = np.arange(N, dtype=np.float32)
         y = rng.normal(size=N).astype(np.float32)
         model = PyMCModel("model", per_observation_effect_model_fn)
-        result = condition_on(
-            model,
-            {"X": X, "y": y},
+        result = condition_on.with_options(
             method="pymc_nuts",
-            num_results=20,
-            num_warmup=10,
-            num_chains=1,
-            random_seed=0,
-        )
+            method_options={"num_results": 20, "num_warmup": 10, "num_chains": 1, "random_seed": 0},
+        )(model, {"X": X, "y": y})
         draws = result.draws()
         assert draws.event_template.fields == ("intercept", "alpha")
         assert jnp.asarray(draws["intercept"]).shape == (20,)
@@ -397,14 +384,10 @@ class TestRecordSpec:
             return m
 
         y = np.zeros(8, dtype=np.float32)
-        result = condition_on.apply(
-            PyMCModel("model", model_fn),
-            {"y": y},
+        result = condition_on.with_options(
             method="pymc_advi",
-            num_iterations=200,
-            num_results=25,
-            random_seed=0,
-        )
+            method_options={"num_iterations": 200, "num_results": 25, "random_seed": 0},
+        )(PyMCModel("model", model_fn), {"y": y})
         assert result.method == "pymc_advi"
         draws = result.draws()
         assert draws.event_template.fields == ("intercept", "alpha")
@@ -500,15 +483,10 @@ class TestRecordSpec:
             return m
 
         model = PyMCModel("model", model_fn)
-        result = condition_on(
-            model,
-            {"y": np.zeros(5, dtype=np.float32)},
+        result = condition_on.with_options(
             method="pymc_nuts",
-            num_results=20,
-            num_warmup=10,
-            num_chains=1,
-            random_seed=0,
-        )
+            method_options={"num_results": 20, "num_warmup": 10, "num_chains": 1, "random_seed": 0},
+        )(model, {"y": np.zeros(5, dtype=np.float32)})
         assert set(result.draws().event_template.fields) == {"mu", "X"}
 
     def test_partial_conditioning_draws_not_mislabeled(self):
@@ -531,15 +509,15 @@ class TestRecordSpec:
             return m
 
         model = PyMCModel("model", model_fn)
-        result = condition_on(
-            model,
-            {"y": np.zeros(5, dtype=np.float32)},
+        result = condition_on.with_options(
             method="pymc_nuts",
-            num_results=200,
-            num_warmup=200,
-            num_chains=1,
-            random_seed=0,
-        )
+            method_options={
+                "num_results": 200,
+                "num_warmup": 200,
+                "num_chains": 1,
+                "random_seed": 0,
+            },
+        )(model, {"y": np.zeros(5, dtype=np.float32)})
         draws = result.draws()
         assert set(draws.event_template.fields) == {"mu", "X"}
         assert float(jnp.mean(jnp.asarray(draws["mu"]))) > 50.0  # ~ +100
@@ -568,15 +546,15 @@ class TestRecordSpec:
             return m
 
         model = PyMCModel("model", model_fn)
-        result = condition_on(
-            model,
-            {"y": np.zeros(5, dtype=np.float32)},
+        result = condition_on.with_options(
             method="pymc_nuts",
-            num_results=200,
-            num_warmup=200,
-            num_chains=1,
-            random_seed=0,
-        )
+            method_options={
+                "num_results": 200,
+                "num_warmup": 200,
+                "num_chains": 1,
+                "random_seed": 0,
+            },
+        )(model, {"y": np.zeros(5, dtype=np.float32)})
         draws = result.draws()
         # Declared order, not nutpie/pymc's alphabetical data_vars order.
         assert draws.event_template.fields == ("zeta", "alpha", "mu")
@@ -603,15 +581,15 @@ class TestRecordSpec:
 
         model = PyMCModel("model", model_fn)
         with pytest.raises(ValueError, match="dynamic random variables"):
-            condition_on(
-                model,
-                {"y": np.zeros(5, dtype=np.float32)},
+            condition_on.with_options(
                 method="pymc_nuts",
-                num_results=5,
-                num_warmup=5,
-                num_chains=1,
-                random_seed=0,
-            )
+                method_options={
+                    "num_results": 5,
+                    "num_warmup": 5,
+                    "num_chains": 1,
+                    "random_seed": 0,
+                },
+            )(model, {"y": np.zeros(5, dtype=np.float32)})
 
     def test_a_none_dimension_is_declared_symbolic(self):
         """A free RV with a ``None`` dimension is declared with a symbolic one.

@@ -294,14 +294,14 @@ class TestStanPosteriorBlocks:
                 p=jnp.array([0.2, 0.3, 0.5]),
             )
 
-    def test_keyword_form_equals_the_record_form(self, structured_model):
+    def test_the_mapping_form_equals_the_record_form(self, structured_model):
         kw = dict(
             mu=0.5,
             theta=jnp.array([0.1, 0.2, 0.3]),
             L=jnp.array([[1.0, 2.0], [3.0, 4.0]]),
             p=jnp.array([0.25, 0.25, 0.5]),
         )
-        lp_kw = float(jnp.asarray(unnormalized_log_prob(structured_model, **kw)))
+        lp_kw = float(jnp.asarray(unnormalized_log_prob(structured_model, kw)))
         lp_record = float(structured_model._unnormalized_log_prob(Record("value", kw)))
         np.testing.assert_allclose(lp_kw, lp_record, atol=1e-6)
 

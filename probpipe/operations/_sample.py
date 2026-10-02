@@ -9,8 +9,11 @@ workflow-owned random event, so the operation takes no key.
 from __future__ import annotations
 
 import operator
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
+
+import jax
+import numpy as np
 
 from ..core._batch import BatchSpec, _ranks_of
 from ..core._record_batch import _batch_class_for
@@ -21,6 +24,7 @@ from ..distributions._distribution import Distribution, DistributionSpec
 from ..distributions._factored import _raw_record
 from ..functions._call import ApplicabilityError
 from ..functions._result import SAMPLE_LEVEL
+from ..values import FunctionSpec
 from ._operation import BoundCall, _call_label, _workflow_draws, operation
 
 __all__ = ["sample"]
@@ -134,13 +138,36 @@ def _draw(call: BoundCall, result: OutputSpec | None) -> Any:
     the draws are jointly independent and reproducible together. Draws that are
     a nested mapping of raw columns become the declared batch of records.
     """
-    draws = _workflow_draws(
-        call.operands["d"],
-        _sample_shape(call.operands["sample_shape"]),
-        operation_kind="sample",
-        execution_mode="sampled",
-    )
+    d, shape = call.operands["d"], _sample_shape(call.operands["sample_shape"])
+    draws = _workflow_draws(d, shape, operation_kind="sample", execution_mode="sampled")
+    if isinstance(d.event_spec.spec, FunctionSpec):
+        return _function_draws(draws, shape)
     return _record_batch(draws, call, result)
+
+
+class _DrawAt:
+    """One function draw of several evaluated together: their values at one index of the sample axes."""
+
+    def __init__(self, draws: Callable[..., Any], index: tuple[int, ...]) -> None:
+        self._draws, self._index = draws, index
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        return jax.tree.map(lambda values: values[self._index], self._draws(*args, **kwargs))
+
+
+def _function_draws(draws: Any, shape: tuple[int, ...]) -> Any:
+    """Function draws under *shape* as the object array of the drawn callables.
+
+    A random function's ``_sample`` may return one callable that evaluates every
+    draw, its values led by the sample axes, and the batch form holds each draw
+    as a callable of its own.
+    """
+    if not shape or isinstance(draws, np.ndarray) or not callable(draws):
+        return draws
+    elements = np.empty(shape, dtype=object)
+    for index in np.ndindex(*shape):
+        elements[index] = _DrawAt(draws, index)
+    return elements
 
 
 sample.capability_route(

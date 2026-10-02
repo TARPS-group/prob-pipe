@@ -32,6 +32,7 @@ from ..core._numeric_array_batch import NumericArrayBatch
 from ..core._object_batch import _from_iterable, _ObjectBatch
 from ..core._record_batch import RecordBatch, _batch_class_for
 from ..core._record_spec import RecordSpec
+from ..core._spec_base import NumericArraySpec
 from ..core._specs import OutputSpec
 from ..core.config import WorkflowKind, prefect_config
 from ..core.provenance import Provenance
@@ -323,10 +324,15 @@ def _output_atoms(
         If each evaluation returned a batch, whose empirical law is not built yet.
     """
     if isinstance(outputs, NumericArray):
-        # The mapped dispatch returns one array term led by the draw axis, under
-        # the declaration of one point.
+        # The mapped dispatch returns one array term led by the draw axis. A map
+        # that returns its operand returns the stacked draws' own term, whose spec
+        # covers every draw, so the element spec is read from one point.
+        element = outputs.spec
+        point = tuple(jnp.shape(outputs.value)[1:])
+        if tuple(element.shape) != point:
+            element = NumericArraySpec(point, element.dtype, element.support)
         atoms: Batch = NumericArrayBatch(
-            output_name, outputs.value, DRAW_LEVEL, element_spec=outputs.spec
+            output_name, outputs.value, DRAW_LEVEL, element_spec=element
         )
     else:
         rows = _rows_of(outputs, output_name)

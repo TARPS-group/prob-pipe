@@ -202,8 +202,7 @@ class TestApproximateDistribution:
         assert jnp.all(jnp.isfinite(v))
 
     def test_sample(self, two_chain_dist):
-        key = jax.random.PRNGKey(42)
-        s = sample(two_chain_dist, key=key)
+        s = sample(two_chain_dist)
         assert s.shape == (2,)
 
     def test_repr(self, two_chain_dist):
@@ -529,7 +528,7 @@ class TestApproximateDistributionValuesTemplate:
 
     def test_a_nested_posterior_keeps_its_nesting_for_views_and_kde(self):
         """A field view and a KDE of the posterior read its target record."""
-        from probpipe import KDEDistribution, from_distribution
+        from probpipe import KDEDistribution, convert
 
         prior = (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)).with_path_names(
             {"a": "params/a", "b": "params/b"}
@@ -537,7 +536,7 @@ class TestApproximateDistributionValuesTemplate:
         chain = jax.random.normal(jax.random.PRNGKey(0), (40, 3))
         post = make_posterior([chain], parents=(prior,), method="test", event_spec=prior.event_spec)
         assert post["params/a"].event_spec.spec == prior.event_spec.spec.at_path(("params", "a"))
-        assert from_distribution(post, KDEDistribution).event_spec == prior.event_spec
+        assert convert(post, KDEDistribution).event_spec == prior.event_spec
 
     def test_a_nested_target_keeps_its_groups(self):
         """A posterior over a nested record declares, stores, and reports its groups nested."""
@@ -1164,14 +1163,14 @@ class TestEndToEndValuesPipeline:
             NumericArraySpec((2,)),
             lambda params: tfd.Independent(tfd.Normal(params, 1.0), 1),
         )
-        return condition_on(
-            likelihood * prior,
-            {"y": jnp.array([1.0, 2.0])},
-            num_results=500,
-            num_warmup=200,
-            step_size=0.3,
-            random_seed=42,
-        )
+        return condition_on.with_options(
+            method_options={
+                "num_results": 500,
+                "num_warmup": 200,
+                "step_size": 0.3,
+                "random_seed": 42,
+            }
+        )(likelihood * prior, {"y": jnp.array([1.0, 2.0])})
 
     def test_template_propagation(self, posterior):
         """The posterior is a law over the joint's unconditioned field, a record of params."""

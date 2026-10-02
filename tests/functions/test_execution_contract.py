@@ -6,7 +6,6 @@ import inspect
 from dataclasses import FrozenInstanceError, replace
 from unittest.mock import Mock, patch
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -49,14 +48,6 @@ def _record_batch():
 
 def _add_automatic_noise(row):
     noise = sample(Normal(loc=0.0, scale=1.0, name="noise"))
-    return row["x"] + noise
-
-
-def _add_caller_keyed_noise(row):
-    noise = sample(
-        Normal(loc=0.0, scale=1.0, name="noise"),
-        key=jax.random.key(3),
-    )
     return row["x"] + noise
 
 
@@ -207,16 +198,6 @@ class TestJaxWorkflowGuards:
             workflow(row=_record_batch())
 
         urandom.assert_not_called()
-
-    def test_caller_keyed_effect_can_trace_and_execute_with_jax(self):
-        workflow = Function(
-            name="_add_caller_keyed_noise", fn=_add_caller_keyed_noise, dispatch="jax"
-        )
-
-        first = workflow(row=_record_batch())
-        second = workflow(row=_record_batch())
-
-        np.testing.assert_array_equal(first, second)
 
     def test_actual_jax_guard_rejects_unprobed_dynamic_effect_before_commit(self):
         plan = _broker._singleton_effect_plan(

@@ -78,7 +78,7 @@ _PROSE = {
         "def variance(d): ...",
         "def cov(d): ...",
         "def quantile(d, q): ...",
-        "def expectation(d, f): ...",
+        "def expectation(d, f, fixed_args): ...",
     ),
     "VI.6": ("def condition_on(d, given): ...",),
     "VI.7": ("def joint(A, B, **align): ...",),
@@ -96,9 +96,7 @@ _PENDING = {
 #: Names the package exports that Part VI does not declare, with where each is declared.
 _DECLARED_ELSEWHERE = {
     "operation": "VI.0's prose: @operation registers an operation",
-    "expectation": "the argument form of expectation that probpipe exports",
-    "ExpectationMethod": "the base of the methods behind expectation's registry route",
-    "expectation_method_registry": "the registry behind expectation's registry route",
+    "inference_method_registry": "VI.6's prose: the registry of inference methods",
 }
 
 #: The route helper each construction call names, with the source of the route it builds.

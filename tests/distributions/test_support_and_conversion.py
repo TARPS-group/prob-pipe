@@ -8,7 +8,8 @@ from probpipe import (
     EmpiricalDistribution,
     NumericArrayBatch,
     NumericArraySpec,
-    from_distribution,
+    convert,
+    converter_registry,
 )
 from probpipe.core.constraints import (
     _supports_compatible,
@@ -241,25 +242,25 @@ class TestDistributionSupport:
 # ── Section 4: from_distribution tests ────────────────────────────────────────
 
 
-class TestFromDistribution:
+class TestConvert:
     """Conversions through ``from_distribution``, whose draws are workflow-owned."""
 
     # -- same-class copy --
     def test_normal_from_normal(self):
         n = Normal(loc=3.0, scale=2.0, name="n")
-        n2 = from_distribution(n, Normal)
+        n2 = convert(n, Normal)
         assert jnp.isclose(n2.loc, 3.0, atol=0.01)
 
     def test_beta_from_beta(self):
         b = Beta(alpha=2.0, beta=5.0, name="b")
-        b2 = from_distribution(b, Beta)
+        b2 = convert(b, Beta)
         assert jnp.isclose(b2.alpha, 2.0, atol=0.01)
 
     # -- moment-matching --
     def test_normal_from_gamma(self):
         """Gamma -> Normal via moment matching (check_support=False needed)."""
         g = Gamma(concentration=9.0, rate=1.0, name="g")
-        n = from_distribution(g, Normal, check_support=False, num_samples=5000)
+        n = converter_registry.convert(g, Normal, check_support=False, num_samples=5000)
         # Gamma(9,1) has mean=9, var=9
         assert jnp.isclose(n.loc, 9.0, atol=1.0)
 
@@ -267,18 +268,18 @@ class TestFromDistribution:
         """Normal -> Gamma should fail support check by default."""
         n = Normal(loc=5.0, scale=1.0, name="n")
         with pytest.raises(ValueError, match="support"):
-            from_distribution(n, Gamma)
+            convert(n, Gamma)
 
     def test_gamma_from_normal_override(self):
         """Normal -> Gamma with check_support=False should work."""
         n = Normal(loc=5.0, scale=1.0, name="n")
-        g = from_distribution(n, Gamma, check_support=False, num_samples=5000)
+        g = converter_registry.convert(n, Gamma, check_support=False, num_samples=5000)
         assert jnp.isclose(float(g.concentration * 1.0 / g.rate), 5.0, atol=1.0)
 
     def test_beta_from_uniform(self):
         """Uniform(0,1) -> Beta should work (compatible support)."""
         u = Uniform(low=0.0, high=1.0, name="u")
-        b = from_distribution(u, Beta, num_samples=5000)
+        b = convert.with_options(method_options={"num_samples": 5000})(u, Beta)
         # Uniform(0,1) has mean=0.5, var=1/12 -> alpha~=beta~=1
         assert float(b.alpha) > 0
         assert float(b.beta) > 0
@@ -286,23 +287,25 @@ class TestFromDistribution:
     # -- discrete --
     def test_bernoulli_from_bernoulli(self):
         b = Bernoulli(probs=0.7, name="b")
-        b2 = from_distribution(b, Bernoulli)
+        b2 = convert(b, Bernoulli)
         assert jnp.isclose(b2.probs, 0.7, atol=0.01)
 
     def test_poisson_from_poisson(self):
         p = Poisson(rate=5.0, name="p")
-        p2 = from_distribution(p, Poisson)
+        p2 = convert(p, Poisson)
         assert jnp.isclose(p2.rate, 5.0, atol=0.01)
 
     def test_binomial_requires_total_count(self):
         """Binomial.from_distribution from non-Binomial needs total_count."""
         p = Poisson(rate=3.0, name="p")
         with pytest.raises(ValueError, match="total_count"):
-            from_distribution(p, Binomial, check_support=False)
+            converter_registry.convert(p, Binomial, check_support=False)
 
     def test_binomial_from_poisson(self):
         p = Poisson(rate=3.0, name="p")
-        b = from_distribution(p, Binomial, check_support=False, total_count=10, num_samples=5000)
+        b = converter_registry.convert(
+            p, Binomial, check_support=False, total_count=10, num_samples=5000
+        )
         # mean ~ 3, so probs ~ 0.3
         assert b.probs is not None
 
@@ -310,33 +313,31 @@ class TestFromDistribution:
     def test_mvn_from_empirical(self):
         samples = jax.random.normal(jax.random.PRNGKey(42), (100, 3))
         ed = EmpiricalDistribution("x", samples)
-        mvn = from_distribution(ed, MultivariateNormal)
+        mvn = convert(ed, MultivariateNormal)
         assert mvn.dim == 3
 
     def test_dirichlet_from_dirichlet(self):
         d = Dirichlet(concentration=jnp.array([1.0, 2.0, 3.0]), name="d")
-        d2 = from_distribution(d, Dirichlet)
+        d2 = convert(d, Dirichlet)
         assert jnp.allclose(d2.concentration, d.concentration)
 
     # -- provenance --
-    def test_from_distribution_same_class_returns_source(self):
-        """Raw same-class conversion is a no-op; Function call is a new result."""
+    def test_convert_same_class_returns_the_source_under_fresh_identity(self):
         n = Normal(loc=0.0, scale=1.0, name="n")
-        raw = from_distribution.apply(n, Normal)
-        n2 = from_distribution(n, Normal)
-        assert raw is n
+        n2 = convert(n, Normal)
         assert n2 is not n
-        assert n2.provenance.operation == "workflow.from_distribution"
+        assert float(n2._loc) == float(n._loc)
+        assert n2.provenance.operation == "workflow.convert"
 
-    def test_from_distribution_cross_class_provenance(self):
+    def test_convert_cross_class_provenance(self):
         """Cross-class conversion attaches provenance."""
         g = Gamma(concentration=3.0, rate=1.0, name="g")
-        n = from_distribution(g, Normal, check_support=False)
+        n = converter_registry.convert(g, Normal, check_support=False)
         assert n.provenance is not None
-        assert n.provenance.operation == "workflow.from_distribution"
+        assert n.provenance.operation == "convert"
 
     # -- empirical from anything --
     def test_empirical_from_normal(self):
         n = Normal(loc=0.0, scale=1.0, name="n")
-        ed = from_distribution(n, EmpiricalDistribution, num_samples=100)
+        ed = convert.with_options(method_options={"num_samples": 100})(n, EmpiricalDistribution)
         assert ed.num_atoms == 100

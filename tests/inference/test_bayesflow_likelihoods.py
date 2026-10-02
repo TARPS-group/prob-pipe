@@ -390,13 +390,9 @@ class TestConditioning:
                 tfd.Normal(jnp.broadcast_to(jnp.stack([lam, m]), y.shape), _SIGMA), 2
             ),
         )
-        ref_post = condition_on(
-            true_likelihood * prior,
-            {"observation": jnp.asarray(y)},
-            num_results=1500,
-            num_warmup=500,
-            random_seed=0,
-        )
+        ref_post = condition_on.with_options(
+            method_options={"num_results": 1500, "num_warmup": 500, "random_seed": 0}
+        )(true_likelihood * prior, {"observation": jnp.asarray(y)})
         ref = np.asarray(ref_post.draws()["lam"]).reshape(-1)
         lik = learn_amortized_likelihood(
             _gamma_prior(),

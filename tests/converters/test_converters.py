@@ -32,8 +32,8 @@ from probpipe import (
     OutputSpec,
     Poisson,
     ResolutionError,
+    convert,
     converter_registry,
-    from_distribution,
     function,
     workflow_run,
 )
@@ -185,17 +185,19 @@ class TestAnEmpiricalSourceAgainstTheTargetSupport:
     def test_atoms_outside_the_target_support_raise(self):
         source = EmpiricalDistribution("x", jnp.array([-5.0, -1.0, 2.0, -3.0]))
         with pytest.raises(ValueError, match="support"):
-            from_distribution(source, Exponential)
+            convert(source, Exponential)
 
     def test_atoms_inside_the_target_support_convert(self):
         source = EmpiricalDistribution("x", jnp.array([0.5, 1.0, 2.0, 3.0]))
-        result = from_distribution(source, Exponential)
+        result = convert(source, Exponential)
         assert isinstance(result, Exponential)
         np.testing.assert_allclose(float(result._mean()), 1.625, rtol=1e-6)
 
     def test_the_check_can_be_overridden(self):
         source = EmpiricalDistribution("x", jnp.array([-5.0, -1.0, 2.0, -3.0]))
-        assert isinstance(from_distribution(source, Exponential, check_support=False), Exponential)
+        assert isinstance(
+            converter_registry.convert(source, Exponential, check_support=False), Exponential
+        )
 
 
 class TestARecordSource:
@@ -720,56 +722,47 @@ class TestCustomConverter:
 
 
 # ---------------------------------------------------------------------------
-# from_distribution delegates to the registry
+# convert delegates to the registry
 # ---------------------------------------------------------------------------
 
 
-class TestFromDistributionDelegation:
-    """Verify from_distribution() delegates to the registry."""
+class TestConvertDelegation:
+    """Verify convert() delegates to the registry."""
 
-    def test_from_distribution_same_class(self):
+    def test_convert_same_class(self):
         n = Normal(loc=2.0, scale=0.5, name="x")
-        result = from_distribution(n, Normal)
+        result = convert(n, Normal)
         assert isinstance(result, Normal)
         np.testing.assert_allclose(float(result._loc), 2.0)
 
-    def test_from_distribution_cross_family(self):
-        g = Gamma(concentration=9.0, rate=1.0, name="g")
-        result = from_distribution(g, Normal, num_samples=5000)
+    def test_convert_cross_family(self):
+        t = StudentT(df=30.0, loc=9.0, scale=1.0, name="t")
+        result = convert.with_options(method_options={"num_samples": 5000})(t, Normal)
         assert isinstance(result, Normal)
         np.testing.assert_allclose(float(result._loc), 9.0, atol=0.5)
 
-    def test_from_distribution_support_check(self):
+    def test_convert_support_check(self):
         n = Normal(loc=0.5, scale=0.1, name="x")
         with pytest.raises(ValueError, match="support"):
-            from_distribution(n, Beta)
+            convert(n, Beta)
 
-    def test_from_distribution_check_support_false(self):
+    def test_convert_check_support_false(self):
         n = Normal(loc=0.5, scale=0.1, name="x")
-        result = from_distribution(n, Beta, check_support=False)
+        result = converter_registry.convert(n, Beta, check_support=False)
         assert isinstance(result, Beta)
 
-    @pytest.mark.parametrize("target", [EmpiricalDistribution, KDEDistribution])
-    def test_check_support_reaches_only_a_converter_that_reads_it(self, target):
-        """The sampled representations read no support option, and the conversion runs."""
-        n = Normal(loc=0.0, scale=1.0, name="n")
-        result = from_distribution(n, target, check_support=False, num_samples=20)
-        assert isinstance(result, target)
-
-    def test_from_distribution_to_empirical(self):
+    def test_convert_to_empirical(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
-        emp = from_distribution(n, EmpiricalDistribution, num_samples=50)
+        emp = convert.with_options(method_options={"num_samples": 50})(n, EmpiricalDistribution)
         assert isinstance(emp, EmpiricalDistribution)
         assert emp.num_atoms == 50
 
-    def test_empirical_to_empirical_preserves_source_only_for_raw_apply(self):
+    def test_empirical_to_empirical_returns_under_fresh_identity(self):
         samples = jnp.array([[1.0], [2.0], [3.0]])
         emp = EmpiricalDistribution("orig", samples)
-        raw = from_distribution.apply(emp, EmpiricalDistribution)
-        emp2 = from_distribution(emp, EmpiricalDistribution)
-        assert raw is emp
+        emp2 = convert(emp, EmpiricalDistribution)
         assert emp2 is not emp
-        assert emp2.provenance.operation == "workflow.from_distribution"
+        assert emp2.provenance.operation == "workflow.convert"
 
 
 # ---------------------------------------------------------------------------
@@ -953,11 +946,11 @@ class TestProtocolConversion:
         with pytest.raises(ResolutionError):
             converter_registry.convert(Normal("x", 0.0, 1.0), SupportsExactConditioning)
 
-    def test_from_distribution_with_protocol(self):
-        """from_distribution() works with protocol targets."""
+    def test_convert_with_protocol(self):
+        """convert() works with protocol targets."""
         samples = jax.random.normal(jax.random.PRNGKey(4), (200,))
         emp = EmpiricalDistribution("x", samples)
-        result = from_distribution(emp, SupportsLogProb)
+        result = convert(emp, SupportsLogProb)
         assert isinstance(result, SupportsLogProb)
 
     def test_protocol_conversion_preserves_provenance(self):
@@ -1095,7 +1088,7 @@ class TestKDEDistribution:
         assert isinstance(kde, SupportsCovariance)
 
     def test_convert_empirical_to_kde(self):
-        """from_distribution(empirical, KDEDistribution) works."""
+        """convert(empirical, KDEDistribution) works."""
         samples = jax.random.normal(jax.random.PRNGKey(0), (200,))
         emp = EmpiricalDistribution("x", samples)
         kde = converter_registry.convert(emp, KDEDistribution)

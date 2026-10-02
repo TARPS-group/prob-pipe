@@ -52,22 +52,6 @@ class TestAutomaticSample:
         np.testing.assert_array_equal(first[1], second[1])
         assert not jnp.array_equal(first[0], first[1])
 
-    def test_explicit_key_passes_through_and_does_not_shift_automatic_sample(self):
-        calls = []
-        dist = _RecordingNormal(calls)
-        explicit = jax.random.key(11)
-
-        with workflow_run(seed=7):
-            expected = sample(dist, sample_shape=4)
-
-        calls.clear()
-        with workflow_run(seed=7):
-            sample(dist, key=explicit, sample_shape=4)
-            actual = sample(dist, sample_shape=4)
-
-        assert calls[0][0] is explicit
-        np.testing.assert_array_equal(actual, expected)
-
     def test_sample_shape_does_not_multiply_events(self):
         claims = []
         original = _context._WorkflowInvocation.key_for
@@ -165,11 +149,7 @@ class TestAutomaticExpectation:
         dist = _RecordingNormal(calls)
 
         with workflow_run(seed=7):
-            result = expectation(
-                dist,
-                lambda value: value,
-                num_evaluations=32,
-            )
+            result = expectation.with_options(n_broadcast_samples=32)(dist, lambda value: value)
 
         assert jnp.asarray(result).shape == ()
         assert [(shape) for _key, shape in calls] == [(32,)]
@@ -181,10 +161,8 @@ class TestAutomaticExpectation:
             workflow_run(seed=7),
             pytest.raises((TypeError, ValueError)),
         ):
-            expectation(
-                Normal(loc=0.0, scale=1.0, name="x"),
-                lambda value: value,
-                num_evaluations=num_evaluations,
+            expectation.with_options(n_broadcast_samples=num_evaluations)(
+                Normal(loc=0.0, scale=1.0, name="x"), lambda value: value
             )
 
         commit.assert_not_called()

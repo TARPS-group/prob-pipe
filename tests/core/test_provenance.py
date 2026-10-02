@@ -11,7 +11,6 @@ import tensorflow_probability.substrates.jax.bijectors as tfb
 
 import probpipe
 from probpipe import (
-    Beta,
     EmpiricalDistribution,
     MultivariateNormal,
     Normal,
@@ -19,8 +18,9 @@ from probpipe import (
     NumericRecordBatch,
     Provenance,
     ProvenanceMode,
+    StudentT,
     condition_on,
-    from_distribution,
+    convert,
     provenance_ancestors,
     provenance_dag,
     workflow_run,
@@ -213,29 +213,27 @@ class TestParentInfoHashEq:
 
 
 # ===========================================================================
-# 3. from_distribution provenance
+# 3. convert provenance
 # ===========================================================================
 
 
-class TestFromDistributionProvenance:
-    def test_normal_from_distribution(self):
-        src = Beta(alpha=2.0, beta=5.0, name="beta_src")
-        converted = from_distribution(src, Normal)
+class TestConvertProvenance:
+    def test_normal_by_convert(self):
+        src = StudentT(df=5.0, loc=0.0, scale=1.0, name="t_src")
+        converted = convert(src, Normal)
         assert converted.provenance is not None
-        assert converted.provenance.operation == "workflow.from_distribution"
-        assert len(converted.provenance.parents) == 2
+        assert converted.provenance.operation == "workflow.convert"
         assert isinstance(converted.provenance.parents[0], ParentInfo)
-        assert converted.provenance.parents[0].name == "from_distribution"
-        assert converted.provenance.parents[1].name == "beta_src"
+        assert converted.provenance.parents[0].name == "convert"
+        assert converted.provenance.parents[1].name == "t_src"
 
-    def test_empirical_from_distribution(self):
+    def test_empirical_by_convert(self):
         src = Normal(loc=0.0, scale=1.0, name="norm_src")
-        ed = from_distribution(src, EmpiricalDistribution, num_samples=100)
+        ed = convert.with_options(method_options={"num_samples": 100})(src, EmpiricalDistribution)
         assert ed.provenance is not None
-        assert ed.provenance.operation == "workflow.from_distribution"
-        assert len(ed.provenance.parents) == 2
+        assert ed.provenance.operation == "workflow.convert"
         assert isinstance(ed.provenance.parents[0], ParentInfo)
-        assert ed.provenance.parents[0].name == "from_distribution"
+        assert ed.provenance.parents[0].name == "convert"
         assert ed.provenance.parents[1].name == "norm_src"
 
 
@@ -279,32 +277,30 @@ class TestBijectorTransformedDistributionProvenance:
 class TestConditioningProvenance:
     def test_product_condition_on(self):
         joint = Normal(loc=0.0, scale=1.0, name="x") * Normal(loc=1.0, scale=2.0, name="y")
-        raw = condition_on.apply(joint, x=jnp.array(0.0))
-        cond = condition_on(joint, x=jnp.array(0.0))
-        assert raw.provenance.operation == "condition_on"
-        assert "x" in raw.provenance.metadata["conditioned"]
+        cond = condition_on(joint, {"x": jnp.array(0.0)})
         assert cond.provenance is not None
         assert cond.provenance.operation == "workflow.condition_on"
-        assert len(cond.provenance.parents) == 2
         assert isinstance(cond.provenance.parents[0], ParentInfo)
+        # The operation, the joint, and the slice's law, whose own record names its stage.
         assert [parent.name for parent in cond.provenance.parents] == [
             "condition_on",
             joint.name,
+            "y",
         ]
 
     def test_condition_on_records_plain_observation_by_parameter(self):
         joint = Normal(loc=0.0, scale=1.0, name="x") * Normal(loc=1.0, scale=2.0, name="y")
 
-        at_zero = condition_on(joint, x=jnp.array(0.0))
-        at_five = condition_on(joint, x=jnp.array(5.0))
+        at_zero = condition_on(joint, {"x": jnp.array(0.0)})
+        at_five = condition_on(joint, {"x": jnp.array(5.0)})
 
         assert at_zero.provenance is not None
         assert at_five.provenance is not None
         assert [parent.fingerprint for parent in at_zero.provenance.parents] == [
             parent.fingerprint for parent in at_five.provenance.parents
         ]
-        assert at_zero.provenance.inputs["**kwargs['x']"].fingerprint != (
-            at_five.provenance.inputs["**kwargs['x']"].fingerprint
+        assert at_zero.provenance.inputs["given"].fingerprint != (
+            at_five.provenance.inputs["given"].fingerprint
         )
 
     def test_dependent_joint_condition_on(self):
@@ -323,11 +319,12 @@ class TestConditioningProvenance:
         jg = MultivariateNormal("x", jnp.zeros(1), cov=jnp.eye(1)) * MultivariateNormal(
             "y", jnp.zeros(1), cov=jnp.eye(1)
         )
-        cond = condition_on(jg, x=jnp.array([0.0]))
+        cond = condition_on(jg, {"x": jnp.array([0.0])})
         assert cond.provenance.operation == "workflow.condition_on"
         assert [parent.name for parent in cond.provenance.parents] == [
             "condition_on",
             jg.name,
+            "y",
         ]
 
 
@@ -459,21 +456,21 @@ class TestBroadcastingProvenance:
 
 class TestProvenanceChains:
     def test_two_step_chain(self):
-        """from_distribution → condition_on creates a 2-step chain.
+        """convert → condition_on creates a 2-step chain.
 
         The converted law keeps the source's component, which the joint conditions on.
         """
-        src = Beta(alpha=2.0, beta=5.0, name="prior")
-        converted = from_distribution(src, Normal)
+        src = StudentT(df=5.0, loc=0.0, scale=1.0, name="prior")
+        converted = convert(src, Normal)
         joint = converted * Normal(loc=0.0, scale=1.0, name="y")
-        cond = condition_on(joint, prior=jnp.array(0.0))
+        cond = condition_on(joint, {"prior": jnp.array(0.0)})
 
         # cond's provenance points to joint
         assert cond.provenance.operation == "workflow.condition_on"
         # joint has no provenance (constructed directly)
         assert joint.provenance is None
         # but converted has provenance pointing to src
-        assert converted.provenance.operation == "workflow.from_distribution"
+        assert converted.provenance.operation == "workflow.convert"
         assert isinstance(converted.provenance.parents[1], ParentInfo)
         assert converted.provenance.parents[1].name == "prior"
 

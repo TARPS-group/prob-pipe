@@ -2,24 +2,31 @@
 
 Each operation is declared in the module of its section and registered in
 :data:`operation_registry`, whose ``list()`` and ``describe()`` report its
-operands and its routes in selection order. The ``expectation`` exported here
-takes its method, budget, and key as arguments and is backed by
-:data:`expectation_method_registry`.
+operands and its routes in selection order.
 """
 
-from . import (  # each module registers its operations
-    _condition,
-    _convert,
-    _density,
-    _evaluate,
-    _inverse,
-    _joint,
-    _marginal,
-    _mixture,
-    _sample,
+from ._condition import condition_on, inference_method_registry
+from ._convert import convert
+from ._density import (
+    log_prob,
+    prob,
+    random_log_prob,
+    random_unnormalized_log_prob,
+    unnormalized_log_prob,
+    unnormalized_prob,
 )
-from ._moments import ExpectationMethod, expectation_method_registry
-from ._moments import _expectation_function as expectation
+from ._evaluate import evaluate
+from ._inverse import inverse, log_det_jacobian
+from ._joint import joint
+from ._marginal import factor, marginal
+from ._mixture import mixture
+from ._moments import (
+    cov,
+    expectation,
+    mean,
+    quantile,
+    variance,
+)
 from ._operation import (
     BoundCall,
     OperandSummary,
@@ -31,18 +38,38 @@ from ._operation import (
     operation,
     operation_registry,
 )
+from ._sample import sample
 
 __all__ = [
     "BoundCall",
-    "ExpectationMethod",
     "OperandSummary",
     "OperationRegistry",
     "OperationRoute",
     "OperationSummary",
     "RouteSource",
     "RouteSummary",
+    "condition_on",
+    "convert",
+    "cov",
+    "evaluate",
     "expectation",
-    "expectation_method_registry",
+    "factor",
+    "inference_method_registry",
+    "inverse",
+    "joint",
+    "log_det_jacobian",
+    "log_prob",
+    "marginal",
+    "mean",
+    "mixture",
     "operation",
     "operation_registry",
+    "prob",
+    "quantile",
+    "random_log_prob",
+    "random_unnormalized_log_prob",
+    "sample",
+    "unnormalized_log_prob",
+    "unnormalized_prob",
+    "variance",
 ]

@@ -20,6 +20,7 @@ from probpipe import (
     NumericRecordSpec,
     OpaqueSpec,
     condition_on,
+    inference_method_registry,
     workflow_run,
 )
 from probpipe.distributions import FactoredDistribution
@@ -146,14 +147,8 @@ class TestExtractEventSpec:
     @pytest.mark.parametrize("method", ["blackjax_nuts", "blackjax_rwmh", "tfp_nuts"])
     def test_the_methods_agree_on_a_bare_target(self, method):
         """Each names the posterior and draws it as build_target_log_prob_flat does."""
-        posterior = condition_on(
-            _FlatTarget(),
-            None,
-            method=method,
-            num_results=20,
-            num_warmup=20,
-            num_chains=1,
-            random_seed=0,
+        posterior = inference_method_registry.execute(
+            _FlatTarget(), method=method, num_results=20, num_warmup=20, num_chains=1, random_seed=0
         )
         assert list(posterior.event_spec.components) == ["posterior"]
         assert isinstance(posterior.draws(), jax.Array)
@@ -432,9 +427,9 @@ def _first_draws(method, seed, **options):
     model = _gaussian_mean(Normal("mu", 0.0, 1.0), 4)
     data = jnp.array([0.3, -0.2, 0.5, 0.1])
     with workflow_run(seed=seed):
-        posterior = condition_on(
-            model, y=data, method=method, num_results=8, num_warmup=4, **options
-        )
+        posterior = condition_on.with_options(
+            method=method, method_options={"num_results": 8, "num_warmup": 4, **options}
+        )(model, {"y": data})
     return np.asarray(posterior.chains[0])
 
 

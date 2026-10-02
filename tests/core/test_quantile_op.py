@@ -110,7 +110,7 @@ class TestQuantileOp:
         class Bare(Distribution):
             pass
 
-        with pytest.raises(ResolutionError, match="converts to SupportsQuantile"):
+        with pytest.raises(ResolutionError, match="does not claim SupportsQuantile"):
             quantile(Bare("x", NumericArraySpec(())), 0.5)
 
     def test_a_law_without_quantiles_that_samples_converts_to_its_empirical_law(self):

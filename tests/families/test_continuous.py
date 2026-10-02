@@ -8,6 +8,7 @@ import scipy.stats as _scipy
 
 from probpipe import (
     MathematicalDomainError,
+    NumericArrayBatch,
     NumericDistribution,
     TFPDistribution,
     cov,
@@ -89,11 +90,11 @@ class TestContinuousGeneric:
         assert isinstance(continuous_dist.event_shape, tuple)
 
     def test_sample_shape(self, continuous_dist, key):
-        s = sample(continuous_dist, key=key, sample_shape=(5,))
+        s = sample(continuous_dist, sample_shape=(5,))
         assert s.shape == (5, *continuous_dist.event_shape)
 
     def test_log_prob_shape(self, continuous_dist, key):
-        s = sample(continuous_dist, key=key, sample_shape=(5,))
+        s = sample(continuous_dist, sample_shape=(5,))
         lp = log_prob(continuous_dist, s)
         assert lp.shape == (5,)
 
@@ -282,7 +283,7 @@ class TestMomentsThatDivergeOrAreUndefined:
 class TestBeta:
     def test_samples_in_unit_interval(self, key):
         d = Beta(alpha=2.0, beta=5.0, name="x")
-        s = jnp.asarray(sample(d, key=key, sample_shape=(1000,)))
+        s = jnp.asarray(sample(d, sample_shape=(1000,)))
         assert jnp.all(s >= 0.0)
         assert jnp.all(s <= 1.0)
 
@@ -290,49 +291,49 @@ class TestBeta:
 class TestGammaDist:
     def test_samples_nonnegative(self, key):
         d = Gamma(concentration=3.0, rate=1.0, name="x")
-        s = jnp.asarray(sample(d, key=key, sample_shape=(1000,)))
+        s = jnp.asarray(sample(d, sample_shape=(1000,)))
         assert jnp.all(s >= 0.0)
 
 
 class TestInverseGammaDist:
     def test_samples_nonnegative(self, key):
         d = InverseGamma(concentration=3.0, scale=1.0, name="x")
-        s = jnp.asarray(sample(d, key=key, sample_shape=(1000,)))
+        s = jnp.asarray(sample(d, sample_shape=(1000,)))
         assert jnp.all(s >= 0.0)
 
 
 class TestExponentialDist:
     def test_samples_nonnegative(self, key):
         d = Exponential(rate=2.0, name="x")
-        s = jnp.asarray(sample(d, key=key, sample_shape=(1000,)))
+        s = jnp.asarray(sample(d, sample_shape=(1000,)))
         assert jnp.all(s >= 0.0)
 
 
 class TestHalfNormalDist:
     def test_samples_nonnegative(self, key):
         d = HalfNormal(scale=1.0, name="x")
-        s = jnp.asarray(sample(d, key=key, sample_shape=(1000,)))
+        s = jnp.asarray(sample(d, sample_shape=(1000,)))
         assert jnp.all(s >= 0.0)
 
 
 class TestHalfCauchyDist:
     def test_samples_nonnegative(self, key):
         d = HalfCauchy(loc=0.0, scale=1.0, name="x")
-        s = jnp.asarray(sample(d, key=key, sample_shape=(1000,)))
+        s = jnp.asarray(sample(d, sample_shape=(1000,)))
         assert jnp.all(s >= 0.0)
 
 
 class TestParetoDist:
     def test_samples_nonnegative(self, key):
         d = Pareto(concentration=3.0, scale=1.0, name="x")
-        s = jnp.asarray(sample(d, key=key, sample_shape=(1000,)))
+        s = jnp.asarray(sample(d, sample_shape=(1000,)))
         assert jnp.all(s >= 0.0)
 
 
 class TestUniformDist:
     def test_samples_in_bounds(self, key):
         d = Uniform(low=0.0, high=1.0, name="x")
-        s = jnp.asarray(sample(d, key=key, sample_shape=(1000,)))
+        s = jnp.asarray(sample(d, sample_shape=(1000,)))
         assert jnp.all(s >= 0.0)
         assert jnp.all(s <= 1.0)
 
@@ -340,7 +341,7 @@ class TestUniformDist:
 class TestTruncatedNormalDist:
     def test_samples_in_bounds(self, key):
         d = TruncatedNormal(loc=0.0, scale=1.0, low=-2.0, high=2.0, name="x")
-        s = jnp.asarray(sample(d, key=key, sample_shape=(1000,)))
+        s = jnp.asarray(sample(d, sample_shape=(1000,)))
         assert jnp.all(s >= -2.0)
         assert jnp.all(s <= 2.0)
 
@@ -408,7 +409,7 @@ class TestContinuousMoments:
         cls, kwargs = _CONTINUOUS_DISTS[name]
         our_dist = cls(**kwargs)
         scipy_dist = _SCIPY_EQUIVALENTS[name]
-        draws = np.asarray(sample(our_dist, key=key, sample_shape=(50_000,)))
+        draws = np.asarray(sample(our_dist, sample_shape=(50_000,)))
         stat, p = _scipy.kstest(draws, scipy_dist.cdf)
         # Project-wide goodness-of-fit threshold: p > 0.001 (~3σ).
         # Strict enough to catch bugs, loose enough to avoid xdist flakes.
@@ -438,7 +439,7 @@ class TestProb:
         else:
             xs = jnp.array([-1.0, 0.0, 1.0])
         our_dist = cls(**kwargs)
-        ours = np.asarray(prob(our_dist, xs))
+        ours = np.asarray(prob(our_dist, NumericArrayBatch("x", xs, "point")))
         expected = scipy_dist.pdf(np.asarray(xs))
         np.testing.assert_allclose(ours, expected, rtol=1e-4)
 
@@ -447,9 +448,9 @@ class TestProb:
         from probpipe import log_prob as log_prob_op
 
         d = Normal(loc=0.0, scale=1.0, name="x")
-        xs = jnp.array([-1.0, 0.5, 1.2])
+        xs = NumericArrayBatch("x", jnp.array([-1.0, 0.5, 1.2]), "point")
         np.testing.assert_allclose(
             np.asarray(prob(d, xs)),
-            np.asarray(jnp.exp(log_prob_op(d, xs))),
+            np.asarray(jnp.exp(jnp.asarray(log_prob_op(d, xs)))),
             rtol=1e-6,
         )

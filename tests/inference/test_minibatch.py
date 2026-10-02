@@ -29,7 +29,6 @@ from probpipe.families import BernoulliFamily, RandomFunction, RandomMeasure, gl
 from probpipe.inference._minibatch import (
     MinibatchedDistribution,
     _FixedMinibatchDistribution,
-    _MinibatchLogProbAtPoint,
     _RandomMinibatchLogProb,
 )
 from tests.inference.canonical import ObservationKernel
@@ -339,17 +338,6 @@ class TestRandomLogProbOp:
         rf = measure._random_unnormalized_log_prob()
         with pytest.raises(NotImplementedError, match="sample_shape"):
             rf._sample(jax.random.PRNGKey(0), sample_shape=(3,))
-
-    def test_two_arg_form_returns_distribution_at_theta(self, measure):
-        """``random_unnormalized_log_prob(measure, theta)`` returns a
-        array-valued distribution over log-density estimates at theta.
-        """
-        theta = jnp.array([0.0, 0.0])
-        dist_at_theta = random_unnormalized_log_prob(measure, theta)
-        assert isinstance(dist_at_theta, _MinibatchLogProbAtPoint)
-        # The distribution is sampleable
-        val = dist_at_theta._sample(jax.random.PRNGKey(0))
-        assert jnp.asarray(val).shape == ()
 
 
 # -- JIT traceability ----------------------------------------------------------

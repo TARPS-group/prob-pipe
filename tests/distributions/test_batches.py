@@ -554,7 +554,7 @@ class TestOperationsSweepTheLaws:
 
     def test_one_value_is_scored_under_each_law(self):
         laws = _laws(3)
-        scores = log_prob(DistributionBatch("laws", laws, "law"), value=jnp.asarray(0.0))
+        scores = log_prob(DistributionBatch("laws", laws, "law"), jnp.asarray(0.0))
         assert isinstance(scores, NumericArrayBatch) and scores.batch_shape == (3,)
         expected = [float(law._log_prob(0.0)) for law in laws]
         np.testing.assert_allclose(scores.values, expected, rtol=1e-5)

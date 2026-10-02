@@ -90,30 +90,30 @@ class TestBlackJAXNuts:
     """End-to-end smoke + correctness checks for ``blackjax_nuts``."""
 
     def test_runs_end_to_end(self, small_model):
-        posterior = condition_on(
-            small_model,
-            {"y": jnp.zeros((4,))},
+        posterior = condition_on.with_options(
             method="blackjax_nuts",
-            num_results=200,
-            num_warmup=200,
-            num_chains=2,
-            random_seed=0,
-        )
+            method_options={
+                "num_results": 200,
+                "num_warmup": 200,
+                "num_chains": 2,
+                "random_seed": 0,
+            },
+        )(small_model, {"y": jnp.zeros((4,))})
         m = mean(posterior)
         assert m["a"].shape == ()
         assert m["b"].shape == ()
 
     def test_collapses_to_prior_under_identity_likelihood(self, small_model):
         # With an identity likelihood, the posterior is the prior.
-        posterior = condition_on(
-            small_model,
-            {"y": jnp.zeros((4,))},
+        posterior = condition_on.with_options(
             method="blackjax_nuts",
-            num_results=400,
-            num_warmup=400,
-            num_chains=2,
-            random_seed=0,
-        )
+            method_options={
+                "num_results": 400,
+                "num_warmup": 400,
+                "num_chains": 2,
+                "random_seed": 0,
+            },
+        )(small_model, {"y": jnp.zeros((4,))})
         m = mean(posterior)
         np.testing.assert_allclose(float(jnp.squeeze(m["a"])), 1.0, atol=0.15)
         np.testing.assert_allclose(float(jnp.squeeze(m["b"])), -2.0, atol=0.15)
@@ -132,15 +132,15 @@ class TestBlackJAXNuts:
         model = _gaussian_mean(prior)
         y = jnp.asarray([1.0, 2.0, 3.0])
 
-        posterior = condition_on(
-            model,
-            {"y": y},
+        posterior = condition_on.with_options(
             method="blackjax_nuts",
-            num_results=2000,
-            num_warmup=1000,
-            num_chains=2,
-            random_seed=0,
-        )
+            method_options={
+                "num_results": 2000,
+                "num_warmup": 1000,
+                "num_chains": 2,
+                "random_seed": 0,
+            },
+        )(model, {"y": y})
 
         # Analytic posterior: N(1.5, 0.25). MC std error on the posterior
         # mean is sqrt(0.25 / 4000) ≈ 0.0079; allow 3 σ_MC.
@@ -164,15 +164,15 @@ class TestBlackJAXNuts:
         propagates verbatim into ``sample_stats`` (no adaptation to
         overwrite it).
         """
-        posterior = condition_on(
-            small_model,
-            {"y": jnp.zeros((4,))},
+        posterior = condition_on.with_options(
             method="blackjax_nuts",
-            num_results=50,
-            num_warmup=0,
-            step_size=0.05,
-            random_seed=0,
-        )
+            method_options={
+                "num_results": 50,
+                "num_warmup": 0,
+                "step_size": 0.05,
+                "random_seed": 0,
+            },
+        )(small_model, {"y": jnp.zeros((4,))})
         m = mean(posterior)
         assert jnp.isfinite(m["a"]).all()
         assert jnp.isfinite(m["b"]).all()
@@ -186,17 +186,17 @@ class TestBlackJAXHmc:
     """End-to-end smoke + correctness checks for ``blackjax_hmc``."""
 
     def test_runs_end_to_end(self, small_model):
-        posterior = condition_on(
-            small_model,
-            {"y": jnp.zeros((4,))},
+        posterior = condition_on.with_options(
             method="blackjax_hmc",
-            num_results=200,
-            num_warmup=200,
-            num_chains=1,
-            step_size=0.05,
-            num_integration_steps=10,
-            random_seed=0,
-        )
+            method_options={
+                "num_results": 200,
+                "num_warmup": 200,
+                "num_chains": 1,
+                "step_size": 0.05,
+                "num_integration_steps": 10,
+                "random_seed": 0,
+            },
+        )(small_model, {"y": jnp.zeros((4,))})
         m = mean(posterior)
         assert m["a"].shape == ()
         assert m["b"].shape == ()
@@ -221,17 +221,17 @@ class TestBlackJAXHmc:
         model = _gaussian_mean(prior)
         y = jnp.asarray([1.0, 2.0, 3.0])
 
-        posterior = condition_on(
-            model,
-            {"y": y},
+        posterior = condition_on.with_options(
             method="blackjax_hmc",
-            num_results=4000,
-            num_warmup=2000,
-            num_chains=2,
-            step_size=0.1,
-            num_integration_steps=5,
-            random_seed=0,
-        )
+            method_options={
+                "num_results": 4000,
+                "num_warmup": 2000,
+                "num_chains": 2,
+                "step_size": 0.1,
+                "num_integration_steps": 5,
+                "random_seed": 0,
+            },
+        )(model, {"y": y})
 
         post_mean = float(jnp.squeeze(mean(posterior)["mu"]))
         post_var = float(jnp.squeeze(variance(posterior)["mu"]))
@@ -249,17 +249,17 @@ class TestBlackJAXHmc:
         """
         prior = FactoredDistribution("prior", [Normal(loc=0.0, scale=1.0, name="mu")])
         model = _gaussian_mean(prior)
-        posterior = condition_on(
-            model,
-            {"y": jnp.asarray([1.0, 2.0, 3.0])},
+        posterior = condition_on.with_options(
             method="blackjax_hmc",
-            num_results=1000,
-            num_warmup=500,
-            num_chains=2,
-            step_size=0.1,
-            num_integration_steps=10,
-            random_seed=0,
-        )
+            method_options={
+                "num_results": 1000,
+                "num_warmup": 500,
+                "num_chains": 2,
+                "step_size": 0.1,
+                "num_integration_steps": 10,
+                "random_seed": 0,
+            },
+        )(model, {"y": jnp.asarray([1.0, 2.0, 3.0])})
         steps = np.asarray(posterior.inference_data["sample_stats"]["num_integration_steps"])
         # Randomized, not a single fixed L.
         assert np.unique(steps).size >= 5
@@ -280,17 +280,17 @@ class TestBlackJAXHmc:
         """
         prior = FactoredDistribution("prior", [Normal(loc=0.0, scale=1.0, name="mu")])
         model = _gaussian_mean(prior)
-        posterior = condition_on(
-            model,
-            {"y": jnp.asarray([1.0, 2.0, 3.0])},
+        posterior = condition_on.with_options(
             method="blackjax_hmc",
-            num_results=4000,
-            num_warmup=2000,
-            num_chains=2,
-            step_size=0.1,
-            num_integration_steps=10,
-            random_seed=0,
-        )
+            method_options={
+                "num_results": 4000,
+                "num_warmup": 2000,
+                "num_chains": 2,
+                "step_size": 0.1,
+                "num_integration_steps": 10,
+                "random_seed": 0,
+            },
+        )(model, {"y": jnp.asarray([1.0, 2.0, 3.0])})
         post_mean = float(jnp.squeeze(mean(posterior)["mu"]))
         post_var = float(jnp.squeeze(variance(posterior)["mu"]))
         np.testing.assert_allclose(post_mean, 1.5, atol=0.05)
@@ -324,17 +324,17 @@ class TestBlackJAXHmc:
         """
         prior = FactoredDistribution("prior", [Normal(loc=0.0, scale=1.0, name="mu")])
         model = _gaussian_mean(prior)
-        posterior = condition_on(
-            model,
-            {"y": jnp.asarray([1.0, 2.0, 3.0])},
+        posterior = condition_on.with_options(
             method="blackjax_hmc",
-            num_results=100,
-            num_warmup=0,
-            num_chains=1,
-            step_size=0.1,
-            num_integration_steps=10,
-            random_seed=0,
-        )
+            method_options={
+                "num_results": 100,
+                "num_warmup": 0,
+                "num_chains": 1,
+                "step_size": 0.1,
+                "num_integration_steps": 10,
+                "random_seed": 0,
+            },
+        )(model, {"y": jnp.asarray([1.0, 2.0, 3.0])})
         draws = np.asarray(posterior.draws()["mu"]).reshape(-1)
         assert draws.shape[0] == 100
         assert np.all(np.isfinite(draws))
@@ -356,15 +356,15 @@ class TestSampleStats:
 
     def test_sample_stats_keys_shapes_and_ranges(self, small_model):
         num_chains, num_results = 2, 200
-        posterior = condition_on(
-            small_model,
-            {"y": jnp.zeros((4,))},
+        posterior = condition_on.with_options(
             method="blackjax_nuts",
-            num_results=num_results,
-            num_warmup=200,
-            num_chains=num_chains,
-            random_seed=0,
-        )
+            method_options={
+                "num_results": num_results,
+                "num_warmup": 200,
+                "num_chains": num_chains,
+                "random_seed": 0,
+            },
+        )(small_model, {"y": jnp.zeros((4,))})
         ds = posterior.inference_data["sample_stats"]
 
         # NUTS plumbs these four info fields plus the injected step_size.
@@ -401,15 +401,15 @@ class TestSampleStats:
 
     def test_posterior_has_one_chain_dim_per_chain(self, small_model):
         num_chains = 2
-        posterior = condition_on(
-            small_model,
-            {"y": jnp.zeros((4,))},
+        posterior = condition_on.with_options(
             method="blackjax_nuts",
-            num_results=100,
-            num_warmup=100,
-            num_chains=num_chains,
-            random_seed=0,
-        )
+            method_options={
+                "num_results": 100,
+                "num_warmup": 100,
+                "num_chains": num_chains,
+                "random_seed": 0,
+            },
+        )(small_model, {"y": jnp.zeros((4,))})
         post_grp = posterior.inference_data["posterior"]
         assert post_grp.sizes["chain"] == num_chains
         assert posterior.inference_data["sample_stats"].sizes["chain"] == num_chains

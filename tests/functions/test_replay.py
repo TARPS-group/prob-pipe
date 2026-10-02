@@ -11,7 +11,6 @@ from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -1133,18 +1132,6 @@ class TestReplayPreflight:
 
 
 class TestReplayEventRegistry:
-    def test_missing_event_is_reported_at_root_completion(self):
-        original = _draw()
-
-        with (
-            pytest.raises(ReplayCompatibilityError, match="missing expected"),
-            replay_run(original.provenance),
-        ):
-            sample(
-                Normal(loc=0.0, scale=1.0, name="value"),
-                key=jax.random.key(9),
-            )
-
     @pytest.mark.parametrize("drift", ["identity", "effect"])
     def test_unexpected_identity_and_effect_drift_fail_before_sampling(self, drift):
         original = _draw()

@@ -8,10 +8,12 @@ import pytest
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
+    EmpiricalDistribution,
     MultivariateNormal,
     Normal,
     NumericArraySpec,
     condition_on,
+    convert,
     mean,
 )
 from probpipe.core._dispatch import ResolutionError
@@ -71,58 +73,40 @@ class TestInferenceMethodRegistry:
 
     def test_method_override(self, simple_model, data):
         """method= should override auto-selection."""
-        posterior = condition_on.apply(
-            simple_model,
-            data,
+        posterior = condition_on.with_options(
             method="blackjax_rwmh",
-            num_results=50,
-            num_warmup=20,
-            random_seed=0,
-        )
+            method_options={"num_results": 50, "num_warmup": 20, "random_seed": 0},
+        )(simple_model, data)
         assert posterior.method == "blackjax_rwmh"
 
     def test_condition_on_default(self, simple_model, data):
         """Default condition_on should work through the registry."""
-        posterior = condition_on(
-            simple_model,
-            data,
-            num_results=50,
-            num_warmup=20,
-            random_seed=0,
-        )
+        posterior = condition_on.with_options(
+            method_options={"num_results": 50, "num_warmup": 20, "random_seed": 0}
+        )(simple_model, data)
         assert mean(posterior)["beta"].shape == (2,)
 
     def test_exact_only_refuses_every_inference_method(self, simple_model, data):
         """Every registered method is approximate, so an exact-only call resolves to nothing."""
         with pytest.raises(ResolutionError):
-            condition_on(simple_model, data, exact_only=True)
+            condition_on.with_options(exact_only=True)(simple_model, data)
         with pytest.raises(ResolutionError):
-            condition_on(simple_model, data, method="blackjax_nuts", exact_only=True)
+            condition_on.with_options(method="blackjax_nuts", exact_only=True)(simple_model, data)
 
     def test_nonexistent_method_raises(self, simple_model, data):
         with pytest.raises(ResolutionError, match="nonexistent"):
-            condition_on(simple_model, data, method="nonexistent")
+            condition_on.with_options(method="nonexistent")(simple_model, data)
 
     def test_infeasible_method_raises(self):
         """Requesting a method that can't handle the dist raises ResolutionError."""
         with pytest.raises(ResolutionError):
             inference_method_registry.execute("not_a_distribution", None, method="tfp_nuts")
 
-    def test_bare_log_prob_distribution(self):
-        """A bare SupportsLogProb distribution can be conditioned via registry.
-
-        This tests "conditioning on nothing" — the posterior equals the
-        prior since no observed data is provided.  Verifies that the
-        registry can handle a plain distribution (not a model) when an
-        explicit method is requested.
-        """
+    def test_a_named_method_runs_on_a_bare_law(self):
+        """The registry runs a method on a plain law, whose posterior is the law itself."""
         prior = Normal(loc=0.0, scale=1.0, name="x")
-        posterior = condition_on(
-            prior,
-            method="tfp_nuts",
-            num_results=50,
-            num_warmup=20,
-            random_seed=0,
+        posterior = inference_method_registry.execute(
+            prior, method="tfp_nuts", num_results=50, num_warmup=20, random_seed=0
         )
         assert mean(posterior).ndim <= 1
 
@@ -215,9 +199,6 @@ class _UnnormalizedTarget:
         # log normalizer is irrelevant for accept/reject.
         return -0.5 * jnp.sum(value**2)
 
-    def _mean(self):
-        return jnp.zeros(2)
-
 
 class _NormalizedTarget:
     """Mixin: implements only ``_log_prob`` (relies on protocol default).
@@ -277,40 +258,34 @@ class TestUnnormalizedLogProbInference:
         assert info.feasible
         assert info.method_name == "blackjax_nuts"
 
-    def test_condition_on_unnormalized_runs_nuts(self):
-        from probpipe import ApproximateDistribution
-
+    def test_converting_an_unnormalized_law_runs_nuts(self):
         dist = _make_unnormalized_distribution()
-        posterior = condition_on(
-            dist,
-            num_results=200,
-            num_warmup=100,
-            random_seed=0,
-        )
-        assert isinstance(posterior, ApproximateDistribution)
+        posterior = convert.with_options(
+            method_options={"num_results": 200, "num_warmup": 100, "random_seed": 0}
+        )(dist, EmpiricalDistribution)
+        assert isinstance(posterior, EmpiricalDistribution)
         # Standard normal: posterior mean ~0, std ~1 (loose tolerance —
         # short chain, no thinning).
-        draws = np.asarray(posterior.draws()).reshape(-1, 2)
+        draws = np.asarray(posterior.atoms).reshape(-1, 2)
         np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.4)
         np.testing.assert_allclose(draws.std(0), [1.0, 1.0], atol=0.4)
 
-    def test_condition_on_unnormalized_runs_rwmh(self):
-        from probpipe import ApproximateDistribution
-
+    def test_converting_an_unnormalized_law_runs_rwmh(self):
         dist = _make_unnormalized_distribution()
-        posterior = condition_on(
-            dist,
+        posterior = convert.with_options(
             method="blackjax_rwmh",
-            num_results=2000,
-            num_warmup=100,
-            step_size=0.5,
-            random_seed=0,
-        )
-        assert isinstance(posterior, ApproximateDistribution)
+            method_options={
+                "num_results": 2000,
+                "num_warmup": 100,
+                "step_size": 0.5,
+                "random_seed": 0,
+            },
+        )(dist, EmpiricalDistribution)
+        assert isinstance(posterior, EmpiricalDistribution)
         # Standard normal target. Observed across seeds 0-7: max |mean|
         # 0.01-0.14, max |std - 1| 0.04-0.10. A wrong target such as
         # N(3, 0.25 I) fails both bounds.
-        draws = np.asarray(posterior.draws()).reshape(-1, 2)
+        draws = np.asarray(posterior.atoms).reshape(-1, 2)
         np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.3)
         np.testing.assert_allclose(draws.std(0), [1.0, 1.0], atol=0.25)
 
@@ -324,11 +299,8 @@ class TestUnnormalizedLogProbInference:
         from probpipe import ApproximateDistribution
 
         dist = _make_normalized_distribution()
-        posterior = condition_on(
-            dist,
-            num_results=1000,
-            num_warmup=200,
-            random_seed=0,
+        posterior = inference_method_registry.execute(
+            dist, method="blackjax_nuts", num_results=1000, num_warmup=200, random_seed=0
         )
         assert isinstance(posterior, ApproximateDistribution)
         # Standard normal target. Observed across seeds 0-7: max |mean|
@@ -342,7 +314,7 @@ class TestUnnormalizedLogProbInference:
         from probpipe import ApproximateDistribution
 
         dist = _make_normalized_distribution()
-        posterior = condition_on(
+        posterior = inference_method_registry.execute(
             dist,
             method="blackjax_rwmh",
             num_results=2000,

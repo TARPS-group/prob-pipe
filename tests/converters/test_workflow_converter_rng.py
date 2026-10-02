@@ -28,8 +28,8 @@ from probpipe import (
     MultivariateNormal,
     Normal,
     NumericArraySpec,
+    convert,
     converter_registry,
-    from_distribution,
     workflow_run,
 )
 from probpipe.distributions import ConverterRegistry
@@ -184,7 +184,7 @@ class TestBuiltInConversionRandomness:
         assert len(calls) == (0 if closed_form else 1)
         assert derive.call_count == (0 if closed_form else 1)
 
-    def test_from_distribution_uses_the_function_broker_once(self):
+    def test_convert_uses_the_function_broker_once(self):
         with (
             patch(
                 "probpipe.functions._context.derive_event_key_words_from_encoded",
@@ -192,10 +192,8 @@ class TestBuiltInConversionRandomness:
             ) as derive,
             workflow_run(seed=7),
         ):
-            result = from_distribution(
-                Normal(loc=0.0, scale=1.0, name="x"),
-                EmpiricalDistribution,
-                num_samples=8,
+            result = convert.with_options(method_options={"num_samples": 8})(
+                Normal(loc=0.0, scale=1.0, name="x"), EmpiricalDistribution
             )
 
         assert result.num_atoms == 8

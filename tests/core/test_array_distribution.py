@@ -9,9 +9,8 @@ from probpipe import (
     Normal,
     NumericArraySpec,
     NumericDistribution,
-    OpaqueSpec,
     ResolutionError,
-    from_distribution,
+    convert,
     log_prob,
     real,
     unnormalized_log_prob,
@@ -48,13 +47,13 @@ class TestDistributionBase:
     """Tests for methods defined on Distribution itself."""
 
     def test_log_prob_raises_by_default(self):
-        """A law without a density, which no converter gives one, raises ResolutionError."""
+        """A law without a density raises ResolutionError."""
 
         class StubDist(Distribution):
             pass
 
-        d = StubDist("stub", OpaqueSpec())
-        with pytest.raises(ResolutionError, match="'dist' converts to SupportsLogProb"):
+        d = StubDist("stub", NumericArraySpec(()))
+        with pytest.raises(ResolutionError, match="does not claim SupportsLogProb"):
             log_prob(d, jnp.array(0.0))
 
     def test_unnormalized_log_prob_delegates_to_log_prob(self, scalar_normal):
@@ -79,10 +78,10 @@ class TestDistributionBase:
         assert "Normal" in r
         assert "x" in r
 
-    def test_from_distribution_on_base_class(self, scalar_normal):
+    def test_convert_on_base_class(self, scalar_normal):
         """from_distribution is accessible on Distribution base."""
-        # Normal inherits from_distribution from Distribution
-        result = from_distribution(scalar_normal, Normal, num_samples=100)
+        # convert returns a Normal source unchanged
+        result = convert.with_options(method_options={"num_samples": 100})(scalar_normal, Normal)
         assert isinstance(result, Normal)
 
 

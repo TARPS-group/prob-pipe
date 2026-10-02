@@ -1,6 +1,5 @@
 """Tests for probpipe.core.transition — iterate, with_conversion, with_resampling."""
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -200,8 +199,7 @@ class TestWithConversion:
         from probpipe import sample as pp_sample
 
         def parametric_step(dist, shift):
-            key = jax.random.PRNGKey(42)
-            samples = jnp.asarray(pp_sample(dist, key=key, sample_shape=(50,))) + shift
+            samples = jnp.asarray(pp_sample(dist, sample_shape=(50,))) + shift
             return EmpiricalDistribution("x", samples)
 
         initial = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="x")

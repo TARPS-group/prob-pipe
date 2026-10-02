@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import random
+from collections.abc import Mapping
 from contextlib import contextmanager
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Literal
@@ -23,9 +24,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._specs import _components_record
-from ..core.ops import sample as _sample_op
 from ..core.record import Record
 from ..custom_types import Array, PRNGKey
 from ..distributions._capabilities import SupportsConditionalSampling
@@ -169,6 +168,22 @@ def _simulator_given(simulator: ConditionalDistribution, params: Any) -> Any:
     return Record("given", {slot: params[slot] for slot in slots})
 
 
+def _leaf_draws(draws: Any, leaf: str) -> Any:
+    """The draws of the numeric leaf at the path *leaf*, from a law's raw batched draws.
+
+    A record-drawing law's raw draws are a nested mapping of stacked leaves, and
+    an array-drawing law's are the stacked array of its one leaf.
+    """
+    if isinstance(draws, Record):
+        return draws.raw(leaf)
+    if isinstance(draws, Mapping):
+        node = draws
+        for part in leaf.split("/"):
+            node = node[part]
+        return node
+    return draws
+
+
 def _simulate_offline(
     prior: Distribution,
     simulator: ConditionalDistribution,
@@ -197,22 +212,15 @@ def _simulate_offline(
     # leaf paths never reach BayesFlow's namespace.
     leaf_keys = tuple(template.leaf_shapes)
     k_theta, k_sim = jax.random.split(key)
-    theta = _sample_op(prior, key=k_theta, sample_shape=(num_simulations,))
-    # Round-trip through the canonical 1-D vector layout: single-field priors'
-    # raw draws are not field-indexable by name, so from_vector gives uniform
-    # named access. Structured draws serialize via to_vector; raw arrays ravel.
-    if isinstance(theta, NumericRecordBatch):
-        theta_flat = jnp.asarray(theta.to_vector()).reshape(num_simulations, -1)
-    else:
-        theta_flat = jnp.asarray(theta).reshape(num_simulations, -1)
-    from ..core._numeric_record import _reconstruct_from_vector
-
-    record = _reconstruct_from_vector(prior.name, template, theta_flat)
+    draws = prior._sample(k_theta, (num_simulations,))
+    columns = {leaf: jnp.asarray(_leaf_draws(draws, leaf)) for leaf in leaf_keys}
+    theta_flat = jnp.concatenate(
+        [jnp.reshape(column, (num_simulations, -1)) for column in columns.values()], axis=1
+    )
     # Invert before flattening: matrix-valued bijectors (positive-definite) require
     # the leaf's native (..., n, n) event shape, not the flat adapter layout.
     named = {}
-    for leaf in leaf_keys:
-        arr = jnp.asarray(record.raw(leaf))
+    for leaf, arr in columns.items():
         if bijectors is not None:
             arr = bijectors[leaf]._inverse(arr)
         named[leaf] = np.asarray(jnp.reshape(arr, (num_simulations, -1)), dtype="float32")

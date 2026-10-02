@@ -6,15 +6,15 @@ import numpy as np
 import pytest
 
 from probpipe import (
+    ApplicabilityError,
     EmpiricalDistribution,
     MultivariateNormal,
     NumericDistribution,
     Provenance,
-    ResolutionError,
     TFPDistribution,
     Weights,
+    convert,
     cov,
-    from_distribution,
     log_prob,
     mean,
     prob,
@@ -103,19 +103,19 @@ class TestMultivariateNormal:
             MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(3), name="z")
 
     def test_sample_shape(self, gaussian, key):
-        s = sample(gaussian, key=key, sample_shape=(5,))
+        s = sample(gaussian, sample_shape=(5,))
         assert s.shape == (5, 3)
 
     def test_sample_no_shape(self, gaussian, key):
-        s = sample(gaussian, key=key)
+        s = sample(gaussian)
         assert s.shape == (3,)
 
     def test_sample_statistics(self, gaussian, key):
-        s = jnp.asarray(sample(gaussian, key=key, sample_shape=(5000,)))
+        s = jnp.asarray(sample(gaussian, sample_shape=(5000,)))
         np.testing.assert_allclose(s.mean(axis=0), gaussian.loc, atol=0.15)
 
     def test_log_prob_shape(self, gaussian, key):
-        s = sample(gaussian, key=key, sample_shape=(7,))
+        s = sample(gaussian, sample_shape=(7,))
         lp = log_prob(gaussian, s)
         assert lp.shape == (7,)
 
@@ -131,7 +131,7 @@ class TestMultivariateNormal:
         scipy_mvn = scipy.stats.multivariate_normal(
             mean=np.asarray(loc), cov=np.asarray(cov_matrix)
         )
-        s = sample(gaussian, key=key, sample_shape=(5,))
+        s = sample(gaussian, sample_shape=(5,))
         s_np = np.asarray(s)
         np.testing.assert_allclose(log_prob(gaussian, s), scipy_mvn.logpdf(s_np), rtol=1e-5)
         np.testing.assert_allclose(prob(gaussian, s), scipy_mvn.pdf(s_np), rtol=1e-5)
@@ -139,7 +139,7 @@ class TestMultivariateNormal:
     def test_mean_and_cov(self, gaussian, loc, cov_matrix, key):
         """Sample mean and cov from 50k draws must match analytical values."""
 
-        draws = np.asarray(sample(gaussian, key=key, sample_shape=(50_000,)))
+        draws = np.asarray(sample(gaussian, sample_shape=(50_000,)))
         np.testing.assert_allclose(draws.mean(0), np.asarray(loc), atol=0.02)
         np.testing.assert_allclose(
             np.cov(draws, rowvar=False),
@@ -151,7 +151,7 @@ class TestMultivariateNormal:
         """Each MVN marginal X_i ~ N(loc_i, cov_ii): KS test on 50k samples."""
         import scipy.stats
 
-        draws = np.asarray(sample(gaussian, key=key, sample_shape=(50_000,)))
+        draws = np.asarray(sample(gaussian, sample_shape=(50_000,)))
         for i in range(draws.shape[1]):
             marginal = scipy.stats.norm(loc=float(loc[i]), scale=float(jnp.sqrt(cov_matrix[i, i])))
             _, p = scipy.stats.kstest(draws[:, i], marginal.cdf)
@@ -176,17 +176,21 @@ class TestMultivariateNormal:
     def test_dtype(self, gaussian, loc):
         assert gaussian.dtype == loc.dtype
 
-    def test_from_distribution_empirical(self, gaussian):
-        ed = from_distribution(gaussian, EmpiricalDistribution, num_samples=2000)
-        g2 = from_distribution(ed, MultivariateNormal)
+    def test_convert_empirical(self, gaussian):
+        ed = convert.with_options(method_options={"num_samples": 2000})(
+            gaussian, EmpiricalDistribution
+        )
+        g2 = convert(ed, MultivariateNormal)
         np.testing.assert_allclose(g2.loc, gaussian.loc, atol=0.2)
-        assert g2.name == from_distribution.output_name
+        assert g2.name == gaussian.name
         assert g2.provenance is not None
-        assert g2.provenance.operation == "workflow.from_distribution"
+        assert g2.provenance.operation == "workflow.convert"
 
-    def test_from_distribution_gaussian(self, gaussian):
+    def test_convert_gaussian(self, gaussian):
         """A law already of the target class converts to itself."""
-        g2 = from_distribution(gaussian, MultivariateNormal, num_samples=5000)
+        g2 = convert.with_options(method_options={"num_samples": 5000})(
+            gaussian, MultivariateNormal
+        )
         np.testing.assert_allclose(g2.loc, gaussian.loc, atol=0.15)
 
 
@@ -242,17 +246,17 @@ class TestEmpiricalDistribution:
 
     def test_sample_shape(self, simple_samples, key):
         ed = EmpiricalDistribution("x", simple_samples)
-        s = sample(ed, key=key, sample_shape=(10,))
+        s = sample(ed, sample_shape=(10,))
         assert s.shape == (10, 1)
 
     def test_sample_no_shape(self, simple_samples, key):
         ed = EmpiricalDistribution("x", simple_samples)
-        s = sample(ed, key=key)
+        s = sample(ed)
         assert s.shape == (1,)
 
     def test_sample_values_from_support(self, simple_samples, key):
         ed = EmpiricalDistribution("x", simple_samples)
-        s = jnp.asarray(sample(ed, key=key, sample_shape=(100,)))
+        s = jnp.asarray(sample(ed, sample_shape=(100,)))
         for val in s:
             assert jnp.any(jnp.all(jnp.isclose(simple_samples, val), axis=-1))
 
@@ -287,22 +291,28 @@ class TestEmpiricalDistribution:
         assert ed.name == "emp"
 
     def test_from_distribution(self, gaussian):
-        ed = from_distribution(gaussian, EmpiricalDistribution, num_samples=50)
+        ed = convert.with_options(method_options={"num_samples": 50})(
+            gaussian, EmpiricalDistribution
+        )
         assert ed.num_atoms == 50
         assert ed.event_shape == gaussian.event_shape
         assert ed.provenance is not None
-        assert ed.provenance.operation == "workflow.from_distribution"
-        assert ed.name == from_distribution.output_name
+        assert ed.provenance.operation == "workflow.convert"
+        assert ed.name == gaussian.name
 
-    def test_from_distribution_keeps_the_source_label(self, gaussian):
+    def test_convert_keeps_the_source_label(self, gaussian):
         """A conversion changes the representation, so the raw result keeps the label."""
-        ed = from_distribution.apply(gaussian, EmpiricalDistribution, num_samples=10)
+        ed = convert.with_options(raw=True, method_options={"num_samples": 10})(
+            gaussian, EmpiricalDistribution
+        )
         assert ed.name == gaussian.name
         assert ed.event_spec == gaussian.event_spec
 
-    def test_from_distribution_default_key(self, gaussian):
+    def test_convert_default_key(self, gaussian):
         """from_distribution should work without explicit key."""
-        ed = from_distribution(gaussian, EmpiricalDistribution, num_samples=10)
+        ed = convert.with_options(method_options={"num_samples": 10})(
+            gaussian, EmpiricalDistribution
+        )
         assert ed.num_atoms == 10
 
 
@@ -355,7 +365,7 @@ class TestEmpiricalLogWeights:
     def test_uniform_sampling(self, key):
         samples = jnp.array([[10.0], [20.0], [30.0]])
         ed = EmpiricalDistribution("x", samples)
-        draws = sample(ed, key=key, sample_shape=(1000,))
+        draws = sample(ed, sample_shape=(1000,))
         # All draws should be from the support
         for val in [10.0, 20.0, 30.0]:
             assert jnp.any(jnp.isclose(draws, val))
@@ -446,20 +456,16 @@ class TestDistributionABC:
         assert gaussian.dtype == loc.dtype
 
     def test_prob_delegates_to_log_prob(self, gaussian, key):
-        x = sample(gaussian, key=key, sample_shape=(3,))
+        x = sample(gaussian, sample_shape=(3,))
         np.testing.assert_allclose(
             prob(gaussian, x),
             jnp.exp(log_prob(gaussian, x)),
             rtol=1e-5,
         )
 
-    def test_from_distribution_raises_for_invalid_input(self):
-        with pytest.raises(ResolutionError, match="NoneType"):
-            from_distribution(None, NumericDistribution)
-
-    def test_from_distribution_takes_no_key(self, gaussian, key):
-        with pytest.raises(TypeError, match="workflow_run"):
-            from_distribution(gaussian, EmpiricalDistribution, key=key, num_samples=10)
+    def test_convert_raises_for_invalid_input(self):
+        with pytest.raises(ApplicabilityError, match="NoneType"):
+            convert(None, NumericDistribution)
 
     def test_provenance_default_none(self, gaussian):
         g = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
@@ -510,23 +516,23 @@ class TestTFPDistribution:
 class TestShapeSemantics:
     def test_sample_shape_convention(self, gaussian, key):
         """sample(key, sample_shape) → sample_shape + event_shape"""
-        s = sample(gaussian, key=key, sample_shape=(4, 2))
+        s = sample(gaussian, sample_shape=(4, 2))
         assert s.shape == (4, 2, 3)
 
     def test_log_prob_sample_shape(self, gaussian, key):
-        s = sample(gaussian, key=key, sample_shape=(4, 2))
+        s = sample(gaussian, sample_shape=(4, 2))
         lp = log_prob(gaussian, s)
         assert lp.shape == (4, 2)
 
     def test_empirical_sample_shape(self, simple_samples, key):
         ed = EmpiricalDistribution("x", simple_samples)
-        s = sample(ed, key=key, sample_shape=(5, 3))
+        s = sample(ed, sample_shape=(5, 3))
         assert s.shape == (5, 3, 1)
 
     def test_empirical_2d_sample_shape(self, key):
         samples = jnp.ones((4, 3))
         ed = EmpiricalDistribution("x", samples)
-        s = sample(ed, key=key, sample_shape=(10,))
+        s = sample(ed, sample_shape=(10,))
         assert s.shape == (10, 3)
 
 

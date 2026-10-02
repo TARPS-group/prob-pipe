@@ -63,15 +63,10 @@ def conjugate_nuts_posterior(
 ) -> ApproximateDistribution:
     """A well-mixed NUTS fit of the conjugate model — the method under validation."""
     m = conjugate_linear_model
-    return condition_on(
-        m.model,
-        {"y": m.data},
+    return condition_on.with_options(
         method="blackjax_nuts",
-        num_results=3000,
-        num_warmup=1500,
-        num_chains=2,
-        random_seed=0,
-    )
+        method_options={"num_results": 3000, "num_warmup": 1500, "num_chains": 2, "random_seed": 0},
+    )(m.model, {"y": m.data})
 
 
 @dataclass(frozen=True)
@@ -125,12 +120,7 @@ def beta_bernoulli_nuts_posterior(
 ) -> ApproximateDistribution:
     """A NUTS fit of the constrained, skewed Beta-Bernoulli posterior."""
     m = beta_bernoulli_model
-    return condition_on(
-        m.model,
-        {"y": m.data},
+    return condition_on.with_options(
         method="blackjax_nuts",
-        num_results=2000,
-        num_warmup=1000,
-        num_chains=2,
-        random_seed=0,
-    )
+        method_options={"num_results": 2000, "num_warmup": 1000, "num_chains": 2, "random_seed": 0},
+    )(m.model, {"y": m.data})

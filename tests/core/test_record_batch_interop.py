@@ -808,7 +808,7 @@ class TestAnEmpiricalTakesABatch:
 
         assert isinstance(empirical, EmpiricalDistribution)
         assert empirical.num_atoms == 4
-        drawn = sample(empirical, key=jax.random.PRNGKey(0), sample_shape=(16,))
+        drawn = sample(empirical, sample_shape=(16,))
         stored = {(float(i), float(i * 10)) for i in range(4)}
         seen = set(zip(np.asarray(drawn["X"]).tolist(), np.asarray(drawn["y"]).tolist()))
         assert seen <= stored

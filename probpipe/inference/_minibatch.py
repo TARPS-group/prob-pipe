@@ -456,7 +456,7 @@ class _MinibatchLogProbAtPoint(Distribution, SupportsSampling):
     """Distribution over minibatched log-density values at a fixed ``theta``.
 
     Returned by ``_RandomMinibatchLogProb(theta)`` — the two-argument
-    form of :func:`~probpipe.core.ops.random_unnormalized_log_prob`.
+    form of :func:`~probpipe.random_unnormalized_log_prob`.
     Sampling draws minibatch indices, computes the rescaled per-datum
     sum, and returns the scalar log-density value.
 

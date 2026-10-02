@@ -23,10 +23,10 @@ from probpipe import (
     workflow_run,
 )
 from probpipe.core._dispatch import (
+    BinaryDispatchMethod,
     Feasibility,
     MathematicalDomainError,
     ResolutionError,
-    UnaryDispatchRegistry,
 )
 from probpipe.core._specs import OutputSpec
 from probpipe.core.constraints import non_negative, real, unit_interval
@@ -34,17 +34,11 @@ from probpipe.distributions._capabilities import SupportsConditionalSampling, Su
 from probpipe.distributions._conditional import ConditionalDistribution
 from probpipe.distributions._distribution import Distribution
 from probpipe.distributions._empirical import EmpiricalDistribution
+from probpipe.functions import _rules
 from probpipe.linalg import LinOp
 from probpipe.operations import RouteSource
-from probpipe.operations._moments import (
-    ExpectationMethod,
-    cov,
-    expectation,
-    expectation_method_registry,
-    mean,
-    quantile,
-    variance,
-)
+from probpipe.operations._evaluate import evaluate
+from probpipe.operations._moments import cov, expectation, mean, quantile, variance
 from probpipe.values import Function, FunctionSpec
 
 from ._laws import (
@@ -111,8 +105,8 @@ def _record_empirical() -> EmpiricalDistribution:
     return EmpiricalDistribution("post", atoms)
 
 
-class _QuadratureStandIn(ExpectationMethod):
-    """An opt-in method that returns a marker, reachable only by name."""
+class _QuadratureStandIn(BinaryDispatchMethod):
+    """An opt-in evaluation rule whose pushforward is a point mass at 7, reachable only by name."""
 
     @property
     def name(self) -> str:
@@ -122,26 +116,39 @@ class _QuadratureStandIn(ExpectationMethod):
     def exact(self) -> bool:
         return False
 
-    def check(self, d: Any, f: Any, /, **options: Any) -> Feasibility:
+    @property
+    def priority(self) -> None:
+        return None
+
+    def supported_types(self) -> tuple[tuple[type, ...], tuple[type, ...]]:
+        return ((Function,), (Distribution,))
+
+    def check(self, f: Any, operand: Any, /, **call: Any) -> Feasibility:
         return Feasibility(True)
 
-    def execute(self, d: Any, f: Any, /, **options: Any) -> Any:
-        return jnp.float32(7.0)
+    def execute(self, f: Any, operand: Any, /, **call: Any) -> Any:
+        return EmpiricalDistribution("stand_in", jnp.array([7.0]))
 
 
 @pytest.fixture
 def quadrature(monkeypatch):
-    """The expectation route, delegating for one test to the shipped methods and the stand-in.
+    """The evaluation rules, for one test, with the stand-in beside the engine's rules.
 
-    The stand-in stays out of the global method registry, which other suites
+    The stand-in stays out of the global rule registry, which other suites
     inspect.
     """
-    registry: UnaryDispatchRegistry = UnaryDispatchRegistry()
-    for name in expectation_method_registry.list_methods():
-        registry.register(expectation_method_registry.get_method(name))
-    registry.register(_QuadratureStandIn())
-    (route,) = expectation.routes
-    monkeypatch.setattr(route, "registry", registry)
+    registry = type(_rules.evaluation_rule_registry)()
+    for rule in (
+        _rules._SamplingLift(),
+        _rules._ElementwiseSweep(),
+        _rules._EmpiricalEnumeration(),
+        _QuadratureStandIn(),
+    ):
+        registry.register(rule)
+    monkeypatch.setattr(_rules, "evaluation_rule_registry", registry)
+    for operation in (expectation, evaluate):
+        (route,) = [r for r in operation.routes if r.name == "evaluation_rules"]
+        monkeypatch.setattr(route, "registry", registry)
     return registry
 
 
@@ -403,25 +410,29 @@ class TestTheFallbacksOfAJoint:
 
 
 class TestExpectation:
-    def test_a_finite_support_law_takes_the_exact_method(self):
+    def test_a_finite_support_law_takes_the_closed_form(self):
         law = Coin("c", 0.25)
         report = expectation.check(law, lambda x: 2.0 * x)
-        assert (report.route, report.method, report.exact) == ("methods", "exact", True)
+        assert (report.route, report.exact) == ("closed_form", True)
         assert _value(expectation(law, lambda x: 2.0 * x)) == pytest.approx(0.5)
 
-    def test_monte_carlo_is_the_default_approximate_method(self):
+    def test_the_sampling_lift_is_the_default_approximate_rule(self):
         law = Gaussian("g")
         report = expectation.check(law, lambda x: x**2)
-        assert (report.method, report.exact) == ("monte_carlo", False)
+        assert (report.route, report.method, report.exact) == (
+            "evaluation_rules",
+            "sampling_lift",
+            False,
+        )
         with workflow_run(seed=6):
             estimate = expectation.with_options(n_broadcast_samples=_DRAWS)(law, lambda x: x**2)
         assert abs(_value(estimate) - 1.0) < 0.1
 
-    def test_method_selects_monte_carlo_for_a_law_with_an_exact_method(self):
-        view = expectation.with_options(method="monte_carlo")
-        assert view.check(Coin("c"), lambda x: x).method == "monte_carlo"
+    def test_method_selects_the_sampling_lift_for_a_law_with_a_closed_form(self):
+        view = expectation.with_options(method="sampling_lift")
+        assert view.check(Coin("c"), lambda x: x).method == "sampling_lift"
 
-    def test_method_selects_an_opt_in_method_by_name(self, quadrature):
+    def test_method_selects_an_opt_in_rule_by_name(self, quadrature):
         view = expectation.with_options(method="operations_suite_quadrature")
         assert _value(view(Gaussian("g"), lambda x: x)) == 7.0
 
@@ -455,11 +466,15 @@ class TestExpectation:
         with pytest.raises(ApplicabilityError, match="FunctionSpec"):
             expectation(Gaussian("g"), 3.0)
 
-    def test_the_one_route_delegates_to_the_method_registry(self):
-        (route,) = expectation.summary().routes
-        assert (route.name, route.source, route.exact) == ("methods", RouteSource.REGISTRY, None)
-        assert "exact, monte_carlo" in route.condition
-        assert expectation.routes[0].registry is expectation_method_registry
+    def test_the_routes_are_the_closed_form_then_the_evaluation_rules(self):
+        routes = [(route.name, route.source) for route in expectation.summary().routes]
+        assert routes == [
+            ("closed_form", RouteSource.CAPABILITY),
+            ("evaluation_rules", RouteSource.REGISTRY),
+            ("identity", RouteSource.FALLBACK),
+        ]
+        (route,) = [r for r in expectation.routes if r.name == "evaluation_rules"]
+        assert route.registry is _rules.evaluation_rule_registry
 
     def test_the_operation_takes_no_key(self):
-        assert list(inspect.signature(expectation).parameters) == ["d", "f"]
+        assert list(inspect.signature(expectation).parameters) == ["d", "f", "fixed_args"]

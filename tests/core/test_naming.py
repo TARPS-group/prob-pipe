@@ -25,9 +25,6 @@ from probpipe import (
     Record,
     RecordBatch,
     RecordSpec,
-)
-from probpipe.core._specs import NumericRecordSpec
-from probpipe.core.ops import (
     log_prob,
     mean,
     prob,
@@ -36,7 +33,9 @@ from probpipe.core.ops import (
     unnormalized_prob,
     variance,
 )
+from probpipe.core._specs import NumericRecordSpec
 from probpipe.distributions import FactoredDistribution
+from probpipe.functions._call import ApplicabilityError
 from probpipe.functions._result import _wrap_as_term
 
 KEY = jax.random.PRNGKey(0)
@@ -199,38 +198,34 @@ class TestADerivedNameSaysSo:
         assert self._batch()[1].name.startswith("posterior")
 
 
-class TestAnOperationNamesItsResult:
-    """Sampling retains supplied names; summaries and densities derive theirs."""
+class TestAnOperationLabelsItsResultByItsLaw:
+    """An operation's result takes the label of its primary operand, the law."""
 
     LAW = Normal("height", 0.0, 1.0)
 
     @pytest.mark.parametrize(
-        ("label", "compute"),
+        "compute",
         [
-            ("mean", lambda d: mean(d)),
-            ("variance", lambda d: variance(d)),
-            ("log_prob", lambda d: log_prob(d, value=jnp.asarray(0.0))),
+            lambda d: mean(d),
+            lambda d: variance(d),
+            lambda d: log_prob(d, jnp.asarray(0.0)),
         ],
+        ids=["mean", "variance", "log_prob"],
     )
-    def test_a_scalar_law_result_is_named_for_the_operation(self, label, compute):
-        result = compute(self.LAW)
+    def test_a_scalar_law_result_takes_the_laws_label(self, compute):
+        assert compute(self.LAW).name == "height"
 
-        assert result.name == label
-
-    def test_a_record_law_result_takes_the_output_name(self):
-        """An already tracked draw is copied under the Function result label."""
+    def test_a_record_law_draw_takes_the_laws_label(self):
         joint = FactoredDistribution("joint", [Normal("a", 0.0, 1.0)])
 
-        drawn = sample(joint, key=KEY)
-
-        assert drawn.name == sample.output_name
+        assert sample(joint).name == "joint"
 
     @pytest.mark.parametrize("sample_shape", [(), (4,)], ids=["single", "batch"])
-    def test_draws_take_the_sample_output_name(self, sample_shape):
+    def test_draws_take_the_laws_label(self, sample_shape):
         """Both a single draw and a batch cross the same result boundary."""
-        given = sample(Normal("height", 0.0, 1.0), sample_shape=sample_shape, key=KEY)
+        given = sample(Normal("height", 0.0, 1.0), sample_shape=sample_shape)
 
-        assert given.name == sample.output_name
+        assert given.name == "height"
 
 
 class TestTheOutputBoundaryNamesEveryKindAlike:
@@ -258,14 +253,14 @@ class TestLevelsAreNamedForWhatMintsThem:
     """An operation names the level it mints after itself (design V.9)."""
 
     def test_sample_mints_a_sample_level(self):
-        drawn = sample(Normal("height", 0.0, 1.0), sample_shape=(5,), key=KEY)
+        drawn = sample(Normal("height", 0.0, 1.0), sample_shape=(5,))
 
         assert drawn.level_names == ("sample",)
 
     def test_a_record_drawing_law_mints_the_same_level(self):
         joint = FactoredDistribution("joint", [Normal("a", 0.0, 1.0)])
 
-        drawn = sample(joint, sample_shape=(5,), key=KEY)
+        drawn = sample(joint, sample_shape=(5,))
 
         assert drawn.level_names == ("sample",)
 
@@ -295,7 +290,7 @@ class TestLevelsAreNamedForWhatMintsThem:
         """
         from probpipe import EmpiricalDistribution
 
-        drawn = sample(EmpiricalDistribution("atoms", atoms), sample_shape=(3,), key=KEY)
+        drawn = sample(EmpiricalDistribution("atoms", atoms), sample_shape=(3,))
 
         assert type(drawn).__name__ == expected
         assert (drawn.batch_shape, drawn.level_names) == ((3,), ("sample",))
@@ -304,11 +299,11 @@ class TestLevelsAreNamedForWhatMintsThem:
         """No sample_shape, no level to mint."""
         from probpipe import EmpiricalDistribution
 
-        drawn = sample(EmpiricalDistribution("atoms", jnp.linspace(0.0, 1.0, 5)), key=KEY)
+        drawn = sample(EmpiricalDistribution("atoms", jnp.linspace(0.0, 1.0, 5)))
 
         assert not isinstance(drawn, NumericArrayBatch)
 
-    def test_the_draws_take_the_sample_functions_output_name(self):
+    def test_the_draws_take_the_laws_label(self):
         from probpipe import EmpiricalDistribution
 
         drawn = sample(
@@ -316,10 +311,9 @@ class TestLevelsAreNamedForWhatMintsThem:
                 "atoms", OpaqueBatch("objects", [object() for _ in range(3)], "atom")
             ),
             sample_shape=(3,),
-            key=KEY,
         )
 
-        assert drawn.name == sample.output_name
+        assert drawn.name == "atoms"
 
 
 class TestABatchOperandKeepsItsLevelsThroughAnOperation:
@@ -345,16 +339,16 @@ class TestABatchOperandKeepsItsLevelsThroughAnOperation:
         return request.param
 
     def test_scoring_a_batch_of_draws_keeps_the_sample_level(self, density_op):
-        drawn = sample(self.LAW, sample_shape=(3,), key=KEY)
+        drawn = sample(self.LAW, sample_shape=(3,))
 
         scored = density_op(self.LAW, drawn)
 
         assert (scored.batch_shape, scored.level_names) == ((3,), ("sample",))
 
-    def test_the_result_uses_the_scoring_functions_output_name(self, density_op):
-        drawn = sample(self.LAW, sample_shape=(3,), key=KEY)
+    def test_the_result_takes_the_laws_label(self, density_op):
+        drawn = sample(self.LAW, sample_shape=(3,))
 
-        assert density_op(self.LAW, drawn).name == density_op.output_name
+        assert density_op(self.LAW, drawn).name == "height"
 
     def test_several_levels_are_all_restated(self, density_op):
         """The operand's own tiling, not one flat axis."""
@@ -372,52 +366,17 @@ class TestABatchOperandKeepsItsLevelsThroughAnOperation:
 
     def test_a_single_draw_is_still_a_single_value(self, density_op):
         """No operand levels to restate, so nothing is invented."""
-        scored = density_op(self.LAW, sample(self.LAW, key=KEY))
+        scored = density_op(self.LAW, sample(self.LAW))
 
         assert not isinstance(scored, NumericArrayBatch)
 
-    def test_a_raw_array_operand_is_left_alone(self, density_op):
-        """A bare array states no levels, so the result carries none."""
-        scored = density_op(self.LAW, jnp.zeros(3))
-
-        assert not isinstance(scored, NumericArrayBatch)
+    def test_a_raw_array_of_several_values_does_not_conform(self, density_op):
+        """A bare array states no levels, so it is one value of the wrong shape."""
+        with pytest.raises(ApplicabilityError, match="does not conform"):
+            density_op(self.LAW, jnp.zeros(3))
 
 
 class TestRawDrawNaming:
-    @pytest.mark.parametrize(
-        "make, kind, levels",
-        [
-            pytest.param(lambda: 2.0, NumericArray, None, id="numeric"),
-            pytest.param(lambda: {"x": 2.0}, Record, None, id="mapping"),
-            pytest.param(lambda: "tag", Opaque, None, id="opaque"),
-            pytest.param(lambda: lambda: 2.0, Function, None, id="callable"),
-            pytest.param(lambda: [], Opaque, None, id="empty-list"),
-            pytest.param(lambda: [1.0, 2.0], Opaque, None, id="numeric-list"),
-            pytest.param(lambda: ("a", "b"), Opaque, None, id="tuple"),
-            pytest.param(lambda: {1.0, 2.0}, Opaque, None, id="set"),
-            pytest.param(lambda: [{"x": 1.0}, {"x": 2.0}], Opaque, None, id="record-list"),
-            pytest.param(lambda: [_named("NumericArrayBatch")], Opaque, None, id="batch-list"),
-            pytest.param(lambda: [Normal("component", 0.0, 1.0)], Opaque, None, id="law-list"),
-        ],
-    )
-    def test_a_draw_takes_the_functions_output_name_without_renaming_levels(
-        self, make, kind, levels
-    ):
-        class Sampler:
-            name = "law"
-
-            def _sample(self, key, sample_shape=()):
-                return make()
-
-        law = Sampler()
-        result = sample(law, key=KEY)
-
-        assert isinstance(result, kind)
-        assert result.name == sample.output_name
-        assert result.provenance is not None
-        if levels is not None:
-            assert result.level_names == levels
-
     @pytest.mark.parametrize("value", [2.0, {"x": 2.0}], ids=["scalar", "mapping"])
     def test_a_declared_raw_result_takes_the_requested_name(self, value):
         from probpipe import OutputSpec
@@ -430,16 +389,6 @@ class TestRawDrawNaming:
         assert result.name == "law"
         assert result.spec == declaration.spec
         assert float(result["x"] if isinstance(result, Record) else result) == 2.0
-
-    def test_a_raw_draws_name_is_validated_by_its_constructor(self):
-        class Sampler:
-            name = ""
-
-            def _sample(self, key, sample_shape=()):
-                return 2.0
-
-        with pytest.raises(TypeError, match=r"NumericArray\.__init__ must set a non-empty name"):
-            sample(Sampler(), key=KEY)
 
 
 class TestEveryAggregateIsNamedForItsFunction:

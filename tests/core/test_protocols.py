@@ -355,11 +355,11 @@ class TestSampleReturnTypeConvention:
         # unbatched
         s0 = dist._sample(k, ())
         assert set(s0) == {"x", "y"} and s0["x"].shape == ()
-        assert isinstance(sample(dist, key=k), Record)
+        assert isinstance(sample(dist), Record)
         # batched
         s1 = dist._sample(k, (5,))
         assert s1["x"].shape == (5,) and s1["y"].shape == (5,)
-        batch = sample(dist, key=k, sample_shape=(5,))
+        batch = sample(dist, sample_shape=(5,))
         assert isinstance(batch, NumericRecordBatch)
         assert batch.batch_shape == (5,)
 
@@ -401,9 +401,9 @@ class TestSampleReturnTypeConvention:
         k = jax.random.PRNGKey(0)
         assert jg._sample(k, ())["x"].shape == (1,)
         assert jg._sample(k, (5,))["y"].shape == (5, 1)
-        assert isinstance(sample(jg, key=k), Record)
-        assert isinstance(sample(jg, key=k, sample_shape=(5,)), NumericRecordBatch)
-        assert sample(jg, key=k, sample_shape=(5,)).batch_shape == (5,)
+        assert isinstance(sample(jg), Record)
+        assert isinstance(sample(jg, sample_shape=(5,)), NumericRecordBatch)
+        assert sample(jg, sample_shape=(5,)).batch_shape == (5,)
 
 
 # ---------------------------------------------------------------------------

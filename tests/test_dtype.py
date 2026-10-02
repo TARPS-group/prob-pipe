@@ -11,7 +11,6 @@ import subprocess
 import sys
 import textwrap
 
-import jax
 import jax.numpy as jnp
 
 
@@ -55,13 +54,13 @@ def _run_x64(snippet: str) -> str:
 
 
 def test_x32_default_normal_is_float32():
-    import probpipe.core.ops as ops
+    import probpipe as ops
     from probpipe.families._continuous import Normal
 
     n = Normal(loc=0.0, scale=1.0, name="n")
     assert n.dtype == jnp.float32
     assert ops.log_prob(n, 0.5).dtype == jnp.float32
-    assert ops.sample(n, key=jax.random.key(0)).dtype == jnp.float32
+    assert ops.sample(n).dtype == jnp.float32
 
 
 def test_x32_explicit_float32_array_preserved():
@@ -90,11 +89,11 @@ def test_x64_normal_full_pipeline():
     out = _run_x64(
         """
         from probpipe.families._continuous import Normal
-        import probpipe.core.ops as ops
+        import probpipe as ops
         n = Normal(loc=0.0, scale=1.0, name='n')
         assert n.dtype == jnp.float64, n.dtype
         assert ops.log_prob(n, 0.5).dtype == jnp.float64
-        assert ops.sample(n, key=__import__('jax').random.key(0)).dtype == jnp.float64
+        assert ops.sample(n).dtype == jnp.float64
         assert ops.mean(n).dtype == jnp.float64
         print('OK')
         """
@@ -106,7 +105,7 @@ def test_x64_uniform_beta_gamma():
     out = _run_x64(
         """
         from probpipe.families._continuous import Uniform, Beta, Gamma
-        import probpipe.core.ops as ops
+        import probpipe as ops
         import jax
 
         for cls, kwargs in [
@@ -116,7 +115,7 @@ def test_x64_uniform_beta_gamma():
         ]:
             d = cls(**kwargs, name='d')
             assert d.dtype == jnp.float64, (cls.__name__, d.dtype)
-            assert ops.sample(d, key=jax.random.key(0)).dtype == jnp.float64
+            assert ops.sample(d).dtype == jnp.float64
         print('OK')
         """
     )
@@ -128,13 +127,13 @@ def test_x64_multivariate_normal_does_not_raise():
     out = _run_x64(
         """
         from probpipe.families._multivariate import MultivariateNormal
-        import probpipe.core.ops as ops
+        import probpipe as ops
         import jax
 
         mvn = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name='m')
         assert mvn.dtype == jnp.float64, mvn.dtype
         assert ops.log_prob(mvn, jnp.asarray([0.5, -0.5])).dtype == jnp.float64
-        assert ops.sample(mvn, key=jax.random.key(0)).dtype == jnp.float64
+        assert ops.sample(mvn).dtype == jnp.float64
         assert ops.mean(mvn).dtype == jnp.float64
         print('OK')
         """
@@ -192,14 +191,14 @@ def test_x64_transformed_distribution_preserves_dtype():
         import tensorflow_probability.substrates.jax.bijectors as tfb
         from probpipe.families._continuous import Normal
         from probpipe.families import BijectorTransformedDistribution
-        import probpipe.core.ops as ops
+        import probpipe as ops
         import jax
 
         base = Normal(loc=0.0, scale=1.0, name='base')
         td = BijectorTransformedDistribution('td', base, tfb.Exp())
         assert td.dtype == jnp.float64, td.dtype
         assert ops.log_prob(td, 1.0).dtype == jnp.float64
-        assert ops.sample(td, key=jax.random.key(0)).dtype == jnp.float64
+        assert ops.sample(td).dtype == jnp.float64
         print('OK')
         """
     )
@@ -210,13 +209,13 @@ def test_x64_gaussian_joint_preserves_dtype():
     out = _run_x64(
         """
         from probpipe.families import MultivariateNormal
-        import probpipe.core.ops as ops
+        import probpipe as ops
         import jax
 
         joint = MultivariateNormal(
             loc=jnp.zeros(1), cov=jnp.eye(1), name='x',
         ) * MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name='y')
-        sample = ops.sample(joint, key=jax.random.key(0))
+        sample = ops.sample(joint)
         assert sample['x'].dtype == jnp.float64, sample['x'].dtype
         assert sample['y'].dtype == jnp.float64
         print('OK')
@@ -265,7 +264,7 @@ def test_x64_discrete_distributions():
         from probpipe.families._discrete import (
             Bernoulli, Binomial, Poisson, Categorical, NegativeBinomial,
         )
-        import probpipe.core.ops as ops
+        import probpipe as ops
         import jax
 
         cases = [
@@ -277,7 +276,7 @@ def test_x64_discrete_distributions():
         ]
         for d in cases:
             # log_prob on int-valued support should not raise
-            sample = ops.sample(d, key=jax.random.key(0))
+            sample = ops.sample(d)
             ops.log_prob(d, sample)
         # The float-valued probs/rate/logits should produce float64 internals
         b = Bernoulli(probs=0.5, name='b2')
@@ -292,13 +291,13 @@ def test_x64_kde_distribution():
     out = _run_x64(
         """
         from probpipe import KDEDistribution
-        import probpipe.core.ops as ops
+        import probpipe as ops
         import jax
 
         samples = jnp.linspace(-2.0, 2.0, 50)
         kde = KDEDistribution('kde', samples)
         assert kde.dtype == jnp.float64
-        assert ops.sample(kde, key=jax.random.key(0)).dtype == jnp.float64
+        assert ops.sample(kde).dtype == jnp.float64
         assert ops.log_prob(kde, 0.5).dtype == jnp.float64
         print('OK')
         """
@@ -333,11 +332,11 @@ def test_x64_joint_promotes():
     out = _run_x64(
         """
         from probpipe.families._continuous import Normal
-        import probpipe.core.ops as ops
+        import probpipe as ops
         import jax
 
         joint = Normal(loc=0.0, scale=1.0, name='a') * Normal(loc=0.0, scale=1.0, name='b')
-        sample = ops.sample(joint, key=jax.random.key(0))
+        sample = ops.sample(joint)
         assert sample['a'].dtype == jnp.float64
         assert sample['b'].dtype == jnp.float64
         assert ops.log_prob(joint, sample).dtype == jnp.float64
@@ -352,7 +351,7 @@ def test_x64_gaussian_joint_conditioning():
     out = _run_x64(
         """
         from probpipe.families import MultivariateNormal
-        from probpipe.core.ops import condition_on, sample
+        from probpipe import condition_on, sample
         import jax
 
         joint = MultivariateNormal(
@@ -360,9 +359,9 @@ def test_x64_gaussian_joint_conditioning():
         ) * MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name='y')
         # Conditioning on a float32 observed value must not corrupt the
         # parent's float64 dtype.
-        cond = condition_on(joint, x=jnp.array([1.0], dtype=jnp.float32))
-        sample_y = sample(cond, key=jax.random.key(0))
-        assert sample_y['y'].dtype == jnp.float64, sample_y['y'].dtype
+        cond = condition_on(joint, {"x": jnp.array([1.0], dtype=jnp.float32)})
+        sample_y = sample(cond)
+        assert sample_y.dtype == jnp.float64, sample_y.dtype
         print('OK')
         """
     )

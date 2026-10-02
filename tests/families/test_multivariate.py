@@ -83,12 +83,12 @@ class TestGeneric:
         assert multivariate_dist.event_shape == expected
 
     def test_sample_shape(self, multivariate_dist, key):
-        samples = sample(multivariate_dist, key=key, sample_shape=(5,))
+        samples = sample(multivariate_dist, sample_shape=(5,))
         expected = (5, *multivariate_dist.event_shape)
         assert samples.shape == expected
 
     def test_log_prob_shape(self, multivariate_dist, key):
-        s = sample(multivariate_dist, key=key)
+        s = sample(multivariate_dist)
         lp = log_prob(multivariate_dist, s)
         assert lp.shape == ()
 
@@ -125,26 +125,26 @@ class TestGeneric:
 class TestDirichlet:
     def test_samples_sum_to_one(self, key):
         d = Dirichlet(concentration=[1.0, 2.0, 3.0], name="d")
-        samples = sample(d, key=key, sample_shape=(100,))
+        samples = sample(d, sample_shape=(100,))
         sums = jnp.sum(samples, axis=-1)
         assert jnp.allclose(sums, 1.0, atol=1e-5)
 
     def test_samples_positive(self, key):
         d = Dirichlet(concentration=[1.0, 2.0, 3.0], name="d")
-        samples = jnp.asarray(sample(d, key=key, sample_shape=(100,)))
+        samples = jnp.asarray(sample(d, sample_shape=(100,)))
         assert jnp.all(samples > 0)
 
 
 class TestMultinomial:
     def test_samples_nonnegative_integers(self, key):
         d = Multinomial(total_count=10, probs=[0.2, 0.3, 0.5], name="m")
-        samples = jnp.asarray(sample(d, key=key, sample_shape=(100,)))
+        samples = jnp.asarray(sample(d, sample_shape=(100,)))
         assert jnp.all(samples >= 0)
         assert jnp.allclose(samples, jnp.round(samples))
 
     def test_samples_sum_to_total_count(self, key):
         d = Multinomial(total_count=10, probs=[0.2, 0.3, 0.5], name="m")
-        samples = sample(d, key=key, sample_shape=(100,))
+        samples = sample(d, sample_shape=(100,))
         sums = jnp.sum(samples, axis=-1)
         assert jnp.allclose(sums, 10.0)
 
@@ -170,12 +170,12 @@ class TestMultinomial:
 class TestWishart:
     def test_accepts_scale_tril(self, key):
         d = Wishart(df=5.0, scale_tril=jnp.eye(3), name="w")
-        s = sample(d, key=key)
+        s = sample(d)
         assert s.shape == (3, 3)
 
     def test_accepts_scale(self, key):
         d = Wishart(df=5.0, scale=jnp.eye(3), name="w")
-        s = sample(d, key=key)
+        s = sample(d)
         assert s.shape == (3, 3)
 
     def test_error_if_both_given(self):
@@ -184,7 +184,7 @@ class TestWishart:
 
     def test_samples_positive_semi_definite(self, key):
         d = Wishart(df=5.0, scale_tril=jnp.eye(3), name="w")
-        samples = jnp.asarray(sample(d, key=key, sample_shape=(10,)))
+        samples = jnp.asarray(sample(d, sample_shape=(10,)))
         # Diagonal elements of a positive semi-definite matrix are >= 0.
         for i in range(10):
             diag = jnp.diag(samples[i])
@@ -194,7 +194,7 @@ class TestWishart:
 class TestVonMisesFisher:
     def test_samples_unit_norm(self, key):
         d = VonMisesFisher(mean_direction=[1.0, 0.0, 0.0], concentration=5.0, name="v")
-        samples = sample(d, key=key, sample_shape=(100,))
+        samples = sample(d, sample_shape=(100,))
         norms = jnp.linalg.norm(samples, axis=-1)
         assert jnp.allclose(norms, 1.0, atol=1e-5)
 
@@ -425,7 +425,7 @@ class TestMultivariateMoments:
         """50k-sample mean and cov must match analytical values."""
         alpha = np.array([1.0, 2.0, 3.0])
         d = Dirichlet(concentration=alpha, name="d")
-        draws = np.asarray(sample(d, key=key, sample_shape=(50_000,)))
+        draws = np.asarray(sample(d, sample_shape=(50_000,)))
         np.testing.assert_allclose(draws.mean(0), np.asarray(mean(d)), atol=0.005)
         np.testing.assert_allclose(np.cov(draws, rowvar=False), np.asarray(cov(d)), atol=0.002)
 
@@ -434,7 +434,7 @@ class TestMultivariateMoments:
         alpha = np.array([1.0, 2.0, 3.0])
         alpha_0 = alpha.sum()
         d = Dirichlet(concentration=alpha, name="d")
-        draws = np.asarray(sample(d, key=key, sample_shape=(50_000,)))
+        draws = np.asarray(sample(d, sample_shape=(50_000,)))
         for i in range(3):
             scipy_marginal = scipy.stats.beta(alpha[i], alpha_0 - alpha[i])
             _, p = scipy.stats.kstest(draws[:, i], scipy_marginal.cdf)
@@ -465,7 +465,7 @@ class TestMultivariateMoments:
         """50k-sample mean and cov must match analytical values."""
         probs = np.array([0.2, 0.3, 0.5])
         d = Multinomial(total_count=10, probs=probs, name="m")
-        draws = np.asarray(sample(d, key=key, sample_shape=(50_000,)))
+        draws = np.asarray(sample(d, sample_shape=(50_000,)))
         np.testing.assert_allclose(draws.mean(0), np.asarray(mean(d)), atol=0.05)
         expected_cov = 10 * (np.diag(probs) - np.outer(probs, probs))
         np.testing.assert_allclose(np.cov(draws, rowvar=False), expected_cov, atol=0.1)
@@ -480,7 +480,7 @@ class TestMultivariateMoments:
     def test_wishart_sample_mean(self, key):
         """50k-sample mean of Wishart(5, I) must match 5*I."""
         d = Wishart(df=5.0, scale_tril=jnp.eye(3), name="w")
-        draws = np.asarray(sample(d, key=key, sample_shape=(50_000,)))
+        draws = np.asarray(sample(d, sample_shape=(50_000,)))
         np.testing.assert_allclose(draws.mean(0), 5.0 * np.eye(3), atol=0.05)
 
     # -- Von Mises-Fisher --------------------------------------------------
@@ -496,7 +496,7 @@ class TestMultivariateMoments:
         """50k-sample mean direction must be parallel to mean_direction."""
         direction = np.array([1.0, 0.0, 0.0])
         d = VonMisesFisher(mean_direction=direction.tolist(), concentration=10.0, name="v")
-        draws = np.asarray(sample(d, key=key, sample_shape=(50_000,)))
+        draws = np.asarray(sample(d, sample_shape=(50_000,)))
         sample_mean = draws.mean(0)
         sample_dir = sample_mean / np.linalg.norm(sample_mean)
         np.testing.assert_allclose(sample_dir, direction, atol=0.01)

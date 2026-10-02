@@ -16,7 +16,7 @@ from typing import Any
 from ..core._dispatch import Feasibility
 from ..core._spec_base import TermSpec
 from ..core._specs import OutputSpec
-from ..functions import _plan, _rules
+from ..functions import _plan, _rules, function
 from ..functions._call import ApplicabilityError
 from ..functions._resolution import PointReport
 from ..values import Function, FunctionSpec
@@ -101,9 +101,14 @@ def _bound_parameter(f: Function, fixed_args: Mapping[str, Any] | None) -> str:
     return open_parameters[0]
 
 
+def _as_function(f: Any) -> Function:
+    """The map as a ``Function``: a plain callable is wrapped under its own name."""
+    return f if isinstance(f, Function) else function(f)
+
+
 def _call_values(call: BoundCall) -> tuple[Function, str, Any, dict[str, Any]]:
     """The map, the parameter the operand binds, the operand, and the fixed arguments."""
-    f, operand = call.operands["f"], call.operands["v"]
+    f, operand = _as_function(call.operands["f"]), call.operands["v"]
     fixed = dict(call.operands.get("fixed_args") or {})
     return f, _bound_parameter(f, fixed), operand, fixed
 
@@ -136,8 +141,15 @@ class _EvaluationRules(_RegistryRoute):
     direct call take the same controls (VI.1).
     """
 
+    #: The controls the run forwards to the direct call.
+    _forwarded: tuple[str, ...] = _FORWARDED_CONTROLS
+
     def __init__(self) -> None:
         super().__init__("evaluation_rules", registry=_rules.evaluation_rule_registry)
+
+    def _values(self, call: BoundCall) -> tuple[Function, str, Any, dict[str, Any]]:
+        """The map, the parameter the operand binds, the operand, and the fixed arguments."""
+        return _call_values(call)
 
     @property
     def condition(self) -> str:
@@ -153,7 +165,7 @@ class _EvaluationRules(_RegistryRoute):
         A rule named for an operand the direct call does not lift is refused, as
         the direct call refuses it.
         """
-        f, parameter, operand, fixed = _call_values(call)
+        f, parameter, operand, fixed = self._values(call)
         if not _lifts(f, parameter, operand):
             if method is not None:
                 return Feasibility(
@@ -174,10 +186,8 @@ class _EvaluationRules(_RegistryRoute):
 
     def run(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Any:
         """The direct call of the map on the operand, by the rule *method* names, if any."""
-        f, parameter, operand, fixed = _call_values(call)
-        forwarded = {
-            name: call.controls[name] for name in _FORWARDED_CONTROLS if name in call.controls
-        }
+        f, parameter, operand, fixed = self._values(call)
+        forwarded = {name: call.controls[name] for name in self._forwarded if name in call.controls}
         forwarded["exact_only"] = exact_only
         if method is not None:
             forwarded["method"] = method

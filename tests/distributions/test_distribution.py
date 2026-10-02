@@ -570,7 +570,7 @@ class TestNameBinding:
 
 
 class TestDerivedNames:
-    """A law that ``expectation`` constructs is named for the operation."""
+    """An expectation's result takes the label of its law."""
 
     @pytest.mark.parametrize(
         ("make_operand", "f"),
@@ -602,9 +602,10 @@ class TestDerivedNames:
             ),
         ],
     )
-    def test_expectation_bootstrap_is_named_for_the_operation(self, make_operand, f):
-        result = expectation(make_operand(), f, num_evaluations=3, key=jax.random.PRNGKey(0))
-        assert result.name == "expectation"
+    def test_an_expectation_takes_the_laws_label(self, make_operand, f):
+        law = make_operand()
+        result = expectation.with_options(n_broadcast_samples=3)(law, f)
+        assert result.name == law.name
 
 
 class TestPublicImportPaths:
@@ -1065,10 +1066,6 @@ class TestJointDeclarations:
 class TestEmpiricalDeclarations:
     """An empirical or bootstrap law declares what one draw is, read off its atoms or source."""
 
-    @pytest.mark.pending(
-        reason="the exported sample wraps a batch-valued draw as a record, not as its declared batch",
-        raises=AssertionError,
-    )
     def test_a_replicate_of_a_record_valued_law_declares_a_batch_of_records(self):
         source = (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)).with_name("p")
         replicate = BootstrapReplicateDistribution("rep", source, replicate_size=3, level="row")
@@ -1076,7 +1073,7 @@ class TestEmpiricalDeclarations:
         assert isinstance(spec, BatchSpec)
         assert spec.batch_shape == (3,)
         assert tuple(spec.element_spec.fields) == ("a", "b")
-        assert spec.is_valid(sample(replicate, key=jax.random.PRNGKey(0)))
+        assert spec.is_valid(sample(replicate))
 
     def test_a_replicate_of_a_nested_posterior_keeps_its_groups(self):
         from probpipe.inference._approximate_distribution import ApproximateDistribution

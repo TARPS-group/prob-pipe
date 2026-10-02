@@ -1,7 +1,8 @@
 """Tests for BlackJAX-backed SGMCMC methods (``blackjax_sgld`` / ``blackjax_sghmc``).
 
 End-to-end coverage of the inference-method-registry path:
-``condition_on(likelihood * prior, y=y, method="blackjax_sgld", batch_size=…, …)``,
+``condition_on.with_options(method="blackjax_sgld", method_options={"batch_size": …})``
+applied to ``(likelihood * prior, {"y": y})``,
 plus checks that the gradient estimator actually drives convergence
 toward the posterior mode on a 200-row Bayesian logistic regression.
 """
@@ -289,16 +290,16 @@ class TestConvergence:
 
 class TestConditionOnDispatch:
     def test_sgld_via_condition_on(self, logistic_problem):
-        post = condition_on(
-            logistic_problem["model"],
-            logistic_problem["data"],
+        post = condition_on.with_options(
             method="blackjax_sgld",
-            batch_size=40,
-            num_results=1000,
-            num_warmup=200,
-            step_size=1e-3,
-            random_seed=7,
-        )
+            method_options={
+                "batch_size": 40,
+                "num_results": 1000,
+                "num_warmup": 200,
+                "step_size": 1e-3,
+                "random_seed": 7,
+            },
+        )(logistic_problem["model"], logistic_problem["data"])
         assert isinstance(post, ApproximateDistribution)
         assert _draws(post).shape == (1000, 2)
 
@@ -351,16 +352,16 @@ class TestConditionOnDispatch:
         prior = MultivariateNormal("beta", jnp.zeros(p), cov=jnp.eye(p)) * HalfNormal(
             "dispersion", 1.0
         )
-        post = condition_on(
-            glm_likelihood("y", GaussianFamily(), X=X) * prior,
-            y=y,
+        post = condition_on.with_options(
             method="blackjax_sgld",
-            batch_size=20,
-            num_results=50,
-            num_warmup=0,
-            step_size=1e-4,
-            random_seed=1,
-        )
+            method_options={
+                "batch_size": 20,
+                "num_results": 50,
+                "num_warmup": 0,
+                "step_size": 1e-4,
+                "random_seed": 1,
+            },
+        )(glm_likelihood("y", GaussianFamily(), X=X) * prior, {"y": y})
         assert float(_draws(post)[0, 2]) > 0.0
 
     def test_with_replacement_kwarg_is_accepted_and_dispatches(self, logistic_problem):
@@ -378,17 +379,17 @@ class TestConditionOnDispatch:
         semantics themselves are covered directly in the
         ``MinibatchedDistribution`` tests.
         """
-        post = condition_on(
-            logistic_problem["model"],
-            logistic_problem["data"],
+        post = condition_on.with_options(
             method="blackjax_sgld",
-            batch_size=20,
-            num_results=100,
-            num_warmup=0,
-            step_size=1e-3,
-            random_seed=4,
-            with_replacement=True,
-        )
+            method_options={
+                "batch_size": 20,
+                "num_results": 100,
+                "num_warmup": 0,
+                "step_size": 1e-3,
+                "random_seed": 4,
+                "with_replacement": True,
+            },
+        )(logistic_problem["model"], logistic_problem["data"])
         # No exception + finite, correctly-shaped chain == kwarg accepted
         # by execute() and threaded into MinibatchedDistribution.
         assert _draws(post).shape == (100, logistic_problem["P"])

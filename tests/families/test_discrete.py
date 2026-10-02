@@ -7,6 +7,7 @@ import pytest
 import scipy.stats
 
 from probpipe import (
+    NumericArrayBatch,
     NumericDistribution,
     TFPDistribution,
     integer_interval,
@@ -57,11 +58,11 @@ class TestGeneric:
         assert isinstance(discrete_dist.event_shape, tuple)
 
     def test_sample_shape(self, discrete_dist, key):
-        samples = sample(discrete_dist, key=key, sample_shape=(5,))
+        samples = sample(discrete_dist, sample_shape=(5,))
         assert samples.shape == (5, *discrete_dist.event_shape)
 
     def test_log_prob_shape(self, discrete_dist, key):
-        samples = sample(discrete_dist, key=key, sample_shape=(5,))
+        samples = sample(discrete_dist, sample_shape=(5,))
         lp = log_prob(discrete_dist, samples)
         # Distributions are scalar (no batch_shape); the log-prob
         # shape is just the sample_shape prefix.
@@ -99,17 +100,17 @@ def test_name_set(name):
 class TestBernoulli:
     def test_samples_zero_or_one(self, key):
         dist = Bernoulli(probs=0.7, name="x")
-        samples = jnp.asarray(sample(dist, key=key, sample_shape=(1000,)))
+        samples = jnp.asarray(sample(dist, sample_shape=(1000,)))
         assert jnp.all((samples == 0) | (samples == 1))
 
     def test_works_with_probs(self, key):
         dist = Bernoulli(probs=0.7, name="x")
-        samples = sample(dist, key=key, sample_shape=(10,))
+        samples = sample(dist, sample_shape=(10,))
         assert samples.shape == (10,)
 
     def test_works_with_logits(self, key):
         dist = Bernoulli(logits=0.0, name="x")
-        samples = sample(dist, key=key, sample_shape=(10,))
+        samples = sample(dist, sample_shape=(10,))
         assert samples.shape == (10,)
 
     def test_error_if_both_probs_and_logits(self):
@@ -120,20 +121,20 @@ class TestBernoulli:
 class TestBinomial:
     def test_samples_nonneg_leq_total_count(self, key):
         dist = Binomial(total_count=10, probs=0.3, name="x")
-        samples = jnp.asarray(sample(dist, key=key, sample_shape=(1000,)))
+        samples = jnp.asarray(sample(dist, sample_shape=(1000,)))
         assert jnp.all(samples >= 0)
         assert jnp.all(samples <= 10)
 
     def test_samples_are_integers(self, key):
         dist = Binomial(total_count=10, probs=0.3, name="x")
-        samples = jnp.asarray(sample(dist, key=key, sample_shape=(100,)))
+        samples = jnp.asarray(sample(dist, sample_shape=(100,)))
         assert jnp.allclose(samples, jnp.round(samples))
 
 
 class TestPoisson:
     def test_samples_nonneg_integers(self, key):
         dist = Poisson(rate=5.0, name="x")
-        samples = jnp.asarray(sample(dist, key=key, sample_shape=(1000,)))
+        samples = jnp.asarray(sample(dist, sample_shape=(1000,)))
         assert jnp.all(samples >= 0)
         assert jnp.allclose(samples, jnp.round(samples))
 
@@ -142,13 +143,13 @@ class TestCategorical:
     def test_samples_are_valid_indices(self, key):
         probs = [0.2, 0.3, 0.5]
         dist = Categorical(probs=probs, name="x")
-        samples = jnp.asarray(sample(dist, key=key, sample_shape=(1000,)))
+        samples = jnp.asarray(sample(dist, sample_shape=(1000,)))
         assert jnp.all(samples >= 0)
         assert jnp.all(samples < len(probs))
 
     def test_samples_are_integers(self, key):
         dist = Categorical(probs=[0.2, 0.3, 0.5], name="x")
-        samples = jnp.asarray(sample(dist, key=key, sample_shape=(100,)))
+        samples = jnp.asarray(sample(dist, sample_shape=(100,)))
         assert jnp.allclose(samples, jnp.round(samples))
 
     @pytest.mark.parametrize("parameter", ["probs", "logits"])
@@ -160,18 +161,18 @@ class TestCategorical:
 class TestNegativeBinomial:
     def test_samples_nonneg_integers(self, key):
         dist = NegativeBinomial(total_count=5, probs=0.4, name="x")
-        samples = jnp.asarray(sample(dist, key=key, sample_shape=(1000,)))
+        samples = jnp.asarray(sample(dist, sample_shape=(1000,)))
         assert jnp.all(samples >= 0)
         assert jnp.allclose(samples, jnp.round(samples))
 
     def test_works_with_probs(self, key):
         dist = NegativeBinomial(total_count=5, probs=0.4, name="x")
-        samples = sample(dist, key=key, sample_shape=(10,))
+        samples = sample(dist, sample_shape=(10,))
         assert samples.shape == (10,)
 
     def test_works_with_logits(self, key):
         dist = NegativeBinomial(total_count=5, logits=0.0, name="x")
-        samples = sample(dist, key=key, sample_shape=(10,))
+        samples = sample(dist, sample_shape=(10,))
         assert samples.shape == (10,)
 
     def test_error_if_both_probs_and_logits(self):
@@ -258,7 +259,7 @@ class TestDiscreteMoments:
     def test_bernoulli_samples_chi2(self, key):
         """Bernoulli(0.7) samples must pass a chi-squared test."""
         d = Bernoulli(probs=0.7, name="x")
-        s = np.asarray(sample(d, key=key, sample_shape=(50_000,)))
+        s = np.asarray(sample(d, sample_shape=(50_000,)))
         counts = np.bincount(s.astype(int), minlength=2)
         _, p = _chi2_discrete(counts, np.array([0.3, 0.7]))
         assert p > 0.001, f"chi2 failed: p={p:.4e}"
@@ -272,7 +273,7 @@ class TestDiscreteMoments:
     def test_binomial_samples_chi2(self, key):
         """Binomial(10, 0.3) samples must pass a chi-squared test."""
         d = Binomial(total_count=10, probs=0.3, name="x")
-        s = np.asarray(sample(d, key=key, sample_shape=(50_000,)))
+        s = np.asarray(sample(d, sample_shape=(50_000,)))
         counts = np.bincount(s.astype(int), minlength=11)
         expected_probs = scipy.stats.binom.pmf(np.arange(11), 10, 0.3)
         _, p = _chi2_discrete(counts, expected_probs)
@@ -286,7 +287,7 @@ class TestDiscreteMoments:
     def test_poisson_samples_chi2(self, key):
         """Poisson(5) samples must pass a chi-squared test."""
         d = Poisson(rate=5.0, name="x")
-        s = np.asarray(sample(d, key=key, sample_shape=(50_000,)))
+        s = np.asarray(sample(d, sample_shape=(50_000,)))
         max_k = int(s.max()) + 1
         counts = np.bincount(s.astype(int), minlength=max_k)
         expected_probs = scipy.stats.poisson.pmf(np.arange(max_k), 5.0)
@@ -298,7 +299,7 @@ class TestDiscreteMoments:
         d = Poisson(rate=5.0, name="x")
         k = jnp.array([0, 1, 5, 10])
         np.testing.assert_allclose(
-            np.asarray(log_prob(d, k)),
+            np.asarray(log_prob(d, NumericArrayBatch("k", k, "point"))),
             scipy.stats.poisson.logpmf(np.asarray(k), 5.0),
             rtol=1e-5,
         )
@@ -308,7 +309,7 @@ class TestDiscreteMoments:
         d = Binomial(total_count=10, probs=0.3, name="x")
         k = jnp.array([0, 3, 5, 10])
         np.testing.assert_allclose(
-            np.asarray(log_prob(d, k)),
+            np.asarray(log_prob(d, NumericArrayBatch("k", k, "point"))),
             scipy.stats.binom.logpmf(np.asarray(k), 10, 0.3),
             rtol=1e-5,
         )

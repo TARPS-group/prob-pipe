@@ -340,14 +340,6 @@ def _library_classes() -> set[type]:
     }
 
 
-# ``sample`` wraps a batch-valued draw as an array.
-_DRAW_FAILURES = {
-    BootstrapReplicateDistribution: pytest.mark.pending(
-        reason="the exported sample wraps a batch-valued draw as an array, not as its declared batch",
-        raises=AssertionError,
-    ),
-}
-
 # Laws that do not pickle, by the exception each raises.
 _RUNTIME_CLASS = pytest.mark.xfail(
     raises=pickle.PicklingError,
@@ -409,12 +401,12 @@ class TestDeclaration:
         for view in ("dtypes", "supports", "dtype", "support"):
             assert hasattr(law, view) is numeric
 
-    @pytest.mark.parametrize(("cls", "make"), _rows(_DRAW_FAILURES))
+    @pytest.mark.parametrize(("cls", "make"), _rows())
     def test_the_declaration_admits_the_draw(self, cls, make):
         law = make()
         if not isinstance(law, SupportsSampling):
             pytest.skip("the law does not sample")
-        assert law.event_spec.spec.is_valid(sample(law, key=jax.random.PRNGKey(0)))
+        assert law.event_spec.spec.is_valid(sample(law))
 
 
 class TestRoundTrips:

@@ -72,8 +72,8 @@ class TestTheRegistryMethods:
     def test_an_entry_that_selects_nothing_reads_at_the_exactness_it_covers(self):
         report = expectation.check(Normal("mu", 0.0, 5.0), lambda x: x**2)
 
-        exact_methods = report.routes[0]
-        assert exact_methods.method_name == "methods (exact methods)"
+        exact_methods = report.routes[1]
+        assert exact_methods.method_name == "evaluation_rules (exact methods)"
         assert exact_methods.feasible is False and exact_methods.exact is True
 
 

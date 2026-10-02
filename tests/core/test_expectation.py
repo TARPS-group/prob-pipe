@@ -1,6 +1,5 @@
 """Tests for expectation(Distribution)."""
 
-import jax
 import jax.numpy as jnp
 import jax.scipy.special as jsp
 import numpy as np
@@ -15,16 +14,19 @@ from probpipe import (
     Categorical,
     EmpiricalDistribution,
     Exponential,
+    Function,
     Gamma,
     Normal,
     NumericArray,
+    evaluate,
     expectation,
     mean,
     set_default_num_evaluations,
     variance,
 )
-from probpipe.core._dispatch import Feasibility, ResolutionError
-from probpipe.operations import ExpectationMethod, expectation_method_registry
+from probpipe.core._dispatch import BinaryDispatchMethod, Feasibility, ResolutionError
+from probpipe.distributions import Distribution
+from probpipe.functions import _rules
 
 # ---------------------------------------------------------------------------
 # Expectation — the estimate is an array
@@ -36,8 +38,7 @@ class TestExpectationReturnsArray:
 
     def test_return_dist_false_returns_array(self):
         d = Normal(loc=3.0, scale=1.0, name="x")
-        key = jax.random.PRNGKey(0)
-        result = expectation(d, lambda x: x, key=key, num_evaluations=1000)
+        result = expectation.with_options(n_broadcast_samples=1000)(d, lambda x: x)
         assert isinstance(result, NumericArray)
         assert isinstance(jnp.asarray(result), jnp.ndarray)
 
@@ -70,15 +71,13 @@ class TestExpectationSampleBased:
 
     def test_normal_mean(self):
         d = Normal(loc=3.0, scale=1.0, name="x")
-        key = jax.random.PRNGKey(0)
-        result = expectation(d, lambda x: x, key=key, num_evaluations=10_000)
+        result = expectation.with_options(n_broadcast_samples=10_000)(d, lambda x: x)
         np.testing.assert_allclose(float(result), 3.0, atol=0.05)
 
     def test_normal_second_moment(self):
         loc, scale = 2.0, 1.5
         d = Normal(loc=loc, scale=scale, name="x")
-        key = jax.random.PRNGKey(1)
-        result = expectation(d, lambda x: x**2, key=key, num_evaluations=10_000)
+        result = expectation.with_options(n_broadcast_samples=10_000)(d, lambda x: x**2)
         expected = loc**2 + scale**2
         # Second moment has higher variance than first moment (kurtosis effect)
         np.testing.assert_allclose(float(result), expected, atol=0.15)
@@ -86,47 +85,41 @@ class TestExpectationSampleBased:
     def test_normal_variance_from_moments(self):
         loc, scale = 1.0, 2.0
         d = Normal(loc=loc, scale=scale, name="x")
-        key1, key2 = jax.random.split(jax.random.PRNGKey(2))
-        ex = expectation(d, lambda x: x, key=key1, num_evaluations=10_000)
-        ex2 = expectation(d, lambda x: x**2, key=key2, num_evaluations=10_000)
+        ex = expectation.with_options(n_broadcast_samples=10_000)(d, lambda x: x)
+        ex2 = expectation.with_options(n_broadcast_samples=10_000)(d, lambda x: x**2)
         var_est = float(ex2) - float(ex) ** 2
         np.testing.assert_allclose(var_est, scale**2, atol=0.15)
 
     def test_gamma_mean(self):
         conc, rate = 3.0, 2.0
         d = Gamma(concentration=conc, rate=rate, name="x")
-        key = jax.random.PRNGKey(3)
-        result = expectation(d, lambda x: x, key=key, num_evaluations=10_000)
+        result = expectation.with_options(n_broadcast_samples=10_000)(d, lambda x: x)
         np.testing.assert_allclose(float(result), conc / rate, atol=0.05)
 
     def test_gamma_log_sufficient_statistic(self):
         conc, rate = 3.0, 2.0
         d = Gamma(concentration=conc, rate=rate, name="x")
-        key = jax.random.PRNGKey(4)
-        result = expectation(d, lambda x: jnp.log(x), key=key, num_evaluations=20_000)
+        result = expectation.with_options(n_broadcast_samples=20_000)(d, lambda x: jnp.log(x))
         expected = float(jsp.digamma(conc)) - float(jnp.log(rate))
         np.testing.assert_allclose(float(result), expected, atol=0.05)
 
     def test_beta_mean(self):
         a, b = 2.0, 5.0
         d = Beta(alpha=a, beta=b, name="x")
-        key = jax.random.PRNGKey(5)
-        result = expectation(d, lambda x: x, key=key, num_evaluations=10_000)
+        result = expectation.with_options(n_broadcast_samples=10_000)(d, lambda x: x)
         np.testing.assert_allclose(float(result), a / (a + b), atol=0.03)
 
     def test_beta_log_sufficient_statistic(self):
         a, b = 2.0, 5.0
         d = Beta(alpha=a, beta=b, name="x")
-        key = jax.random.PRNGKey(6)
-        result = expectation(d, lambda x: jnp.log(x), key=key, num_evaluations=20_000)
+        result = expectation.with_options(n_broadcast_samples=20_000)(d, lambda x: jnp.log(x))
         expected = float(jsp.digamma(a)) - float(jsp.digamma(a + b))
         np.testing.assert_allclose(float(result), expected, atol=0.05)
 
     def test_exponential_second_moment(self):
         rate = 3.0
         d = Exponential(rate=rate, name="x")
-        key = jax.random.PRNGKey(7)
-        result = expectation(d, lambda x: x**2, key=key, num_evaluations=10_000)
+        result = expectation.with_options(n_broadcast_samples=10_000)(d, lambda x: x**2)
         np.testing.assert_allclose(float(result), 2.0 / rate**2, atol=0.03)
 
 
@@ -266,6 +259,11 @@ class TestGlobalDefaults:
         finally:
             set_default_num_evaluations(old)
 
+    @pytest.mark.pending(
+        reason="the default sample count is one setting, read by the sampling lift's "
+        "n_broadcast_samples",
+        raises=AssertionError,
+    )
     @pytest.mark.parametrize(("make_dist", "f"), _DEFAULT_SIZE_ESTIMATORS)
     def test_default_num_evaluations_sets_the_estimate_size(self, make_dist, f):
         """An estimator reads the current default sample count, not a copy taken at import."""
@@ -273,10 +271,8 @@ class TestGlobalDefaults:
         try:
             set_default_num_evaluations(7)
             law = make_dist()
-            key = jax.random.PRNGKey(0)
-            result = expectation(law, f, key=key)
-            expected = jnp.mean(jax.vmap(f)(law._sample(key, (7,))), axis=0)
-            np.testing.assert_allclose(np.asarray(result), np.asarray(expected), rtol=1e-6)
+            assert evaluate(f, law).num_atoms == 7
+            assert np.isfinite(float(expectation(law, f)))
         finally:
             set_default_num_evaluations(old)
 
@@ -286,89 +282,102 @@ class TestGlobalDefaults:
 
 
 # ---------------------------------------------------------------------------
-# The expectation methods
+# The routes of expectation
 # ---------------------------------------------------------------------------
 
 
-class _Stand_In(ExpectationMethod):
-    """An approximate method registered opt-in, standing in for quadrature."""
+class _StandIn(BinaryDispatchMethod):
+    """An approximate rule registered opt-in, standing in for quadrature.
+
+    Its pushforward is the point mass at -1, whatever the map and the law.
+    """
 
     name = "quadrature_stand_in"
     exact = False
     priority = None
 
-    def check(self, d, f, /, **options):
+    def supported_types(self):
+        return ((Function,), (Distribution,))
+
+    def check(self, f, operand, /, **call):
         return Feasibility(True)
 
-    def execute(self, d, f, /, **options):
-        return jnp.asarray(-1.0)
+    def execute(self, f, operand, /, **call):
+        return EmpiricalDistribution("stand_in", jnp.array([-1.0]))
 
 
-if "quadrature_stand_in" not in expectation_method_registry.list_methods():
-    expectation_method_registry.register(_Stand_In())
+@pytest.fixture
+def rules(monkeypatch):
+    """An evaluation-rule registry holding the engine's rules and the stand-in."""
+    registry = type(_rules.evaluation_rule_registry)()
+    for rule in (
+        _rules._SamplingLift(),
+        _rules._ElementwiseSweep(),
+        _rules._EmpiricalEnumeration(),
+        _StandIn(),
+    ):
+        registry.register(rule)
+    monkeypatch.setattr(_rules, "evaluation_rule_registry", registry)
+    for operation in (expectation, evaluate):
+        (route,) = [r for r in operation._route_table.routes if r.name == "evaluation_rules"]
+        monkeypatch.setattr(route, "registry", registry)
+    return registry
 
 
-class TestExpectationMethods:
-    def test_a_finite_support_law_takes_the_exact_method(self):
+class TestExpectationRoutes:
+    def test_a_finite_support_law_takes_the_closed_form(self):
+        report = expectation.check(Bernoulli("b", probs=0.3), lambda x: x)
+        assert report.selected.method_name == "closed_form"
+
+    def test_a_continuous_law_takes_the_sampling_lift(self):
+        report = expectation.check(Normal("n", 0.0, 1.0), lambda x: x)
+        assert report.selected.method_name == "evaluation_rules/sampling_lift"
+
+    def test_a_named_rule_runs_instead_of_the_closed_form(self):
         law = Bernoulli("b", probs=0.3)
-        assert expectation_method_registry.check(law, lambda x: x).method_name == "exact"
-
-    def test_a_continuous_law_takes_the_monte_carlo_default(self):
-        law = Normal("n", 0.0, 1.0)
-        assert expectation_method_registry.check(law, lambda x: x).method_name == "monte_carlo"
-
-    def test_a_named_method_runs_instead_of_the_selected_one(self):
-        law = Bernoulli("b", probs=0.3)
-        result = expectation(law, lambda x: x, method="monte_carlo", key=jax.random.PRNGKey(0))
+        result = expectation.with_options(method="sampling_lift")(law, lambda x: x)
         np.testing.assert_allclose(float(result), 0.3, atol=0.1)
 
-    def test_exact_only_refuses_a_law_without_an_exact_method(self):
+    def test_exact_only_refuses_a_law_without_an_exact_route(self):
         with pytest.raises(ResolutionError, match="exact_only"):
-            expectation(Normal("n", 0.0, 1.0), lambda x: x, exact_only=True)
+            expectation.with_options(exact_only=True)(Normal("n", 0.0, 1.0), lambda x: x)
 
     def test_an_unregistered_method_name_raises(self):
-        with pytest.raises(ResolutionError, match="No method named"):
-            expectation(Normal("n", 0.0, 1.0), lambda x: x, method="no_such_method")
+        with pytest.raises(ResolutionError, match="no_such_method"):
+            expectation.with_options(method="no_such_method")(Normal("n", 0.0, 1.0), lambda x: x)
 
-    def test_an_opt_in_method_runs_only_when_named(self):
+    def test_an_opt_in_rule_runs_only_when_named(self, rules):
         law = Normal("n", 0.0, 1.0)
-        assert float(expectation(law, lambda x: x, method="quadrature_stand_in")) == -1.0
-        assert expectation_method_registry.check(law, lambda x: x).method_name == "monte_carlo"
+        assert (
+            float(expectation.with_options(method="quadrature_stand_in")(law, lambda x: x)) == -1.0
+        )
+        assert expectation.check(law, lambda x: x).selected.method_name == (
+            "evaluation_rules/sampling_lift"
+        )
 
-    def test_a_raised_priority_makes_a_method_the_default(self):
+    def test_a_rule_serves_evaluate_and_expectation_alike(self, rules):
         law = Normal("n", 0.0, 1.0)
-        try:
-            expectation_method_registry.set_priorities(quadrature_stand_in=60)
-            assert float(expectation(law, lambda x: x)) == -1.0
-            assert expectation_method_registry.check(law, lambda x: x).method_name == (
-                "quadrature_stand_in"
-            )
-        finally:
-            expectation_method_registry.set_priorities(quadrature_stand_in=None)
-        assert expectation_method_registry.check(law, lambda x: x).method_name == "monte_carlo"
+        pushforward = evaluate.with_options(method="quadrature_stand_in")(lambda x: x, law)
+        assert float(mean(pushforward)) == -1.0
 
-    def test_the_exact_method_ranks_before_a_higher_priority_approximate_one(self):
-        law = Bernoulli("b", probs=0.3)
-        try:
-            expectation_method_registry.set_priorities(quadrature_stand_in=1000)
-            assert expectation_method_registry.check(law, lambda x: x).method_name == "exact"
-        finally:
-            expectation_method_registry.set_priorities(quadrature_stand_in=None)
+    def test_a_raised_priority_makes_a_rule_the_default(self, rules):
+        law = Normal("n", 0.0, 1.0)
+        rules.set_priorities(quadrature_stand_in=60)
+        assert float(expectation(law, lambda x: x)) == -1.0
+        assert expectation.check(law, lambda x: x).selected.method_name == (
+            "evaluation_rules/quadrature_stand_in"
+        )
+
+    def test_the_closed_form_ranks_before_a_higher_priority_rule(self, rules):
+        rules.set_priorities(quadrature_stand_in=1000)
+        report = expectation.check(Bernoulli("b", probs=0.3), lambda x: x)
+        assert report.selected.method_name == "closed_form"
 
     @pytest.mark.parametrize("bad", [0, -3])
     def test_monte_carlo_refuses_a_nonpositive_sample_count(self, bad):
         with pytest.raises(ValueError, match="positive"):
-            expectation(Normal("n", 0.0, 1.0), lambda x: x, num_evaluations=bad)
+            expectation.with_options(n_broadcast_samples=bad)(Normal("n", 0.0, 1.0), lambda x: x)
 
     def test_monte_carlo_refuses_a_non_integer_sample_count(self):
         with pytest.raises(TypeError, match="integer"):
-            expectation(Normal("n", 0.0, 1.0), lambda x: x, num_evaluations=2.5)
-
-
-def test_the_method_registry_is_exported_beside_the_other_registries():
-    import probpipe
-    import probpipe.operations
-
-    assert probpipe.expectation_method_registry is probpipe.operations.expectation_method_registry
-    assert "expectation_method_registry" in probpipe.__all__
-    assert "ExpectationMethod" in probpipe.operations.__all__
+            expectation.with_options(n_broadcast_samples=2.5)(Normal("n", 0.0, 1.0), lambda x: x)

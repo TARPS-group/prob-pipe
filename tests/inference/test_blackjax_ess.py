@@ -282,13 +282,9 @@ class TestDeclinesToRWMH:
         model = self._model()
         # No method= → registry auto-selects. ESS (75) declines
         # (non-traceable), NUTS/HMC (gradient) decline, so RWMH (55) wins.
-        posterior = condition_on.apply(
-            model,
-            {"y": np.zeros((5, 2))},
-            num_results=50,
-            num_warmup=20,
-            random_seed=0,
-        )
+        posterior = condition_on.with_options(
+            method_options={"num_results": 50, "num_warmup": 20, "random_seed": 0}
+        )(model, {"y": np.zeros((5, 2))})
         assert posterior.method == "blackjax_rwmh"
 
 

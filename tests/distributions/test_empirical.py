@@ -54,7 +54,7 @@ from probpipe.distributions._capabilities import (
 )
 from probpipe.distributions._empirical import EmpiricalDistribution
 from probpipe.linalg import DenseLinOp
-from probpipe.operations import expectation, expectation_method_registry
+from probpipe.operations import expectation
 
 _MOMENTS = (SupportsMean, SupportsVariance, SupportsCovariance, SupportsQuantile)
 _ALWAYS = (SupportsSampling, SupportsExpectation, SupportsMarginals)
@@ -389,15 +389,14 @@ class TestSampling:
         assert set(draws) <= {"north", "south", "east"}
 
     def test_the_sample_operation_returns_the_declared_kind(self):
-        key = jax.random.PRNGKey(0)
-        assert isinstance(sample(_array_law(), key=key, sample_shape=(4,)), NumericArrayBatch)
-        assert isinstance(sample(_record_law(), key=key, sample_shape=(4,)), NumericRecordBatch)
+        assert isinstance(sample(_array_law(), sample_shape=(4,)), NumericArrayBatch)
+        assert isinstance(sample(_record_law(), sample_shape=(4,)), NumericRecordBatch)
         for law in (_array_law(), _record_law(), _opaque_law()):
-            assert law.event_spec.spec.is_valid(sample(law, key=key))
+            assert law.event_spec.spec.is_valid(sample(law))
 
     def test_the_sample_operation_draws_a_batch_of_mixed_records(self):
         law = EmpiricalDistribution("m", _mixed_atoms())
-        draws = sample(law, key=jax.random.PRNGKey(0), sample_shape=(4,))
+        draws = sample(law, sample_shape=(4,))
         assert type(draws) is RecordBatch
         assert (draws.batch_shape, draws.level_names) == ((4,), ("sample",))
         assert draws.element_spec == law.event_spec.spec
@@ -566,9 +565,9 @@ class TestExpectation:
         law = EmpiricalDistribution("f", FunctionBatch("fs", [jnp.sin, jnp.cos], "f"))
         assert jnp.allclose(law._expectation(lambda f: f(0.0)), 0.5)
 
-    def test_the_expectation_operation_takes_the_exact_method(self):
+    def test_the_expectation_operation_takes_the_closed_form(self):
         law, integrand = _array_law(), (lambda x: x**2)
-        assert expectation_method_registry.check(law, integrand).method_name == "exact"
+        assert expectation.check(law, integrand).route == "closed_form"
         result = expectation(law, integrand)
         assert jnp.allclose(jnp.asarray(result), _weighted_sum(_NORMALIZED, _VALUES**2))
 

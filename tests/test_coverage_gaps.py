@@ -98,14 +98,12 @@ class TestTransformedNonTFP:
         assert td.event_shape == (2,)
 
     def test_sample_unbatched(self, td):
-        key = jax.random.PRNGKey(0)
-        s = jnp.asarray(sample(td, key=key))
+        s = jnp.asarray(sample(td))
         assert s.shape == (2,)
         assert jnp.all(s > 0)  # Exp bijector
 
     def test_sample_batched(self, td):
-        key = jax.random.PRNGKey(0)
-        s = jnp.asarray(sample(td, key=key, sample_shape=(5,)))
+        s = jnp.asarray(sample(td, sample_shape=(5,)))
         assert s.shape == (5, 2)
         assert jnp.all(s > 0)
 

@@ -9,6 +9,7 @@ import pytest
 
 from probpipe import (
     Distribution,
+    FunctionBatch,
     FunctionSpec,
     GaussianRandomFunction,
     LinearBasisFunction,
@@ -344,6 +345,13 @@ def _multi_output_basis(X):
     return jnp.stack([phi, 0.5 * phi], axis=-2)
 
 
+def _values(drawn, X):
+    """The values at *X* of each function in the batch *drawn*, stacked along its batch axes."""
+    functions = drawn.raw()
+    values = [jnp.asarray(f(X)) for f in functions.ravel()]
+    return jnp.reshape(jnp.stack(values), (*functions.shape, *values[0].shape))
+
+
 @pytest.fixture
 def scalar_lbf():
     weights = MultivariateNormal("weights", jnp.array([1.0, 0.5, 0.1]), cov=0.01 * jnp.eye(3))
@@ -398,37 +406,39 @@ class TestLinearBasisFunction:
     # -- Drawing functions -------------------------------------------------
 
     def test_sample_single(self, key, scalar_lbf):
-        f = sample(scalar_lbf, key=key)
+        f = sample(scalar_lbf)
         assert callable(f)
         assert f(jnp.linspace(-1, 1, 10).reshape(-1, 1)).shape == (10,)
 
     def test_sample_batched(self, key, scalar_lbf):
-        f = sample(scalar_lbf, key=key, sample_shape=(7,))
-        assert callable(f)
-        assert f(jnp.linspace(-1, 1, 10).reshape(-1, 1)).shape == (7, 10)
+        drawn = sample(scalar_lbf, sample_shape=(7,))
+        assert isinstance(drawn, FunctionBatch)
+        assert (drawn.batch_shape, drawn.level_names) == ((7,), ("sample",))
+        assert _values(drawn, jnp.linspace(-1, 1, 10).reshape(-1, 1)).shape == (7, 10)
 
     def test_sample_multi_dim_shape(self, key, scalar_lbf):
-        f = sample(scalar_lbf, key=key, sample_shape=(3, 4))
-        assert f(jnp.linspace(-1, 1, 5).reshape(-1, 1)).shape == (3, 4, 5)
+        drawn = sample(scalar_lbf, sample_shape=(3, 4))
+        assert _values(drawn, jnp.linspace(-1, 1, 5).reshape(-1, 1)).shape == (3, 4, 5)
 
     def test_sample_consistency(self, key, scalar_lbf):
         """One drawn function takes one value at a point, whatever else it is evaluated at."""
-        f = sample(scalar_lbf, key=key)
+        f = sample(scalar_lbf)
         y1 = f(jnp.array([[0.0], [1.0]]))
         y2 = f(jnp.array([[0.0], [2.0]]))
         np.testing.assert_allclose(y1[0], y2[0], atol=1e-6)
 
     def test_sample_batched_consistency(self, key, scalar_lbf):
-        f = sample(scalar_lbf, key=key, sample_shape=(5,))
-        np.testing.assert_allclose(f(jnp.array([[0.0]])), f(jnp.array([[0.0]])), atol=1e-6)
+        drawn = sample(scalar_lbf, sample_shape=(5,))
+        X = jnp.array([[0.0]])
+        np.testing.assert_allclose(_values(drawn, X), _values(drawn, X), atol=1e-6)
 
     def test_sample_multi_output(self, key, multi_output_lbf):
-        f = sample(multi_output_lbf, key=key)
+        f = sample(multi_output_lbf)
         assert f(jnp.linspace(-1, 1, 8).reshape(-1, 1)).shape == (8, 2)
 
     def test_sample_batched_multi_output(self, key, multi_output_lbf):
-        f = sample(multi_output_lbf, key=key, sample_shape=(5,))
-        assert f(jnp.linspace(-1, 1, 8).reshape(-1, 1)).shape == (5, 8, 2)
+        drawn = sample(multi_output_lbf, sample_shape=(5,))
+        assert _values(drawn, jnp.linspace(-1, 1, 8).reshape(-1, 1)).shape == (5, 8, 2)
 
     # -- Validation --------------------------------------------------------
 
@@ -1021,8 +1031,8 @@ class TestMonteCarlo:
     MC_ATOL_VAR = 0.25
 
     def _sample_outputs(self, lbf, X, key, n_samples):
-        f = sample(lbf, key=key, sample_shape=(n_samples,))
-        return np.array(f(X))
+        """The values at *X* of *n_samples* draws, evaluated together by the family's sampler."""
+        return np.array(lbf._sample(key, (n_samples,))(X))
 
     def test_linear_basis_function_moments(self, scalar_correctness_lbf, correctness_X):
         Y = self._sample_outputs(

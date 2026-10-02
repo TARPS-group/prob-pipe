@@ -529,7 +529,6 @@ class TestTheOperations:
         expected = likelihood._condition_on({"beta": beta})._log_prob(y)
         np.testing.assert_allclose(log_prob(likelihood, y, given={"beta": beta}), expected)
 
-    @pytest.mark.pending(reason="condition_on binds a kernel's given slots", raises=ResolutionError)
     def test_condition_on_binds_the_given_slots(self, X, beta):
         likelihood = glm_likelihood("y", PoissonFamily(), X=X)
         law = condition_on(likelihood, {"beta": beta})

@@ -85,15 +85,15 @@ class TestRandomFunction:
             _MinimalRandomFunction("rf", event_spec)
 
     def test_sample_raises(self, key):
-        with pytest.raises(ResolutionError, match="converts to SupportsSampling"):
-            sample(_MinimalRandomFunction("rf"), key=key)
+        with pytest.raises(ResolutionError, match="does not claim SupportsSampling"):
+            sample(_MinimalRandomFunction("rf"))
 
     def test_sample_with_shape_raises(self, key):
-        with pytest.raises(ResolutionError, match="converts to SupportsSampling"):
-            sample(_MinimalRandomFunction("rf"), key=key, sample_shape=(5,))
+        with pytest.raises(ResolutionError, match="does not claim SupportsSampling"):
+            sample(_MinimalRandomFunction("rf"), sample_shape=(5,))
 
     def test_log_prob_raises(self):
-        with pytest.raises(ResolutionError, match="converts to SupportsLogProb"):
+        with pytest.raises(ResolutionError, match="does not claim SupportsLogProb"):
             log_prob(_MinimalRandomFunction("rf"), lambda x: x)
 
 
@@ -183,7 +183,7 @@ class _SamplingOnlyRandomMeasure(RandomMeasure, SupportsSampling):
     """A random measure that only draws laws."""
 
     def __init__(self, component, name="sampling_only_rm"):
-        super().__init__(name)
+        super().__init__(name, DistributionSpec(component.event_spec))
         self._component = component
 
     def _sample(self, key, sample_shape=()):
@@ -238,15 +238,12 @@ class TestInheritance:
 
 class TestSampling:
     def test_single_sample_returns_distribution(self, key):
-        comps = _normals(3)
-        # ``apply`` exposes the sampled component itself; the public Function
-        # call creates an independent tracked result term.
-        drawn = sample.apply(_DiracRandomMeasure(comps), key=key)
+        drawn = sample(_DiracRandomMeasure(_normals(3)))
         assert isinstance(drawn, Distribution)
-        assert drawn in comps
+        assert float(mean(drawn)) in {0.0, 1.0, 2.0}
 
     def test_batched_sample_returns_distribution_batch(self, key):
-        batch = sample(_DiracRandomMeasure(_normals(4)), key=key, sample_shape=(5,))
+        batch = sample(_DiracRandomMeasure(_normals(4)), sample_shape=(5,))
         assert isinstance(batch, DistributionBatch)
         assert batch.batch_shape == (5,)
         assert len(batch) == 5
@@ -254,7 +251,7 @@ class TestSampling:
             assert isinstance(batch[i], Distribution)
 
     def test_multi_d_batched_sample(self, key):
-        batch = sample(_DiracRandomMeasure(_normals(4)), key=key, sample_shape=(2, 3))
+        batch = sample(_DiracRandomMeasure(_normals(4)), sample_shape=(2, 3))
         assert isinstance(batch, DistributionBatch)
         assert batch.batch_shape == (2, 3)
         assert batch.batch_size == 6
@@ -291,23 +288,6 @@ class TestRandomLogProb:
         rf = random_unnormalized_log_prob(_DiracRandomMeasure(_normals(3)))
         assert isinstance(rf, RandomFunction)
 
-    def test_random_log_prob_two_arg_returns_distribution(self):
-        """``random_log_prob(rm, x)`` is ``random_log_prob(rm)(x)``."""
-        rm = _DiracRandomMeasure(_normals(3))
-        x = jnp.array(1.0)
-        marginal = random_log_prob(rm, x)
-        assert isinstance(marginal, Distribution)
-        assert not isinstance(marginal, RandomFunction)
-        assert jnp.allclose(mean(marginal), mean(random_log_prob(rm)(x)), atol=1e-6)
-
-    def test_random_unnormalized_log_prob_two_arg_returns_distribution(self):
-        rm = _DiracRandomMeasure(_normals(3))
-        x = jnp.array(0.5)
-        marginal = random_unnormalized_log_prob(rm, x)
-        assert isinstance(marginal, Distribution)
-        assert not isinstance(marginal, RandomFunction)
-        assert jnp.allclose(mean(marginal), mean(random_unnormalized_log_prob(rm)(x)), atol=1e-6)
-
     def test_protocols_isinstance(self):
         rm = _DiracRandomMeasure(_normals(1))
         assert isinstance(rm, SupportsRandomLogProb)
@@ -322,11 +302,10 @@ class TestProtocolOptIn:
         assert not isinstance(rm, SupportsRandomLogProb)
         assert not isinstance(rm, SupportsRandomUnnormalizedLogProb)
 
-    def test_unsupported_op_raises_resolution_error(self):
-        """No converter gives a random measure that only samples these capabilities."""
+    def test_a_sampling_measure_has_a_monte_carlo_mean_and_no_random_density(self):
+        """The mean of a measure that only samples is the mixture of its draws."""
         rm = _SamplingOnlyRandomMeasure(Normal(loc=0.0, scale=1.0, name="n0"))
-        with pytest.raises(ResolutionError, match="SupportsMean"):
-            mean(rm)
+        assert isinstance(mean(rm), Distribution)
         with pytest.raises(ResolutionError, match="SupportsRandomLogProb"):
             random_log_prob(rm)
         with pytest.raises(ResolutionError, match="SupportsRandomUnnormalizedLogProb"):

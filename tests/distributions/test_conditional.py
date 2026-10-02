@@ -22,7 +22,6 @@ from probpipe import (
     OpaqueSpec,
     OutputSpec,
     RecordSpec,
-    ResolutionError,
     TrackedTerm,
     condition_on,
     mean,
@@ -646,10 +645,6 @@ class TestWithPathNames:
 class TestConditionOnOperation:
     """``condition_on`` binds a kernel's given slots by applying the kernel."""
 
-    @pytest.mark.pending(
-        reason="condition_on applies a kernel at a value for every given slot",
-        raises=ResolutionError,
-    )
     def test_binding_every_given_slot_returns_the_law_the_kernel_gives(self):
         kernel = LocationKernel()
         law = condition_on(kernel, {"mu": 2.0})

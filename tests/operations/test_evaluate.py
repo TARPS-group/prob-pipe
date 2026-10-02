@@ -8,6 +8,7 @@ import pytest
 from probpipe import (
     ApplicabilityError,
     EmpiricalDistribution,
+    Normal,
     NumericArrayBatch,
     NumericArraySpec,
     ResolutionError,
@@ -114,3 +115,16 @@ def test_a_rule_named_for_a_value_is_refused_as_the_direct_call_refuses_it():
         square.with_options(method="sampling_lift")(3.0)
     with pytest.raises(ResolutionError, match="lifts nothing"):
         evaluate.with_options(method="sampling_lift")(square, 3.0)
+
+
+class TestThePushforwardOfAView:
+    def test_the_identity_over_a_field_view_gives_one_atom_per_draw(self):
+        """The map returns its operand, so the stacked draws' term reaches the result step."""
+        view = (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0))["a"]
+        law = evaluate.with_options(n_broadcast_samples=3)(lambda x: x, view)
+        assert law.num_atoms == 3
+        assert law.atoms.element_spec.shape == ()
+
+    def test_a_plain_callable_is_admitted_as_the_map(self):
+        law = evaluate.with_options(n_broadcast_samples=4)(lambda x: 2.0 * x, Normal("x", 0.0, 1.0))
+        assert law.num_atoms == 4

@@ -9,7 +9,6 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -202,18 +201,13 @@ class TestWorkflowRecipeRecording:
         )
         assert urandom.call_count == 2
 
-    def test_deterministic_exact_and_caller_keyed_calls_have_no_recipe(self):
+    def test_deterministic_and_exact_calls_have_no_recipe(self):
         deterministic = Function(name="_identity", fn=_identity)(value=3.0)
         exact_workflow = Function(name="_identity", fn=_identity, n_broadcast_samples=8)
         exact = exact_workflow(value=EmpiricalDistribution("exact", jnp.asarray([1.0, 2.0])))
-        caller_keyed = sample(
-            Normal(loc=0.0, scale=1.0, name="x"),
-            key=jax.random.key(4),
-        )
 
         assert deterministic.provenance.controls == {}
         assert exact.provenance.controls == {}
-        assert caller_keyed.provenance.controls == {}
 
     def test_direct_automatic_sample_recipe_remains_standalone(self):
         with workflow_run(seed=4):
@@ -537,10 +531,9 @@ class TestWorkflowCallableAnchor:
 
     def test_unchanged_source_artifacts_are_read_once_across_function_calls(self):
         workflow = Function(name="replayable_identity", fn=replayable_identity)
-        explicit_key = jax.random.key(11)
         expected_paths = {
             Path(inspect.getsourcefile(replayable_identity)).absolute(),
-            Path(probpipe.core.ops.__file__).absolute(),
+            Path(probpipe.operations._sample.__file__).absolute(),
         }
         reads = {path: 0 for path in expected_paths}
         read_bytes = Path.read_bytes
@@ -555,7 +548,7 @@ class TestWorkflowCallableAnchor:
             for _ in range(5):
                 workflow(value=1.0)
             for _ in range(3):
-                sample(Normal(loc=0.0, scale=1.0, name="value"), key=explicit_key)
+                sample(Normal(loc=0.0, scale=1.0, name="value"))
 
         assert reads == dict.fromkeys(expected_paths, 1)
 

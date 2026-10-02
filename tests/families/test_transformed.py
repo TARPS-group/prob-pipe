@@ -15,6 +15,7 @@ from probpipe import (
     Function,
     MultivariateNormal,
     Normal,
+    NumericArrayBatch,
     NumericDistribution,
     ResolutionError,
     bijector_for,
@@ -169,14 +170,14 @@ class TestTheBijectorTransform:
 class TestSampling:
     def test_exp_samples_are_positive(self, standard, key):
         transformed = BijectorTransformedDistribution("td", standard, tfb.Exp())
-        draws = jnp.asarray(sample(transformed, key=key, sample_shape=(100,)))
+        draws = jnp.asarray(sample(transformed, sample_shape=(100,)))
         assert draws.shape == (100,)
         assert jnp.all(draws > 0)
         assert transformed.event_shape == ()
 
     def test_the_log_density_keeps_the_leading_axes(self, standard, key):
         transformed = BijectorTransformedDistribution("td", standard, tfb.Exp())
-        draws = sample(transformed, key=key, sample_shape=(5,))
+        draws = sample(transformed, sample_shape=(5,))
         densities = log_prob(transformed, draws)
         assert densities.shape == (5,)
         assert jnp.all(jnp.isfinite(densities))
@@ -188,13 +189,13 @@ class TestSampling:
     )
     def test_draws_lie_in_the_image(self, standard, key, bijector, low, high):
         transformed = BijectorTransformedDistribution("td", standard, bijector)
-        draws = jnp.asarray(sample(transformed, key=key, sample_shape=(100,)))
+        draws = jnp.asarray(sample(transformed, sample_shape=(100,)))
         assert jnp.all(draws >= low) and jnp.all(draws <= high)
 
     def test_a_multivariate_base(self, key):
         base = MultivariateNormal("z", jnp.zeros(3), cov=jnp.eye(3))
         transformed = BijectorTransformedDistribution("td", base, tfb.Exp())
-        draws = jnp.asarray(sample(transformed, key=key, sample_shape=(10,)))
+        draws = jnp.asarray(sample(transformed, sample_shape=(10,)))
         assert draws.shape == (10, 3)
         assert jnp.all(draws > 0)
 
@@ -218,20 +219,21 @@ class TestSampling:
     def test_a_chain_of_bijectors(self, standard, key):
         chain = tfb.Chain([tfb.Exp(), tfb.Shift(jnp.array(1.0)), tfb.Scale(jnp.array(2.0))])
         transformed = BijectorTransformedDistribution("td", standard, chain)
-        draws = jnp.asarray(sample(transformed, key=key, sample_shape=(10,)))
+        drawn = sample(transformed, sample_shape=(10,))
+        draws = jnp.asarray(drawn)
         assert draws.shape == (10,)
         assert jnp.all(draws > 0)
-        assert jnp.all(jnp.isfinite(log_prob(transformed, draws)))
+        assert jnp.all(jnp.isfinite(jnp.asarray(log_prob(transformed, drawn))))
 
     def test_the_identity_keeps_draws_and_densities(self, key):
         base = Normal("x", 2.0, 0.5)
         transformed = BijectorTransformedDistribution("td", base, tfb.Identity())
         np.testing.assert_allclose(
-            np.asarray(sample(transformed, key=key, sample_shape=(100,))),
-            np.asarray(sample(base, key=key, sample_shape=(100,))),
+            np.asarray(transformed._sample(key, (100,))),
+            np.asarray(base._sample(key, (100,))),
             atol=1e-6,
         )
-        xs = jnp.array([-1.0, 0.0, 1.0, 2.5])
+        xs = NumericArrayBatch("x", jnp.array([-1.0, 0.0, 1.0, 2.5]), "point")
         np.testing.assert_allclose(
             np.asarray(log_prob(transformed, xs)), np.asarray(log_prob(base, xs)), atol=1e-5
         )
