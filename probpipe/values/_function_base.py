@@ -570,7 +570,7 @@ class Function(Node, TrackedTerm, Annotated):
         - ``workflow_kind`` (WorkflowKind): orchestration selection; DEFAULT,
           the default, inherits the workflow configuration.
         - ``n_broadcast_samples`` (int or None): positive sampling-lift count,
-          defaulting to the class's ``DEFAULT_N_BROADCAST_SAMPLES``, 128.
+          defaulting to the class's ``DEFAULT_N_BROADCAST_SAMPLES``, 256.
         - ``dispatch`` ({"auto", "jax", "sequential", "thread"}): evaluation
           dispatch interpreted by the engine, "auto" by default.
         - ``max_workers`` (int or None): positive thread-worker count, or the

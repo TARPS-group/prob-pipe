@@ -17,7 +17,7 @@ Each operation computes its result exactly where it can and otherwise selects a 
 
 <!-- --8<-- [start:quick-example] -->
 A Bayesian logistic regression on the [Challenger O-ring data](https://en.wikipedia.org/wiki/Space_Shuttle_Challenger_disaster) relates the temperature of 23 shuttle launches to whether an O-ring was damaged.
-Its posterior then gives the probability of damage at the Challenger's launch temperature of 31°F.
+Its posterior then gives the probability of damage at 31°F, far below the 53°F of the coldest of those launches.
 
 ```python
 import jax
@@ -66,9 +66,9 @@ print("P(damage at 31°F), 90% interval:", quantile(risk, jnp.array([0.05, 0.95]
 ```
 
 ```text
-posterior mean of the slope: -0.189
-P(damage at 31°F), posterior mean: 0.959
-P(damage at 31°F), 90% interval: [0.72666454 0.99999535]
+posterior mean of the slope: -0.182
+P(damage at 31°F), posterior mean: 0.962
+P(damage at 31°F), 90% interval: [0.82085985 0.9999324 ]
 ```
 
 `damage_probability` is an ordinary function of two numbers.
