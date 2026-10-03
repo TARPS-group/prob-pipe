@@ -144,9 +144,14 @@ def _definitions() -> frozenset[str]:
 
 @functools.cache
 def _identifiers() -> frozenset[str]:
-    """Every identifier ``probpipe/`` uses: a module, a name, an attribute, or a string."""
+    """Every identifier ``probpipe/`` uses, and the fixtures of ``tests/conftest.py``.
+
+    An identifier of the package is a module, a name, an attribute, or a string.
+    """
     names: set[str] = set(_definitions())
     names.update(path.stem for path in PACKAGE.rglob("*.py"))
+    conftest = ast.parse((ROOT / "tests" / "conftest.py").read_text())
+    names.update(node.name for node in ast.walk(conftest) if isinstance(node, ast.FunctionDef))
     for tree in _package_trees():
         for node in ast.walk(tree):
             if isinstance(node, ast.Name):
