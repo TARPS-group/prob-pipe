@@ -60,13 +60,14 @@ The method takes part in automatic selection once it overrides `priority`.
 
 A method declares its exactness and its priority, and the two are independent:
 
-1. `exact`: whether the result denotes the conditional law itself. `InferenceMethod` declares `exact = False`, since a finite MCMC, variational, or ABC output stands in for the conditional law, and every built-in method keeps that declaration. The `exact_only` control excludes the approximate methods.
+1. `exact`: whether the result denotes the conditional law itself. `InferenceMethod` declares `exact = False`, the declaration of a finite MCMC, variational, or ABC output, which stands in for the conditional law. A method whose result is the conditional law overrides it, as `empirical_reweighting` does: the posterior of an empirical prior is its atoms reweighted by the likelihood. The `exact_only` control excludes the approximate methods.
 2. `priority`: the rank among methods of the same exactness, which [Dispatch registries](#dispatch-registries) defines with its default, `None`.
 
 A new method takes its rank relative to the nearest of the ranks of the built-in methods:
 
 | Method | Priority |
 |---|---|
+| `empirical_reweighting` (exact) | 100 |
 | `nutpie_nuts` | 88 |
 | `blackjax_nuts` | 85 |
 | `cmdstan_nuts`, `pymc_nuts` | 82 |

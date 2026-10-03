@@ -127,7 +127,7 @@ class TestInferenceMethodRegistry:
 
 
 class TestBuiltInRanks:
-    """Every built-in inference method is approximate; ranks order them.
+    """Each built-in method declares its exactness, and ranks order methods of one exactness.
 
     Methods whose ``check()`` is identical to a higher-ranked sibling are
     opt-in-only, ``priority=None``: they can never win auto-dispatch and are
@@ -138,6 +138,7 @@ class TestBuiltInRanks:
     """
 
     EXPECTED_PRIORITIES: ClassVar[dict[str, int | None]] = {
+        "empirical_reweighting": 100,
         "nutpie_nuts": 88,
         "blackjax_nuts": 85,
         "cmdstan_nuts": 82,
@@ -153,9 +154,13 @@ class TestBuiltInRanks:
         "tfp_nuts": None,
     }
 
-    def test_every_registered_method_is_approximate(self):
+    #: The built-in methods whose result is the conditional law itself.
+    EXACT_METHODS: ClassVar[frozenset[str]] = frozenset({"empirical_reweighting"})
+
+    def test_each_registered_method_declares_its_exactness(self):
         for name in inference_method_registry.list_methods():
-            assert inference_method_registry.get_method(name).exact is False, name
+            expected = name in self.EXACT_METHODS
+            assert inference_method_registry.get_method(name).exact is expected, name
 
     def test_ranks_match_anchors(self):
         # Asserts on the registered (class-level) rank so the test stays

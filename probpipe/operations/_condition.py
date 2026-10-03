@@ -129,7 +129,7 @@ _UNNORMALIZED = "unnormalized"
 
 
 class InferenceMethod(UnaryDispatchMethod):
-    """Base class for registered inference methods; declares ``exact = False``.
+    """Base class for registered inference methods; ``exact`` is ``False`` unless a method overrides it.
 
     A method normalizes the target of ``condition_on``'s normalization stage: it
     takes the target alone, a law whose data are already bound, and returns a
@@ -145,11 +145,12 @@ class InferenceMethod(UnaryDispatchMethod):
 
     Notes
     -----
-    Every inference method is approximate: a finite MCMC, SG-MCMC, slice,
-    ABC, or variational output stands in for the conditional law, whatever
-    its invariant target or asymptotic guarantee. Those guarantees are the
-    method's own documentation, not its exactness. A method that returns a
-    representation of the conditional law itself overrides ``exact``.
+    A method is exact when its result is the conditional law itself, as the
+    reweighted atoms of an empirical prior are, and such a method overrides
+    ``exact``. A finite MCMC, SG-MCMC, slice, ABC, or variational output stands
+    in for the conditional law, whatever its invariant target or asymptotic
+    guarantee, so such a method keeps ``exact = False``; those guarantees are
+    the method's own documentation.
     """
 
     #: The ``method_options`` entries the method reads; ``None`` names none, for a

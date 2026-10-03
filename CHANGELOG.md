@@ -999,6 +999,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`condition_on` conditions an empirical prior exactly.** The inference method
+  `empirical_reweighting` applies Bayes' rule to a joint whose prior is an
+  `EmpiricalDistribution` over numeric atoms and whose likelihood has a
+  conditional log-density: the posterior keeps the prior's atoms, each weighted
+  by its prior weight times the likelihood of the given values there, so
+  `condition_on(likelihood * particles, {"y": y})` is a particle filter's update.
+  The method is exact, so automatic selection tries it before the approximate
+  methods and `exact_only=True` admits it. It evaluates the likelihood at every
+  atom in one `jax.vmap` when the likelihood traces.
 - **Get started and the first three tutorials.** The documentation site gains
   an installation page, a quickstart that fits, checks, and forecasts the
   Challenger O-ring model, and three tutorials on a Ricker model of the moose
