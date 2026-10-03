@@ -110,14 +110,13 @@ jobs:
             echo "_Full report in the \"Pyright\" step log above. Type checking is advisory; see CONTRIBUTING.md § Type checking._"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # Advisory design ledger: the stubs the package declares but does not yet
+  # The design ledger: the stubs the package declares but does not yet
   # implement, the tests marked pending, and the stale uses of removed names in
-  # the docs notebooks and example scripts (scripts/design/ledger.py). The job
-  # reports the three lists in its summary and fails only when the script
-  # itself errors, since the lists stay non-empty while the code catches up
-  # with design/.
+  # the docs notebooks (scripts/design/ledger.py). The job reports the three
+  # lists in its summary and fails when the docs use a removed name, since the
+  # stubs and the pending tests stay while the code catches up with design/.
   ledger:
-    name: design ledger (report)
+    name: design ledger
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -134,13 +133,13 @@ jobs:
       - name: Run the ledger
         run: |
           set -o pipefail
-          uv run --frozen python scripts/design/ledger.py | tee ledger.txt
+          uv run --frozen python scripts/design/ledger.py --require-no-stale-docs | tee ledger.txt
 
       - name: Surface the ledger counts
         if: always()
         run: |
           {
-            echo "### Design ledger (report — does not gate merges)"
+            echo "### Design ledger (fails on stale docs)"
             echo '```'
             grep -E '^(stubs|pending tests|stale docs):' ledger.txt || echo "no counts found"
             echo '```'
@@ -250,6 +249,8 @@ jobs:
               case "$f" in
                 design/*|scripts/design/*)
                   TEST_TARGETS="$TEST_TARGETS $(git ls-files 'tests/*/test_design_conformance.py' | xargs) tests/docs tests/ci" ;;
+                scripts/docs/*|docs/*|README.md|mkdocs.yml|mkdocs_hooks.py)
+                  TEST_TARGETS="$TEST_TARGETS tests/docs" ;;
                 scripts/*)
                   TEST_TARGETS="$TEST_TARGETS tests/ci" ;;
                 probpipe/*|AGENTS.md|CLAUDE.md|CONTRIBUTING.md|CONTRACTS.md|STYLE_GUIDE.md|CHANGELOG.md|.github/PULL_REQUEST_TEMPLATE.md|.claude/*)

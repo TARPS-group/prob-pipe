@@ -266,6 +266,39 @@ each notebook follows three more:
 3. **No design citations:** a notebook for users cites no section of `design/`
    and no decision identifier, except where it reports a bug against the design.
 
+Each page of the site and README.md carries a review label, which tells users
+how far to trust the page and tells maintainers what to review next. A page is
+in one of three states:
+
+1. **AI-generated:** an AI assistant drafted the page, and no maintainer has
+   reviewed it. Its first line is
+   `> **AI-generated.** An AI assistant drafted this page, and no maintainer has reviewed it yet. Please report errors on the issue tracker.`
+2. **Human-validated:** a maintainer has read the whole page as it renders, run
+   its code, and found it correct. Its last line names the reviewer and the
+   date, as in `> **Human-validated** by Jonathan Huggins on 2026-10-20.`
+3. **AI-revised:** an AI assistant changed a validated page in more than two
+   sections. Its first line replaces the validated label and names that review,
+   as in
+   `> **AI-revised.** An AI assistant changed this page after Jonathan Huggins reviewed it on 2026-10-20, and no maintainer has reviewed the changes yet. Please report errors on the issue tracker.`
+   A pair of comments marks each changed part: `<!-- unreviewed: what changed -->`
+   before it and `<!-- /unreviewed -->` after it in markdown, and
+   `# unreviewed: what changed` and `# /unreviewed` in a notebook's code cell.
+   The note after the colon is optional.
+
+An AI assistant's change to one or two sections of a validated page keeps the
+page validated, and the first line under each changed section's heading is
+`> **AI-generated section.** An AI assistant changed this section after the page was reviewed, and no maintainer has reviewed the change yet.`
+A change to a third section makes the page AI-revised. A maintainer who reviews
+a page removes its other labels and markers and closes it with the validated
+label, and a maintainer's own edit keeps a page validated and updates the date.
+
+A notebook's labels are in its markdown cells, the opening label on the first
+line of the first markdown cell and the closing label on the last line of the
+last. An API page's labels cover the docstrings it renders.
+`tests/docs/test_review_labels.py` checks every page, and
+`python scripts/docs/review_status.py` lists each page with its status, its
+reviewer and date, and the sections or parts left to review.
+
 ### Prefect orchestration
 
 ProbPipe ships with Prefect orchestration **off** by default — every

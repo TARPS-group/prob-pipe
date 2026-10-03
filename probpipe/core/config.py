@@ -190,6 +190,7 @@ class PrefectConfig:
 
 # Module-level singleton
 prefect_config = PrefectConfig()
+"""The global Prefect orchestration settings, an instance of ``PrefectConfig``."""
 
 
 # ---------------------------------------------------------------------------
@@ -294,3 +295,4 @@ class ProvenanceConfig:
 
 # Module-level singleton
 provenance_config = ProvenanceConfig()
+"""The global provenance tracking settings, an instance of ``ProvenanceConfig``."""

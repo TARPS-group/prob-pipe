@@ -19,8 +19,10 @@ Usage::
     python scripts/design/ledger.py              # all three lists
     python scripts/design/ledger.py --no-tests   # without collecting tests
     python scripts/design/ledger.py --require-empty
+    python scripts/design/ledger.py --require-no-stale-docs
 
-``--require-empty`` exits with status 1 while any list is non-empty.
+``--require-empty`` exits with status 1 while any list is non-empty, and
+``--require-no-stale-docs`` while the docs use a name the package removed.
 """
 
 from __future__ import annotations
@@ -146,6 +148,8 @@ class StaleUse:
 def _doc_sources(root: Path) -> Iterator[tuple[str, str, str]]:
     """Each code cell of the docs notebooks and each example script, as (path, location, source)."""
     for path in sorted((root / "docs").rglob("*.ipynb")):
+        if ".ipynb_checkpoints" in path.parts:
+            continue
         cells = json.loads(path.read_text())["cells"]
         for index, cell in enumerate(cells):
             if cell["cell_type"] == "code":
@@ -243,6 +247,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--require-empty", action="store_true", help="exit 1 while a stub or pending test remains"
     )
+    parser.add_argument(
+        "--require-no-stale-docs",
+        action="store_true",
+        help="exit 1 while the docs use a name the package removed",
+    )
     args = parser.parse_args(argv)
     found = list(stubs()) + list(generated_stubs())
     print(f"stubs: {len(found)}")
@@ -256,13 +265,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"pending tests: {len(pending)}")
         for module, count in sorted(Counter(t.split("::")[0] for t in pending).items()):
             print(f"  {module}: {count}")
-    stale = list(stale_docs())
+    stale = list(stale_docs(ROOT))
     print(f"stale docs: {len(stale)}")
     for module, count in sorted(Counter(use.path for use in stale).items()):
         print(f"  {module}: {count}")
     for use in stale:
         print(f"    {use.path} {use.location}: {use.detail}")
     if args.require_empty and (found or pending or stale):
+        return 1
+    if args.require_no_stale_docs and stale:
         return 1
     return 0
 

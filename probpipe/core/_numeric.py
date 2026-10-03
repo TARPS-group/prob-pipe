@@ -18,8 +18,9 @@ __all__ = ["Numeric"]
 
 
 class Numeric(ABC):
-    """The flat-vector interface that :class:`~probpipe.NumericArray` and
-    :class:`~probpipe.NumericRecord` implement.
+    """The flat-vector interface of the numeric kinds.
+
+    :class:`~probpipe.NumericArray` and :class:`~probpipe.NumericRecord` implement it.
 
     A numeric value lays itself out as one flat vector in canonical order.
     :meth:`to_vector` returns that vector, :attr:`vector_size` is its length,

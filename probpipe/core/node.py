@@ -11,7 +11,7 @@ __all__ = ["InputFrozenError", "Node"]
 
 
 class InputFrozenError(Exception):
-    pass
+    """The error for an attempt to change the frozen inputs of a node."""
 
 
 class Node(ABC):  # noqa: B024

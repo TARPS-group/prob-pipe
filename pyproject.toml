@@ -134,7 +134,6 @@ exclude = ["*.ipynb"]
 "!probpipe/**" = ["I002"]
 # Demo scripts and tests legitimately import after setup (sys.path / env) or a
 # pytest.importorskip(...) guard, so E402 there is expected.
-"example_scripts/*" = ["E402"]
 "tests/**" = ["E402"]
 
 [tool.ruff.lint.isort]
