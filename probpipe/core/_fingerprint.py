@@ -16,7 +16,7 @@ Supported types
   scalars; ``float`` ``-0.0``/``0.0`` and all NaN payloads are canonicalized
 - ``set`` / ``frozenset`` — order-independent (element sub-digests, sorted)
 - ``Record`` — leaf paths + leaf values (leaf-keyed collection)
-- ``Distribution`` — class + name + parameters; ``EmpiricalDistribution``
+- ``Distribution`` — class + parameters, without the label; ``EmpiricalDistribution``
   hashes its atoms' levels + element spec + stored rows + weights,
   ``KDEDistribution`` hashes atoms + weights + kernel class + scales;
   ``Weights`` are hashed by content
@@ -729,7 +729,10 @@ def _update_distribution(
     max_array_bytes: int | None,
     state: _FingerprintState,
 ) -> None:
-    """Hash a distribution by class name, distribution name, and parameters.
+    """Hash a distribution by class name and parameters.
+
+    The label names the law for display and records nothing about what it
+    computes, so a relabeled law keeps its fingerprint, as a renamed function does.
 
     For TFP-backed distributions (those with a ``_tfp_dist`` attribute) the
     TFP parameter dict is hashed directly — this covers every concrete
@@ -740,15 +743,12 @@ def _update_distribution(
     h.update(b"dist:")
     h.update(type(dist).__name__.encode())
     h.update(b":")
-    name = getattr(dist, "label", None) or ""
-    h.update(name.encode())
-    h.update(b":")
 
     tfp_dist = getattr(dist, "_tfp_dist", None)
 
     if tfp_dist is not None:
         params = getattr(tfp_dist, "parameters", {}) or {}
-        # Skip construction flags and the name (already hashed above).
+        # Skip construction flags and the backend's name for the law.
         _TFP_SKIP = frozenset({"name", "validate_args", "allow_nan_stats"})
         for k, v in sorted(params.items()):
             if k in _TFP_SKIP:

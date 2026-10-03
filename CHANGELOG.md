@@ -647,7 +647,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `replay_run` reproduces a recorded call's draws under the new names. A
   declared rename made replay refuse with "the supplied Function callable
   definition changed since recording". A call recorded before this change
-  replays only with a function that declares no output.
+  replays only with a function that declares no output. A law's fingerprint
+  likewise omits its label, so `with_label` keeps it.
 - **Contributors install pre-commit as a uv tool.** The hooks are installed
   with `uv tool install pre-commit` and then `pre-commit install`, replacing
   `uvx pre-commit install`: its hook called an interpreter in the uv cache, so

@@ -348,10 +348,11 @@ class TestDistributionHashing:
         n2 = Normal(loc=0.0, scale=2.0, label="x")
         assert fingerprint(n1) != fingerprint(n2)
 
-    def test_different_name_differs(self):
-        n1 = Normal(loc=0.0, scale=1.0, label="x")
-        n2 = Normal(loc=0.0, scale=1.0, label="y")
-        assert fingerprint(n1) != fingerprint(n2)
+    def test_a_relabeled_law_keeps_its_fingerprint(self):
+        """A label names a law for display, so it is no part of what the law computes."""
+        law = Normal(loc=0.0, scale=1.0, label="x")
+        assert fingerprint(law.with_label("y")) == fingerprint(law)
+        assert fingerprint(Normal(loc=0.0, scale=1.0, label="y")) == fingerprint(law)
 
     def test_different_distribution_types_differ(self):
         from probpipe import Beta
