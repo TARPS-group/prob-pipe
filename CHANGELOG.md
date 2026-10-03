@@ -658,6 +658,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   definition changed since recording". A call recorded before this change
   replays only with a function that declares no output. A law's fingerprint
   likewise omits its label, so `with_label` keeps it.
+- **MCMC methods run four chains by default.** `blackjax_nuts`,
+  `blackjax_hmc`, `blackjax_rwmh`, `blackjax_elliptical_slice`, and `tfp_nuts`
+  ran one chain, so a fit under the default budget had no R-hat. They now run
+  four, as `cmdstan_nuts`, `pymc_nuts`, and `nutpie_nuts` do. Pass
+  `method_options={"num_chains": 1}` for one chain.
 - **Contributors install pre-commit as a uv tool.** The hooks are installed
   with `uv tool install pre-commit` and then `pre-commit install`, replacing
   `uvx pre-commit install`: its hook called an interpreter in the uv cache, so

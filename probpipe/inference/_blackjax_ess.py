@@ -181,7 +181,7 @@ def elliptical_slice(
     *,
     num_results: int = 1000,
     num_warmup: int = 500,
-    num_chains: int = 1,
+    num_chains: int = 4,
     init: ArrayLike | None = None,
     random_seed: int | None = None,
 ) -> EmpiricalDistribution:
@@ -356,7 +356,7 @@ class BlackJAXESSMethod(InferenceMethod):
             target,
             num_results=kwargs.get("num_results", 1000),
             num_warmup=kwargs.get("num_warmup", 500),
-            num_chains=kwargs.get("num_chains", 1),
+            num_chains=kwargs.get("num_chains", 4),
             init=kwargs.get("init"),
             random_seed=run_seed(kwargs, self.name),
         )

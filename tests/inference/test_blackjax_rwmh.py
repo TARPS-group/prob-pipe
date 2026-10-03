@@ -673,7 +673,7 @@ class TestEagerFallback:
         dimensions leaves a proposal that moves the chain."""
         dist = _NumpyStdNormal10(label="np10")
         # Observed across seeds 0-3: accept 0.33-0.43, min std 0.58.
-        result = rwmh(dist=dist, num_results=300, num_warmup=100, random_seed=0)
+        result = rwmh(dist=dist, num_results=300, num_warmup=100, num_chains=1, random_seed=0)
         assert result.event_shape == (10,)
         _assert_every_chain_moves(result, min_std=0.25)
 
@@ -704,6 +704,7 @@ class TestEagerFallback:
             dist=dist,
             num_results=400,
             num_warmup=200,
+            num_chains=1,
             random_seed=42,
         )
         assert result.provenance.metadata["accept_rate"] > 0.10

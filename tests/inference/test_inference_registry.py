@@ -21,7 +21,7 @@ from probpipe.distributions import Distribution
 from probpipe.distributions._capabilities import SupportsSampling
 from probpipe.inference import inference_method_registry
 from probpipe.inference._inference_utils import observed_target
-from tests._posterior import flat_draws, method_of
+from tests._posterior import flat_draws, method_of, num_chains
 from tests.inference.canonical import ObservationKernel
 
 # ---------------------------------------------------------------------------
@@ -177,6 +177,19 @@ class TestBuiltInRanks:
         opt_in = {n for n in registered if inference_method_registry.get_method(n).priority is None}
         expected = {n for n, p in self.EXPECTED_PRIORITIES.items() if p is None} & registered
         assert opt_in == expected
+
+
+class TestDefaultBudget:
+    @pytest.mark.parametrize(
+        "method", ["blackjax_nuts", "blackjax_hmc", "blackjax_rwmh", "tfp_nuts"]
+    )
+    def test_an_mcmc_method_runs_four_chains_by_default(self, simple_model, data, method):
+        """A fit that sets no chain count runs four chains, so it has an R-hat."""
+        posterior = condition_on.with_options(
+            method=method,
+            method_options={"num_results": 20, "num_warmup": 20, "random_seed": 0},
+        )(simple_model, data)
+        assert num_chains(posterior) == 4
 
 
 # ---------------------------------------------------------------------------
@@ -472,14 +485,14 @@ class TestTargets:
             target, num_results=30, num_warmup=30, random_seed=0
         )
         assert set(posterior.event_spec.components) == {"beta"}
-        assert flat_draws(posterior)["beta"].shape == (30, 2)
+        assert flat_draws(posterior)["beta"].shape == (4 * 30, 2)
 
     def test_the_random_walk_normalizes_a_keyed_target(self):
         posterior = inference_method_registry.execute(
             _logistic_target(), method="blackjax_rwmh", num_results=20, num_warmup=30
         )
         assert set(posterior.event_spec.components) == {"beta"}
-        assert flat_draws(posterior)["beta"].shape == (20, 2)
+        assert flat_draws(posterior)["beta"].shape == (4 * 20, 2)
 
     def test_a_keyed_target_starts_at_a_draw_of_its_joint(self):
         from probpipe.inference._inference_utils import get_init_state

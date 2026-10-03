@@ -202,7 +202,7 @@ class _TFPGradientMethod(InferenceMethod):
 
         num_results = kwargs.get("num_results", 1000)
         num_warmup = kwargs.get("num_warmup", 500)
-        num_chains = kwargs.get("num_chains", 1)
+        num_chains = kwargs.get("num_chains", 4)
 
         chains, sample_stats = _run_tfp_chains(
             density,

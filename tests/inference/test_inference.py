@@ -649,7 +649,7 @@ class TestRWMH:
         )
         assert isinstance(result, EmpiricalDistribution)
         assert num_draws(result) == 100
-        assert num_chains(result) == 1
+        assert num_chains(result) == 4
         assert result.event_shape == (2,)
         assert method_of(result) == "blackjax_rwmh"
 
@@ -1194,7 +1194,8 @@ class TestEndToEndValuesPipeline:
         draws = flat_draws(posterior)
         assert isinstance(draws, NumericRecordBatch)
         assert tuple(draws.event_template.keys()) == ("params",)
-        assert draws["params"].shape == (500, 2)
+        # Four chains of 500 draws.
+        assert draws["params"].shape == (4 * 500, 2)
 
     def test_draws_values_correct(self, posterior):
         """Posterior mean and std match analytical conjugate values."""

@@ -355,7 +355,7 @@ class _BlackJAXMCMCMethod(InferenceMethod):
         )
         num_results: int = kwargs.get("num_results", 1000)
         num_warmup: int = kwargs.get("num_warmup", 500)
-        num_chains: int = kwargs.get("num_chains", 1)
+        num_chains: int = kwargs.get("num_chains", 4)
         step_size: float = kwargs.get("step_size", 0.1)
         num_integration_steps: int = kwargs.get("num_integration_steps", 10)
 
