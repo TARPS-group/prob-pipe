@@ -757,7 +757,9 @@ class TriangularLinOp(LinOp):
 
 
 class RootLinOp(LinOp):
-    """A linear operator A represented by its square root S such that A = S @ S.T
+    """A positive-semidefinite operator ``A = S @ S.T``, stored as its root ``S``.
+
+    A linear operator A represented by its square root S such that A = S @ S.T
     A is guaranteed to be symmetric positive semidefinite, but not necessarily
     positive definite."""
 
@@ -911,7 +913,9 @@ class CholeskyLinOp(RootLinOp):
 
 
 class DiagonalRootLinOp(DiagonalLinOp):
-    """A linear operator A represented by its diagonal square root
+    """A diagonal operator ``A = S @ S.T``, stored as its diagonal root ``S``.
+
+    A linear operator A represented by its diagonal square root
     S = diag(s1, ..., sd) such that A = S @ S.T = diag(s1^2, ..., sd^2).
     A is guaranteed to be symmetric positive semidefinite, and is strictly
     positive definite if all entries of all of the si are non-zero."""

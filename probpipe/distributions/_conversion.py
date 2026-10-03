@@ -767,3 +767,4 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
 
 
 converter_registry: ConverterRegistry = ConverterRegistry()
+"""The global registry of converters, keyed on the source type and the requested target."""

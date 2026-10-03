@@ -1,51 +1,65 @@
+> **AI-generated.** An AI assistant drafted this page, and no maintainer has reviewed it yet. Please report errors on the issue tracker.
+
 # Operations
 
-Standalone Functions for sampling, density evaluation, moments,
-conditioning, and conversion. Each op dispatches via the matching
-[protocol](extending.md#protocols), participates in
-[broadcasting](../user_guide/03_broadcasting.ipynb), and is subject to
-[Prefect orchestration](workflows.md) when configured.
+This page documents the operations, such as `sample`, `mean`, and `condition_on`, and the errors a call raises when no route of an operation applies or the result is undefined.
+A call of an operation selects one of its routes, which are its implementations, and ranks exact routes before approximate ones.
+The `convert` operation is on [Conversion](conversion.md), the inference methods that `condition_on` selects are on [Inference methods](inference.md), and the registry of the operations and their routes is on [Registries for extensions](extending.md).
 
 ## Sampling
 
-::: probpipe.core.ops.sample
+::: probpipe.sample
 
-## Density evaluation
+## Densities
 
-::: probpipe.core.ops.log_prob
+::: probpipe.log_prob
 
-::: probpipe.core.ops.prob
+::: probpipe.unnormalized_log_prob
 
-::: probpipe.core.ops.unnormalized_log_prob
+::: probpipe.prob
 
-::: probpipe.core.ops.unnormalized_prob
+::: probpipe.unnormalized_prob
 
-::: probpipe.core.ops.random_log_prob
+::: probpipe.random_log_prob
 
-::: probpipe.core.ops.random_unnormalized_log_prob
+::: probpipe.random_unnormalized_log_prob
 
 ## Moments and expectations
 
-::: probpipe.core.ops.mean
+::: probpipe.mean
 
-::: probpipe.core.ops.variance
+::: probpipe.variance
 
-::: probpipe.core.ops.cov
+::: probpipe.cov
 
-::: probpipe.core.ops.quantile
+::: probpipe.quantile
 
-::: probpipe.core.ops.expectation
+::: probpipe.expectation
 
 ## Conditioning
 
-::: probpipe.core.ops.condition_on
+::: probpipe.condition_on
 
-`condition_on` dispatches inference via the
-[inference-method registry](inference.md#inference-methods); override the
-auto-selection with `method="<name>"`.
+## Joints, marginals, and mixtures
 
-## Conversion
+::: probpipe.joint
 
-::: probpipe.core.ops.from_distribution
+::: probpipe.marginal
 
-Backed by the [converter registry](converters.md).
+::: probpipe.factor
+
+::: probpipe.mixture
+
+## Maps
+
+::: probpipe.evaluate
+
+::: probpipe.inverse
+
+::: probpipe.log_det_jacobian
+
+## Errors
+
+::: probpipe.ResolutionError
+
+::: probpipe.MathematicalDomainError

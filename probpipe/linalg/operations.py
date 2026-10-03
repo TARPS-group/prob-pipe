@@ -8,6 +8,8 @@ Also included are more specialized operations like `mah_dist_squared()`
 that are not in one-to-one correspondence with `LinOp` methods.
 """
 
+from __future__ import annotations
+
 from typing import Any
 
 import jax.numpy as jnp

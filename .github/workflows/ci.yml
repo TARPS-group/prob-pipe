@@ -110,6 +110,42 @@ jobs:
             echo "_Full report in the \"Pyright\" step log above. Type checking is advisory; see CONTRIBUTING.md § Type checking._"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # The design ledger: the stubs the package declares but does not yet
+  # implement, the tests marked pending, and the stale uses of removed names in
+  # the docs notebooks (scripts/design/ledger.py). The job reports the three
+  # lists in its summary and fails when the docs use a removed name, since the
+  # stubs and the pending tests stay while the code catches up with design/.
+  ledger:
+    name: design ledger
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev --extra nutpie --extra pymc --extra pyabc
+
+      - name: Run the ledger
+        run: |
+          set -o pipefail
+          uv run --frozen python scripts/design/ledger.py --require-no-stale-docs | tee ledger.txt
+
+      - name: Surface the ledger counts
+        if: always()
+        run: |
+          {
+            echo "### Design ledger (fails on stale docs)"
+            echo '```'
+            grep -E '^(stubs|pending tests|stale docs):' ledger.txt || echo "no counts found"
+            echo '```'
+            echo "_Full lists in the \"Run the ledger\" step log above._"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -161,17 +197,12 @@ jobs:
             done
           fi
 
-          # Check RUN_ALL before the empty-CHANGED skip, so a foundational
-          # change with no .py edits (e.g. a pyproject.toml-only PR) still
-          # runs the full suite instead of being skipped.
+          # Check RUN_ALL first, so a foundational change with no .py edits
+          # (e.g. a pyproject.toml-only PR) still runs the full suite.
           if [ "$RUN_ALL" = "true" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
             echo "run_all=true" >> "$GITHUB_OUTPUT"
             echo "Will run ALL tests (foundational change detected)."
-          elif [ -z "$CHANGED" ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "run_all=false" >> "$GITHUB_OUTPUT"
-            echo "No .py files changed — skipping tests."
           else
             # Expand changed source files to their transitively-dependent
             # modules via the shared, unit-tested import-graph builder
@@ -207,6 +238,27 @@ jobs:
               echo "$MAPPED"
               TEST_TARGETS="$TEST_TARGETS $MAPPED"
             fi
+
+            # Tests that read files rather than import the changed modules, so
+            # the import graph cannot select them. The conformance tests
+            # compare the code blocks of design/ with the code; tests/docs/
+            # checks what the rule documents, the agent files, and the
+            # CHANGELOG cite, including probpipe names; tests/ci/ covers the
+            # scripts; and tests/test_version.py checks the packaging lockstep.
+            for f in $CHANGED_ALL; do
+              case "$f" in
+                design/*|scripts/design/*)
+                  TEST_TARGETS="$TEST_TARGETS $(git ls-files 'tests/*/test_design_conformance.py' | xargs) tests/docs tests/ci" ;;
+                scripts/docs/*|docs/*|README.md|mkdocs.yml|mkdocs_hooks.py)
+                  TEST_TARGETS="$TEST_TARGETS tests/docs" ;;
+                scripts/*)
+                  TEST_TARGETS="$TEST_TARGETS tests/ci" ;;
+                probpipe/*|AGENTS.md|CLAUDE.md|CONTRIBUTING.md|CONTRACTS.md|STYLE_GUIDE.md|CHANGELOG.md|.github/PULL_REQUEST_TEMPLATE.md|.claude/*)
+                  TEST_TARGETS="$TEST_TARGETS tests/docs" ;;
+                packaging/*)
+                  TEST_TARGETS="$TEST_TARGETS tests/test_version.py" ;;
+              esac
+            done
 
             # Deduplicate (works for both file paths and directory paths)
             TEST_TARGETS=$(echo "$TEST_TARGETS" | tr ' ' '\n' | sort -u | tr '\n' ' ' | xargs)

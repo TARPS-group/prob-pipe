@@ -1,6 +1,6 @@
 # ProbPipe Style Guide
 
-This document defines the coding conventions for the ProbPipe project.
+This document defines the coding and writing conventions for the ProbPipe project.
 It is intended for contributors and AI assistants working on the codebase.
 
 > **Spelling:** Always write **ProbPipe** — not "probpipe", "prob-pipe",
@@ -22,7 +22,7 @@ SupportsArrayBackend
 ```
 
 Protocol methods use a **single leading underscore** to distinguish the
-primitive implementation from the public op:
+primitive implementation from the public operation:
 
 ```python
 _sample, _log_prob, _mean, _variance, _cov, _condition_on, _expectation,
@@ -51,16 +51,17 @@ The corresponding *backend* interface that `_make_array_backend`
 returns (`_DistributionArrayBackend`) is private to the library —
 user code never imports or constructs it.
 
-### 1.2 Ops (public API)
+### 1.2 Operations (public API)
 
-Ops are the public entry points in `probpipe.core.ops`. They are
-`snake_case` with **no** leading underscore:
+The operations are the public entry points, declared in `probpipe.operations`
+and exported from `probpipe`. They are `snake_case` with **no** leading
+underscore:
 
 ```python
 sample, log_prob, mean, variance, cov, condition_on, expectation
 ```
 
-Users call ops, never the underscore methods directly:
+Users call operations, never the underscore methods directly:
 
 ```python
 # correct
@@ -70,44 +71,37 @@ m = mean(dist)
 m = dist._mean()
 ```
 
-The density ops (`log_prob` and its family) also accept the value by **named
-fields** — `log_prob(model, intercept=0.0, X=X_obs, y=y_obs)` — packed into one
-draw via `Distribution._pack_value`
-(single-field → the bare value; multi-field → a `Record`), the same shape as
-`condition_on`'s named data kwargs. Because `dist` and `value` are ordinary
-parameters, a distribution field whose name is exactly `value` or `dist` is
-*reserved*: address it positionally (the bare value for a single-field
-distribution, or a `Record` for a multi-field one), not by keyword.
+### 1.3 Operation routes
 
-### 1.3 Implementation functions
-
-Each op has a private implementation function named `_<op>_impl`:
+Each operation is declared once, with the `@operation` decorator, in the module
+of `probpipe/operations/` that matches its design section. The decorated
+function's signature names the operands, and its body is its docstring. Each
+implementation is a route registered on the operation, as
+`probpipe/operations/_sample.py` registers the route that calls `_sample`:
 
 ```python
-_sample_impl, _log_prob_impl, _mean_impl, _condition_on_impl
+@operation(result=_sample_result)
+def sample(d: Distribution, sample_shape: tuple[int, ...] = ()):
+    """Draw from a distribution."""
+
+
+sample.capability_route(
+    "exact", operand="d", protocol=SupportsSampling, method="_sample", exact=True, execute=_draw
+)
 ```
 
-These functions contain the protocol-check-and-delegate logic and are
-registered in `_OP_REGISTRY`. They are wrapped by `Function`
-for broadcasting/orchestration and by `_make_op` for the positional-arg
-public API.
+Design VI.0 owns the operation model, its route sources included.
 
 ### 1.4 Standalone Functions
 
-Functions that are **not** ops (i.e., not universal operations
-on distributions) follow the pattern:
-
-- Implementation function: `_<name>_impl`
-- Public `Function` instance: `<name>`
+A public function that is not an operation is a `Function`, defined with the
+`@function` decorator in its implementation module:
 
 ```python
 # probpipe/inference/_nutpie.py
-def _condition_on_nutpie_impl(model, data=None, *, ...):
+@function
+def condition_on_nutpie(model, data=None, *, num_results=1000, num_warmup=500, ...):
     ...
-
-condition_on_nutpie = Function(
-    "condition_on_nutpie", _condition_on_nutpie_impl
-)
 ```
 
 Treat a public `Function` as an immutable, first-class `TrackedTerm` / `Annotated`
@@ -116,47 +110,41 @@ calling contract; optional `input_spec: InputSpec` and `output_spec: OutputSpec`
 are authoritative schemas but never derive or replace that signature. Use
 `apply(*args, **kwargs)` for one raw evaluation with binding and schema checks.
 Use `__call__` for distribution lifting, array sweeps, orchestration, result
-wrapping, and Function-first provenance. Results use `output_name`, which
-defaults to the initial function name and survives `with_name`. This includes
-operation wrappers; a raw implementation's domain label survives `apply`,
-while a normal call labels its independent result.
+wrapping, and Function-first provenance. Results use `output_label`, which
+defaults to the function's label at construction and survives `with_label`. A
+raw implementation's own label survives `apply`, while a normal call labels its
+independent result.
 
 If an implementation returns an existing `Record`, `RecordBatch`, or
 `Distribution`, `apply` preserves its identity. `__call__` instead creates a
-shallow result copy that shares value data and templates, owns a separate
+shallow result copy that shares value data and specs, owns a separate
 annotations container, and receives only the current call's provenance. Do not
 restore identity-through behavior at the workflow boundary. Variadic Functions
 without an input declaration are supported: the planner treats every `*args`
 element and `**kwargs` entry as an independent slot while reconstructing the
 original `BoundArguments` before invoking user code.
 
-Exception: functions whose return value is a model *component* rather than a
-`Record`/`Distribution` are deliberately **plain functions** — the workflow
-result boundary coerces returns into `Record`/`Distribution`, which would wrap
-and break such components. Examples: the learned-likelihood factories
-`learn_amortized_likelihood` / `learn_amortized_ratio`; precedent: the
-de-workflowed `rwmh` / `elliptical_slice`. Note the rationale in a comment at
-the definition site.
+Exception: the learned-likelihood factories `learn_amortized_likelihood` and
+`learn_amortized_ratio`, and the samplers `rwmh` and `elliptical_slice`, are
+plain functions. A plain public function states its reason in a comment at its
+definition site.
 
 ### 1.5 Classes
 
 - **Distribution classes:** CamelCase, descriptive — `Normal`, `MultivariateNormal`,
   `EmpiricalDistribution`, `BootstrapReplicateDistribution`.
-- **Base / mixin classes:** `Distribution`, `RecordDistribution`,
-  `NumericRecordDistribution`, `FlatNumericRecordDistribution`,
-  `TFPDistribution`, `ProbabilisticModel`.
-- **View classes:** end in `DistributionView` — `FlattenedDistributionView`
-  (a `FlatNumericRecordDistribution` produced by `as_flat_distribution`),
-  `NumericRecordDistributionView` (a Record-keyed view produced by
-  `FlatNumericRecordDistribution.as_record_distribution`).
+- **Base / mixin classes:** `Distribution`, `NumericDistribution`,
+  `TFPDistribution`, `RandomFunction`.
+- **View classes:** end in "View" — `FieldView` (the field view `d[path]`),
+  `DiagnosticsView` (the accessor `Distribution.diagnostics`).
 - **Private helper classes:** Leading underscore — `_LinearMapGRF`, `_ShiftedGRF`.
 
 ### 1.6 Modules
 
-- **Private implementation modules:** Leading underscore — `_simple.py`,
-  `_stan.py`, `_blackjax_rwmh.py`, `_nutpie.py`.
-- **Public modules:** Descriptive names — `continuous.py`, `discrete.py`,
-  `protocols.py`, `ops.py`.
+- **Private implementation modules:** Leading underscore — `_continuous.py`,
+  `_programs.py`, `_blackjax_rwmh.py`, `_nutpie.py`.
+- **Public modules:** Descriptive names — `constraints.py`, `named_tree.py`,
+  `protocols.py`, `record.py`.
 - **Package `__init__.py`** files re-export the public API. Users should
   import from `probpipe` or from subpackage `__init__` modules, not from
   private modules.
@@ -172,7 +160,7 @@ nutpie_nuts, cmdstan_nuts, pymc_nuts, pymc_advi
 ```
 
 Method classes are CamelCase: ``TFPNutsMethod``, ``CmdStanNutsMethod``,
-``PyMCNutsMethod``.  Factory functions that return parameterized instances
+``PyMCNutsMethod``. Factory functions that return parameterized instances
 (e.g., ``TFPNutsMethod() -> _TFPGradientMethod``) use the same naming.
 
 ### 1.8 Workflow option namespace
@@ -200,23 +188,19 @@ naming the size of the finite collection they hold. The name reflects
 
 - **`num_atoms`** — items in an empirical *measure* (atoms / point
   masses in `\sum_i w_i \delta_{x_i}`). Use for any class whose
-  ``_sample`` returns *one of N stored realisations*.
+  ``_sample`` returns *one of N stored atoms*.
 - **`replicate_size`** — items in a single bootstrap *replicate*. Use
-  for any class whose ``_sample`` returns a *whole resampled dataset*
-  whose size is the named count. (`*_size` rather than `num_*` because
-  a generative resampler holds no finite atom set — the count is a
+  for any class whose ``_sample`` returns a *whole resampled dataset or
+  measure* whose size is the named count. (`*_size` rather than `num_*`
+  because a generative resampler holds no finite atom set — the count is a
   parameter of the resample, like `batch_size` / `event_size`.)
 
 | Class | Property | Meaning |
 |-------|----------|---------|
-| `EmpiricalDistribution` | `num_atoms` | Stored samples |
-| `RecordEmpiricalDistribution` | `num_atoms` | Stored samples |
-| `JointEmpirical`, `NumericJointEmpirical` | `num_atoms` | Stored joint samples |
-| `BootstrapDistribution` | `num_atoms` | Stored function evaluations |
+| `EmpiricalDistribution` | `num_atoms` | Stored atoms |
 | `KDEDistribution` | `num_atoms` | Kernel centres |
-| `BroadcastDistribution`, `_RecordMarginal`, `_MixtureMarginal`, `_ListMarginal` | `num_atoms` | Output samples / components |
-| `ApproximateDistribution` | `num_atoms` (inherited) + `num_draws` (per chain) | total chain × draw / per-chain |
-| `BootstrapReplicateDistribution`, `RecordBootstrapReplicateDistribution` | `replicate_size` (+ `source_size`) | Items per bootstrap replicate, plus optional source-pool size |
+| `BootstrapReplicateDistribution` | `replicate_size` | Draws in one replicate |
+| `BootstrapDistribution` | `replicate_size` | Atoms of one drawn measure |
 
 When adding a new class that wraps a finite collection, define the
 property as a `@property` returning `int`. Pick the name based on
@@ -237,7 +221,7 @@ the constructor preserves what the caller wrote.
 The `/` character is reserved as a nested-path separator. Field
 names may not contain `/` (raises `ValueError` at construction).
 Slash-delimited strings are accepted everywhere a field name is
-accepted, and are sugar for the tuple form:
+accepted, as a short form of the tuple form:
 
 ```python
 record["params/intercept"]   # same as record["params", "intercept"]
@@ -250,14 +234,6 @@ sub-Record, whereas `record["params"]` raises when `params` is not a
 leaf. `keys()` lists every leaf's path using the same `/` separator, so
 those paths round-trip with `__getitem__`.
 
-One surface is a documented exception, pending its own follow-up:
-
-- Record-based **distributions** (`RecordDistribution`,
-  `RecordEmpiricalDistribution`, …): their `fields` / `keys()` / `in` /
-  `[]` surface is still **top-level** pending the distribution
-  value-model work. Use `dist.event_spec.spec.keys()` for the leaf
-  paths of one draw.
-
 **Mappings are never leaves.** A `Mapping` value denotes tree
 structure: a dict field value is always materialised into a nested
 subtree, never stored as a single opaque leaf (construction recurses
@@ -269,8 +245,8 @@ inside a `Record`; use a non-mapping container if you need one leaf.
 same-family tree with the given nodes (leaves or whole subtrees)
 renamed. Each key is the exact path of a node, so a single name
 addresses a top-level node and a nested node takes its full path. It
-renames fields *within* the tree; renaming the object itself is
-`with_name`.
+renames fields *within* the tree; relabeling the object itself is
+`with_label`.
 
 When adding new Record-based containers, follow these conventions:
 preserve first-appearance order, reject `/` in field names, materialize
@@ -282,11 +258,9 @@ leaf path, and accept the slash-delimited form in any string-keyed lookup.
 A `Distribution` represents a single random variable, not a
 collection. Every concrete `Distribution` subclass —
 `Normal`, `EmpiricalDistribution`, `BootstrapReplicateDistribution`,
-joint distributions, marginals — is **non-iterable**. For the
-finite-sample subclasses listed in §1.9, stored samples are
-accessed via `.samples` / `.draws()` and the size property
-(`num_atoms` or `replicate_size` per §1.9) reports the count.
-Parametric distributions do not have either property.
+factored joints — is **non-iterable**. An empirical law exposes its stored
+atoms on `.atoms`, and the size property of §1.9 reports the count.
+Parametric distributions have neither.
 
 Iteration is reserved for the `Record` family — `Record` and
 `NumericRecord` — which iterate field names dict-style
@@ -294,26 +268,18 @@ Iteration is reserved for the `Record` family — `Record` and
 `RecordBatch` is a collection, not a named tree: it iterates leading-axis
 views like an array, and its fields are read from `event_template`.
 
-`DistributionArray` is positional and follows numpy/jax conventions:
-`len(da)` is the leading-axis dim and `da.size` is the total cell
-count (`prod(da.batch_shape)`); elements are accessed via `da[i]`.
-Its `event_spec` declares the term every cell draws.
-Iteration walks the leading axis — for a 1-D `DistributionArray`
-it yields scalar cells; for a multi-d one it yields sub-arrays of
-shape `batch_shape[1:]`, mirroring `iter(np.zeros((2, 3)))`. For
-flat row-major access over every cell, use `da.components`.
+`DistributionBatch` is positional and follows numpy/jax conventions:
+`len(batch)` is the leading-axis size and `batch_size` is the total
+count of laws; elements are accessed via `batch[i]`.
+Its `event_spec` declares the term every law draws.
+Iteration visits views of the laws along the leading axis.
 
-When adding a new `Distribution` subclass, do not define `__iter__`.
-The regression test in `tests/test_iteration_protocol.py` enforces
-this rule across user-constructible distribution subclasses
-(`Normal`, `Beta`, `Gamma`, `MultivariateNormal`, `ProductDistribution`,
-`TransformedDistribution`, `KDEDistribution`,
-`RecordEmpiricalDistribution`, `BootstrapReplicateDistribution`,
-`RecordBootstrapReplicateDistribution`, `NumericJointEmpirical`).
-WF-output classes (`BroadcastDistribution`, `_RecordMarginal`,
-`_MixtureMarginal`, `_ListMarginal`) inherit the constraint from
-their bases and aren't directly parametrised; if you add a new such
-class, verify non-iterability via the parent class's contract.
+A new `Distribution` subclass defines no `__iter__`.
+The regression test in `tests/core/test_iteration_protocol.py` enforces
+this rule across the user-constructible distribution classes, such as
+`Normal`, `KDEDistribution`, and `MinibatchedDistribution`. A lifted call's
+result is an
+`EmpiricalDistribution`, which the test covers with the others.
 
 ### 1.12 Naming accuracy
 
@@ -330,12 +296,10 @@ uses:
   total element count), follow it rather than inventing a parallel
   vocabulary.
 - **Symmetry.** Paired APIs get symmetric names — e.g.,
-  `as_flat_distribution` / `as_record_distribution` produce
-  `FlattenedDistributionView` / `NumericRecordDistributionView`.
-- **Rename sweeps are complete.** Renaming a symbol includes every
-  analogous symbol (fixing `_ensure_bayesflow` means fixing
-  `_ensure_cmdstanpy` too), the test files named after the old symbol,
-  and the docs that mention it.
+  `NumericRecord.to_vector` / `NumericRecord.from_vector`.
+- **Rename sweeps are complete.** A rename covers every analogous symbol,
+  such as the `with_*` method of a renamed attribute. It also covers the test
+  files named after the old symbol and the docs that mention it.
 
 ---
 
@@ -347,13 +311,14 @@ Each file should contain **one independent concern**. Use judgment:
 
 - **Thin wrappers** that share a common base and pattern (e.g.,
   TFP-backed distributions) belong together in a single file grouped
-  by mathematical category (`continuous.py`, `discrete.py`,
-  `multivariate.py`).
-- **Substantial classes** with distinct logic or backends (e.g.,
-  `SimpleModel` vs `StanModel`, `RWMH` vs nutpie) get their own file.
+  by mathematical category (`families/_continuous.py`,
+  `families/_discrete.py`, `families/_multivariate.py`).
+- **Substantial classes** with distinct logic or backends get their own
+  file, as the random-walk sampler in `inference/_blackjax_rwmh.py` and the
+  nutpie sampler in `inference/_nutpie.py` do.
 - **Small helpers** tightly coupled to one consumer belong in
-  that consumer's file (e.g., `make_posterior` in
-  `_approximate_distribution.py`).
+  that consumer's file (e.g., `_function_draws` in
+  `operations/_sample.py`).
 
 The test: *if two classes are always modified together or one only exists
 to serve the other, they belong in the same file. If they can evolve
@@ -367,7 +332,7 @@ positive vs bounded).
 
 ### 2.3 Private vs public modules
 
-Implementation modules use a leading underscore (`_simple.py`,
+Implementation modules use a leading underscore (`_continuous.py`,
 `_blackjax_rwmh.py`, `_array_backend.py`); the package `__init__.py`
 re-exports their public symbols so users never need to import from
 underscore modules directly.
@@ -376,17 +341,21 @@ Modules **without** the underscore are reserved for the foundational
 vocabulary that user code may reasonably import directly:
 
 ```python
-from probpipe.core.protocols import SupportsSampling
+from probpipe.core.protocols import SupportsArrayBackend
 from probpipe.core.constraints import positive
 from probpipe.core.record import Record
 ```
 
-A handful of `core/` and `distributions/` modules fit this profile —
-`protocols.py`, `named_tree.py`, `record.py`, `ops.py`, `constraints.py`,
-`provenance.py`, `tracked.py`, `transition.py`, `node.py`, `continuous.py`,
-`discrete.py`, `multivariate.py`, `transformed.py`.
-Everything else in those subpackages (the `_*.py` files) is an
-implementation detail re-exported via the package `__init__.py`.
+The public modules are these:
+
+- `core/`: `config.py`, `constraints.py`, `named_tree.py`, `node.py`,
+  `protocols.py`, `provenance.py`, `record.py`, `tracked.py`, and `transition.py`;
+- `linalg/`: `linear_operator.py`, `operations.py`, and `utils.py`;
+- `record/`: `design.py`;
+- `diagnostics/`: `views.py`.
+
+Every other module (the `_*.py` files) is an implementation detail
+re-exported via its package `__init__.py`.
 
 Test: *if a user can plausibly type the module path on a doc page or
 in their own code, the module is public. If it only exists to
@@ -397,7 +366,7 @@ factor implementation off the foundational class, it is private.*
 ## 3. Docstring Conventions
 
 Use **NumPy-style** docstrings with `Parameters`, `Returns`, and `Raises`
-sections as needed.
+sections as needed. Their prose follows the writing rules of §10.
 
 ### 3.1 Module docstrings
 
@@ -405,16 +374,16 @@ Every module has a docstring explaining its purpose. Include a usage
 example when helpful:
 
 ```python
-"""Built-in operations for distribution computation.
+"""The sample operation: one draw, or a batch of draws, of a distribution.
 
-Each public function (``sample``, ``mean``, ``log_prob``, ...) is a
-lightweight positional-arg wrapper around an internal
-:class:`~probpipe.values._function_base.Function`.
+``sample(d)`` returns one draw at the kind the law's event declaration names,
+and a non-empty ``sample_shape`` prepends batch axes on a level named
+``sample``, returning the batch form of that kind.
 
 Usage::
 
-    from probpipe import sample, mean, log_prob
-    m = mean(dist)
+    from probpipe import Normal, sample
+    draws = sample(Normal(loc=0.0, scale=1.0, label="x"), sample_shape=(100,))
 """
 ```
 
@@ -428,8 +397,8 @@ class Normal(TFPDistribution):
 
     Parameters
     ----------
-    name : str
-        Distribution name.
+    label : str
+        Distribution label.
     loc : array-like
         Mean of the distribution.
     scale : array-like
@@ -442,27 +411,30 @@ class Normal(TFPDistribution):
 Summary line, then `Parameters`, `Returns`, `Raises` as needed:
 
 ```python
-def _sample_impl(
-    dist: SupportsSampling,
-    *,
-    key: PRNGKey | None = None,
-    sample_shape: tuple[int, ...] = (),
-) -> Any:
-    """Draw samples from a distribution.
+@operation(result=_sample_result)
+def sample(d: Distribution, sample_shape: tuple[int, ...] = ()):
+    """Draw from a distribution.
 
     Parameters
     ----------
-    dist : SupportsSampling
-        Distribution to sample from.
-    key : PRNGKey or None
-        JAX PRNG key. Auto-generated if not provided.
-    sample_shape : tuple of int
-        Shape prefix for independent draws.
+    d : Distribution
+        The law to draw from.
+    sample_shape : int or tuple of int
+        The batch axes to prepend; ``()`` draws once, and a bare integer is one
+        axis.
 
     Returns
     -------
-    Any
-        Sampled value(s).
+    TrackedTerm
+        One draw at the kind the event declaration names; or, for a non-empty
+        *sample_shape*, the batch form of that kind.
+
+    Raises
+    ------
+    ApplicabilityError
+        If *sample_shape* is malformed.
+    ResolutionError
+        If *d* does not sample.
     """
 ```
 
@@ -483,14 +455,17 @@ or module:
 
 ### 4.1 Future annotations
 
-Every module starts with:
+Every module of `probpipe/` other than a package's `__init__.py` starts with:
 
 ```python
 from __future__ import annotations
 ```
 
-This enables PEP 604 union syntax (`X | Y`) and forward references in
-all Python versions ProbPipe supports.
+The import postpones the evaluation of annotations, so an annotation can name a
+class defined later in the module or imported only under `TYPE_CHECKING`.
+Ruff enforces the rule through the `required-imports` setting in
+`pyproject.toml`. `probpipe/linalg/operations.py` lacks the import, so its
+per-file ignore stays until a change to its source adds it.
 
 ### 4.2 Import order
 
@@ -506,25 +481,24 @@ Separate each group with a blank line.
 Always use **relative imports** for internal references:
 
 ```python
-from ..core.protocols import SupportsSampling
 from ..core.provenance import Provenance
 from ..custom_types import Array, PRNGKey
+from ..distributions._capabilities import SupportsSampling
 from ..distributions._distribution import Distribution
 ```
 
 ### 4.4 Optional dependencies
 
-Use try/except with a helpful error at the call site:
+Import an optional dependency where it is used, and raise a helpful error
+there:
 
 ```python
-def _ensure_nutpie():
-    try:
-        import nutpie
-        return nutpie
-    except ImportError:
-        raise ImportError(
-            "nutpie is required: pip install probpipe-core[nutpie]"
-        ) from None
+try:
+    import nutpie
+except ImportError as e:
+    raise ImportError(
+        "nutpie is required for condition_on_nutpie. Install it with: pip install nutpie"
+    ) from e
 ```
 
 For test files, use `pytest.importorskip("nutpie")` or mock-based
@@ -558,7 +532,7 @@ Use `TYPE_CHECKING` for imports needed only by type checkers:
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .core.protocols import SupportsSampling
+    from .distributions._distribution import Distribution
 ```
 
 ---
@@ -575,12 +549,12 @@ Use modern Python 3.12+ syntax everywhere:
 | `str \| None`        | `Optional[str]`         |
 | `X \| Y`             | `Union[X, Y]`           |
 
-Type aliases live in `probpipe/custom_types.py`:
+Type aliases are defined in `probpipe/custom_types.py`:
 
 ```python
-Array: TypeAlias = jnp.ndarray
-ArrayLike: TypeAlias = jnp.ndarray | list | tuple | float | int
-PRNGKey: TypeAlias = jax.Array
+type Array = jnp.ndarray
+type ArrayLike = jnp.ndarray | list | tuple | float | int
+type PRNGKey = jax.Array  # JAX PRNG key
 ```
 
 These conventions are checked (advisorily) by pyright in CI — see
@@ -592,86 +566,60 @@ under the project's `basic` pyright mode where practical.
 
 ## 6. Subpackage Dependencies
 
-The dependency graph must remain **acyclic**. Allowed import directions:
+The dependency graph must remain **acyclic**. Each entry lists the packages
+it imports at module level:
 
 ```
-custom_types  (no internal deps — leaf)
+custom_types   (no internal deps — leaf)
      ↑
-   core/      (imports custom_types only)
+core/          (custom_types; the exceptions below)
      ↑
-distributions/ (imports core/, custom_types)
-record/        (imports core/, custom_types)
+values/        (core/)
      ↑
-linalg/       (imports core/, custom_types; no distribution imports)
+linalg/        (core/, custom_types)
      ↑
-converters/   (imports core/, distributions/, custom_types)
+distributions/ (core/, linalg/)
      ↑
-modeling/     (imports core/, inference/, converters/, custom_types)
-inference/    (imports core/, custom_types)
-validation/   (imports core/, inference/, custom_types)
-diagnostics/  (imports core/, inference/, validation/, custom_types)
+functions/     (core/, values/, distributions/)
+     ↑
+operations/    (core/, values/, distributions/, functions/)
+     ↑
+families/      (core/, values/, linalg/, distributions/, functions/, operations/)
+record/        (core/)
+     ↑
+inference/     (core/, values/, distributions/, functions/, operations/, families/)
+validation/    (core/, distributions/, functions/, operations/)
+diagnostics/   (distributions/, functions/, validation/)
 ```
 
-`distributions/_distribution.py` is the distribution base: it defines
-`Distribution` and `DistributionSpec` and imports only from `core/` at module
-level. Every package that works with distributions may import it, and `core/`
-does so under the first exception below.
+The private helper modules (`_array_utils.py`, `_dtype.py`, `_weights.py`)
+import only `custom_types` and each other, so every package may import them.
 
-`values/_function_base.py` owns `Function` and `FunctionSpec`; `functions/`
-owns binding-to-engine integration, planning, broadcasting, sweeping, RNG,
-execution, replay, and result wrapping. The base never imports the engine:
-`install_call_engine` installs it at package initialization. Pure Python binding
-helpers live in `values/_binding.py` so raw evaluation works without the engine.
-
-### Rules
-
-1. **`core/`** must never import from `record/`, `linalg/`,
-   `converters/`, `inference/`, or `modeling/`, and it imports only the
-   distribution base from `distributions/`.
-2. **`distributions/`** must never import from `record/`, `linalg/`,
-   `converters/`, `inference/`, or `modeling/`.
-3. **`record/`** must never import from `distributions/`, `linalg/`,
-   `converters/`, `inference/`, or `modeling/`.
-4. **`linalg/`** is self-contained; it may import from `core/` and
-   `custom_types` only.
-5. **`converters/`** may import from `distributions/` and `core/` but
-   must never import from `inference/` or `modeling/`.
-6. **`inference/`** must never import from `modeling/` or `converters/`.
-7. **`modeling/`** may import from `inference/` (for MCMC result types)
-   and from `converters/` (for auto-conversion in conditioning).
-8. **`validation/`** may import from `core/`, `inference/`, and
-   `custom_types`.
-9. **`diagnostics/`** may import from `core/`, `inference/`, `validation/`,
-   and `custom_types`; it must not become a dependency of those packages except
-   for the documented lazy accessor edge below.
+`values/_function_base.py` owns `Function` and `FunctionSpec`, and `functions/`
+owns the engine, from binding through result wrapping. The base never imports the engine:
+`install_call_engine` installs it when `functions/_function.py` is imported.
+The pure Python binding helpers are in `values/_binding.py`, so raw evaluation
+works without the engine. `functions/__init__.py` resolves its exports lazily.
 
 > **Exceptions** (intentional reverse edges):
 >
-> - `core/` → `distributions/_distribution.py` (module-level imports of the
->   distribution base). The base is defined at its target location, while the
->   `core/` modules that build on it have not yet moved out of `core/`.
->   Importing the base initializes `probpipe.distributions`, whose families
->   import those modules back, so the two packages form a cycle. The cycle stays
->   benign because `probpipe/__init__.py` imports `probpipe.distributions` before
->   any other first-party module. A `core/` module therefore imports the base
->   from `..distributions._distribution`, never through the names
->   `probpipe.distributions` re-exports, since that package's `__init__` is still
->   running when the module loads.
-> - During #448 B1, unmigrated `core/` modules may import the moved
->   `values/` and `functions/` implementations. The old workflow paths have no
->   shims. `functions/__init__.py` resolves exports lazily to allow core and
->   distribution bootstrap before installing the engine. This is a transition
->   exception, not permission to add reverse dependencies to the Function base.
-> - `inference/` → `modeling/` (lazy imports for model-type dispatch in
->   `_tfp_mcmc`, `_nutpie`, `_cmdstan_method`, `_pymc_method`)
-> - `inference/` → `distributions/` (lazy imports: prior-type dispatch on
->   distribution classes in `_blackjax_ess`, `bijector_for` constraint
->   reparameterization in `_bayesflow_posteriors`)
+> - `core/` → `values/`: `core/_function_batch.py` and `core/_record_batch.py`
+>   import from `values/_function_base.py`. The two batch modules belong in
+>   `values/`, where `design/package-structure.md` places them.
+> - `core/transition.py` → `values/`, `distributions/`, and `functions/`:
+>   `iterate`, `with_conversion`, and `with_resampling` build `Function`s over
+>   distributions, and their placement is an open point of
+>   `design/package-structure.md`.
+> - `core/` → `families/`: the function of `core/_fingerprint.py` that
+>   fingerprints a `KDEDistribution` imports the class lazily.
 > - `distributions/` → `diagnostics.views` (lazy import inside
 >   `Distribution.diagnostics` to construct the read-only diagnostics accessor)
+> - `diagnostics/` → `inference/`: four diagnostics modules import private
+>   helpers of `inference/` lazily, such as the chain helpers of
+>   `inference/_approximate_distribution.py`.
 >
-> Except for the documented migration edges, these use lazy (in-function) imports to avoid circular
-> imports at module load time. Do not add new reverse edges without discussion.
+> A new reverse edge needs a maintainer's agreement first, and a lazy
+> (in-function) import keeps it from creating a cycle at module load time.
 
 ---
 
@@ -716,7 +664,8 @@ class Normal(TFPDistribution):
 
 ### 8.1 File naming
 
-Test files mirror the source structure: `tests/test_<module>.py`.
+Test files mirror the package tree, as `design/package-structure.md` § Principles
+states: `tests/core/test_record.py` tests `probpipe/core/record.py`.
 
 ### 8.2 Test classes
 
@@ -726,7 +675,7 @@ setup:
 ```python
 class TestSample:
     def test_sample_scalar(self, normal):
-        s = sample(normal, key=jax.random.PRNGKey(0))
+        s = sample(normal)
         assert s.shape == ()
 ```
 
@@ -737,7 +686,7 @@ Define reusable fixtures at module scope:
 ```python
 @pytest.fixture
 def normal():
-    return Normal("x", 2.0, 0.5)
+    return Normal(loc=2.0, scale=0.5, label="x")
 ```
 
 Use `@pytest.fixture(params=...)` for parametrized testing across
@@ -748,8 +697,8 @@ distribution families.
 - `pytest.importorskip("pymc")` for tests requiring optional packages.
 - `patch.dict(sys.modules, ...)` for mock-based isolation of optional
   backends.
-- nutpie tests use `object.__new__()` + manual attribute setting to avoid
-  requiring compiled models.
+- nutpie tests replace nutpie's compiled model with a small stand-in class,
+  so the helper and error-path tests need no compiled model.
 - Stan tests compile real programs through BridgeStan, gated by a fixture
   that `importorskip`s `bridgestan` and probes the C++ toolchain, and run in
   the dedicated `stan` CI job (`--extra stan`). StanModel's backend-free tests
@@ -813,18 +762,16 @@ bugs; too tight is flaky on other platforms.
 ### 9.1 `__all__` exports
 
 Every public module defines `__all__`. Package `__init__.py` files
-aggregate exports from private submodules.  Private implementation
+aggregate exports from private submodules. Private implementation
 modules (`_*.py`) whose symbols are re-exported through the package
 `__init__.py` are exempt.
 
 ### 9.2 Immutability
 
-Distribution and `Function` objects are immutable. Parameters, Function
-signatures, templates, controls, and implementations are fixed at construction;
-operations return new terms rather than mutating state.
-
-Records, batches, functions, and templates **enforce** this: assignment and
-deletion raise `AttributeError`, naming the class touched.
+Design II.4 owns the immutability rule and its one writable store, the
+append-only `annotations`. Every tracked term other than a distribution
+enforces the rule: assignment and deletion raise `AttributeError`, naming the
+class.
 
 **Distributions do not enforce it yet.** `Distribution` overrides both
 `__setattr__` and `__delattr__` to permit them, because the documented way to
@@ -835,28 +782,14 @@ do not add assignment to a distribution outside its constructor. The exemption
 lifts by removing both overrides, once fitting has that contract; removing one
 would leave a trainer that clears what it fitted still raising.
 
-Two stores are carved out of that rule, both written after construction.
-
-**The first is the `annotations` store** (`_annotations`, provided
-by the `Annotated` mixin in `probpipe.core.tracked` and carried by
-`Distribution` and `Record`): a string-keyed mapping — typically an
-`xarray.DataTree` — whose job is to collect post-construction metadata
-(validation results, diagnostic outputs, future LOO/WAIC scores) under
-named groups. Ops like `predictive_check` mutate it in place because the
-alternative — returning a renamed clone for every diagnostic — would
-break the provenance/identity tracking that downstream code relies on.
-Treat it as append-only and never use it as a back-channel for mutating
-parameter-like state.
-
-**The second, narrower, is a memo**: a term that computes something
-lazily holds a `_memo` dictionary, assigned by its constructor and filled in
-place by the read that needs it (`BroadcastDistribution.marginalize`, a
-backend-delegated `DistributionArray.components`,
-`ApproximateDistribution._concat_chains`). Filling it leaves the term's own
-attributes as construction set them, which is what the immutability guard sees.
-A class holding one declares it in `_transient_state` so no copy inherits it —
-each copy rebuilds — and whatever reads it must tolerate its absence, since a
-copy or an unpickle arrives without one.
+**A memo** holds what a term computes lazily. It is a `_memo` dictionary that
+`transient_memo` in `probpipe/core/_immutable.py` creates on first use, and the
+read that needs a value fills it in place, as `StanModel` does with its
+BridgeStan model. Filling it leaves the term's own attributes as construction
+set them, which is what the immutability guard sees. A class holding one
+declares `_memo` in `_transient_state` so no copy inherits it, and whatever
+reads it must tolerate its absence, since a copy or an unpickle arrives
+without one.
 
 ### 9.3 Error messages
 
@@ -870,3 +803,48 @@ if not isinstance(dist, SupportsMean):
         f"it must implement the SupportsMean protocol"
     )
 ```
+
+---
+
+## 10. Writing
+
+These rules govern the prose of the repository: docstrings and comments, the
+documentation and `design/`, and PR and issue text. `scripts/design/prose.py`
+lists the places that may break the rules a script can detect, for a reader to
+judge.
+
+1. **One claim per sentence.** Write declarative sentences that each make one
+   claim. Connect clauses with a word, such as *therefore*, *which*, or
+   *because*, rather than with an appositive comma. A parenthetical is a short
+   gloss or a citation. Use em-dashes sparingly, and never two in one sentence.
+2. **State rules positively.** Say what a thing is. Cut a contrast that only
+   says what a thing is not, and cut historical asides.
+3. **Cut what adds nothing.** Cut each clause that adds nothing, and prefer the
+   plain statement to a compressed parallel one.
+4. **Justify truly.** A justification implies the rule it justifies.
+5. **Format lists.** Where a list illustrates, give two or three examples.
+   Three or more parallel items become a numbered or bulleted list with a colon
+   gloss for each.
+6. **Use plain words.** Prefer plain words to metaphor and jargon, and use none
+   of these as a figure of speech:
+   - words and phrases: "surface" for an API, "load-bearing", "machinery",
+     "escape hatch", "door", "hook" unless it is a literal callback,
+     "plumbing", "under the hood", "sugar", "elide", "knob", "dial", "seams",
+     "fine print", "story", and "picture";
+   - vague verbs: "reach", "touch", "hand back", "walk", "live", "ride",
+     "land", and "sit".
+
+   Use a generic word only in its literal sense, so "shape" is an array shape.
+   Use a term that `design/glossary.md` defines only in that sense, so a "path"
+   is a tree address.
+7. **Name exactly.** Use no intensifier: "precisely", "deliberately",
+   "genuinely", "of course", and "exactly" outside its mathematical sense. Name
+   attributes, methods, and APIs exactly, and let each relational noun name its
+   object.
+8. **State each rule once.** State a rule in the section that owns it, and
+   point to that section from every other place.
+9. **Name things by behavior.** Code, comments, tests, and PR text name each
+   thing by its behavior, and never by a development-plan label: a phase, a
+   tier, a wave, or a stage letter.
+10. **Keep PR and issue text self-contained.** Motivate each change from the
+    repository's code, merged PRs, `design/`, and open issues.

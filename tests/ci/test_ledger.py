@@ -85,3 +85,26 @@ class TestStaleDocs:
         _notebook(root / "docs" / "guide.ipynb", "%matplotlib inline\nfrom probpipe import Normal")
         (root / "example_scripts" / "demo.py").write_text("import probpipe\n")
         assert _details(root) == []
+
+    def test_a_notebook_checkpoint_is_not_listed(self, root):
+        _notebook(root / "docs" / ".ipynb_checkpoints" / "guide.ipynb", "from probpipe import Gone")
+        assert _details(root) == []
+
+
+class TestRequireNoStaleDocs:
+    @pytest.fixture
+    def ledger_at(self, root, monkeypatch):
+        """The ledger reading the docs under *root*, with no stubs."""
+        monkeypatch.setattr(ledger, "ROOT", root)
+        monkeypatch.setattr(ledger, "stubs", lambda: iter(()))
+        monkeypatch.setattr(ledger, "generated_stubs", lambda: iter(()))
+        return root
+
+    def test_the_flag_fails_while_the_docs_use_a_removed_name(self, ledger_at):
+        _notebook(ledger_at / "docs" / "guide.ipynb", "from probpipe import NoSuchName")
+        assert ledger.main(["--no-tests", "--require-no-stale-docs"]) == 1
+        assert ledger.main(["--no-tests"]) == 0
+
+    def test_the_flag_passes_once_the_docs_are_current(self, ledger_at):
+        _notebook(ledger_at / "docs" / "guide.ipynb", "from probpipe import Normal")
+        assert ledger.main(["--no-tests", "--require-no-stale-docs"]) == 0
