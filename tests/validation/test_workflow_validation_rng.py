@@ -13,6 +13,7 @@ from probpipe import (
     EmpiricalDistribution,
     MultivariateNormal,
     Normal,
+    conditional_distribution,
     predictive_check,
     workflow_run,
 )
@@ -23,7 +24,6 @@ from probpipe.validation import (
     score_posterior,
     simulation_based_calibration,
 )
-from tests._regression_provider import CertifiedRegression
 
 
 class _OpaqueLikelihood:
@@ -32,26 +32,20 @@ class _OpaqueLikelihood:
         return jnp.asarray(params)[..., None] + noise
 
 
-class _RecordingNormal(Normal):
-    def __init__(self, calls):
-        self.calls = calls
-        super().__init__(loc=0.0, scale=1.0, label="x")
-
-    def _sample(self, key, sample_shape=()):
-        self.calls.append((key, tuple(sample_shape)))
-        return super()._sample(key, sample_shape)
-
-
-def _glm_validation_setup():
-    x = jnp.linspace(-1.0, 1.0, 6)[:, None]
-    prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="beta")
-    likelihood = CertifiedRegression("normal", x)
-    return prior, likelihood
+def _check_setup():
+    """A normal kernel of six observations and its normal prior."""
+    prior = Normal("mu", 0.0, 1.0)
+    likelihood = conditional_distribution(
+        "y_given_mu",
+        lambda mu: Normal("y", mu * jnp.ones(6), 1.0),
+        given_spec=prior.event_spec.components,
+    )
+    return likelihood, prior
 
 
 class TestPredictiveCheckBroker:
-    def test_certified_provider_is_seeded_and_claims_one_event(self):
-        prior, likelihood = _glm_validation_setup()
+    def test_a_seeded_check_is_reproducible_and_claims_one_event(self):
+        likelihood, prior = _check_setup()
 
         def run(num_replications):
             with (
@@ -62,11 +56,7 @@ class TestPredictiveCheckBroker:
                 workflow_run(seed=7),
             ):
                 result = predictive_check(
-                    prior,
-                    likelihood,
-                    test_fn=jnp.mean,
-                    num_observations=6,
-                    num_replications=num_replications,
+                    likelihood, prior, jnp.mean, num_replications=num_replications
                 )
             return np.asarray(result["replicated_statistics"].atoms.values), derive
 
@@ -80,153 +70,68 @@ class TestPredictiveCheckBroker:
         assert larger_derive.call_count == 1
         assert larger.shape == (16,)
 
-    def test_opaque_provider_requires_explicit_key_before_sampling(self):
-        calls = []
-        prior = _RecordingNormal(calls)
+    def test_several_statistics_claim_one_event(self):
+        likelihood, prior = _check_setup()
 
         with (
-            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
+            patch(
+                "probpipe.functions._context.derive_event_key_words_from_encoded",
+                wraps=_context.derive_event_key_words_from_encoded,
+            ) as derive,
             workflow_run(seed=7),
-            pytest.raises(TypeError, match="explicit key"),
         ):
+            predictive_check(likelihood, prior, [jnp.mean, jnp.max], num_replications=4)
+
+        assert derive.call_count == 1
+
+    def test_an_explicit_key_claims_no_event(self):
+        likelihood, prior = _check_setup()
+
+        with patch("probpipe.functions._context._commit_stochastic_invocation") as commit:
             predictive_check(
-                prior,
-                _OpaqueLikelihood(),
-                test_fn=jnp.mean,
-                num_observations=4,
-                num_replications=3,
+                likelihood, prior, jnp.mean, num_replications=3, key=jax.random.key(11)
             )
 
-        assert calls == []
         commit.assert_not_called()
 
-        explicit = jax.random.key(11)
-        with patch("probpipe.functions._context._commit_stochastic_invocation") as explicit_commit:
-            predictive_check(
-                prior,
-                _OpaqueLikelihood(),
-                test_fn=jnp.mean,
-                num_observations=4,
-                num_replications=3,
-                key=explicit,
-            )
-        assert len(calls) == 1
-        explicit_commit.assert_not_called()
+    def test_a_check_outside_a_workflow_run_draws_a_fresh_key(self):
+        likelihood, prior = _check_setup()
 
-    def test_numpy_integer_counts_are_normalized_before_event_commit(self):
-        prior, likelihood = _glm_validation_setup()
-
-        with workflow_run(seed=7):
-            result = predictive_check(
-                prior,
-                likelihood,
-                test_fn=jnp.mean,
-                num_observations=np.int64(6),
-                num_replications=np.int64(3),
-            )
+        result = predictive_check(likelihood, prior, jnp.mean, num_replications=3)
 
         assert result["replicated_statistics"].num_atoms == 3
 
-    @pytest.mark.parametrize(
-        ("argument", "value"),
-        [
-            ("num_replications", True),
-            ("num_replications", 0),
-            ("num_replications", 1.5),
-            ("num_observations", True),
-            ("num_observations", 0),
-            ("num_observations", 1.5),
-        ],
-    )
-    def test_invalid_counts_fail_before_event_commit(self, argument, value):
-        prior, likelihood = _glm_validation_setup()
-        kwargs = {"num_observations": 6, "num_replications": 3, argument: value}
+    def test_numpy_integer_counts_are_normalized_before_event_commit(self):
+        likelihood, prior = _check_setup()
+
+        with workflow_run(seed=7):
+            result = predictive_check(likelihood, prior, jnp.mean, num_replications=np.int64(3))
+
+        assert result["replicated_statistics"].num_atoms == 3
+
+    @pytest.mark.parametrize("value", [True, 0, 1.5])
+    def test_invalid_counts_fail_before_event_commit(self, value):
+        likelihood, prior = _check_setup()
 
         with (
             patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=7),
             pytest.raises((TypeError, ValueError)),
         ):
-            predictive_check(prior, likelihood, test_fn=jnp.mean, **kwargs)
+            predictive_check(likelihood, prior, jnp.mean, num_replications=value)
 
         commit.assert_not_called()
 
-    def test_instance_method_override_is_not_certified(self):
-        prior, likelihood = _glm_validation_setup()
-        likelihood.generate_data = _OpaqueLikelihood().generate_data
+    def test_a_missing_given_slot_fails_before_event_commit(self):
+        likelihood, _ = _check_setup()
+        other = Normal("tau", 0.0, 1.0)
 
         with (
             patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=7),
-            pytest.raises(TypeError, match="explicit key"),
+            pytest.raises(ValueError, match=r"given slots \['mu'\]"),
         ):
-            predictive_check(
-                prior,
-                likelihood,
-                test_fn=jnp.mean,
-                num_observations=6,
-                num_replications=3,
-            )
-
-        commit.assert_not_called()
-
-    def test_a_subclass_of_a_certified_provider_is_not_certified(self):
-        class DerivedRegression(CertifiedRegression):
-            pass
-
-        prior, _ = _glm_validation_setup()
-        likelihood = DerivedRegression("normal", jnp.linspace(-1.0, 1.0, 6)[:, None])
-
-        with (
-            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
-            workflow_run(seed=7),
-            pytest.raises(TypeError, match="explicit key"),
-        ):
-            predictive_check(
-                prior,
-                likelihood,
-                test_fn=jnp.mean,
-                num_observations=6,
-                num_replications=3,
-            )
-
-        commit.assert_not_called()
-
-    def test_class_method_override_is_not_certified(self, monkeypatch):
-        prior, likelihood = _glm_validation_setup()
-        monkeypatch.setattr(CertifiedRegression, "generate_data", _OpaqueLikelihood.generate_data)
-
-        with (
-            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
-            workflow_run(seed=7),
-            pytest.raises(TypeError, match="explicit key"),
-        ):
-            predictive_check(
-                prior,
-                likelihood,
-                test_fn=jnp.mean,
-                num_observations=6,
-                num_replications=3,
-            )
-
-        commit.assert_not_called()
-
-    def test_a_provider_without_its_design_fails_before_event_commit(self):
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="beta")
-        likelihood = CertifiedRegression("normal")
-
-        with (
-            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
-            workflow_run(seed=7),
-            pytest.raises(ValueError, match="design matrix"),
-        ):
-            predictive_check(
-                prior,
-                likelihood,
-                test_fn=jnp.mean,
-                num_observations=3,
-                num_replications=2,
-            )
+            predictive_check(likelihood, other, jnp.mean, num_replications=3)
 
         commit.assert_not_called()
 

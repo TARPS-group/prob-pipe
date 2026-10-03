@@ -722,7 +722,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
                 posterior,
                 test_fns=[...],
                 observed_data=y,
-                generative_likelihood=lik,
+                kernel=likelihood,
             )
 
             posterior.diagnostics.ppc.result

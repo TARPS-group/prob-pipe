@@ -529,11 +529,6 @@ class TestSupportsArrayBackendProtocolSurface:
             )
 
 
-@pytest.mark.pending(
-    reason="predictive_check and add_ppc take a GenerativeLikelihood until they take a sampling "
-    "kernel",
-    raises=AssertionError,
-)
 def test_the_generative_likelihood_protocol_retires():
     """A model is a factored joint or a program family, so no likelihood protocol remains."""
     from probpipe.core import protocols

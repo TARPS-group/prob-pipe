@@ -411,14 +411,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   benchmark scoring must run inside `workflow_run(seed=...)` (or pass an
   explicit `key=`) to remain reproducible.
 
-  Omitted-key `predictive_check`, `simulation_based_calibration`, and `add_ppc`
-  certify only the exact built-in `GLMLikelihood` data generator. Custom or
-  otherwise opaque likelihoods, including subclasses, must pass `key=`
-  explicitly; inheriting `generate_data` does not certify that a subclass's
-  sampling still matches the built-in stochastic-effect descriptor. The
-  omitted-key route also requires that exact likelihood to carry its stored
-  design matrix.
-
   PPC test functions must have unique `__name__` values because those names
   label the returned statistics; use distinct named functions instead of
   multiple lambdas or same-named methods.
@@ -533,6 +525,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   named by its path with `.` between the parts, as `K` or `params.a`, since a
   `DataTree` variable has no `/` in its name. Replace
   `annotations["arviz"]["posterior"]["params"]` with the leaf's variable.
+- **`predictive_check` takes the kernel of the observations and a law over its
+  given slots.** A replication is a draw of the kernel's event from
+  `kernel * law`, so a model `likelihood * prior` is checked with its own
+  likelihood: the posterior as the law gives a posterior predictive check, and
+  the prior gives a prior predictive check. Replace
+  `predictive_check(posterior, simulator, test_fn, y, num_observations=n)` with
+  `predictive_check(likelihood, posterior, test_fn, y)`.
+  - The kernel's event declares the shape of a replication, so
+    `num_observations` is removed.
+  - `test_fn` is renamed `test_fns` and takes one statistic or a sequence of
+    them, all computed on the same replications. A sequence nests each
+    statistic's result under its name, as in `check["max_count/p_value"]`.
+  - The observed data is a replication's value or a mapping from the kernel's
+    components to their values, as `condition_on` takes it.
+  - A law that leaves a given slot unfilled raises `ValueError` naming the slot.
+  - The workflow supplies an omitted `key` for every kernel.
+- **`add_ppc` takes the kernel as `kernel=`.** Replace
+  `add_ppc(posterior, test_fns, y, generative_likelihood=simulator, num_observations=n)`
+  with `add_ppc(posterior, test_fns, y, kernel=likelihood)`. Its statistics
+  read one set of replications.
+- **`GenerativeLikelihood` is removed from `probpipe.core.protocols`.** The
+  observations of a model are a `ConditionalDistribution`, built with
+  `conditional_distribution` and composed with a prior as `likelihood * prior`.
+  The certification of a data generator for an omitted key is removed with it.
 
 ### Added
 

@@ -5,7 +5,6 @@ from __future__ import annotations
 import operator
 from typing import Any
 
-from ..core.protocols import _WorkflowGenerativeProviderCertificate
 from ..custom_types import PRNGKey
 from ..functions import _broker
 
@@ -24,35 +23,6 @@ def _validate_positive_int(name: str, value: Any) -> int:
     if count <= 0:
         raise ValueError(f"{name} must be a positive integer; got {value!r}")
     return count
-
-
-def _certified_generative_provider(
-    provider: Any,
-) -> _WorkflowGenerativeProviderCertificate | None:
-    """Return exact private provider authority, or ``None`` when opaque."""
-    provider_type = type(provider)
-    certificate = vars(provider_type).get("_workflow_generative_provider_certificate")
-    if not isinstance(certificate, _WorkflowGenerativeProviderCertificate):
-        return None
-    if certificate.provider_type is not provider_type:
-        return None
-    if getattr(provider_type, "generate_data", None) is not certificate.generate_data:
-        return None
-    if "generate_data" in vars(provider):
-        return None
-    return certificate
-
-
-def _require_certified_generative_provider(provider: Any, operation: str) -> str:
-    """Require the closed omitted-key generative provider contract."""
-    certificate = _certified_generative_provider(provider)
-    if certificate is None:
-        raise TypeError(
-            f"{operation} cannot use workflow-owned randomness with opaque provider "
-            f"{type(provider).__name__}; pass an explicit key= value."
-        )
-    certificate.preflight(provider, operation)
-    return certificate.provider_abi
 
 
 def _resolve_validation_key(

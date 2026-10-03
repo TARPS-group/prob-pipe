@@ -696,13 +696,6 @@ class SupportsFoo(Protocol):
   `SupportsVariance`, `SupportsCovariance`, `SupportsExpectation`) are
   standalone, as are the two conditioning capabilities, which are abstract
   base classes rather than protocols.
-- The likelihood / simulator protocols `Likelihood`,
-  `ConditionallyIndependentLikelihood` (extends `Likelihood`), and
-  `GenerativeLikelihood` also live in `core/protocols.py`. They type model
-  components — log-density, per-datum log-density, and data generation —
-  rather than distribution capabilities, so they are *not* named `Supports*`
-  (they describe what a likelihood/simulator *is*, not a capability a
-  distribution *supports*).
 
 ### 7.3 Implementing protocols
 

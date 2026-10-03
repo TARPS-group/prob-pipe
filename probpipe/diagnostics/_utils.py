@@ -14,7 +14,6 @@ __all__ = [
     "_dataset_values",
     "_json_dumps_safe",
     "_record_get",
-    "_resolve_generative_likelihood",
     "_safe_float",
 ]
 
@@ -107,49 +106,3 @@ def _dataset_values(ds: Any) -> dict[str, float]:
             values[_component_name(param, index)] = float(arr[index])
 
     return values
-
-
-def _resolve_generative_likelihood(
-    distribution: Any,
-    generative_likelihood: Any = None,
-) -> Any:
-    """Auto-detect generative likelihood from a posterior distribution.
-
-    Resolution order:
-
-    1. Explicitly passed ``generative_likelihood`` argument.
-    2. ``distribution.generative_likelihood`` — an attribute a posterior may
-       carry.
-    3. Raise a descriptive :class:`ValueError`.
-
-    Parameters
-    ----------
-    distribution : Distribution
-        Posterior or prior whose replicated data are checked.
-    generative_likelihood : optional
-        Explicitly supplied likelihood; returned as-is if not ``None``.
-
-    Returns
-    -------
-    Any
-        Object with a ``generate_data(params, n_samples, *, key)`` method.
-
-    Raises
-    ------
-    ValueError
-        If no generative likelihood can be found.
-    """
-    # 1. Explicit argument — highest priority
-    if generative_likelihood is not None:
-        return generative_likelihood
-
-    # 2. distribution.generative_likelihood
-    candidate = getattr(distribution, "generative_likelihood", None)
-    if candidate is not None and hasattr(candidate, "generate_data"):
-        return candidate
-
-    # 3. Nothing found
-    raise ValueError(
-        "Could not auto-detect a generative likelihood from the distribution; "
-        "pass `generative_likelihood` explicitly."
-    )

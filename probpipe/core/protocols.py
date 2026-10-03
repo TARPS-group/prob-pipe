@@ -1,26 +1,19 @@
 """Protocols that are not distribution capabilities.
 
 The capability protocols of the distribution kinds are defined in
-:mod:`probpipe.distributions._capabilities`. This module holds the rest:
-
-- ``SupportsArrayBackend``, which a distribution class implements to store
-  its laws at batched parameters in one fused backend.
-- ``GenerativeLikelihood``, the simulator protocol that
-  :func:`~probpipe.validation.predictive_check` takes.
+:mod:`probpipe.distributions._capabilities`. This module holds
+``SupportsArrayBackend``, which a distribution class implements to store its
+laws at batched parameters in one fused backend.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
     Any,
     Protocol,
     runtime_checkable,
 )
-
-from ..custom_types import PRNGKey
 
 if TYPE_CHECKING:
     from ..distributions._distribution import Distribution
@@ -134,53 +127,6 @@ class SupportsArrayBackend(Protocol):
         ...
 
 
-# ---------------------------------------------------------------------------
-# Likelihoods and generative simulators
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class _WorkflowGenerativeProviderCertificate:
-    """Private exact-provider authority for workflow-owned generation."""
-
-    provider_type: type[Any]
-    generate_data: Callable[..., Any]
-    provider_abi: str
-    preflight: Callable[[Any, str], None]
-
-
-@runtime_checkable
-class GenerativeLikelihood[P, D](Protocol):
-    """Protocol for generating synthetic data given parameters.
-
-    Generic in ``P`` (parameter type) and ``D`` (data type).
-    Any class that defines
-    ``generate_data(params, num_observations, *, key) -> D``
-    satisfies this protocol.
-    """
-
-    def generate_data(
-        self,
-        params: P,
-        num_observations: int,
-        *,
-        key: PRNGKey | None = None,
-    ) -> D:
-        """Generate ``num_observations`` synthetic data points from ``params``.
-
-        Parameters
-        ----------
-        params : P
-            Model parameters.
-        num_observations : int
-            Number of data points to generate.
-        key : PRNGKey or None
-            JAX PRNG key for reproducible generation.
-        """
-        ...
-
-
 __all__ = [
-    "GenerativeLikelihood",
     "SupportsArrayBackend",
 ]

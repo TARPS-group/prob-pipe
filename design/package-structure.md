@@ -200,7 +200,7 @@ spec types of `core/`. `DistributionSpec` is defined beside `Distribution` in
 | `inference/_approximate_distribution.py`, `inference/_minibatch.py` | `inference/`, in place: `ApproximateDistribution` becomes an `EmpiricalDistribution` carrying provenance and annotations (VII.7), and `MinibatchedDistribution` is a `RandomMeasure` member (VII.5) |
 | `core/transition.py` (`iterate`, `with_conversion`, `with_resampling`) | open, with the incremental-conditioning point below |
 | `_weights.py`, `_array_utils.py`, `_dtype.py`, `_utils.py` | private helpers, unchanged |
-| `diagnostics/`, `validation/` | unchanged |
+| `diagnostics/`, `validation/` | in place; a predictive check takes the kernel of the observations and a law over its given slots, and reads its replications from their composition, as `mixture` does (VI.9) |
 
 ### Open points
 
