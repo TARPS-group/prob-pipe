@@ -75,7 +75,6 @@ from probpipe.core._random_measures import NumericRandomMeasure, RandomMeasure
 from probpipe.core._record_batch import RecordBatch
 from probpipe.core._record_distribution import RecordDistribution
 from probpipe.core._specs import (
-    FunctionSpec,
     InputSpec,
     NumericArraySpec,
     NumericRecordSpec,
@@ -84,13 +83,6 @@ from probpipe.core._specs import (
     RecordSpec,
     TermSpec,
 )
-from probpipe.core._workflow_context import workflow_run
-from probpipe.core._workflow_errors import (
-    ReplayCompatibilityError,
-    ReplayUnsupportedCallableError,
-    UnmanagedConcurrentWorkflowEntryError,
-)
-from probpipe.core._workflow_replay import replay_run
 from probpipe.core.config import ProvenanceMode, WorkflowKind, prefect_config, provenance_config
 from probpipe.core.constraints import (
     Constraint,
@@ -108,13 +100,6 @@ from probpipe.core.constraints import (
     unit_interval,
 )
 from probpipe.core.named_tree import NamedTree
-from probpipe.core.node import (
-    Function,
-    Module,
-    abstract_workflow_method,
-    function,
-    workflow_method,
-)
 from probpipe.core.protocols import (
     SupportsApproximateConditioning,
     SupportsArrayBackend,
@@ -195,6 +180,20 @@ from probpipe.distributions._distribution import (
     set_default_num_evaluations,
     set_return_approx_dist,
 )
+from probpipe.functions import (
+    AbstractModule,
+    Module,
+    abstract_workflow_method,
+    function,
+    workflow_method,
+)
+from probpipe.functions._context import workflow_run
+from probpipe.functions._errors import (
+    ReplayCompatibilityError,
+    ReplayUnsupportedCallableError,
+    UnmanagedConcurrentWorkflowEntryError,
+)
+from probpipe.functions._replay import replay_run
 from probpipe.inference import (
     ApproximateDistribution,
     BayesFlowLikelihood,
@@ -221,8 +220,10 @@ from probpipe.modeling import (
 )
 from probpipe.record import Design, FullFactorialDesign
 from probpipe.validation import predictive_check
+from probpipe.values import Function, FunctionSpec
 
 __all__ = [
+    "AbstractModule",
     "Annotated",
     "ApproximateDistribution",
     "ArrayBackend",

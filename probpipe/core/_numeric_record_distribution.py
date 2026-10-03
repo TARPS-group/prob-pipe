@@ -54,7 +54,7 @@ from .._weights import Weights
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..distributions import _distribution as _base
 from ..distributions._distribution import Distribution, NumericDistribution
-from . import _workflow_broker, _workflow_descendants
+from ..functions import _broker, _descendants
 from ._record_distribution import (
     RecordDistribution,
     _field_event_shape,
@@ -152,10 +152,10 @@ def _mc_expectation(
     if n <= 0:
         raise ValueError(f"num_evaluations must be positive; got {n!r}")
     if key is None:
-        captured = _workflow_descendants.capture_stochastic_consumer(dist)
-        key = _workflow_broker._resolve_automatic_key(
+        captured = _descendants.capture_stochastic_consumer(dist)
+        key = _broker._resolve_automatic_key(
             None,
-            _workflow_broker._singleton_effect_plan(
+            _broker._singleton_effect_plan(
                 operation_kind="expectation",
                 execution_mode="monte_carlo",
                 sample_shape=(n,),
@@ -163,7 +163,7 @@ def _mc_expectation(
                 descendant_descriptor=captured.descendant_descriptor,
             ),
         )
-        samples = _workflow_descendants.sample_captured_consumer(captured, key, (n,))
+        samples = _descendants.sample_captured_consumer(captured, key, (n,))
     else:
         samples = dist._sample(key, sample_shape=(n,))
     evals = jax.vmap(f)(samples)
@@ -766,7 +766,7 @@ def _flattened_distribution_view_class_for_base(base: Distribution) -> type:
         (FlattenedDistributionView, *extra_bases),
         extra_methods,
     )
-    _workflow_descendants._register_unsupported_descendant_type(
+    _descendants._register_unsupported_descendant_type(
         new_cls,
         "FlattenedDistributionView",
     )
@@ -852,6 +852,124 @@ class FlattenedDistributionView(FlatNumericRecordDistribution):
 _LIFTED_VIEW_CLASS_CACHE: dict[type, type] = {}
 
 
+def _numeric_record_view_sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()):
+    from ._numeric_record import _reconstruct_from_vector
+
+    base_sample = self._base._sample(key, sample_shape)
+    flat = self._base.flatten_value(
+        base_sample,
+        event_shape=self._base.event_shape,
+    )
+    # ``_reconstruct_from_vector`` selects single (NumericRecord, flat
+    # is 1-D) vs batched (NumericRecordBatch, batch_shape ==
+    # sample_shape) from the rank of ``flat``.
+    return _reconstruct_from_vector(self.name, self.event_spec.spec, flat)
+
+
+def _numeric_record_view_log_prob(self, x) -> Array:
+    from ._numeric_record import NumericRecord
+    from ._numeric_record_batch import NumericRecordBatch
+
+    flat = x.to_vector() if isinstance(x, (NumericRecord, NumericRecordBatch)) else jnp.asarray(x)
+    value = self._base.unflatten_value(flat, template=self._base.event_spec.spec)
+    return self._base._log_prob(value)
+
+
+def _numeric_record_view_mean(self):
+    from ._numeric_record import _reconstruct_from_vector
+
+    value = self._base._mean()
+    flat = self._base.flatten_value(
+        value,
+        event_shape=self._base.event_shape,
+    )
+    return _reconstruct_from_vector(self.name, self.event_spec.spec, flat)
+
+
+def _numeric_record_view_variance(self):
+    from ._numeric_record import _reconstruct_from_vector
+
+    value = self._base._variance()
+    flat = self._base.flatten_value(
+        value,
+        event_shape=self._base.event_shape,
+    )
+    return _reconstruct_from_vector(self.name, self.event_spec.spec, flat)
+
+
+def _numeric_record_view_cov(self):
+    # Covariance stays flat (event_size × event_size matrix).
+    # The Record / field-block structure is implicit in the
+    # template's flat ordering.
+    return self._base._cov()
+
+
+def _numeric_record_view_expectation(
+    self,
+    f: Callable,
+    *,
+    key: PRNGKey | None = None,
+    num_evaluations: int | None = None,
+    return_dist: bool | None = None,
+) -> Any:
+    # ``f`` operates on a Record-shaped sample. We can't pass the
+    # batched ``NumericRecordBatch`` returned by ``self._sample``
+    # through ``jax.vmap(f)`` directly — vmap strips the leading
+    # axis from each leaf while preserving ``batch_shape`` aux,
+    # producing an invariant violation. Instead, sample the base
+    # in flat form (no aux-shape invariants) and run vmap over a
+    # closure that unflattens to a Record inside the loop body.
+    from ._numeric_record import _reconstruct_from_vector
+
+    n = num_evaluations if num_evaluations is not None else _base.DEFAULT_NUM_EVALUATIONS
+    if isinstance(n, bool) or not isinstance(n, int):
+        raise TypeError(f"num_evaluations must be an integer; got {n!r}")
+    if n <= 0:
+        raise ValueError(f"num_evaluations must be positive; got {n!r}")
+    sample_key = key
+    if sample_key is None:
+        captured = _descendants.capture_stochastic_consumer(self)
+        sample_key = _broker._resolve_automatic_key(
+            None,
+            _broker._singleton_effect_plan(
+                operation_kind="expectation",
+                execution_mode="monte_carlo",
+                sample_shape=(n,),
+                record_path=captured.record_path,
+                descendant_descriptor=captured.descendant_descriptor,
+            ),
+        )
+    base_samples = self._base._sample(sample_key, sample_shape=(n,))
+    flat_samples = self._base.flatten_value(
+        base_samples,
+        event_shape=self._base.event_shape,
+    )
+    evals = jax.vmap(
+        lambda flat: f(
+            _reconstruct_from_vector(
+                self.name,
+                self.event_spec.spec,
+                flat,
+            )
+        )
+    )(flat_samples)
+
+    if return_dist if return_dist is not None else _base.RETURN_APPROX_DIST:
+        return BootstrapDistribution("expectation", evals)
+
+    return jax.tree.map(lambda x: jnp.mean(x, axis=0), evals)
+
+
+_NUMERIC_RECORD_VIEW_CAPABILITIES = (
+    (SupportsSampling, "_sample", _numeric_record_view_sample),
+    (SupportsLogProb, "_log_prob", _numeric_record_view_log_prob),
+    (SupportsMean, "_mean", _numeric_record_view_mean),
+    (SupportsVariance, "_variance", _numeric_record_view_variance),
+    (SupportsCovariance, "_cov", _numeric_record_view_cov),
+    (SupportsExpectation, "_expectation", _numeric_record_view_expectation),
+)
+
+
 def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type:
     """Return a ``NumericRecordDistributionView`` subclass advertising the
     same capability protocols as *base*.
@@ -868,174 +986,33 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
     # Distribution subclass advertise the same protocol set, so the
     # frozenset key would collide anyway. Type-based caching avoids
     # six runtime_checkable isinstance scans on every construction.
-    cached = _LIFTED_VIEW_CLASS_CACHE.get(type(base))
+    base_type = type(base)
+    cached = _LIFTED_VIEW_CLASS_CACHE.get(base_type)
     if cached is not None:
         return cached
 
-    # Imports hoisted once for all closures below (and to avoid
-    # circular-import risk at module load time).
-    from ._numeric_record import NumericRecord
-    from ._numeric_record_batch import NumericRecordBatch
+    bases = [NumericRecordDistributionView]
+    methods = {}
+    for protocol, method_name, method in _NUMERIC_RECORD_VIEW_CAPABILITIES:
+        if isinstance(base, protocol):
+            bases.append(protocol)
+            methods[method_name] = method
 
-    protocols: set[str] = set()
-    if isinstance(base, SupportsSampling):
-        protocols.add("sample")
-    if isinstance(base, SupportsLogProb):
-        protocols.add("log_prob")
-    if isinstance(base, SupportsMean):
-        protocols.add("mean")
-    if isinstance(base, SupportsVariance):
-        protocols.add("variance")
-    if isinstance(base, SupportsCovariance):
-        protocols.add("cov")
-    if isinstance(base, SupportsExpectation):
-        protocols.add("expectation")
+    if methods:
+        cls = type(
+            "NumericRecordDistributionView",
+            tuple(bases),
+            methods,
+        )
+        _descendants._register_unsupported_descendant_type(
+            cls,
+            "NumericRecordDistributionView",
+        )
+    else:
+        cls = NumericRecordDistributionView
 
-    extra_bases: list[type] = []
-    extra_methods: dict[str, object] = {}
-
-    if "sample" in protocols:
-        extra_bases.append(SupportsSampling)
-
-        def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()):
-            base_sample = self._base._sample(key, sample_shape)
-            flat = self._base.flatten_value(
-                base_sample,
-                event_shape=self._base.event_shape,
-            )
-            from ._numeric_record import _reconstruct_from_vector
-
-            # ``_reconstruct_from_vector`` selects single (NumericRecord, flat
-            # is 1-D) vs batched (NumericRecordBatch, batch_shape ==
-            # sample_shape) from the rank of ``flat``.
-            return _reconstruct_from_vector(self.name, self.event_spec.spec, flat)
-
-        extra_methods["_sample"] = _sample
-
-    if "log_prob" in protocols:
-        extra_bases.append(SupportsLogProb)
-
-        def _log_prob(self, x) -> Array:
-            if isinstance(x, (NumericRecord, NumericRecordBatch)):
-                flat = x.to_vector()
-            else:
-                flat = jnp.asarray(x)
-            value = self._base.unflatten_value(flat, template=self._base.event_spec.spec)
-            return self._base._log_prob(value)
-
-        extra_methods["_log_prob"] = _log_prob
-
-    if "mean" in protocols:
-        extra_bases.append(SupportsMean)
-
-        def _mean(self):
-            from ._numeric_record import _reconstruct_from_vector
-
-            flat = self._base.flatten_value(
-                self._base._mean(),
-                event_shape=self._base.event_shape,
-            )
-            return _reconstruct_from_vector(self.name, self.event_spec.spec, flat)
-
-        extra_methods["_mean"] = _mean
-
-    if "variance" in protocols:
-        extra_bases.append(SupportsVariance)
-
-        def _variance(self):
-            from ._numeric_record import _reconstruct_from_vector
-
-            flat = self._base.flatten_value(
-                self._base._variance(),
-                event_shape=self._base.event_shape,
-            )
-            return _reconstruct_from_vector(self.name, self.event_spec.spec, flat)
-
-        extra_methods["_variance"] = _variance
-
-    if "cov" in protocols:
-        extra_bases.append(SupportsCovariance)
-
-        def _cov(self):
-            # Covariance stays flat (event_size × event_size matrix).
-            # The Record / field-block structure is implicit in the
-            # template's flat ordering.
-            return self._base._cov()
-
-        extra_methods["_cov"] = _cov
-
-    if "expectation" in protocols:
-        extra_bases.append(SupportsExpectation)
-
-        def _expectation(
-            self,
-            f: Callable,
-            *,
-            key: PRNGKey | None = None,
-            num_evaluations: int | None = None,
-            return_dist: bool | None = None,
-        ) -> Any:
-            # ``f`` operates on a Record-shaped sample. We can't pass the
-            # batched ``NumericRecordBatch`` returned by ``self._sample``
-            # through ``jax.vmap(f)`` directly — vmap strips the leading
-            # axis from each leaf while preserving ``batch_shape`` aux,
-            # producing an invariant violation. Instead, sample the base
-            # in flat form (no aux-shape invariants) and run vmap over a
-            # closure that unflattens to a Record inside the loop body.
-            n = num_evaluations if num_evaluations is not None else _base.DEFAULT_NUM_EVALUATIONS
-            if isinstance(n, bool) or not isinstance(n, int):
-                raise TypeError(f"num_evaluations must be an integer; got {n!r}")
-            if n <= 0:
-                raise ValueError(f"num_evaluations must be positive; got {n!r}")
-            sample_key = key
-            if sample_key is None:
-                captured = _workflow_descendants.capture_stochastic_consumer(self)
-                sample_key = _workflow_broker._resolve_automatic_key(
-                    None,
-                    _workflow_broker._singleton_effect_plan(
-                        operation_kind="expectation",
-                        execution_mode="monte_carlo",
-                        sample_shape=(n,),
-                        record_path=captured.record_path,
-                        descendant_descriptor=captured.descendant_descriptor,
-                    ),
-                )
-            base_samples = self._base._sample(sample_key, sample_shape=(n,))
-            flat_samples = self._base.flatten_value(
-                base_samples,
-                event_shape=self._base.event_shape,
-            )
-            template = self.event_spec.spec
-            dist_name = self.name
-
-            def _f_on_flat(flat_row):
-                from ._numeric_record import _reconstruct_from_vector
-
-                return f(_reconstruct_from_vector(dist_name, template, flat_row))
-
-            evals = jax.vmap(_f_on_flat)(flat_samples)
-            rd = return_dist if return_dist is not None else _base.RETURN_APPROX_DIST
-            if rd:
-                return BootstrapDistribution("expectation", evals)
-            return jax.tree.map(lambda v: jnp.mean(v, axis=0), evals)
-
-        extra_methods["_expectation"] = _expectation
-
-    if not extra_bases:
-        _LIFTED_VIEW_CLASS_CACHE[type(base)] = NumericRecordDistributionView
-        return NumericRecordDistributionView
-
-    new_cls = type(
-        "NumericRecordDistributionView",
-        (NumericRecordDistributionView, *extra_bases),
-        extra_methods,
-    )
-    _workflow_descendants._register_unsupported_descendant_type(
-        new_cls,
-        "NumericRecordDistributionView",
-    )
-    _LIFTED_VIEW_CLASS_CACHE[type(base)] = new_cls
-    return new_cls
+    _LIFTED_VIEW_CLASS_CACHE[base_type] = cls
+    return cls
 
 
 def _piecewise_support(support: Constraint | None) -> Constraint | None:
@@ -1118,11 +1095,11 @@ class NumericRecordDistributionView(NumericRecordDistribution):
         )
 
 
-_workflow_descendants._register_unsupported_descendant_type(
+_descendants._register_unsupported_descendant_type(
     FlattenedDistributionView,
     "FlattenedDistributionView",
 )
-_workflow_descendants._register_unsupported_descendant_type(
+_descendants._register_unsupported_descendant_type(
     NumericRecordDistributionView,
     "NumericRecordDistributionView",
 )

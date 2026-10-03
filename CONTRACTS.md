@@ -99,8 +99,8 @@ if it were user-guide reference text.
 | `Distribution` (stores one `DistributionSpec`; `event_spec` and the schema views read it, and construction checks it is stored) | docstrings in `probpipe/distributions/_distribution.py`; design III.7 |
 | `NumericDistribution` (membership read from the declaration; `dtypes`, `supports`, `dtype`, and `support` belong to numeric laws only) | docstrings in `probpipe/distributions/_distribution.py`; design III.7 |
 | `DistributionSpec` (the distribution kind's declaration) | docstrings in `probpipe/distributions/_distribution.py`; design III.7 |
-| `FunctionSpec` (the callable kind's declaration) | docstrings in `probpipe/core/_kind_specs.py`; design III.3 |
-| `InputSpec` / `OutputSpec` (slots, component exposure, paths, type holes, completion) | docstrings in `probpipe/core/_specs.py`; design II.2 |
+| `FunctionSpec` (the callable kind's declaration) | docstrings in `probpipe/values/_function_base.py`; design III.3 |
+| `InputSpec` / `OutputSpec` (slots, component exposure, type holes) | docstrings in `probpipe/core/_specs.py`; design II.2 |
 | `RecordSpec` / `NumericRecordSpec` (the record kind spec is its schema) | docstrings in `probpipe/core/_record_spec.py`; design III.5 |
 | the kind table (which tracked class and which batch form each value spec has) | docstrings in `probpipe/core/_kinds.py` |
 | `NumericArray` / `Opaque` (the tracked classes of the two raw-value kinds) | docstrings in `probpipe/core/_numeric_array.py`, `_opaque.py` |
@@ -109,7 +109,8 @@ if it were user-guide reference text.
 | `NumericArrayBatch` (the batch form of the numeric-array kind; one native store, not columns) | docstrings in `probpipe/core/_numeric_array_batch.py`; #235 Chapter 2 |
 | `RecordBatch` / `NumericRecordBatch` (columnar, leaf-path-keyed storage; a collection, not a named tree) | docstrings in `probpipe/core/_record_batch.py`, `_numeric_record_batch.py`; #235 Chapter 2 |
 | `FunctionBatch` / `OpaqueBatch` (the batch forms that *store* their elements, over shared object-array storage) | docstrings in `probpipe/core/_function_batch.py`, `_opaque_batch.py` (storage in `_object_batch.py`); #235 Chapter 2 |
-| `Function` & ops (`sample`, `log_prob`, …) | docstrings in `core/node.py`, `core/ops.py`, `_workflow_result.py`; #235 Chapter 3 |
+| `Function` (`input_spec`, `output_spec`, `output_name`, `effective_workflow_kind`, legacy constructor keyword warnings) & ops (`sample`, `log_prob`, …) | docstrings in `probpipe/values/_function_base.py`, `probpipe/functions/_function.py`, `probpipe/functions/_result.py`, and `probpipe/core/ops.py`; design III.3 and V.1 |
+| Function call-engine installation (single engine, idempotent reinstallation, retained callbacks) | `install_call_engine` docstring in `probpipe/values/_function_base.py` |
 | Naming / provenance / annotations (`TrackedTerm` / `Annotated` mixins) | docstrings in `probpipe/core/tracked.py` (and `provenance.py` for `Provenance` / `ParentInfo`); the naming contract in #235 Chapter 5 |
 | Immutability (`Immutable` mixin: the assignment guard, and the `copy` / `pickle` state round-trip it forces) | docstrings in `probpipe/core/_immutable.py`; `design/02-shared-abstractions.md` §II.4 |
 

@@ -386,6 +386,8 @@ Commit the resulting `uv.lock` change alongside the `pyproject.toml` change.
 ```
 probpipe/
 ├── core/           # Base abstractions: protocols, ops, node, transition
+├── values/         # Function values, declarations, and pure argument binding
+├── functions/      # Workflow call engine and experimental Module containers
 ├── distributions/  # The Distribution base and the concrete distributions
 ├── record/         # Record-adjacent constructions: parameter-sweep Designs
 ├── modeling/       # Model wrappers (SimpleModel, StanModel, PyMCModel, likelihoods)
@@ -406,11 +408,20 @@ a leading underscore (`_simple.py`, `_blackjax_rwmh.py`).  The package
 underscore modules directly.  See `probpipe/__init__.py` for the
 full public API surface.
 
-The diagnostics accessor is the one documented package-graph edge from
+The diagnostics accessor is a documented package-graph edge from
 `distributions/` back to a feature subpackage: `Distribution.diagnostics` lazily
 imports `probpipe.diagnostics.views.DiagnosticsView` only when the accessor is
 read. Keep this edge lazy so importing `probpipe` does not import the diagnostics
 subpackage or its optional ArviZ-facing dependencies.
+
+`values/` provides Function values and pure binding; `functions/` installs their
+call engine. Inference, validation, diagnostics, conversion, and modeling code
+may consume those layers. The base never imports the engine. Current reverse
+edges include core's imports of migrated implementations and the conversion
+registry's exchange with engine services; the actual graph still contains
+cycles. See [STYLE_GUIDE §6](STYLE_GUIDE.md#6-subpackage-dependencies) for import
+permissions and the explicit initialization exceptions. The target layout is
+recorded separately in `design/package-structure.md`.
 
 ### Distributions: `probpipe-core` and `probpipe`
 
@@ -444,7 +455,7 @@ uv build packaging/probpipe   # probpipe (metapackage)
 
 1. **Distributions are immutable** — parameters fixed at construction;
    operations return new distributions. Records, batches, functions, and
-   templates enforce this (assignment and deletion raise); `Distribution`
+   specs enforce this (assignment and deletion raise); `Distribution`
    permits both for now, because the documented emulator pattern trains a
    subclassed random function in place and fitting has no contract yet that
    returns a new fitted term. Treat the rule as binding when writing new code
@@ -508,20 +519,26 @@ uv build packaging/probpipe   # probpipe (metapackage)
    the mixin's metaclass enforces a non-empty `name` at construction
    for every host. `Function` is an immutable, schema-aware computation term;
    its Python signature is captured independently from its optional
-   authoritative input and output templates. A distribution takes its name
+   authoritative InputSpec and OutputSpec declarations. A distribution takes its name
    as the required first argument (`Normal("x", 0.0, 1.0)`), as `Record`
    does; the classes the design retires, such as `ProductDistribution`, still
-   take it as a keyword. Names are set at construction and preserved by every transform;
-   only `with_name` replaces them. `ProductDistribution` validates that each
+   take it as a keyword. Structural transforms preserve names, and `with_name`
+   explicitly relabels a copy. A Function call creates an independent result
+   under `output_name`, including every Function-based operation:
+   `sample`, `condition_on`, `from_distribution`, and `mean` use those labels.
+   Component names, record fields, and existing batch levels are separate from
+   the result label and remain unchanged. `ProductDistribution` validates that each
    component distribution's `name` matches its keyword key (e.g.,
    `ProductDistribution(x=Normal("x", 0, 1))`).  `Record` and
    `NumericRecord` take the name as the required first positional
-   argument (`Record(name, ...)`); an operation that produces a record
-   supplies a meaningful name — the producing distribution's or model's
-   name, or a domain term such as `"data"` / `"observed"`. A nested
+   argument (`Record(name, ...)`); raw operation implementations may supply
+   domain names such as the model's name or `"data"` / `"observed"`.
+   `apply` preserves these implementation labels; ordinary operation calls use
+   `output_name` until operation-specific result rules are implemented. A nested
    record view takes its field key as its name at construction.
 7. **Every return is wrapped at its own kind** — a `@function` return becomes
-   the tracked term of the kind it already is, named for the function.
+   the tracked term of the kind it already is, named by `output_name`.
+   This defaults to the initial function name and survives `with_name`.
    A numeric value becomes a `NumericArray`, a mapping a `Record`,
    a callable a `Function`, and anything else an `Opaque`; a sequence, or a
    sweep, aggregates at the rows' kind through `_make_stack`. The kind follows
@@ -544,15 +561,13 @@ uv build packaging/probpipe   # probpipe (metapackage)
    and provenance.
    Every tracked term an operation returns keeps its kind, `Function` included:
    a term is never re-wrapped and never buried inside another.
-   Authoritative nested output templates use a private recursive aggregate
+   Authoritative nested output declarations use a private recursive aggregate
    packer across sequential and JAX dispatch; the public
-   `RecordBatch.stack` contract remains unchanged. The field name for inferred
-   single-field output is always the function's own name. Single-field terms
-   expose shims, each only the ones its values admit. `Record` forwards
-   `__call__` to its one field, so a `Function` whose return is itself
-   callable — `sample(grf)`, which wraps the sampled random function in a
-   one-field record — is invoked as `sample(grf)(X)` rather than unwrapped
-   first. `NumericRecord` adds array conversion (`__array__`,
+   `RecordBatch.stack` contract remains unchanged. A whole-term
+   output component defaults to `output_name`; exposed record fields keep their
+   names. A returned callable becomes a Function, so `sample(grf)(X)` invokes
+   the sampled random function directly. Single-field Records retain their
+   existing forwarding and conversion conveniences. `NumericRecord` adds array conversion (`__array__`,
    `__jax_array__`, `.shape`, `.dtype`, `.ndim`) and scalar conversion
    (`__float__`, `__int__`, `__bool__`), so `jnp.array(log_prob(d, v))` and
    `float(mean(d))` stay terse. `NumericRecordBatch` has the array
@@ -605,7 +620,7 @@ uv build packaging/probpipe   # probpipe (metapackage)
 | `JointEmpirical` / `NumericJointEmpirical` | Weighted joint samples distribution. Generic base supports only sampling; the numeric subclass adds exact `SupportsMean` / `SupportsVariance`. Conditioning is not offered, since dropping stored fields is marginalization; build the marginal directly. `JointEmpirical(...)` dispatches to `NumericJointEmpirical` when every field is numeric. (Empirical distributions do not claim `SupportsLogProb`; use `from_distribution(emp, KDEDistribution, …)` for a density.) |
 | `EmpiricalDistribution` / `RecordEmpiricalDistribution` | Weighted empirical distribution. The generic base holds samples of any type; the Record-based specialisation adds `event_shapes`, exact moments (`SupportsMean` / `SupportsVariance` / `SupportsCovariance`), and TFP-style shape semantics. Numeric-array sources auto-wrap as a single-field Record keyed by the name. Two views on the stored draws: `samples` (structured `NumericRecord`, per-field access via `samples[name]`) and `flat_samples` (flat `(n, dim)` matrix across all fields, in insertion order). Use `flat_samples` for stacked-matrix idioms like `post.flat_samples.mean(axis=0)` for per-parameter posterior summaries. |
 | `BootstrapReplicateDistribution` / `RecordBootstrapReplicateDistribution` | N-fold product over a source: each draw is a bootstrapped dataset of `replicate_size` i.i.d. observations. Accepts a `Record`, `RecordEmpiricalDistribution`, numeric array, or any `SupportsSampling` source, in which case `replicate_size` is mandatory. |
-| `Function` | Immutable first-class `TrackedTerm` / `Annotated`, schema-aware computation term. It owns a frozen Python `signature`, optional authoritative input/output `RecordSpec`s, and an implementation object. `apply` performs one raw evaluation; `__call__` adds lifting, variadic slot planning, sweeps, orchestration, wrapping, and Function-first provenance. Prefect is off by default; views are grouped by parent for correlated broadcasting. |
+| `Function` | Immutable first-class `TrackedTerm` / `Annotated`, schema-aware computation term. It owns a frozen Python `signature`, optional authoritative `InputSpec` / `OutputSpec` declarations, and an implementation object. `apply` performs one raw evaluation; `__call__` adds lifting, variadic slot planning, sweeps, orchestration, wrapping, and Function-first provenance. Prefect is off by default; views are grouped by parent for correlated broadcasting. |
 | `Module` | Stateful workflow-aware base class (see `@workflow_method`) |
 | Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, the two conditioning capabilities, etc.; dynamic inclusion on `ProductDistribution` and `TransformedDistribution` |
 | `BaseDispatchRegistry` | Abstract base for the dispatch registries: holds registration and the validation of a method's declarations, ordering by exactness, then rank, then type specificity, then registration order, opt-in filtering (`priority=None`) with override warnings, and the `check`/`execute` loop, `_find_methods` included. Arity-specific subclasses implement `_cache_key`, `_validate_supported_types`, `_distance`, and `_format_key`. |

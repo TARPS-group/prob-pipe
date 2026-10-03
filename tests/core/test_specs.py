@@ -393,7 +393,10 @@ class TestDimensionBinding:
             data=NumericArraySpec(("n", "m"), dtype="float32"),
             batch=BatchSpec(NumericArraySpec(("n",)), [("m",)], ["draw"]),
             law=DistributionSpec(RecordSpec(x=("n",))),
-            function=FunctionSpec(RecordSpec(x=("m",)), NumericArraySpec(("n",))),
+            function=FunctionSpec(
+                InputSpec(RecordSpec(x=("m",)).children),
+                OutputSpec(result=NumericArraySpec(("n",))),
+            ),
         )
         renamed = spec.with_dim_names(n="m", m="n")
         assert renamed["data"].shape == ("m", "n")
@@ -402,8 +405,8 @@ class TestDimensionBinding:
         assert renamed["batch"].element_spec.shape == ("m",)
         assert renamed["batch"].level_names == ("draw",)
         assert renamed["law"].event_spec.components["x"].shape == ("m",)
-        assert renamed["function"].input_template["x"].shape == ("n",)
-        assert renamed["function"].output_spec.shape == ("m",)
+        assert renamed["function"].input_spec["x"].shape == ("n",)
+        assert renamed["function"].output_spec.spec.shape == ("m",)
         assert spec["data"].shape == ("n", "m")
         for value in (None, "", 2):
             with pytest.raises(TypeError):
@@ -451,13 +454,18 @@ class TestSpecKinds:
 
         law = Normal("x", 0.0, 1.0)
         function = Function(
-            func=lambda x: x, input_template=RecordSpec(x=()), output_template=RecordSpec(y=())
+            name="function",
+            fn=lambda x: x,
+            input_spec=InputSpec(RecordSpec(x=()).children),
+            output_spec=RecordSpec(y=()),
         )
         schema = RecordSpec.infer_from(
             {"law": law, "function": function, "raw_callable": lambda x: x}
         )
         assert schema["law"] == law.spec
-        assert schema["function"] == FunctionSpec(RecordSpec(x=()), RecordSpec(y=()))
+        assert schema["function"] == FunctionSpec(
+            InputSpec(RecordSpec(x=()).children), OutputSpec(RecordSpec(y=()))
+        )
         assert schema["raw_callable"] == FunctionSpec()
 
     def test_an_empirical_over_opaque_atoms_is_a_distribution_field(self):
@@ -650,9 +658,18 @@ class TestNestedValueBinding:
         from probpipe import EmpiricalDistribution, Function
 
         if kind == "function":
-            spec_type = FunctionSpec
-            reference = Function(func=lambda x: x, input_template=RecordSpec(x=(3,)))
-            actual = Function(func=lambda x: x, input_template=RecordSpec(x=(size,)))
+
+            def spec_type(spec):
+                return FunctionSpec(InputSpec(spec.children))
+
+            reference = Function(
+                name="function", fn=lambda x: x, input_spec=InputSpec(RecordSpec(x=(3,)).children)
+            )
+            actual = Function(
+                name="function",
+                fn=lambda x: x,
+                input_spec=InputSpec(RecordSpec(x=(size,)).children),
+            )
         else:
             spec_type = DistributionSpec
             reference = EmpiricalDistribution("x", np.zeros((2, 3)))
@@ -768,7 +785,7 @@ class TestNestedValueBinding:
             assert declared.bind_dims_from_value(value) == declared
 
     def test_missing_callable_declarations_remain_unspecified(self, wrap_binding):
-        symbolic = FunctionSpec(RecordSpec(x=("n",)))
+        symbolic = FunctionSpec(InputSpec(RecordSpec(x=("n",)).children))
         for spec in (symbolic, symbolic.with_dim_sizes(n=3)):
             declared, value = wrap_binding(spec, lambda x: x)
             assert declared.bind_dims_from_value(value) == declared
@@ -796,16 +813,20 @@ class TestNestedSpecBinding:
     @pytest.mark.parametrize(
         "expected, actual, result",
         [
-            (FunctionSpec(), FunctionSpec(output_spec=NumericArraySpec((3,))), FunctionSpec()),
             (
-                FunctionSpec(RecordSpec(x=("n",))),
                 FunctionSpec(),
-                FunctionSpec(RecordSpec(x=("n",))),
+                FunctionSpec(output_spec=OutputSpec(result=NumericArraySpec((3,)))),
+                FunctionSpec(),
             ),
             (
-                FunctionSpec(output_spec=NumericArraySpec(("n",))),
-                FunctionSpec(output_spec=NumericArraySpec((3,))),
-                FunctionSpec(output_spec=NumericArraySpec((3,))),
+                FunctionSpec(InputSpec(RecordSpec(x=("n",)).children)),
+                FunctionSpec(),
+                FunctionSpec(InputSpec(RecordSpec(x=("n",)).children)),
+            ),
+            (
+                FunctionSpec(output_spec=OutputSpec(result=NumericArraySpec(("n",)))),
+                FunctionSpec(output_spec=OutputSpec(result=NumericArraySpec((3,)))),
+                FunctionSpec(output_spec=OutputSpec(result=NumericArraySpec((3,)))),
             ),
             (
                 NumericArraySpec((3,)),
@@ -824,8 +845,8 @@ class TestNestedSpecBinding:
         [
             (FunctionSpec(), OpaqueSpec()),
             (
-                FunctionSpec(output_spec=NumericArraySpec((2,))),
-                FunctionSpec(output_spec=NumericArraySpec((3,))),
+                FunctionSpec(output_spec=OutputSpec(result=NumericArraySpec((2,)))),
+                FunctionSpec(output_spec=OutputSpec(result=NumericArraySpec((3,)))),
             ),
             (NumericArraySpec((3,), dtype="int32"), NumericArraySpec((3,), dtype="float32")),
             (NumericArraySpec((3,)), RecordSpec(x=(3,))),

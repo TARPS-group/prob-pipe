@@ -67,13 +67,17 @@ array shapes and dtypes. Binding from another spec uses only the information
 that declaration supplies. The same spec-binding rules apply directly and
 inside records, input slots, or batches.
 
-These shared declarations do not yet replace the `Function` input and output
-templates or the `event_template=` argument of the record constructors.
+`Function` uses these declarations through `input_spec` and `output_spec`;
+see [Function declarations](workflows.md#function-declarations-and-result-names).
+`Record` constructors retain their `event_template=` argument.
+Distributions use `event_spec`, an `OutputSpec` describing one draw; their former
+`event_template` property has been removed. For a record-valued law, read its
+`RecordSpec` through `law.event_spec.spec`.
 
 `DistributionSpec` carries the `OutputSpec` of a law's draw and matches a
 `Distribution` whose own declaration unifies with it. Dimension binding learns
 sizes from a law's declaration or from another `DistributionSpec`. `FunctionSpec`
-optionally declares the input and output of a callable. Its validity check is
+stores optional `InputSpec` and `OutputSpec` declarations for a callable. Its validity check is
 callability alone, while binding reads available declarations without running
 the callable. An undeclared callable side leaves its dimensions symbolic.
 

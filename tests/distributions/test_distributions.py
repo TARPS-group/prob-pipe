@@ -179,7 +179,7 @@ class TestMultivariateNormal:
         ed = from_distribution(gaussian, RecordEmpiricalDistribution, key=key, num_samples=2000)
         g2 = from_distribution(ed, MultivariateNormal, name="fitted")
         np.testing.assert_allclose(g2.loc, gaussian.loc, atol=0.2)
-        assert g2.name == "fitted"
+        assert g2.name == from_distribution.output_name
         assert g2.provenance is not None
         assert g2.provenance.operation == "workflow.from_distribution"
 
@@ -294,10 +294,10 @@ class TestEmpiricalDistribution:
         assert ed.event_shape == gaussian.event_shape
         assert ed.provenance is not None
         assert ed.provenance.operation == "workflow.from_distribution"
-        assert ed.name == gaussian.name
+        assert ed.name == from_distribution.output_name
 
     def test_from_distribution_custom_name(self, gaussian, key):
-        ed = from_distribution(
+        ed = from_distribution.apply(
             gaussian, RecordEmpiricalDistribution, key=key, num_samples=10, name="custom"
         )
         assert ed.name == "custom"

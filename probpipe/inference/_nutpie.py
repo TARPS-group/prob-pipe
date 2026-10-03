@@ -7,8 +7,8 @@ from typing import Any
 
 from ..core._dispatch import Feasibility
 from ..core._specs import OutputSpec
-from ..core.node import function
 from ..custom_types import ArrayLike
+from ..functions import function
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._inference_utils import extract_chain_columns, posterior_var_order
 from ._registry import InferenceMethod

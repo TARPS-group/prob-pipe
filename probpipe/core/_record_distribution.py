@@ -168,7 +168,7 @@ class _RecordDistributionView(Distribution):
     The Record-world analog of
     :class:`~probpipe.core._joint.DistributionView`. Preserves
     correlation when multiple views from the same parent are used in
-    :class:`~probpipe.core.node.Function` broadcasting.
+    :class:`~probpipe.values._function_base.Function` broadcasting.
 
     **Dynamic protocol support:** this base class intentionally does
     not inherit any ``SupportsFoo`` protocols. Each concrete instance

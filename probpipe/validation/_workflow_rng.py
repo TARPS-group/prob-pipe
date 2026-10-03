@@ -5,9 +5,9 @@ from __future__ import annotations
 import operator
 from typing import Any
 
-from ..core import _workflow_broker
 from ..core.protocols import _WorkflowGenerativeProviderCertificate
 from ..custom_types import PRNGKey
+from ..functions import _broker
 
 _VALIDATION_SAMPLING_ABI = "probpipe.validation/v1"
 _SLICED_WASSERSTEIN_PROVIDER_ABI = "probpipe.validation.sliced_wasserstein/v1"
@@ -66,9 +66,9 @@ def _resolve_validation_key(
     """Preserve a caller key or claim one validation singleton event."""
     if key is not None:
         return key
-    return _workflow_broker._resolve_automatic_key(
+    return _broker._resolve_automatic_key(
         None,
-        _workflow_broker._singleton_effect_plan(
+        _broker._singleton_effect_plan(
             operation_kind=operation_kind,
             execution_mode=execution_mode,
             sample_shape=sample_shape,

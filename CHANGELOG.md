@@ -9,6 +9,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **Function declarations and engine migration.** Construct with
+  `Function(name, fn, *, input_spec=None, output_spec=None, output_name=None, ...)`.
+  The name is required; decorators default it to the Python callable's name.
+  `FunctionSpec` now stores `InputSpec` and `OutputSpec`. The old Function
+  template properties are removed. Legacy constructor keywords emit
+  `FutureWarning`: template parameters and `seed` are ignored, while `func`
+  overrides `fn`; the required `name` and `fn` arguments remain. Warnings identify
+  each supplied legacy option at the caller, and ignored templates install no
+  validation. `func` cannot replace an omitted `fn`. Bare record
+  specs expose fields; other bare term specs declare one whole component under
+  `output_name`, which defaults to the initial function name and survives
+  `with_name`. Arrays remain arrays and single-field records remain records.
+  Type holes and symbolic output dimensions are completed per call. Existing
+  tracked returns are copied and relabeled by `__call__`; `apply` preserves them.
+  This includes every Function-based operation: `sample`, `condition_on`,
+  `from_distribution`, and `mean` label their results with those operation names,
+  replacing implementation labels such as `params` or the source law's name.
+  Component names, record fields, and existing batch levels are retained;
+  `apply` preserves implementation labels. Operation results follow the same
+  naming contract as other Function results.
+  `Function`/`FunctionSpec` live in `values/`, and workflow helpers move from
+  `core/_workflow_*` into `functions/`; old imports have no shims. Declaration
+  fingerprints and replay anchors change, so regenerate persisted artifacts.
+  They include input and output declarations, including component names, but
+  exclude Function labels and the independent `output_name` label. Changing
+  labels preserves definition identity when declarations stay the same. A bare
+  non-record output spec still uses `output_name` to declare its component at
+  construction, so changing that default changes the declaration.
+  Callable anchors use `probpipe.callable_definition/v1` and the field
+  `signature_and_declarations`. Regenerate persisted recipes whose
+  declaration fields or fingerprints no longer match, including recipes that
+  stored `output_name` in the callable anchor. The RNG recipe, stochastic
+  plan, and outer replay schema remain at v1.
+  `Function.effective_workflow_kind` remains public and read-only: it resolves
+  instance controls against the current global configuration on each access,
+  including the warning and `OFF` fallback when Prefect is unavailable.
+  `Module`, `AbstractModule`, and both method decorators are experimental.
+  Resolved output declarations survive sweeps and broadcasts, including type
+  holes, output-only dimensions, and returned Function contracts. Broadcast
+  marginals preserve whole-record component exposure and non-numeric term kinds;
+  numeric arrays retain the existing record marginal and returned laws form
+  mixtures. Module methods
+  infer their returns normally and use the method name as their output label.
+  Import `Function` from `probpipe` or `probpipe.values`; import `function`,
+  `Module`, `AbstractModule`, `workflow_method`, and `abstract_workflow_method`
+  from `probpipe` or `probpipe.functions`. These names are no longer exported
+  by `probpipe.core.node`, which retains `Node` and `InputFrozenError`.
+  `with_options` returns a reusable Function copy accepting every engine control
+  (`workflow_kind`, `n_broadcast_samples`, `dispatch`, `max_workers`, and
+  `include_inputs`); it does not accept construction metadata or domain arguments.
+  Omitted controls stay unchanged; explicit `max_workers=None` clears the limit
+  and `n_broadcast_samples=None` restores the default sample count. Other controls
+  use constructor validation. Worker-count warnings now point to the user's
+  call for direct construction, decorators, and `with_options`.
+  Broadcast joint results now use `output_name` instead of `"broadcast"`.
+  Undeclared whole-term output components use `output_name` instead of
+  `"marginal"`; explicit output declarations retain their component names.
+  The invocation logger is now `probpipe.functions._function` instead of
+  `probpipe.core.node`; update logger-specific handlers and filters.
+
 - `OutputSpec` takes one keyword or one positional `RecordSpec`, so its form
   alone decides the packaging. The form with several keywords, which exposed a
   record of them, raises `TypeError`: replace `OutputSpec(a=a_spec, b=b_spec)`
@@ -38,13 +98,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `NumericRecord` or a `NumericRecordBatch` whatever its number of fields, so
     a one-field record no longer comes back as a bare array. `treedef` follows
     the same rule.
-  - A Function with an output template checks a returned distribution as it
-    checks a returned record. The record the law's components form must match
-    the template's fields and shapes, a dtype the template sets admits a
-    same-kind cast, and a support it sets must hold the law's. Before, the law's
-    `event_template` had to equal the template, and a parametric family's
-    template carried no dtype or support, so a template that set either
-    rejected such a law.
+  - A Function declares a returned law with `DistributionSpec`; matching uses
+    event-declaration unification, including packaging, component names,
+    dimensions, and same-kind dtypes. Function return validation additionally
+    checks compatibility where both actual and declared supports are specified.
+    The returned law retains its own declaration through calls and lifting.
   - The BayesFlow learners accept a prior whose declaration is numeric,
     whatever its class, and raise `TypeError` for any other before simulating.
 - `NumericRecord.from_vector` and `NumericRecordBatch.from_vector` name their
@@ -156,8 +214,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its separate wrapper; `NumericRecordSpec` replaces `NumericEventTemplate`.
   Replace `ValueSpec` with `TermSpec` in custom specs. Dimension binding returns
   a refined spec, `with_dim_sizes` permits partial substitution, and `with_dim_names`
-  renames symbols throughout nested declarations. Existing live function and
-  distribution template APIs retain their signatures for their later migration.
+  renames symbols throughout nested declarations. Distributions expose their
+  draw declaration through `event_spec`; Record constructors retain `event_template=`.
   Moving and renaming schema classes changes their fingerprints and those of
   containing terms; affected persisted provenance fingerprints no longer match.
   A custom `NumericSpec` implements `_vector_size`; the public `vector_size`

@@ -14,10 +14,13 @@ import pytest
 
 from probpipe import (
     DistributionSpec,
+    Function,
     FunctionSpec,
+    InputSpec,
     Normal,
     NumericArraySpec,
     OpaqueSpec,
+    OutputSpec,
     Record,
     RecordSpec,
     TermSpec,
@@ -27,7 +30,6 @@ from probpipe.core._fingerprint import (
     _update_function,
     fingerprint,
 )
-from probpipe.core.node import Function
 from probpipe.core.provenance import ParentInfo, Provenance
 
 # ===========================================================================
@@ -115,7 +117,7 @@ class TestFingerprintStrength:
             def implementation(value):
                 return value if captured is None else captured
 
-            return Function(func=implementation)
+            return Function(name="implementation", fn=implementation)
 
         assert _fingerprint_with_strength(build(1))[1] is False
         assert _fingerprint_with_strength(build(object()))[1] is True
@@ -435,8 +437,52 @@ class TestBootstrapSourceFingerprint:
 
 
 class TestFunctionHashing:
+    @pytest.mark.parametrize(
+        ("declaration", "same_identity"),
+        [
+            (None, True),
+            (OutputSpec(value=NumericArraySpec(())), True),
+            (NumericArraySpec(()), False),
+        ],
+        ids=["undeclared", "explicit-component", "default-component"],
+    )
+    def test_output_labels_only_affect_identity_through_declarations(
+        self, declaration, same_identity
+    ):
+        def identity(value):
+            return value
+
+        first = Function("identity", identity, output_name="first", output_spec=declaration)
+        second = Function("identity", identity, output_name="second", output_spec=declaration)
+        assert (first.output_spec == second.output_spec) is same_identity
+        assert (fingerprint(first) == fingerprint(second)) is same_identity
+        assert fingerprint(first) == fingerprint(first.with_name("display"))
+
+    @pytest.mark.parametrize("change", ["component", "shape", "kind", "packaging", "declaration"])
+    def test_output_contract_participates_in_function_fingerprint(self, change):
+        def identity(value):
+            return value
+
+        declaration = OutputSpec(bundle=RecordSpec(field=()))
+        baseline = Function("identity", identity, output_name="result", output_spec=declaration)
+        declarations = {
+            "component": OutputSpec(other=RecordSpec(field=())),
+            "shape": OutputSpec(bundle=RecordSpec(field=(2,))),
+            "kind": OutputSpec(bundle=OpaqueSpec()),
+            "packaging": OutputSpec(RecordSpec(field=())),
+            "declaration": None,
+        }
+        changed = Function(
+            "identity",
+            identity,
+            output_name="result",
+            output_spec=declarations[change],
+        )
+        assert fingerprint(baseline) != fingerprint(changed)
+        assert fingerprint(baseline) == fingerprint(baseline.with_name("display"))
+
     def _make_wf(self, func):
-        return Function(func=func, dispatch="sequential", n_broadcast_samples=10)
+        return Function(name="func", fn=func, dispatch="sequential", n_broadcast_samples=10)
 
     def test_legacy_content_marker_is_preserved(self):
         """A pure API rename must not invalidate existing cache identities."""
@@ -467,9 +513,10 @@ class TestFunctionHashing:
 
         def build(*, input_shape=(), output_shape=()):
             return Function(
-                func=identity,
-                input_template=RecordSpec(x=input_shape),
-                output_template=RecordSpec(y=output_shape),
+                name="identity",
+                fn=identity,
+                input_spec=InputSpec(RecordSpec(x=input_shape).children),
+                output_spec=RecordSpec(y=output_shape),
             )
 
         baseline = build()
@@ -562,13 +609,13 @@ class TestFunctionHashing:
             import sys
             sys.path.insert(0, sys.argv[1])
             from probpipe.core._fingerprint import fingerprint
-            from probpipe.core.node import Function
+            from probpipe import Function
 
             def f(x: float) -> float:
                 transform = lambda v: v * 2.0  # noqa: E731
                 return transform(x)
 
-            wf = Function(func=f, dispatch="sequential", n_broadcast_samples=10)
+            wf = Function("f", f, dispatch="sequential", n_broadcast_samples=10)
             print(fingerprint(wf))
         """)
         site = str(next(p for p in sys.path if "site-packages" in p))
@@ -664,7 +711,7 @@ class TestFunctionCapture:
     """Bytecode alone is not enough: referenced names, closures, and defaults."""
 
     def _wf(self, func):
-        return Function(func=func, dispatch="sequential", n_broadcast_samples=10)
+        return Function(name="func", fn=func, dispatch="sequential", n_broadcast_samples=10)
 
     def test_called_name_differs(self):
         # ``jnp.sin`` vs ``jnp.cos``: identical co_code + co_consts, differing
@@ -962,7 +1009,7 @@ class TestTermSpecFingerprints:
             OpaqueSpec(),
             RecordSpec(tau),
             DistributionSpec(tau),
-            FunctionSpec(tau, tau),
+            FunctionSpec(InputSpec(tau.children), OutputSpec(result=tau)),
             FunctionSpec(),
         ):
             _, weak = _fingerprint_with_strength(RecordSpec(field=spec))
@@ -984,8 +1031,8 @@ class TestTermSpecFingerprints:
         [
             lambda t: RecordSpec(t),
             lambda t: DistributionSpec(t),
-            lambda t: FunctionSpec(t, t),
-            lambda t: FunctionSpec(t, DistributionSpec(t)),
+            lambda t: FunctionSpec(InputSpec(t.children), OutputSpec(result=t)),
+            lambda t: FunctionSpec(InputSpec(t.children), OutputSpec(result=DistributionSpec(t))),
         ],
         ids=["record", "distribution", "function-record-out", "function-term-out"],
     )
@@ -998,31 +1045,35 @@ class TestTermSpecFingerprints:
         other = RecordSpec(y=())
         assert self._fp(RecordSpec(tau)) != self._fp(RecordSpec(other))
         assert self._fp(DistributionSpec(tau)) != self._fp(DistributionSpec(other))
-        assert self._fp(FunctionSpec(tau, tau)) != self._fp(FunctionSpec(tau, other))
+        assert self._fp(FunctionSpec(InputSpec(tau.children), OutputSpec(result=tau))) != self._fp(
+            FunctionSpec(InputSpec(tau.children), OutputSpec(result=other))
+        )
 
     def test_declared_kind_changes_the_fingerprint(self, tau):
         # The same space under different declared kinds must not collide: the
         # declaration's class is the kind.
         assert self._fp(RecordSpec(tau)) != self._fp(DistributionSpec(tau))
-        assert self._fp(FunctionSpec(tau, tau)) != self._fp(
-            FunctionSpec(tau, DistributionSpec(tau))
+        assert self._fp(FunctionSpec(InputSpec(tau.children), OutputSpec(result=tau))) != self._fp(
+            FunctionSpec(InputSpec(tau.children), OutputSpec(result=DistributionSpec(tau)))
         )
 
     def test_unspecified_output_differs_from_a_declared_one(self, tau):
-        assert self._fp(FunctionSpec(tau)) != self._fp(FunctionSpec(tau, tau))
+        assert self._fp(FunctionSpec(InputSpec(tau.children))) != self._fp(
+            FunctionSpec(InputSpec(tau.children), OutputSpec(result=tau))
+        )
 
     def test_a_deep_declaration_chain_truncates_instead_of_recursing(self, tau):
         """Declaration edges are hashed through the depth-guarded entry point.
 
         An output declaration may itself be a FunctionSpec, so the chain is
         unbounded; hashing it must degrade to the depth marker and report weak
-        rather than exhaust the interpreter stack. The spec is hashed directly:
-        nesting it in a template instead would recurse in ``RecordSpec``'s
-        own hash, which is a separate concern.
+        rather than traverse the full declaration. Keep the fixture beyond the
+        fingerprint depth limit but within OutputSpec construction's recursive
+        hashability check, which is a separate concern.
         """
         spec = FunctionSpec()
-        for _ in range(1000):
-            spec = FunctionSpec(tau, spec)
+        for _ in range(64):
+            spec = FunctionSpec(InputSpec(tau.children), OutputSpec(result=spec))
 
         _, weak = _fingerprint_with_strength(spec)
         assert weak

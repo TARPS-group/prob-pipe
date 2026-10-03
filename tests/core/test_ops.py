@@ -103,7 +103,7 @@ class TestSample:
     def test_sample_with_shape(self, normal):
         s = ops.sample(normal, key=jax.random.PRNGKey(0), sample_shape=(50,))
         assert s.shape == (50,)
-        assert s.name == normal.name
+        assert s.name == ops.sample.output_name
 
     @pytest.mark.parametrize("sample_shape", [(), (3,), (2, 3)])
     @pytest.mark.parametrize(
@@ -132,7 +132,7 @@ class TestSample:
         )
 
         np.testing.assert_array_equal(np.asarray(result), np.ones(sample_shape, dtype=np.float32))
-        assert result.name == (sampler_name or "sample")
+        assert result.name == ops.sample.output_name
         assert result.provenance is not None
         if sample_shape:
             assert isinstance(result, NumericArrayBatch)
@@ -145,7 +145,7 @@ class TestSample:
             assert isinstance(result, NumericArray)
             assert result.spec == NumericArraySpec((), dtype=np.float32)
 
-    def test_sample_keeps_an_already_tracked_draws_name(self):
+    def test_sample_relabels_an_independent_copy_of_a_tracked_draw(self):
         drawn = NumericArray("held", jnp.asarray(2.0))
 
         class Sampler:
@@ -158,7 +158,8 @@ class TestSample:
 
         result = ops.sample(Sampler(), key=jax.random.PRNGKey(0))
 
-        assert result.name == drawn.name == "held"
+        assert result.name == ops.sample.output_name
+        assert drawn.name == "held"
         assert result is not drawn
         assert result.provenance is not None
         assert drawn.provenance is None
@@ -190,7 +191,7 @@ class TestSample:
             assert result.batch_shape == sample_shape
             assert result.level_names == ("sample",)
             assert result.axis_groups == (sample_shape,)
-            assert result.name == "objects"
+            assert result.name == ops.sample.output_name
             for index in np.ndindex(sample_shape):
                 np.testing.assert_array_equal(result[index], expected)
 
@@ -572,7 +573,7 @@ class TestFunctionRouting:
     """Verify public ops are Function instances."""
 
     def test_ops_are_functions(self):
-        from probpipe.core.node import Function
+        from probpipe import Function
 
         for name in ops.__all__:
             fn = getattr(ops, name)

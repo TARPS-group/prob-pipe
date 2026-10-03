@@ -9,6 +9,7 @@ import pytest
 
 from probpipe import (
     EmpiricalDistribution,
+    Function,
     Gamma,
     MultivariateNormal,
     Normal,
@@ -26,7 +27,6 @@ from probpipe import (
 from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._record_batch import RecordBatch
 from probpipe.core._record_distribution import _RecordDistributionView
-from probpipe.core.node import Function
 from probpipe.core.record import Record
 
 # ---------------------------------------------------------------------------
@@ -405,9 +405,10 @@ class TestDistributionView:
         # threaded name, or mean/variance come back named after the last
         # component ("y") instead of the product distribution.
         prod = ProductDistribution(x=Normal("x", 0.0, 1.0), y=Normal("y", 0.0, 1.0))
-        assert mean(prod).name == prod.name
-        assert variance(prod).name == prod.name
-        assert mean(prod).name != "y"
+        assert mean.apply(prod).name == prod.name
+        assert variance.apply(prod).name == prod.name
+        assert mean(prod).name == "mean"
+        assert variance(prod).name == "variance"
 
     def test_parent_reference(self, joint_xy):
         view = joint_xy["x"]
@@ -498,7 +499,8 @@ class TestBroadcastingReconnection:
             return a + b
 
         return Function(
-            func=add,
+            name="add",
+            fn=add,
             dispatch=backend,
             n_broadcast_samples=50,
         )
@@ -545,7 +547,8 @@ class TestBroadcastingReconnection:
             return a - b
 
         wf = Function(
-            func=subtract,
+            name="subtract",
+            fn=subtract,
             dispatch="sequential",
             n_broadcast_samples=20,
         )
@@ -567,7 +570,8 @@ class TestBroadcastingReconnection:
             return a + b + c
 
         wf = Function(
-            func=add3,
+            name="add3",
+            fn=add3,
             dispatch="sequential",
             n_broadcast_samples=50,
         )
@@ -589,7 +593,8 @@ class TestBroadcastingReconnection:
             return a + b
 
         wf = Function(
-            func=add,
+            name="add",
+            fn=add,
             dispatch="jax",
             n_broadcast_samples=50,
         )
@@ -611,7 +616,8 @@ class TestBroadcastingReconnection:
             return a - b
 
         wf = Function(
-            func=subtract,
+            name="subtract",
+            fn=subtract,
             dispatch="jax",
             n_broadcast_samples=20,
         )
@@ -1020,7 +1026,8 @@ class TestEnumerateWithDistributionViews:
             return (a - b) + c
 
         wf = Function(
-            func=compute,
+            name="compute",
+            fn=compute,
             dispatch="sequential",
             n_broadcast_samples=50,
         )
@@ -1356,7 +1363,8 @@ class TestNestedProductDistribution:
             return a + b
 
         wf = Function(
-            func=add,
+            name="add",
+            fn=add,
             dispatch="sequential",
             n_broadcast_samples=30,
         )

@@ -1320,7 +1320,7 @@ class TestEndToEndValuesPipeline:
 
     def test_workflow_broadcasting_values_correct(self, posterior):
         """Broadcast predict(params, x) computes correct function of posterior."""
-        from probpipe.core.node import function
+        from probpipe.functions import function
 
         @function(n_broadcast_samples=100, dispatch="sequential")
         def predict(params, x):
@@ -1340,7 +1340,7 @@ class TestEndToEndValuesPipeline:
         bug would produce mean≈0 (by symmetry) but var≈2*var(params),
         so checking var is the real correlation test.
         """
-        from probpipe.core.node import function
+        from probpipe.functions import function
 
         @function(n_broadcast_samples=50, dispatch="sequential")
         def identity_pair(a, b):
@@ -1382,7 +1382,7 @@ class TestEndToEndValuesPipeline:
 
     def test_workflow_mixed_posterior_and_independent(self, posterior):
         """Workflow with both posterior views and an independent distribution."""
-        from probpipe.core.node import function
+        from probpipe.functions import function
 
         @function(n_broadcast_samples=posterior.num_atoms, dispatch="sequential")
         def noisy_predict(params, noise):

@@ -9,6 +9,7 @@ import pytest
 
 from probpipe import (
     EmpiricalDistribution,
+    Function,
     JointEmpirical,
     Record,
     RecordBatch,
@@ -24,7 +25,6 @@ from probpipe import (
     workflow_run,
 )
 from probpipe.core._record_distribution import _RecordDistributionView
-from probpipe.core.node import Function
 
 # ---------------------------------------------------------------------------
 # Construction
@@ -336,7 +336,8 @@ class TestBroadcasting:
             return a + b
 
         wf = Function(
-            func=add,
+            name="add",
+            fn=add,
             dispatch="sequential",
             n_broadcast_samples=30,
         )

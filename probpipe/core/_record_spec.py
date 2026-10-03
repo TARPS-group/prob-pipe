@@ -507,7 +507,7 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
             )
 
         def _leaf_spec(val: Any) -> _FieldSpecInput:
-            from ._kind_specs import FunctionSpec
+            from ..values._function_base import FunctionSpec
             from .tracked import TrackedTerm
 
             if isinstance(val, TrackedTerm):
@@ -517,10 +517,6 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
             if isinstance(val, Record):
                 return val.event_template
             if callable(val):
-                if isinstance(val, TrackedTerm):
-                    return FunctionSpec(
-                        getattr(val, "input_template", None), getattr(val, "output_template", None)
-                    )
                 return FunctionSpec()
             # A mapping is never a leaf: it denotes tree structure, so infer a
             # nested template from it rather than an (invalid) opaque-leaf spec

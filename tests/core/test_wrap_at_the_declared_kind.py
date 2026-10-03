@@ -93,8 +93,8 @@ class TestTheKindsAreOrderedNotDisjoint:
 
     def test_every_tracked_term_keeps_its_kind(self):
         """Whatever the kind, a term keeps it."""
-        inner = Function(func=lambda x: x + 1, name="inner")
-        outer = Function(func=lambda: inner, name="outer")
+        inner = Function(fn=lambda x: x + 1, name="inner")
+        outer = Function(fn=lambda: inner, name="outer")
 
         assert isinstance(outer(), Function)
 
@@ -111,7 +111,7 @@ class TestTheKindsAreOrderedNotDisjoint:
     )
     def test_the_rule_is_the_same_for_every_kind(self, make):
         kind = type(make())
-        returning = Function(func=make, name="returning")
+        returning = Function(fn=make, name="returning")
 
         assert isinstance(returning(), kind)
 
@@ -232,7 +232,7 @@ class TestAnEmptyReturnKeepsItsHostsKind:
 
     @staticmethod
     def _returned(value):
-        return Function(func=lambda: value, name="f")()
+        return Function(fn=lambda: value, name="f")()
 
     def test_an_empty_mapping_is_an_empty_record(self):
         result = self._returned({})
@@ -272,7 +272,7 @@ class TestASequenceAggregatesAtItsRowsKind:
 
     @staticmethod
     def _returned(value):
-        return Function(func=lambda: value, name="f")()
+        return Function(fn=lambda: value, name="f")()
 
     def test_numeric_rows_batch_as_arrays(self):
         from probpipe import NumericArrayBatch
@@ -355,7 +355,7 @@ class TestEachSweptRowTakesItsOwnKind:
         )
 
     def _swept(self, body, dispatch):
-        return Function(func=body, name="f", dispatch=dispatch)(v=self._rows())
+        return Function(fn=body, name="f", dispatch=dispatch)(v=self._rows())
 
     def test_a_mapping_row_gives_a_batch_of_records(self, dispatch):
         out = self._swept(lambda v: {"y": jnp.asarray(v["x"]) * 2}, dispatch)
@@ -445,7 +445,7 @@ class TestEachSweptRowTakesItsOwnKind:
         """The stack has a batch form for every element kind, so what raises here
         is the rows disagreeing — which the caller should see."""
         with pytest.raises(ValueError, match="differing shapes"):
-            Function(func=lambda: [jnp.ones(1), jnp.ones(2)], name="g")()
+            Function(fn=lambda: [jnp.ones(1), jnp.ones(2)], name="g")()
 
 
 class TestASweptEmptyMappingHitsTheSameWall:
@@ -465,4 +465,4 @@ class TestASweptEmptyMappingHitsTheSameWall:
         )
 
         with pytest.raises(ValueError, match="at least one field"):
-            Function(func=lambda v: {}, name="f", dispatch=dispatch)(v=rows)
+            Function(fn=lambda v: {}, name="f", dispatch=dispatch)(v=rows)

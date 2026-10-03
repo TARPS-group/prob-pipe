@@ -179,12 +179,32 @@ bound methods, partials, callable objects, classes, and builtins may execute
 normally, but replay raises `ReplayUnsupportedCallableError` rather than using
 a weak identity.
 
+Callable anchors use `probpipe.callable_definition/v1`, with signature and
+output/input contracts stored in `signature_and_declarations`. Function labels
+and the independent `output_name` label are excluded; declared component names
+remain part of the anchor and the Function fingerprint. A label-only change
+can replay with the current result label when the declarations and other replay
+checks still match. A bare non-record output spec generates its component from
+`output_name` at construction, so changing that default changes the declaration.
+With no output declaration, replay does not promise an unchanged inferred
+output interface. Downstream component projections still record their paths.
+
+Unsupported callable ABI labels are rejected before their fields are read.
+Regenerate persisted recipes when their declaration fields or definition digests
+no longer match, including recipes that stored `output_name` in the callable
+anchor; these are rejected by the strict field check. The outer
+replay, RNG recipe, and stochastic plan formats remain at v1.
+
 The definition anchor covers the callable's local executable definition and
 the names it references, but not the current values of module globals,
 referenced helper functions, imported implementations, files, services, or
 other environmental state. Those dependencies may change results without
 making the callable anchor incompatible: replay validates ProbPipe's random
 stream structure, not full computational semantics.
+
+Input parameter values may also change while the recorded random stream is
+reused. Replay acceptance therefore does not establish that a cached result
+would be valid for the current inputs.
 
 The recorded execution route is diagnostic, not authoritative. Replay may move
 between compatible rowwise, thread, JAX, or Prefect routes; any drift is written
@@ -251,7 +271,7 @@ closures, and other composite values.
 | TFP-backed distribution (`Normal`, `Gamma`, …) | class name + distribution name + all TFP constructor parameters |
 | `EmpiricalDistribution` | class name + name + sample arrays + log-normalised weight array |
 | `Record` | field names + values, recursively |
-| `Function` | frozen signature and input/output templates, plus user-function bytecode/defaults/closure or the private implementation type |
+| `Function` | frozen signature and `InputSpec`/`OutputSpec` declarations (including component exposure), plus user-function bytecode/defaults/closure or the private implementation type |
 | JAX / NumPy array | shape + dtype + raw bytes (large arrays are sampled) |
 | Closure-free Python function | module + qualified name + bytecode + defaults |
 | Closure-bearing function, bound method, partial, callable instance, class, builtin, or unsupported object | process-local identity; marked weak |

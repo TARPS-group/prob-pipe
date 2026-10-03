@@ -7,6 +7,7 @@ import pytest
 from probpipe import (
     Distribution,
     EmpiricalDistribution,
+    Function,
     IncrementalConditioner,
     MultivariateNormal,
     Provenance,
@@ -14,7 +15,6 @@ from probpipe import (
     with_conversion,
     with_resampling,
 )
-from probpipe.core.node import Function
 
 # ---------------------------------------------------------------------------
 # Fixtures and helpers

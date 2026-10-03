@@ -234,13 +234,13 @@ class Provenance:
         diagnostics:
             Exact JSON-native non-semantic execution observations.
         """
-        from . import _workflow_context
+        from ..functions import _context
 
-        mode = _workflow_context._active_provenance_mode()
+        mode = _context._active_provenance_mode()
         if mode is ProvenanceMode.OFF:
             return None
 
-        if _workflow_context._workflow_side_effects_forbidden():
+        if _context._workflow_side_effects_forbidden():
             return None
         keep = mode is ProvenanceMode.FULL
 

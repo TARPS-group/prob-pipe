@@ -66,7 +66,7 @@ probpipe/
 │   │                          #     lift and the Monte Carlo fallbacks construct
 │   └── _conversion.py         #   Converter, ConverterRegistry (IV.3)
 ├── functions/                 # Part V — Function and its engine
-│   ├── _function.py           #   the engine installed on Function at import; the decorator; with_options (V.1, V.2)
+│   ├── _function.py           #   the engine installed on Function at import; the decorator (V.1, V.2)
 │   ├── _call.py               #   binding, wrap, conversion planning, admission; ApplicabilityError (V.3, V.4)
 │   ├── _plan.py               #   lift classification, root-ancestor grouping, and the result declaration (V.5, V.6)
 │   ├── _rules.py              #   the evaluation-rule registry: consulted by the engine,
@@ -125,7 +125,7 @@ probpipe/
 - **`families/`** implements the catalog: constructors and capability implementations, registering its evaluation rules and converters upward at import.
 - **`inference/`**, **`diagnostics/`**, and **`validation/`** are outside the reference's parts: inference methods register into the VI.6 registry, and diagnostics and validation are application layers over the public operations.
 - **`designs/`** builds a `Batch` of any element kind from per-field candidate sets combined by a rule, the full factorial being the Cartesian product, on a level named `design`; a design is a distinct concept from the batch it produces, and its section is to be written.
-- **Experimental, placement to be decided.** `Module`, `AbstractModule`, `workflow_method`, `abstract_workflow_method`, and `Module.dag()` in `core/node.py` form a container of `Function`s with shared inputs and a Graphviz view of their graph. They stay outside the reference until their role is settled, at low priority.
+- **Experimental, placement to be decided.** `Module`, `AbstractModule`, `workflow_method`, `abstract_workflow_method`, and `Module.dag()` in `functions/_module.py` form a container of `Function`s with shared inputs and a Graphviz view of their graph. They stay outside the reference until their role is settled, at low priority.
 
 A handful of private helper modules (dtypes, array utilities) support the packages and carry no design contract.
 
@@ -133,29 +133,40 @@ A handful of private helper modules (dtypes, array utilities) support the packag
 
 Every module with a design contract, with where it goes; the target contracts above are authoritative.
 
-The spec implementation in `core/` is divided into four files: `core/_spec_base.py`
+The shared spec implementation in `core/` is divided into three files: `core/_spec_base.py`
 defines `TermSpec`, `NumericSpec`, `NumericArraySpec`, `OpaqueSpec`, and shared
 dimension unification; `core/_record_spec.py` defines `RecordSpec` and
-`NumericRecordSpec`; `core/_kind_specs.py` defines `FunctionSpec`; and
+`NumericRecordSpec`; and
 `core/_specs.py` defines `InputSpec` and `OutputSpec` and re-exports the public
 spec types of `core/`. `DistributionSpec` is defined beside `Distribution` in
-`distributions/_distribution.py`.
+`distributions/_distribution.py`. `FunctionSpec` is beside `Function` in
+`values/_function_base.py`; `core/_kind_specs.py` has been removed.
+
+The rows below describe current locations and the remaining target moves.
+Pure binding stays in `values/_binding.py` to keep raw evaluation independent
+of the engine. Lifted-input validation currently lives in `functions/_contract.py`.
+Managed execution, recipes, callable anchors, descendant capture, and execution
+contracts retain separate helper modules rather than being merged into the
+larger target modules. The current import cycles and lazy initialization are
+listed in STYLE_GUIDE §6; the target tree above does not assert their removal.
 
 | Today | Target |
 |---|---|
-| `core/node.py` (`Function`, the decorator, `with_options`) | `functions/_function.py` |
-| `core/node.py` (`Module`, `AbstractModule`, `workflow_method`, `abstract_workflow_method`, `Module.dag()`) | experimental; placement to be decided |
-| `core/_workflow_call.py`, `core/_workflow_distribution_normalization.py` | `functions/_call.py`; conversion executes later under the IV.3 plan |
-| `core/_workflow_plan.py` | `functions/_plan.py` |
-| `core/_function_contract.py` | split: construction-time validation of the declared sides to `values/_function_base.py`; per-call binding and the result declaration to `functions/_plan.py`; output validation and declared wrapping to `functions/_result.py` |
-| `core/_workflow_distribution_broadcast.py` | `functions/_broadcast.py` |
-| `core/_workflow_sweep.py` | `functions/_sweep.py` |
-| `core/_workflow_rng.py` | `functions/_rng.py` |
-| `core/_workflow_context.py` | `functions/_context.py` |
-| `core/_workflow_replay.py`, `core/_workflow_recipe.py` | `functions/_replay.py` |
-| `core/_workflow_broker.py`, `core/_workflow_managed.py` | `functions/_broker.py` |
-| `core/_workflow_execution.py`, `core/_workflow_execution_contract.py` | `functions/_execution.py` |
-| `core/_workflow_result.py` | `functions/_result.py` |
+| `values/_function_base.py` (`Function`, `FunctionSpec`, `with_options`, raw evaluation) | in place (III.3) |
+| `values/_binding.py` (signatures and pure Python binding) | value-layer helper for raw evaluation |
+| `functions/_function.py` (decorator and installed engine) | in place (V.1, V.2) |
+| `functions/_module.py` (`Module`, `AbstractModule`, `workflow_method`, `abstract_workflow_method`, `Module.dag()`) | experimental; placement to be decided |
+| `functions/_call.py`, `functions/_normalization.py` | `functions/_call.py`; conversion executes later under the IV.3 plan |
+| `functions/_plan.py` | `functions/_plan.py` |
+| `values/_function_base.py`, `functions/_contract.py`, `functions/_result.py` | construction and raw evaluation remain in the base; lifted-input binding moves into the planning steps; engine wrapping and aggregation stay in `_result.py` |
+| `functions/_broadcast.py` | `functions/_broadcast.py` |
+| `functions/_sweep.py` | `functions/_sweep.py` |
+| `functions/_rng.py` | `functions/_rng.py` |
+| `functions/_context.py` | `functions/_context.py` |
+| `functions/_replay.py`, `functions/_recipe.py` | `functions/_replay.py` |
+| `functions/_broker.py`, `functions/_managed.py` | `functions/_broker.py` |
+| `functions/_execution.py`, `functions/_execution_contract.py` | `functions/_execution.py` |
+| `functions/_result.py` | `functions/_result.py` |
 | `core/ops.py` | `operations/`, one module per operation section (VI.1–VI.10), plus `_operation.py` for the declaration, route, and registry code |
 | `distributions/_distribution.py` | in place: `Distribution` and `DistributionSpec` (III.7) |
 | `core/protocols.py` | `distributions/_capabilities.py` |
@@ -167,7 +178,6 @@ spec types of `core/`. `DistributionSpec` is defined beside `Distribution` in
 | `core/_numeric_array.py`, `core/_opaque.py`, `core/record.py`, and their batch modules | `values/`, one module per III section |
 | `core/_spec_base.py` | `TermSpec`, `NumericSpec`, `NumericArraySpec`, `OpaqueSpec`, and dimension unification stay in place, since `NumericArraySpec` subclasses `NumericSpec`, which subclasses `TermSpec` (II.1, II.3, III.1–III.2) |
 | `core/_record_spec.py` | in place: `RecordSpec`, `NumericRecordSpec`, and record unification (III.5) |
-| `core/_kind_specs.py` | `FunctionSpec` to `values/_function_base.py` (III.3) |
 | `core/_specs.py` | `InputSpec`, `OutputSpec`, and component projection contracts stay in place (II.2) |
 | `core/constraints.py` | `core/_constraints.py` (II.3) |
 | `record/design.py` | `designs/`, generalized from `RecordBatch` to any element spec |
@@ -183,8 +193,8 @@ spec types of `core/`. `DistributionSpec` is defined beside `Distribution` in
 | `core/_kinds.py`, `core/_array_backend.py` | `core/`, in place: the kind table (II.1) and the array-backend registry (II.3) |
 | `core/_immutable.py`, `core/_fingerprint.py` | `core/_identity.py` (II.4) |
 | `core/config.py` | `core/_config.py` |
-| `core/_workflow_callable.py`, `core/_workflow_descendants.py` | `functions/_replay.py` for the callable anchors and `functions/_plan.py` for the root-ancestor capture (V.5, V.8) |
-| `core/_workflow_errors.py` | `functions/`, each error beside the step that raises it (V.1) |
+| `functions/_callable.py`, `functions/_descendants.py` | `functions/_replay.py` for the callable anchors and `functions/_plan.py` for the root-ancestor capture (V.5, V.8) |
+| `functions/_errors.py` | `functions/`, each error beside the step that raises it (V.1) |
 | `core/_random_functions.py`, `core/_random_measures.py` | `families/_random_functions.py` (VII.5) |
 | `distributions/_product.py`, `distributions/_sequential_joint.py`, `distributions/_joint_utils.py`, `distributions/joint.py` | `distributions/_factored.py` (IV.1): `ProductDistribution` and `SequentialJointDistribution` become `FactoredDistribution` |
 | `distributions/_joint_gaussian.py`, `distributions/gaussian_random_function.py` | `families/_gaussian.py` (VII.6): `JointGaussian` becomes `FactoredMultivariateGaussian` |
