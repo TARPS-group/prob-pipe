@@ -59,6 +59,7 @@ from tests.correctness._laws import (
 )
 from tests.correctness._records import leaf_paths
 from tests.inference import canonical
+from tests.inference._bayesflow_helpers import SimulatorKernel
 from tests.inference._harness import PROFILES, assert_matches
 from tests.inference.canonical import LeafReference, PosteriorReference, ScaleMixture
 
@@ -432,19 +433,12 @@ class TestFamiliesWithRecordParameters:
             value["theta"]
 
 
-class _SchoolsSimulator:
+def _schools(params, key):
     """The eight-schools simulator ``y = mu + tau theta_tilde + sigma e``, reading the nested record."""
-
-    def generate_data(self, params, num_observations, *, key=None):
-        mu, tau = params["population/mu"], params["population/tau"]
-        theta_tilde = jnp.asarray(params["groups/theta_tilde"])
-        key = jax.random.PRNGKey(0) if key is None else key
-        sigma = jnp.asarray(canonical.SCHOOL_ERRORS, jnp.float32)
-        noise = jax.random.normal(key, (num_observations, theta_tilde.shape[-1]))
-        return mu + tau * theta_tilde + sigma * noise
-
-    def log_likelihood(self, params, data):
-        return jnp.array(0.0)
+    mu, tau = params["population/mu"], params["population/tau"]
+    theta_tilde = jnp.asarray(params["groups/theta_tilde"])
+    sigma = jnp.asarray(canonical.SCHOOL_ERRORS, jnp.float32)
+    return mu + tau * theta_tilde + sigma * jax.random.normal(key, theta_tilde.shape)
 
 
 class TestLearnedKernelOverANestedRecord:
@@ -463,10 +457,14 @@ class TestLearnedKernelOverANestedRecord:
 
         prior = Groups() * Population()
         kernel = learn_amortized_posterior(
-            prior, _SchoolsSimulator(), num_simulations=500, epochs=1, random_seed=0
+            prior,
+            SimulatorKernel(prior, canonical.SCHOOL_EFFECTS.shape, _schools),
+            num_simulations=500,
+            epochs=1,
+            random_seed=0,
         )
         assert kernel.event_spec == prior.event_spec
-        law = condition_on.with_options(method_options={"num_results": 200, "random_seed": 0})(
+        law = condition_on(
             kernel, {"observation": jnp.asarray(canonical.SCHOOL_EFFECTS, jnp.float32)}
         )
         assert law.event_spec == prior.event_spec

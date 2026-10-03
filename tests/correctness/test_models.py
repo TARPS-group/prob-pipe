@@ -68,6 +68,7 @@ from tests._ops import (
 )
 from tests.correctness._laws import REAL, exact_reference
 from tests.inference import canonical
+from tests.inference._bayesflow_helpers import SimulatorKernel, theta_vec
 from tests.inference._harness import PROFILES, Z, assert_matches
 from tests.inference.canonical import LeafReference, ObservationKernel, PosteriorReference
 
@@ -531,16 +532,14 @@ def _bayesflow():
     pytest.importorskip("bayesflow")
 
 
-class _Shift:
+def _shift(params, key):
     """The simulator ``y = theta + N(0, 0.5²)`` of two coordinates, whose posterior is Gaussian."""
+    theta = theta_vec(params)
+    return theta + 0.5 * jax.random.normal(key, theta.shape)
 
-    def generate_data(self, params, num_observations, *, key=None):
-        theta = params.to_vector() if hasattr(params, "to_vector") else jnp.ravel(params)
-        key = jax.random.PRNGKey(0) if key is None else key
-        return theta[None, :] + 0.5 * jax.random.normal(key, (num_observations, theta.shape[-1]))
 
-    def log_likelihood(self, params, data):
-        return jnp.array(0.0)
+def _shift_simulator(prior):
+    return SimulatorKernel(prior, (2,), _shift)
 
 
 def _shift_prior():
@@ -566,12 +565,10 @@ class TestLearnedKernels:
 
         prior = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
         kernel = learn_amortized_posterior(
-            prior, _Shift(), num_simulations=3000, epochs=8, random_seed=0
+            prior, _shift_simulator(prior), num_simulations=3000, epochs=8, random_seed=0
         )
         observation = jnp.array([0.6, -0.4])
-        law = condition_on.with_options(method_options={"num_results": 2000, "random_seed": 0})(
-            kernel, {"observation": observation}
-        )
+        law = condition_on(kernel, {"observation": observation})
         reference = _shift_reference(observation)
         leaf = reference.leaves["theta"]
         split = PosteriorReference(
@@ -591,11 +588,13 @@ class TestLearnedKernels:
         from probpipe.inference import learn_amortized_posterior
 
         kernel = learn_amortized_posterior(
-            _shift_prior(), _Shift(), num_simulations=500, epochs=1, random_seed=0
+            _shift_prior(),
+            _shift_simulator(_shift_prior()),
+            num_simulations=500,
+            epochs=1,
+            random_seed=0,
         )
-        law = condition_on.with_options(method_options={"num_results": 200, "random_seed": 0})(
-            kernel, {"observation": jnp.array([0.6, -0.4])}
-        )
+        law = condition_on(kernel, {"observation": jnp.array([0.6, -0.4])})
         assert law.event_spec == _shift_prior().event_spec
 
     def test_a_learned_likelihood_times_the_prior_is_normalized_by_inference(self):
@@ -608,7 +607,11 @@ class TestLearnedKernels:
         from probpipe.inference import learn_amortized_likelihood
 
         likelihood = learn_amortized_likelihood(
-            _shift_prior(), _Shift(), num_simulations=3000, epochs=15, random_seed=0
+            _shift_prior(),
+            _shift_simulator(_shift_prior()),
+            num_simulations=3000,
+            epochs=15,
+            random_seed=0,
         )
         observation = jnp.array([[0.6, -0.4]])
         joint = likelihood * _shift_prior()

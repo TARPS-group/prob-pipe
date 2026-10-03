@@ -1,9 +1,8 @@
 """Shared helpers for the BayesFlow surrogate tests.
 
-Kept out of the ``test_*`` modules so the two BayesFlow test files
-(``test_bayesflow_likelihoods.py`` / ``test_bayesflow_posteriors.py``) share a
-single implementation rather than duplicating it: the flat parameter vector of
-a per-draw record, and the simulator kernel the learners train on.
+Kept out of the ``test_*`` modules so the BayesFlow tests in this package and in
+``tests/correctness`` share a single implementation: the flat parameter vector
+of a per-draw record, and the simulator kernel the learners train on.
 """
 
 from __future__ import annotations
