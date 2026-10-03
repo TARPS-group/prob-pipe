@@ -166,6 +166,16 @@ class TestEventCompletion:
         law = EmpiricalDistribution("post", _record_atoms(), event_spec=OutputSpec(_RECORD_SPEC))
         assert law.event_spec == OutputSpec(_RECORD_SPEC)
 
+    def test_a_declaration_keeps_the_dtypes_the_atoms_leave_open(self):
+        prior = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
+        atoms = NumericRecordBatch(
+            "draws", {"a": jnp.zeros(5), "b": jnp.ones(5)}, ("draw",), axes_per_level=(1,)
+        )
+        assert atoms.element_spec.children["a"].dtype is None
+        law = EmpiricalDistribution("post", atoms, event_spec=prior.event_spec)
+        assert law.event_spec == prior.event_spec
+        assert law.dtypes == {"a": jnp.float32, "b": jnp.float32}
+
     def test_a_declared_type_that_does_not_unify_raises(self):
         with pytest.raises(ValueError, match="dimension"):
             EmpiricalDistribution(

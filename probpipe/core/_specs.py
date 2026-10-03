@@ -301,8 +301,12 @@ class OutputSpec:
         """This declaration with its type set to *spec*.
 
         A pending hole is filled with *spec*. A declared spec must unify with
-        *spec*, which then replaces it, so the result carries what the producer
-        returns.
+        *spec*, and the result stores their unification under the declared names
+        and packaging. A numeric array keeps its declared dtype and support and
+        takes *spec*'s where the declaration leaves them unset, and a declared
+        symbolic dimension binds to the size *spec* gives. A record unifies field
+        by field, and an opaque spec takes the known type and ``meta``. Any other
+        kind takes *spec*.
 
         Raises
         ------
@@ -320,9 +324,9 @@ class OutputSpec:
             )
         if self._term_spec is not None:
             label = f"the exposed {kind}" if kind is not None else repr(self._component_name)
-            _unify_specs(self._term_spec, spec, {}, f"Declared component {label}")
-            if isinstance(self._term_spec, OpaqueSpec) and isinstance(spec, OpaqueSpec):
-                spec = _known_type(self._term_spec, spec)
+            bindings: dict[str, int] = {}
+            _unify_specs(self._term_spec, spec, bindings, f"Declared component {label}")
+            spec = _unification(self._term_spec, spec, bindings)
         return self._with_spec(spec)
 
     def with_path_names(
@@ -388,6 +392,33 @@ class OutputSpec:
     def with_dim_names(self, **names: str) -> OutputSpec:
         """Rename dimensions while preserving component exposure and holes."""
         return self._with_spec(None if self.spec is None else self.spec.with_dim_names(**names))
+
+
+def _unification(declared: TermSpec, produced: TermSpec, bindings: Mapping[str, int]) -> TermSpec:
+    """The unification of a declared spec with the produced one it unifies with.
+
+    *bindings* holds the sizes the unification bound to symbolic dimensions.
+    The rule is :meth:`OutputSpec.with_spec`'s, and the result is *produced*
+    when the two agree.
+    """
+    if isinstance(declared, NumericArraySpec) and isinstance(produced, NumericArraySpec):
+        unified = NumericArraySpec(
+            declared._substitute_dims(bindings).shape,
+            dtype=declared.dtype if declared.dtype is not None else produced.dtype,
+            support=declared.support if declared.support is not None else produced.support,
+        )
+    elif isinstance(declared, RecordSpec) and isinstance(produced, RecordSpec):
+        unified = RecordSpec(
+            {
+                name: _unification(field, produced.children[name], bindings)
+                for name, field in declared.children.items()
+            }
+        )
+    elif isinstance(declared, OpaqueSpec) and isinstance(produced, OpaqueSpec):
+        unified = _known_type(declared, produced)
+    else:
+        return produced
+    return produced if unified == produced else unified
 
 
 def _renamed_exposed(
