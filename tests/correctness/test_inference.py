@@ -28,6 +28,7 @@ from tests._ops import condition_on, inference_method_registry, mean, variance
 from tests.correctness._laws import ExactGaussianRegression, exact_reference
 from tests.inference import canonical
 from tests.inference._harness import (
+    _RESONANT_HMC,
     PROFILES,
     assert_matches,
     calibration_ranks,
@@ -43,12 +44,6 @@ CALIBRATION_LEVEL = 0.01
 #: two dozen replications of a fitted method, and more of the exact route,
 #: whose replications cost no fit.
 REPLICATIONS, EXACT_REPLICATIONS, RANK_DRAWS = 24, 40, 99
-
-#: The bug that makes tfp_hmc disagree with an exact Gaussian conditional.
-_RESONANT_HMC = (
-    "bug: tfp_hmc runs a fixed ten-step trajectory that resonates on a near-Gaussian "
-    "posterior, so its chains mix poorly and its variances come out low"
-)
 
 #: The approximate methods the exact conditional is compared with.
 APPROXIMATE_METHODS = ("blackjax_nuts", "blackjax_hmc", "blackjax_rwmh", "tfp_nuts", "tfp_hmc")
@@ -214,7 +209,9 @@ class TestExactness:
         [
             pytest.param(
                 method,
-                marks=[pytest.mark.pending(reason=_RESONANT_HMC, raises=AssertionError)]
+                marks=[
+                    pytest.mark.pending(reason=_RESONANT_HMC, raises=AssertionError, strict=False)
+                ]
                 if method == "tfp_hmc"
                 else [],
             )

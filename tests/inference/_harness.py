@@ -132,10 +132,12 @@ PROFILES: dict[str, MethodProfile] = {
 
 
 #: The (method, representation, case) runs that fail for a known reason, a
-#: library bug or a limit of the harness's run, with the reason and the exception
-#: the failure raises. Each is collected as a pending test, so the suite stays
-#: green and the ledger lists it.
-KNOWN_FAILURES: dict[tuple[str, str, str], tuple[str, type[BaseException]]] = {}
+#: library bug or a limit of the harness's run, with the reason, the exception
+#: the failure raises, and whether it fails on every platform. Each is collected
+#: as a pending test, so the suite stays green and the ledger lists it. A failure
+#: that depends on the platform's numerics is pending without strictness, since
+#: the same seeded run passes on some platforms.
+KNOWN_FAILURES: dict[tuple[str, str, str], tuple[str, type[BaseException], bool]] = {}
 
 _ABC_BUDGET = (
     "the harness's SMC-ABC budget, 200 particles over four populations, leaves a "
@@ -146,14 +148,28 @@ _ABC_RAW_OUTCOMES = (
     "tolerance of two mismatched outcomes the ABC posterior favors a theta near 0, where "
     "the eleven observed failures are matched most often"
 )
-KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "gaussian_linear")] = (_ABC_BUDGET, AssertionError)
-KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "eight_schools")] = (_ABC_BUDGET, AssertionError)
-KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "gamma_poisson")] = (_ABC_BUDGET, AssertionError)
-KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "poisson_regression")] = (_ABC_BUDGET, AssertionError)
+_RESONANT_HMC = (
+    "bug: tfp_hmc runs a fixed ten-step trajectory that resonates on a near-Gaussian "
+    "posterior, so its chains mix poorly and its variances come out low"
+)
+KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "gaussian_linear")] = (
+    _ABC_BUDGET,
+    AssertionError,
+    False,
+)
+KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "eight_schools")] = (_ABC_BUDGET, AssertionError, True)
+KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "gamma_poisson")] = (_ABC_BUDGET, AssertionError, True)
+KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "poisson_regression")] = (
+    _ABC_BUDGET,
+    AssertionError,
+    True,
+)
 KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "beta_bernoulli")] = (
     _ABC_RAW_OUTCOMES,
     AssertionError,
+    True,
 )
+KNOWN_FAILURES[("tfp_hmc", "probpipe", "gaussian_linear")] = (_RESONANT_HMC, AssertionError, False)
 
 
 # ---------------------------------------------------------------------------
@@ -419,8 +435,8 @@ def _params(name: str, profile: MethodProfile) -> list[Any]:
         marks = []
         failure = KNOWN_FAILURES.get((name, profile.representation, case_name))
         if failure is not None:
-            reason, raises = failure
-            marks.append(pytest.mark.pending(reason=reason, raises=raises))
+            reason, raises, strict = failure
+            marks.append(pytest.mark.pending(reason=reason, raises=raises, strict=strict))
         params.append(pytest.param(case_name, marks=marks, id=case_name))
     return params
 

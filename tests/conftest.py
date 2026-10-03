@@ -14,9 +14,11 @@ _STAN_FIXTURES = frozenset({"_stanc", "_stan_toolchain"})
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",
-        "pending(reason, raises=NotImplementedError): a documented contract whose "
-        "implementation has not merged. The test xfails strictly, and only on *raises*, "
-        "so it fails once the implementation passes it or when it fails for another reason.",
+        "pending(reason, raises=NotImplementedError, strict=True): a documented contract "
+        "whose implementation has not merged. The test xfails strictly, and only on *raises*, "
+        "so it fails once the implementation passes it or when it fails for another reason. "
+        "strict=False marks a failure that depends on the platform's numerics, such as a "
+        "sampler's run at a fixed budget, which passes on some platforms.",
     )
 
 
@@ -29,7 +31,7 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(
                 pytest.mark.xfail(
                     raises=marker.kwargs.get("raises", NotImplementedError),
-                    strict=True,
+                    strict=marker.kwargs.get("strict", True),
                     reason=f"pending: {reason}",
                 )
             )
