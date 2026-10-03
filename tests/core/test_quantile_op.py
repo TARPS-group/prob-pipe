@@ -91,7 +91,8 @@ class TestQuantileOp:
         res = quantile(emp, 0.5)
         for field, values in (("a", a), ("b", b)):
             expected = np.quantile(np.asarray(values), 0.5, method="inverted_cdf")
-            assert float(np.asarray(res[field])) == pytest.approx(float(expected), abs=1e-5)
+            estimate = float(np.asarray(res[f"quantile({field})"]))
+            assert estimate == pytest.approx(float(expected), abs=1e-5)
 
     def test_vector_q_on_vector_event(self):
         # (n, 2) samples, q a 3-vector → per-field quantile shape (3, 2).
@@ -162,12 +163,13 @@ class TestRawQuantilesAtTheirLevels:
 
     def test_one_level_of_a_record_law_is_a_record(self):
         result = quantile(self._record_law(), 1.0)
-        assert isinstance(result, NumericRecord) and result.fields == ("b", "a")
-        np.testing.assert_allclose(np.asarray(result["b"]), [2.0, 3.0])
+        assert isinstance(result, NumericRecord)
+        assert result.fields == ("quantile(b)", "quantile(a)")
+        np.testing.assert_allclose(np.asarray(result["quantile(b)"]), [2.0, 3.0])
 
     def test_several_levels_of_a_record_law_are_a_batch_of_records(self):
         result = quantile(self._record_law(), jnp.array([0.0, 1.0]))
         assert isinstance(result, NumericRecordBatch)
         assert (result.level_names, result.batch_shape) == (("quantile",), (2,))
-        np.testing.assert_allclose(np.asarray(result["a"]), [1.0, 3.0])
-        np.testing.assert_allclose(np.asarray(result["b"]), [[0.0, 1.0], [2.0, 3.0]])
+        np.testing.assert_allclose(np.asarray(result["quantile(a)"]), [1.0, 3.0])
+        np.testing.assert_allclose(np.asarray(result["quantile(b)"]), [[0.0, 1.0], [2.0, 3.0]])

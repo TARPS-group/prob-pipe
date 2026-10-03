@@ -72,7 +72,7 @@ from math import prod
 from typing import Any, Self, cast
 
 from ._record_spec import RecordSpec, _check_kind_of
-from ._repr import format_levels, public_class_name, term_repr
+from ._repr import format_levels, is_expression, public_class_name, term_repr
 from ._spec_base import OpaqueSpec, _agree, _unify_array_shape, _unify_specs
 from ._specs import TermSpec
 from .provenance import Provenance
@@ -929,7 +929,8 @@ class Batch[E](TrackedTerm, ABC):
         if selection == self._root_selection:
             name = self.label
         elif label:
-            name = f"{self._root_name}[{label}]"
+            root = f"({self._root_name})" if is_expression(self._root_name) else self._root_name
+            name = f"{root}[{label}]"
         else:
             name = self._root_name
 

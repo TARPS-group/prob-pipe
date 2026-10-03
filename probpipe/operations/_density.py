@@ -111,14 +111,14 @@ def _unnormalized_prob_result(d: DistributionSpec, value: TermSpec) -> OutputSpe
     )
 
 
-def _random_log_prob_result(M: DistributionSpec) -> OutputSpec:
-    """A law over log-density functions, whose declaration the returned law fills."""
-    return OutputSpec(random_log_prob=None)
+def _random_log_prob_result(M: DistributionSpec) -> None:
+    """None: the returned law over log-density functions carries its declaration."""
+    return None
 
 
-def _random_unnormalized_log_prob_result(M: DistributionSpec) -> OutputSpec:
-    """A law over unnormalized log-density functions, whose declaration the returned law fills."""
-    return OutputSpec(random_unnormalized_log_prob=None)
+def _random_unnormalized_log_prob_result(M: DistributionSpec) -> None:
+    """None: the returned law over unnormalized log-density functions carries its declaration."""
+    return None
 
 
 @operation(result=_log_prob_result)

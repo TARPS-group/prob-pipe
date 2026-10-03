@@ -31,15 +31,13 @@ class TestMarginal:
         assert marginal.check(law, "a").route == "exact"
 
     def test_the_declaration_is_the_node_under_the_path_s_final_segment(self):
-        assert marginal.check(Marginalizing("law"), "a").result == OutputSpec(
-            marginal=DistributionSpec(OutputSpec(a=REAL))
-        )
+        result = marginal.check(Marginalizing("law"), "a").result
+        assert result == OutputSpec(DistributionSpec(OutputSpec(a=REAL)))
+        assert dict(result.components) == {"a": REAL}
 
     def test_several_paths_declare_an_exposed_record_of_the_nodes(self):
         result = marginal.check(Marginalizing("law"), ("a", "b")).result
-        assert result == OutputSpec(
-            marginal=DistributionSpec(OutputSpec(RecordSpec(a=REAL, b=REAL)))
-        )
+        assert result == OutputSpec(DistributionSpec(OutputSpec(RecordSpec(a=REAL, b=REAL))))
 
     def test_two_paths_ending_in_the_same_segment_raise(self):
         with pytest.raises(ApplicabilityError, match="same segment"):
@@ -93,6 +91,11 @@ class TestMarginal:
 
 
 class TestFactor:
+    def test_the_factor_carries_its_own_declaration(self):
+        joint = Kernel("y", ("beta",)) * Gaussian("beta", 2.0)
+        assert factor.check(joint, "beta").result is None
+        assert factor(joint, "beta").event_spec == Gaussian("beta").event_spec
+
     def test_factor_returns_the_factor_producing_the_component(self):
         joint = Kernel("y", ("beta",)) * Gaussian("beta", 2.0)
         prior = factor(joint, "beta")

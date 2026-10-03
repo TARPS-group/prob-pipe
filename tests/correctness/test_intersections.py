@@ -149,11 +149,12 @@ class TestNestedHierarchicalModel:
             float(np.mean(draws["population"]["tau"])), rel=1e-5
         )
 
-    def test_the_tracked_mean_is_a_record_of_the_targets_schema(self, schools):
+    def test_the_tracked_mean_names_each_component_of_the_targets_schema(self, schools):
         _, target, posterior = schools
         result = mean(posterior)
         assert isinstance(result, NumericRecord)
-        assert result.spec == target.event_spec.spec
+        children = target.event_spec.spec.children
+        assert result.spec == RecordSpec({f"mean({name})": spec for name, spec in children.items()})
 
     def test_draws_of_the_posterior_keep_the_nested_paths(self, schools):
         _, _, posterior = schools
@@ -413,12 +414,13 @@ class TestFamiliesWithRecordParameters:
         view = FieldView(normalized, "theta/b")
         group = marginal(normalized, "theta")
         np.testing.assert_allclose(
-            np.asarray(mean.with_options(raw=True)(view)), np.asarray(parent_mean["theta"]["b"])
+            np.asarray(mean.with_options(raw=True)(view)),
+            np.asarray(parent_mean["mean(theta)"]["b"]),
         )
         assert group.event_spec == OutputSpec(theta=_NESTED.children["theta"])
         np.testing.assert_allclose(
             np.asarray(variance.with_options(raw=True)(group)["a"]),
-            np.asarray(variance.with_options(raw=True)(normalized)["theta"]["a"]),
+            np.asarray(variance.with_options(raw=True)(normalized)["variance(theta)"]["a"]),
         )
 
     def test_a_density_over_a_nested_record_reads_an_interior_path(self):

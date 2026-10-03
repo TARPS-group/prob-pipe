@@ -414,7 +414,7 @@ def _update_value_spec(
         # term ``x`` and a one-field record exposing ``x`` hash apart.
         declaration = spec.event_spec
         h.update(b"component=")
-        component = None if declaration.exposes_record else next(iter(declaration.components))
+        component = declaration._component_name
         _update(h, component, depth + 1, max_array_bytes, state)
         h.update(b":event=")
         _update(h, declaration.spec, depth + 1, max_array_bytes, state)

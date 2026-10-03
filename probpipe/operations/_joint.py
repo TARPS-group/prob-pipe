@@ -21,9 +21,9 @@ __all__ = ["joint"]
 _FACTOR_KINDS = (DistributionSpec, ConditionalDistributionSpec)
 
 
-def _joint_result(A: Any, B: Any, align: Any) -> OutputSpec:
-    """A law, or a kernel over the unmet givens, whose declaration composition derives."""
-    return OutputSpec(joint=None)
+def _joint_result(A: Any, B: Any, align: Any) -> None:
+    """None: the composed law, or a kernel over the unmet givens, carries the declaration composition derives."""
+    return None
 
 
 def _composed_label(A: Any, B: Any) -> str:

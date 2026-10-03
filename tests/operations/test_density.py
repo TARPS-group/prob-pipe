@@ -272,6 +272,10 @@ class TestRandomLogDensities:
     def test_random_unnormalized_log_prob_returns_its_own_random_function(self):
         assert random_unnormalized_log_prob(RandomDensity("m")).loc == -2.0
 
+    def test_the_random_function_carries_its_own_declaration(self):
+        assert random_log_prob.check(RandomDensity("m")).result is None
+        assert random_unnormalized_log_prob.check(RandomDensity("m")).result is None
+
     def test_neither_takes_a_value(self):
         assert list(inspect.signature(random_log_prob).parameters) == ["M"]
         assert list(inspect.signature(random_unnormalized_log_prob).parameters) == ["M"]

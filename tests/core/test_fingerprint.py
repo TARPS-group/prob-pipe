@@ -490,8 +490,12 @@ class TestFunctionHashing:
         [
             (OutputSpec(a=NumericArraySpec(())), OutputSpec(b=NumericArraySpec(()))),
             (OutputSpec(RecordSpec(a=(), b=(3,))), OutputSpec(RecordSpec(c=(), d=(3,)))),
+            (
+                OutputSpec(DistributionSpec(OutputSpec(a=NumericArraySpec(())))),
+                OutputSpec(DistributionSpec(OutputSpec(b=NumericArraySpec(())))),
+            ),
         ],
-        ids=["whole-term", "exposed-record"],
+        ids=["whole-term", "exposed-record", "exposed-law"],
     )
     def test_a_rename_of_the_function_or_its_outputs_keeps_the_fingerprint(self, before, after):
         """A rename changes no value, so the renamed function shares the fingerprint."""

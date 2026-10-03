@@ -41,10 +41,10 @@ def _node(d: DistributionSpec, path: str) -> Any:
 
 
 def _marginal_result(d: DistributionSpec, field: Any) -> OutputSpec:
-    """A law over the node at the path, a whole term under the path's final segment.
+    """A law over the node at the path, which exposes its event: a whole term under the path's final segment.
 
-    A tuple of paths selects several nodes, returned as an exposed record of
-    them.
+    A tuple of paths selects several nodes, the law's event an exposed record
+    of them.
 
     Raises
     ------
@@ -56,11 +56,11 @@ def _marginal_result(d: DistributionSpec, field: Any) -> OutputSpec:
         nodes = {path.rsplit(_PATH_SEP, 1)[-1]: _node(d, path) for path in field}
         if len(nodes) != len(field):
             raise ApplicabilityError(f"marginal: the paths {field!r} end in the same segment")
-        return OutputSpec(marginal=DistributionSpec(OutputSpec(RecordSpec(nodes))))
+        return OutputSpec(DistributionSpec(OutputSpec(RecordSpec(nodes))))
     if not isinstance(field, str):
         raise ApplicabilityError(f"marginal: a field is a path or a tuple of paths; got {field!r}")
     component = field.rsplit(_PATH_SEP, 1)[-1]
-    return OutputSpec(marginal=DistributionSpec(OutputSpec(**{component: _node(d, field)})))
+    return OutputSpec(DistributionSpec(OutputSpec(**{component: _node(d, field)})))
 
 
 def _marginal_label(d: Any, field: Any) -> str:
@@ -161,9 +161,9 @@ def _names_a_component(d: Any, component_name: str) -> bool:
     return component_name in d.event_spec.components
 
 
-def _factor_result(d: Any, component_name: str) -> OutputSpec:
-    """A law, or a kernel for a dependent edge, whose declaration the returned factor carries."""
-    return OutputSpec(factor=None)
+def _factor_result(d: Any, component_name: str) -> None:
+    """None: the returned factor, a law or a kernel for a dependent edge, carries its declaration."""
+    return None
 
 
 def _factor_of(d: Any, component_name: str) -> Any:

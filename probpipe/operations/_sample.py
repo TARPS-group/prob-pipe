@@ -78,7 +78,7 @@ def _sample_shape(sample_shape: Any) -> tuple[int, ...]:
 
 
 def _sample_result(d: DistributionSpec, sample_shape: Any) -> OutputSpec:
-    """A draw carries the law's event declaration, and a batch of draws is on a level named sample.
+    """A draw and a batch of draws carry the law's event components, the batch on a level named sample.
 
     The returned kind is read from ``event_spec.spec``, so an array and a
     one-field record stay distinct under every sample shape.
@@ -97,7 +97,7 @@ def _sample_result(d: DistributionSpec, sample_shape: Any) -> OutputSpec:
         )
     if not shape:
         return d.event_spec
-    return OutputSpec(sample=BatchSpec(d.event_spec.spec, (shape,), (SAMPLE_LEVEL,)))
+    return d.event_spec._with_spec(BatchSpec(d.event_spec.spec, (shape,), (SAMPLE_LEVEL,)))
 
 
 @operation(result=_sample_result)

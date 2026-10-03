@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **A result names each component by what its value means.**
+  - `mean`, `variance`, and `quantile` name each component of the law's event
+    by their call. The mean of a law over `mu` and `tau` is a record whose
+    fields are `mean(mu)` and `mean(tau)`, and the mean of a law over `theta` is
+    declared under `mean(theta)`: replace `mean(posterior)["mu"]` with
+    `mean(posterior)["mean(mu)"]`. A plug-in call such as
+    `predict(**mean(posterior))` names its keywords instead.
+  - `cov` is declared under the call on every component of the event, as
+    `cov(mu, tau)`, and `expectation(d, f)` under `mean(c)` for each component
+    `c` of `f`'s output declaration.
+  - A batch of draws is declared under the event's components, where it was
+    declared under `sample`.
+  - `OutputSpec` takes a positional `DistributionSpec`,
+    `ConditionalDistributionSpec`, or `BatchSpec` of a record or a law, which
+    exposes the term's components: a law's event components, or a batch
+    element's. `condition_on`, `marginal`, `convert`, and `mixture` declare the
+    law they return in this form, so its components are its event's, where
+    each was declared under the operation's name. `factor`, `joint`,
+    `random_log_prob`, `random_unnormalized_log_prob`, and the Bayes stage of
+    `condition_on` declare none, and the returned law carries its own.
+  - A repr writes names that are no Python identifiers, such as `mean(mu)`,
+    in order inside one `**{...}` mapping, as in
+    `OutputSpec(**{'mean(theta)': NumericArraySpec(shape=())})`.
 - `OutputSpec` takes one keyword or one positional `RecordSpec`, so its form
   alone decides the packaging. The form with several keywords, which exposed a
   record of them, raises `TypeError`: replace `OutputSpec(a=a_spec, b=b_spec)`
@@ -613,7 +636,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `other effect`, is bracketed, so `effect + other` is labeled
   `effect + [other effect]`, since parentheses mark an expression. An
   operand that opens with a unary operator is parenthesized, so `(-x) ** 2` is
-  labeled `(-x) ** 2`, since `-x ** 2` reads as `-(x ** 2)`.
+  labeled `(-x) ** 2`, since `-x ** 2` reads as `-(x ** 2)`. A batch view of a
+  batch whose label is an expression parenthesizes it, as in
+  `(model | y)[dataset=0]`.
 - **A rename keeps a function's fingerprint and replays its calls.** A
   function's fingerprint and its replay anchor record its code, its signature,
   and the types of its declarations, without the names of its output's

@@ -265,7 +265,7 @@ class TestCurry:
         assert law.loc == 1.5
         report = condition_on.check(_NormalKernel(), {"mu": 1.5})
         assert (report.route, report.method, report.exact) == ("curry", None, True)
-        assert report.result == OutputSpec(condition_on=DistributionSpec(Kernel().event_spec))
+        assert report.result == OutputSpec(DistributionSpec(Kernel().event_spec))
 
     def test_a_record_given_binds_its_fields(self):
         assert condition_on(_NormalKernel(), Record("given", {"mu": 2.0})).loc == 2.0
@@ -279,7 +279,7 @@ class TestCurry:
         assert isinstance(curried, ConditionalDistribution)
         assert set(curried.given_spec) == {"b"}
         assert condition_on.check(kernel, {"a": 1.0}).result == OutputSpec(
-            condition_on=ConditionalDistributionSpec(InputSpec(b=REAL), kernel.event_spec)
+            ConditionalDistributionSpec(InputSpec(b=REAL), kernel.event_spec)
         )
         assert condition_on(curried, {"b": 2.0}).loc == 3.0
 
@@ -415,6 +415,20 @@ class TestTheConditionedLabel:
         joint = (Kernel("y", ("mu",)) * Gaussian("mu")).with_label("model")
         label = condition_on._derived_label({"d": joint, "given": {"y": 0.3, "mu": 0.0}})
         assert label == "model | y, mu"
+
+
+class TestTheConditionedDeclaration:
+    def test_binding_every_slot_exposes_the_kernel_law(self):
+        kernel = _NormalKernel("y", ("mu",))
+        result = condition_on.check(kernel, {"mu": 1.5}).result
+        assert result == OutputSpec(DistributionSpec(kernel.event_spec))
+        assert list(result.components) == ["y"]
+
+    def test_conditioning_a_produced_field_leaves_the_declaration_to_the_law(
+        self, approximate_method
+    ):
+        joint = Kernel("y", ("mu",)) * Gaussian("mu")
+        assert condition_on.check(joint, {"y": 0.3}).result is None
 
 
 class TestConditioningCapabilities:

@@ -17,6 +17,7 @@ from probpipe import (
     RecordBatch,
     workflow_run,
 )
+from probpipe.core._batch import BatchSpec
 from probpipe.core._dispatch import ResolutionError
 from probpipe.distributions._batches import DistributionBatch
 from probpipe.distributions._distribution import Distribution
@@ -72,6 +73,14 @@ class TestBatches:
         assert (draws.batch_shape, draws.level_names) == ((4,), ("sample",))
         assert draws.element_spec == joint.event_spec.spec
         assert jnp.shape(draws["b"]) == (4,)
+
+    def test_a_batch_of_draws_is_declared_under_the_event_components(self):
+        whole = sample.check(Gaussian("g"), (4,)).result
+        assert (list(whole.components), whole.exposes_record) == (["g"], False)
+        assert isinstance(whole.spec, BatchSpec)
+        record = sample.check(Pair("p"), (4,)).result
+        assert list(record.components) == list(Pair("p").event_spec.components)
+        assert record.spec == BatchSpec(Pair("p").event_spec.spec, ((4,),), ("sample",))
 
     def test_a_measure_draws_a_batch_of_laws(self):
         draws = sample(Measure("m"), sample_shape=(3,))

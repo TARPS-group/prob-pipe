@@ -81,6 +81,24 @@ class TestOutputSpec:
         assert exposed.components["law"] is law
         assert list(OutputSpec(posterior=law).components) == ["posterior"]
 
+    def test_a_law_or_a_batch_exposes_its_components(self):
+        record = RecordSpec(mu=(), tau=())
+        law = OutputSpec(DistributionSpec(OutputSpec(record)))
+        assert (list(law.components), law.exposes_record) == (["mu", "tau"], False)
+        assert law.with_path_names({"mu": "center"}).spec == DistributionSpec(
+            OutputSpec(record.with_path_names({"mu": "center"}))
+        )
+        batch = OutputSpec(BatchSpec(record, ((3,),), ("sample",)))
+        assert (list(batch.components), batch.exposes_record) == (["mu", "tau"], False)
+        with pytest.raises(TypeError, match="exposed law declaration needs"):
+            law.with_spec(record)
+        with pytest.raises(TypeError, match="no record's fields"):
+            _components_record(law)
+
+    def test_a_batch_of_arrays_exposes_no_components(self):
+        with pytest.raises(TypeError):
+            OutputSpec(BatchSpec(NumericArraySpec(()), ((3,),), ("sample",)))
+
     def test_a_record_field_given_none_is_refused_naming_the_opaque_spec(self):
         """None is a pending type, so a record field takes OpaqueSpec() instead."""
         with pytest.raises(TypeError, match=r"OpaqueSpec\(\)"):

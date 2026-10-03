@@ -549,8 +549,8 @@ class TestOperationsSweepTheLaws:
     def test_the_mean_of_each_record_law_is_a_record_batch(self):
         means = mean(DistributionBatch("laws", [_record_law(i) for i in range(3)], "law"))
         assert isinstance(means, NumericRecordBatch)
-        np.testing.assert_allclose(means["x"], [0.0, 1.0, 2.0])
-        np.testing.assert_allclose(means["y"], [0.0, -1.0, -2.0])
+        np.testing.assert_allclose(means["mean(x)"], [0.0, 1.0, 2.0])
+        np.testing.assert_allclose(means["mean(y)"], [0.0, -1.0, -2.0])
 
     def test_one_value_is_scored_under_each_law(self):
         laws = _laws(3)

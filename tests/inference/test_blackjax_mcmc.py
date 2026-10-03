@@ -101,8 +101,8 @@ class TestBlackJAXNuts:
             },
         )(small_model, {"y": jnp.zeros((4,))})
         m = mean(posterior)
-        assert m["a"].shape == ()
-        assert m["b"].shape == ()
+        assert m["mean(a)"].shape == ()
+        assert m["mean(b)"].shape == ()
 
     def test_collapses_to_prior_under_identity_likelihood(self, small_model):
         # With an identity likelihood, the posterior is the prior.
@@ -116,8 +116,8 @@ class TestBlackJAXNuts:
             },
         )(small_model, {"y": jnp.zeros((4,))})
         m = mean(posterior)
-        np.testing.assert_allclose(float(jnp.squeeze(m["a"])), 1.0, atol=0.15)
-        np.testing.assert_allclose(float(jnp.squeeze(m["b"])), -2.0, atol=0.15)
+        np.testing.assert_allclose(float(jnp.squeeze(m["mean(a)"])), 1.0, atol=0.15)
+        np.testing.assert_allclose(float(jnp.squeeze(m["mean(b)"])), -2.0, atol=0.15)
 
     def test_closed_form_gaussian_target(self):
         """Single-parameter conjugate Gaussian: closed-form posterior recovery.
@@ -148,8 +148,8 @@ class TestBlackJAXNuts:
         analytic_mean = 1.5
         analytic_var = 0.25
         sigma_mc = (analytic_var / (2 * 2000)) ** 0.5
-        post_mean = float(jnp.squeeze(mean(posterior)["mu"]))
-        post_var = float(jnp.squeeze(variance(posterior)["mu"]))
+        post_mean = float(jnp.squeeze(mean(posterior)["mean(mu)"]))
+        post_var = float(jnp.squeeze(variance(posterior)["variance(mu)"]))
         np.testing.assert_allclose(post_mean, analytic_mean, atol=3 * sigma_mc)
         # Variance MC SE for 4000 draws of an N(.,.25) is ~0.0056 — allow
         # ~3 sigma plus a small slack for residual warmup bias.
@@ -175,8 +175,8 @@ class TestBlackJAXNuts:
             },
         )(small_model, {"y": jnp.zeros((4,))})
         m = mean(posterior)
-        assert jnp.isfinite(m["a"]).all()
-        assert jnp.isfinite(m["b"]).all()
+        assert jnp.isfinite(m["mean(a)"]).all()
+        assert jnp.isfinite(m["mean(b)"]).all()
 
         # With no warmup, the kernel runs at exactly the user step size.
         step_size = arviz_data(posterior)["sample_stats"]["step_size"]
@@ -199,8 +199,8 @@ class TestBlackJAXHmc:
             },
         )(small_model, {"y": jnp.zeros((4,))})
         m = mean(posterior)
-        assert m["a"].shape == ()
-        assert m["b"].shape == ()
+        assert m["mean(a)"].shape == ()
+        assert m["mean(b)"].shape == ()
 
     def test_closed_form_gaussian_target(self):
         """HMC analogue of the NUTS closed-form Gaussian recovery.
@@ -234,8 +234,8 @@ class TestBlackJAXHmc:
             },
         )(model, {"y": y})
 
-        post_mean = float(jnp.squeeze(mean(posterior)["mu"]))
-        post_var = float(jnp.squeeze(variance(posterior)["mu"]))
+        post_mean = float(jnp.squeeze(mean(posterior)["mean(mu)"]))
+        post_var = float(jnp.squeeze(variance(posterior)["variance(mu)"]))
         np.testing.assert_allclose(post_mean, 1.5, atol=0.05)
         np.testing.assert_allclose(post_var, 0.25, rtol=0.10)
 
@@ -292,8 +292,8 @@ class TestBlackJAXHmc:
                 "random_seed": 0,
             },
         )(model, {"y": jnp.asarray([1.0, 2.0, 3.0])})
-        post_mean = float(jnp.squeeze(mean(posterior)["mu"]))
-        post_var = float(jnp.squeeze(variance(posterior)["mu"]))
+        post_mean = float(jnp.squeeze(mean(posterior)["mean(mu)"]))
+        post_var = float(jnp.squeeze(variance(posterior)["variance(mu)"]))
         np.testing.assert_allclose(post_mean, 1.5, atol=0.05)
         np.testing.assert_allclose(post_var, 0.25, rtol=0.12)
 

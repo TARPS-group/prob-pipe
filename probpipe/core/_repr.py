@@ -20,6 +20,7 @@ from __future__ import annotations
 import inspect
 import sys
 from collections.abc import Iterable, Mapping
+from keyword import iskeyword
 from math import prod
 from typing import Any
 
@@ -130,10 +131,17 @@ def call_repr(
     """``class_name(positional, ..., name=value, ...)`` over formatted arguments.
 
     One argument goes on each line past :data:`WIDTH` characters, and a value
-    that is itself such a repr is laid out at the width its line leaves.
+    that is itself such a repr is laid out at the width its line leaves. When a
+    name is no Python identifier, as a component ``mean(mu)`` is, the keywords
+    are written in order as one ``**{'name': value, ...}`` argument, which the
+    constructor takes alike.
     """
     parts = [("", value) for value in positional]
-    parts.extend((f"{name}=", value) for name, value in keywords)
+    keywords = list(keywords)
+    if all(name.isidentifier() and not iskeyword(name) for name, _ in keywords):
+        parts.extend((f"{name}=", value) for name, value in keywords)
+    else:
+        parts.append(("**", mapping_repr(dict(keywords))))
     return _Layout(class_name, parts, ("(", ")"))
 
 
@@ -230,3 +238,60 @@ def public_class_name(cls: type) -> str:
         if not klass.__name__.startswith("_"):
             return klass.__name__
     return cls.__name__
+
+
+# ---------------------------------------------------------------------------
+# Derived labels
+# ---------------------------------------------------------------------------
+
+#: The symbol each binary operator writes in the name its result derives.
+BINARY_SYMBOLS = {
+    "add": "+", "sub": "-", "mul": "*", "matmul": "@", "truediv": "/", "floordiv": "//",
+    "mod": "%", "pow": "**", "lshift": "<<", "rshift": ">>", "and": "&", "xor": "^", "or": "|",
+    "lt": "<", "le": "<=", "eq": "==", "ne": "!=", "gt": ">", "ge": ">=",
+}  # fmt: skip
+
+#: The symbols that make a label an expression: the binary operators', of which
+#: ``|`` also reads as conditioning.
+_OPERATOR_SYMBOLS = frozenset(BINARY_SYMBOLS.values())
+
+#: The prefixes of the unary operators' forms that apply an operator to what follows.
+_UNARY_PREFIXES = ("-", "+", "~")
+
+
+def _top_level_words(label: str) -> list[str]:
+    """*label* split at the spaces outside its parentheses and brackets."""
+    words, current, depth = [], [], 0
+    for char in label:
+        if char in "([":
+            depth += 1
+        elif char in ")]" and depth:
+            depth -= 1
+        if char == " " and depth == 0:
+            words.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+    words.append("".join(current))
+    return words
+
+
+def is_expression(label: str) -> bool:
+    """Whether *label* is an expression: one of its top-level words is an operator's
+    symbol, as in ``effect + 1.0`` or ``model | y``, or it opens with a unary operator,
+    as ``-effect`` does."""
+    words = _top_level_words(label)
+    return label.startswith(_UNARY_PREFIXES) or any(word in _OPERATOR_SYMBOLS for word in words)
+
+
+def grouped_label(label: str) -> str:
+    """*label* as it reads inside a derived label, grouped so it reads as one operand.
+
+    An expression is parenthesized, so the derived label states the order of
+    evaluation. Any other label with a top-level space, such as a user's label
+    ``other effect``, is bracketed, so it reads as one name, and a label with
+    none is used as it is.
+    """
+    if is_expression(label):
+        return f"({label})"
+    return f"[{label}]" if len(_top_level_words(label)) > 1 else label

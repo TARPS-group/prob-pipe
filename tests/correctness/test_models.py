@@ -479,10 +479,10 @@ class TestFactoredJoints:
         joint = Normal("a", 1.0, 2.0) * Gamma("b", 3.0, 2.0)
         means = mean.with_options(raw=True)(joint)
         variances = variance.with_options(raw=True)(joint)
-        assert float(means["a"]) == pytest.approx(1.0)
-        assert float(means["b"]) == pytest.approx(1.5)
-        assert float(variances["a"]) == pytest.approx(4.0)
-        assert float(variances["b"]) == pytest.approx(0.75)
+        assert float(means["mean(a)"]) == pytest.approx(1.0)
+        assert float(means["mean(b)"]) == pytest.approx(1.5)
+        assert float(variances["variance(a)"]) == pytest.approx(4.0)
+        assert float(variances["variance(b)"]) == pytest.approx(0.75)
 
     def test_a_dependent_joint_claims_no_moment_and_its_mean_is_estimated(self):
         """The mean of ``p(y | x) p(x)`` falls back to Monte Carlo, within four standard errors."""
@@ -492,7 +492,7 @@ class TestFactoredJoints:
             means = mean.with_options(method="monte_carlo", n_broadcast_samples=DRAWS, raw=True)(
                 joint
             )
-        _within_mcse([means["x"], means["y"]], [1.0, 3.0], [2.0, np.sqrt(16.25)])
+        _within_mcse([means["mean(x)"], means["mean(y)"]], [1.0, 3.0], [2.0, np.sqrt(16.25)])
 
     def test_the_marginal_of_the_root_factor_is_the_factor(self):
         marginal_x = marginal(_chain(), "x")

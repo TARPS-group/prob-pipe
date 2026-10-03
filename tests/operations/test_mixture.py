@@ -19,7 +19,7 @@ def test_mixture_is_derived_from_its_identity():
 def test_the_result_carries_the_kernel_event_declaration():
     kernel = Kernel("y", ("mu",))
     assert mixture.check(kernel, Gaussian("mu")).result == OutputSpec(
-        mixture=DistributionSpec(kernel.event_spec)
+        DistributionSpec(kernel.event_spec)
     )
 
 

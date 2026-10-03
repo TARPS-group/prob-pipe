@@ -339,7 +339,7 @@ class TestBayesFlowNPE:
             law = condition_on_operation.with_options(method_options=budgets)(npe_model, given)
         assert isinstance(law, EmpiricalDistribution)
         assert tuple(law.event_spec.components) == ("b",)
-        assert abs(float(np.asarray(pp.mean(law)["b"]).ravel()[0])) < 0.5
+        assert abs(float(np.asarray(pp.mean(law)["mean(b)"]).ravel()[0])) < 0.5
 
     def test_without_a_density_a_given_parameter_is_not_left_free(self, npe_model):
         """A posterior whose network gives no density has no route for Bayes' rule, so

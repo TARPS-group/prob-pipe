@@ -544,17 +544,17 @@ class TestMakePosteriorRecordTarget:
         # The atoms keep the nesting, in the chain's flat layout.
         np.testing.assert_allclose(post.atoms["params/b"][0], chain[:, 1])
         np.testing.assert_allclose(post.atoms["scale"][0], chain[:, 2])
-        # Moments are records of the target's schema.
+        # A moment names each group in call form, as ``mean(params)``, and keeps its fields.
         from probpipe import mean as op_mean
         from probpipe import variance as op_variance
 
         m = op_mean(post)
-        assert m.fields == expected_fields
-        assert jnp.shape(m["params/a"]) == ()
-        assert jnp.shape(m["scale"]) == ()
+        assert m.fields == ("mean(params)", "mean(scale)")
+        assert jnp.shape(m["mean(params)/a"]) == ()
+        assert jnp.shape(m["mean(scale)"]) == ()
         v = op_variance(post)
-        assert v.fields == expected_fields
-        assert jnp.shape(v["params/b"]) == ()
+        assert v.fields == ("variance(params)", "variance(scale)")
+        assert jnp.shape(v["variance(params)/b"]) == ()
         # ``draws()`` walks the full template, nesting included.
         draws = flat_draws(post)
         assert tuple(draws.event_template.children) == expected_fields

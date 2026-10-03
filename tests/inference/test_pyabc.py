@@ -83,8 +83,9 @@ def _product(*names: str):
 
 
 def _means(post) -> dict[str, np.ndarray]:
+    """The mean of each of the posterior's components, keyed by the component."""
     m = mean(post)
-    return {f: np.asarray(m[f]).reshape(-1) for f in post.event_spec.components}
+    return {f: np.asarray(m[f"mean({f})"]).reshape(-1) for f in post.event_spec.components}
 
 
 class TestPyABCCheck:
@@ -189,7 +190,7 @@ class TestPyABCWeightsAndDraws:
             method_options={"n_particles": 200, "max_populations": 4, "random_seed": 0},
         )(_model(_product("theta")), _observed(2.0))
         draws = np.asarray(flat_draws(post)["theta"]).reshape(-1)
-        weighted = float(np.asarray(mean(post)["theta"]).reshape(-1)[0])
+        weighted = float(np.asarray(mean(post)["mean(theta)"]).reshape(-1)[0])
         assert weighted != pytest.approx(float(draws.mean()), abs=1e-6)
 
     def test_reproducible_across_calls(self):

@@ -19,8 +19,8 @@ __all__ = ["mixture"]
 
 
 def _mixture_result(K: ConditionalDistributionSpec, mixing: DistributionSpec) -> OutputSpec:
-    """A law carrying the kernel's event declaration unchanged."""
-    return OutputSpec(mixture=DistributionSpec(K.event_spec))
+    """A law that exposes the kernel's event declaration unchanged."""
+    return OutputSpec(DistributionSpec(K.event_spec))
 
 
 def _kernel_output_projection(K: ConditionalDistribution) -> Any:

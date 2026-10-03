@@ -262,7 +262,7 @@ class TestExactness:
         prior = MultivariateNormal("beta", jnp.zeros(X.shape[1]), cov=4.0 * jnp.eye(X.shape[1]))
         posterior = condition_on.with_options(exact_only=True)(likelihood * prior, case.data)
         np.testing.assert_allclose(
-            np.asarray(mean.with_options(raw=True)(posterior)["beta"]),
+            np.asarray(mean.with_options(raw=True)(posterior)["mean(beta)"]),
             case.reference.leaves["beta"].mean,
             rtol=1e-4,
         )

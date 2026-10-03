@@ -302,6 +302,10 @@ def _lift_result(
         If the outputs do not satisfy the output declaration.
     """
     atoms, declaration = _output_atoms(draws.outputs, draws.count, output_label, output_spec)
+    if declaration._component_name is None and not declaration.exposes_record:
+        # A law's event is a value, so an exposed law is one value under the
+        # output label, as a function that declares no output places its result.
+        declaration = OutputSpec(**{output_label: declaration.spec})
     if not include_inputs:
         return EmpiricalDistribution(output_label, atoms, draws.weights, event_spec=declaration)
     joint = _joint_atoms(atoms, declaration, draws, values, broadcast_args, output_label)
@@ -410,8 +414,8 @@ def _joint_atoms(
         fields.update(declaration.spec.children)
         columns.update(stored)
     else:
-        ((component, spec),) = declaration.components.items()
-        fields[component] = spec
+        component = declaration._component_name or output_label
+        fields[component] = declaration.spec
         columns.update(_prefixed(component, stored))
     element = RecordSpec(fields)
     return _batch_class_for(element)(output_label, columns, DRAW_LEVEL, element_spec=element)

@@ -5,8 +5,9 @@ Each summarizes a distribution by a deterministic value. ``mean``, ``variance``,
 ``closed_form``, and a Monte Carlo fallback, ``monte_carlo``, on the event kinds
 where the required averaging is defined. A capability returns the law's own
 moment, and a numeric fallback returns that moment of the empirical law of its
-draws. A moment of the event's kind keeps the event's components and packaging
-and derives only its term specs, support included.
+draws. A moment of the event's kind keeps the event's packaging and derives its
+term specs, support included, and it names each component for the moment, so
+the mean of a law over ``mu`` and ``tau`` holds ``mean(mu)`` and ``mean(tau)``.
 
 ``expectation(d, f)`` returns ``E[f(X)]`` for ``X ~ d``. It is the derived
 operation ``mean(evaluate(f, d))``: a law claiming
@@ -23,7 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from math import prod
-from typing import Any
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -34,7 +35,7 @@ from ..core._dispatch import (
     Feasibility,
     MathematicalDomainError,
 )
-from ..core._record_batch import _batch_class_for
+from ..core._record_batch import RecordBatch, _batch_class_for
 from ..core._record_spec import RecordSpec
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec
 from ..core._specs import OutputSpec
@@ -47,6 +48,7 @@ from ..core.constraints import (
     non_negative,
     unit_interval,
 )
+from ..core.record import Record
 from ..core.tracked import TrackedTerm
 from ..distributions._capabilities import (
     SupportsCovariance,
@@ -151,33 +153,104 @@ def _array_leaves(spec: TermSpec) -> list[NumericArraySpec]:
     return []
 
 
+def _summary_name(summary: str, components: Any) -> str:
+    """The component a summary of *components* takes, the summary's call on them, as ``cov(mu, tau)``."""
+    return f"{summary}({', '.join(components)})"
+
+
+def _named_record(record: RecordSpec, summary: str) -> RecordSpec:
+    """*record* with each immediate field named for *summary*, as ``mean(mu)``."""
+    return record.with_path_names(
+        {name: _summary_name(summary, [name]) for name in record.children}
+    )
+
+
+def _summary_declaration(declaration: OutputSpec, summary: str, term: TermSpec) -> OutputSpec:
+    """The declaration of a summary of each component of *declaration*, whose type is *term*.
+
+    Each component is named for the summary, as ``mean(theta)``, in the
+    declaration's packaging. A summary whose type is a law, as the mean of a law
+    over laws is, exposes that law's event, since a law takes its event's
+    components.
+    """
+    if isinstance(term, DistributionSpec):
+        return OutputSpec(term)
+    if declaration.exposes_record:
+        return OutputSpec(_named_record(cast(RecordSpec, term), summary))
+    ((name, _),) = declaration.components.items()
+    return OutputSpec(**{_summary_name(summary, [name]): term})
+
+
+def _named_value(value: Any, summary: str, declaration: OutputSpec) -> Any:
+    """*value*, a summary of each component of *declaration*, with its fields named for *summary*.
+
+    A route returns the summary keyed by the law's components, as a record, a
+    batch of records, or a mapping. An exposed record's components are the
+    value's fields, which take the summary's names, and any other value is
+    returned as it is.
+    """
+    if not declaration.exposes_record:
+        return value
+    if isinstance(value, (Record, RecordBatch)):
+        names = value.children if isinstance(value, Record) else value.element_spec.children
+        return value.with_path_names({name: _summary_name(summary, [name]) for name in names})
+    if isinstance(value, Mapping):
+        return {_summary_name(summary, [name]): field for name, field in value.items()}
+    return value
+
+
+def _summary_route(
+    summary: str, execute: Callable[[BoundCall, OutputSpec | None], Any]
+) -> Callable[[BoundCall, OutputSpec | None], Any]:
+    """*execute*, whose value is keyed by the law's components, with its fields named for *summary*."""
+
+    def named(call: BoundCall, result: OutputSpec | None) -> Any:
+        return _named_value(execute(call, result), summary, call.operands["d"].event_spec)
+
+    named.__doc__ = execute.__doc__
+    return named
+
+
+def _capability(method: str) -> Callable[[BoundCall, OutputSpec | None], Any]:
+    """The law's capability *method*, called on the call's other arguments."""
+
+    def call_capability(call: BoundCall, result: OutputSpec | None) -> Any:
+        others = [value for name, value in call.operands.items() if name != "d"]
+        return getattr(call.operands["d"], method)(*others)
+
+    call_capability.__doc__ = f"``d.{method}()``."
+    return call_capability
+
+
 def _mean_result(d: DistributionSpec) -> OutputSpec:
-    """A value of the event's kind, with the event's components and packaging.
+    """A value of the event's kind, each component named ``mean(...)`` in the event's packaging.
 
     Its term specs are those of an average: floating, on the hull of the
     event's support, so the mean of a Bernoulli event lies in the unit interval.
     """
-    return d.event_spec._with_spec(_mean_term(d.event_spec.spec))
+    return _summary_declaration(d.event_spec, "mean", _mean_term(d.event_spec.spec))
 
 
 def _variance_result(d: DistributionSpec) -> OutputSpec:
-    """A value of the event's kind whose leaves are non-negative and floating."""
-    return d.event_spec._with_spec(_variance_term(d.event_spec.spec))
+    """A value of the event's kind with non-negative floating leaves, each component named ``variance(...)``."""
+    return _summary_declaration(d.event_spec, "variance", _variance_term(d.event_spec.spec))
 
 
 def _cov_result(d: DistributionSpec) -> OutputSpec | None:
-    """The dense covariance of the flattened draw, a ``(size, size)`` array.
+    """The dense covariance of the flattened draw, a ``(size, size)`` array under ``cov(...)``.
 
-    The size is the number of the event's coordinates; an event with free
+    The component names every component of the event, as ``cov(mu, tau)``. The
+    size is the number of the event's coordinates; an event with free
     dimensions leaves it to the returned value.
     """
+    name = _summary_name("cov", d.event_spec.components)
     leaves = _array_leaves(d.event_spec.spec)
     if any(leaf.free_dims for leaf in leaves):
-        return OutputSpec(cov=None)
+        return OutputSpec(**{name: None})
     size = sum(prod(leaf.shape) for leaf in leaves)
     dtypes = {_floating(leaf.dtype) for leaf in leaves}
     dtype = dtypes.pop() if len(dtypes) == 1 else None
-    return OutputSpec(cov=NumericArraySpec((size, size), dtype))
+    return OutputSpec(**{name: NumericArraySpec((size, size), dtype)})
 
 
 def _quantile_result(d: DistributionSpec, q: TermSpec) -> OutputSpec:
@@ -190,21 +263,22 @@ def _quantile_result(d: DistributionSpec, q: TermSpec) -> OutputSpec:
     """
     if not isinstance(q, NumericArraySpec):
         raise ApplicabilityError(f"quantile levels are a number or an array of numbers; got {q!r}")
-    element = _quantile_term(d.event_spec.spec)
+    element = _summary_declaration(d.event_spec, "quantile", _quantile_term(d.event_spec.spec))
     if not q.shape:
-        return d.event_spec._with_spec(element)
-    return OutputSpec(quantile=BatchSpec(element, (q.shape,), ("quantile",)))
+        return element
+    return element._with_spec(BatchSpec(element.spec, (q.shape,), ("quantile",)))
 
 
-def _expectation_result(f: TermSpec) -> OutputSpec:
-    """The kind the integrand's output declaration names, with an average's term specs.
+def _expectation_result(f: TermSpec) -> OutputSpec | None:
+    """The mean of the integrand's output declaration, as ``mean(evaluate(f, d))`` declares it.
 
-    An integrand that declares no output leaves the declaration to the returned
-    value.
+    Each of the integrand's components is named ``mean(...)``, with an average's
+    term specs. An integrand that declares no output leaves the declaration to
+    the returned value.
     """
     if isinstance(f, FunctionSpec) and f.output_spec is not None and f.output_spec.spec is not None:
-        return f.output_spec._with_spec(_mean_term(f.output_spec.spec))
-    return OutputSpec(expectation=None)
+        return _summary_declaration(f.output_spec, "mean", _mean_term(f.output_spec.spec))
+    return None
 
 
 def _numeric_event(d: DistributionSpec) -> bool:
@@ -310,7 +384,11 @@ def _mc_mean(call: BoundCall, result: OutputSpec | None) -> Any:
     Monte Carlo estimate of the mean measure.
     """
     if isinstance(call.operands["d"].event_spec.spec, NumericSpec):
-        return _empirical_of(call, _monte_carlo_draws(call, "mean"))._mean()
+        return _named_value(
+            _empirical_of(call, _monte_carlo_draws(call, "mean"))._mean(),
+            "mean",
+            call.operands["d"].event_spec,
+        )
     if _mixture_factory is None:
         raise RuntimeError("the mixture family is not installed; import probpipe")
     draws = _monte_carlo_draws(call, "mean")
@@ -325,7 +403,11 @@ def _mc_variance(call: BoundCall, result: OutputSpec | None) -> Any:
     Each coordinate's variance is the mean squared deviation of the draws from
     their mean, dividing by the number of draws.
     """
-    return _empirical_of(call, _monte_carlo_draws(call, "variance"))._variance()
+    return _named_value(
+        _empirical_of(call, _monte_carlo_draws(call, "variance"))._variance(),
+        "variance",
+        call.operands["d"].event_spec,
+    )
 
 
 def _dense(covariance: Any) -> Any:
@@ -371,7 +453,10 @@ def _mc_quantile(call: BoundCall, result: OutputSpec | None) -> Any:
     """
     levels = _check_levels(call.operands["q"])
     draws = _monte_carlo_draws(call, "quantile")
-    return _record_batch(_empirical_of(call, draws)._quantile(levels), call, result)
+    quantiles = _empirical_of(call, draws)._quantile(levels)
+    return _record_batch(
+        _named_value(quantiles, "quantile", call.operands["d"].event_spec), call, result
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -399,7 +484,14 @@ def mean(d: Distribution):
     """
 
 
-mean.capability_route("closed_form", operand="d", protocol=SupportsMean, method="_mean", exact=True)
+mean.capability_route(
+    "closed_form",
+    operand="d",
+    protocol=SupportsMean,
+    method="_mean",
+    exact=True,
+    execute=_summary_route("mean", _capability("_mean")),
+)
 mean.fallback_route("monte_carlo", check=_can_average, execute=_mc_mean, exact=False)
 
 
@@ -423,7 +515,12 @@ def variance(d: Distribution):
 
 
 variance.capability_route(
-    "closed_form", operand="d", protocol=SupportsVariance, method="_variance", exact=True
+    "closed_form",
+    operand="d",
+    protocol=SupportsVariance,
+    method="_variance",
+    exact=True,
+    execute=_summary_route("variance", _capability("_variance")),
 )
 variance.fallback_route(
     "monte_carlo", check=_can_average_squares, execute=_mc_variance, exact=False
@@ -505,7 +602,9 @@ def _closed_form_quantile(call: BoundCall, result: OutputSpec | None) -> Any:
     records.
     """
     quantiles = call.operands["d"]._quantile(_check_levels(call.operands["q"]))
-    return _record_batch(quantiles, call, result)
+    return _record_batch(
+        _named_value(quantiles, "quantile", call.operands["d"].event_spec), call, result
+    )
 
 
 quantile.capability_route(
@@ -580,8 +679,10 @@ def _integrand(call: BoundCall) -> Callable[[Any], Any]:
 
 
 def _closed_form_expectation(call: BoundCall, result: OutputSpec | None) -> Any:
-    """``d._expectation(f)``."""
-    return call.operands["d"]._expectation(_integrand(call))
+    """``d._expectation(f)``, each component of the integrand's output named ``mean(...)``."""
+    value = call.operands["d"]._expectation(_integrand(call))
+    declared = _as_function(call.operands["f"]).output_spec
+    return value if declared is None else _named_value(value, "mean", declared)
 
 
 expectation.capability_route(

@@ -21,7 +21,7 @@ from ._array_backend import (
     _to_numpy_array,
 )
 from ._numeric import Numeric
-from ._repr import format_dtype, format_value, term_repr
+from ._repr import BINARY_SYMBOLS, format_dtype, format_value, grouped_label, term_repr
 from ._specs import NumericArraySpec
 from .provenance import Provenance
 from .tracked import Annotated, TrackedTerm
@@ -346,56 +346,8 @@ def _unwrap(other: Any) -> Any:
     return other._value if isinstance(other, NumericArray) else other
 
 
-#: The symbol each binary operator writes in the name its result derives.
-_BINARY_SYMBOLS = {
-    "add": "+", "sub": "-", "mul": "*", "matmul": "@", "truediv": "/", "floordiv": "//",
-    "mod": "%", "pow": "**", "lshift": "<<", "rshift": ">>", "and": "&", "xor": "^", "or": "|",
-    "lt": "<", "le": "<=", "eq": "==", "ne": "!=", "gt": ">", "ge": ">=",
-}  # fmt: skip
-
 #: The form each unary operator gives the name its result derives.
 _UNARY_FORMS = {"neg": "-{}", "pos": "+{}", "abs": "abs({})", "invert": "~{}"}
-
-#: The symbols that make a label an expression: the binary operators', of which
-#: ``|`` also reads as conditioning.
-_OPERATOR_SYMBOLS = frozenset(_BINARY_SYMBOLS.values())
-
-
-#: The prefixes of the unary operators' forms that apply an operator to what follows.
-_UNARY_PREFIXES = ("-", "+", "~")
-
-
-def _top_level_words(label: str) -> list[str]:
-    """*label* split at the spaces outside its parentheses and brackets."""
-    words, current, depth = [], [], 0
-    for char in label:
-        if char in "([":
-            depth += 1
-        elif char in ")]" and depth:
-            depth -= 1
-        if char == " " and depth == 0:
-            words.append("".join(current))
-            current = []
-        else:
-            current.append(char)
-    words.append("".join(current))
-    return words
-
-
-def grouped_label(label: str) -> str:
-    """*label* as it reads inside a derived label, grouped so it reads as one operand.
-
-    An expression is parenthesized, so the derived label states the order of
-    evaluation: a label one of whose top-level words is an operator's symbol,
-    as ``effect + 1.0`` or ``model | y`` is, or that opens with a unary
-    operator, as ``-effect`` does. Any other label with a top-level space, such
-    as a user's label ``other effect``, is bracketed, so it reads as one name,
-    and a label with none is used as it is.
-    """
-    words = _top_level_words(label)
-    if label.startswith(_UNARY_PREFIXES) or any(word in _OPERATOR_SYMBOLS for word in words):
-        return f"({label})"
-    return f"[{label}]" if len(words) > 1 else label
 
 
 def _operand_label(operand: Any) -> str:
@@ -438,7 +390,7 @@ def _install_array_operators() -> None:
     """
 
     def _binary(name: str):
-        symbol = _BINARY_SYMBOLS.get(name)
+        symbol = BINARY_SYMBOLS.get(name)
 
         def method(self: NumericArray, other: Any) -> Any:
             value = getattr(self._value, f"__{name}__")(_unwrap(other))
@@ -451,7 +403,7 @@ def _install_array_operators() -> None:
         return method
 
     def _reflected(name: str):
-        symbol = _BINARY_SYMBOLS.get(name)
+        symbol = BINARY_SYMBOLS.get(name)
 
         def method(self: NumericArray, other: Any) -> Any:
             value = getattr(self._value, f"__r{name}__")(_unwrap(other))

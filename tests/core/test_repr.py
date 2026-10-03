@@ -91,6 +91,14 @@ class TestSpecs:
             "InputSpec(x=NumericArraySpec(shape=(2,)))"
         )
 
+    def test_names_that_are_no_identifiers_read_as_one_mapping(self):
+        """A derived component such as mean(theta) cannot be a keyword, so the call maps it."""
+        output = OutputSpec(**{"mean(theta)": NumericArraySpec(())})
+        assert repr(output) == "OutputSpec(**{'mean(theta)': NumericArraySpec(shape=())})"
+        record = RecordSpec({"mean(mu)": (), "mean(tau)": ()})
+        assert repr(record) == "NumericRecordSpec(**{'mean(mu)': (), 'mean(tau)': ()})"
+        assert eval(repr(output)) == output
+
     def test_a_batch_spec_names_its_levels(self):
         assert repr(_schools().spec).endswith("    levels={'school': 8},\n)")
 

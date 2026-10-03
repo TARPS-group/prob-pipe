@@ -71,10 +71,9 @@ from ..core._dispatch import (
     UnaryDispatchMethod,
     UnaryDispatchRegistry,
 )
-from ..core._numeric_array import grouped_label
 from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
-from ..core._repr import format_names, format_value
+from ..core._repr import format_names, format_value, grouped_label
 from ..core._spec_base import NumericSpec, OpaqueSpec, TermSpec, _full_array_shape_or_none
 from ..core._specs import InputSpec, OutputSpec, _components_record
 from ..core.provenance import Provenance
@@ -1337,22 +1336,21 @@ class _NormalizingRoute(_RegistryRoute):
 # ---------------------------------------------------------------------------
 
 
-def _condition_on_result(d: TermSpec, given: TermSpec) -> OutputSpec:
+def _condition_on_result(d: TermSpec, given: TermSpec) -> OutputSpec | None:
     """Binding given slots declares the kernel's law, or a kernel over the slots left.
 
-    Conditioning on a produced field leaves the declaration to the law the
-    selected route returns.
+    The result exposes its event, so its components are the law's. Conditioning
+    on a produced field leaves the declaration to the law the selected route
+    returns.
     """
     if isinstance(d, ConditionalDistributionSpec) and isinstance(given, RecordSpec):
         keys = tuple(given.children)
         if keys and all(key in d.given_spec for key in keys):
             left = {name: spec for name, spec in d.given_spec.items() if name not in keys}
             if not left:
-                return OutputSpec(condition_on=DistributionSpec(d.event_spec))
-            return OutputSpec(
-                condition_on=ConditionalDistributionSpec(InputSpec(left), d.event_spec)
-            )
-    return OutputSpec(condition_on=None)
+                return OutputSpec(DistributionSpec(d.event_spec))
+            return OutputSpec(ConditionalDistributionSpec(InputSpec(left), d.event_spec))
+    return None
 
 
 def _conditioned_label(d: Any, given: Any) -> str:

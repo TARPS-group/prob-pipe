@@ -25,8 +25,8 @@ def _is_target(target: Any) -> bool:
 
 
 def _convert_result(d: DistributionSpec, target: Any) -> OutputSpec:
-    """The converted law carries the source's event declaration."""
-    return OutputSpec(convert=DistributionSpec(d.event_spec))
+    """The converted law, which exposes the source's event declaration."""
+    return OutputSpec(DistributionSpec(d.event_spec))
 
 
 @operation(result=_convert_result, conditions=(_is_target,))

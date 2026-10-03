@@ -116,7 +116,7 @@ class TestConvert:
 
     def test_the_converted_law_carries_the_source_declaration(self):
         assert convert.check(_Source("s"), _Target).result == OutputSpec(
-            convert=DistributionSpec(_Source("s").event_spec)
+            DistributionSpec(_Source("s").event_spec)
         )
 
     def test_an_exact_converter_is_selected_before_an_approximate_one(self, suite_converters):

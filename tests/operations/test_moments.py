@@ -170,17 +170,19 @@ class TestMean:
         assert routes["closed_form"].exact is True
         assert (report.route, report.exact) == ("closed_form", True)
 
-    def test_the_result_keeps_the_event_components_and_packaging(self):
+    def test_the_result_names_each_component_for_the_mean_in_the_event_packaging(self):
         assert mean.check(Gaussian("g")).result == OutputSpec(
-            g=NumericArraySpec((), jnp.float32, real)
+            **{"mean(g)": NumericArraySpec((), jnp.float32, real)}
         )
-        assert mean.check(Pair("p")).result.exposes_record
+        result = mean.check(Pair("p")).result
+        assert result.exposes_record
+        assert tuple(result.components) == ("mean(a)", "mean(b)")
 
-    def test_a_record_law_has_a_record_mean_with_its_schema(self):
+    def test_a_record_law_has_a_record_mean_with_a_field_per_component(self):
         result = mean(Pair("p"))
-        assert isinstance(result, Record)
-        assert _value(result["a"]) == 1.0
-        np.testing.assert_array_equal(np.asarray(result["b"]), [-1.0, -1.0])
+        assert isinstance(result, Record) and result.fields == ("mean(a)", "mean(b)")
+        assert _value(result["mean(a)"]) == 1.0
+        np.testing.assert_array_equal(np.asarray(result["mean(b)"]), [-1.0, -1.0])
 
     def test_the_mean_of_a_bernoulli_event_is_floating_on_the_unit_interval(self):
         result = mean(Coin("c", 0.25))
@@ -200,7 +202,8 @@ class TestMean:
         with workflow_run(seed=2):
             estimate = mean.with_options(n_broadcast_samples=_DRAWS)(ExactPosterior("post"))
         assert isinstance(estimate, Record)
-        assert abs(_value(estimate["theta"])) < 0.1 and abs(_value(estimate["y"])) < 0.1
+        assert abs(_value(estimate["mean(theta)"])) < 0.1
+        assert abs(_value(estimate["mean(y)"])) < 0.1
 
     def test_method_selects_the_fallback_over_the_closed_form(self):
         law = Gaussian("g", -1.0)
@@ -219,6 +222,12 @@ class TestMean:
 
     def test_the_fallback_mean_of_a_measure_is_the_mixture_of_its_draws(self):
         assert mean(Measure("m")).event_spec == Measure("m").event_spec.spec.event_spec
+
+    def test_the_mean_of_a_measure_is_a_law_that_exposes_its_event(self):
+        """The mean measure is a law, so it takes its event's components."""
+        result = mean.check(Measure("m")).result
+        assert result == OutputSpec(Measure("m").event_spec.spec)
+        assert not result.exposes_record
 
 
 class TestVariance:
@@ -249,6 +258,10 @@ class TestCov:
             estimate = cov.with_options(n_broadcast_samples=_DRAWS)(Vector("v"))
         assert estimate.spec.shape == (2, 2)
         np.testing.assert_allclose(np.asarray(estimate), np.diag([1.0, 4.0]), atol=0.3)
+
+    def test_the_covariance_is_declared_under_the_call_on_every_component(self):
+        assert list(cov.check(Gaussian("g")).result.components) == ["cov(g)"]
+        assert list(cov.check(Pair("p")).result.components) == ["cov(a, b)"]
 
     def test_the_covariance_requires_a_numeric_event(self):
         with pytest.raises(ApplicabilityError, match="numeric value"):
@@ -288,7 +301,7 @@ class TestQuantile:
         # Four draws of x are 0, 1, 2, 3, whose CDF reaches 0.25 at 0.
         view = quantile.with_options(n_broadcast_samples=4)
         estimate = view(_Ramp("ramp", record=record), jnp.array([0.25, 0.5, 1.0]))
-        x = estimate["x"] if record else estimate.values[:, 0]
+        x = estimate["quantile(x)"] if record else estimate.values[:, 0]
         np.testing.assert_array_equal(np.asarray(x), [0.0, 1.0, 3.0])
 
     def test_method_selects_the_fallback_over_the_closed_form(self):
@@ -297,21 +310,24 @@ class TestQuantile:
 
     def test_one_level_of_a_record_law_is_a_record_of_its_quantiles(self):
         result = quantile(_record_empirical(), 0.5)
-        assert isinstance(result, Record) and result.fields == ("b", "a")
-        np.testing.assert_allclose(np.asarray(result["b"]), [1.0, 2.0])
-        assert _value(result["a"]) == 2.0
+        assert isinstance(result, Record)
+        assert result.fields == ("quantile(b)", "quantile(a)")
+        np.testing.assert_allclose(np.asarray(result["quantile(b)"]), [1.0, 2.0])
+        assert _value(result["quantile(a)"]) == 2.0
 
     def test_several_levels_of_a_record_law_are_a_batch_of_records(self):
         result = quantile(_record_empirical(), jnp.array([0.0, 0.5, 1.0]))
         assert isinstance(result, NumericRecordBatch)
         assert (result.level_names, result.batch_shape) == (("quantile",), (3,))
-        np.testing.assert_allclose(np.asarray(result["a"]), [1.0, 2.0, 3.0])
-        np.testing.assert_allclose(np.asarray(result["b"]), [[0.0, 1.0], [1.0, 2.0], [2.0, 3.0]])
+        np.testing.assert_allclose(np.asarray(result["quantile(a)"]), [1.0, 2.0, 3.0])
+        np.testing.assert_allclose(
+            np.asarray(result["quantile(b)"]), [[0.0, 1.0], [1.0, 2.0], [2.0, 3.0]]
+        )
 
     def test_a_raw_record_law_s_levels_are_the_mapping_of_their_columns(self):
         result = quantile.with_options(raw=True)(_record_empirical(), jnp.array([0.0, 1.0]))
-        assert isinstance(result, dict) and list(result) == ["b", "a"]
-        assert jnp.shape(result["b"]) == (2, 2)
+        assert isinstance(result, dict) and list(result) == ["quantile(b)", "quantile(a)"]
+        assert jnp.shape(result["quantile(b)"]) == (2, 2)
 
     def test_quantiles_require_a_numeric_event(self):
         with pytest.raises(ApplicabilityError, match="numeric value"):
@@ -369,7 +385,10 @@ class TestTheFallbacksOnFewDraws:
         law = _Ramp("ramp", record=record)
         spread = variance.with_options(n_broadcast_samples=7)(law)
         covariance = cov.with_options(n_broadcast_samples=7)(law)
-        values = [_value(spread["x"]), _value(spread["y"])] if record else np.asarray(spread)
+        if record:
+            values = [_value(spread["variance(x)"]), _value(spread["variance(y)"])]
+        else:
+            values = np.asarray(spread)
         np.testing.assert_allclose(values, np.diag(np.asarray(covariance)), rtol=1e-6)
 
     @pytest.mark.parametrize("record", [False, True], ids=["array", "record"])
@@ -384,16 +403,16 @@ class TestTheFallbacksOfAJoint:
     def test_the_mean_is_the_average_of_each_component(self):
         with workflow_run(seed=7):
             estimate = mean.with_options(n_broadcast_samples=_DRAWS)(_dependent_joint())
-        assert isinstance(estimate, Record) and estimate.fields == ("y", "mu")
-        assert abs(_value(estimate["mu"]) - 2.0) < 0.1
-        assert abs(_value(estimate["y"]) - 3.0) < 0.1
+        assert isinstance(estimate, Record) and estimate.fields == ("mean(y)", "mean(mu)")
+        assert abs(_value(estimate["mean(mu)"]) - 2.0) < 0.1
+        assert abs(_value(estimate["mean(y)"]) - 3.0) < 0.1
 
     def test_the_variance_is_the_sample_variance_of_each_component(self):
         with workflow_run(seed=8):
             estimate = variance.with_options(n_broadcast_samples=_DRAWS)(_dependent_joint())
         assert isinstance(estimate, Record)
-        assert abs(_value(estimate["mu"]) - 1.0) < 0.15
-        assert abs(_value(estimate["y"]) - 1.0) < 0.15
+        assert abs(_value(estimate["variance(mu)"]) - 1.0) < 0.15
+        assert abs(_value(estimate["variance(y)"]) - 1.0) < 0.15
 
     def test_the_covariance_couples_the_components(self):
         with workflow_run(seed=9):
@@ -405,8 +424,8 @@ class TestTheFallbacksOfAJoint:
         with workflow_run(seed=10):
             estimate = quantile.with_options(n_broadcast_samples=_DRAWS)(_dependent_joint(), levels)
         assert (estimate.level_names, estimate.batch_shape) == (("quantile",), (2,))
-        assert abs(float(estimate["mu"][1]) - 2.0) < 0.1
-        assert abs(float(estimate["y"][1]) - 3.0) < 0.1
+        assert abs(float(estimate["quantile(mu)"][1]) - 2.0) < 0.1
+        assert abs(float(estimate["quantile(y)"][1]) - 3.0) < 0.1
 
 
 class TestExpectation:
@@ -456,11 +475,14 @@ class TestExpectation:
             output_spec=OutputSpec(RecordSpec(sq=NumericArraySpec(()))),
         )
         result = expectation(Coin("c", 0.5), f)
-        assert isinstance(result, Record)
-        assert _value(result["sq"]) == pytest.approx(0.5)
+        assert isinstance(result, Record) and result.fields == ("mean(sq)",)
+        assert _value(result["mean(sq)"]) == pytest.approx(0.5)
 
     def test_an_undeclared_integrand_wraps_its_value_by_kind(self):
         assert isinstance(expectation(Coin("c"), lambda x: x), NumericArray)
+
+    def test_an_undeclared_integrand_leaves_the_declaration_to_the_value(self):
+        assert expectation.check(Coin("c", 0.5), lambda x: x**2).result is None
 
     def test_the_integrand_is_a_callable(self):
         with pytest.raises(ApplicabilityError, match="FunctionSpec"):

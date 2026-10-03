@@ -330,6 +330,10 @@ class TestNumericArrayComputesAsAnArray:
 
         assert compute(v, w).label == name
 
+    def test_an_element_of_a_batch_labeled_by_an_expression_groups_it(self):
+        batch = NumericArrayBatch("model | y", jnp.zeros(3), "dataset")
+        assert batch[0].label == "(model | y)[dataset=0]"
+
     def test_an_element_label_is_one_unit_already(self):
         """The space of a two-level element's label sits inside its brackets."""
         batch = NumericArrayBatch(

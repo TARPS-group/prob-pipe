@@ -161,15 +161,51 @@ class InputSpec(Mapping[str, TermSpec]):
         )
 
 
+#: The spec each kind of exposed term takes, by the kind :func:`_exposed_kind` names.
+_EXPOSED_SPECS = {
+    "record": "RecordSpec",
+    "law": "DistributionSpec or ConditionalDistributionSpec",
+    "batch": "BatchSpec of a record or a law",
+}
+
+
+def _exposed_kind(spec: object) -> str | None:
+    """The kind of term the positional form exposes for *spec*, or None when it exposes none.
+
+    A record exposes its immediate fields, a law or a kernel its event's
+    components, and a batch its element's components.
+    """
+    from ._batch import BatchSpec
+
+    if isinstance(spec, RecordSpec):
+        return "record"
+    if isinstance(spec, TermSpec) and isinstance(getattr(spec, "event_spec", None), OutputSpec):
+        return "law"
+    if isinstance(spec, BatchSpec) and _exposed_kind(spec.element_spec) is not None:
+        return "batch"
+    return None
+
+
+def _exposed_components(spec: TermSpec) -> Mapping[str, TermSpec | None]:
+    """The components an exposed *spec* declares, by the rule of :func:`_exposed_kind`."""
+    kind = _exposed_kind(spec)
+    if kind == "record":
+        return cast(RecordSpec, spec).children
+    if kind == "law":
+        return cast(OutputSpec, spec.event_spec).components  # type: ignore[attr-defined]
+    return _exposed_components(spec.element_spec)  # type: ignore[attr-defined]
+
+
 @dataclass(frozen=True, init=False)
 class OutputSpec:
-    """One returned term and its packaging: a whole term, or an exposed record.
+    """One returned term and its packaging: a whole term, or an exposed term.
 
     Parameters
     ----------
-    *args : RecordSpec
-        The positional form exposes the record's immediate fields as the
-        components.
+    *args : RecordSpec, DistributionSpec, ConditionalDistributionSpec, or BatchSpec
+        The positional form exposes the components of the term it declares: a
+        record's immediate fields, a law's or a kernel's event components, or
+        the components of a batch's element, which is a record or a law.
     **term : TermSpec or None
         One keyword names the whole returned term. Its spec may be None, which
         marks a type hole that a producer fills with :meth:`with_spec`.
@@ -177,8 +213,9 @@ class OutputSpec:
     Raises
     ------
     TypeError
-        If the positional form is not exactly one RecordSpec, forms are mixed,
-        more than one keyword is given, or a record field lacks a spec.
+        If the positional form is not exactly one spec that exposes components,
+        forms are mixed, more than one keyword is given, or a record field lacks
+        a spec.
     ValueError
         If no declaration is given, or a component name is empty or contains ``/``.
 
@@ -186,19 +223,25 @@ class OutputSpec:
     -----
     Only the underlying declaration is stored, and ``spec``, ``components``, and
     ``exposes_record`` are derived views of it. The form alone decides the
-    packaging.
+    packaging. An exposed record's components are fields of the returned value,
+    and an exposed law's are the components of its draws, so the returned term
+    is the law itself.
     """
 
     _component_name: str | None
     _term_spec: TermSpec | None
 
-    def __init__(self, *args: RecordSpec, **term: TermSpec | None) -> None:
+    def __init__(self, *args: TermSpec, **term: TermSpec | None) -> None:
         if args:
-            if len(args) != 1 or not isinstance(args[0], RecordSpec) or term:
-                raise TypeError("OutputSpec expects one positional RecordSpec or one keyword")
+            if len(args) != 1 or term or _exposed_kind(args[0]) is None:
+                raise TypeError(
+                    "OutputSpec expects one positional RecordSpec, DistributionSpec, "
+                    "ConditionalDistributionSpec, or BatchSpec of one of them, or one keyword"
+                )
             spec = args[0]
-            for name, child in spec.children.items():
-                _check_component(name, child)
+            if isinstance(spec, RecordSpec):
+                for name, child in spec.children.items():
+                    _check_component(name, child)
             name = None
         elif len(term) == 1:
             name, spec = next(iter(term.items()))
@@ -229,12 +272,12 @@ class OutputSpec:
         """The ordered immediate components, as a read-only derived mapping."""
         if self._component_name is not None:
             return MappingProxyType({self._component_name: self._term_spec})
-        return cast(RecordSpec, self._term_spec).children
+        return _exposed_components(cast(TermSpec, self._term_spec))
 
     @property
     def exposes_record(self) -> bool:
         """Whether the components are the fields of an exposed record."""
-        return self._component_name is None
+        return self._component_name is None and isinstance(self._term_spec, RecordSpec)
 
     @classmethod
     def default(cls, spec: TermSpec, *, component: str) -> OutputSpec:
@@ -264,16 +307,19 @@ class OutputSpec:
         Raises
         ------
         TypeError
-            If this declaration exposes a record and *spec* is not a ``RecordSpec``.
+            If this declaration exposes a term and *spec* is not a spec of that
+            kind, such as a ``RecordSpec`` for an exposed record.
         ValueError
             If a declared spec does not unify with *spec*.
         """
-        if self.exposes_record and not isinstance(spec, RecordSpec):
+        kind = None if self._component_name is not None else _exposed_kind(self._term_spec)
+        if kind is not None and _exposed_kind(spec) != kind:
             raise TypeError(
-                f"an exposed record declaration needs a RecordSpec, got {type(spec).__name__}"
+                f"an exposed {kind} declaration needs a {_EXPOSED_SPECS[kind]}, "
+                f"got {type(spec).__name__}"
             )
         if self._term_spec is not None:
-            label = "the exposed record" if self.exposes_record else repr(self._component_name)
+            label = f"the exposed {kind}" if kind is not None else repr(self._component_name)
             _unify_specs(self._term_spec, spec, {}, f"Declared component {label}")
             if isinstance(self._term_spec, OpaqueSpec) and isinstance(spec, OpaqueSpec):
                 spec = _known_type(self._term_spec, spec)
@@ -306,7 +352,7 @@ class OutputSpec:
         spec = self._term_spec
         component = self._component_name
         if component is None:
-            return OutputSpec(cast(RecordSpec, spec).with_path_names(mapping, **kwargs))
+            return OutputSpec(_renamed_exposed(cast(TermSpec, spec), mapping, kwargs))
         # A whole term's paths are those of the record of its one component.
         components = RecordSpec({component: OpaqueSpec() if spec is None else spec})
         renames = components._resolve_path_renames(mapping, kwargs)
@@ -328,7 +374,7 @@ class OutputSpec:
     def _with_spec(self, spec: TermSpec | None) -> OutputSpec:
         if self._component_name is not None:
             return OutputSpec(**{self._component_name: spec})
-        return OutputSpec(cast(RecordSpec, spec))
+        return OutputSpec(cast(TermSpec, spec))
 
     @property
     def is_concrete(self) -> bool:
@@ -344,6 +390,26 @@ class OutputSpec:
         return self._with_spec(None if self.spec is None else self.spec.with_dim_names(**names))
 
 
+def _renamed_exposed(
+    spec: TermSpec, mapping: Mapping[str, str] | None, kwargs: Mapping[str, str]
+) -> TermSpec:
+    """The exposed *spec* with the nodes its components start renamed, as ``with_path_names`` reads them.
+
+    A record renames its own paths, a law or a kernel its event declaration's,
+    and a batch its element's, so the term keeps its kind.
+    """
+    from dataclasses import replace
+
+    kind = _exposed_kind(spec)
+    if kind == "record":
+        return cast(RecordSpec, spec).with_path_names(mapping, **kwargs)
+    if kind == "law":
+        event = cast(OutputSpec, spec.event_spec)  # type: ignore[attr-defined]
+        return replace(spec, event_spec=event.with_path_names(mapping, **kwargs))  # type: ignore[type-var]
+    element = _renamed_exposed(spec.element_spec, mapping, kwargs)  # type: ignore[attr-defined]
+    return replace(spec, element_spec=element)  # type: ignore[type-var]
+
+
 def _components_record(declaration: OutputSpec) -> RecordSpec:
     """The record of *declaration*'s components, one field per component.
 
@@ -354,24 +420,47 @@ def _components_record(declaration: OutputSpec) -> RecordSpec:
     Raises
     ------
     TypeError
-        If *declaration* exposes a spec that is not a ``RecordSpec``.
+        If *declaration* exposes a spec that is not a ``RecordSpec``, since a
+        law's or a batch's components are no record's fields.
     """
     if declaration.exposes_record:
         if not isinstance(declaration.spec, RecordSpec):
             raise TypeError(f"an exposed declaration holds a RecordSpec, got {declaration.spec!r}")
         return declaration.spec
+    if declaration._component_name is None:
+        raise TypeError(
+            f"an exposed declaration holds a RecordSpec, got {declaration.spec!r}, whose "
+            f"components are no record's fields"
+        )
     return RecordSpec(dict(declaration.components))
 
 
-def _unnamed_declaration(declaration: OutputSpec) -> tuple[str, tuple[TermSpec | None, ...]]:
+def _unnamed_declaration(declaration: OutputSpec) -> tuple[object, ...]:
     """*declaration*'s packaging and its components' specs in order, without their names.
 
     A function's fingerprint and its replay anchor record this form, so a
     rename of the components of its output keeps both.
     """
-    if declaration.exposes_record:
-        return ("exposed record", tuple(declaration.components.values()))
-    return ("whole term", (declaration.spec,))
+    if declaration._component_name is not None:
+        return ("whole term", (declaration.spec,))
+    return ("exposed", *_unnamed_exposed(cast(TermSpec, declaration.spec)))
+
+
+def _unnamed_exposed(spec: TermSpec) -> tuple[object, ...]:
+    """An exposed *spec* without its component names: its kind and what it holds besides them."""
+    kind = _exposed_kind(spec)
+    if kind == "record":
+        return ("record", tuple(_exposed_components(spec).values()))
+    if kind == "law":
+        given = getattr(spec, "given_spec", None)
+        event = cast(OutputSpec, spec.event_spec)  # type: ignore[attr-defined]
+        return ("law", type(spec).__qualname__, given, _unnamed_declaration(event))
+    return (
+        "batch",
+        spec.axis_groups,  # type: ignore[attr-defined]
+        spec.level_names,  # type: ignore[attr-defined]
+        _unnamed_exposed(spec.element_spec),  # type: ignore[attr-defined]
+    )
 
 
 def _check_output_template(record: RecordSpec, template: RecordSpec, path: str) -> None:

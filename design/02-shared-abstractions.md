@@ -61,7 +61,7 @@ class InputSpec(Mapping[str, TermSpec]): ...   # named slots; keys are Python id
 
 class OutputSpec:
     @overload
-    def __init__(self, record_spec: RecordSpec, /) -> None: ...  # the record's fields are the components
+    def __init__(self, term_spec: TermSpec, /) -> None: ...  # a record, a law, or a batch of either: its components
     @overload
     def __init__(self, **term: TermSpec | None) -> None: ...     # exactly one keyword: the whole term's name
     @property
@@ -82,7 +82,7 @@ class OutputSpec:
     # rename or move nodes by their paths, which start with a component; the packaging is kept
 ```
 
-**Construction.** One keyword names the entire returned term, and a positional `RecordSpec` exposes its immediate children.
+**Construction.** One keyword names the entire returned term, and a positional spec exposes the components of the term it declares: a `RecordSpec` its immediate fields, a `DistributionSpec` or a `ConditionalDistributionSpec` its event's components, and a `BatchSpec` of one of these its element's components.
 
 ```python
 OutputSpec(beta=beta_spec)                      # array out; beta is the whole array
@@ -92,19 +92,29 @@ OutputSpec(RecordSpec(beta=beta_spec, sigma=sigma_spec))
 # record out; beta and sigma are its fields
 OutputSpec(parameters=RecordSpec(beta=beta_spec, sigma=sigma_spec))
 # record out; parameters names the whole record, its one component
+OutputSpec(DistributionSpec(OutputSpec(RecordSpec(mu=mu_spec, tau=tau_spec))))
+# law out; mu and tau are its event components, and the law is one term
+OutputSpec(BatchSpec(RecordSpec(mu=mu_spec, tau=tau_spec), ((3,),), ("sample",)))
+# batch of records out; mu and tau are its fields
 ```
 
-The keyword form takes exactly one entry, and the positional form exactly one `RecordSpec` and no keywords. A component name is any non-empty string without `/`, which is the rule for a record's field names, so an exposed record's components are its fields. A component that binds a Python parameter must also be an identifier, which binding checks.
+The keyword form takes exactly one entry, and the positional form exactly one spec of those kinds and no keywords. A component name is any non-empty string without `/`, which is the rule for a record's field names, so an exposed record's components are its fields. A component that binds a Python parameter must also be an identifier, which binding checks.
 
-**Packaging.** The declaration stores either one named whole term or an exposed record schema. `spec`, `components`, and `exposes_record` are derived views of it, and extracting a component from a produced value, or reconstructing the value from its components, reads it.
+**Packaging.** The declaration stores either one named whole term or an exposed term. `spec`, `components`, and `exposes_record` are derived views of it, and extracting a component from a produced value, or reconstructing the value from its components, reads it. An exposed record's components are fields of the returned value, and so are those of a batch of records. An exposed law's components are its event's, so the returned term is the law itself, and its components name what its draws hold, which is how an operation that returns a law declares it (VI.0).
 
 **Completion.** A producer knows the type of the term it returns and completes its declaration with `with_spec`, which stores the unification of the declared type and the produced one under the declared names and packaging. The declared dtype and support are kept, dimensions are bound from the produced term, and the produced value is checked against the stored type. A declared type that does not unify with the produced one raises. A producer given no declaration uses `OutputSpec.default` with the default component its kind defines (II.5, III.3, III.7).
 
 **Names.** Component names are the only names a declaration carries, and matching reads only them: a distribution labeled `regression_model` may declare `OutputSpec(beta=beta_spec)` or `OutputSpec(RecordSpec(beta=beta_spec))`, and either exports `beta`. `OutputSpec(posterior=DistributionSpec(...))` exports the single component `posterior`, whose value is a law with its own event components. The object's label is renamed separately, by `with_name` (II.4).
 
-**Paths.** A declaration's paths start with a component. An exposed record's paths are the paths of its record, and a whole term's are its component followed by the paths within its term. `OutputSpec(parameters=RecordSpec(beta=beta_spec))` and `OutputSpec(RecordSpec(parameters=RecordSpec(beta=beta_spec)))` therefore both have the paths `parameters` and `parameters/beta`, and they differ only in the term they return. `with_path_names` renames and moves nodes by these paths under the rules of II.6. Its result keeps the packaging, so a whole term's component is renamed in place and the term's fields stay under it.
+**Paths.** A declaration's paths start with a component:
 
-**Type holes.** `OutputSpec(mean=None)` declares the component `mean` with its term spec pending. `None` is permitted only in the keyword form, so an exposed record takes a complete `RecordSpec`. A producer fills the hole with `with_spec` once it knows the term's type. `None` means only a pending type, so an opaque field of a `RecordSpec` is declared as `OpaqueSpec()` (III.5).
+1. **An exposed record's** are the paths of its record.
+2. **An exposed law's** are its event's, and an exposed batch's are its element's.
+3. **A whole term's** are its component followed by the paths within its term.
+
+`OutputSpec(parameters=RecordSpec(beta=beta_spec))` and `OutputSpec(RecordSpec(parameters=RecordSpec(beta=beta_spec)))` therefore both have the paths `parameters` and `parameters/beta`, and they differ only in the term they return. `with_path_names` renames and moves nodes by these paths under the rules of II.6. Its result keeps the packaging, so a whole term's component is renamed in place and the term's fields stay under it.
+
+**Type holes.** `OutputSpec(mean=None)` declares the component `mean` with its term spec pending. `None` is permitted only in the keyword form, so an exposed term takes a complete spec. A producer fills the hole with `with_spec` once it knows the term's type. `None` means only a pending type, so an opaque field of a `RecordSpec` is declared as `OpaqueSpec()` (III.5).
 
 ### Rationale
 
@@ -173,7 +183,7 @@ The `spec` slot is the term's type, stored once. Each kind narrows it to its own
 
 Every tracked term exposes `raw()` as the single access point to the representation layer. It returns the term **detached** from the workflow. Detachment removes provenance, annotations, and any reference to a container or parent, and it keeps the spec and the label. A kind represented by an object from outside ProbPipe has a **raw host**, which `raw()` returns, for example a backing array object or a wrapped callable. A kind whose representation is a ProbPipe object, such as a distribution, returns that object detached.
 
-Accessing a container returns a **view**, for example a record field or a batch element. A container's view is a tracked term labeled from the accessor, which is the field key for a record and the selected levels for a batch; its provenance records the container and the source term where one was supplied.
+Accessing a container returns a **view**, for example a record field or a batch element. A container's view is a tracked term labeled from the accessor, which is the field key for a record and the selected levels for a batch; its provenance records the container and the source term where one was supplied. A batch whose label is an expression has it parenthesized before the selection, as in `(model | y)[dataset=0]`, so the selection reads as applying to the whole label.
 
 **The repr.** A term's repr reads as a call of its public class's constructor:
 1. the label: first and positionally, as in `RecordBatch('schools', ...)`;
@@ -184,7 +194,7 @@ Accessing a container returns a **view**, for example a record field or a batch 
    - a batch of arrays or laws: its element spec;
    - a distribution: its family parameters, and its event declaration where that differs from the default of III.7.
 
-A spec reads as its own constructor call, with the attributes it sets, and so does a report, such as a `MethodInfo` or a `CallReport` (V.1). A private class reads as its public class or kind, so a law that renames another reads as the class of the law it renames. A repr longer than about 100 characters shows one argument per line. In a notebook a `CallReport` also displays as a table, with a row for each route and the selected route marked.
+A spec reads as its own constructor call, with the attributes it sets, and so does a report, such as a `MethodInfo` or a `CallReport` (V.1). A name that is no Python identifier, such as the component `mean(mu)`, cannot be a keyword, so a call with one writes its names in order inside one `**{...}` mapping, as in `OutputSpec(**{'mean(theta)': NumericArraySpec(shape=())})`. A private class reads as its public class or kind, so a law that renames another reads as the class of the law it renames. A repr longer than about 100 characters shows one argument per line. In a notebook a `CallReport` also displays as a table, with a row for each route and the selected route marked.
 
 **A tracked term is immutable.** `TrackedTerm` carries an immutability guard automatically, so assignment and deletion raise an error. Immutability requires that every transformation, including each `with_*` method, returns a new term that shares the representation.
 

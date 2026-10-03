@@ -22,6 +22,10 @@ class TestJoint:
         assert isinstance(result, FactoredDistribution)
         assert result.event_spec == (likelihood * prior).event_spec
 
+    def test_the_composed_law_carries_the_declaration_composition_derives(self):
+        likelihood, prior = Kernel("y", ("slope",)), Gaussian("slope")
+        assert joint.check(likelihood, prior).result is None
+
     def test_a_rename_connects_a_producer_to_the_slot_its_consumer_names(self):
         likelihood, prior = Kernel("y", ("slope",)), Gaussian("beta")
         assert isinstance(joint(likelihood, prior), ConditionalDistribution)
