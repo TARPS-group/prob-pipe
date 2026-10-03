@@ -44,6 +44,7 @@ Tick what applies; leave blank if not relevant.
 
 - [ ] User Guide / tutorials updated where relevant
 - [ ] CHANGELOG entry added in this PR for a user-visible change
+- [ ] A docs page an AI assistant drafted or changed opens with the AI-generated label
 
 ## Checklist
 

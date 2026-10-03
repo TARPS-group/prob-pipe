@@ -53,7 +53,10 @@ __all__ = [
 ]
 
 type UnarySupportedTypes = tuple[type, ...]
+"""The ``supported_types`` of a unary dispatch method: a tuple of classes."""
+
 type BinarySupportedTypes = tuple[tuple[type, ...], tuple[type, ...]]
+"""The ``supported_types`` of a binary dispatch method: a pair of tuples of classes."""
 
 
 class ResolutionError(Exception):

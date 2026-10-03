@@ -57,12 +57,10 @@
 "area:orchestration":
   - changed-files:
       - any-glob-to-any-file:
-          - "example_scripts/run_prefect_demo.py"
-          - "example_scripts/run_ray_demo.py"
           - "probpipe/core/config.py"
           - "tests/core/test_prefect*.py"
           - "tests/core/test_workflow_kind*.py"
-          - "docs/orchestration/**"
+          - "docs/user_guide/ray.md"
 
 "area:diagnostics":
   - changed-files:

@@ -1854,6 +1854,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The documentation site is rebuilt around the current API.** The user-guide
+  notebooks, the `getting_started` and `flexible_inference` tutorials, the
+  earlier API pages, and `example_scripts/` are removed, since each used names
+  the package no longer has. The API reference documents every public name on
+  one of thirteen topic pages, the README's quick example uses the current API,
+  and every page opens with a review label that says whether a maintainer has
+  reviewed it. The tour of the overhaul moves to `review/overhaul_tour.ipynb`.
+  CI fails when the docs use a removed name, and `tests/docs/` checks the API
+  coverage and the review labels.
 - **`condition_on` and `marginal` label their result by what it is.** A kernel
   applied at given slots keeps the kernel's label. Conditioning a joint on the
   whole events of the factors upstream of the rest returns the other factors,

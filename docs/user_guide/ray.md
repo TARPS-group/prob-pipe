@@ -1,3 +1,5 @@
+> **AI-generated.** An AI assistant drafted this page, and no maintainer has reviewed it yet. Please report errors on the issue tracker.
+
 # Ray via Prefect
 
 Current support: **Ray through Prefect-Ray**.
@@ -50,23 +52,21 @@ pip install -e ".[prefect]"
 pip install "prefect[ray]"
 ```
 
-There is intentionally no `probpipe[ray]` extra yet. Ray support currently
-enters through Prefect-Ray, and adding a first-class Ray extra would expand the
-packaging surface.
+ProbPipe has no `probpipe[ray]` extra, since Ray support enters through
+Prefect-Ray, whose install the two commands above cover.
 
-## Local Demo
+## Local Setup
 
-The canonical local demo is `example_scripts/run_ray_demo.py`. Run it with a
-persistent local Ray head:
+Start a Prefect server and a persistent local Ray head:
 
 ```bash
 prefect server start
 ray start --head
-python example_scripts/run_ray_demo.py
 ```
 
-The script configures:
+Then point ProbPipe's Prefect configuration at Ray:
 
+<!-- docs-test: skip, it needs a Ray cluster -->
 ```python
 from prefect_ray import RayTaskRunner
 
@@ -95,12 +95,12 @@ must be able to import the packages that appear in the pickled task graph.
 In both modes, the task function, arguments, closed-over state, and return value
 must be serializable. ProbPipe's `Record` family and several composite
 distributions include pickle support for this reason, and the serialization
-tests cover those contracts without requiring a live Ray cluster.
+tests cover those contracts with no running Ray cluster.
 
 ## Troubleshooting
 
 If the flow cannot find a Ray cluster, make sure `ray start --head` is running
-before launching the demo, or pass the correct remote Ray address.
+before calling the function, or pass the correct remote Ray address.
 
 If workers raise `ModuleNotFoundError`, install the same task dependencies on
 the process running the Ray driver and on the Ray cluster environment.

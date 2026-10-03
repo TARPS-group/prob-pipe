@@ -364,8 +364,8 @@ class _EvaluationRuleRegistry(BinaryDispatchRegistry[BinaryDispatchMethod]):
         return (tier + exactness, opt_in, priority)
 
 
-#: The routes of a lifted application, keyed on the map's and the operand's types.
 evaluation_rule_registry: BinaryDispatchRegistry[BinaryDispatchMethod] = _EvaluationRuleRegistry()
+"""The routes of a lifted application, keyed on the map's and the operand's types."""
 evaluation_rule_registry.register(_SamplingLift())
 evaluation_rule_registry.register(_ElementwiseSweep())
 evaluation_rule_registry.register(_EmpiricalEnumeration())

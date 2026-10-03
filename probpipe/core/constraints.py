@@ -244,14 +244,23 @@ class _IntegerInterval(Constraint):
 # ---------------------------------------------------------------------------
 
 real = _Real()
+"""The support of all finite real numbers."""
 positive = _Positive()
+"""The support of the strictly positive reals, ``(0, inf)``."""
 non_negative = _NonNegative()
+"""The support of the non-negative reals, ``[0, inf)``."""
 non_negative_integer = _NonNegativeInteger()
+"""The support of the non-negative integers, ``{0, 1, 2, ...}``."""
 boolean = _Boolean()
+"""The support of the binary values ``{0, 1}``."""
 unit_interval = _UnitInterval()
+"""The support of the closed unit interval, ``[0, 1]``."""
 simplex = _Simplex()
+"""The probability simplex: non-negative vectors that sum to one along the last axis."""
 positive_definite = _PositiveDefinite()
+"""The support of the positive-definite matrices."""
 sphere = _Sphere()
+"""The unit sphere: vectors of unit Euclidean norm along the last axis."""
 
 
 # ---------------------------------------------------------------------------
@@ -260,14 +269,17 @@ sphere = _Sphere()
 
 
 def interval(low: ArrayLike, high: ArrayLike) -> _Interval:
+    """The support of the closed interval ``[low, high]``."""
     return _Interval(low, high)
 
 
 def greater_than(lower_bound: ArrayLike) -> _GreaterThan:
+    """The support of the values strictly greater than *lower_bound*."""
     return _GreaterThan(lower_bound)
 
 
 def integer_interval(low: ArrayLike, high: ArrayLike) -> _IntegerInterval:
+    """The support of the integers in the closed interval ``[low, high]``."""
     return _IntegerInterval(low, high)
 
 

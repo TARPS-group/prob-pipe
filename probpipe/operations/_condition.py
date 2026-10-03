@@ -238,9 +238,11 @@ class _InferenceMethodRegistry(UnaryDispatchRegistry[UnaryDispatchMethod]):
         return (_observed_target(*args),)
 
 
-#: The registry of the normalization stage, keyed on the target's type; the
-#: methods of ``probpipe.inference`` register here.
 inference_method_registry: UnaryDispatchRegistry[UnaryDispatchMethod] = _InferenceMethodRegistry()
+"""The registry of the normalization stage of ``condition_on``, keyed on the target's type.
+
+The methods of ``probpipe.inference`` register here.
+"""
 
 
 # ---------------------------------------------------------------------------

@@ -266,6 +266,23 @@ each notebook follows three more:
 3. **No design citations:** a notebook for users cites no section of `design/`
    and no decision identifier, except where it reports a bug against the design.
 
+Each page of the site and README.md opens with a review label, which tells
+users how far to trust the page and tells maintainers what to review next:
+
+1. **AI-generated:** an AI assistant drafted or changed the page, and no
+   maintainer has reviewed it since. The page's first line is
+   `> **AI-generated.** An AI assistant drafted this page, and no maintainer has reviewed it yet. Please report errors on the issue tracker.`
+2. **Human-validated:** a maintainer has read the whole page as it renders, run
+   its code, and found it correct. The first line names the reviewer and the
+   date, as in `> **Human-validated** by Jonathan Huggins on 2026-10-20.`
+
+A notebook's first markdown cell holds the label, and an API page's label covers
+the docstrings it renders. A change that an AI assistant drafts makes a page
+AI-generated again, and a maintainer's own edit keeps it validated and updates
+the date. `tests/docs/test_review_labels.py` checks every page, and
+`python scripts/docs/review_status.py` lists each page with its label, reviewer,
+and date.
+
 ### Prefect orchestration
 
 ProbPipe ships with Prefect orchestration **off** by default — every
