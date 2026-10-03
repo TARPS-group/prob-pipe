@@ -56,7 +56,6 @@ when ranking a new method are documented under
 | `blackjax_sghmc` | None | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` | BlackJAX (opt-in only) |
 | `pymc_advi` | None | `PyMCModel` + pymc | PyMC (opt-in only) |
 | `tfp_nuts` | None | `SupportsLogProb` + JAX-traceable | TFP (opt-in only) |
-| `tfp_hmc` | None | `SupportsLogProb` + JAX-traceable | TFP (opt-in only) |
 
 ::: probpipe.ApproximateDistribution
 

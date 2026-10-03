@@ -120,7 +120,6 @@ PROFILES: dict[str, MethodProfile] = {
     "blackjax_sgld": MethodProfile("probpipe", False, _STOCHASTIC),
     "blackjax_sghmc": MethodProfile("probpipe", False, _STOCHASTIC),
     "tfp_nuts": MethodProfile("probpipe", True, _GRADIENT),
-    "tfp_hmc": MethodProfile("probpipe", True, _GRADIENT),
     "nutpie_nuts": MethodProfile("pymc", True, _GRADIENT),
     "pymc_nuts": MethodProfile("pymc", True, {**_GRADIENT, "cores": 1}),
     "pymc_advi": MethodProfile(
@@ -148,10 +147,6 @@ _ABC_RAW_OUTCOMES = (
     "tolerance of two mismatched outcomes the ABC posterior favors a theta near 0, where "
     "the eleven observed failures are matched most often"
 )
-_RESONANT_HMC = (
-    "bug: tfp_hmc runs a fixed ten-step trajectory that resonates on a near-Gaussian "
-    "posterior, so its chains mix poorly and its variances come out low"
-)
 KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "gaussian_linear")] = (
     _ABC_BUDGET,
     AssertionError,
@@ -169,7 +164,6 @@ KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "beta_bernoulli")] = (
     AssertionError,
     True,
 )
-KNOWN_FAILURES[("tfp_hmc", "probpipe", "gaussian_linear")] = (_RESONANT_HMC, AssertionError, False)
 
 
 # ---------------------------------------------------------------------------

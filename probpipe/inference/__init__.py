@@ -82,10 +82,9 @@ _install_observed_target(observed_target)
 
 # TFP-backed MCMC — registered with ``priority=None`` (opt-in only); BlackJAX
 # methods below win auto-dispatch.
-from ._tfp_mcmc import TFPHmcMethod, TFPNutsMethod
+from ._tfp_mcmc import TFPNutsMethod
 
 inference_method_registry.register(TFPNutsMethod())
-inference_method_registry.register(TFPHmcMethod())
 
 # BlackJAX MCMC (gradient-based) — auto-dispatch default for any
 # JAX-traceable ``SupportsLogProb`` target.

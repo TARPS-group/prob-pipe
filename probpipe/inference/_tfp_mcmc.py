@@ -1,4 +1,4 @@
-"""TFP-backed inference methods: NUTS and HMC."""
+"""The TFP-backed inference method, NUTS."""
 
 from __future__ import annotations
 
@@ -48,19 +48,12 @@ def _run_tfp_chains(
     Returns (chains, sample_stats_dict) where sample_stats_dict contains
     arrays shaped (num_chains, num_results) for building DataTree.
     """
-    if algorithm == "nuts":
-        inner_kernel = tfp_mcmc.NoUTurnSampler(
-            target_log_prob_fn=target_log_prob_fn,
-            step_size=step_size,
-        )
-    elif algorithm == "hmc":
-        inner_kernel = tfp_mcmc.HamiltonianMonteCarlo(
-            target_log_prob_fn=target_log_prob_fn,
-            step_size=step_size,
-            num_leapfrog_steps=10,
-        )
-    else:
-        raise ValueError(f"algorithm must be 'nuts' or 'hmc', got {algorithm!r}")
+    if algorithm != "nuts":
+        raise ValueError(f"algorithm must be 'nuts', got {algorithm!r}")
+    inner_kernel = tfp_mcmc.NoUTurnSampler(
+        target_log_prob_fn=target_log_prob_fn,
+        step_size=step_size,
+    )
 
     num_adapt = int(0.8 * num_warmup) if num_warmup > 0 else 0
     if num_adapt > 0:
@@ -246,17 +239,3 @@ def TFPNutsMethod() -> _TFPGradientMethod:
     Kept for bit-pattern regression and side-by-side backend comparison.
     """
     return _TFPGradientMethod("nuts", "tfp_nuts", None)
-
-
-def TFPHmcMethod() -> _TFPGradientMethod:
-    """TFP Hamiltonian Monte Carlo, registered as ``tfp_hmc``, opt-in-only.
-
-    Runs only when the caller pins ``method="tfp_hmc"``.
-
-    Notes
-    -----
-    Its ``check()`` is identical to that of ``tfp_nuts``, and both TFP
-    kernels are opt-in-only because ``blackjax_nuts`` is what automatic
-    selection picks for the same targets.
-    """
-    return _TFPGradientMethod("hmc", "tfp_hmc", None)

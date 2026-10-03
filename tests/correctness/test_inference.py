@@ -28,7 +28,6 @@ from tests._ops import condition_on, inference_method_registry, mean, variance
 from tests.correctness._laws import ExactGaussianRegression, exact_reference
 from tests.inference import canonical
 from tests.inference._harness import (
-    _RESONANT_HMC,
     PROFILES,
     assert_matches,
     calibration_ranks,
@@ -46,7 +45,7 @@ CALIBRATION_LEVEL = 0.01
 REPLICATIONS, EXACT_REPLICATIONS, RANK_DRAWS = 24, 40, 99
 
 #: The approximate methods the exact conditional is compared with.
-APPROXIMATE_METHODS = ("blackjax_nuts", "blackjax_hmc", "blackjax_rwmh", "tfp_nuts", "tfp_hmc")
+APPROXIMATE_METHODS = ("blackjax_nuts", "blackjax_hmc", "blackjax_rwmh", "tfp_nuts")
 
 
 def _regression() -> ExactGaussianRegression:
@@ -204,20 +203,7 @@ class TestExactness:
                 model, {"y": _observation(model)}
             )
 
-    @pytest.mark.parametrize(
-        "method",
-        [
-            pytest.param(
-                method,
-                marks=[
-                    pytest.mark.pending(reason=_RESONANT_HMC, raises=AssertionError, strict=False)
-                ]
-                if method == "tfp_hmc"
-                else [],
-            )
-            for method in APPROXIMATE_METHODS
-        ],
-    )
+    @pytest.mark.parametrize("method", APPROXIMATE_METHODS)
     def test_each_approximate_method_agrees_with_the_exact_conditional(self, method):
         """An approximate method's posterior of the same law meets the exact conditional's moments.
 

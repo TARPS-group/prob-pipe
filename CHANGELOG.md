@@ -657,6 +657,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed (breaking)
 
+- **`tfp_hmc` is removed.** Its fixed ten-step trajectory resonates on a
+  near-Gaussian posterior, so its chains mixed poorly and its variances came out
+  low. `blackjax_hmc` jitters its trajectory length, and `tfp_nuts` remains for
+  TFP: replace `method="tfp_hmc"` with `method="blackjax_hmc"`.
 - **`RecordArray` and `NumericRecordArray` are gone; the batch of records is
   `RecordBatch` / `NumericRecordBatch`.** A batched record was a `Record`
   subclass, which made `isinstance(x, Record)` true of a collection and put a

@@ -49,20 +49,19 @@ class TestInferenceMethodRegistry:
     def test_methods_registered(self):
         methods = inference_method_registry.list_methods()
         assert "tfp_nuts" in methods
-        assert "tfp_hmc" in methods
         assert "blackjax_rwmh" in methods
 
     def test_priority_order(self):
         """Ranked methods precede the opt-in-only ones in the listing.
 
-        ``tfp_nuts`` and ``tfp_hmc`` carry no priority, so they are listed
-        but never selected automatically; ``blackjax_rwmh`` (55) is the
-        gradient-free entry point automatic selection does reach.
+        ``tfp_nuts`` carries no priority, so it is listed but never selected
+        automatically; ``blackjax_rwmh`` (55) is the gradient-free entry point
+        automatic selection does reach.
         """
         methods = inference_method_registry.list_methods()
-        assert {"tfp_nuts", "tfp_hmc", "blackjax_rwmh"}.issubset(methods)
+        assert {"tfp_nuts", "blackjax_rwmh"}.issubset(methods)
         assert methods.index("blackjax_nuts") < methods.index("blackjax_rwmh")
-        for opt_in in ("tfp_nuts", "tfp_hmc"):
+        for opt_in in ("tfp_nuts",):
             assert methods.index("blackjax_rwmh") < methods.index(opt_in)
             assert inference_method_registry.get_method(opt_in).priority is None
 
@@ -135,8 +134,7 @@ class TestBuiltInRanks:
     reachable only via ``method=`` (``blackjax_hmc`` vs ``blackjax_nuts``;
     ``blackjax_sghmc`` vs ``blackjax_sgld``). ``pymc_advi`` is also opt-in:
     VI is a deliberate bias-for-speed tradeoff the user should choose
-    explicitly. ``tfp_nuts`` / ``tfp_hmc`` are opt-in for bit-pattern
-    regression.
+    explicitly. ``tfp_nuts`` is opt-in for bit-pattern regression.
     """
 
     EXPECTED_PRIORITIES: ClassVar[dict[str, int | None]] = {
@@ -153,7 +151,6 @@ class TestBuiltInRanks:
         "blackjax_sghmc": None,
         "pymc_advi": None,
         "tfp_nuts": None,
-        "tfp_hmc": None,
     }
 
     def test_every_registered_method_is_approximate(self):
@@ -340,7 +337,7 @@ class TestUnnormalizedLogProbInference:
                 super().__init__("no_density", NumericArraySpec((2,)))
 
         dist = NoDensityDist()
-        for method in ("tfp_nuts", "tfp_hmc", "blackjax_rwmh"):
+        for method in ("tfp_nuts", "blackjax_rwmh"):
             m = inference_method_registry.get_method(method)
             info = m.check(dist)
             assert not info.feasible
