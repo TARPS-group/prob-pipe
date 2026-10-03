@@ -593,6 +593,41 @@ class TestMakePosteriorRecordTarget:
         assert idata is not None
         assert "posterior" in idata.children
 
+    def test_the_arviz_draws_are_named_by_leaf(self):
+        """The ArviZ draw groups hold one variable per leaf, a nested path joined by dots."""
+        template = RecordSpec(params=RecordSpec(a=(), b=()), scale=(3,))
+        chain = jax.random.normal(jax.random.PRNGKey(0), (20, 5))
+        warmup = jax.random.normal(jax.random.PRNGKey(1), (4, 5))
+        prior = MultivariateNormal(loc=jnp.zeros(5), cov=jnp.eye(5), label="z")
+        post = make_posterior(
+            [chain],
+            parents=(prior,),
+            method="test",
+            annotations=build_mcmc_datatree([chain], warmup_chains=[warmup]),
+            event_spec=template,
+        )
+        tree = arviz_data(post)
+        for group, draws in (("posterior", chain), ("warmup", warmup)):
+            variables = tree[group].data_vars
+            assert list(variables) == ["params.a", "params.b", "scale"]
+            np.testing.assert_allclose(variables["params.b"].values[0], draws[:, 1])
+            np.testing.assert_allclose(variables["scale"].values[0], draws[:, 2:])
+        assert tree["posterior"]["scale"].dims == ("chain", "draw", "scale_dim_0")
+
+    def test_the_arviz_draws_of_a_whole_term_are_named_by_its_component(self):
+        prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), label="theta")
+        chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
+        post = make_posterior(
+            [chain],
+            parents=(prior,),
+            method="test",
+            annotations=build_mcmc_datatree([chain]),
+            event_spec=prior.event_spec,
+        )
+        variable = arviz_data(post)["posterior"]["theta"]
+        assert variable.dims == ("chain", "draw", "theta_dim_0")
+        np.testing.assert_allclose(variable.values[0], chain)
+
 
 # ---------------------------------------------------------------------------
 # rwmh Function

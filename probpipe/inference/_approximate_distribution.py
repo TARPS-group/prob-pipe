@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from ..core._spec_base import TermSpec
 
 import jax.numpy as jnp
+import numpy as np
 
 from .._weights import Weights
 from ..core._numeric_array_batch import NumericArrayBatch
@@ -23,6 +24,7 @@ from ..core._specs import (
     RecordSpec,
     _components_record,
 )
+from ..core.named_tree import _PATH_SEP
 from ..core.provenance import Provenance
 from ..custom_types import Array, ArrayLike
 from ..distributions._distribution import Distribution, _complete_event_spec
@@ -32,6 +34,12 @@ __all__ = ["make_posterior"]
 
 #: The levels of an inference result's atoms, outermost first.
 _CHAIN_LEVELS = ("chain", "draw")
+
+#: The variable under which ``build_mcmc_datatree`` stores a run's flat draws.
+_FLAT_DRAWS = "params"
+
+#: The ArviZ groups whose flat draws an inference result names by leaf.
+_DRAW_GROUPS = ("posterior", "warmup")
 
 
 def _spec_size(spec: NumericArraySpec | RecordSpec) -> int:
@@ -314,7 +322,11 @@ def make_posterior(
         The inference method's name, by which the ``method`` control selects it,
         such as ``"tfp_nuts"`` or ``"blackjax_rwmh"``.
     annotations : DataTree or None
-        The method's diagnostics, sample statistics, and warmup draws.
+        The method's diagnostics, sample statistics, and warmup draws. A
+        ``posterior`` or ``warmup`` group that holds the flat draws as its one
+        variable ``params``, as ``build_mcmc_datatree`` stores them, is stored
+        with one variable per leaf of the result, named by its path with ``.``
+        between the parts, since a ``DataTree`` variable has no ``/`` in its name.
     event_spec : OutputSpec, TermSpec, or None
         The target's declaration, usually the prior's ``event_spec``, which the
         result declares as its event. A bare ``RecordSpec`` exposes its fields,
@@ -378,7 +390,52 @@ def make_posterior(
         raise ValueError(f"the chains of an inference result have equal lengths, got {lengths}")
     atoms = _chain_atoms(label, jnp.stack(flat_chains), declaration)
     result = EmpiricalDistribution(label, atoms, weights, event_spec=declaration)
+    if annotations is not None:
+        annotations = _named_draw_groups(annotations, result)
     return _record_run(result, parents, method, annotations=annotations, **meta)
+
+
+def _leaf_variables(flat: Any, layout: dict[str, tuple[int, ...]]) -> dict[str, Any]:
+    """The flat draws *flat* ``(chains, draws, *flat)`` as one ArviZ variable per leaf of *layout*.
+
+    *layout* maps each leaf path to its shape, in the flat layout's order. A
+    variable is named by its leaf's path with ``.`` between the parts, and its
+    event axes are named ``<name>_dim_<i>``, as ArviZ names them.
+    """
+    import xarray as xr
+
+    chains, draws = flat.shape[:2]
+    flat = np.reshape(np.asarray(flat), (chains, draws, -1))
+    coords = {"chain": np.arange(chains), "draw": np.arange(draws)}
+    variables, offset = {}, 0
+    for path, shape in layout.items():
+        name = path.replace(_PATH_SEP, ".")
+        width = prod(shape)
+        values = np.reshape(flat[..., offset : offset + width], (chains, draws, *shape))
+        dims = ["chain", "draw", *(f"{name}_dim_{i}" for i in range(len(shape)))]
+        variables[name] = xr.DataArray(values, dims=dims, coords=coords)
+        offset += width
+    return variables
+
+
+def _named_draw_groups(annotations: Any, result: EmpiricalDistribution) -> dict[str, Any]:
+    """The groups of *annotations* with the flat draws of each draw group named by leaf of *result*.
+
+    A ``posterior`` or ``warmup`` group whose one variable is ``params`` holds
+    the run's flat draws in the target's flat layout, which the leaves of
+    *result* split, so ArviZ reports each component by its name.
+    """
+    import xarray as xr
+
+    layout = {path: tuple(column.shape[2:]) for path, column in _chain_columns(result).items()}
+    groups = {}
+    for path, node in annotations.items():
+        group = node.to_dataset() if isinstance(node, xr.DataTree) else node
+        if path.strip("/") in _DRAW_GROUPS and list(group.data_vars) == [_FLAT_DRAWS]:
+            variables = _leaf_variables(group[_FLAT_DRAWS].values, layout)
+            group = xr.Dataset(variables, attrs=group.attrs)
+        groups[path] = group
+    return groups
 
 
 def _record_run(

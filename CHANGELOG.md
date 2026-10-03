@@ -526,6 +526,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Function`, `NumericArray`, or `Opaque` gets it back as itself, as a `Record`,
   `Distribution`, or `Batch` always did. A declared `output_template` still
   shapes the result, being a caller's declaration rather than a default.
+- **The ArviZ data of an MCMC result name each component.** The `posterior` and
+  `warmup` groups under `annotations["arviz"]` held the draws as one flat
+  variable `params`, so `arviz_stats.summary` reported `params[0]`,
+  `params[1]`, and so on. Each leaf of the target is now its own variable,
+  named by its path with `.` between the parts, as `K` or `params.a`, since a
+  `DataTree` variable has no `/` in its name. Replace
+  `annotations["arviz"]["posterior"]["params"]` with the leaf's variable.
 
 ### Added
 

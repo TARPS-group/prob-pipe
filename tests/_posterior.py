@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 import jax.numpy as jnp
+import numpy as np
 
 from probpipe.core._numeric_record import _reconstruct_from_vector
 from probpipe.core._specs import RecordSpec, _components_record
@@ -67,13 +68,13 @@ def method_of(posterior: Any) -> str:
 
 
 def warmup_samples(posterior: Any) -> list[Any] | None:
-    """The per-chain warmup draws in the annotations, or ``None``."""
+    """The per-chain warmup draws in the annotations, or ``None``, each in the flat layout."""
     tree = arviz_data(posterior)
     if tree is None or "warmup" not in tree.children:
         return None
-    warmup = tree["warmup"]["params"]
-    count = warmup.sizes.get("chain", 1)
-    return [jnp.asarray(warmup.sel(chain=i).values) for i in range(count)]
+    columns = [np.asarray(variable.values) for variable in tree["warmup"].data_vars.values()]
+    flat = np.concatenate([np.reshape(c, (*c.shape[:2], -1)) for c in columns], axis=-1)
+    return [jnp.asarray(chain) for chain in flat]
 
 
 def law_draws(law: Any, count: int = 500) -> dict[str, Any]:
@@ -82,8 +83,6 @@ def law_draws(law: Any, count: int = 500) -> dict[str, Any]:
     A record event gives one entry per leaf path, and any other event one entry
     under its component.
     """
-    import numpy as np
-
     from probpipe import sample
     from probpipe.distributions._empirical import _flat_rows
 

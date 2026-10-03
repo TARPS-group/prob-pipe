@@ -980,7 +980,9 @@ def build_mcmc_datatree(
 
     Groups: ``posterior``, ``sample_stats`` (if provided), ``warmup``
     (if provided). Backend-agnostic — consumed by both the TFP and
-    BlackJAX MCMC paths.
+    BlackJAX MCMC paths. The ``posterior`` and ``warmup`` groups hold the
+    flat draws as the one variable ``params``, which :func:`make_posterior`
+    names by the target's leaves.
     """
     import arviz_base as azb
     import xarray as xr
