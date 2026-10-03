@@ -438,8 +438,27 @@ class TestBootstrapSourceFingerprint:
 
 class TestFunctionHashing:
     @pytest.mark.parametrize(
-        "change", ["output_name", "component", "shape", "kind", "packaging", "declaration"]
+        ("declaration", "same_identity"),
+        [
+            (None, True),
+            (OutputSpec(value=NumericArraySpec(())), True),
+            (NumericArraySpec(()), False),
+        ],
+        ids=["undeclared", "explicit-component", "default-component"],
     )
+    def test_output_labels_only_affect_identity_through_declarations(
+        self, declaration, same_identity
+    ):
+        def identity(value):
+            return value
+
+        first = Function("identity", identity, output_name="first", output_spec=declaration)
+        second = Function("identity", identity, output_name="second", output_spec=declaration)
+        assert (first.output_spec == second.output_spec) is same_identity
+        assert (fingerprint(first) == fingerprint(second)) is same_identity
+        assert fingerprint(first) == fingerprint(first.with_name("display"))
+
+    @pytest.mark.parametrize("change", ["component", "shape", "kind", "packaging", "declaration"])
     def test_output_contract_participates_in_function_fingerprint(self, change):
         def identity(value):
             return value
@@ -456,8 +475,8 @@ class TestFunctionHashing:
         changed = Function(
             "identity",
             identity,
-            output_name="other" if change == "output_name" else "result",
-            output_spec=declarations.get(change, declaration),
+            output_name="result",
+            output_spec=declarations[change],
         )
         assert fingerprint(baseline) != fingerprint(changed)
         assert fingerprint(baseline) == fingerprint(baseline.with_name("display"))

@@ -206,7 +206,6 @@ def _signature_and_declarations(function: Any, candidate: Any) -> dict[str, Any]
         "return_annotation": _canonical_value(signature.return_annotation),
         "input_spec": _canonical_value(function.input_spec),
         "output_spec": _canonical_value(function.output_spec),
-        "output_name": _canonical_value(function.output_name),
     }
 
 

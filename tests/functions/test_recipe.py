@@ -20,6 +20,7 @@ from probpipe import (
     Function,
     InputSpec,
     Normal,
+    NumericArraySpec,
     NumericRecord,
     NumericRecordBatch,
     OpaqueSpec,
@@ -48,9 +49,9 @@ from tests.functions._replay_fixtures import (
 )
 
 _CALLABLE_ANCHOR_GOLDENS = {
-    "cpython-3.12": "2a92e733a2419f171a678312905caf6e06ead64cec83b8a885da2c11b63bd274",
-    "cpython-3.13": "65082e77a30fe7100db1b2e32f12b100dfc7804d0d6720ed2d5f118682f8f2b4",
-    "cpython-3.14": "7b4aafde7bb0a713bb07e6140c1fa6aa044c0e03b562e84eed19a92c28162603",
+    "cpython-3.12": "18ae73e6204b142822c6d7a94e3fc8f021d6bbb87da94743cb3ec96309ceef57",
+    "cpython-3.13": "e80ece2774f2124fb06f1f9e942bd5a34d1383e69132bed87e2a9cd207a0b31a",
+    "cpython-3.14": "a1e101d3a658683213682af93960988bd4cf536fcb6427799cbd269d36142897",
 }
 
 
@@ -505,8 +506,34 @@ class TestWorkflowRecipeRecording:
 
 class TestWorkflowCallableAnchor:
     @pytest.mark.parametrize(
-        "change", ["output_name", "component", "shape", "kind", "packaging", "declaration"]
+        ("declaration", "same_identity"),
+        [
+            (None, True),
+            (OutputSpec(value=NumericArraySpec(())), True),
+            (NumericArraySpec(()), False),
+        ],
+        ids=["undeclared", "explicit-component", "default-component"],
     )
+    def test_output_labels_only_affect_anchor_through_declarations(
+        self, declaration, same_identity
+    ):
+        first = Function(
+            "identity", replayable_identity, output_name="first", output_spec=declaration
+        )
+        second = Function(
+            "identity", replayable_identity, output_name="second", output_spec=declaration
+        )
+        anchor = _callable.capture_function_anchor(first)
+        other = _callable.capture_function_anchor(second)
+        assert anchor.supported and other.supported
+        assert (anchor.sha256 == other.sha256) is same_identity
+        assert (anchor.controls() == other.controls()) is same_identity
+        assert (
+            anchor.controls()
+            == _callable.capture_function_anchor(first.with_name("display")).controls()
+        )
+
+    @pytest.mark.parametrize("change", ["component", "shape", "kind", "packaging", "declaration"])
     def test_output_contract_participates_in_callable_anchor(self, change):
         declaration = OutputSpec(bundle=RecordSpec(field=()))
         baseline = Function(
@@ -522,8 +549,8 @@ class TestWorkflowCallableAnchor:
         changed = Function(
             "identity",
             replayable_identity,
-            output_name="other" if change == "output_name" else "result",
-            output_spec=declarations.get(change, declaration),
+            output_name="result",
+            output_spec=declarations[change],
         )
         anchor = _callable.capture_function_anchor(baseline)
         other = _callable.capture_function_anchor(changed)
@@ -725,7 +752,6 @@ class TestWorkflowCallableAnchor:
                 "return_annotation": {"tag": "str", "value": "float"},
                 "input_spec": {"tag": "none"},
                 "output_spec": {"tag": "none"},
-                "output_name": {"tag": "str", "value": "replayable_affine"},
             },
             "python_replay_abi": python_replay_abi,
             "probpipe_replay_abi": "probpipe.replay/v1",

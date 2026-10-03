@@ -166,7 +166,14 @@ A function has three independent names: its own label, its result's
 defaults to the initial function name. `with_name` changes only the function
 label; results keep their output name, and provenance identifies the function
 actually called. Function labels do not participate in `FunctionSpec` matching.
-This naming rule applies to every operation implemented as a Function:
+Neither label is independently encoded in Function fingerprints or callable
+replay anchors. Output declarations, including their component names, are
+encoded: constructing a bare non-record output spec under a different
+`output_name` changes its default component and therefore its definition
+identity. An undeclared output remains undeclared; its inferred interface is
+not guaranteed to stay identical merely because replay accepts a label change.
+
+This result naming rule applies to every operation implemented as a Function:
 
 | Call | Result label |
 | --- | --- |

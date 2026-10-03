@@ -21,6 +21,7 @@ from probpipe import (
     EmpiricalDistribution,
     Function,
     Normal,
+    NumericArraySpec,
     OpaqueSpec,
     OutputSpec,
     ProductDistribution,
@@ -276,6 +277,18 @@ class TestReplayOwnership:
 
 
 class TestReplayAdmission:
+    def test_legacy_output_label_field_is_rejected(self):
+        payload = _draw().provenance.to_dict()
+        payload["controls"]["replay"]["callable"]["signature_and_declarations"]["output_name"] = {
+            "tag": "str",
+            "value": "sample",
+        }
+        with (
+            pytest.raises(ReplayCompatibilityError, match="fields"),
+            replay_run(Provenance.from_dict(payload)),
+        ):
+            pass
+
     def test_unknown_callable_abi_is_rejected_before_fields_are_read(self):
         payload = _draw().provenance.to_dict()
         anchor = payload["controls"]["replay"]["callable"]
@@ -284,7 +297,6 @@ class TestReplayAdmission:
         anchor["signature_and_templates"] = signature
         signature["input_template"] = signature.pop("input_spec")
         signature["output_template"] = signature.pop("output_spec")
-        signature.pop("output_name")
         with (
             patch(
                 "probpipe.functions._context.derive_event_key_words_from_encoded",
@@ -436,11 +448,6 @@ class TestReplayAdmission:
                 ("replay", "callable", "signature_and_declarations"),
                 "output_spec",
                 id="callable-signature",
-            ),
-            pytest.param(
-                ("replay", "callable", "signature_and_declarations"),
-                "output_name",
-                id="callable-output-name",
             ),
             pytest.param(
                 ("replay", "callable", "signature_and_declarations", "parameters", 0),
@@ -902,9 +909,66 @@ class TestReplayAdmission:
 
 
 class TestReplayPreflight:
-    @pytest.mark.parametrize(
-        "change", ["output_name", "component", "shape", "kind", "packaging", "declaration"]
-    )
+    @pytest.mark.parametrize("declaration", [None, OutputSpec(value=NumericArraySpec(()))])
+    @pytest.mark.parametrize("label", ["function", "output"])
+    def test_label_changes_replay_with_current_result_names(self, declaration, label):
+        baseline = Function(
+            "identity",
+            replayable_identity,
+            output_name="original",
+            output_spec=declaration,
+            dispatch="sequential",
+            n_broadcast_samples=8,
+        )
+        changed = (
+            baseline.with_name("display")
+            if label == "function"
+            else Function(
+                "identity",
+                replayable_identity,
+                output_name="renamed",
+                output_spec=declaration,
+                dispatch="sequential",
+                n_broadcast_samples=8,
+            )
+        )
+        law = Normal("source", 0.0, 1.0)
+        with workflow_run(seed=4):
+            original = baseline(value=law)
+        with replay_run(original.provenance):
+            replayed = changed(value=law)
+
+        original_component = "value" if declaration is not None else baseline.output_name
+        replayed_component = "value" if declaration is not None else changed.output_name
+        assert replayed.name == changed.output_name
+        assert tuple(original.event_spec.components) == (original_component,)
+        assert tuple(replayed.event_spec.components) == (replayed_component,)
+        np.testing.assert_array_equal(
+            np.asarray(original.samples[original_component]),
+            np.asarray(replayed.samples[replayed_component]),
+        )
+
+    def test_changed_default_component_fails_before_sampling(self):
+        baseline = Function(
+            "identity",
+            replayable_identity,
+            output_name="original",
+            output_spec=NumericArraySpec(()),
+        )
+        changed = Function(
+            "identity", replayable_identity, output_name="renamed", output_spec=NumericArraySpec(())
+        )
+        law = Normal("source", 0.0, 1.0)
+        with workflow_run(seed=4):
+            original = baseline(value=law)
+        with (
+            patch.object(law, "_sample", side_effect=AssertionError("sampled")),
+            pytest.raises(ReplayCompatibilityError, match="callable"),
+            replay_run(original.provenance),
+        ):
+            changed(value=law)
+
+    @pytest.mark.parametrize("change", ["component", "shape", "kind", "packaging", "declaration"])
     def test_output_contract_drift_fails_before_sampling(self, change):
         record = RecordSpec(left=(), right=())
         declaration = OutputSpec(bundle=record)
@@ -929,8 +993,8 @@ class TestReplayPreflight:
         changed = Function(
             "identity",
             replayable_identity,
-            output_name="other" if change == "output_name" else "result",
-            output_spec=declarations.get(change, declaration),
+            output_name="result",
+            output_spec=declarations[change],
             dispatch="sequential",
             n_broadcast_samples=8,
         )

@@ -32,11 +32,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Function`/`FunctionSpec` live in `values/`, and workflow helpers move from
   `core/_workflow_*` into `functions/`; old imports have no shims. Declaration
   fingerprints and replay anchors change, so regenerate persisted artifacts.
-  They include `output_name` as well as the input and output declarations;
-  changing only the display label with `with_name` preserves the content identity.
+  They include input and output declarations, including component names, but
+  exclude Function labels and the independent `output_name` label. Changing
+  labels preserves definition identity when declarations stay the same. A bare
+  non-record output spec still uses `output_name` to declare its component at
+  construction, so changing that default changes the declaration.
   Callable anchors use `probpipe.callable_definition/v1` and the field
   `signature_and_declarations`. Regenerate persisted recipes whose
-  declaration fields or fingerprints no longer match. The RNG recipe, stochastic
+  declaration fields or fingerprints no longer match, including recipes that
+  stored `output_name` in the callable anchor. The RNG recipe, stochastic
   plan, and outer replay schema remain at v1.
   `Function.effective_workflow_kind` remains public and read-only: it resolves
   instance controls against the current global configuration on each access,

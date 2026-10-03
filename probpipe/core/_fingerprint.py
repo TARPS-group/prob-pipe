@@ -851,8 +851,6 @@ def _update_function(
     _update(h, function.input_spec, 1, max_array_bytes, state)
     h.update(b":output_spec=")
     _update(h, function.output_spec, 1, max_array_bytes, state)
-    h.update(b":output_name=")
-    _update(h, function.output_name, 1, max_array_bytes, state)
 
     implementation = function._implementation
     if not isinstance(implementation, _CallableFunctionImplementation):
