@@ -1859,8 +1859,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   earlier API pages, and `example_scripts/` are removed, since each used names
   the package no longer has. The API reference documents every public name on
   one of thirteen topic pages, the README's quick example uses the current API,
-  and every page opens with a review label that says whether a maintainer has
-  reviewed it. The tour of the overhaul moves to `review/overhaul_tour.ipynb`.
+  and every page carries a review label that says whether a maintainer has
+  reviewed it and, for a reviewed page, which sections or parts changed since. The tour of the overhaul moves to `review/overhaul_tour.ipynb`.
   CI fails when the docs use a removed name, and `tests/docs/` checks the API
   coverage and the review labels.
 - **`condition_on` and `marginal` label their result by what it is.** A kernel
