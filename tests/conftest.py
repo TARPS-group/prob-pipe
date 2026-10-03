@@ -6,6 +6,10 @@ import pytest
 import probpipe
 from probpipe import EmpiricalDistribution, ProvenanceMode
 
+#: The fixtures that skip a test unless BridgeStan is installed; a test requesting one is marked
+#: ``stan``, the marker CI's stan job selects.
+_STAN_FIXTURES = frozenset({"_stanc", "_stan_toolchain"})
+
 
 def pytest_configure(config):
     config.addinivalue_line(
@@ -18,6 +22,8 @@ def pytest_configure(config):
 
 def pytest_collection_modifyitems(config, items):
     for item in items:
+        if _STAN_FIXTURES.intersection(item.fixturenames):
+            item.add_marker(pytest.mark.stan)
         for marker in item.iter_markers("pending"):
             reason = marker.kwargs.get("reason") or (marker.args[0] if marker.args else "")
             item.add_marker(

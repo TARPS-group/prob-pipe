@@ -89,6 +89,7 @@ def _posterior(tmp_path):
     return StanModel("program", str(program), data={"N": 2, "y": [1.0, 2.0]})
 
 
+@pytest.mark.stan
 def test_the_posterior_keeps_the_parameter_record_chain_by_chain(fake_cmdstanpy, tmp_path):
     from probpipe.inference._cmdstan_method import CmdStanNutsMethod
 
@@ -190,4 +191,7 @@ def test_from_cmdstanpy_produces_arviz1x_datatree(tmp_path):
 # The canonical cases of the cross-method validation harness
 # ---------------------------------------------------------------------------
 
-test_cmdstan_nuts_canonical = validate_method("cmdstan_nuts")
+test_cmdstan_nuts_canonical = pytest.mark.skipif(
+    not _cmdstan_available(),
+    reason="requires the [stan] extra plus an installed CmdStan toolchain",
+)(validate_method("cmdstan_nuts"))

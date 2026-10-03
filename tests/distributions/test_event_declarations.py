@@ -287,6 +287,9 @@ _STUB_CONSTRUCTIONS = {
 }
 
 # Bases a concrete class specializes, constructed only through one.
+#: The constructions that read a Stan program, so they need BridgeStan.
+_STAN_CONSTRUCTIONS = frozenset({_StanPosterior, _UnconstrainedStanView})
+
 _BASES = frozenset(
     {
         NumericDistribution,
@@ -301,9 +304,16 @@ def _rows(failures: dict[type, pytest.MarkDecorator] | None = None) -> list:
     """One case per construction, marked where the check fails for a known reason."""
     failures = {**_STUB_CONSTRUCTIONS, **(failures or {})}
     return [
-        pytest.param(cls, make, id=cls.__name__, marks=failures.get(cls, ()))
+        pytest.param(cls, make, id=cls.__name__, marks=_marks(cls, failures))
         for cls, make in _CONSTRUCTIONS.items()
     ]
+
+
+def _marks(cls: type, failures: dict[type, pytest.MarkDecorator]) -> tuple:
+    """The row's known-failure mark, and ``stan`` when its construction needs BridgeStan."""
+    known = failures.get(cls, ())
+    known = known if isinstance(known, tuple) else (known,)
+    return (*known, pytest.mark.stan) if cls in _STAN_CONSTRUCTIONS else known
 
 
 def _reachable(cls: type) -> bool:

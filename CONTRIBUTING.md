@@ -353,10 +353,12 @@ GitHub Actions (`.github/workflows/ci.yml`):
   `<3.14`) syncs `dev,nutpie,bayesflow` and runs every test marked `bayesflow`.
   The other jobs skip a test that needs the extra, so such a test carries
   `@pytest.mark.bayesflow`
-- A separate `stan` leg (Python 3.12) syncs `dev,nutpie,stan`, caches the
-  `~/.bridgestan` build, and runs StanModel's compile-backed tests against a
-  real BridgeStan backend; coverage uploads under a `stan` flag. Gated like the
-  bayesflow leg — runs on pushes to main, foundational changes, or Stan-file
+- A separate `stan` leg (Python 3.12) syncs `dev,nutpie,stan,pymc`, caches the
+  `~/.bridgestan` build, and runs every test marked `stan` against a real
+  BridgeStan backend; coverage uploads under a `stan` flag. `tests/conftest.py`
+  marks a test that requests the `_stanc` or `_stan_toolchain` fixture, and a
+  test that needs BridgeStan another way carries `@pytest.mark.stan`. Gated like
+  the bayesflow leg — runs on pushes to main, foundational changes, or Stan-file
   changes
 - Coverage uploaded to Codecov
 - The `lint & format` job runs `ruff check` (lint) and `ruff format --check`;

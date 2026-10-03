@@ -387,8 +387,8 @@ jobs:
     # programs (needs a C++ toolchain — ubuntu-latest provides one). Kept
     # separate from the main matrix so the per-model compile cost stays out of
     # every leg: the main matrix runs StanModel's pure tests (the name parser,
-    # the bridgestan-missing guard, the CmdStan import shim) and skips the
-    # compile-backed ones (gated by the _stan_toolchain fixture). One leg only —
+    # the bridgestan-missing guard, the CmdStan import shim) and skips the tests
+    # marked `stan`, which need BridgeStan. One leg only —
     # BridgeStan is a C++/ctypes backend, so behaviour doesn't vary by Python
     # version and the compile cost is paid per leg.
     runs-on: ubuntu-latest
@@ -411,10 +411,16 @@ jobs:
           else
             BASE="${{ github.event.before }}"
           fi
+          # Run for a change to the Stan adapter, a Stan test helper, or a test
+          # file that holds tests marked `stan`, since this leg runs those tests.
+          # tests/conftest.py marks a test that requests `_stanc` or
+          # `_stan_toolchain`, so the grep matches those requests and the marker.
           CHANGED=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD \
-            -- 'probpipe/families/_programs.py' 'tests/families/test_programs.py' \
-            'tests/modeling/test_stan_model.py' \
-            'tests/distributions/test_event_declarations.py' || true)
+            -- 'probpipe/families/_programs.py' 'tests/_stanc.py' 'tests/inference/_harness.py' || true)
+          CHANGED_TESTS=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD \
+            -- 'tests/*.py' || true)
+          MARKED=$(echo "$CHANGED_TESTS" \
+            | xargs -r grep -lE 'pytest\.mark\.stan\b|"_stanc"|"_stan_toolchain"|_stan_toolchain[,)]' || true)
           CHANGED_ALL=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD || true)
           RUN_STAN=false
           if [ "${{ github.event_name }}" = "push" ]; then
@@ -426,7 +432,7 @@ jobs:
                   RUN_STAN=true ;;
               esac
             done
-            [ -n "$CHANGED" ] && RUN_STAN=true
+            [ -n "$CHANGED$MARKED" ] && RUN_STAN=true
           fi
           if [ "$RUN_STAN" = "true" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -462,21 +468,17 @@ jobs:
         if: steps.stan_check.outputs.skip != 'true'
         # Versions are pinned in uv.lock; --frozen fails if the lockfile drifts.
         # The `stan` extra brings bridgestan (and cmdstanpy); dev+nutpie match
-        # the other backend legs' base.
-        run: uv sync --frozen --python 3.12 --extra dev --extra nutpie --extra stan
+        # the other backend legs' base. pymc is here because test_nutpie.py,
+        # which holds the nutpie-on-Stan tests, skips as a module without it.
+        run: uv sync --frozen --python 3.12 --extra dev --extra nutpie --extra stan --extra pymc
 
-      - name: Run StanModel tests (real BridgeStan)
+      - name: Run Stan tests (real BridgeStan)
         if: steps.stan_check.outputs.skip != 'true'
+        # Runs every test in the suite marked `stan` (registered in
+        # pyproject.toml); the other jobs lack BridgeStan and skip those tests.
         # -n 0 disables xdist so the module-scoped model fixtures compile once,
-        # not once per worker. The suite is small; serial is fine. The -k
-        # expression selects the StanModel tests of the program-defined families
-        # and the Stan rows of the event-declaration table test.
-        run: >-
-          uv run pytest tests/modeling/test_stan_model.py
-          tests/families/test_programs.py
-          tests/distributions/test_event_declarations.py
-          -k "test_stan_model or StanModel or UnconstrainedStanView"
-          -n 0 --cov-report=xml
+        # not once per worker.
+        run: uv run pytest tests -m stan -n 0 --cov-report=xml
 
       - name: Upload coverage reports to Codecov
         # The main test job doesn't install [stan], so it measures the Stan

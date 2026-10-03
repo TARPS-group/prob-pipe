@@ -78,6 +78,7 @@ addopts = "-n auto --dist worksteal -v --cov=probpipe --cov-report=term-missing 
 markers = [
     "prefect: marks tests requiring prefect (deselect with '-m \"not prefect\"')",
     "bayesflow: marks tests requiring the bayesflow extra (select with '-m bayesflow')",
+    "stan: marks tests requiring BridgeStan (select with '-m stan')",
 ]
 
 [tool.ruff]

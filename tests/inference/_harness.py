@@ -476,6 +476,8 @@ def validate_method(
         f"Each case runs one fit of the method, a second or two of sampling, "
         f"so the parametrization takes several seconds in all."
     )
+    if profile.representation == "stan":
+        test = pytest.mark.stan(test)
     return test
 
 
