@@ -999,14 +999,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Get started and the first two tutorials.** The documentation site gains an
-  installation page, a quickstart that fits, checks, and forecasts the
-  Challenger O-ring model, and two tutorials on a Ricker model of the moose
-  counts of 1967 to 1988: a first Bayesian analysis, which fits the model,
-  checks it with MCMC diagnostics and a posterior predictive check, and adds
-  process noise when the check fails, and a forecast of the population with
-  its uncertainty split into the parts due to the parameters and the process
-  noise. Each notebook opens on Google Colab from its badge, and the notebook
+- **Get started and the first three tutorials.** The documentation site gains
+  an installation page, a quickstart that fits, checks, and forecasts the
+  Challenger O-ring model, and three tutorials on a Ricker model of the moose
+  counts of 1967 to 1988:
+  1. a first Bayesian analysis, which fits the model, checks it with MCMC
+     diagnostics and a posterior predictive check, and adds process noise when
+     the check fails;
+  2. a forecast of the population, with its uncertainty split into the parts
+     due to the parameters and to the process noise;
+  3. forecasts updated as each year's count arrives, by a particle filter that
+     `iterate` and `with_resampling` run, with the coverage of the one-year
+     forecast intervals.
+
+  Each notebook opens on Google Colab from its badge, and the notebook
   job of CI gains a leg for `docs/get_started/`. A notebook links to another
   page by its file, which the docs build rewrites to the page's URL and checks.
 - **Writing rules and a prose checker.** `STYLE_GUIDE.md` §10 states the

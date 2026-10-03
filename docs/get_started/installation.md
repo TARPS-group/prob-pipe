@@ -88,7 +88,7 @@ The extras add optional backends and tools:
 
 Two extras need more than their packages:
 
-1. **`stan`:** CmdStan and a C++ toolchain, which compile Stan programs. The command `install_cmdstan`, which CmdStanPy provides, installs CmdStan, and the [CmdStanPy installation guide](https://mc-stan.org/cmdstanpy/installation.html) lists the toolchain each operating system needs.
+1. **`stan`:** CmdStan and a C++ toolchain, which compile Stan programs. CmdStanPy's command `install_cmdstan` installs CmdStan, and the [CmdStanPy installation guide](https://mc-stan.org/cmdstanpy/installation.html) lists the toolchain each operating system needs.
 2. **`bayesflow`:** Python 3.12 or 3.13, and the JAX backend of Keras. ProbPipe sets the environment variable `KERAS_BACKEND` to `jax` when it first imports BayesFlow, unless the variable is already set. A program that imports Keras before then, or sets the variable to another backend, must set `KERAS_BACKEND=jax` before its first import of Keras.
 
 The extras `docs` and `dev` are for contributors, and the [contributing guide](https://github.com/TARPS-group/prob-pipe/blob/main/CONTRIBUTING.md) uses them to set up a development environment.

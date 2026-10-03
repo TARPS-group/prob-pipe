@@ -86,6 +86,7 @@ nav:
   - Tutorials:
     - "1. A first Bayesian analysis": tutorials/01_first_analysis.ipynb
     - "2. Forecasting with uncertainty": tutorials/02_forecasting.ipynb
+    - "3. Updating forecasts as data arrive": tutorials/03_updating.ipynb
   - User guide:
     - Ray via Prefect: user_guide/ray.md
   - API reference:
