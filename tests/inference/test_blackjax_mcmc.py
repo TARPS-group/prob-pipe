@@ -372,7 +372,7 @@ class TestSampleStats:
         expected = {
             "step_size",
             "acceptance_rate",
-            "is_divergent",
+            "diverging",
             "num_integration_steps",
             "energy",
         }
@@ -388,7 +388,7 @@ class TestSampleStats:
         ar = np.asarray(ds["acceptance_rate"])
         assert np.all(ar >= 0.0) and np.all(ar <= 1.0 + 1e-5)
 
-        div = np.asarray(ds["is_divergent"])
+        div = np.asarray(ds["diverging"])
         assert div.dtype == np.bool_
         # A well-adapted NUTS run on a Gaussian prior should rarely diverge.
         assert div.mean() < 0.05
@@ -414,6 +414,18 @@ class TestSampleStats:
         post_grp = arviz_data(posterior)["posterior"]
         assert post_grp.sizes["chain"] == num_chains
         assert arviz_data(posterior)["sample_stats"].sizes["chain"] == num_chains
+
+    def test_the_mcmc_diagnostics_count_the_divergences(self, small_model):
+        """``add_mcmc_diagnostics`` records the sum of ``diverging`` over chains and draws."""
+        from probpipe.diagnostics import add_mcmc_diagnostics
+
+        posterior = condition_on.with_options(
+            method="blackjax_nuts",
+            method_options={"num_results": 100, "num_warmup": 100, "num_chains": 2},
+        )(small_model, {"y": jnp.zeros((4,))})
+        add_mcmc_diagnostics(posterior)
+        expected = int(np.asarray(arviz_data(posterior)["sample_stats"]["diverging"]).sum())
+        assert posterior.diagnostics.mcmc.n_divergences == expected
 
 
 class TestCheckFeasibility:

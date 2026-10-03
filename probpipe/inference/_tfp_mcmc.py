@@ -108,6 +108,10 @@ def _extract_sample_stats(traces: Any, num_chains: int) -> dict[str, np.ndarray]
     if is_accepted is not None:
         stats["is_accepted"] = np.asarray(is_accepted)
 
+    has_divergence = getattr(results, "has_divergence", None)
+    if has_divergence is not None:
+        stats["diverging"] = np.asarray(has_divergence)
+
     return stats
 
 

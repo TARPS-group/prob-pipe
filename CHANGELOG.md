@@ -2740,6 +2740,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`add_mcmc_diagnostics` counts the divergent transitions.** It recorded no
+  count, so `posterior.diagnostics.mcmc.n_divergences` reported "not recorded by
+  this backend" for every method. It now records the sum of the ArviZ sample
+  statistic `diverging`, which the PyMC, Stan, and nutpie methods write.
+  `blackjax_nuts` and `blackjax_hmc` wrote the statistic as `is_divergent`, and
+  `tfp_nuts` wrote none; both now write `diverging`, so read
+  `annotations["arviz"]["sample_stats"]["diverging"]` in place of
+  `["is_divergent"]`.
 - **A completed declaration keeps its declared dtypes.** `OutputSpec.with_spec`
   checked that the declared spec unifies with the produced one and then stored
   the produced spec, so a declared dtype or support was lost wherever the
