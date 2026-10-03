@@ -20,9 +20,11 @@ Supported types
   hashes its atoms' levels + element spec + stored rows + weights,
   ``KDEDistribution`` hashes atoms + weights + kernel class + scales;
   ``Weights`` are hashed by content
-- ``Function`` — frozen signature and input/output declarations, plus either
-  plain-callable bytecode, referenced names, and captured/default values or a
-  private implementation type
+- ``Function`` — frozen signature, input declaration, and output declaration
+  without its component names, plus either plain-callable bytecode, referenced
+  names, and captured/default values or a private implementation type, so a
+  rename of the function, its output label, or its output's components keeps
+  the digest
 - Closure-free Python functions — module + qualified name + bytecode +
   defaults. Closure-bearing functions and every other callable kind are
   process-local identities.
@@ -418,7 +420,7 @@ def _update_value_spec(
         _update(h, declaration.spec, depth + 1, max_array_bytes, state)
     elif isinstance(spec, FunctionSpec):
         _update(h, spec.input_spec, depth + 1, max_array_bytes, state)
-        _update(h, spec.output_spec, depth + 1, max_array_bytes, state)
+        _update_output_declaration(h, spec.output_spec, depth + 1, max_array_bytes, state)
     elif isinstance(spec, BatchSpec):
         _update(h, spec.element_spec, depth + 1, max_array_bytes, state)
         h.update(b":axis_groups=")
@@ -871,6 +873,25 @@ def _update_plain_function(
     _update(h, func.__kwdefaults__, depth + 1, max_array_bytes, state)
 
 
+def _update_output_declaration(
+    h: hashlib._Hash,
+    declaration: Any,
+    depth: int,
+    max_array_bytes: int | None,
+    state: _FingerprintState,
+) -> None:
+    """Hash a function's output declaration without its component names.
+
+    Two functions that differ only in the names of their outputs compute the
+    same values, so they share a fingerprint.
+    """
+    from ._specs import _unnamed_declaration
+
+    if declaration is not None:
+        declaration = _unnamed_declaration(declaration)
+    _update(h, declaration, depth, max_array_bytes, state)
+
+
 def _update_function(
     h: hashlib._Hash,
     function: Any,
@@ -894,7 +915,7 @@ def _update_function(
     h.update(b":input_spec=")
     _update(h, function.input_spec, 1, max_array_bytes, state)
     h.update(b":output_spec=")
-    _update(h, function.output_spec, 1, max_array_bytes, state)
+    _update_output_declaration(h, function.output_spec, 1, max_array_bytes, state)
 
     implementation = function._implementation
     if not isinstance(implementation, _CallableFunctionImplementation):

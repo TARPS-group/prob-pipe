@@ -485,6 +485,28 @@ class TestFunctionHashing:
         provenance = Provenance.create("compare", parents=[baseline, changed_output])
         assert provenance.parents[0].fingerprint != provenance.parents[1].fingerprint
 
+    @pytest.mark.parametrize(
+        ("before", "after"),
+        [
+            (OutputSpec(a=NumericArraySpec(())), OutputSpec(b=NumericArraySpec(()))),
+            (OutputSpec(RecordSpec(a=(), b=(3,))), OutputSpec(RecordSpec(c=(), d=(3,)))),
+        ],
+        ids=["whole-term", "exposed-record"],
+    )
+    def test_a_rename_of_the_function_or_its_outputs_keeps_the_fingerprint(self, before, after):
+        """A rename changes no value, so the renamed function shares the fingerprint."""
+
+        def identity(x):
+            return x
+
+        def build(output_spec, label="identity", **options):
+            return Function(label=label, fn=identity, output_spec=output_spec, **options)
+
+        baseline = fingerprint(build(before))
+        assert fingerprint(build(after)) == baseline
+        assert fingerprint(build(before, label="renamed", output_label="relabeled")) == baseline
+        assert fingerprint(build(OutputSpec(a=NumericArraySpec((3,))))) != baseline
+
     def test_callable_fingerprint_tracks_frozen_signature_declaration(self):
         def build(signature: inspect.Signature) -> Function:
             def identity(x):
@@ -1050,6 +1072,11 @@ class TestTermSpecFingerprints:
         assert self._fp(DistributionSpec(tau)) != self._fp(DistributionSpec(other))
         assert self._fp(FunctionSpec(InputSpec(tau.children), OutputSpec(result=tau))) != self._fp(
             FunctionSpec(InputSpec(tau.children), OutputSpec(result=other))
+        )
+
+    def test_a_function_type_keeps_its_fingerprint_when_its_output_is_renamed(self, tau):
+        assert self._fp(FunctionSpec(InputSpec(tau.children), OutputSpec(result=tau))) == self._fp(
+            FunctionSpec(InputSpec(tau.children), OutputSpec(renamed=tau))
         )
 
     def test_declared_kind_changes_the_fingerprint(self, tau):

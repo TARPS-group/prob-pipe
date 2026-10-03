@@ -18,6 +18,7 @@ import pytest
 from probpipe import (
     Function,
     Normal,
+    OutputSpec,
     Provenance,
     ReplayCompatibilityError,
     ReplayUnsupportedCallableError,
@@ -954,6 +955,34 @@ class TestReplayPreflight:
             replay_run(original.provenance),
         ):
             changed(value=candidate)
+
+    @pytest.mark.parametrize(
+        ("before", "after"),
+        [
+            ({"output_label": "a"}, {"output_label": "b"}),
+            ({"output_spec": OutputSpec(a=None)}, {"output_spec": OutputSpec(b=None)}),
+        ],
+        ids=["output-label", "declared-component"],
+    )
+    def test_a_renamed_output_replays_to_the_same_draws(self, before, after):
+        """A rename changes no value, so the replay reproduces the draws under the new names."""
+
+        def lifted(**options):
+            return Function(
+                label="replayable_identity",
+                fn=replayable_identity,
+                n_broadcast_samples=5,
+                **options,
+            )
+
+        law = Normal(loc=0.0, scale=1.0, label="value")
+        with workflow_run(seed=4):
+            original = lifted(**before)(value=law)
+        with replay_run(original.provenance):
+            replayed = lifted(**after)(value=law)
+
+        np.testing.assert_array_equal(_marginal_values(replayed), _marginal_values(original))
+        assert list(replayed.event_spec.components) == ["b"]
 
     def test_plan_drift_fails_before_distribution_sampling(self):
         workflow = Function(

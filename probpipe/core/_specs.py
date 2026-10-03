@@ -363,6 +363,17 @@ def _components_record(declaration: OutputSpec) -> RecordSpec:
     return RecordSpec(dict(declaration.components))
 
 
+def _unnamed_declaration(declaration: OutputSpec) -> tuple[str, tuple[TermSpec | None, ...]]:
+    """*declaration*'s packaging and its components' specs in order, without their names.
+
+    A function's fingerprint and its replay anchor record this form, so a
+    rename of the components of its output keeps both.
+    """
+    if declaration.exposes_record:
+        return ("exposed record", tuple(declaration.components.values()))
+    return ("whole term", (declaration.spec,))
+
+
 def _check_output_template(record: RecordSpec, template: RecordSpec, path: str) -> None:
     """Raise ``ValueError`` unless *record* conforms to a Function's output *template*.
 

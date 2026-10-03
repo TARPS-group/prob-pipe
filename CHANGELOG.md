@@ -598,6 +598,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A rename keeps a function's fingerprint and replays its calls.** A
+  function's fingerprint and its replay anchor record its code, its signature,
+  and the types of its declarations, without the names of its output's
+  components. Renaming the function, its output label, or a declared component,
+  as `OutputSpec(a=...)` to `OutputSpec(b=...)`, keeps the fingerprint, and
+  `replay_run` reproduces a recorded call's draws under the new names. A
+  declared rename made replay refuse with "the supplied Function callable
+  definition changed since recording". A call recorded before this change
+  replays only with a function that declares no output.
 - **Contributors install pre-commit as a uv tool.** The hooks are installed
   with `uv tool install pre-commit` and then `pre-commit install`, replacing
   `uvx pre-commit install`: its hook called an interpreter in the uv cache, so

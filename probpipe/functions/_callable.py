@@ -21,7 +21,7 @@ from typing import Any
 
 import numpy as np
 
-from ..core._specs import RecordSpec
+from ..core._specs import RecordSpec, _unnamed_declaration
 from ..core.constraints import Constraint
 from ..values._function_base import _CallableFunctionImplementation
 
@@ -205,7 +205,9 @@ def _signature_and_templates(function: Any, candidate: Any) -> dict[str, Any]:
         "parameters": parameters,
         "return_annotation": _canonical_value(signature.return_annotation),
         "input_spec": _canonical_value(function.input_spec),
-        "output_spec": _canonical_value(function.output_spec),
+        "output_spec": _canonical_value(
+            None if function.output_spec is None else _unnamed_declaration(function.output_spec)
+        ),
     }
 
 
