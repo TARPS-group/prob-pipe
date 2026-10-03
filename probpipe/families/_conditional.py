@@ -443,10 +443,10 @@ class PoissonFamily(GLMFamily):
 def _declared_sizes(event_spec: OutputSpec, response: NumericArraySpec) -> dict[str, int]:
     """The sizes the declared array type of *event_spec* fixes for the dimensions of *response*.
 
-    ``OutputSpec.with_spec`` checks a declared type against the response and
-    then replaces it, so the sizes it fixes are read here first. A type hole
-    fixes no size, and a declared type of another kind is left to
-    ``with_spec``, which refuses it.
+    The given slots ``X`` and ``beta`` share the response's dimensions, so the
+    sizes a declared type fixes are read here and substituted into them as well
+    as into the response. A type hole fixes no size, and a declared type of
+    another kind is left to ``OutputSpec.with_spec``, which refuses it.
 
     Raises
     ------
@@ -456,7 +456,7 @@ def _declared_sizes(event_spec: OutputSpec, response: NumericArraySpec) -> dict[
     sizes: dict[str, int] = {}
     if isinstance(event_spec.spec, NumericArraySpec):
         (component,) = event_spec.components
-        _unify_specs(event_spec.spec, response, sizes, f"Declared component {component!r}")
+        _unify_specs(event_spec.spec, response, sizes, component)
     return sizes
 
 

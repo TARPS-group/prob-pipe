@@ -186,6 +186,19 @@ class TestOutputSpecCompletion:
         with pytest.raises(ValueError, match="has dimension 3, expected 2"):
             OutputSpec(beta=NumericArraySpec((2,))).with_spec(NumericArraySpec((3,)))
 
+    def test_with_spec_names_the_node_that_does_not_unify_by_its_path(self):
+        with pytest.raises(ValueError, match=r"^beta has dimension 3"):
+            OutputSpec(beta=NumericArraySpec((2,))).with_spec(NumericArraySpec((3,)))
+        whole = OutputSpec(params=RecordSpec(a=NumericArraySpec((2,))))
+        with pytest.raises(ValueError, match=r"^params/a has dimension 3"):
+            whole.with_spec(RecordSpec(a=NumericArraySpec((3,))))
+        # An exposed record's fields are its components, so a path starts at a field.
+        exposed = OutputSpec(RecordSpec(a=NumericArraySpec((2,))))
+        with pytest.raises(ValueError, match=r"^a has dimension 3"):
+            exposed.with_spec(RecordSpec(a=NumericArraySpec((3,))))
+        with pytest.raises(ValueError, match=r"^fields \['b'\] do not match template fields"):
+            exposed.with_spec(RecordSpec(b=NumericArraySpec((2,))))
+
     def test_with_spec_keeps_an_exposed_record_exposed(self):
         produced = RecordSpec(a=NumericArraySpec(()), b=NumericArraySpec((2,)))
         declared = OutputSpec(RecordSpec(a=NumericArraySpec(()), b=NumericArraySpec((2,))))

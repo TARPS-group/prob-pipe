@@ -323,9 +323,9 @@ class OutputSpec:
                 f"got {type(spec).__name__}"
             )
         if self._term_spec is not None:
-            label = f"the exposed {kind}" if kind is not None else repr(self._component_name)
             bindings: dict[str, int] = {}
-            _unify_specs(self._term_spec, spec, bindings, f"Declared component {label}")
+            root = _root_path(self._component_name, kind)
+            _unify_specs(self._term_spec, spec, bindings, root)
             spec = _unification(self._term_spec, spec, bindings)
         return self._with_spec(spec)
 
@@ -392,6 +392,19 @@ class OutputSpec:
     def with_dim_names(self, **names: str) -> OutputSpec:
         """Rename dimensions while preserving component exposure and holes."""
         return self._with_spec(None if self.spec is None else self.spec.with_dim_names(**names))
+
+
+def _root_path(component: str | None, kind: str | None) -> str:
+    """The path a unification error names a declaration's root by.
+
+    A whole term's paths start at its *component*, and an exposed record's
+    fields are its components, so its root is the empty path. An exposed law or
+    batch has no path above its event's components, so its root is named by its
+    *kind*.
+    """
+    if component is not None:
+        return component
+    return "" if kind == "record" else f"the exposed {kind}"
 
 
 def _unification(declared: TermSpec, produced: TermSpec, bindings: Mapping[str, int]) -> TermSpec:

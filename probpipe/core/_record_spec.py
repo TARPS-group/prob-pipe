@@ -374,9 +374,9 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
                 f"got {type(value).__name__}"
             )
         if self._tree.keys() != children.keys():
+            fields = f"{path} fields" if path else "fields"
             raise ValueError(
-                f"{path} fields {sorted(children)} do not match template fields "
-                f"{sorted(self._tree)}"
+                f"{fields} {sorted(children)} do not match template fields {sorted(self._tree)}"
             )
         for name, spec in self._tree.items():
             child_path = f"{path}{_PATH_SEP}{name}" if path else name
@@ -386,9 +386,9 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
         if not isinstance(actual, RecordSpec):
             return False
         if self._tree.keys() != actual._tree.keys():
+            fields = f"{path} fields" if path else "fields"
             raise ValueError(
-                f"{path} fields {sorted(actual._tree)} do not match template fields "
-                f"{sorted(self._tree)}"
+                f"{fields} {sorted(actual._tree)} do not match template fields {sorted(self._tree)}"
             )
         for name, spec in self._tree.items():
             child_path = f"{path}{_PATH_SEP}{name}" if path else name
