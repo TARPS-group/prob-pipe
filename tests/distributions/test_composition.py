@@ -15,12 +15,14 @@ import re
 from collections.abc import Callable, Mapping
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from probpipe import (
     GaussianRandomFunction,
+    HalfNormal,
     LinearBasisFunction,
     MultivariateNormal,
     Normal,
@@ -35,6 +37,7 @@ from probpipe.distributions import (
     FactoredConditionalDistribution,
     FactoredDistribution,
     SupportsFactors,
+    conditional_distribution,
 )
 
 SCALAR = NumericArraySpec(())
@@ -236,6 +239,119 @@ class TestUnmetRule:
         pair = _kernel("k1", {"x": SCALAR}, "a") * _kernel("k2", {"x": SCALAR}, "b")
         assert isinstance(pair, FactoredConditionalDistribution)
         assert isinstance(pair * _law("p", "x"), FactoredDistribution)
+
+
+class TestOptionalSlots:
+    """An optional slot is met as a required one is; unmet, it takes its default."""
+
+    @staticmethod
+    def _scaled() -> ConditionalDistribution:
+        return conditional_distribution(
+            "lik", lambda mu, scale=2.0: Normal("y", mu, scale), given_spec={"mu": SCALAR}
+        )
+
+    def test_an_unmet_optional_slot_leaves_the_joint_unconditional(self):
+        joint = self._scaled() * Normal("mu", 0.0, 1.0)
+        assert isinstance(joint, FactoredDistribution)
+        expected = Normal("y", 0.0, 2.0)._log_prob(0.5) + Normal("mu", 0.0, 1.0)._log_prob(0.0)
+        np.testing.assert_allclose(joint._log_prob({"y": 0.5, "mu": 0.0}), expected, rtol=1e-6)
+
+    def test_a_factor_that_produces_an_optional_slot_meets_it(self):
+        prior = Normal("mu", 0.0, 1.0) * HalfNormal("scale", 1.0)
+        joint = self._scaled() * prior
+        assert list(joint.event_spec.components) == ["y", "mu", "scale"]
+        expected = (
+            Normal("y", 0.0, 3.0)._log_prob(0.5)
+            + Normal("mu", 0.0, 1.0)._log_prob(0.0)
+            + HalfNormal("scale", 1.0)._log_prob(3.0)
+        )
+        value = {"y": 0.5, "mu": 0.0, "scale": 3.0}
+        np.testing.assert_allclose(joint._log_prob(value), expected, rtol=1e-6)
+
+    def test_a_conditional_joint_keeps_its_unmet_optional_slots(self):
+        joint = self._scaled() * _law("other", "c")
+        assert isinstance(joint, FactoredConditionalDistribution)
+        assert joint.given_spec.required == ("mu",)
+        assert joint.given_spec.optional == {"scale"}
+
+    def test_a_slot_one_factor_requires_is_required(self):
+        joint = self._scaled() * _kernel("k2", {"scale": SCALAR}, "b")
+        assert set(joint.given_spec.required) == {"mu", "scale"}
+
+    def test_a_producer_to_the_left_of_an_optional_slot_raises(self):
+        with pytest.raises(ValueError, match="to its left"):
+            HalfNormal("scale", 1.0) * self._scaled()
+
+    def test_a_produced_component_whose_spec_does_not_unify_raises(self):
+        with pytest.raises(ValueError, match="'scale'"):
+            self._scaled() * (Normal("mu", 0.0, 1.0) * Normal("scale", jnp.ones(3), 1.0))
+
+    def test_the_joint_draws_the_slot_from_its_producer(self):
+        """A scale concentrated at 5 replaces the default of 2 in the draws of ``y``."""
+        joint = self._scaled() * (Normal("mu", 0.0, 1e-3) * Normal("scale", 5.0, 1e-3))
+        draws = joint._sample(jax.random.PRNGKey(0), (4000,))
+        np.testing.assert_allclose(float(jnp.std(draws["y"])), 5.0, rtol=0.05)
+
+    def test_the_joint_draws_an_unmet_slot_at_its_default(self):
+        joint = self._scaled() * Normal("mu", 0.0, 1e-3)
+        draws = joint._sample(jax.random.PRNGKey(0), (4000,))
+        np.testing.assert_allclose(float(jnp.std(draws["y"])), 2.0, rtol=0.05)
+
+    def test_a_later_operand_meets_an_optional_slot_through_flattening(self):
+        """``(k * mu) * scale`` is the joint ``k * (mu * scale)``, with the slot met."""
+        left = (self._scaled() * Normal("mu", 0.0, 1.0)) * HalfNormal("scale", 1.0)
+        right = self._scaled() * (Normal("mu", 0.0, 1.0) * HalfNormal("scale", 1.0))
+        value = {"y": 0.5, "mu": 0.0, "scale": 3.0}
+        assert list(left.event_spec.components) == ["y", "mu", "scale"]
+        np.testing.assert_allclose(left._log_prob(value), right._log_prob(value), rtol=1e-6)
+
+    def test_binding_the_required_slots_of_a_conditional_joint_takes_the_defaults(self):
+        joint = self._scaled() * Normal("c", 0.0, 1.0)
+        law = joint._condition_on({"mu": 0.0})
+        assert isinstance(law, FactoredDistribution)
+        np.testing.assert_allclose(
+            law._log_prob({"y": 0.5, "c": 0.0}),
+            Normal("y", 0.0, 2.0)._log_prob(0.5) + Normal("c", 0.0, 1.0)._log_prob(0.0),
+            rtol=1e-6,
+        )
+        bound = joint._condition_on({"mu": 0.0, "scale": 3.0})
+        np.testing.assert_allclose(
+            bound._log_prob({"y": 0.5, "c": 0.0}),
+            Normal("y", 0.0, 3.0)._log_prob(0.5) + Normal("c", 0.0, 1.0)._log_prob(0.0),
+            rtol=1e-6,
+        )
+
+    def test_binding_only_an_optional_slot_of_a_conditional_joint_curries_it(self):
+        joint = self._scaled() * Normal("c", 0.0, 1.0)
+        curried = joint._condition_on({"scale": 3.0})
+        assert isinstance(curried, FactoredConditionalDistribution)
+        assert curried.given_spec.required == ("mu",)
+
+    def test_a_conditional_joint_requires_its_required_slots(self):
+        joint = self._scaled() * Normal("c", 0.0, 1.0)
+        with pytest.raises(KeyError, match="omits the required slots"):
+            joint._conditional_log_prob({"scale": 3.0}, {"y": 0.5, "c": 0.0})
+
+    def test_a_slot_two_factors_hold_optional_is_optional_and_feeds_both(self):
+        first = self._scaled()
+        second = conditional_distribution(
+            "lik2", lambda nu, scale=2.0: Normal("z", nu, scale), given_spec={"nu": SCALAR}
+        )
+        joint = first * second
+        assert joint.given_spec.optional == {"scale"}
+        value = {"y": 0.5, "z": -0.5}
+        np.testing.assert_allclose(
+            joint._conditional_log_prob({"mu": 0.0, "nu": 0.0, "scale": 3.0}, value),
+            Normal("y", 0.0, 3.0)._log_prob(0.5) + Normal("z", 0.0, 3.0)._log_prob(-0.5),
+            rtol=1e-6,
+        )
+
+    def test_an_edge_free_joint_draws_a_kernel_at_its_defaults(self):
+        kernel = conditional_distribution("lik0", lambda scale=2.0: Normal("y", 0.0, scale))
+        joint = kernel * Normal("c", 0.0, 1.0)
+        assert isinstance(joint, FactoredDistribution)
+        draws = joint._sample(jax.random.PRNGKey(0), (4000,))
+        np.testing.assert_allclose(float(jnp.std(draws["y"])), 2.0, rtol=0.05)
 
 
 # -- Same-named unmet givens ------------------------------------------------------

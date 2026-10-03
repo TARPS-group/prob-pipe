@@ -639,6 +639,40 @@ class TestDistributionSchemaAvailability:
 
 
 class TestInputSpec:
+    def test_optional_slots_are_part_of_the_declaration(self):
+        array = NumericArraySpec(())
+        inputs = InputSpec(a=array, b=array).with_optional("b")
+        assert inputs.required == ("a",)
+        assert inputs.optional == {"b"}
+        assert inputs != InputSpec(a=array, b=array)
+        assert hash(inputs) != hash(InputSpec(a=array, b=array))
+        assert repr(inputs).endswith(".with_optional('b')")
+
+    def test_an_optional_slot_stays_optional(self):
+        inputs = InputSpec(a=NumericArraySpec(("n",)), b=NumericArraySpec(())).with_optional("b")
+        assert inputs.with_dim_sizes(n=2).optional == {"b"}
+        assert inputs.with_dim_names(n="m").optional == {"b"}
+        assert inputs.bind_dims_from_value({"a": np.ones(2), "b": 1.0}).optional == {"b"}
+        assert inputs.bind_dims_from_spec(inputs.with_dim_sizes(n=2)).optional == {"b"}
+        assert inputs.without("a").optional == {"b"}
+        assert inputs.without("b").optional == frozenset()
+
+    def test_marking_slots_optional_accumulates(self):
+        array = NumericArraySpec(())
+        inputs = InputSpec(a=array, b=array, c=array).with_optional("a").with_optional("c")
+        assert inputs.optional == {"a", "c"}
+        assert inputs.required == ("b",)
+
+    def test_an_input_spec_with_optional_slots_pickles(self):
+        import pickle
+
+        inputs = InputSpec(a=NumericArraySpec(()), b=NumericArraySpec(())).with_optional("b")
+        assert pickle.loads(pickle.dumps(inputs)) == inputs
+
+    def test_marking_an_unknown_slot_optional_raises(self):
+        with pytest.raises(KeyError, match="'c'"):
+            InputSpec(a=NumericArraySpec(())).with_optional("c")
+
     def test_binding_values_requires_a_mapping(self):
         with pytest.raises(TypeError, match=r"InputSpec\.bind_dims_from_value expects a mapping"):
             InputSpec(x=OpaqueSpec()).bind_dims_from_value(None)

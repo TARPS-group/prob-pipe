@@ -75,7 +75,7 @@ from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
 from ..core._repr import format_names, format_value, grouped_label
 from ..core._spec_base import NumericSpec, OpaqueSpec, TermSpec, _full_array_shape_or_none
-from ..core._specs import InputSpec, OutputSpec, _components_record
+from ..core._specs import OutputSpec, _components_record
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
@@ -98,6 +98,7 @@ from ..distributions._factored import (
     SupportsFactors,
     _bound_factor,
     _joined_label,
+    _law_at_defaults,
 )
 from ..distributions._views import _RenamedDistribution
 from ..functions._call import checking
@@ -1038,7 +1039,7 @@ def _slice(call: BoundCall) -> Any:
             factor = _bound_factor(factor, bound, options)
         factors.append(factor)
     law = (
-        factors[0]
+        _law_at_defaults(factors[0], ())
         if len(factors) == 1
         else FactoredDistribution(_joined_label(f.label for f in factors), factors)
     )
@@ -1346,10 +1347,10 @@ def _condition_on_result(d: TermSpec, given: TermSpec) -> OutputSpec | None:
     if isinstance(d, ConditionalDistributionSpec) and isinstance(given, RecordSpec):
         keys = tuple(given.children)
         if keys and all(key in d.given_spec for key in keys):
-            left = {name: spec for name, spec in d.given_spec.items() if name not in keys}
-            if not left:
+            left = d.given_spec.without(*keys)
+            if not left.required:
                 return OutputSpec(DistributionSpec(d.event_spec))
-            return OutputSpec(ConditionalDistributionSpec(InputSpec(left), d.event_spec))
+            return OutputSpec(ConditionalDistributionSpec(left, d.event_spec))
     return None
 
 

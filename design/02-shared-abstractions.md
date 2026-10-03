@@ -54,10 +54,16 @@ One `is_valid` contract across the kinds keeps validation uniform (`C1 – Unifo
 
 ### Contract
 
-An `InputSpec` is a flat mapping from names to term specs: the named input slots of a map-like kind. An `OutputSpec` declares one returned term by its named components, together with that term's packaging:
+An `InputSpec` is a flat mapping from names to term specs: the named input slots of a map-like kind. A slot is required or optional: a binding may omit an optional slot, and the kind then uses its default. The optional slots are part of the declaration, so they take part in equality. An `OutputSpec` declares one returned term by its named components, together with that term's packaging:
 
 ```python
-class InputSpec(Mapping[str, TermSpec]): ...   # named slots; keys are Python identifiers
+class InputSpec(Mapping[str, TermSpec]):   # named slots; keys are Python identifiers
+    @property
+    def required(self) -> tuple[str, ...]: ...   # the slots a binding supplies, in slot order
+    @property
+    def optional(self) -> frozenset[str]: ...    # the slots a binding may omit
+    def with_optional(self, *names: str) -> InputSpec: ...   # these slots optional as well
+    def without(self, *names: str) -> InputSpec: ...         # the other slots, optional ones kept optional
 
 class OutputSpec:
     @overload

@@ -552,6 +552,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A default argument of a kernel's function is an optional slot.**
+  `conditional_distribution` makes a parameter with a default an optional given
+  slot, so a constant of the model needs no closure. Binding the required slots
+  calls the function with its default, and the default's value declares the
+  slot when `given_spec` and the annotation do not. In a joint, a factor that
+  produces a component of the slot's name meets it, so one kernel serves the
+  model with the constant and the model with a prior on it:
+  `counts * prior` uses `n0=50.0`, and `counts * (prior * LogNormal("n0", ...))`
+  infers `n0`. An unmet optional slot leaves the joint unconditional.
+  `InputSpec` records the optional slots, as `InputSpec.optional`,
+  `InputSpec.required`, `with_optional`, and `without`.
 - **Completing an `OutputSpec`.** A producer completes a declaration with the
   spec of the term it returns.
   - `with_spec(spec)` returns the declaration with its type set to `spec`. It

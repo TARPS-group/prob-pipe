@@ -9,7 +9,16 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import ApplicabilityError, MultivariateNormal, NumericRecordBatch, Record, RecordSpec
+from probpipe import (
+    ApplicabilityError,
+    HalfNormal,
+    MultivariateNormal,
+    Normal,
+    NumericRecordBatch,
+    Record,
+    RecordSpec,
+    conditional_distribution,
+)
 from probpipe.core._dispatch import Feasibility, ResolutionError, UnaryDispatchRegistry
 from probpipe.core._specs import InputSpec, OutputSpec
 from probpipe.distributions._batches import DistributionBatch
@@ -429,6 +438,44 @@ class TestTheConditionedDeclaration:
     ):
         joint = Kernel("y", ("mu",)) * Gaussian("mu")
         assert condition_on.check(joint, {"y": 0.3}).result is None
+
+
+class TestOptionalSlots:
+    """A kernel's optional slot takes its default under each route of ``condition_on``."""
+
+    @staticmethod
+    def _scaled() -> ConditionalDistribution:
+        return conditional_distribution(
+            "lik", lambda mu, scale=2.0: Normal("y", mu, scale), given_spec={"mu": REAL}
+        )
+
+    def test_binding_the_required_slots_declares_the_kernel_law(self):
+        kernel = self._scaled()
+        result = condition_on.check(kernel, {"mu": 1.5}).result
+        assert result == OutputSpec(DistributionSpec(kernel.event_spec))
+
+    def test_binding_only_an_optional_slot_declares_a_kernel(self):
+        kernel = self._scaled()
+        result = condition_on.check(kernel, {"scale": 3.0}).result
+        assert result == OutputSpec(
+            ConditionalDistributionSpec(InputSpec(mu=REAL), kernel.event_spec)
+        )
+
+    def test_slicing_a_joint_at_a_required_slot_leaves_the_default(self):
+        law = condition_on(self._scaled() * Normal("mu", 0.0, 1.0), {"mu": 0.0})
+        assert isinstance(law, Normal)
+        np.testing.assert_allclose(law._variance(), 4.0)
+
+    def test_slicing_off_every_producer_leaves_a_kernel_at_its_defaults(self):
+        kernel = conditional_distribution("lik0", lambda scale=2.0: Normal("y", 0.0, scale))
+        law = condition_on(kernel * Normal("mu", 0.0, 1.0), {"mu": 0.0})
+        assert isinstance(law, Normal)
+        np.testing.assert_allclose(law._variance(), 4.0)
+
+    def test_slicing_at_the_component_that_meets_an_optional_slot_binds_it(self):
+        joint = self._scaled() * (Normal("mu", 0.0, 1.0) * HalfNormal("scale", 1.0))
+        law = condition_on(joint, {"mu": 0.0, "scale": 3.0})
+        np.testing.assert_allclose(law._variance(), 9.0)
 
 
 class TestConditioningCapabilities:

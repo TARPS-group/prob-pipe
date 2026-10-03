@@ -90,6 +90,35 @@ class TestMarginal:
         assert marginal(Marginalizing("law"), "a").label == "law"
 
 
+class TestOptionalSlots:
+    """A factor whose optional slots no factor produces is closed, at its defaults."""
+
+    def test_the_marginal_of_such_a_factor_is_its_law_at_the_defaults(self):
+        from probpipe import Normal, conditional_distribution
+
+        kernel = conditional_distribution("lik", lambda scale=2.0: Normal("y", 0.0, scale))
+        law = marginal(kernel * Normal("mu", 0.0, 1.0), "y")
+        assert isinstance(law, Distribution)
+        assert law.label == "lik"
+        assert float(law._variance()) == pytest.approx(4.0)
+
+    def test_a_renamed_joint_keeps_the_marginal_at_the_defaults(self):
+        from probpipe import Normal, conditional_distribution
+
+        kernel = conditional_distribution("lik", lambda scale=2.0: Normal("y", 0.0, scale))
+        joint = (kernel * Normal("mu", 0.0, 1.0)).with_path_names({"y": "obs"})
+        law = marginal(joint, "obs")
+        assert isinstance(law, Distribution)
+        assert list(law.event_spec.components) == ["obs"]
+
+    def test_a_factor_whose_optional_slot_is_produced_is_not_closed(self):
+        from probpipe import HalfNormal, Normal, conditional_distribution
+
+        kernel = conditional_distribution("lik", lambda scale=2.0: Normal("y", 0.0, scale))
+        with pytest.raises(ResolutionError, match="integrates out the fields \\['scale'\\]"):
+            marginal(kernel * HalfNormal("scale", 1.0), "y")
+
+
 class TestFactor:
     def test_the_factor_carries_its_own_declaration(self):
         joint = Kernel("y", ("beta",)) * Gaussian("beta", 2.0)

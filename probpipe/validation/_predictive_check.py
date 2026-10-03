@@ -237,7 +237,7 @@ def _predictive_joint(
     if isinstance(joint, FactoredConditionalDistribution):
         raise ValueError(
             f"{operation}: the law {law.label!r} does not produce the given slots "
-            f"{sorted(joint.given_spec)} of the kernel {kernel.label!r}"
+            f"{sorted(joint.given_spec.required)} of the kernel {kernel.label!r}"
         )
     return joint
 

@@ -51,6 +51,7 @@ from ..distributions._factored import (
     _components_of,
     _event_of,
     _factor_graph,
+    _law_at_defaults,
 )
 from ..families._backend import TFPDistribution
 from ..operations._condition import _unnormalized_conditional, _UnnormalizedConditional
@@ -461,11 +462,15 @@ def model_factors(target: Any) -> ModelFactors | None:
             return None
     if not prior_factors or not likelihood_factors:
         return None
-    prior = _joint_of(joint.label, prior_factors)
+    prior = _law_at_defaults(_joint_of(joint.label, prior_factors), joint.event_spec.components)
     likelihood = _joint_of(joint.label, likelihood_factors)
     if not isinstance(prior, Distribution):
         return None
-    slots = set(likelihood.given_spec) if isinstance(likelihood, ConditionalDistribution) else set()
+    slots = (
+        set(likelihood.given_spec.required)
+        if isinstance(likelihood, ConditionalDistribution)
+        else set()
+    )
     if not slots <= set(prior.event_spec.components):
         return None
     children = dict(given.children)
@@ -477,11 +482,14 @@ def model_factors(target: Any) -> ModelFactors | None:
 
 
 def parameter_given(factors: ModelFactors, draw: Any) -> dict[str, Any]:
-    """The likelihood's given values at *draw*, a draw of the prior."""
+    """The likelihood's given values at *draw*, a draw of the prior.
+
+    An optional slot that the prior does not produce takes its default.
+    """
     if not isinstance(factors.likelihood, ConditionalDistribution):
         return {}
     components = _components_of(factors.prior.event_spec, draw)
-    return {slot: components[slot] for slot in factors.likelihood.given_spec}
+    return {slot: components[slot] for slot in factors.likelihood.given_spec if slot in components}
 
 
 def likelihood_flat(factors: ModelFactors) -> Callable[[Array], Array]:

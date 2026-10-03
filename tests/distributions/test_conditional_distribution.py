@@ -24,6 +24,7 @@ from probpipe import (
     InputSpec,
     Normal,
     NumericArraySpec,
+    OpaqueSpec,
     OutputSpec,
     Record,
     RecordSpec,
@@ -250,6 +251,171 @@ class TestEvaluation:
         curried = pickle.loads(pickle.dumps(condition_on(kernel, {"mu": 1.0})))
         assert list(curried.given_spec) == ["tau"]
         np.testing.assert_allclose(condition_on(curried, {"tau": 2.0})._mean(), 1.0)
+
+
+#: An array default, which declares its slot's shape.
+_OFFSETS = jnp.zeros(3)
+
+
+def _scaled(mu: Any, scale: Any = 2.0) -> Distribution:
+    return Normal("y", mu, scale)
+
+
+class TestOptionalSlots:
+    """A parameter with a default is an optional slot, which takes its default when left unbound."""
+
+    def test_a_parameter_with_a_default_is_an_optional_slot(self):
+        kernel = conditional_distribution("y", _scaled, given_spec={"mu": REAL})
+        assert kernel.given_spec.required == ("mu",)
+        assert kernel.given_spec.optional == {"scale"}
+        assert kernel.given_spec["scale"] == NumericArraySpec(())
+
+    def test_given_spec_declares_an_optional_slot(self):
+        kernel = conditional_distribution("y", _scaled, given_spec={"mu": REAL, "scale": POSITIVE})
+        assert kernel.given_spec["scale"] == POSITIVE
+        assert kernel.given_spec.optional == {"scale"}
+
+    def test_binding_the_required_slots_takes_the_default(self):
+        kernel = conditional_distribution("y", _scaled, given_spec={"mu": REAL})
+        law = condition_on(kernel, {"mu": 1.0})
+        assert isinstance(law, Normal)
+        np.testing.assert_allclose(law._variance(), 4.0)
+
+    def test_a_bound_optional_slot_replaces_the_default(self):
+        kernel = conditional_distribution("y", _scaled, given_spec={"mu": REAL})
+        np.testing.assert_allclose(condition_on(kernel, {"mu": 1.0, "scale": 3.0})._variance(), 9.0)
+
+    def test_binding_an_optional_slot_alone_curries_the_kernel(self):
+        kernel = conditional_distribution("y", _scaled, given_spec={"mu": REAL})
+        curried = condition_on(kernel, {"scale": 3.0})
+        assert curried.given_spec == InputSpec(mu=REAL)
+        np.testing.assert_allclose(condition_on(curried, {"mu": 0.0})._variance(), 9.0)
+
+    def test_construction_reads_the_law_at_the_defaults(self):
+        """A default that fixes a shape reaches the function as its value."""
+        kernel = conditional_distribution(
+            "y", lambda mu, n=3: Normal("y", mu * jnp.ones(n), 1.0), given_spec={"mu": REAL}
+        )
+        assert kernel.event_spec.components["y"].shape == (3,)
+
+    def test_a_kernel_with_an_optional_slot_pickles(self):
+        kernel = conditional_distribution("y", _scaled, given_spec={"mu": REAL})
+        restored = pickle.loads(pickle.dumps(kernel))
+        assert restored.given_spec == kernel.given_spec
+        np.testing.assert_allclose(condition_on(restored, {"mu": 1.0})._variance(), 4.0)
+        curried = pickle.loads(pickle.dumps(condition_on(kernel, {"scale": 3.0})))
+        np.testing.assert_allclose(condition_on(curried, {"mu": 1.0})._variance(), 9.0)
+
+    def test_an_array_default_declares_its_shape(self):
+        kernel = conditional_distribution(
+            "y", lambda mu, loc=_OFFSETS: Normal("y", mu + loc, 1.0), given_spec={"mu": REAL}
+        )
+        assert kernel.given_spec["loc"].shape == (3,)
+        assert kernel.event_spec.components["y"].shape == (3,)
+
+    def test_an_annotation_declares_an_optional_slot(self):
+        def law(mu: REAL, scale: POSITIVE = 2.0) -> Distribution:
+            return Normal("y", mu, scale)
+
+        kernel = conditional_distribution("y", law)
+        assert kernel.given_spec == InputSpec(mu=REAL, scale=POSITIVE).with_optional("scale")
+
+    def test_a_keyword_only_default_is_an_optional_slot(self):
+        kernel = conditional_distribution(
+            "y", lambda mu, *, scale=2.0: Normal("y", mu, scale), given_spec={"mu": REAL}
+        )
+        assert kernel.given_spec.optional == {"scale"}
+        np.testing.assert_allclose(condition_on(kernel, {"mu": 0.0, "scale": 3.0})._variance(), 9.0)
+
+    def test_a_default_that_is_no_array_is_an_opaque_slot(self):
+        def law(mu: Any, family: Any = "narrow") -> Distribution:
+            return Normal("y", mu, 1.0 if family == "narrow" else 2.0)
+
+        kernel = conditional_distribution("y", law, given_spec={"mu": REAL})
+        assert kernel.given_spec["family"] == OpaqueSpec(str)
+        np.testing.assert_allclose(condition_on(kernel, {"mu": 0.0})._variance(), 1.0)
+        np.testing.assert_allclose(
+            condition_on(kernel, {"mu": 0.0, "family": "wide"})._variance(), 4.0
+        )
+
+    def test_a_none_default_takes_a_declared_spec_to_be_met(self):
+        """``None`` declares a slot that only ``None`` conforms to, so a prior meets it once declared."""
+
+        def law(mu: Any, shift: Any = None) -> Distribution:
+            return Normal("y", mu + (0.0 if shift is None else shift), 1.0)
+
+        prior = Normal("mu", 0.0, 1.0) * Normal("shift", 0.0, 1.0)
+        undeclared = conditional_distribution("y", law, given_spec={"mu": REAL})
+        assert undeclared.given_spec["shift"] == OpaqueSpec(type(None))
+        with pytest.raises(ValueError, match="'shift'"):
+            undeclared * prior
+        declared = conditional_distribution("y", law, given_spec={"mu": REAL, "shift": REAL})
+        assert declared.given_spec.optional == {"shift"}
+        assert list((declared * prior).event_spec.components) == ["y", "mu", "shift"]
+
+    def test_a_kernel_whose_slots_are_all_optional_binds_at_its_defaults(self):
+        kernel = conditional_distribution("y", lambda mu=1.0: Normal("y", mu, 1.0))
+        assert kernel.given_spec.required == ()
+        np.testing.assert_allclose(kernel._condition_on({})._mean(), 1.0)
+        np.testing.assert_allclose(condition_on(kernel, {"mu": 3.0})._mean(), 3.0)
+
+    def test_binding_a_required_slot_curries_over_the_rest_and_keeps_them_optional(self):
+        kernel = conditional_distribution(
+            "y",
+            lambda mu, tau, scale=1.0: Normal("y", mu, tau * scale),
+            given_spec={"mu": REAL, "tau": POSITIVE},
+        )
+        curried = condition_on(kernel, {"mu": 0.0})
+        expected = InputSpec(tau=POSITIVE, scale=NumericArraySpec(())).with_optional("scale")
+        assert curried.given_spec == expected
+
+    def test_a_value_that_does_not_conform_to_an_optional_slot_raises(self):
+        kernel = conditional_distribution("y", _scaled, given_spec={"mu": REAL})
+        with pytest.raises(ValueError):
+            kernel._condition_on({"mu": 0.0, "scale": jnp.ones(3)})
+
+    def test_the_conditional_density_and_draws_take_the_default(self):
+        kernel = conditional_distribution("y", _scaled, given_spec={"mu": REAL})
+        np.testing.assert_allclose(
+            kernel._conditional_log_prob({"mu": 1.0}, 0.5),
+            Normal("y", 1.0, 2.0)._log_prob(0.5),
+            rtol=1e-6,
+        )
+        draws = kernel._conditional_sample({"mu": 0.0}, jax.random.PRNGKey(0), (4000,))
+        np.testing.assert_allclose(float(jnp.std(draws)), 2.0, rtol=0.05)
+
+    def test_a_renamed_optional_slot_stays_optional(self):
+        kernel = conditional_distribution("y", _scaled, given_spec={"mu": REAL})
+        renamed = kernel.with_path_names({"scale": "sigma"})
+        assert renamed.given_spec.optional == {"sigma"}
+        np.testing.assert_allclose(condition_on(renamed, {"mu": 0.0})._variance(), 4.0)
+        np.testing.assert_allclose(
+            condition_on(renamed, {"mu": 0.0, "sigma": 3.0})._variance(), 9.0
+        )
+        assert kernel.with_path_names({"mu": "m"}).given_spec.optional == {"scale"}
+
+    def test_grouping_an_optional_slot_makes_it_required(self):
+        kernel = conditional_distribution("y", _scaled, given_spec={"mu": REAL})
+        grouped = kernel.with_path_names({"mu": "pars/mu", "scale": "pars/scale"})
+        assert grouped.given_spec.required == ("pars",)
+        assert grouped.given_spec.optional == frozenset()
+
+    def test_the_posterior_fits_the_slots_a_prior_produces(self):
+        """With the default scale the model is conjugate, so NUTS meets its posterior mean."""
+        kernel = conditional_distribution(
+            "y", lambda mu, scale=2.0: Normal("y", mu * jnp.ones(5), scale), given_spec={"mu": REAL}
+        )
+        y = jnp.array([1.0, 2.0, 0.5, 1.5, 2.5])
+        budget = {"num_results": 500, "num_warmup": 500, "num_chains": 2}
+        with workflow_run(seed=0):
+            posterior = condition_on.with_options(method="blackjax_nuts", method_options=budget)(
+                kernel * Normal("mu", 0.0, 1.0), {"y": y}
+            )
+        assert list(posterior.event_spec.components) == ["mu"]
+        # Precision 1 + 5 / 4, so the mean is (sum(y) / 4) / 2.25.
+        expected = float(jnp.sum(y)) / 4.0 / 2.25
+        draws = np.asarray(sample(posterior, sample_shape=(2000,)))
+        np.testing.assert_allclose(draws.mean(), expected, atol=0.1)
 
 
 class TestTheForms:

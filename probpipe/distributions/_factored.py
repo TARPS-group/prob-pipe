@@ -11,7 +11,7 @@ Provides:
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, Self, runtime_checkable
 
@@ -241,7 +241,10 @@ def _factor_graph(
     component is produced once. A matched component's spec must unify with the
     consuming slot's, and same-named unmet givens unify into one slot, all in one
     dimension scope, starting from *scope*, whose bindings are applied to the
-    factors and recorded with the graph.
+    factors and recorded with the graph. An optional slot is met as a required
+    one is, and unmet, it takes its default. The graph records the unmet givens
+    only when a required one is among them, and an unmet slot is optional when
+    every factor that names it holds it optional.
 
     Raises
     ------
@@ -274,6 +277,7 @@ def _factor_graph(
             component_specs[component] = spec
     edges: list[tuple[int, int, str]] = []
     unmet: dict[str, TermSpec] = {}
+    required: set[str] = set()
     for index, factor in enumerate(factors):
         given = _given_of(factor)
         if given is None:
@@ -281,6 +285,8 @@ def _factor_graph(
         for slot, slot_spec in given.items():
             producer = producers.get(slot)
             if producer is None:
+                if slot not in given.optional:
+                    required.add(slot)
                 if slot in unmet:
                     _unify_either_way(unmet[slot], slot_spec, bindings, f"the given {slot!r}")
                     if isinstance(unmet[slot], OpaqueSpec) and isinstance(slot_spec, OpaqueSpec):
@@ -317,7 +323,7 @@ def _factor_graph(
         factors=factors,
         producers=producers,
         edges=tuple(edges),
-        unmet=InputSpec(unmet) if unmet else None,
+        unmet=InputSpec(unmet).with_optional(*(set(unmet) - required)) if required else None,
         event_spec=event_spec,
         scope=bindings,
     )
@@ -420,17 +426,17 @@ def _given_values(joint: Any, given: Record | Mapping[str, Any]) -> dict[str, An
     Raises
     ------
     KeyError
-        If *given* names a slot the joint does not have, or omits one it has,
-        since a fused conditional path binds every given slot.
+        If *given* names a slot the joint does not have, or omits a required one,
+        since a fused conditional path binds every required slot.
     """
     top = given.children if hasattr(given, "children") else given
     values = dict(top.items())
     unknown = set(values) - set(joint.given_spec)
     if unknown:
         raise KeyError(f"{sorted(unknown)} are not given slots of {joint.label!r}")
-    missing = [slot for slot in joint.given_spec if slot not in values]
+    missing = [slot for slot in joint.given_spec.required if slot not in values]
     if missing:
-        raise KeyError(f"the given of {joint.label!r} omits the given slots {missing}")
+        raise KeyError(f"the given of {joint.label!r} omits the required slots {missing}")
     return values
 
 
@@ -546,6 +552,35 @@ def _ancestral_sample(
     return {component: drawn[component] for component in graph.event_spec.components}
 
 
+def _law_at_defaults(factor: Factor, produced: Collection[str]) -> Factor:
+    """*factor*, or its law at its defaults when it is a kernel none of whose slots is required or in *produced*.
+
+    A joint whose factors produce none of such a kernel's slots holds them at
+    their defaults, so the kernel standing alone is that law.
+    """
+    if (
+        isinstance(factor, ConditionalDistribution)
+        and not factor.given_spec.required
+        and not set(factor.given_spec) & set(produced)
+    ):
+        return factor._condition_on({})
+    return factor
+
+
+def _factor_given(
+    factor: ConditionalDistribution, values: Mapping[str, Any], fixed: Mapping[str, Any]
+) -> dict[str, Any]:
+    """The value of each slot of *factor*: a component's in *values*, else an unmet given's in *fixed*.
+
+    An optional slot that neither sets is left out, so the factor takes its default.
+    """
+    return {
+        slot: values[slot] if slot in values else fixed[slot]
+        for slot in factor.given_spec
+        if slot in values or slot in fixed or slot not in factor.given_spec.optional
+    }
+
+
 def _conditional_draw(
     factor: ConditionalDistribution,
     drawn: Mapping[str, Any],
@@ -561,7 +596,7 @@ def _conditional_draw(
     inner = {slot: drawn[slot] for slot in factor.given_spec if slot in drawn}
 
     def given(values: Mapping[str, Any]) -> dict[str, Any]:
-        return {slot: values[slot] if slot in values else fixed[slot] for slot in factor.given_spec}
+        return _factor_given(factor, values, fixed)
 
     if not inner or not sample_shape:
         return factor._conditional_sample(given(inner), key, sample_shape)
@@ -604,7 +639,7 @@ def _conditional_score(
     inner = {slot: components[slot] for slot in factor.given_spec if slot in graph.producers}
 
     def given(values: Mapping[str, Any]) -> dict[str, Any]:
-        return {slot: values[slot] if slot in values else fixed[slot] for slot in factor.given_spec}
+        return _factor_given(factor, values, fixed)
 
     density = getattr(factor, method)
     batch = _batch_axes(factor, inner, event)
@@ -633,7 +668,7 @@ def _factor_results(
     """
     for factor in graph.factors:
         if isinstance(factor, ConditionalDistribution):
-            given = {slot: fixed[slot] for slot in factor.given_spec}
+            given = _factor_given(factor, {}, fixed)
             yield factor, getattr(factor, f"_conditional{method}")(given, *arguments)
         else:
             yield factor, getattr(factor, method)(*arguments)
@@ -1094,7 +1129,7 @@ def _joint_conditional_sample(
     Raises
     ------
     KeyError
-        If *given* names a slot the joint does not have, or omits one it has.
+        If *given* names a slot the joint does not have, or omits a required one.
     """
     return _ancestral_sample(self._graph, _given_values(self, given), key, tuple(sample_shape))
 
@@ -1108,7 +1143,7 @@ def _joint_conditional_log_prob(self: Any, given: Record | Mapping[str, Any], va
     Raises
     ------
     KeyError
-        If *given* names a slot the joint does not have, or omits one it has.
+        If *given* names a slot the joint does not have, or omits a required one.
     """
     return _score(self._graph, _given_values(self, given), value, "_log_prob")
 
@@ -1121,7 +1156,7 @@ def _joint_conditional_unnormalized_log_prob(
     Raises
     ------
     KeyError
-        If *given* names a slot the joint does not have, or omits one it has.
+        If *given* names a slot the joint does not have, or omits a required one.
     """
     return _score(self._graph, _given_values(self, given), value, "_unnormalized_log_prob")
 
@@ -1132,7 +1167,7 @@ def _joint_conditional_mean(self: Any, given: Record | Mapping[str, Any]) -> dic
     Raises
     ------
     KeyError
-        If *given* names a slot the joint does not have, or omits one it has.
+        If *given* names a slot the joint does not have, or omits a required one.
     """
     return _componentwise(self._graph, _given_values(self, given), "_mean")
 
@@ -1143,7 +1178,7 @@ def _joint_conditional_variance(self: Any, given: Record | Mapping[str, Any]) ->
     Raises
     ------
     KeyError
-        If *given* names a slot the joint does not have, or omits one it has.
+        If *given* names a slot the joint does not have, or omits a required one.
     """
     return _componentwise(self._graph, _given_values(self, given), "_variance")
 
@@ -1154,7 +1189,7 @@ def _joint_conditional_cov(self: Any, given: Record | Mapping[str, Any]) -> Dens
     Raises
     ------
     KeyError
-        If *given* names a slot the joint does not have, or omits one it has.
+        If *given* names a slot the joint does not have, or omits a required one.
     """
     return _block_diagonal(self._graph, _given_values(self, given))
 
@@ -1167,7 +1202,7 @@ def _joint_conditional_quantile(
     Raises
     ------
     KeyError
-        If *given* names a slot the joint does not have, or omits one it has.
+        If *given* names a slot the joint does not have, or omits a required one.
     """
     return _componentwise(self._graph, _given_values(self, given), "_quantile", q)
 
@@ -1229,7 +1264,7 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
         else:
             kept.append(factor)
     if len(kept) == 1 and (projection or kept[0].event_spec.exposes_record):
-        (marginal,) = kept
+        marginal = _law_at_defaults(kept[0], ())
         marginal = marginal if marginal.label == label else marginal.with_label(label)
     else:
         marginal = FactoredDistribution(label, kept)
@@ -1782,7 +1817,7 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
                 if bound:
                     factor = _bound_factor(factor, bound, options)
             factors.append(factor)
-        if set(values) == set(self.given_spec):
+        if set(self.given_spec.required) <= set(values):
             return FactoredDistribution(self.label, factors, **_packaging(self))
         return FactoredConditionalDistribution(self.label, factors, **_packaging(self))
 
@@ -1796,13 +1831,14 @@ def _bound_factor(
     ------
     ValueError
         If the primitive returns a law or kernel whose event declaration, or whose
-        remaining given slots, differ from the factor's.
+        remaining given slots, differ from the factor's. Once the required slots
+        are bound, the result is a law.
     """
     result = factor._condition_on(bound, **options)
-    remaining = {slot: spec for slot, spec in factor.given_spec.items() if slot not in bound}
+    remaining = factor.given_spec.without(*bound)
     expected = (
         ConditionalDistributionSpec(remaining, factor.event_spec)
-        if remaining
+        if remaining.required
         else DistributionSpec(factor.event_spec)
     )
     if not expected.is_valid(result):

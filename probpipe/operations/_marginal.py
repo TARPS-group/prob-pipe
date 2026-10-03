@@ -92,9 +92,17 @@ def _closed_factors(d: Any, components: tuple[Any, ...]) -> list[Any] | None:
     produced = {component for part in selected for component in part.event_spec.components}
     if produced != wanted:
         return None
+    components_of_d = set(d.event_spec.components)
     for part in selected:
-        slots = part.given_spec if isinstance(part, ConditionalDistribution) else {}
-        if any(slot not in wanted for slot in slots):
+        if not isinstance(part, ConditionalDistribution):
+            continue
+        # An optional slot that no factor of d produces takes its default, so it
+        # conditions on nothing.
+        given = part.given_spec
+        conditioned = [
+            slot for slot in given if slot in components_of_d or slot not in given.optional
+        ]
+        if any(slot not in wanted for slot in conditioned):
             return None
     return selected
 

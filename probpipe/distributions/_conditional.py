@@ -219,7 +219,17 @@ def _moved_slots(
             return RecordSpec({name: spec_of(child) for name, child in node.items()})
         return node
 
-    return InputSpec({slot: spec_of(node) for slot, node in tree.items()}), origins
+    moved_spec = InputSpec({slot: spec_of(node) for slot, node in tree.items()})
+    # An optional slot stays optional when it moves whole to a slot of its own;
+    # grouped into a structured slot, it is part of a value the binding supplies.
+    optional = []
+    for slot in given_spec.optional:
+        target = moves.get(slot, slot)
+        split = any(old.startswith(slot + _PATH_SEP) for old in moves)
+        joined = any(new.startswith(target + _PATH_SEP) for new in moves.values())
+        if target in moved_spec and not split and not joined:
+            optional.append(target)
+    return moved_spec.with_optional(*optional), origins
 
 
 #: The kernel that ``with_path_names`` returns, installed by the views module at import.
@@ -298,9 +308,7 @@ class ConditionalDistributionSpec(TermSpec):
         """This spec with *bindings* substituted on both sides."""
         declaration = self.event_spec
         return ConditionalDistributionSpec(
-            InputSpec(
-                {name: spec._substitute_dims(bindings) for name, spec in self.given_spec.items()}
-            ),
+            self.given_spec._substitute_dims(bindings),
             declaration._with_spec(declaration.spec._substitute_dims(bindings)),
         )
 
@@ -867,10 +875,11 @@ def _declared_law(law: Any, event_spec: OutputSpec, name: str) -> Distribution:
 class _FunctionKernel(ConditionalDistribution):
     """The kernel of a function of its given values: its law at a value is the one the function returns.
 
-    :func:`conditional_distribution` builds it. Binding every given slot calls
-    the function with each value as the argument of that name, at the kind its
-    slot declares, and returns the law the call returns; binding some slots
-    returns the kernel over the others. The kernel claims the conditional
+    :func:`conditional_distribution` builds it. Binding every required slot
+    calls the function with each value as the argument of that name, at the
+    kind its slot declares, and with its default for each optional slot left
+    unbound, and returns the law the call returns; binding fewer slots returns
+    the kernel over the others. The kernel claims the conditional
     twin of sampling, of the normalized density, and of the unnormalized
     density exactly when the law its function returned at construction claims
     the capability, and each twin's guard reports what that law's guard did.
@@ -938,15 +947,13 @@ class _FunctionKernel(ConditionalDistribution):
                 f"got {sorted(options)}"
             )
         values = self._given_values(given)
-        if set(values) == set(self.given_spec):
+        if set(self.given_spec.required) <= set(values):
             return self._law(values)
         self._check_conformance(values)
         curried = self._shallow_copy()
         object.__setattr__(curried, "_provenance", None)
         object.__setattr__(curried, "_bound", {**self._bound, **self._arguments(values)})
-        left = InputSpec(
-            {slot: spec for slot, spec in self.given_spec.items() if slot not in values}
-        )
+        left = self.given_spec.without(*values)
         object.__setattr__(curried, "_spec", ConditionalDistributionSpec(left, self.event_spec))
         return curried
 
@@ -978,20 +985,24 @@ class _FunctionKernel(ConditionalDistribution):
         return {slot: _argument(self._slots[slot], slot, value) for slot, value in values.items()}
 
     def _law(self, given: Any) -> Distribution:
-        """The law the function returns at *given*, a value of every given slot.
+        """The law the function returns at *given*, a value of every required slot.
+
+        An optional slot that *given* leaves out takes the function's default.
 
         Raises
         ------
         KeyError
-            If a given slot has no value, or *given* names another key.
+            If a required slot has no value, or *given* names another key.
         ValueError
             If a value does not conform to its slot, or the law departs from the
             kernel's event declaration.
         """
         values = self._given_values(given)
-        missing = [slot for slot in self.given_spec if slot not in values]
+        missing = [slot for slot in self.given_spec.required if slot not in values]
         if missing:
-            raise KeyError(f"{self.label!r} needs a value of every given slot; {missing} have none")
+            raise KeyError(
+                f"{self.label!r} needs a value of every required slot; {missing} have none"
+            )
         self._check_conformance(values)
         law = self._fn(**self._bound, **self._arguments(values))
         return _declared_law(law, self.event_spec, self.label)
@@ -1062,16 +1073,20 @@ def _probe(name: str, fn: Callable[..., Distribution], slots: InputSpec) -> _Pro
     """The declaration and the guards of the law *fn* returns, evaluated abstractly.
 
     *fn* runs once under ``jax.eval_shape``, with a traced stand-in of each
-    slot's type at the kind the slot declares, so no value is assumed; a
-    support that a given value sets holds a traced bound, and is left
-    undeclared.
+    required slot's type at the kind the slot declares, so no value is assumed,
+    and with its default for each optional slot; a support that a given value
+    sets holds a traced bound, and is left undeclared.
 
     Raises
     ------
     TypeError
         If a slot has no stand-in, or *fn* returns something other than a law.
     """
-    stand_ins = {slot: _stand_in(spec, slot, name) for slot, spec in slots.items()}
+    stand_ins = {
+        slot: _stand_in(spec, slot, name)
+        for slot, spec in slots.items()
+        if slot not in slots.optional
+    }
     found: dict[str, Any] = {}
 
     def evaluate(values: Mapping[str, Any]) -> Any:
@@ -1096,11 +1111,16 @@ def _slots_of(
 ) -> InputSpec:
     """The given slots of the kernel of *fn*: one per parameter, declared by *given_spec* or its annotation.
 
+    A parameter with a default is an optional slot, which a binding may omit,
+    and its default's value declares it when neither *given_spec* nor its
+    annotation does.
+
     Raises
     ------
     TypeError
         If *given_spec* names a key that is not a parameter, a parameter is
-        variadic or positional-only, or a parameter is declared by neither.
+        variadic or positional-only, or a parameter without a default is
+        declared by neither.
     """
     declared = dict((given_spec or {}).items())
     try:
@@ -1111,6 +1131,7 @@ def _slots_of(
     if unknown:
         raise TypeError(f"given_spec names {unknown}, which are not parameters of {name!r}")
     slots: dict[str, TermSpec] = {}
+    optional: list[str] = []
     for parameter in signature.parameters.values():
         if parameter.kind in (parameter.VAR_POSITIONAL, parameter.VAR_KEYWORD):
             raise TypeError(
@@ -1123,6 +1144,10 @@ def _slots_of(
                 f"slot's value is passed by name"
             )
         spec = declared.get(parameter.name, parameter.annotation)
+        if parameter.default is not parameter.empty:
+            optional.append(parameter.name)
+            if not isinstance(spec, TermSpec):
+                spec = RecordSpec.infer_from({"default": parameter.default}).children["default"]
         if not isinstance(spec, TermSpec):
             raise TypeError(
                 f"the given slot {parameter.name!r} of {name!r} declares no term spec. Pass "
@@ -1131,7 +1156,7 @@ def _slots_of(
                 f"with the spec"
             )
         slots[parameter.name] = spec
-    return InputSpec(slots)
+    return InputSpec(slots).with_optional(*optional)
 
 
 def _agreed_event_spec(name: str, declared: OutputSpec | TermSpec, law: OutputSpec) -> OutputSpec:
@@ -1203,21 +1228,36 @@ def conditional_distribution(
     """Build a ``ConditionalDistribution`` from a function of its given values that returns a law.
 
     Each parameter of the function is a given slot, declared by its entry in
-    *given_spec* or else by its annotation, which is then a term spec.
-    Construction evaluates the function once, abstractly, at stand-ins of the
-    slots' types, and reads the law it returns: its event declaration is the
-    kernel's, unless *event_spec* declares one that agrees with it, and the
-    kernel claims conditional sampling and the conditional density exactly
+    *given_spec* or else by its annotation, which is then a term spec. A
+    parameter with a default is an optional slot, which its default's value
+    declares when neither does. Construction evaluates the function once,
+    abstractly, at stand-ins of the required slots' types and at the defaults
+    of the optional ones, and reads the law it returns: its event declaration
+    is the kernel's, unless *event_spec* declares one that agrees with it, and
+    the kernel claims conditional sampling and the conditional density exactly
     when that law claims sampling and a density, each with the law's guard.
-    Binding every given slot calls the function with each value as the
-    argument of that name, at the kind its slot declares, and returns the law
-    the call returns; binding some slots curries the kernel over the rest.
+    Binding every required slot calls the function with each value as the
+    argument of that name, at the kind its slot declares, and with its default
+    for each optional slot left unbound, and returns the law the call returns;
+    binding fewer slots curries the kernel over the rest.
 
     The call form takes the name first and the function second::
 
         likelihood = conditional_distribution(
             "y", lambda mu, tau: Normal("y", mu, tau), given_spec={"mu": real, "tau": scale}
         )
+
+    An optional slot holds a constant of the model. In a joint, a factor that
+    produces a component of its name meets it, so one kernel serves a model
+    with the default and a model with a prior on the slot::
+
+        counts = conditional_distribution(
+            "counts",
+            lambda r, n0=50.0: Poisson("y", n0 * jnp.exp(r)),
+            given_spec={"r": real},
+        )
+        fixed = counts * Normal("r", 0.0, 1.0)                           # n0 is 50
+        uncertain = counts * (Normal("r", 0.0, 1.0) * LogNormal("n0", 4.0, 0.3))
 
     and the decorator form names the kernel after the function, or as given::
 
@@ -1247,8 +1287,9 @@ def conditional_distribution(
     Raises
     ------
     TypeError
-        If a parameter declares no term spec, is variadic or positional-only,
-        or *given_spec* names a key that is not a parameter; if a slot is
+        If a parameter without a default declares no term spec, a parameter is
+        variadic or positional-only, or *given_spec* names a key that is not a
+        parameter; if a required slot is
         neither an array nor a record of arrays, or declares free dimensions;
         or if the function returns something other than a law.
     ValueError

@@ -499,6 +499,40 @@ class TestForms:
 # ---------------------------------------------------------------------------
 
 
+class TestOptionalSlots:
+    """The replications take an optional slot's default unless the law produces the slot."""
+
+    @staticmethod
+    def _scaled():
+        return conditional_distribution(
+            "y_given_mu",
+            lambda mu, scale=2.0: Normal("y", mu * jnp.ones(200), scale),
+            given_spec={"mu": NumericArraySpec(())},
+        )
+
+    def test_the_replications_take_the_default(self):
+        check = predictive_check(
+            self._scaled(), Normal("mu", 0.0, 1e-3), sample_variance, key=jax.random.key(0)
+        )
+        replicated = np.asarray(check["replicated_statistics"].atoms)
+        np.testing.assert_allclose(replicated.mean(), 4.0, rtol=0.05)
+
+    def test_the_replications_take_the_slot_the_law_produces(self):
+        law = Normal("mu", 0.0, 1e-3) * Normal("scale", 3.0, 1e-3)
+        check = predictive_check(self._scaled(), law, sample_variance, key=jax.random.key(0))
+        replicated = np.asarray(check["replicated_statistics"].atoms)
+        np.testing.assert_allclose(replicated.mean(), 9.0, rtol=0.05)
+
+    def test_the_error_names_only_the_required_slots(self, prior, observed_data):
+        kernel = conditional_distribution(
+            "y_given_mu_sigma",
+            lambda mu, sigma, scale=1.0: Normal("y", mu * jnp.ones(N), sigma * scale),
+            given_spec={"mu": prior.event_spec.components["mu"], "sigma": NumericArraySpec(())},
+        )
+        with pytest.raises(ValueError, match=r"does not produce the given slots \['sigma'\] "):
+            predictive_check(kernel, prior, sample_mean, observed_data, key=jax.random.key(0))
+
+
 class TestErrors:
     def test_a_law_that_misses_a_given_slot_raises_naming_it(self, prior, observed_data):
         kernel = conditional_distribution(

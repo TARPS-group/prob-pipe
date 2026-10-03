@@ -1820,7 +1820,7 @@ def _widened(
         return None
     given_spec = InputSpec(
         {name: (record if name == slot else spec) for name, spec in kernel.given_spec.items()}
-    )
+    ).with_optional(*(kernel.given_spec.optional - {slot}))
     own = set(_given_leaf_specs(kernel.given_spec))
     origins = {leaf: (leaf if leaf in own else None) for leaf in _given_leaf_specs(given_spec)}
     event = _EventRenames.of(kernel.event_spec, kernel.event_spec, {})
@@ -2312,12 +2312,13 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
             If *given* binds part of a slot.
         """
         complete, pending, slots = self._translated(given)
-        result = self._parent._condition_on(complete, **options) if complete else self._parent
+        remaining = self.given_spec.without(*slots)
+        # A binding that leaves no required slot evaluates the parent, whose
+        # optional slots left unbound take their defaults.
+        evaluate = bool(complete) or not remaining.required
+        result = self._parent._condition_on(complete, **options) if evaluate else self._parent
         if not isinstance(result, ConditionalDistribution):
             return self._event.law(result)
-        remaining = InputSpec(
-            {slot: spec for slot, spec in self.given_spec.items() if slot not in slots}
-        )
         origins = {
             path: leaf
             for path, leaf in self._origins.items()

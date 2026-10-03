@@ -72,9 +72,9 @@ require  F_A ∩ F_B = ∅         # each name is produced exactly once
 law:  p(F_A, F_B | unmet) = p_A(F_A | bound ∪ (G_A − F_B)) · p_B(F_B | G_B)      # reads left → right
 ```
 
-If `unmet ≠ ∅` then the result is a conditional distribution, or a plain distribution otherwise:
+An optional slot (II.2) is in `G` and is matched as a required one is. Unmet, it takes its default (III.9), so the result is a conditional distribution exactly when a required slot is unmet, and a plain distribution otherwise. A slot of `unmet` is optional when every factor that names it holds it optional:
 
-| `unmet` | result |
+| required slots of `unmet` | result |
 |---|---|
 | `∅` | `FactoredDistribution` — a joint `Distribution` |
 | `≠ ∅` | `FactoredConditionalDistribution` — a joint `ConditionalDistribution`, its `given_spec` exactly `unmet` |

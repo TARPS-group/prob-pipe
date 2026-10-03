@@ -64,6 +64,11 @@ def _check_term(name: str, spec: TermSpec | None, *, allow_hole: bool) -> None:
 class InputSpec(Mapping[str, TermSpec]):
     """An immutable, flat mapping of input slot names to term specs.
 
+    A slot is required or optional. A binding may omit an optional slot, and the
+    map-like kind then uses its default; :meth:`with_optional` marks slots
+    optional, and the optional slots are part of the declaration, so they take
+    part in equality and hashing.
+
     Parameters
     ----------
     slots : Mapping[str, TermSpec], optional
@@ -84,6 +89,7 @@ class InputSpec(Mapping[str, TermSpec]):
     """
 
     _slots: dict[str, TermSpec]
+    _optional: frozenset[str]
 
     def __init__(
         self, slots: Mapping[str, TermSpec] | None = None, /, **components: TermSpec
@@ -96,6 +102,7 @@ class InputSpec(Mapping[str, TermSpec]):
         for name, spec in slots.items():
             _check_slot(name, spec)
         object.__setattr__(self, "_slots", dict(slots))
+        object.__setattr__(self, "_optional", frozenset())
 
     def __getitem__(self, key: str) -> TermSpec:
         return self._slots[key]
@@ -106,12 +113,56 @@ class InputSpec(Mapping[str, TermSpec]):
     def __len__(self) -> int:
         return len(self._slots)
 
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, InputSpec):
+            return self._slots == other._slots and self._optional == other._optional
+        return super().__eq__(other)
+
     def __hash__(self) -> int:
-        return hash(frozenset(self._slots.items()))
+        return hash((frozenset(self._slots.items()), self._optional))
 
     def __repr__(self) -> str:
-        """Each slot as a keyword, as the constructor takes it."""
-        return term_repr("InputSpec", None, [(name, repr(spec)) for name, spec in self.items()])
+        """Each slot as a keyword, as the constructor takes it, then the optional slots."""
+        text = term_repr("InputSpec", None, [(name, repr(spec)) for name, spec in self.items()])
+        if not self._optional:
+            return text
+        names = ", ".join(repr(name) for name in self if name in self._optional)
+        return f"{text}.with_optional({names})"
+
+    @property
+    def optional(self) -> frozenset[str]:
+        """The slots a binding may omit, which then take their defaults."""
+        return self._optional
+
+    @property
+    def required(self) -> tuple[str, ...]:
+        """The slots a binding must supply, in slot order."""
+        return tuple(name for name in self._slots if name not in self._optional)
+
+    def with_optional(self, *names: str) -> InputSpec:
+        """The slots with *names* optional, in addition to the slots already optional.
+
+        Raises
+        ------
+        KeyError
+            If a name is not a slot.
+        """
+        unknown = [name for name in names if name not in self._slots]
+        if unknown:
+            raise KeyError(f"{unknown} are not slots of {list(self._slots)}")
+        return self._with_slots(self._slots, self._optional | frozenset(names))
+
+    def without(self, *names: str) -> InputSpec:
+        """The slots other than *names*, each optional slot staying optional."""
+        return self._with_slots(
+            {name: spec for name, spec in self._slots.items() if name not in names}, self._optional
+        )
+
+    def _with_slots(self, slots: Mapping[str, TermSpec], optional: frozenset[str]) -> InputSpec:
+        """An input declaration of *slots*, those of *optional* among them optional."""
+        result = InputSpec(slots)
+        object.__setattr__(result, "_optional", optional & frozenset(slots))
+        return result
 
     @property
     def free_dims(self) -> frozenset[str]:
@@ -125,11 +176,24 @@ class InputSpec(Mapping[str, TermSpec]):
 
     def with_dim_sizes(self, **sizes: int) -> InputSpec:
         """Return the slots with supplied sizes substituted in their shared scope."""
-        return InputSpec({name: spec.with_dim_sizes(**sizes) for name, spec in self._slots.items()})
+        return self._with_slots(
+            {name: spec.with_dim_sizes(**sizes) for name, spec in self._slots.items()},
+            self._optional,
+        )
 
     def with_dim_names(self, **names: str) -> InputSpec:
         """Return the slots with simultaneous symbolic-dimension renaming."""
-        return InputSpec({name: spec.with_dim_names(**names) for name, spec in self._slots.items()})
+        return self._with_slots(
+            {name: spec.with_dim_names(**names) for name, spec in self._slots.items()},
+            self._optional,
+        )
+
+    def _substitute_dims(self, bindings: Mapping[str, int | str]) -> InputSpec:
+        """The slots with *bindings* substituted in their shared scope."""
+        return self._with_slots(
+            {name: spec._substitute_dims(bindings) for name, spec in self._slots.items()},
+            self._optional,
+        )
 
     def bind_dims_from_value(self, value: Mapping[str, object]) -> InputSpec:
         """Bind all slots against named values in one shared dimension scope.
@@ -143,9 +207,7 @@ class InputSpec(Mapping[str, TermSpec]):
         bindings: dict[str, int] = {}
         for name, spec in self._slots.items():
             spec._bind_dims_from_value(value[name], bindings, f"InputSpec/{name}")
-        return InputSpec(
-            {name: spec._substitute_dims(bindings) for name, spec in self._slots.items()}
-        )
+        return self._substitute_dims(bindings)
 
     def bind_dims_from_spec(self, other: InputSpec) -> InputSpec:
         """Bind against another input declaration in one shared dimension scope."""
@@ -156,9 +218,7 @@ class InputSpec(Mapping[str, TermSpec]):
         bindings: dict[str, int] = {}
         for name, spec in self._slots.items():
             _unify_specs(spec, other[name], bindings, f"InputSpec/{name}")
-        return InputSpec(
-            {name: spec._substitute_dims(bindings) for name, spec in self._slots.items()}
-        )
+        return self._substitute_dims(bindings)
 
 
 #: The spec each kind of exposed term takes, by the kind :func:`_exposed_kind` names.
