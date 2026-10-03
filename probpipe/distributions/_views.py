@@ -65,12 +65,12 @@ from ._distribution import (
     _whole_term_component,
 )
 from ._factored import (
-    _LABEL_SEP,
     FactoredConditionalDistribution,
     FactoredDistribution,
     SupportsFactors,
     _factor_graph,
     _FactorGraph,
+    _joined_label,
     _raw_record,
 )
 
@@ -1900,7 +1900,7 @@ def _regrouped(
                 if _factor_graph(parts, graph.scope).unmet is None
                 else FactoredConditionalDistribution
             )
-            label = _LABEL_SEP.join(part.label for part in parts)
+            label = _joined_label(part.label for part in parts)
             units.append((indices[0], kind(label, parts, _scope=graph.scope, _component=node)))
     except (KeyError, TypeError, ValueError):
         return None

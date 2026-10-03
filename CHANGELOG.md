@@ -636,7 +636,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `other effect`, is bracketed, so `effect + other` is labeled
   `effect + [other effect]`, since parentheses mark an expression. An
   operand that opens with a unary operator is parenthesized, so `(-x) ** 2` is
-  labeled `(-x) ** 2`, since `-x ** 2` reads as `-(x ** 2)`. A batch view of a
+  labeled `(-x) ** 2`, since `-x ** 2` reads as `-(x ** 2)`. A joint groups each
+  factor's label the same way, so `likelihood * posterior` for a posterior
+  labeled `model | y` is labeled `likelihood·(model | y)`. A batch view of a
   batch whose label is an expression parenthesizes it, as in
   `(model | y)[dataset=0]`.
 - **A rename keeps a function's fingerprint and replays its calls.** A

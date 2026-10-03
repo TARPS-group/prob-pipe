@@ -11,7 +11,7 @@ Provides:
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, Self, runtime_checkable
 
@@ -23,7 +23,7 @@ from ..core._dispatch import Feasibility, ResolutionError
 from ..core._object_batch import _is_object_array
 from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
-from ..core._repr import sequence_repr
+from ..core._repr import grouped_label, sequence_repr
 from ..core._spec_base import (
     NumericArraySpec,
     NumericSpec,
@@ -87,6 +87,16 @@ _PATH_SEP = "/"
 
 #: The separator a joint's label places between the labels it joins.
 _LABEL_SEP = "·"
+
+
+def _joined_label(labels: Iterable[str]) -> str:
+    """The labels of factors joined with ``·``, each grouped as an operator groups an operand's.
+
+    An expression is parenthesized, as a posterior labeled ``model | y`` is, and
+    a label with a space is bracketed, so each factor's label reads as one unit.
+    """
+    return _LABEL_SEP.join(grouped_label(label) for label in labels)
+
 
 type Factor = Distribution | ConditionalDistribution
 

@@ -94,10 +94,10 @@ from ..distributions._conditional import ConditionalDistribution, ConditionalDis
 from ..distributions._distribution import Distribution, DistributionSpec
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import (
-    _LABEL_SEP,
     FactoredDistribution,
     SupportsFactors,
     _bound_factor,
+    _joined_label,
 )
 from ..distributions._views import _RenamedDistribution
 from ..functions._call import checking
@@ -1040,7 +1040,7 @@ def _slice(call: BoundCall) -> Any:
     law = (
         factors[0]
         if len(factors) == 1
-        else FactoredDistribution(_LABEL_SEP.join(f.label for f in factors), factors)
+        else FactoredDistribution(_joined_label(f.label for f in factors), factors)
     )
     if law.provenance is None:
         law.with_provenance(
@@ -1371,7 +1371,7 @@ def _conditioned_label(d: Any, given: Any) -> str:
             return d.label
         kept = _factors_left(d, paths)
         if kept is not None:
-            return _LABEL_SEP.join(factor.label for factor in kept)
+            return _joined_label(factor.label for factor in kept)
     else:
         paths = (given.label if isinstance(given, TrackedTerm) else format_value(given),)
     return f"{grouped_label(d.label)} | {', '.join(paths)}"

@@ -16,7 +16,7 @@ from ..core._specs import OutputSpec
 from ..distributions._capabilities import SupportsMarginals, _capability_guard
 from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
 from ..distributions._distribution import Distribution, DistributionSpec
-from ..distributions._factored import _LABEL_SEP, SupportsFactors
+from ..distributions._factored import SupportsFactors, _joined_label
 from ..distributions._views import _node_at
 from ..functions._call import ApplicabilityError
 from ._operation import BoundCall, operation
@@ -74,7 +74,7 @@ def _marginal_label(d: Any, field: Any) -> str:
     """
     paths = field if isinstance(field, tuple) else (field,)
     parts = _closed_factors(d, paths)
-    return d.label if parts is None else _LABEL_SEP.join(part.label for part in parts)
+    return d.label if parts is None else _joined_label(part.label for part in parts)
 
 
 def _closed_factors(d: Any, components: tuple[Any, ...]) -> list[Any] | None:

@@ -13,7 +13,7 @@ from typing import Any
 from ..core._specs import OutputSpec
 from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
 from ..distributions._distribution import Distribution, DistributionSpec
-from ..distributions._factored import _LABEL_SEP
+from ..distributions._factored import _joined_label
 from ._operation import BoundCall, operation
 
 __all__ = ["joint"]
@@ -28,7 +28,7 @@ def _joint_result(A: Any, B: Any, align: Any) -> None:
 
 def _composed_label(A: Any, B: Any) -> str:
     """The factors' labels joined as composition joins them (IV.2); a rename keeps a label."""
-    return f"{A.label}{_LABEL_SEP}{B.label}"
+    return _joined_label((A.label, B.label))
 
 
 @operation(

@@ -17,10 +17,10 @@ from __future__ import annotations
 from ._conditional import ConditionalDistribution
 from ._distribution import Distribution, _install_composition
 from ._factored import (
-    _LABEL_SEP,
     FactoredConditionalDistribution,
     FactoredDistribution,
     _factor_graph,
+    _joined_label,
 )
 
 __all__: list[str] = []
@@ -48,7 +48,7 @@ def _compose(
     # Each operand enters with its factors and its dimension scope; the factor
     # graph flattens a factored operand and carries its scope.
     operands = (left, right)
-    label = f"{left.label}{_LABEL_SEP}{right.label}"
+    label = _joined_label((left.label, right.label))
     if _factor_graph(operands).unmet is None:
         return FactoredDistribution(label, operands)
     return FactoredConditionalDistribution(label, operands)

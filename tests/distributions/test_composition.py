@@ -485,7 +485,7 @@ class TestAssociativity:
 
 
 class TestLabels:
-    """The joint's label joins the operands' current labels with ``·``, as ordinary strings."""
+    """The joint's label joins the operands' current labels with ``·``, each read as one unit."""
 
     def test_the_label_joins_the_operand_labels_with_a_middle_dot(self):
         assert (_likelihood() * _prior()).label == "lik·prior"
@@ -502,6 +502,12 @@ class TestLabels:
         left = _law("x·y", "u") * _law("z", "v")
         right = _law("x", "u") * _law("y·z", "v")
         assert left.label == right.label == "x·y·z"
+
+    def test_an_expression_label_is_parenthesized_and_a_spaced_label_bracketed(self):
+        """A posterior labeled by its conditioning reads as one factor of the joint."""
+        posterior = _prior().with_label("model | y")
+        assert (_likelihood() * posterior).label == "lik·(model | y)"
+        assert (_likelihood() * _prior().with_label("my prior")).label == "lik·[my prior]"
 
     def test_exchanging_independent_operands_changes_the_label_and_the_order(self):
         a, b = _law("a", "a"), _law("b", "b")
