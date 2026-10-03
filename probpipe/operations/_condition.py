@@ -71,12 +71,15 @@ from ..core._dispatch import (
     UnaryDispatchMethod,
     UnaryDispatchRegistry,
 )
+from ..core._numeric_array import grouped_label
+from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
-from ..core._repr import format_names
+from ..core._repr import format_names, format_value
 from ..core._spec_base import NumericSpec, OpaqueSpec, TermSpec, _full_array_shape_or_none
 from ..core._specs import InputSpec, OutputSpec, _components_record
 from ..core.provenance import Provenance
 from ..core.record import Record
+from ..core.tracked import TrackedTerm
 from ..distributions._capabilities import (
     SupportsApproximateConditioning,
     SupportsConditionalUnnormalizedLogProb,
@@ -92,6 +95,7 @@ from ..distributions._conditional import ConditionalDistribution, ConditionalDis
 from ..distributions._distribution import Distribution, DistributionSpec
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import (
+    _LABEL_SEP,
     FactoredDistribution,
     SupportsFactors,
     _bound_factor,
@@ -1034,7 +1038,11 @@ def _slice(call: BoundCall) -> Any:
                 options = dict(call.controls.get("method_options", {}))
             factor = _bound_factor(factor, bound, options)
         factors.append(factor)
-    law = factors[0] if len(factors) == 1 else FactoredDistribution(d.label, factors)
+    law = (
+        factors[0]
+        if len(factors) == 1
+        else FactoredDistribution(_LABEL_SEP.join(f.label for f in factors), factors)
+    )
     if law.provenance is None:
         law.with_provenance(
             Provenance.create(
@@ -1347,6 +1355,60 @@ def _condition_on_result(d: TermSpec, given: TermSpec) -> OutputSpec:
     return OutputSpec(condition_on=None)
 
 
+def _conditioned_label(d: Any, given: Any) -> str:
+    """The label of the law that conditioning *d* on *given* returns (II.4).
+
+    Applying a kernel at given slots keeps the kernel's label. Fixing the whole
+    events of factors upstream of the rest leaves the other factors at the
+    given values, whose labels are joined, so ``condition_on(model, {"mu": 0.5})``
+    for ``model = likelihood * prior`` is labeled ``likelihood``. Any other
+    conditioning applies Bayes' rule, and its result is labeled by the
+    expression of the law and the conditioned paths, as ``model | y``.
+    """
+    paths = _conditioned_paths(given)
+    if paths:
+        if isinstance(d, ConditionalDistribution) and {_head(path) for path in paths} <= _slots_of(
+            d
+        ):
+            return d.label
+        kept = _factors_left(d, paths)
+        if kept is not None:
+            return _LABEL_SEP.join(factor.label for factor in kept)
+    else:
+        paths = (given.label if isinstance(given, TrackedTerm) else format_value(given),)
+    return f"{grouped_label(d.label)} | {', '.join(paths)}"
+
+
+def _factors_left(d: Any, keys: tuple[str, ...]) -> list[Any] | None:
+    """The factors of the joint *d* that fixing the whole events of others at *keys* leaves.
+
+    Returns None unless the slice applies and fixes every factor it touches
+    whole, so the result is the product of the other factors.
+    """
+    if not isinstance(d, SupportsFactors) or isinstance(d, ConditionalDistribution):
+        return None
+    report, fixed = _slice_plan(d, keys)
+    factors = d.factors
+    if report.feasible is not True or any(
+        components != set(factors[index].event_spec.components)
+        for index, components in fixed.items()
+    ):
+        return None
+    return [factor for index, factor in enumerate(factors) if index not in fixed]
+
+
+def _conditioned_paths(given: Any) -> tuple[str, ...] | None:
+    """The paths *given* fixes: a value's, each element's of a batch, or each draw's of a law."""
+    keys = _given_keys(given)
+    if keys is not None:
+        return keys
+    if isinstance(given, RecordBatch):
+        return tuple(given.element_spec.fields)
+    if isinstance(given, Distribution):
+        return tuple(given.event_spec.components)
+    return None
+
+
 #: The kinds a given is admitted at whole: every kind but a batch, so a batch of
 #: givens is swept, one conditioned law per element (VI.11).
 _GIVEN_KINDS: tuple[type[TermSpec], ...] = (
@@ -1362,6 +1424,7 @@ _GIVEN_KINDS: tuple[type[TermSpec], ...] = (
 @operation(
     result=_condition_on_result,
     roles={"d": (DistributionSpec, ConditionalDistributionSpec), "given": _GIVEN_KINDS},
+    label=_conditioned_label,
 )
 def condition_on(d: Distribution, given: Record | Mapping[str, Any]):
     """Fix fields of *d* at the values *given* holds, and return the resulting law, normalized.

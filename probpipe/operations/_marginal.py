@@ -14,9 +14,9 @@ from ..core._dispatch import Feasibility
 from ..core._record_spec import RecordSpec
 from ..core._specs import OutputSpec
 from ..distributions._capabilities import SupportsMarginals, _capability_guard
-from ..distributions._conditional import ConditionalDistributionSpec
+from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
 from ..distributions._distribution import Distribution, DistributionSpec
-from ..distributions._factored import SupportsFactors
+from ..distributions._factored import _LABEL_SEP, SupportsFactors
 from ..distributions._views import _node_at
 from ..functions._call import ApplicabilityError
 from ._operation import BoundCall, operation
@@ -63,7 +63,43 @@ def _marginal_result(d: DistributionSpec, field: Any) -> OutputSpec:
     return OutputSpec(marginal=DistributionSpec(OutputSpec(**{component: _node(d, field)})))
 
 
-@operation(result=_marginal_result)
+def _marginal_label(d: Any, field: Any) -> str:
+    """The joined labels of the factors the marginal is, and *d*'s label for any other marginal.
+
+    A marginal over the whole events of some factors of a joint, none of which
+    conditions on a component outside them, is the product of those factors,
+    so ``marginal(location * scale, "tau")`` is ``scale`` and takes its label.
+    Any other marginal integrates a factor out, as the prior predictive does,
+    and keeps the joint's label.
+    """
+    paths = field if isinstance(field, tuple) else (field,)
+    parts = _closed_factors(d, paths)
+    return d.label if parts is None else _LABEL_SEP.join(part.label for part in parts)
+
+
+def _closed_factors(d: Any, components: tuple[Any, ...]) -> list[Any] | None:
+    """The factors of *d* whose events are *components* together, if none conditions outside them.
+
+    Returns None when *d* has no factors, a path is not a whole component, the
+    components split a factor's event, or a factor conditions on a component
+    outside them.
+    """
+    parts = getattr(d, "factors", None)
+    wanted = set(components)
+    if not parts or not all(isinstance(path, str) and _PATH_SEP not in path for path in wanted):
+        return None
+    selected = [part for part in parts if wanted & set(part.event_spec.components)]
+    produced = {component for part in selected for component in part.event_spec.components}
+    if produced != wanted:
+        return None
+    for part in selected:
+        slots = part.given_spec if isinstance(part, ConditionalDistribution) else {}
+        if any(slot not in wanted for slot in slots):
+            return None
+    return selected
+
+
+@operation(result=_marginal_result, label=_marginal_label)
 def marginal(d: Distribution, field: str):
     """The detached marginal of *d* at *field*, a standalone law with no reference back to *d*.
 

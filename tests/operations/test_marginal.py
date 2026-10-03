@@ -70,9 +70,26 @@ class TestMarginal:
         joint = Kernel("y", ("beta",)) * Gaussian("beta")
         assert marginal(joint, "beta").event_spec == Gaussian("beta").event_spec
 
-    def test_the_marginal_is_labeled_by_the_law(self):
+    def test_a_marginal_that_is_one_factor_takes_its_label(self):
+        joint = (Kernel("y", ("beta",)) * Gaussian("beta").with_label("prior")).with_label("model")
+        assert marginal(joint, "beta").label == "prior"
+
+    def test_a_marginal_that_is_several_factors_joins_their_labels(self):
+        joint = Gaussian("a").with_label("first") * Gaussian("b").with_label("second")
+        joint = (joint * Gaussian("c")).with_label("model")
+        assert marginal._derived_label({"d": joint, "field": ("a", "b")}) == "first·second"
+
+    @pytest.mark.parametrize(
+        "field",
+        [pytest.param("y", id="a-consumer"), pytest.param(("y",), id="a-tuple-of-one")],
+    )
+    def test_a_marginal_that_integrates_a_factor_out_keeps_the_joint_label(self, field):
+        """The prior predictive integrates the prior out, so it describes the whole model."""
         joint = (Kernel("y", ("beta",)) * Gaussian("beta")).with_label("model")
-        assert marginal(joint, "beta").label == "model"
+        assert marginal._derived_label({"d": joint, "field": field}) == "model"
+
+    def test_the_marginal_of_a_law_without_factors_keeps_its_label(self):
+        assert marginal(Marginalizing("law"), "a").label == "law"
 
 
 class TestFactor:

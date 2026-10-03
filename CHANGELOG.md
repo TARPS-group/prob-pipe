@@ -598,6 +598,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`condition_on` and `marginal` label their result by what it is.** A kernel
+  applied at given slots keeps the kernel's label. Conditioning a joint on the
+  whole events of the factors upstream of the rest returns the other factors,
+  whose labels joined with `·` label the result, so
+  `condition_on(likelihood * prior, {"mu": 0.5})` is labeled `likelihood`. Any
+  other conditioning applies Bayes' rule, and the posterior is labeled by the
+  expression of the law's label and the conditioned paths, as `model | y`. A
+  marginal that is the product of some of a joint's factors takes their labels,
+  so `marginal(location * scale, "tau")` is labeled `scale`, and any other
+  marginal keeps the law's label. Both took the law's label before.
 - **Each operand of an operator reads as one unit in the result's label.** A
   label with a space that is not an expression, such as a user's
   `other effect`, is bracketed, so `effect + other` is labeled

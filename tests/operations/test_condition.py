@@ -385,6 +385,38 @@ class TestSlice:
         assert approximate_method.options == [{}]
 
 
+class TestTheConditionedLabel:
+    """A conditioned law is labeled by what it is (II.4)."""
+
+    def test_applying_a_kernel_at_its_givens_keeps_the_kernel_label(self):
+        kernel = _NormalKernel("y", ("mu",)).with_label("likelihood")
+        assert condition_on(kernel, {"mu": 1.5}).label == "likelihood"
+
+    def test_fixing_an_upstream_factor_leaves_the_label_of_the_factor_left(self):
+        likelihood = _NormalKernel("y", ("mu",)).with_label("likelihood")
+        joint = (likelihood * Gaussian("mu").with_label("prior")).with_label("model")
+        assert condition_on(joint, {"mu": 1.5}).label == "likelihood"
+
+    def test_the_factors_left_join_their_labels(self):
+        joint = Gaussian("a").with_label("first") * Gaussian("b").with_label("second")
+        joint = joint * Gaussian("c").with_label("third")
+        assert condition_on(joint, {"a": 0.0}).label == "second·third"
+
+    def test_conditioning_part_of_a_factor_is_labeled_by_the_expression(self):
+        joint = (_NormalKernel("w", ("theta",)) * ExactPosterior("model")).with_label("joint")
+        assert condition_on.check(joint, {"y": 0.3}).route == "slice"
+        assert condition_on(joint, {"y": 0.3}).label == "joint | y"
+
+    def test_bayes_rule_brackets_a_label_with_a_space(self, approximate_method):
+        joint = (Kernel("y", ("mu",)) * Gaussian("mu")).with_label("my model")
+        assert condition_on(joint, {"y": 0.3}).label == "[my model] | y"
+
+    def test_the_expression_lists_every_conditioned_path(self):
+        joint = (Kernel("y", ("mu",)) * Gaussian("mu")).with_label("model")
+        label = condition_on._derived_label({"d": joint, "given": {"y": 0.3, "mu": 0.0}})
+        assert label == "model | y, mu"
+
+
 class TestConditioningCapabilities:
     def test_exact_conditioning_returns_the_conditional_law(self):
         model = ExactPosterior("model")
@@ -544,9 +576,9 @@ class TestTheExactStage:
 
 
 class TestTheNormalizationStage:
-    def test_the_posterior_is_labeled_by_the_conditioned_law(self, approximate_method):
+    def test_the_posterior_is_labeled_by_the_conditioned_law_and_paths(self, approximate_method):
         joint = (Kernel("y", ("mu",)) * Gaussian("mu")).with_label("model")
-        assert condition_on(joint, {"y": 0.0}).label == "model"
+        assert condition_on(joint, {"y": 0.0}).label == "model | y"
 
     def test_a_normalized_result_is_returned_without_inference(self, suite_methods):
         exact, approximate = suite_methods
@@ -927,12 +959,12 @@ class TestEndToEnd:
         assert _is_normalized(law)
         np.testing.assert_allclose(law._mean(), X @ beta, rtol=1e-6)
 
-    def test_the_posterior_is_labeled_by_the_model_and_names_its_method(self):
+    def test_the_posterior_is_labeled_by_the_model_and_the_data_and_names_its_method(self):
         model = _logistic_joint().with_label("logistic")
         posterior = condition_on.with_options(method_options=_MCMC)(
             model, {"y": jnp.array([1, 0, 1, 0])}
         )
-        assert posterior.label == "logistic"
+        assert posterior.label == "logistic | y"
         assert method_of(posterior) == "blackjax_nuts"
         assert posterior.provenance.metadata["method"] == "blackjax_nuts"
 
