@@ -392,6 +392,10 @@ jobs:
     # BridgeStan is a C++/ctypes backend, so behaviour doesn't vary by Python
     # version and the compile cost is paid per leg.
     runs-on: ubuntu-latest
+    env:
+      # The CmdStan release the cmdstan_nuts tests run against; the cache key
+      # below names it, so a bump builds the new release once.
+      CMDSTAN_VERSION: "2.40.0"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -471,6 +475,22 @@ jobs:
         # the other backend legs' base. pymc is here because test_nutpie.py,
         # which holds the nutpie-on-Stan tests, skips as a module without it.
         run: uv sync --frozen --python 3.12 --extra dev --extra nutpie --extra stan --extra pymc
+
+      - name: Cache the CmdStan build
+        # install_cmdstan downloads CmdStan and builds it under ~/.cmdstan, which
+        # takes minutes, so a cache hit skips the next step.
+        if: steps.stan_check.outputs.skip != 'true'
+        id: cmdstan_cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cmdstan
+          key: cmdstan-${{ runner.os }}-${{ env.CMDSTAN_VERSION }}
+
+      - name: Install CmdStan
+        # cmdstanpy finds the build under ~/.cmdstan. Without it the cmdstan_nuts
+        # tests skip.
+        if: steps.stan_check.outputs.skip != 'true' && steps.cmdstan_cache.outputs.cache-hit != 'true'
+        run: uv run install_cmdstan --version "$CMDSTAN_VERSION" --cores 4
 
       - name: Run Stan tests (real BridgeStan)
         if: steps.stan_check.outputs.skip != 'true'
