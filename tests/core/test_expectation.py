@@ -22,6 +22,7 @@ from probpipe import (
     mean,
     set_default_n_broadcast_samples,
     variance,
+    workflow_run,
 )
 from probpipe.core._dispatch import BinaryDispatchMethod, Feasibility, ResolutionError
 from probpipe.distributions import Distribution
@@ -67,6 +68,17 @@ class TestExpectationReturnsArray:
 
 class TestExpectationSampleBased:
     """Test sample-based expectations on infinite-support distributions."""
+
+    @pytest.fixture(autouse=True)
+    def _seeded(self):
+        """Each estimate draws in one seeded workflow, so its Monte Carlo error is fixed.
+
+        The second moment of a normal has a standard error near half of its
+        tolerance, so an unseeded estimate falls outside it in a few runs of a
+        hundred.
+        """
+        with workflow_run(seed=0):
+            yield
 
     def test_normal_mean(self):
         d = Normal(loc=3.0, scale=1.0, label="x")
