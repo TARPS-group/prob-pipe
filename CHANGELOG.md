@@ -712,6 +712,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A completed declaration keeps its declared dtypes.** `OutputSpec.with_spec`
+  checked that the declared spec unifies with the produced one and then stored
+  the produced spec, so a declared dtype or support was lost wherever the
+  producer left it open. An `EmpiricalDistribution` declared from a prior's
+  `event_spec` over atoms without dtypes reported `dtypes` of `None` where the
+  prior declared `float32`. `with_spec` now stores the unification, as design
+  II.2 states. A numeric array keeps its declared dtype and support and takes the
+  produced ones where the declaration leaves them unset, a declared symbolic
+  dimension binds to the produced size, and a record unifies field by field.
 - **An exact lift over an empirical law runs in one `vmap`.** A function lifted
   over an empirical law with at most `n_broadcast_samples` atoms is evaluated at
   every combination of atoms, and these evaluations ran in a Python loop even

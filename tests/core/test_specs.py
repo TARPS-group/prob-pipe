@@ -164,6 +164,24 @@ class TestOutputSpecCompletion:
             beta=produced
         )
 
+    def test_with_spec_keeps_the_declared_dtype_and_support(self):
+        declared = NumericArraySpec(("k",), jnp.float32, positive)
+        assert OutputSpec(beta=declared).with_spec(NumericArraySpec((3,))) == OutputSpec(
+            beta=NumericArraySpec((3,), jnp.float32, positive)
+        )
+        # A produced dtype that casts to the declared one does not replace it.
+        produced = NumericArraySpec((3,), jnp.float64)
+        assert OutputSpec(beta=declared).with_spec(produced) == OutputSpec(
+            beta=NumericArraySpec((3,), jnp.float32, positive)
+        )
+
+    def test_with_spec_unifies_a_record_field_by_field(self):
+        declared = RecordSpec(a=NumericArraySpec((), jnp.float32), b=NumericArraySpec(("k",)))
+        produced = RecordSpec(a=NumericArraySpec(()), b=NumericArraySpec((2,), jnp.float32))
+        assert OutputSpec(declared).with_spec(produced) == OutputSpec(
+            RecordSpec(a=NumericArraySpec((), jnp.float32), b=NumericArraySpec((2,), jnp.float32))
+        )
+
     def test_with_spec_rejects_a_spec_that_does_not_unify(self):
         with pytest.raises(ValueError, match="has dimension 3, expected 2"):
             OutputSpec(beta=NumericArraySpec((2,))).with_spec(NumericArraySpec((3,)))
