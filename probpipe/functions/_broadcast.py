@@ -19,6 +19,7 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 try:
     from prefect import flow, task
@@ -121,7 +122,9 @@ def execute_distribution_broadcast(
     whose every lifted group enumerates evaluates each combination of atoms once
     with the product of their weights, which is the exact pushforward; any other
     plan draws ``n_broadcast_samples`` joint draws per co-sampling group,
-    enumerating the groups the plan enumerates, and is a stand-in for it.
+    enumerating the groups the plan enumerates, and is a stand-in for it. Under
+    the ``"jax"`` dispatch every evaluation runs in one ``jax.vmap``, with the
+    evaluations and weights of the row-wise dispatch modes.
 
     Parameters
     ----------
@@ -213,14 +216,11 @@ def execute_distribution_broadcast(
         broadcast_args,
         jax_supported=jax_supported,
     )
-    if requested_dispatch == "jax" and stochastic_plan.evaluation_mode != "sampled":
-        raise ValueError(
-            "dispatch='jax' does not support exact empirical enumeration; "
-            "use dispatch='auto', 'sequential', or 'thread' for this path."
-        )
+    if dispatch == "jax":
+        _record_active_execution_contract(jax_contract)
+        if requested_dispatch == "jax":
+            require_jax_traceable(values, broadcast_args)
 
-    # Enumeration preserves exact empirical weights and must run in all row-wise
-    # dispatch modes; otherwise cartesian-product semantics vary by dispatch.
     if stochastic_plan.evaluation_mode != "sampled":
         draws = _broadcast_enumerate(
             func=func,
@@ -229,11 +229,11 @@ def execute_distribution_broadcast(
             logical_unit=logical_unit,
             get_key=get_key,
             make_execution_config=make_execution_config,
+            dispatch=dispatch,
+            function_name=function_name,
+            workflow_kind=workflow_kind,
         )
     elif dispatch == "jax":
-        _record_active_execution_contract(jax_contract)
-        if requested_dispatch == "jax":
-            require_jax_traceable(values, broadcast_args)
         draws = _broadcast_jax(
             func=func,
             values=values,
@@ -554,33 +554,17 @@ def _broadcast_jax(
     workflow_kind: WorkflowKind,
 ) -> _LiftDraws:
     """Draw the lifted arguments and evaluate the function on every draw with one ``jax.vmap``."""
-    if workflow_kind in (WorkflowKind.TASK, WorkflowKind.FLOW) and (task is None or flow is None):
-        raise RuntimeError(
-            "Prefect task or flow execution was requested, but Prefect is not installed. "
-            "Install with: pip install probpipe[prefect]"
-        )
-
     sample_shape = stochastic_plan.sample_shape
     if sample_shape is None:  # pragma: no cover - planner/dispatch contract guard
         raise RuntimeError("sampled stochastic plan is missing sample_shape")
     broadcast_args = list(stochastic_plan.arg_refs)
-    single_call = mapped_draw_body(func=func, values=values, broadcast_args=broadcast_args)
-    batch: tuple[Any, ...] = ()
-
-    def run_vmap():
-        with _workflow_jax_runtime_guard():
-            return jax.vmap(single_call)(batch)
-
-    if workflow_kind in (WorkflowKind.TASK, WorkflowKind.FLOW):
-        if workflow_kind == WorkflowKind.TASK:
-            run_vmap = task(name=f"{function_name}_vmap")(run_vmap)
-        else:
-            runner = prefect_config.resolve_task_runner()
-            run_vmap = flow(
-                name=f"{function_name}_vmap",
-                **({"task_runner": runner} if runner is not None else {}),
-            )(run_vmap)
-
+    evaluate = _mapped_evaluator(
+        func=func,
+        values=values,
+        broadcast_args=broadcast_args,
+        function_name=function_name,
+        workflow_kind=workflow_kind,
+    )
     sampled = _sample_planned_source_groups(
         stochastic_plan,
         stochastic_plan.source_groups,
@@ -588,14 +572,63 @@ def _broadcast_jax(
         logical_unit,
         get_key,
     )
-    batch = tuple(sampled[ref] for ref in broadcast_args)
-    results = run_vmap()
+    inputs = {ref: sampled[ref] for ref in broadcast_args}
     return _LiftDraws(
-        inputs={ref: sampled[ref] for ref in broadcast_args},
-        outputs=results,
+        inputs=inputs,
+        outputs=evaluate(inputs),
         weights=None,
         count=stochastic_plan.n_evaluations,
     )
+
+
+def _mapped_evaluator(
+    *,
+    func: Callable[..., Any],
+    values: dict[str, Any],
+    broadcast_args: Sequence[FunctionInputRef],
+    function_name: str,
+    workflow_kind: WorkflowKind,
+) -> Callable[[Mapping[FunctionInputRef, Any]], Any]:
+    """The callable that evaluates *func* on every row of its inputs with one ``jax.vmap``.
+
+    The callable takes each argument of *broadcast_args* along one leading axis,
+    keyed by its reference, and returns the stacked results; *values* holds the
+    other arguments. A Prefect *workflow_kind* runs the map as one task or flow,
+    which is built here, so a caller builds the evaluator before it draws the
+    lifted arguments and a route that cannot be built fails before any draw.
+
+    Raises
+    ------
+    RuntimeError
+        If *workflow_kind* asks for a Prefect task or flow and Prefect is not
+        installed.
+    """
+    if workflow_kind in (WorkflowKind.TASK, WorkflowKind.FLOW) and (task is None or flow is None):
+        raise RuntimeError(
+            "Prefect task or flow execution was requested, but Prefect is not installed. "
+            "Install with: pip install probpipe[prefect]"
+        )
+    single_call = mapped_draw_body(func=func, values=values, broadcast_args=broadcast_args)
+    batch: list[tuple[Any, ...]] = []
+
+    def run_vmap():
+        with _workflow_jax_runtime_guard():
+            return jax.vmap(single_call)(batch[-1])
+
+    if workflow_kind == WorkflowKind.TASK:
+        run_vmap = task(name=f"{function_name}_vmap")(run_vmap)
+    elif workflow_kind == WorkflowKind.FLOW:
+        runner = prefect_config.resolve_task_runner()
+        run_vmap = flow(
+            name=f"{function_name}_vmap",
+            **({"task_runner": runner} if runner is not None else {}),
+        )(run_vmap)
+
+    def evaluate(inputs: Mapping[FunctionInputRef, Any]) -> Any:
+        batch.append(tuple(inputs[ref] for ref in broadcast_args))
+        return run_vmap()
+
+    return evaluate
 
 
 def _broadcast_enumerate(
@@ -609,46 +642,48 @@ def _broadcast_enumerate(
         [],
         _execution.WorkflowExecutionConfig,
     ],
+    dispatch: str,
+    function_name: str,
+    workflow_kind: WorkflowKind,
 ) -> _LiftDraws:
     """Evaluate the plan's exact combinations of atoms and its sampled repetitions.
 
     Each combination of the enumerated groups' atoms carries the product of
-    their weights, shared equally among its repetitions.
+    their weights, shared equally among its repetitions. Under the ``"jax"``
+    dispatch every evaluation runs in one ``jax.vmap``; under any other the
+    evaluations run row by row under the execution settings.
     """
-    execution = make_execution_config()
-    _execution._preflight_execution_config(execution)
-    exact_entries: list[
-        tuple[
-            _plan.StochasticSourceGroup,
-            EmpiricalDistribution,
-            tuple[Any, ...],
-        ]
-    ] = []
-    for group_index in stochastic_plan.exact_group_order:
-        group = stochastic_plan.source_groups[group_index]
-        binding = stochastic_plan.runtime_bindings[group_index]
-        dist = binding.root
-        if not isinstance(dist, EmpiricalDistribution):  # pragma: no cover - plan contract guard
-            raise RuntimeError("exact stochastic source is not an EmpiricalDistribution")
-        if group.exact_size is None or dist.num_atoms != group.exact_size:
-            raise RuntimeError(
-                "exact empirical size changed after planning: "
-                f"planned {group.exact_size}, found {dist.num_atoms}"
-            )
-        # Every atom along one leading axis, in its raw form.
-        atoms = _record_columns(dist._atoms_at(jnp.arange(dist.num_atoms)), dist.label)
-        exact_entries.append(
-            (
-                group,
-                dist,
-                tuple(evaluate(atoms) for evaluate in binding.consumer_evaluators),
-            )
+    if dispatch == "jax":
+        mapped = _mapped_evaluator(
+            func=func,
+            values=values,
+            broadcast_args=stochastic_plan.arg_refs,
+            function_name=function_name,
+            workflow_kind=workflow_kind,
         )
+    else:
+        mapped = None
+        execution = make_execution_config()
+        _execution._preflight_execution_config(execution)
+    roots = tuple(
+        _enumerated_root(stochastic_plan, group_index)
+        for group_index in stochastic_plan.exact_group_order
+    )
+    # The atom of each enumerated group at every evaluation, one column per group
+    # in the plan's exact group order: each combination, once per repetition.
+    atom_indices = np.repeat(
+        np.asarray(stochastic_plan.exact_combination_order, dtype=np.int64).reshape(-1, len(roots)),
+        stochastic_plan.repetitions_per_combination,
+        axis=0,
+    )
+    weights = np.ones(len(atom_indices))
+    for column, root in enumerate(roots):
+        weights = weights * np.asarray(root.weights, dtype=np.float64)[atom_indices[:, column]]
+    weights = jnp.array(weights / stochastic_plan.repetitions_per_combination)
 
     sampled_groups = tuple(
         group for group in stochastic_plan.source_groups if group.execution_mode == "sampled"
     )
-    sample_arg_refs = [ref for group in sampled_groups for ref in group.arg_refs]
     if sampled_groups:
         sample_shape = stochastic_plan.sample_shape
         if sample_shape is None:  # pragma: no cover - planner contract guard
@@ -663,29 +698,34 @@ def _broadcast_enumerate(
     else:
         sampled = {}
 
+    if mapped is not None:
+        inputs = _enumerated_inputs(stochastic_plan, roots, atom_indices, sampled)
+        return _LiftDraws(
+            inputs=inputs, outputs=mapped(inputs), weights=weights, count=len(atom_indices)
+        )
+
+    exact_entries: list[tuple[_plan.StochasticSourceGroup, tuple[Any, ...]]] = []
+    for group_index, root in zip(stochastic_plan.exact_group_order, roots, strict=True):
+        binding = stochastic_plan.runtime_bindings[group_index]
+        # Every atom along one leading axis, in its raw form.
+        atoms = _record_columns(root._atoms_at(jnp.arange(root.num_atoms)), root.label)
+        exact_entries.append(
+            (
+                stochastic_plan.source_groups[group_index],
+                tuple(evaluate(atoms) for evaluate in binding.consumer_evaluators),
+            )
+        )
+    sample_arg_refs = [ref for group in sampled_groups for ref in group.arg_refs]
+
     call_value_list = []
-    weights = []
-    sample_idx = 0
-    all_broadcast_args = list(stochastic_plan.arg_refs)
-
-    for combo in stochastic_plan.exact_combination_order:
-        emp_weight = 1.0
-        for (_group, dist, _consumer_batches), i in zip(exact_entries, combo):
-            emp_weight *= float(dist.weights[i])
-
-        for _ in range(stochastic_plan.repetitions_per_combination):
-            replacements: dict[FunctionInputRef, Any] = {}
-
-            for (group, _dist, consumer_batches), i in zip(exact_entries, combo):
-                for consumer, consumer_batch in zip(group.consumers, consumer_batches):
-                    replacements[consumer.arg_ref] = _index_sample(consumer_batch, i)
-
-            for ref in sample_arg_refs:
-                replacements[ref] = _index_sample(sampled[ref], sample_idx)
-
-            weights.append(emp_weight / stochastic_plan.repetitions_per_combination)
-            call_value_list.append(replace_input_refs(values, replacements))
-            sample_idx += 1
+    for sample_idx, combo in enumerate(atom_indices.tolist()):
+        replacements: dict[FunctionInputRef, Any] = {}
+        for (group, consumer_batches), i in zip(exact_entries, combo):
+            for consumer, consumer_batch in zip(group.consumers, consumer_batches):
+                replacements[consumer.arg_ref] = _index_sample(consumer_batch, i)
+        for ref in sample_arg_refs:
+            replacements[ref] = _index_sample(sampled[ref], sample_idx)
+        call_value_list.append(replace_input_refs(values, replacements))
 
     request = _execution.WorkflowExecutionRequest(
         func=func,
@@ -711,15 +751,62 @@ def _broadcast_enumerate(
 
     all_input_samples = {
         ref: _stack_rows([input_ref_value(call_values, ref) for call_values in call_value_list])
-        for ref in all_broadcast_args
+        for ref in stochastic_plan.arg_refs
     }
 
     return _LiftDraws(
         inputs=all_input_samples,
         outputs=results,
-        weights=jnp.array(weights),
+        weights=weights,
         count=len(call_value_list),
     )
+
+
+def _enumerated_root(
+    stochastic_plan: _plan.StochasticPlan, group_index: int
+) -> EmpiricalDistribution:
+    """The empirical law at the root of the enumerated group *group_index*.
+
+    Raises
+    ------
+    RuntimeError
+        If the root is not an empirical law, or its atom count differs from the plan's.
+    """
+    group = stochastic_plan.source_groups[group_index]
+    root = stochastic_plan.runtime_bindings[group_index].root
+    if not isinstance(root, EmpiricalDistribution):  # pragma: no cover - plan contract guard
+        raise RuntimeError("exact stochastic source is not an EmpiricalDistribution")
+    if group.exact_size is None or root.num_atoms != group.exact_size:
+        raise RuntimeError(
+            "exact empirical size changed after planning: "
+            f"planned {group.exact_size}, found {root.num_atoms}"
+        )
+    return root
+
+
+def _enumerated_inputs(
+    stochastic_plan: _plan.StochasticPlan,
+    roots: Sequence[EmpiricalDistribution],
+    atom_indices: np.ndarray,
+    sampled: Mapping[FunctionInputRef, Any],
+) -> dict[FunctionInputRef, Any]:
+    """Each lifted argument's value at every evaluation, along one leading axis.
+
+    An enumerated group reads the atoms of its root that its column of
+    *atom_indices* names, in their raw form, and each consumer reads its
+    argument from them as it reads one from a draw. A sampled group's arguments
+    are its draws in *sampled*.
+    """
+    inputs = dict(sampled)
+    for column, (group_index, root) in enumerate(
+        zip(stochastic_plan.exact_group_order, roots, strict=True)
+    ):
+        group = stochastic_plan.source_groups[group_index]
+        binding = stochastic_plan.runtime_bindings[group_index]
+        atoms = _record_columns(root._atoms_at(jnp.asarray(atom_indices[:, column])), root.label)
+        for consumer, evaluate in zip(group.consumers, binding.consumer_evaluators, strict=True):
+            inputs[consumer.arg_ref] = evaluate(atoms)
+    return {ref: inputs[ref] for ref in stochastic_plan.arg_refs}
 
 
 def _broadcast_sample(

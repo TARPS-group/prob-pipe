@@ -117,16 +117,7 @@ def supports_execution_contract(
         return False
     if contract != expected:
         return False
-    if contract.evaluator == "jax_vmap":
-        if not jax_structure_supported:
-            return False
-        if contract.plan_evaluation_mode not in (None, "sampled"):
-            return False
-        if stochastic_plan is not None and any(
-            group.execution_mode != "sampled" for group in stochastic_plan.source_groups
-        ):
-            return False
-    return True
+    return contract.evaluator != "jax_vmap" or jax_structure_supported
 
 
 def execution_contract_abi() -> str:

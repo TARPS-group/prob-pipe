@@ -54,6 +54,7 @@ from ..core.config import ProvenanceMode, WorkflowKind, prefect_config
 from ..core.node import Node
 from ..core.provenance import Provenance
 from ..core.tracked import TrackedTerm
+from ..distributions._empirical import EmpiricalDistribution
 from ..values._function_base import (
     Function,
     _bind_function_inputs,
@@ -744,13 +745,11 @@ def _jax_traceability_error(
                 _draw_call = _broadcast.mapped_draw_body(
                     func=func, values=dummy_kw, broadcast_args=refs
                 )
-                sampled_groups = tuple(
-                    group
-                    for group in stochastic_plan.source_groups
-                    if group.execution_mode == "sampled"
-                )
+                # The executor reads an enumerated group's atoms as it reads a
+                # sampled group's draws, so every group is probed with a stand-in
+                # for one draw of its root.
                 root_probes = []
-                for group in sampled_groups:
+                for group in stochastic_plan.source_groups:
                     binding = stochastic_plan.runtime_bindings[group.index]
                     root = binding.root
                     from ..core._specs import _components_record
@@ -772,7 +771,9 @@ def _jax_traceability_error(
                     for path in template:
                         dtype = dtypes.get(path)
                         if dtype is None:
-                            dtype = dtypes[path.split("/", 1)[0]]
+                            dtype = dtypes.get(path.split("/", 1)[0])
+                        if dtype is None:
+                            dtype = _stored_dtype(root, path)
                         columns[path] = jax.ShapeDtypeStruct(
                             (1, *template[path].shape),
                             dtype,
@@ -794,7 +795,7 @@ def _jax_traceability_error(
                 def probe_draw(root_values):
                     sampled = {}
                     for group, root_value in zip(
-                        sampled_groups,
+                        stochastic_plan.source_groups,
                         root_values,
                         strict=True,
                     ):
@@ -813,6 +814,21 @@ def _jax_traceability_error(
     except Exception as exc:
         return exc
     return None
+
+
+def _stored_dtype(root: Any, path: str) -> Any:
+    """The dtype of the atoms an empirical *root* stores at the leaf *path*, or None.
+
+    The probe reads it where the law's declaration leaves a dtype open, since an
+    empirical law holds its atoms and reading them draws nothing. Atoms that
+    are objects have no dtype.
+    """
+    if not isinstance(root, EmpiricalDistribution):
+        return None
+    rows = root._rows
+    column = rows.get(path) if isinstance(rows, Mapping) else rows
+    dtype = getattr(column, "dtype", None)
+    return None if dtype is None or dtype.kind == "O" else dtype
 
 
 def _require_jax_traceable(

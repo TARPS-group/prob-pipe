@@ -12,15 +12,19 @@ import numpy as np
 import pytest
 
 from probpipe import (
+    DistributionBatch,
     EmpiricalDistribution,
     Function,
     MultivariateNormal,
     Normal,
     NumericArrayBatch,
     NumericArraySpec,
+    OpaqueBatch,
     Record,
     RecordBatch,
+    ResultSchemaError,
     function,
+    positive,
     sample,
     workflow_run,
 )
@@ -1368,13 +1372,8 @@ class TestTheProbeModelsItsExecutorsTransform:
             np.asarray(mapped.atoms), np.asarray(self._run(sequential, law).atoms)
         )
 
-    def test_an_empirical_law_is_enumerated_rather_than_mapped(self):
-        """Not the probe's doing: enumeration preserves exact weights.
-
-        A record-valued empirical law takes the enumeration path whatever the
-        probe would say, so its agreeing with sequential dispatch is a property
-        of that path rather than of the mapped one.
-        """
+    def test_an_enumerated_empirical_law_is_probed_and_mapped(self, caplog):
+        """The probe stands in for one atom of an enumerated law as for one draw of a sampled one."""
         law = _empirical_of_rows(
             "law", Record("r", {"a": jnp.arange(6.0), "b": jnp.arange(6.0) + 10.0})
         )
@@ -1386,9 +1385,13 @@ class TestTheProbeModelsItsExecutorsTransform:
             n_broadcast_samples=6,
         )
 
+        with caplog.at_level(logging.INFO, logger="probpipe.functions._function"):
+            mapped = self._run(totals, law)
+
+        assert not any("not JAX-traceable" in record.message for record in caplog.records)
+        assert mapped.provenance.metadata["dispatch"] == "jax"
         np.testing.assert_allclose(
-            np.asarray(self._run(totals, law).atoms),
-            np.asarray(self._run(sequential, law).atoms),
+            np.asarray(mapped.atoms), np.asarray(self._run(sequential, law).atoms)
         )
 
     @pytest.mark.pending(
@@ -1448,6 +1451,253 @@ class TestTheProbeModelsItsExecutorsTransform:
             np.asarray(mapped.atoms), np.asarray(self._run(sequential, law).atoms)
         )
         assert kinds and all(issubclass(kind, Record) for kind in kinds)
+
+
+class TestAnEnumerationRunsInOneMappedCall:
+    """An enumerated lift maps its combinations of atoms as the sampling lift maps its draws.
+
+    Each body below records its calls, so a count that does not grow with the
+    atoms shows the body was traced rather than run once per atom.
+    """
+
+    @staticmethod
+    def _records(n: int, weights=None) -> EmpiricalDistribution:
+        a = jnp.linspace(0.5, 1.5, n)
+        return _empirical_of_rows("theta", Record("r", {"a": a, "b": a + 2.0}), weights)
+
+    @staticmethod
+    def _arrays(n: int, weights=None) -> EmpiricalDistribution:
+        return EmpiricalDistribution("theta", jnp.linspace(0.5, 1.5, 2 * n).reshape(n, 2), weights)
+
+    @staticmethod
+    def _rate(theta) -> jax.Array:
+        """A scalar read from one atom, a record or an array."""
+        return theta["a"] if isinstance(theta, Record) else theta[0]
+
+    @classmethod
+    def _counted(cls, calls: list, **controls) -> Function:
+        """A function whose body runs a ``jax.lax.scan`` and records each of its calls."""
+
+        def trajectory(theta):
+            calls.append(theta)
+            rate = 2.0 + cls._rate(theta)
+
+            def step(n, _):
+                n = rate * n * jnp.exp(-n)
+                return n, n
+
+            return jax.lax.scan(step, jnp.asarray(1.0), None, length=22)[1]
+
+        return Function(label="trajectory", fn=trajectory, **controls)
+
+    @pytest.mark.parametrize("make", ["_records", "_arrays"])
+    def test_the_body_runs_as_often_for_a_thousand_atoms_as_for_five(self, make):
+        make = getattr(self, make)
+        calls: list = []
+        result = self._counted(calls, n_broadcast_samples=1000)(make(1000))
+        thousand = len(calls)
+        calls.clear()
+        self._counted(calls, n_broadcast_samples=1000)(make(5))
+
+        assert len(calls) == thousand < 5
+        assert result.num_atoms == 1000
+        assert result.provenance.metadata["route"] == "empirical_enumeration"
+        assert result.provenance.metadata["dispatch"] == "jax"
+
+    @pytest.mark.parametrize("make", ["_records", "_arrays"])
+    def test_the_atoms_and_weights_equal_the_sequential_loops(self, make):
+        """Two weighted laws enumerate their product, each combination weighted by both atoms."""
+        theta = getattr(self, make)(4, jnp.array([0.1, 0.2, 0.3, 0.4]))
+        scale = EmpiricalDistribution(
+            "scale", jnp.array([1.0, 2.0, 3.0]), jnp.array([0.5, 0.3, 0.2])
+        )
+        mapped_calls: list = []
+        sequential_calls: list = []
+
+        def scaled(calls):
+            def body(theta, scale):
+                calls.append(theta)
+                return scale * jnp.sin(self._rate(theta))
+
+            return body
+
+        mapped = Function("scaled", scaled(mapped_calls), n_broadcast_samples=12)(theta, scale)
+        sequential = Function(
+            "scaled", scaled(sequential_calls), n_broadcast_samples=12, dispatch="sequential"
+        )(theta, scale)
+
+        assert len(sequential_calls) == 12 > len(mapped_calls)
+        assert mapped.num_atoms == sequential.num_atoms == 12
+        np.testing.assert_allclose(
+            np.asarray(mapped.atoms), np.asarray(sequential.atoms), rtol=1e-6
+        )
+        np.testing.assert_array_equal(np.asarray(mapped.weights), np.asarray(sequential.weights))
+
+    def test_include_inputs_reports_the_enumerated_atoms(self):
+        theta = self._records(6, jnp.arange(1.0, 7.0))
+        joint = {}
+        for dispatch in ("auto", "sequential"):
+            calls: list = []
+            joint[dispatch] = self._counted(
+                calls, n_broadcast_samples=6, dispatch=dispatch, include_inputs=True
+            )(theta)
+
+        assert list(joint["auto"].event_spec.components) == ["theta", "trajectory"]
+        for path in ("theta/a", "theta/b", "trajectory"):
+            np.testing.assert_allclose(
+                _drawn(joint["auto"], path), _drawn(joint["sequential"], path), rtol=1e-6
+            )
+        np.testing.assert_array_equal(
+            np.asarray(joint["auto"].weights), np.asarray(joint["sequential"].weights)
+        )
+
+    def test_a_plan_that_also_samples_maps_with_the_same_draws(self):
+        """An empirical law enumerated beside a sampled law maps with the loop's draws."""
+        theta = self._arrays(3)
+        noise = Normal(loc=0.0, scale=1.0, label="noise")
+        laws = {}
+        counts = {}
+        for dispatch in ("auto", "sequential"):
+            calls: list = []
+
+            def body(theta, noise, calls=calls):
+                calls.append(theta)
+                return self._rate(theta) + noise
+
+            with workflow_run(seed=3):
+                laws[dispatch] = Function("f", body, n_broadcast_samples=30, dispatch=dispatch)(
+                    theta, noise
+                )
+            counts[dispatch] = len(calls)
+
+        assert counts["sequential"] == 30 > counts["auto"]
+        np.testing.assert_allclose(
+            np.asarray(laws["auto"].atoms), np.asarray(laws["sequential"].atoms), rtol=1e-6
+        )
+        np.testing.assert_array_equal(
+            np.asarray(laws["auto"].weights), np.asarray(laws["sequential"].weights)
+        )
+
+    @pytest.mark.parametrize(
+        ("n_broadcast_samples", "route"),
+        [(8, "empirical_enumeration"), (4, "sampling_lift")],
+    )
+    def test_atoms_whose_declaration_leaves_the_dtype_open_map(self, n_broadcast_samples, route):
+        """The probe reads an open dtype from the stored atoms, whether the lift enumerates or samples."""
+        theta = self._records(8)
+        assert set(theta.dtypes.values()) == {None}
+        calls: list = []
+
+        with workflow_run(seed=0):
+            result = self._counted(calls, n_broadcast_samples=n_broadcast_samples)(theta)
+
+        assert len(calls) < n_broadcast_samples
+        assert result.provenance.metadata["route"] == route
+        assert result.provenance.metadata["dispatch"] == "jax"
+
+    def test_a_nested_lift_maps_the_enumeration_in_each_cell(self):
+        theta = self._arrays(3, jnp.array([0.2, 0.3, 0.5]))
+        cells = NumericArrayBatch("c", jnp.arange(4.0), "cell")
+        laws = {}
+        counts = {}
+        for dispatch in ("auto", "sequential"):
+            calls: list = []
+
+            def body(c, theta, calls=calls):
+                calls.append(theta)
+                return c * self._rate(theta)
+
+            laws[dispatch] = Function("f", body, n_broadcast_samples=3, dispatch=dispatch)(
+                cells, theta
+            )
+            counts[dispatch] = len(calls)
+
+        assert counts["sequential"] == 12 > counts["auto"]
+        for index in range(4):
+            np.testing.assert_allclose(
+                np.asarray(laws["auto"][index].atoms),
+                np.asarray(laws["sequential"][index].atoms),
+                rtol=1e-6,
+            )
+            np.testing.assert_array_equal(
+                np.asarray(laws["auto"][index].weights),
+                np.asarray(laws["sequential"][index].weights),
+            )
+
+    @staticmethod
+    def _object_atoms(kind: str) -> EmpiricalDistribution:
+        if kind == "opaque":
+            return EmpiricalDistribution("s", OpaqueBatch("labels", ["a", "bb", "ccc"], "atom"))
+        laws = [Normal(loc=float(loc), scale=1.0, label="x") for loc in range(3)]
+        return EmpiricalDistribution("laws", DistributionBatch("laws", laws, "law"))
+
+    @pytest.mark.parametrize("kind", ["opaque", "laws"])
+    def test_object_atoms_enumerate_by_the_loop(self, kind):
+        calls: list = []
+
+        def body(atom):
+            calls.append(atom)
+            return jnp.asarray(1.0)
+
+        law = self._object_atoms(kind)
+        result = Function("f", body, n_broadcast_samples=3)(law)
+
+        # The body receives each stored atom itself, once.
+        atoms = law._atoms_at(np.arange(3))
+        assert len(calls) == 3
+        assert all(call is atom for call, atom in zip(calls, atoms, strict=True))
+        assert result.provenance.metadata["dispatch"] == "sequential"
+        np.testing.assert_array_equal(np.asarray(result.atoms), np.ones(3))
+
+    def test_a_body_that_does_not_trace_enumerates_by_the_loop(self):
+        theta = self._arrays(4, jnp.array([0.1, 0.2, 0.3, 0.4]))
+
+        def untraceable(theta):
+            return jnp.asarray(float(theta[0]) ** 2)
+
+        result = Function("f", untraceable, n_broadcast_samples=4)(theta)
+        sequential = Function("f", untraceable, n_broadcast_samples=4, dispatch="sequential")(theta)
+
+        assert result.provenance.metadata["dispatch"] == "sequential"
+        np.testing.assert_array_equal(np.asarray(result.atoms), np.asarray(sequential.atoms))
+        np.testing.assert_array_equal(np.asarray(result.weights), np.asarray(sequential.weights))
+
+    @pytest.mark.parametrize("kind", ["opaque", "untraceable"])
+    def test_jax_dispatch_refuses_an_enumeration_that_does_not_trace(self, kind):
+        if kind == "opaque":
+            law, body = self._object_atoms("opaque"), lambda atom: jnp.asarray(1.0)
+        else:
+            law, body = self._arrays(4), lambda theta: jnp.asarray(float(theta[0]))
+
+        with pytest.raises(ValueError, match="dispatch='jax' failed while tracing"):
+            Function("f", body, n_broadcast_samples=4, dispatch="jax")(law)
+
+    @pytest.mark.parametrize("dispatch", ["auto", "jax"])
+    @pytest.mark.parametrize(("shift", "holds"), [(1.0, True), (-1.0, False)])
+    def test_a_declared_support_is_checked_on_the_mapped_atoms(self, dispatch, shift, holds):
+        """The atoms run from 0.5 to 1.5, so a shift of -1.0 leaves some outside the support."""
+        calls: list = []
+
+        def body(theta):
+            calls.append(theta)
+            return self._rate(theta) + shift
+
+        wrapped = Function(
+            "f",
+            body,
+            output_spec=NumericArraySpec((), support=positive),
+            n_broadcast_samples=50,
+            dispatch=dispatch,
+        )
+
+        if holds:
+            result = wrapped(self._arrays(50))
+            assert len(calls) < 5
+            assert bool(jnp.all(jnp.asarray(result.atoms.values) > 0))
+        else:
+            with pytest.raises(ResultSchemaError, match="support positive"):
+                wrapped(self._arrays(50))
+            assert len(calls) < 5
 
 
 class TestARecordReturnLiftsToARecordLaw:

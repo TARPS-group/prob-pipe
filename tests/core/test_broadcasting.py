@@ -640,9 +640,8 @@ class TestNamedComponents:
 # ---------------------------------------------------------------------------
 #
 # Empirical enumeration semantics (cartesian product of small
-# empiricals, weighted) must not depend on row-wise dispatch mode.
-# Explicit JAX dispatch rejects exact empirical enumeration because that
-# path cannot run through ``jax.vmap`` without changing semantics.
+# empiricals, weighted) do not depend on the dispatch mode; under
+# ``dispatch="jax"`` the enumeration runs in one ``jax.vmap``.
 # ---------------------------------------------------------------------------
 
 
@@ -777,11 +776,16 @@ class TestDispatchConsistency:
         for sample_values in samples[1:]:
             np.testing.assert_array_equal(sample_values, samples[0])
 
-    def test_jax_dispatch_rejects_exact_empirical_enumeration(self):
-        def identity(x):
-            return x
+    def test_jax_dispatch_maps_exact_empirical_enumeration(self):
+        def add_them(a, b):
+            return a + b
 
-        empirical = EmpiricalDistribution("x", jnp.array([[1.0], [2.0]]))
-
-        with pytest.raises(ValueError, match="does not support exact empirical"):
-            self._run("jax", identity, x=empirical, n_broadcast_samples=20)
+        ed1 = EmpiricalDistribution("x", jnp.array([[1.0], [2.0]]), weights=jnp.array([0.8, 0.2]))
+        ed2 = EmpiricalDistribution(
+            "x", jnp.array([[10.0], [20.0]]), weights=jnp.array([0.25, 0.75])
+        )
+        mapped = self._run("jax", add_them, a=ed1, b=ed2, n_broadcast_samples=20)
+        sequential = self._run("sequential", add_them, a=ed1, b=ed2, n_broadcast_samples=20)
+        assert mapped.provenance.metadata["dispatch"] == "jax"
+        np.testing.assert_array_equal(np.asarray(mapped.atoms), np.asarray(sequential.atoms))
+        np.testing.assert_array_equal(np.asarray(mapped.weights), np.asarray(sequential.weights))

@@ -696,6 +696,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An exact lift over an empirical law runs in one `vmap`.** A function lifted
+  over an empirical law with at most `n_broadcast_samples` atoms is evaluated at
+  every combination of atoms, and these evaluations ran in a Python loop even
+  when the call traces, so a body that runs `jax.lax.scan` was traced again for
+  each atom. A 22-step population trajectory over a 2,000-atom posterior took
+  70 s. When the call traces, `dispatch="auto"` now evaluates every combination
+  in one `jax.vmap`, with the atoms and weights of the loop, and the trajectory
+  takes 0.6 s. `dispatch="jax"` maps the enumeration, where it raised before.
+  The trace probe reads a dtype that a law's declaration leaves open from the
+  law's stored atoms, so a record-valued empirical law without declared dtypes
+  maps as well, under the enumeration and the sampling lift. Atoms that are
+  objects, such as laws, and a body that does not trace run one combination at
+  a time.
 - **A sweep over a batch of arrays runs in one `vmap`.** A batch of records at
   a parameter that expects one value runs its rows in one `jax.vmap` when the
   call traces, but a `NumericArrayBatch` ran row by row under

@@ -54,11 +54,24 @@ class TestDispatchModes:
 
         np.testing.assert_allclose(atom_leaves(auto)[0], atom_leaves(jax_mode)[0], rtol=1e-6)
 
+    def test_jax_maps_an_enumeration_as_sequential_dispatch_evaluates_it(self):
+        mapped = Function("affine", _affine, n_broadcast_samples=64, dispatch="jax")
+        sequential = Function("affine", _affine, n_broadcast_samples=64, dispatch="sequential")
+
+        result = mapped(record_law()["a"])
+
+        assert result.provenance.metadata["dispatch"] == "jax"
+        np.testing.assert_allclose(
+            atom_leaves(result)[0], atom_leaves(sequential(record_law()["a"]))[0], rtol=1e-6
+        )
+
     def test_an_unsupported_mode_is_refused_before_sampling(self):
-        wrapped = Function("affine", _affine, n_broadcast_samples=64, dispatch="jax")
+        @function(n_broadcast_samples=64, dispatch="jax")
+        def untraceable(z):
+            return jnp.asarray(float(z) ** 2)
 
         with workflow_run(seed=5), pytest.raises(ValueError, match="dispatch='jax'"):
-            wrapped(record_law()["a"])
+            untraceable(record_law()["a"])
 
 
 class TestOrchestration:

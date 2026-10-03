@@ -75,11 +75,12 @@ class TestExecutionContract:
         with pytest.raises(FrozenInstanceError):
             contract.transport = "local_thread"
 
-    def test_exact_plan_is_not_jax_capable_but_is_rowwise_capable(self):
+    def test_an_exact_plan_is_jax_capable_and_rowwise_capable(self):
         plan = _plan(
             {"x": EmpiricalDistribution("x", jnp.asarray([1.0, 2.0]))},
             n_broadcast_samples=8,
         )
+        assert plan.evaluation_mode == "exact"
         jax_contract = _execution_contract.make_execution_contract(
             evaluator="jax_vmap",
             transport="local_inline",
@@ -91,7 +92,7 @@ class TestExecutionContract:
             stochastic_plan=plan,
         )
 
-        assert not _execution_contract.supports_execution_contract(
+        assert _execution_contract.supports_execution_contract(
             jax_contract,
             plan,
         )
