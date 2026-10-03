@@ -143,7 +143,7 @@ class RecordBatch(Batch[Record]):
     (3,)
     >>> batch["x"].shape
     (3, 2)
-    >>> batch[0].name
+    >>> batch[0].label
     'draws[draw=0]'
     """
 

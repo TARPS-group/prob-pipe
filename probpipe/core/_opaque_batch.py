@@ -83,7 +83,7 @@ class OpaqueBatch(_ObjectBatch[Any]):
     (2,)
     >>> batch[0].value
     'north'
-    >>> batch[0].name
+    >>> batch[0].label
     'labels[site=0]'
     """
 
