@@ -312,6 +312,36 @@ class TestNumericArrayComputesAsAnArray:
         assert result.label == name
         assert isinstance(result.raw(), jax.Array)
 
+    @pytest.mark.parametrize(
+        ("compute", "name"),
+        [
+            (lambda v, w: v + w, "v + [other value]"),
+            (lambda v, w: -w, "-[other value]"),
+            (lambda v, w: 2 * (v + w), "2 * (v + [other value])"),
+            (lambda v, w: (2 * v) + 1, "(2 * v) + 1"),
+            (lambda v, w: (-v) ** 2, "(-v) ** 2"),
+            (lambda v, w: abs(w) + 1, "abs(other value) + 1"),
+        ],
+    )
+    def test_each_operand_reads_as_one_unit_in_the_name(self, compute, name):
+        """An expression operand is parenthesized, and a user's label with a space is bracketed."""
+        v = NumericArray("v", jnp.arange(3.0))
+        w = NumericArray("other value", jnp.ones(3))
+
+        assert compute(v, w).label == name
+
+    def test_an_element_label_is_one_unit_already(self):
+        """The space of a two-level element's label sits inside its brackets."""
+        batch = NumericArrayBatch(
+            "posterior",
+            jnp.zeros((2, 3)),
+            ("chain", "draw"),
+            element_spec=NumericArraySpec(()),
+            axes_per_level=(1, 1),
+        )
+
+        assert (batch.at_levels(chain=0, draw=1) + 1).label == "posterior[chain=0, draw=1] + 1"
+
     def test_a_result_records_the_operator_and_its_tracked_operands(self):
         left, right = NumericArray("a", jnp.arange(3.0)), NumericArray("b", jnp.ones(3))
 

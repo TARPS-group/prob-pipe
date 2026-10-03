@@ -356,15 +356,52 @@ _BINARY_SYMBOLS = {
 #: The form each unary operator gives the name its result derives.
 _UNARY_FORMS = {"neg": "-{}", "pos": "+{}", "abs": "abs({})", "invert": "~{}"}
 
+#: The symbols that make a label an expression: the binary operators', of which
+#: ``|`` also reads as conditioning.
+_OPERATOR_SYMBOLS = frozenset(_BINARY_SYMBOLS.values())
+
+
+#: The prefixes of the unary operators' forms that apply an operator to what follows.
+_UNARY_PREFIXES = ("-", "+", "~")
+
+
+def _top_level_words(label: str) -> list[str]:
+    """*label* split at the spaces outside its parentheses and brackets."""
+    words, current, depth = [], [], 0
+    for char in label:
+        if char in "([":
+            depth += 1
+        elif char in ")]" and depth:
+            depth -= 1
+        if char == " " and depth == 0:
+            words.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+    words.append("".join(current))
+    return words
+
+
+def grouped_label(label: str) -> str:
+    """*label* as it reads inside a derived label, grouped so it reads as one operand.
+
+    An expression is parenthesized, so the derived label states the order of
+    evaluation: a label one of whose top-level words is an operator's symbol,
+    as ``effect + 1.0`` or ``model | y`` is, or that opens with a unary
+    operator, as ``-effect`` does. Any other label with a top-level space, such
+    as a user's label ``other effect``, is bracketed, so it reads as one name,
+    and a label with none is used as it is.
+    """
+    words = _top_level_words(label)
+    if label.startswith(_UNARY_PREFIXES) or any(word in _OPERATOR_SYMBOLS for word in words):
+        return f"({label})"
+    return f"[{label}]" if len(words) > 1 else label
+
 
 def _operand_label(operand: Any) -> str:
-    """How *operand* reads in a derived name: its label, or its value when it is untracked.
-
-    A label that is itself an expression, which contains a space, is
-    parenthesized, so the name states the order of evaluation.
-    """
+    """How *operand* reads in a derived name: its grouped label, or its value when it is untracked."""
     if isinstance(operand, NumericArray):
-        return f"({operand.label})" if " " in operand.label else operand.label
+        return grouped_label(operand.label)
     return format_value(operand)
 
 

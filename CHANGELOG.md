@@ -598,6 +598,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Each operand of an operator reads as one unit in the result's label.** A
+  label with a space that is not an expression, such as a user's
+  `other effect`, is bracketed, so `effect + other` is labeled
+  `effect + [other effect]`, since parentheses mark an expression. An
+  operand that opens with a unary operator is parenthesized, so `(-x) ** 2` is
+  labeled `(-x) ** 2`, since `-x ** 2` reads as `-(x ** 2)`.
 - **A rename keeps a function's fingerprint and replays its calls.** A
   function's fingerprint and its replay anchor record its code, its signature,
   and the types of its declarations, without the names of its output's
