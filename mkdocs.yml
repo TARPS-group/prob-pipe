@@ -80,6 +80,12 @@ extra_javascript:
 
 nav:
   - Home: index.md
+  - Get started:
+    - Installation: get_started/installation.md
+    - Quickstart: get_started/quickstart.ipynb
+  - Tutorials:
+    - "1. A first Bayesian analysis": tutorials/01_first_analysis.ipynb
+    - "2. Forecasting with uncertainty": tutorials/02_forecasting.ipynb
   - User guide:
     - Ray via Prefect: user_guide/ray.md
   - API reference:
